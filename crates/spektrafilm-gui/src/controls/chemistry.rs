@@ -7,9 +7,10 @@ pub(crate) fn sections(
     params: &mut RuntimeParams,
     section: &str,
     flags: &mut ChangeFlags,
+    filter: &mut ControlFilter<'_>,
 ) {
     if section == "Film chemistry" {
-        render_chemistry(ui, &mut params.film_render.chemistry, flags, true);
+        render_chemistry(ui, &mut params.film_render.chemistry, flags, true, filter);
     }
     if section == "Print chemistry" {
         render_chemistry(
@@ -17,6 +18,7 @@ pub(crate) fn sections(
             &mut params.print_render.density_curves_morph,
             flags,
             false,
+            filter,
         );
     }
 }

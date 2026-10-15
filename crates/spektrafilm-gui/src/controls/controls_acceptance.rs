@@ -16,6 +16,8 @@ fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         &mut serde_json::Value::Null,
         "Scanner",
         super::ScanMedium::Negative,
+        "",
+        &mut Default::default(),
     );
 }
 

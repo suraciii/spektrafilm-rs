@@ -77,6 +77,13 @@ pub(crate) struct App {
     /// surfaces success/failure in `status` when the worker thread
     /// completes. Joined eagerly to release the thread.
     pub(crate) export_job: Option<ExportJob>,
+    /// Transient control-search filter. Not persisted.
+    pub(crate) filter: String,
+    /// Labels the control sections rendered last, keyed by section name. The
+    /// control search hides a section whose cache was recorded by a filtered
+    /// render and does not match.
+    pub(crate) section_labels:
+        std::collections::HashMap<String, crate::controls::SectionLabelCache>,
     /// In-flight Convert controller action. The epoch drops results made stale
     /// by later parameter edits or a newer action.
     pub(crate) calibration_job: Option<CalibrationJob>,
@@ -236,6 +243,8 @@ impl App {
             right_panel_mode: None,
             compare_active: false,
             compare_split: 0.5,
+            filter: String::new(),
+            section_labels: std::collections::HashMap::new(),
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);

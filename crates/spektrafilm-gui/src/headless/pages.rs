@@ -579,3 +579,142 @@ fn overall_effect_amount_scales_render_between_prepared_source_and_complete_resu
         assert_eq!(h.state().params.output_mix.amount, 0.75);
     });
 }
+
+/// Replace the control-search filter through the search box above the tabs.
+fn search(h: &mut Harness<'_, App>, text: &str) {
+    h.get_by_label("Filter controls").focus();
+    h.step();
+    h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    if text.is_empty() {
+        h.press_key(egui::Key::Backspace);
+    } else {
+        h.get_by_label("Filter controls").type_text(text);
+    }
+    h.run_steps(3);
+}
+
+// specs/gui-workflow/spec.md#control-search: the box filters the parameter
+// controls by label within the active tab, reveals the matching controls of a
+// collapsed section, hides the sections without a match, and leaves parameter
+// values and the saved sections untouched.
+#[test]
+fn control_search_filters_controls_and_hides_sections_without_matches() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let params_before = h.state().params.clone();
+    let sections_before = h.state().gui_state.sections.clone();
+    assert_eq!(
+        h.get_by_label("Filter controls").role(),
+        egui::accesskit::Role::TextInput
+    );
+
+    // The Camera section is open by default; Crop and upscale is collapsed.
+    assert!(h.query_by_label("exposure compensation ev").is_some());
+    assert!(h.query_by_label("upscale factor").is_none());
+
+    search(h, "UPSCALE");
+
+    // Case-insensitive substring matching reveals the matching control of the
+    // collapsed section and drops the sections that do not match.
+    assert!(h.query_by_label("Crop and upscale").is_some());
+    assert!(h.query_by_label("upscale factor").is_some());
+    assert!(h.query_by_label("exposure compensation ev").is_none());
+    assert!(h.query_by_label("print exposure").is_none());
+    assert!(h.query_by_label("Simulation blend").is_none());
+    // The import surface keeps its normal layout while the filter is active.
+    assert!(h.query_all_by_label("workflow").next().is_some());
+
+    search(h, "no-such-control-label");
+    assert!(h.query_by_label("upscale factor").is_none());
+    assert!(h.query_by_label("exposure compensation ev").is_none());
+
+    // A group of controls between two route states is reachable by the full
+    // label of each member, not only by the shared prefix.
+    search(h, "preflash exposure");
+    assert!(h.query_by_label("preflash exposure").is_some());
+    assert!(h.query_by_label("preflash y filter shift").is_none());
+    assert!(h.query_by_label("print exposure").is_none());
+
+    search(h, "");
+    assert!(h.query_by_label("exposure compensation ev").is_some());
+    // Clearing the search restores the collapsed layout.
+    assert!(h.query_by_label("upscale factor").is_none());
+    assert_eq!(h.state().params, params_before);
+    assert_eq!(h.state().gui_state.sections, sections_before);
+}
+
+// specs/gui-workflow/spec.md#control-search: the box stays above the tab
+// content, and a match inside a collapsed section reveals that section while
+// the sections without a match disappear.
+#[test]
+fn control_search_reveals_a_collapsed_section_and_restores_it_when_cleared() {
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "FILM");
+    assert!(h.query_by_label("Filter controls").is_some());
+
+    // Chemistry is collapsed by default; Grain is open by default.
+    assert!(h.query_by_label("development time").is_none());
+    assert!(h.query_all_by_label("Engine").next().is_some());
+
+    search(h, "development time");
+    assert!(h.query_by_label("Chemistry").is_some());
+    assert!(h.query_by_label("development time").is_some());
+    assert!(h.query_all_by_label("Engine").next().is_none());
+    // Film chemistry's density-curve controls do not match the filter.
+    assert!(h.query_by_label("gamma factor").is_none());
+
+    // The diffusion editor is collapsed by default; its matching control
+    // appears on its own while its other controls stay hidden.
+    search(h, "halo warmth");
+    assert!(h.query_all_by_label("Diffusion").next().is_some());
+    assert!(h.query_by_label("halo warmth").is_some());
+    assert!(h.query_by_label("filter family").is_none());
+    assert!(h.query_by_label("strength").is_none());
+
+    search(h, "");
+    assert!(h.query_by_label("development time").is_none());
+    assert!(h.query_all_by_label("Engine").next().is_some());
+    // The revealed sections collapse back behind their headers.
+    assert!(h.query_by_label("halo warmth").is_none());
+}
+
+// specs/gui-workflow/spec.md#control-search: a control inside a collapsed
+// sub-section of a revealed section is found by its own label and does not
+// require the sub-section to be opened first.
+#[test]
+fn control_search_reveals_controls_of_a_collapsed_subsection() {
+    use spektrafilm_core::params::GrainEngine;
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "FILM");
+    h.state_mut().params.film_render.grain.engine = GrainEngine::Fotufilm;
+    h.step();
+
+    // The Fotufilm advanced sub-section is collapsed by default.
+    assert!(h.query_by_label("RMS density").is_none());
+    assert!(h.query_by_label("Softness").is_some());
+
+    search(h, "rms density");
+    assert!(h.query_all_by_label("Grain").next().is_some());
+    assert!(h.query_by_label("Fotufilm advanced").is_some());
+    assert!(h.query_by_label("RMS density").is_some());
+    // The sub-section's other controls do not match the filter.
+    assert!(h.query_by_label("Coating density scale").is_none());
+    assert!(h.query_by_label("Softness").is_none());
+
+    // Each share editor row matches by its own visible label.
+    search(h, "sublayer 2");
+    assert!(h.query_by_label("Sublayer 2").is_some());
+    assert!(h.query_by_label("Sublayer 1").is_none());
+    assert!(h.query_by_label("Sublayer 3").is_none());
+    assert!(
+        h.query_by_label_contains("Sublayer 4 (remainder)")
+            .is_none()
+    );
+
+    search(h, "");
+    // Clearing the search closes the sub-section again.
+    assert!(h.query_by_label("RMS density").is_none());
+    assert!(h.query_by_label("Softness").is_some());
+}

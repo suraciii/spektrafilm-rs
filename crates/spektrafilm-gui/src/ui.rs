@@ -477,6 +477,21 @@ impl App {
             "Output" => Some((Section::OutputMix, "Output", true)),
             _ => None,
         };
+        if !self.filter.is_empty() {
+            // Search mode: reveal the matching controls of a section that has
+            // any, and drop a section that has none.
+            if !self.section_has_filter_match(section) {
+                return;
+            }
+            if let Some((kind, label, _)) = preset_section {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(label).strong());
+                    self.section_preset_menu(ui, kind);
+                });
+            }
+            self.parameter_section_controls(ui, section);
+            return;
+        }
         if let Some((kind, label, default_open)) = preset_section {
             let mut label_clicked = false;
             let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -499,13 +514,25 @@ impl App {
         }
     }
 
+    /// Whether `section` rendered a control whose label matches the search
+    /// filter.
+    fn section_has_filter_match(&self, section: &str) -> bool {
+        match self.section_labels.get(section) {
+            Some(cache) => controls::cached_labels_match(&self.filter, cache),
+            None => true,
+        }
+    }
+
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
+        let cache = self.section_labels.entry(section.to_owned()).or_default();
         let changes = controls::show(
             ui,
             &mut self.params,
             &mut self.gui_state.sections,
             section,
             self.film_medium,
+            &self.filter,
+            cache,
         );
         if changes.runtime_changed {
             self.mark_parameters_changed_invalidating_calibration();
@@ -602,6 +629,27 @@ impl App {
             });
     }
     fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
+        let section = if film {
+            "Film chemistry"
+        } else {
+            "Print chemistry"
+        };
+        if !self.filter.is_empty() {
+            // Search mode: no collapsing header, and matching parts only.
+            let development_time = controls::label_matches(&self.filter, "development time");
+            if !development_time && !self.section_has_filter_match(section) {
+                return;
+            }
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Chemistry").strong());
+                self.section_preset_menu(ui, if film { Section::Film } else { Section::Print });
+            });
+            if development_time {
+                self.chemistry_dev_time(ui, film);
+            }
+            self.parameter_section(ui, section);
+            return;
+        }
         let mut label_clicked = false;
         let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
@@ -618,35 +666,32 @@ impl App {
             header.toggle();
         }
         header.body(|ui| {
-            let (times, selected) = if film {
-                (
-                    &self.film_dev_times,
-                    &mut self.params.film_render.development_time,
-                )
-            } else {
-                (
-                    &self.print_dev_times,
-                    &mut self.params.print_render.development_time,
-                )
-            };
-            if dev_time_combo(
-                ui,
-                if film { "film-time" } else { "print-time" },
-                "development time",
-                times,
-                selected,
-            ) {
-                self.mark_parameters_changed();
-            }
-            self.parameter_section(
-                ui,
-                if film {
-                    "Film chemistry"
-                } else {
-                    "Print chemistry"
-                },
-            );
+            self.chemistry_dev_time(ui, film);
+            self.parameter_section(ui, section);
         });
+    }
+
+    fn chemistry_dev_time(&mut self, ui: &mut egui::Ui, film: bool) {
+        let (times, selected) = if film {
+            (
+                &self.film_dev_times,
+                &mut self.params.film_render.development_time,
+            )
+        } else {
+            (
+                &self.print_dev_times,
+                &mut self.params.print_render.development_time,
+            )
+        };
+        if dev_time_combo(
+            ui,
+            if film { "film-time" } else { "print-time" },
+            "development time",
+            times,
+            selected,
+        ) {
+            self.mark_parameters_changed();
+        }
     }
 
     fn controls_panel(&mut self, ui: &mut egui::Ui) {
@@ -910,6 +955,12 @@ impl eframe::App for App {
                     }
                 });
                 ui.separator();
+                ui.horizontal(|ui| {
+                    let label = ui.label("Filter controls");
+                    ui.text_edit_singleline(&mut self.filter)
+                        .labelled_by(label.id);
+                });
+                ui.add_space(2.0);
                 let scroll_height = (ui.available_height() - 95.0).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
                     egui::ScrollArea::vertical()
