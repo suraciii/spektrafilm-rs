@@ -517,10 +517,7 @@ impl App {
     /// Whether `section` rendered a control whose label matches the search
     /// filter.
     fn section_has_filter_match(&self, section: &str) -> bool {
-        match self.section_labels.get(section) {
-            Some(cache) => controls::cached_labels_match(&self.filter, cache),
-            None => true,
-        }
+        controls::cached_labels_match(&self.filter, self.section_labels.get(section))
     }
 
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {

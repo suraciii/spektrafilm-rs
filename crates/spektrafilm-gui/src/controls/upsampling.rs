@@ -10,7 +10,7 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Spectral upsampling" {
-        section_header(ui, filter, "Spectral upsampling", false, |ui, filter| {
+        section_header(ui, filter, "Spectral upsampling", |ui, filter| {
             if filter_matches(filter, "spectral upsampling") {
                 flags.runtime_changed |= choice_tip(
                     ui,
