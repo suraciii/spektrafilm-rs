@@ -2178,9 +2178,14 @@ mod tests {
 
     #[test]
     fn zero_correlation_reproduces_the_frozen_cell_densities() {
-        // Recorded from the build that predates the shared-rate split. Zero
-        // correlation must leave the independent per-`(channel, layer)` draws
-        // exactly as they were, including their accumulation order.
+        // Zero correlation must leave the independent per-`(channel, layer)`
+        // draws exactly as they were, including their accumulation order. The
+        // digest itself is recorded from the split, so on its own it cannot
+        // show what the tree looked like before it: that is established by a
+        // cross-build comparison of a binary built from the pre-split base
+        // against this one, which agree byte for byte on the CPU and f64 Dye
+        // paths at the default, as recorded in this change's verification
+        // notes on the pull request.
         //
         // The digest is a constant of the default mass law, so an experiment
         // that selects another one is skipped by name instead of failing with a

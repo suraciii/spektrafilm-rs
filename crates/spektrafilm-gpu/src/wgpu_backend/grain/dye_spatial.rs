@@ -68,10 +68,9 @@ pub(super) struct DyeBand {
 /// Bounded resource plan of one Dye run.
 pub(super) struct DyePlan {
     pub bands: Vec<DyeBand>,
-    pub max_source_pixels: u32,
-    pub max_cells: u32,
-    pub max_horizontal_cells: u32,
-    pub max_formed_cells: u32,
+    /// Per-band maxima of [`band_bytes`], in the same binding order: the
+    /// scratch buffers `prepare_dye` allocates and `dye_plan` validates.
+    pub max_band_bytes: [u64; 5],
 }
 
 /// Signed 64-bit fixed-point words `(high, low)` of one film coordinate in
@@ -166,6 +165,32 @@ fn band_geometry(
     })
 }
 
+/// Names of the band scratch buffers, in binding order. The per-band bound,
+/// the plan maxima and the allocations all read [`band_bytes`] in this order,
+/// so a name cannot drift from its size.
+pub(super) const BAND_BUFFERS: [&str; 5] = [
+    "source layers",
+    "cell layers",
+    "cell density",
+    "horizontal formation",
+    "formed density",
+];
+
+/// Byte size of every band scratch buffer, in binding order: the two
+/// nine-float `source`/`cell layers` tables, the cell density, the horizontal
+/// formation buffer, and the formed density. This is the one rule behind the
+/// per-band bound [`band_fit`] enforces, the maxima `dye_plan` validates, and
+/// the buffers `prepare_dye` and the shared runner allocate.
+pub(super) fn band_bytes(band: &DyeBand) -> [u64; 5] {
+    [
+        u64::from(band.source_cols) * u64::from(band.source_rows) * 36,
+        u64::from(band.ext_cols) * u64::from(band.ext_rows) * 36,
+        u64::from(band.ext_cols) * u64::from(band.ext_rows) * 12,
+        u64::from(band.ext_rows) * u64::from(band.cols) * 12,
+        u64::from(band.rows) * u64::from(band.cols) * 12,
+    ]
+}
+
 /// The named bounds one band must fit before it is committed: the cell and
 /// source-pixel budget and the device storage binding size. The two
 /// nine-float buffers (`source layers`, `cell layers`) are the binding-count
@@ -179,28 +204,7 @@ fn band_fit(band: &DyeBand, bound: u64) -> Result<(), String> {
             "needs up to {band_cells} field cells and {band_pixels} source pixels, above the {MAX_BAND_CELLS} limit"
         ));
     }
-    for (name, bytes) in [
-        (
-            "source layers",
-            u64::from(band.source_cols) * u64::from(band.source_rows) * 36,
-        ),
-        (
-            "cell layers",
-            u64::from(band.ext_cols) * u64::from(band.ext_rows) * 36,
-        ),
-        (
-            "cell density",
-            u64::from(band.ext_cols) * u64::from(band.ext_rows) * 12,
-        ),
-        (
-            "horizontal formation",
-            u64::from(band.ext_rows) * u64::from(band.cols) * 12,
-        ),
-        (
-            "formed density",
-            u64::from(band.rows) * u64::from(band.cols) * 12,
-        ),
-    ] {
+    for (name, bytes) in BAND_BUFFERS.iter().zip(band_bytes(band)) {
         if bytes > bound {
             return Err(format!(
                 "{name} needs {bytes} bytes, above the {bound}-byte device storage limit"
@@ -313,10 +317,7 @@ impl DyePlan {
         }
 
         let mut bands = Vec::new();
-        let mut max_source_pixels = 0u32;
-        let mut max_cells = 0u32;
-        let mut max_horizontal_cells = 0u32;
-        let mut max_formed_cells = 0u32;
+        let mut max_band_bytes = [0u64; 5];
         // Coarse output pitches read many cells per row; halve the band
         // until its cells, source pixels, and storage buffers fit and keep
         // that height.
@@ -339,10 +340,9 @@ impl DyePlan {
                     }
                 }
             };
-            max_source_pixels = max_source_pixels.max(band.source_cols * band.source_rows);
-            max_cells = max_cells.max(band.ext_cols * band.ext_rows);
-            max_horizontal_cells = max_horizontal_cells.max(band.ext_rows * band.cols);
-            max_formed_cells = max_formed_cells.max(band.rows * band.cols);
+            for (max, bytes) in max_band_bytes.iter_mut().zip(band_bytes(&band)) {
+                *max = (*max).max(bytes);
+            }
             row0 += band.output_rows;
             bands.push(band);
         }
@@ -356,10 +356,7 @@ impl DyePlan {
         }
         Ok(Self {
             bands,
-            max_source_pixels,
-            max_cells,
-            max_horizontal_cells,
-            max_formed_cells,
+            max_band_bytes,
         })
     }
 }
@@ -734,19 +731,13 @@ impl SpatialCase {
                 mapped_at_creation: false,
             })
         };
-        let cell_bytes = u64::from(self.band.ext_cols) * u64::from(self.band.ext_rows) * 36;
+        let [_, cell_bytes, _, horizontal_bytes, formed_bytes] = band_bytes(&self.band);
         let output_bytes = u64::from(self.out_width) * u64::from(self.out_height) * 12;
         let source_layers = init("dye_spatial_check_source", &self.source);
         let cell_layers = alloc("dye_spatial_check_layers", cell_bytes);
         let cells = init("dye_spatial_check_field", &self.cells);
-        let horizontal = alloc(
-            "dye_spatial_check_horizontal",
-            u64::from(self.band.ext_rows) * u64::from(self.band.cols) * 12,
-        );
-        let formed = alloc(
-            "dye_spatial_check_formed",
-            u64::from(self.band.rows) * u64::from(self.band.cols) * 12,
-        );
+        let horizontal = alloc("dye_spatial_check_horizontal", horizontal_bytes);
+        let formed = alloc("dye_spatial_check_formed", formed_bytes);
         let output = alloc("dye_spatial_check_output", output_bytes);
         let state = build_spatial_with(
             backend,
@@ -1712,17 +1703,7 @@ mod tests {
             mins: [0.0; 3],
         };
         let params = params_of(&g);
-        let largest_buffer = |band: &DyeBand| {
-            [
-                u64::from(band.source_cols) * u64::from(band.source_rows) * 36,
-                u64::from(band.ext_cols) * u64::from(band.ext_rows) * 36,
-                u64::from(band.ext_cols) * u64::from(band.ext_rows) * 12,
-                u64::from(band.ext_rows) * u64::from(band.cols) * 12,
-                u64::from(band.rows) * u64::from(band.cols) * 12,
-            ]
-            .into_iter()
-            .fold(0, u64::max)
-        };
+        let largest_buffer = |band: &DyeBand| band_bytes(band).into_iter().fold(0, u64::max);
         let one = band_geometry(g.src_w, g.src_h, &params, 0, 1).expect("one row");
         let full =
             band_geometry(g.src_w, g.src_h, &params, 0, BAND_OUTPUT_ROWS).expect("full band");

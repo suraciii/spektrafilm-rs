@@ -3,7 +3,7 @@
 
 use super::dye_decisions::DYE_MAX_RATE;
 use super::dye_layers::{self, DyeChannelTablesGpu, LayerPass};
-use super::dye_spatial::{self, DyeBand, DyePlan, DyeSpatialState};
+use super::dye_spatial::{self, BAND_BUFFERS, DyeBand, DyePlan, DyeSpatialState};
 use super::*;
 
 #[derive(Clone, Debug)]
@@ -156,6 +156,8 @@ impl WgpuBackend {
         let bound = limits
             .max_buffer_size
             .min(u64::from(limits.max_storage_buffer_binding_size));
+        // The band scratch sizes come from the one rule that bounds them, in
+        // the order `band_fit` checks them; the plan-level buffers flank it.
         for (name, bytes) in [
             (
                 "source",
@@ -169,17 +171,13 @@ impl WgpuBackend {
                     .saturating_mul(u64::from(params.grid.height))
                     .saturating_mul(12),
             ),
-            ("source layers", u64::from(plan.max_source_pixels) * 36),
-            ("cell layers", u64::from(plan.max_cells) * 36),
-            ("cell density", u64::from(plan.max_cells) * 12),
-            (
-                "horizontal formation",
-                u64::from(plan.max_horizontal_cells) * 12,
-            ),
-            ("formed density", u64::from(plan.max_formed_cells) * 12),
+        ]
+        .into_iter()
+        .chain(BAND_BUFFERS.iter().copied().zip(plan.max_band_bytes))
+        .chain([
             ("channel curves", params.tables.curves.len() as u64 * 4),
             ("formation taps", params.taps.len() as u64 * 4),
-        ] {
+        ]) {
             if bytes == 0 || bytes > bound {
                 return Err(format!(
                     "film grain Dye: {name} needs {bytes} bytes; device storage limit is {bound} bytes"
@@ -296,11 +294,18 @@ impl WgpuBackend {
             })
         };
         let status = scratch("dye_status", 4);
-        let source_layers = scratch("dye_source_layers", u64::from(plan.max_source_pixels) * 36);
-        let cell_layers = scratch("dye_cell_layers", u64::from(plan.max_cells) * 36);
-        let cells = scratch("dye_cell_density", u64::from(plan.max_cells) * 12);
-        let horizontal = scratch("dye_horizontal", u64::from(plan.max_horizontal_cells) * 12);
-        let formed = scratch("dye_formed", u64::from(plan.max_formed_cells) * 12);
+        let [
+            source_layers_bytes,
+            cell_layers_bytes,
+            cells_bytes,
+            horizontal_bytes,
+            formed_bytes,
+        ] = plan.max_band_bytes;
+        let source_layers = scratch("dye_source_layers", source_layers_bytes);
+        let cell_layers = scratch("dye_cell_layers", cell_layers_bytes);
+        let cells = scratch("dye_cell_density", cells_bytes);
+        let horizontal = scratch("dye_horizontal", horizontal_bytes);
+        let formed = scratch("dye_formed", formed_bytes);
         let bytes = u64::from(params.grid.width) * u64::from(params.grid.height) * 12;
         let output = scratch("dye_readout", bytes);
         let bands = plan
