@@ -24,6 +24,8 @@ specs/
 - Keep transient material outside the repository, under `/data/workspaces/spektrafilm-project-context/`.
 - Put durable non-contract conclusions in the relevant Issue/PR.
 - Do not use `docs/` as a competing product or design authority.
+- **Authority** (optional) — declare the owning module and cross-capability dependencies at the top of a spec. Prevents spec/code drift.
+- **Laws** (optional) — end a spec with numbered invariants that are directly testable. Complements Acceptance by stating what must always hold.
 
 ## Context Layers
 
