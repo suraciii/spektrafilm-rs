@@ -297,99 +297,6 @@ fn preflash_controls(
     });
 }
 
-/// Case-insensitive substring match of the control-search filter against a label.
-pub(crate) fn label_matches(filter: &str, label: &str) -> bool {
-    filter.is_empty() || label.to_lowercase().contains(&filter.to_lowercase())
-}
-
-/// Whether any of `labels` matches the control-search filter.
-pub(crate) fn any_label_matches(filter: &str, labels: &[&str]) -> bool {
-    labels.iter().any(|label| label_matches(filter, label))
-}
-
-/// The control labels a section reached in its last render, and whether that
-/// render ran with a non-empty filter. A miss hides the section only after a
-/// filtered render: an unfiltered render can skip the controls of a collapsed
-/// sub-section, so its label cache can be incomplete.
-#[derive(Default)]
-pub(crate) struct SectionLabelCache {
-    labels: Vec<&'static str>,
-    search_rendered: bool,
-}
-
-impl SectionLabelCache {
-    /// Whether `labels` came from a filtered render, so the control search may
-    /// hide the section on a cache miss.
-    fn complete_for_search(&self) -> bool {
-        self.search_rendered && !self.labels.is_empty()
-    }
-}
-
-/// Whether a section's cached control labels include a match for `filter`. An
-/// incomplete cache reports a match so the section renders until the cache
-/// fills.
-pub(crate) fn cached_labels_match(filter: &str, cache: &SectionLabelCache) -> bool {
-    filter.is_empty() || !cache.complete_for_search() || any_label_matches(filter, &cache.labels)
-}
-
-/// Control-search state threaded through one section render: the filter text,
-/// the labels reached by this render, and the label cache the panel keeps per
-/// section. The cached labels decide which sections a search shows and hides,
-/// so the decision does not depend on the section body being rendered.
-pub(crate) struct ControlFilter<'a> {
-    filter: &'a str,
-    reached: Vec<&'static str>,
-    cache: &'a mut SectionLabelCache,
-}
-
-impl<'a> ControlFilter<'a> {
-    pub(crate) fn new(filter: &'a str, cache: &'a mut SectionLabelCache) -> Self {
-        Self {
-            filter,
-            reached: Vec::new(),
-            cache,
-        }
-    }
-
-    /// Store the labels this render reached as the section's label cache.
-    pub(crate) fn finish(&mut self) {
-        std::mem::swap(&mut self.cache.labels, &mut self.reached);
-        self.reached.clear();
-        self.cache.search_rendered = self.active();
-    }
-
-    /// Whether the control search is active.
-    pub(crate) fn active(&self) -> bool {
-        !self.filter.is_empty()
-    }
-
-    /// Whether the filter matches a label the section rendered before.
-    pub(crate) fn section_matches(&self) -> bool {
-        cached_labels_match(self.filter, self.cache)
-    }
-
-    fn record(&mut self, label: &'static str) {
-        if !self.reached.contains(&label) {
-            self.reached.push(label);
-        }
-    }
-}
-
-/// Filter a control by its label, recording the label as reached.
-pub(crate) fn filter_matches(filter: &mut ControlFilter<'_>, label: &'static str) -> bool {
-    filter.record(label);
-    label_matches(filter.filter, label)
-}
-
-/// Filter a group of labels that guard one control, recording every label.
-pub(crate) fn filter_matches_any(filter: &mut ControlFilter<'_>, labels: &[&'static str]) -> bool {
-    let mut matched = false;
-    for &label in labels {
-        matched |= filter_matches(filter, label);
-    }
-    matched
-}
-
 /// A section or sub-section header. During a control search the body is
 /// revealed instead of collapsed, and a section whose controls do not match is
 /// dropped entirely.
@@ -397,7 +304,6 @@ pub(crate) fn section_header<R>(
     ui: &mut Ui,
     filter: &mut ControlFilter<'_>,
     title: &str,
-    default_open: bool,
     add_contents: impl FnOnce(&mut Ui, &mut ControlFilter<'_>) -> R,
 ) {
     if filter.active() {
@@ -408,9 +314,7 @@ pub(crate) fn section_header<R>(
         add_contents(ui, filter);
         return;
     }
-    egui::CollapsingHeader::new(title)
-        .default_open(default_open)
-        .show(ui, |ui| add_contents(ui, filter));
+    egui::CollapsingHeader::new(title).show(ui, |ui| add_contents(ui, filter));
 }
 
 pub(crate) fn show(
@@ -458,7 +362,7 @@ fn render_sections(
     upsampling::sections(ui, params, section, flags, filter);
     grain::sections(ui, params, section, flags, filter);
     if section == "Magazine finish color" {
-        section_header(ui, filter, section, false, |ui, filter| {
+        section_header(ui, filter, section, |ui, filter| {
             let magazine = &mut params.magazine_print_color;
             if filter_matches(filter, "strength") {
                 flags.runtime_changed |= param_numeric(
@@ -664,6 +568,11 @@ mod base;
 mod chemistry;
 mod convert;
 mod crop;
+mod filter;
+pub(crate) use filter::{
+    ControlFilter, SectionLabelCache, cached_labels_match, filter_matches, filter_matches_any,
+    label_matches,
+};
 mod gamut;
 mod glare;
 mod grain;

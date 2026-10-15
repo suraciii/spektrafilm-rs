@@ -32,7 +32,7 @@ pub(crate) fn sections(
         });
     }
     if section == "Print base" {
-        section_header(ui, filter, "Base", false, |ui, filter| {
+        section_header(ui, filter, "Base", |ui, filter| {
             if filter_matches(filter, "active") {
                 flags.runtime_changed |= toggle(
                     ui,

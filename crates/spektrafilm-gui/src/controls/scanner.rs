@@ -13,7 +13,7 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Input" {
-        section_header(ui, filter, "Input", false, |ui, filter| {
+        section_header(ui, filter, "Input", |ui, filter| {
             if filter_matches(filter, "input color space") {
                 flags.runtime_changed |= choice_tip(
                     ui,

@@ -10,7 +10,7 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Input gamut compress" {
-        section_header(ui, filter, "Input gamut compress", false, |ui, filter| {
+        section_header(ui, filter, "Input gamut compress", |ui, filter| {
             if filter_matches(filter, "active") {
                 flags.runtime_changed |= toggle(
                     ui,
@@ -49,7 +49,7 @@ pub(crate) fn sections(
         });
     }
     if section == "Output gamut compress" {
-        section_header(ui, filter, "Output gamut compress", false, |ui, filter| {
+        section_header(ui, filter, "Output gamut compress", |ui, filter| {
             if filter_matches(filter, "algorithm") {
                 flags.runtime_changed |= choice_tip(
                     ui,

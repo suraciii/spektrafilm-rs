@@ -10,7 +10,7 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Crop and upscale" {
-        section_header(ui, filter, "Crop and upscale", false, |ui, filter| {
+        section_header(ui, filter, "Crop and upscale", |ui, filter| {
             if filter_matches(filter, "upscale factor") {
                 flags.runtime_changed |= param_numeric(
                     ui,

@@ -100,7 +100,7 @@ pub(crate) fn sections(
                 if filter_matches(filter, "layer amounts") {
                     flags.runtime_changed |= param_tuple(ui, "Layer amounts", &mut fotufilm.layers, "film_render.grain.fotufilm.layers", "Effective grain amount per emulsion layer.");
                 }
-                section_header(ui, filter, "Fotufilm advanced", false, |ui, filter| {
+                section_header(ui, filter, "Fotufilm advanced", |ui, filter| {
                     if filter_matches(filter, "rms density") {
                         flags.runtime_changed |= param_numeric(ui, "RMS density", &mut fotufilm.rms_density, "film_render.grain.fotufilm.rms_density", "Authored effective RMS optical-density target; not measured stock calibration.");
                     }

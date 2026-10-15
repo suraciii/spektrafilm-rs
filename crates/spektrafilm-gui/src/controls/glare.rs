@@ -10,7 +10,7 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Glare" {
-        section_header(ui, filter, "Print viewing glare", false, |ui, filter| {
+        section_header(ui, filter, "Print viewing glare", |ui, filter| {
             ui.add_enabled_ui(params.workflow.route.contains(" > print > "), |ui| {
                 if filter_matches(filter, "active") {
                     flags.runtime_changed |= toggle(ui, "active", &mut params.print_render.glare.active, "Add readout stray light after lens blur and before scanner correction. This does not change print exposure or developed density.");
