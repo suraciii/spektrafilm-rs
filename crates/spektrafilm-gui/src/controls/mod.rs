@@ -271,7 +271,7 @@ pub(crate) fn show(
         gamut::sections(ui, params, section, &mut flags);
         crop::sections(ui, params, section, &mut flags);
         base::sections(ui, params, section, &mut flags);
-        convert::sections(ui, params, section, &mut flags);
+        convert::sections(ui, params, extras, section, &mut flags);
         upsampling::sections(ui, params, section, &mut flags);
         grain::sections(ui, params, section, &mut flags);
         if section == "Magazine finish color" {

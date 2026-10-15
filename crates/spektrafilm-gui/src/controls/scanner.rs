@@ -39,6 +39,7 @@ pub(crate) fn sections(
             ], "Auto normalizes the print exposure so the developed midgray density prints to the paper midgray and follows camera exposure compensation, like a color analyzer or minilab. Manual applies the print exposure time alone, like a test strip.");
             flags.runtime_changed |= param_numeric(ui, "print y filter shift", &mut params.enlarger.y_filter_shift, "enlarger.y_filter_shift", "Y filter shift of the color enlarger from a neutral position, in Kodak CC units");
             flags.runtime_changed |= param_numeric(ui, "print m filter shift", &mut params.enlarger.m_filter_shift, "enlarger.m_filter_shift", "M filter shift of the color enlarger from a neutral position, in Kodak CC units");
+            flags.runtime_changed |= choice_tip(ui, "print illuminant (experimental)", &mut params.enlarger.illuminant, &["TH-KG3", "TH-KG3-L", "K75P", "T", "D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Print illuminant to simulate. Default is the bundled TH-KG3.");
             preflash_controls(ui, params, flags);
         });
     }
@@ -194,38 +195,5 @@ pub(crate) fn sections(
         );
         flags.raw_reload |= ui.button("reprocess raw").clicked();
     }
-    if section == "Experimental" {
-        egui::CollapsingHeader::new("Experimental")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(
-                        "Internal testing features. Not recommended for production.",
-                    )
-                    .small()
-                    .color(egui::Color32::GRAY),
-                );
-                flags.runtime_changed |= choice_tip(
-                    ui,
-                    "print illuminant",
-                    &mut params.enlarger.illuminant,
-                    &["TH-KG3"],
-                    "Print illuminant to simulate",
-                );
-                flags.runtime_changed |= extra_channels(
-                    ui,
-                    extras,
-                    "film_channel_swap",
-                    "film channel swap",
-                    "extras.special.film_channel_swap",
-                );
-                flags.runtime_changed |= extra_channels(
-                    ui,
-                    extras,
-                    "print_channel_swap",
-                    "print channel swap",
-                    "extras.special.print_channel_swap",
-                );
-            });
-    }
+
 }
