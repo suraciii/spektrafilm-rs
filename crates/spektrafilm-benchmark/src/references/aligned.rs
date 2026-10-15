@@ -279,9 +279,11 @@ pub fn aligned(
             None
         };
         for (name, q) in [("mean", None), ("p95", Some(0.95)), ("max", Some(1.))] {
-            let value = flip
-                .as_ref()
-                .map(|map| vec![q.map_or_else(|| mean(map), |q| percentile(map.clone(), q))]);
+            let value = flip.as_ref().map(|map| {
+                vec![Some(
+                    q.map_or_else(|| mean(map), |q| percentile(map.clone(), q)),
+                )]
+            });
             c.distances(
                 "full_image",
                 &format!("reference.flip.{name}"),
@@ -313,7 +315,7 @@ pub fn aligned(
         for (name, q) in [("median", 0.5), ("p95", 0.95), ("p99", 0.99), ("max", 1.)] {
             let values = (count > 0 && tone).then(|| {
                 maps.iter()
-                    .map(|map| percentile(pop.iter().map(|i| map.0[*i]).collect(), q))
+                    .map(|map| Some(percentile(pop.iter().map(|i| map.0[*i]).collect(), q)))
                     .collect()
             });
             c.distances(
@@ -336,9 +338,11 @@ pub fn aligned(
                 );
                 labs.iter()
                     .map(|lab| {
-                        (percentile(pop.iter().map(|i| lab[*i][0]).collect(), q as f64 / 100.)
-                            - ref_q)
-                            .abs()
+                        Some(
+                            (percentile(pop.iter().map(|i| lab[*i][0]).collect(), q as f64 / 100.)
+                                - ref_q)
+                                .abs(),
+                        )
                     })
                     .collect()
             });
@@ -356,7 +360,7 @@ pub fn aligned(
         }
         let values = (count > 0 && chroma).then(|| {
             maps.iter()
-                .map(|map| percentile(pop.iter().map(|i| map.1[*i]).collect(), 0.5))
+                .map(|map| Some(percentile(pop.iter().map(|i| map.1[*i]).collect(), 0.5)))
                 .collect()
         });
         c.distances(

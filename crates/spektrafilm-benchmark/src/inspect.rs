@@ -243,6 +243,52 @@ pub fn inspect(
         .iter()
         .filter_map(|artifact| artifact["path"].as_str().map(|path| (path, artifact)))
         .collect();
+    // Retained run conditions and stage context, straight from the validated
+    // run evidence: nothing here is recomputed, and unobserved stays named.
+    let mut case_conditions = Vec::new();
+    for case in cases.iter().filter(|c| selected(case_ids, &c["case_id"])) {
+        let mut roles = Map::new();
+        for (role, payload) in case["run_evidence"].as_object().into_iter().flatten() {
+            let stage = &payload["stage_evidence"];
+            let links = |record: &Value| record["path"].clone();
+            roles.insert(
+                role.clone(),
+                json!({
+                    "run": payload["run"],
+                    "target": payload["target"],
+                    "input": payload["input"],
+                    "preparation": payload.get("preparation").cloned().unwrap_or(Value::Null),
+                    "conditions": {
+                        "command": payload["command"],
+                        "source_command": payload["source_command"],
+                        "environment": payload["environment"],
+                        "precision": payload["precision"],
+                        "execution": payload["execution"],
+                        "data_inventory": payload["data_inventory"],
+                    },
+                    "declared": payload["declared"],
+                    "observed": payload["observed"],
+                    "stage_evidence": {
+                        "requested": stage["requested"],
+                        "availability": stage["availability"],
+                        "reason": stage.get("reason").cloned().unwrap_or(Value::Null),
+                        "manifest": links(&stage["manifest"]),
+                        "buffers": stage["buffers"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(links)
+                            .collect::<Vec<_>>(),
+                    },
+                    "diagnostic_evidence": {
+                        "diagnostics": links(&payload["diagnostics"]),
+                        "resolved_configuration": links(&payload["resolved_configuration"]),
+                    },
+                }),
+            );
+        }
+        case_conditions.push(json!({"case_id":case["case_id"],"seed":case["seed"],"roles":roles}));
+    }
     let mut failed_results = Vec::new();
     for case in cases.iter().filter(|c| selected(case_ids, &c["case_id"])) {
         let pairs = rows(&case["pairs"]);
@@ -259,6 +305,7 @@ pub fn inspect(
         "evaluation_status":comparison["evaluation_status"],"condition_differences":comparison["condition_differences"],
         "summary":comparison["summary"],"artifact_base":root,
         "available":{"case_ids":available_cases,"region_ids":available_regions,"metrics":available_metrics},
+        "case_conditions":case_conditions,
         "failed_results":failed_results,"findings":selected_findings,
         "measurements":selected_measurements,"seed_measurements":seed_measurements}),
     )

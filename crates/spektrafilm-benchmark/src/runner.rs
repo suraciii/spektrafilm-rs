@@ -395,6 +395,71 @@ fn resolved_geometry(resolved: &Value, diagnostics: &Value) -> Value {
     json!({"input_dimensions":diagnostics["configuration"]["input_dimensions"],"working_dimensions":diagnostics["configuration"]["working_dimensions"],"published_dimensions":diagnostics["configuration"]["published_dimensions"],"crop":io["crop"],"crop_center":io["crop_center"],"crop_size":io["crop_size"],"upscale_factor":io["upscale_factor"],"preview_mode":resolved["parameters"]["settings"]["preview_mode"],"preview_max_size":resolved["parameters"]["settings"]["preview_max_size"]})
 }
 
+/// Source-evidence route command for one simulation command: the same
+/// configuration with the input route and linear ACES2065-1 RGB taps.
+/// Stage capture stays with the simulation, never the source-only decode.
+fn source_render_command(command: &[String], folder: &Path) -> Result<Vec<String>> {
+    let mut source_command = command.to_vec();
+    if let Some(i) = source_command.iter().position(|s| s == "--route") {
+        source_command[i + 1] = "input".into();
+    } else {
+        source_command.extend(["--route".into(), "input".into()]);
+    }
+    let output_index = source_command
+        .iter()
+        .position(|s| s == "--output")
+        .ok_or_else(|| Error::new("source_evidence", "Missing output option"))?;
+    source_command[output_index + 1] = folder.join("source.tif").to_string_lossy().into();
+    source_command.extend([
+        "--set".into(), "io.output_color_space=ACES2065-1,io.output_cctf_encoding=false,magazine_print_color.active=false,film_render.grain.active=false,taps.inject=rgb_in,taps.collect=rgb_out".into(),
+        "--raw-out".into(), folder.join("source.f64").to_string_lossy().into(),
+        "--diagnostics".into(), folder.join("source-diagnostics.json").to_string_lossy().into(),
+    ]);
+    Ok(source_command)
+}
+
+/// The single source-configuration resolver for execution and preflight: the
+/// source route is dry-run from its own command, so both observe exactly the
+/// configuration the source execution uses. The dry-run never decodes pixels
+/// and never claims exposure or stage observation.
+fn resolve_source_configuration(
+    source_command: &[String],
+    environment: &BTreeMap<String, String>,
+    folder: &Path,
+    evidence: &mut Evidence,
+) -> Result<(Value, Value)> {
+    let mut source_dry = source_command.to_vec();
+    for option in ["--raw-out", "--diagnostics"] {
+        if let Some(index) = source_dry.iter().position(|value| value == option) {
+            source_dry.drain(index..index + 2);
+        }
+    }
+    source_dry.push("--dry-run".into());
+    let (result, _) = invoke(&source_dry, environment, folder, "source-dry-run", evidence)?;
+    renderer_success(&result, "source_configuration", folder, "source-dry-run")?;
+    let source_resolved: Value = serde_json::from_slice(&result.stdout)?;
+    if source_resolved["parameters"]["workflow"]["route"] != "input"
+        || source_resolved["parameters"]["io"]["output_color_space"] != "ACES2065-1"
+        || source_resolved["parameters"]["io"]["output_cctf_encoding"] != false
+        || source_resolved["parameters"]["magazine_print_color"]["active"] != false
+        || source_resolved["parameters"]["taps"]["inject"] != "rgb_in"
+        || source_resolved["parameters"]["taps"]["collect"] != "rgb_out"
+    {
+        return Err(Error::new(
+            "source_configuration",
+            "Source route must resolve to input with linear ACES2065-1, magazine disabled, and RGB input/output taps",
+        ));
+    }
+    common::dump(&folder.join("source-resolved.json"), &source_resolved)?;
+    let record = evidence.add(
+        &folder.join("source-resolved.json"),
+        "source_configuration",
+        "application/json",
+        json!({}),
+    )?;
+    Ok((source_resolved, record))
+}
+
 fn check_configuration(
     case: &Value,
     seed: u64,
@@ -486,6 +551,7 @@ fn check_configuration(
     Ok(resolved)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_case(
     case: &Value,
     seed: u64,
@@ -494,6 +560,7 @@ fn run_case(
     target_path: &Path,
     root: &Path,
     evidence: &mut Evidence,
+    capture_stage_evidence: bool,
 ) -> Result<Value> {
     let case_id = text(case, "id")?;
     let folder = root
@@ -504,7 +571,23 @@ fn run_case(
     let (environment, conditions) = renderer_environment(target, &folder);
     let mut command = render_command(case, suite_path, target, target_path, &folder)?;
     command.extend(["--seed".into(), seed.to_string()]);
-    let mut row = json!({"case_id":case_id,"seed":seed,"status":"failed","environment":conditions,"command":command});
+    let source_command = source_render_command(&command, &folder)?;
+    // The retained command is the actual executed simulation argv, including
+    // the evidence sinks, not the base argv they were appended to.
+    let mut render = command;
+    render.extend([
+        "--raw-out".into(),
+        folder.join("master.f64").to_string_lossy().into(),
+        "--diagnostics".into(),
+        folder.join("diagnostics.json").to_string_lossy().into(),
+    ]);
+    if capture_stage_evidence {
+        render.extend([
+            "--stage-evidence".into(),
+            folder.join("stage-evidence").to_string_lossy().into(),
+        ]);
+    }
+    let mut row = json!({"case_id":case_id,"seed":seed,"status":"failed","environment":conditions,"command":render,"source_command":source_command});
     let attempt = (|| -> Result<()> {
         let source = documents::resolve_path(text(&case["input"], "path")?, suite_path)?;
         let mut declaration = case["input"].clone();
@@ -526,60 +609,28 @@ fn run_case(
             target_path,
             root,
             evidence: &mut *evidence,
+            capture_stage_evidence,
         };
         let resolved = check_configuration(case, seed, &mut context, &folder, &mut row)?;
-        let mut source_command = command.clone();
-        if let Some(i) = source_command.iter().position(|s| s == "--route") {
-            source_command[i + 1] = "input".into();
-        } else {
-            source_command.extend(["--route".into(), "input".into()]);
-        }
-        let output_index = source_command
-            .iter()
-            .position(|s| s == "--output")
-            .ok_or_else(|| Error::new("source_evidence", "Missing output option"))?;
-        source_command[output_index + 1] = folder.join("source.tif").to_string_lossy().into();
-        source_command.extend([
-            "--set".into(), "io.output_color_space=ACES2065-1,io.output_cctf_encoding=false,magazine_print_color.active=false,film_render.grain.active=false,taps.inject=rgb_in,taps.collect=rgb_out".into(),
-            "--raw-out".into(), folder.join("source.f64").to_string_lossy().into(),
-            "--diagnostics".into(), folder.join("source-diagnostics.json").to_string_lossy().into(),
-        ]);
-        row["source_command"] = json!(source_command);
-        let mut source_dry = source_command.clone();
-        for option in ["--raw-out", "--diagnostics"] {
-            if let Some(index) = source_dry.iter().position(|value| value == option) {
-                source_dry.drain(index..index + 2);
-            }
-        }
-        source_dry.push("--dry-run".into());
-        let (result, _) = invoke(
-            &source_dry,
-            &environment,
-            &folder,
-            "source-dry-run",
-            evidence,
-        )?;
-        renderer_success(&result, "source_configuration", &folder, "source-dry-run")?;
-        let source_resolved: Value = serde_json::from_slice(&result.stdout)?;
-        if source_resolved["parameters"]["workflow"]["route"] != "input"
-            || source_resolved["parameters"]["io"]["output_color_space"] != "ACES2065-1"
-            || source_resolved["parameters"]["io"]["output_cctf_encoding"] != false
-            || source_resolved["parameters"]["magazine_print_color"]["active"] != false
-            || source_resolved["parameters"]["taps"]["inject"] != "rgb_in"
-            || source_resolved["parameters"]["taps"]["collect"] != "rgb_out"
+        // One supported capture boundary: preview bounding resizes the decoded
+        // source before the pipeline, so the metering input would not be the
+        // original decoded source the run row retains. Reject up front with an
+        // actionable reason instead of recording ambiguous dimensions.
+        if capture_stage_evidence
+            && resolved["parameters"]["settings"]["preview_mode"] == json!(true)
         {
             return Err(Error::new(
-                "source_configuration",
-                "Source route must resolve to input with linear ACES2065-1, magazine disabled, and RGB input/output taps",
+                "stage_capture_unsupported",
+                "stage capture requires preview_mode off: disable settings.preview_mode or drop --stage-evidence",
             ));
         }
-        common::dump(&folder.join("source-resolved.json"), &source_resolved)?;
-        row["source_resolved"] = evidence.add(
-            &folder.join("source-resolved.json"),
-            "source_configuration",
-            "application/json",
-            json!({}),
+        let (source_resolved, source_record) = resolve_source_configuration(
+            &source_command,
+            &environment,
+            &folder,
+            &mut *context.evidence,
         )?;
+        row["source_resolved"] = source_record;
         let (result, _) = invoke(
             &source_command,
             &environment,
@@ -647,13 +698,6 @@ fn run_case(
         if let Some(preparation) = case.get("preparation") {
             row["preparation"] = preparation.clone();
         }
-        let mut render = command;
-        render.extend([
-            "--raw-out".into(),
-            folder.join("master.f64").to_string_lossy().into(),
-            "--diagnostics".into(),
-            folder.join("diagnostics.json").to_string_lossy().into(),
-        ]);
         let (result, logs) = invoke(&render, &environment, &folder, "render", evidence)?;
         row["stdout"] = logs["stdout"].clone();
         row["stderr"] = logs["stderr"].clone();
@@ -734,6 +778,8 @@ fn run_case(
         row["source_pixel_aligned"] =
             json!(!dye && !fotufilm && row["source_geometry"] == row["simulation_geometry"]);
         row["precision"] = json!({"host_precision":configuration["host_precision"],"gpu_precision":configuration["gpu_precision"],"spectral_preparation_precision":configuration["spectral_preparation_precision"]});
+        row["stage_evidence"] =
+            retain_stage_evidence(&folder, capture_stage_evidence, evidence, [width, height])?;
         row["status"] = json!("completed");
         Ok(())
     })();
@@ -742,12 +788,229 @@ fn run_case(
     }
     Ok(row)
 }
+
+/// Explicit naming of exposure and stage boundaries that no capture observed.
+/// Unobserved never masquerades as measured: no values are invented here.
+fn unobserved_stage_context(reason: &str) -> Value {
+    json!({
+        "exposure": {"availability":"unavailable","reason":format!("{reason}; exposure unobserved")},
+        "print_normalization": {"availability":"unavailable","reason":format!("{reason}; print normalization unobserved")},
+        "stages": documents::STAGE_IDS.iter().map(|id| json!({"id":id,"availability":"unavailable","reason":format!("{reason}; stage {id} unobserved")})).collect::<Vec<_>>(),
+    })
+}
+
+/// Validate and index one requested renderer stage bundle. Every buffer is
+/// checked as a regular file for hash, byte length and finite f64 samples in
+/// its declared domain before it becomes an immutable indexed artifact. A
+/// missing or malformed bundle fails the case explicitly: an optional bundle
+/// never passes silently, and a successful render must carry complete capture.
+fn retain_stage_evidence(
+    folder: &Path,
+    capture: bool,
+    evidence: &mut Evidence,
+    published: [u64; 2],
+) -> Result<Value> {
+    if !capture {
+        return Ok(json!({
+            "requested": false,
+            "availability": "not_applicable",
+            "reason": "stage capture not requested",
+            "context": unobserved_stage_context("stage capture not requested"),
+        }));
+    }
+    let bundle_dir = folder.join("stage-evidence");
+    let bundle = documents::validate_stage_bundle(&bundle_dir)
+        .map_err(|error| error.at(bundle_dir.display().to_string()))?;
+    if bundle.availability != "available" {
+        return Err(Error::new(
+            "stage_evidence",
+            bundle
+                .reason
+                .unwrap_or_else(|| "stage capture is incomplete".into()),
+        )
+        .at(bundle_dir.display().to_string()));
+    }
+    documents::check_output_boundary(&bundle, published)?;
+    let manifest_record = evidence.add(
+        &bundle_dir.join("stage-evidence.json"),
+        "stage_evidence_manifest",
+        "application/json",
+        json!({"context":bundle.context}),
+    )?;
+    let mut buffers = Vec::new();
+    for buffer in &bundle.buffers {
+        let mut metadata = buffer.metadata.clone();
+        metadata["stage_id"] = json!(buffer.stage_id);
+        metadata["bundle_path"] = json!(buffer.relative);
+        buffers.push(evidence.add(
+            &buffer.path,
+            "stage_evidence_buffer",
+            "application/octet-stream",
+            metadata,
+        )?);
+    }
+    Ok(json!({
+        "requested": true,
+        "availability": "available",
+        "manifest": manifest_record,
+        "buffers": buffers,
+        "context": bundle.context,
+    }))
+}
+
+/// Retain one validated run row into the comparison's evidence and return its
+/// per-case `run_evidence` role payload: run/target/input identities, the
+/// resolved-configuration and diagnostics references, the passive input
+/// preparation declaration, the actual executed argv, environment and data
+/// inventory identity, declared versus observed exposure/normalization, and
+/// the stage bundle references. The stage bundle manifest and all of its
+/// relative buffer dependencies are copied together as immutable indexed
+/// artifacts. The run document was validated at load time, so this helper
+/// only copies and hashes the artifacts the payload references.
+pub fn retain_run_evidence(
+    evidence: &mut Evidence,
+    run_root: &Path,
+    run: &Value,
+    row: &Value,
+    definition: &Value,
+    role: &str,
+) -> Result<Value> {
+    let case_id = text(row, "case_id")?;
+    let seed = row["seed"]
+        .as_u64()
+        .ok_or_else(|| Error::new("run_case", "invalid case seed"))?;
+    let folder = format!("cases/{case_id}/seed-{seed}");
+    let resolved_source = documents::safe_artifact_path(run_root, text(&row["resolved"], "path")?)?;
+    let resolved_configuration = evidence.copy(
+        &resolved_source,
+        &format!("{folder}/{role}-resolved.json"),
+        "resolved_configuration",
+        json!({}),
+    )?;
+    let diagnostics = evidence.copy(
+        &documents::safe_artifact_path(run_root, text(&row["diagnostics"], "path")?)?,
+        &format!("{folder}/{role}-diagnostics.json"),
+        "render_diagnostics",
+        json!({}),
+    )?;
+    // Declared conditions come from the retained resolved configuration;
+    // observed conditions come from the capture, or are named unobserved.
+    let resolved_document = documents::load_json_document(&resolved_source)?;
+    let parameters = &resolved_document["parameters"];
+    let declared = json!({
+        "exposure": {
+            "auto_enabled": parameters["camera"]["auto_exposure"],
+            "method": parameters["camera"]["auto_exposure_method"],
+            "compensation_ev": parameters["camera"]["exposure_compensation_ev"],
+        },
+        "print_normalization": {
+            "mode": "profile_prepared",
+            "print_exposure": parameters["enlarger"]["print_exposure"],
+            "print_exposure_mode": parameters["enlarger"]["print_exposure_mode"],
+            "print_exposure_ev_tracking": parameters["settings"]["print_exposure_ev_tracking"],
+        },
+    });
+    let mut stage_evidence = json!({
+        "requested": false,
+        "availability": "not_applicable",
+        "reason": "stage capture not requested",
+    });
+    let mut observed = unobserved_stage_context("stage capture not requested");
+    if let Some(stage) = row.get("stage_evidence").filter(|value| value.is_object()) {
+        observed = stage["context"].clone();
+        stage_evidence = json!({
+            "requested": stage["requested"],
+            "availability": stage["availability"],
+        });
+        if let Some(reason) = stage.get("reason") {
+            stage_evidence["reason"] = reason.clone();
+        }
+        if stage["requested"] == json!(true) {
+            let manifest_path = text(&stage["manifest"], "path")?;
+            let bundle_dir = Path::new(manifest_path).parent().ok_or_else(|| {
+                Error::new("stage_evidence", "bundle manifest must name its directory")
+            })?;
+            let destination = format!("{folder}/{role}-stage-evidence");
+            let manifest = evidence.copy(
+                &documents::safe_artifact_path(run_root, manifest_path)?,
+                &format!("{destination}/stage-evidence.json"),
+                "stage_evidence_manifest",
+                json!({"case_id":case_id,"seed":seed,"role":role}),
+            )?;
+            let mut buffers = Vec::new();
+            for record in stage["buffers"].as_array().into_iter().flatten() {
+                let path = text(record, "path")?;
+                let relative = Path::new(path)
+                    .strip_prefix(bundle_dir)
+                    .map_err(|_| {
+                        Error::new(
+                            "stage_evidence",
+                            "buffer must live inside the bundle directory",
+                        )
+                    })?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                buffers.push(evidence.copy(
+                    &documents::safe_artifact_path(run_root, path)?,
+                    &format!("{destination}/{relative}"),
+                    "stage_evidence_buffer",
+                    json!({"case_id":case_id,"seed":seed,"role":role,"stage_id":record["stage_id"],"layout":record["layout"]}),
+                )?);
+            }
+            stage_evidence["manifest"] = manifest;
+            stage_evidence["buffers"] = json!(buffers);
+        }
+    }
+    let inventory = array(run, "dependencies")?
+        .iter()
+        .find(|record| record["role"] == json!("data_inventory"))
+        .map(|record| record["sha256"].clone())
+        .unwrap_or(Value::Null);
+    let input = json!({
+        "declaration": definition["input"],
+        "source_dimensions": row["source_dimensions"],
+        "source_geometry": row["source_geometry"],
+        "simulation_geometry": row["simulation_geometry"],
+        "source_pixel_aligned": row["source_pixel_aligned"],
+        "source_raw": {"sha256": row["source_raw"]["sha256"], "layout": row["source_raw"]["layout"], "color": row["source_raw"]["color"]},
+        "source_raw_metadata": {"sha256": row["source_raw_metadata"]["sha256"]},
+        "source_master": {"sha256": row["source_master"]["sha256"], "dimensions": row["source_master"]["dimensions"], "color": row["source_master"]["color"]},
+    });
+    let target = documents::load_json_document(&documents::safe_artifact_path(
+        run_root,
+        text(&run["target"], "path")?,
+    )?)?;
+    let mut payload = json!({
+        "role": role,
+        "case_id": case_id,
+        "seed": seed,
+        "run": {"id": run["id"], "schema_version": run["schema_version"], "execution_status": run["execution_status"]},
+        "target": {"id": target["id"], "digest": common::digest(&target)?},
+        "input": input,
+        "command": row["command"],
+        "source_command": row["source_command"],
+        "environment": row["environment"],
+        "precision": row["precision"],
+        "execution": row["execution"],
+        "data_inventory": {"sha256": inventory},
+        "resolved_configuration": resolved_configuration,
+        "diagnostics": diagnostics,
+        "declared": declared,
+        "observed": observed,
+        "stage_evidence": stage_evidence,
+    });
+    if let Some(preparation) = definition.get("preparation") {
+        payload["preparation"] = preparation.clone();
+    }
+    Ok(payload)
+}
 struct RenderContext<'a> {
     suite_path: &'a Path,
     target: &'a Value,
     target_path: &'a Path,
     root: &'a Path,
     evidence: &'a mut Evidence,
+    capture_stage_evidence: bool,
 }
 fn render_cases<'a>(
     suite: &'a Value,
@@ -774,6 +1037,7 @@ fn render_cases<'a>(
                 context.target_path,
                 context.root,
                 context.evidence,
+                context.capture_stage_evidence,
             ) {
                 Ok(row) => row,
                 Err(error) => {
@@ -789,15 +1053,25 @@ fn render_cases<'a>(
 }
 /// Validate every selected case and seed through renderer dry-run without decoding or rendering.
 /// Requires a new output directory and retains configuration evidence in `preflight.json`.
+/// `stage_evidence` resolves the capture request only: preflight never claims
+/// stage capture or exposure observation.
 pub fn preflight(
     suite_path: &Path,
     target_path: &Path,
     out: &Path,
     selections: &[String],
+    stage_evidence: bool,
 ) -> Result<(Value, i32)> {
     let suite_path = suite_path.canonicalize()?;
     let suite = documents::load_suite(&suite_path)?;
-    preflight_suite(suite, &suite_path, target_path, out, selections)
+    preflight_suite(
+        suite,
+        &suite_path,
+        target_path,
+        out,
+        selections,
+        stage_evidence,
+    )
 }
 
 /// Preflight an in-memory suite using `suite_path` as its dependency resolution anchor.
@@ -808,8 +1082,17 @@ pub fn preflight_suite(
     target_path: &Path,
     out: &Path,
     selections: &[String],
+    stage_evidence: bool,
 ) -> Result<(Value, i32)> {
-    execute_suite(suite, suite_path, target_path, out, selections, true)
+    execute_suite(
+        suite,
+        suite_path,
+        target_path,
+        out,
+        selections,
+        true,
+        stage_evidence,
+    )
 }
 
 fn preflight_cases<'a>(
@@ -835,9 +1118,47 @@ fn preflight_cases<'a>(
                 .join(case_id)
                 .join(format!("seed-{seed}"));
             let mut row = json!({"case_id":case_id,"seed":seed,"status":"failed","environment":renderer_environment(context.target,&folder).1});
+            let capture = context.capture_stage_evidence;
             let result = (|| -> Result<()> {
                 fs::create_dir_all(&folder)?;
-                check_configuration(case, seed, context, &folder, &mut row)?;
+                let (environment, _) = renderer_environment(context.target, &folder);
+                let resolved = check_configuration(case, seed, context, &folder, &mut row)?;
+                // Preflight resolves the capture request too: the preview
+                // bounding configuration is unsupported for stage capture and
+                // fails here with the same actionable reason as execution.
+                if capture && resolved["parameters"]["settings"]["preview_mode"] == json!(true) {
+                    return Err(Error::new(
+                        "stage_capture_unsupported",
+                        "stage capture requires preview_mode off: disable settings.preview_mode or drop --stage-evidence",
+                    ));
+                }
+                // The source route preflight resolves exactly the source
+                // configuration the execution will use, through the same
+                // resolver; no pixels are decoded, so exposure, stages and
+                // source geometry stay explicitly unobserved.
+                let mut command = render_command(
+                    case,
+                    context.suite_path,
+                    context.target,
+                    context.target_path,
+                    &folder,
+                )?;
+                command.extend(["--seed".into(), seed.to_string()]);
+                let source_command = source_render_command(&command, &folder)?;
+                let (_, record) = resolve_source_configuration(
+                    &source_command,
+                    &environment,
+                    &folder,
+                    &mut *context.evidence,
+                )?;
+                row["source_command"] = json!(source_command);
+                row["source_resolved"] = record;
+                row["stage_evidence"] = json!({
+                    "requested": capture,
+                    "availability": "unavailable",
+                    "reason": "dry-run resolves the request without stage capture or exposure observation",
+                    "context": unobserved_stage_context("dry-run does not render"),
+                });
                 row["status"] = json!("validated");
                 Ok(())
             })();
@@ -902,11 +1223,19 @@ pub fn run(
     target_path: &Path,
     out: &Path,
     selections: &[String],
+    stage_evidence: bool,
 ) -> Result<(Value, i32)> {
     let suite_path = suite_path.canonicalize()?;
     let target_path = target_path.canonicalize()?;
     let suite = documents::load_suite(&suite_path)?;
-    run_suite(suite, &suite_path, &target_path, out, selections)
+    run_suite(
+        suite,
+        &suite_path,
+        &target_path,
+        out,
+        selections,
+        stage_evidence,
+    )
 }
 
 pub fn run_suite(
@@ -915,8 +1244,17 @@ pub fn run_suite(
     target_path: &Path,
     out: &Path,
     selections: &[String],
+    stage_evidence: bool,
 ) -> Result<(Value, i32)> {
-    execute_suite(suite, suite_path, target_path, out, selections, false)
+    execute_suite(
+        suite,
+        suite_path,
+        target_path,
+        out,
+        selections,
+        false,
+        stage_evidence,
+    )
 }
 
 fn execute_suite(
@@ -926,6 +1264,7 @@ fn execute_suite(
     out: &Path,
     selections: &[String],
     dry_run: bool,
+    capture_stage_evidence: bool,
 ) -> Result<(Value, i32)> {
     let suite_path = documents::normalize_path(suite_path)?;
     documents::validate_suite(&suite, &suite_path)?;
@@ -1028,6 +1367,7 @@ fn execute_suite(
             target_path: &target_path,
             root: &root,
             evidence: &mut evidence,
+            capture_stage_evidence,
         };
         let processing = if dry_run {
             preflight_cases(&suite, &selected, &mut context, &mut rows, &mut progress)
@@ -1074,7 +1414,10 @@ fn execute_suite(
                 {"check":"gpu_execution","status":"unchecked","reason":"Dry-run does not initialize or execute a GPU"},
                 {"check":"output_write","status":"unchecked","reason":"Dry-run does not render or publish images"},
                 {"check":"observed_output_geometry","status":"unchecked","reason":"Dry-run does not decode or render images to observe output dimensions"},
-                {"check":"numerical_output","status":"unchecked","reason":"Dry-run produces no numerical image evidence"}
+                {"check":"numerical_output","status":"unchecked","reason":"Dry-run produces no numerical image evidence"},
+                {"check":"exposure_observation","status":"unchecked","reason":"Dry-run never applies exposure, so metered and applied exposure stay unobserved"},
+                {"check":"print_normalization_observation","status":"unchecked","reason":"Dry-run never prepares print normalization, so its value stays unobserved"},
+                {"check":"stage_evidence","status":"unchecked","reason":if capture_stage_evidence{"Stage capture requested but unobserved: dry-run renders no stage boundaries"}else{"Stage capture not requested; stage boundaries unobserved"}}
             ]);
             let mut manifest = json!({"schema_version":1,"mode":"dry_run","execution_status":if valid{"validated"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1,"errors":errors,"unchecked":unchecked});
             manifest["id"] = json!(common::digest(&manifest)?);

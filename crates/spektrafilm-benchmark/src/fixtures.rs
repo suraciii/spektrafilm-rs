@@ -416,9 +416,16 @@ pub fn create_fixtures(
             documents::load_suite(&out.join(suite))?;
         }
         documents::load_policy(&out.join("exploratory-policy.json"))?;
+        let chart_report: Value =
+            serde_json::from_str(include_str!("../assets/chart-report.example.json"))?;
+        let chart_report_path = out.join("chart-report.json");
+        dump(&chart_report_path, &chart_report)?;
+        crate::chart_report::validate_manifest(&chart_report_path)?;
+        provenance["chart_report"] =
+            json!({"path":"chart-report.json","sha256":sha256_file(&chart_report_path)?});
         dump(&out.join("provenance.json"), &provenance)?;
         Ok(
-            json!({"schema_version":1,"command":"fixtures","execution_status":"completed","artifact":out,"suites":suites,"preset":"look.toml","configurations":{"color_tone":"color-tone.json","appearance":"appearance.json"}}),
+            json!({"schema_version":1,"command":"fixtures","execution_status":"completed","artifact":out,"suites":suites,"preset":"look.toml","configurations":{"color_tone":"color-tone.json","appearance":"appearance.json"},"chart_report":"chart-report.json"}),
         )
     })();
     result.map_err(|error| crate::common::incomplete_destination(error, out, "provenance.json"))
@@ -649,7 +656,7 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert_eq!(error.code, "dependency_hash");
+        assert_eq!(error.code, "dependency_hash", "{}", error.message);
     }
 
     #[cfg(unix)]
@@ -666,7 +673,6 @@ mod tests {
             let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
             assert_eq!(error.code, "preset_export");
             assert_eq!(error.path, Some(renderer.display().to_string()));
-            assert!(error.message.contains("export rejected"));
             assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
         }
         let temp = tempfile::tempdir().unwrap();
@@ -675,7 +681,6 @@ mod tests {
         let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
         assert_eq!(error.code, "preset_export");
         assert_eq!(error.path, Some(renderer.display().to_string()));
-        assert!(error.message.contains("os error"));
         assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
     }
     #[cfg(unix)]

@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 mod evidence;
 mod masks;
 
-pub use evidence::{Availability, MeasurementRecord, validate_generated_document};
+pub use evidence::{
+    Availability, MeasurementRecord, STAGE_IDS, StageBuffer, StageBundle, check_output_boundary,
+    validate_generated_document, validate_stage_bundle,
+};
 pub use masks::{geometry_mask, reference_geometry_mask};
 
 pub const ID_PATTERN: &str = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$";
@@ -437,6 +440,7 @@ pub fn schema_for(kind: &str) -> Result<Value> {
         "policy" => include_str!("../assets/policy.schema.json"),
         "run" => include_str!("../assets/run.schema.json"),
         "comparison" => include_str!("../assets/comparison.schema.json"),
+        "chart-report" => include_str!("../assets/chart-report.schema.json"),
         _ => {
             return Err(err(
                 "unknown_document_kind",
@@ -633,6 +637,7 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
             }
             geometry(&r.geometry, path)?
         }
+        crate::references::validate_region_pairs(c)?;
         for x in c["probe"]["tone_response"].as_array().into_iter().flatten() {
             geometry(&x["geometry"], path)?
         }
@@ -869,6 +874,7 @@ pub fn protocol_digest(suite: &Value) -> Result<String> {
                 "input",
                 "seeds",
                 "regions",
+                "region_pairs",
                 "measurements",
                 "probe",
                 "probe_response",
@@ -935,6 +941,9 @@ pub fn validate_policy_selectors(policy: &Value, suite: &Value) -> Result<()> {
             && !case["regions"]
                 .as_array()
                 .is_some_and(|a| a.iter().any(|x| x["id"].as_str() == Some(reg)))
+            && !case["region_pairs"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|x| x["id"].as_str() == Some(reg)))
         {
             return Err(err(
                 "unresolved_identifier",
@@ -943,4 +952,48 @@ pub fn validate_policy_selectors(policy: &Value, suite: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suite(color: Option<Value>, pairs: Value) -> Value {
+        let mut protocol = json!({"id":"appearance-v1","pixels_per_degree":60.,"region_sampling_scales":[1.],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":1.,"border_px":0},"spectrum":{"window":"boxcar"}},"hotspots":{"count":0,"min_area_px":1}});
+        if let Some(color) = color {
+            protocol["color"] = color;
+        }
+        json!({"schema_version":1,"id":"t","protocol":protocol,"cases":[{"id":"c","kind":"probe","input":{"path":"x.png","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"configuration":{},"seeds":[0],"regions":[{"id":"a","label":"A","role":"color","geometry":[0,0,1,1],"measurements":[]},{"id":"b","label":"B","role":"neutral","geometry":[1,0,1,1],"measurements":[]}],"region_pairs":pairs,"measurements":[]}]})
+    }
+
+    #[test]
+    fn suite_schema_bounds_the_hue_floor_and_pair_documents() {
+        assert!(
+            validate_shape(
+                "suite",
+                &suite(
+                    Some(json!({"hue_chroma_floor": 2.})),
+                    json!([{"id":"ab","label":"A/B","left":"a","right":"b"}])
+                )
+            )
+            .is_ok()
+        );
+        assert!(validate_shape("suite", &suite(None, json!([]))).is_ok());
+        for invalid in [
+            json!({"hue_chroma_floor": 0.}),
+            json!({"hue_chroma_floor": -1.}),
+            json!({"hue_chroma_floor": "2"}),
+            json!({}),
+        ] {
+            assert!(validate_shape("suite", &suite(Some(invalid), json!([]))).is_err());
+        }
+        for invalid in [
+            json!([{"id":"ab","label":"A/B","left":"a"}]),
+            json!([{"id":"ab","label":"A/B","left":"a","right":"b","extra":1}]),
+            json!([{"id":"a b","label":"A/B","left":"a","right":"b"}]),
+            json!([{"id":"ab","label":"","left":"a","right":"b"}]),
+        ] {
+            assert!(validate_shape("suite", &suite(None, invalid)).is_err());
+        }
+    }
 }

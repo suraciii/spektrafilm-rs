@@ -65,6 +65,10 @@ function identityMatch(items, predicate, label) {
   return matches[0];
 }
 function selectReviewRegion(pair, region) {
+  if (pair.hasAttribute('data-diagnostic-pair')) {
+    if (region) region.open = true;
+    return;
+  }
   const regions = [...pair.querySelectorAll('details[data-review-region]')];
   if (!regions.length && !pair.querySelector('[data-review-full]')) return;
   pair.querySelectorAll('[data-review-full]').forEach(full => { full.hidden = Boolean(region); });
@@ -101,6 +105,45 @@ function selectReviewRegion(pair, region) {
     region.querySelectorAll('.viewport').forEach(pane => { pane.scrollLeft = 0; pane.scrollTop = 0; });
   }
 }
+function refreshDiagnosticSelection(pair) {
+  if (!pair || !pair.hasAttribute('data-diagnostic-pair')) return;
+  const panel = pair.closest('[data-case-panel]');
+  const selects = [...panel.querySelectorAll('[data-role-select]')];
+  if (selects.length < 2) return;
+  const key = `${selects[0].value}|${selects[1].value}`;
+  panel.querySelectorAll('[data-role-view]').forEach(view => {
+    view.hidden = view.dataset.roleView !== key;
+  });
+  panel.querySelectorAll('[data-role-region]').forEach(view => {
+    view.hidden = view.dataset.roleRegion !== key;
+  });
+  panel.querySelectorAll('[data-selection-evidence]').forEach(note => {
+    note.hidden = note.dataset.selectionEvidence !== key;
+  });
+  refreshViewers();
+}
+function setDiagnosticPair(pair, pairId) {
+  if (!pair || !pair.hasAttribute('data-diagnostic-pair')) return;
+  const panel = pair.closest('[data-case-panel]');
+  const mappings = JSON.parse(pair.dataset.pairRoles || '[]');
+  const mapping = mappings.find(item => item.id === pairId);
+  if (mapping) {
+    const selects = [...panel.querySelectorAll('[data-role-select]')];
+    const left = selects.find(select => select.dataset.roleSelect === 'left');
+    const right = selects.find(select => select.dataset.roleSelect === 'right');
+    if (left && [...left.options].some(option => option.value === mapping.left)) left.value = mapping.left;
+    if (right && [...right.options].some(option => option.value === mapping.right)) right.value = mapping.right;
+  }
+  pair.dataset.pairId = pairId;
+  refreshDiagnosticSelection(pair);
+}
+document.querySelectorAll('[data-role-select]').forEach(select => {
+  select.setAttribute('aria-label', select.dataset.roleSelect === 'left' ? '左侧图像角色' : '右侧图像角色');
+  select.addEventListener('change', () => {
+    const pair = select.closest('[data-pair-panel]');
+    refreshDiagnosticSelection(pair);
+  });
+});
 async function navigate() {
   const revision = ++navigationRevision;
   try {
@@ -110,9 +153,15 @@ async function navigate() {
       : casePanels[0];
     if (!panel) throw new Error('链接中的案例或种子不存在');
     const pairs = [...panel.querySelectorAll('[data-pair-panel]')];
-    const pair = values && values.has('pair')
+    const diagnosticPair = panel.querySelector('[data-diagnostic-pair]');
+    const pair = diagnosticPair || (values && values.has('pair')
       ? identityMatch(pairs, item => item.dataset.pairId === values.get('pair'), '比较对象')
-      : identityMatch(pairs, item => item.dataset.defaultPair === 'true', '默认比较对象');
+      : identityMatch(pairs, item => item.dataset.defaultPair === 'true', '默认比较对象'));
+    if (diagnosticPair && values && values.has('pair')) {
+      const ids = (diagnosticPair.dataset.pairIds || '').split(',').filter(Boolean);
+      if (!ids.includes(values.get('pair'))) throw new Error('链接中的比较对象不存在');
+      setDiagnosticPair(diagnosticPair, values.get('pair'));
+    }
     if (!pair) throw new Error('链接中的比较对象不存在');
     const region = values && values.has('region')
       ? identityMatch([...pair.querySelectorAll('details[data-region-id]')], item => item.dataset.regionId === values.get('region'), '区域')
@@ -127,6 +176,7 @@ async function navigate() {
     if (pairNav) pairNav.value = pair.dataset.pairPanel;
     selectReviewRegion(pair, region);
     const target = region || (values && values.has('pair') ? pair : panel);
+    if (diagnosticPair) refreshDiagnosticSelection(diagnosticPair);
     for (let ancestor = target; ancestor && ancestor !== panel; ancestor = ancestor.parentElement) {
       if (ancestor.tagName === 'DETAILS') {
         ancestor.open = true;

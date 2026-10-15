@@ -354,7 +354,7 @@ pub fn material(
         }
         let evidence = c.json_artifact(ArtifactRole::MaterialCurve, &payload)?;
         c.review_ref(&evidence);
-        let rmse = residual
+        let rmse: Vec<_> = residual
             .iter()
             .map(|samples| {
                 (samples.iter().map(|x| x * x).sum::<f64>() / values.len() as f64).sqrt()
@@ -370,7 +370,7 @@ pub fn material(
                 estimator.name
             ),
             coordinates.len(),
-            Some(rmse),
+            Some(rmse.into_iter().map(Some).collect()),
             None,
             &[evidence],
         );

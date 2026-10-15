@@ -68,6 +68,10 @@ The orchestrator must retain the command vector after path normalization, select
 
 The orchestrator must retain an observed floating decoded-input result for both raster and RAW cases through the renderer's input route. Source and simulation must use the same case geometry and decoding controls. Source output conversion and disabled magazine finishing must be explicit overrides; image-input and simulation behavior retain their existing owners. Source dimensions and actual result geometry must be retained independently.
 
+Explicit native-stage capture must remain renderer-owned. The orchestrator must request the supported capture route, validate the resulting bundle, and retain its actual exposure and profile-prepared normalization. It must not infer those values from authored controls or repeat the renderer's preparation mathematics. Intermediate coordinates must remain separate from completed-image regions.
+
+Comparison retention must reuse the run validation already performed for that run. It must not reload and rehash every case for each selected case or role. Copying requested evidence must preserve the bundle's relative dependency layout and artifact identities.
+
 ### Comparison engine
 
 The comparison engine matches results by stable case and seed identities. It verifies protocol, dimensions, source declarations, effective parameter compatibility, and applicable reference scope before computing measurements. It must produce an explicit incompatibility result instead of silently aligning incompatible runs.
@@ -96,9 +100,23 @@ Case navigation must preserve request order. Pair selection must change the comp
 
 Report fragment navigation identifies case, seed, pair, and region by retained semantic identities. Internal DOM ordering must not define public location identity. Accessible disclosure controls and direct links belong to the review builder; neither navigation nor inspection may recalculate a measurement.
 
+The diagnostic layout is another presentation of the same comparison, not a second evaluation pipeline. Focus regions and complete regional costs must use retained measurements. A selected visual pair without measured evidence must remain visually inspectable with an explicit unavailable numeric state. Full-image JPEG copies must remain display-only derivatives; native detail and numerical artifacts retain their existing owners.
+
+### Prepared chart report builder
+
+The prepared chart builder imports explicitly declared raster images instead of synthesizing benchmark runs or comparison records. Its authored manifest owns chart groups, window geometry, captions, and the initial pair. It does not own rendering, reference qualification, or measurement algorithms.
+
+The builder must reuse strict document loading, dependency path resolution, destination publication, and image display conversion. It must snapshot authored image dependencies before decoding so an undeclared neighboring sidecar cannot override the explicit color declaration. It must retain each image's source identity, observed dimensions, and generated display artifact. The terminal report manifest must be written after all assets succeed.
+
+The browser must select pairs from one ordered image inventory. Each input needs one display image, not a precomputed image for every possible pair. Patch inspection must use windows into those display images. The browser must not add another color conversion or encode canvas copies. Embedded data and local image paths must support direct offline opening without fetching a manifest.
+
+The builder must bundle its viewer script as a local asset and embed non-executable view data in the HTML. Direct file opening and static HTTP hosting must both work without permitting inline JavaScript; the viewer must not depend on network-hosted libraries.
+
 ## Identity and cache invariant
 
 A render result is reusable only when its suite, case, target, renderer executable, data inventory, source input, parameter files, protocol-independent render settings, selected environment, and seed identities match. A comparison result is reusable only when its two run identities, protocol digest, policy digest, and metric implementation identities match.
+
+The benchmark implementation identity must cover local workspace dependencies that implement measurements, including shared color and Lab mathematics. A path dependency without a lockfile change must not escape this identity. Capture selection must be retained separately from image settings so observed stage availability is never inferred from a previously rendered image alone.
 
 The benchmark must never reuse a stale result because a path stayed the same. It must reject a changed dependency before using the cache. It must not use a partial or failed run as a qualified baseline.
 

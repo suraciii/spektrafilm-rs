@@ -34,72 +34,186 @@
       "items": {
         "type": "object",
         "properties": {
-          "source_raw": {
+          "case_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "failed"
+            ]
+          },
+          "environment": {
             "type": "object",
-            "description": "Observed floating decoded-input master from the renderer input route, linear ACES2065-1.",
-            "properties": { "path": {"type":"string","minLength":1}, "layout": {"type":"object"}, "color": {"type":"object"} },
-            "required": ["path", "layout", "color"]
+            "description": "Retained renderer environment conditions."
           },
-          "source_raw_metadata": {"type":"object","properties":{"path":{"type":"string","minLength":1}},"required":["path"]},
-          "source_dimensions": {"type":"array","description":"Observed original decoded input width and height before renderer geometry.","items":{"type":"integer","minimum":1},"minItems":2,"maxItems":2},
-          "source_geometry": {"type":"object","description":"Resolved source geometry and observed result dimensions."},
-          "simulation_geometry": {"type":"object","description":"Resolved simulation geometry and observed result dimensions."},
-          "source_pixel_aligned": {"type":"boolean","description":"Resolved correspondence, requiring geometry equality and no film-field readout geometry."},
-          "preparation": {"type":"object","description":"Passive original dependency and preparation operations; never executed."}
-        }
-      },
-      "minItems": 0,
-      "uniqueItems": false
-    },
-    "artifacts": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 1
-          },
-          "sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "media_type": {
-            "type": "string",
-            "minLength": 1
-          },
-          "role": {
-            "type": "string",
-            "minLength": 1
-          },
-          "width": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "height": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "dimensions": {
+          "command": {
             "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 1
-            },
+            "items": { "type": "string", "minLength": 1 },
+            "minItems": 1,
+            "uniqueItems": false,
+            "description": "Actual executed simulation argv, including raw-out, diagnostics and requested stage-evidence sinks."
+          },
+          "source_command": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "minItems": 1,
+            "uniqueItems": false,
+            "description": "Actual executed source-route argv retained independently of the simulation argv."
+          },
+          "configuration_command": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
             "minItems": 1,
             "uniqueItems": false
           },
-          "layout": {
+          "input": {
+            "$ref": "#/$defs/artifact",
+            "description": "Passively retained original input dependency."
+          },
+          "resolved": {
+            "$ref": "#/$defs/artifact",
+            "description": "Resolved configuration document actually executed."
+          },
+          "stdout": {
+            "$ref": "#/$defs/artifact"
+          },
+          "stderr": {
+            "$ref": "#/$defs/artifact"
+          },
+          "raw": {
+            "$ref": "#/$defs/native_buffer",
+            "description": "Observed native master from the simulation route."
+          },
+          "raw_metadata": {
+            "$ref": "#/$defs/artifact"
+          },
+          "master": {
+            "$ref": "#/$defs/picture",
+            "description": "Observed floating master from the simulation route."
+          },
+          "diagnostics": {
+            "$ref": "#/$defs/artifact"
+          },
+          "dimensions": {
+            "$ref": "#/$defs/dimensions",
+            "description": "Observed simulation result dimensions."
+          },
+          "source_raw": {
+            "$ref": "#/$defs/native_buffer",
+            "description": "Observed floating decoded-input master from the renderer input route, linear ACES2065-1."
+          },
+          "source_raw_metadata": {
+            "$ref": "#/$defs/artifact"
+          },
+          "source_resolved": {
+            "$ref": "#/$defs/artifact",
+            "description": "Resolved source-route configuration shared by execution and preflight."
+          },
+          "source_diagnostics": {
+            "$ref": "#/$defs/artifact"
+          },
+          "source_master": {
+            "$ref": "#/$defs/picture"
+          },
+          "source_dimensions": {
+            "$ref": "#/$defs/dimensions",
+            "description": "Observed original decoded input width and height before renderer geometry."
+          },
+          "source_geometry": {
+            "$ref": "#/$defs/geometry",
+            "description": "Resolved source geometry and observed result dimensions."
+          },
+          "simulation_geometry": {
+            "$ref": "#/$defs/geometry",
+            "description": "Resolved simulation geometry and observed result dimensions."
+          },
+          "source_pixel_aligned": {
+            "type": "boolean",
+            "description": "Resolved correspondence, requiring geometry equality and no film-field readout geometry."
+          },
+          "precision": {
+            "type": "object"
+          },
+          "execution": {
+            "type": "object"
+          },
+          "preparation": {
+            "type": "object",
+            "description": "Passive original dependency and preparation operations; never executed."
+          },
+          "stage_evidence": {
+            "$ref": "#/$defs/stage_evidence"
+          },
+          "case_configuration_logs": {
+            "type": "object"
+          },
+          "error": {
             "type": "object"
           }
         },
         "required": [
-          "path",
-          "sha256",
-          "media_type",
-          "role"
+          "case_id",
+          "seed",
+          "status"
         ],
+        "allOf": [
+          {
+            "if": {
+              "properties": { "status": { "const": "completed" } },
+              "required": ["status"]
+            },
+            "then": {
+              "description": "Completed rows always retain the actual argv and the original existing source evidence.",
+              "required": [
+                "command",
+                "source_command",
+                "input",
+                "resolved",
+                "stdout",
+                "stderr",
+                "raw",
+                "raw_metadata",
+                "master",
+                "diagnostics",
+                "dimensions",
+                "source_raw",
+                "source_raw_metadata",
+                "source_resolved",
+                "source_diagnostics",
+                "source_master",
+                "source_dimensions",
+                "source_geometry",
+                "simulation_geometry",
+                "source_pixel_aligned"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": { "status": { "const": "failed" } },
+              "required": ["status"]
+            },
+            "then": {
+              "required": ["error"]
+            }
+          }
+        ],
+        "minItems": 0,
+        "uniqueItems": false,
         "additionalProperties": true
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/artifact"
       },
       "minItems": 0,
       "uniqueItems": false
@@ -118,6 +232,174 @@
     "artifacts"
   ],
   "additionalProperties": true,
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "media_type",
+        "role"
+      ],
+      "additionalProperties": true
+    },
+    "dimensions": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": false
+    },
+    "layout": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "channels": { "const": 3 },
+        "dtype": { "const": "f64" },
+        "endianness": { "const": "little" },
+        "channel_order": { "enum": ["RGB", "CMY"] }
+      },
+      "required": [
+        "width",
+        "height",
+        "channels",
+        "dtype",
+        "endianness",
+        "channel_order"
+      ],
+      "additionalProperties": true
+    },
+    "native_buffer": {
+      "allOf": [
+        { "$ref": "#/$defs/artifact" },
+        {
+          "type": "object",
+          "properties": {
+            "layout": { "$ref": "#/$defs/layout" },
+            "color": {
+              "type": "object",
+              "properties": {
+                "color_space": { "type": "string", "minLength": 1 },
+                "transfer": { "type": "string", "minLength": 1 }
+              },
+              "required": ["color_space", "transfer"],
+              "additionalProperties": true
+            }
+          },
+          "required": ["layout", "color"]
+        }
+      ]
+    },
+    "picture": {
+      "allOf": [
+        { "$ref": "#/$defs/artifact" },
+        {
+          "type": "object",
+          "properties": {
+            "dimensions": { "$ref": "#/$defs/dimensions" },
+            "color": {
+              "type": "object"
+            }
+          },
+          "required": ["color"]
+        }
+      ]
+    },
+    "geometry": {
+      "type": "object",
+      "properties": {
+        "published_dimensions": { "$ref": "#/$defs/dimensions" }
+      },
+      "required": ["published_dimensions"],
+      "additionalProperties": true
+    },
+    "stage_evidence": {
+      "type": "object",
+      "description": "Requested renderer stage bundle: indexed manifest and buffers with retained availability and context. Uncaptured exposure and stage boundaries are named explicitly as unobserved; no values are invented.",
+      "properties": {
+        "requested": {
+          "type": "boolean"
+        },
+        "availability": {
+          "enum": ["available", "unavailable", "not_applicable"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest": {
+          "$ref": "#/$defs/artifact",
+          "description": "Indexed stage-evidence.json of the retained bundle."
+        },
+        "buffers": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              { "$ref": "#/$defs/artifact" },
+              {
+                "type": "object",
+                "properties": {
+                  "stage_id": { "type": "string", "minLength": 1 },
+                  "layout": { "$ref": "#/$defs/layout" },
+                  "bundle_path": { "type": "string", "minLength": 1 }
+                },
+                "required": ["stage_id", "layout"]
+              }
+            ]
+          },
+          "uniqueItems": false
+        },
+        "context": {
+          "type": "object",
+          "description": "Observed host precision, route, normalization mode, exposure, print normalization and stage availability, or explicit unobserved markers."
+        }
+      },
+      "required": ["requested", "availability"],
+      "allOf": [
+        {
+          "if": {
+            "properties": { "requested": { "const": true } },
+            "required": ["requested"]
+          },
+          "then": {
+            "required": ["manifest", "buffers", "context"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "requested": { "const": false } },
+            "required": ["requested"]
+          },
+          "then": {
+            "required": ["reason", "context"]
+          }
+        }
+      ],
+      "additionalProperties": true
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SpektraFilm benchmark run version 1"
 }

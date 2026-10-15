@@ -157,6 +157,7 @@ impl Pipeline {
                 &color_ref,
                 None,
                 None,
+                None,
             )?
         };
         crate::stages::scanning::prepare_setup(

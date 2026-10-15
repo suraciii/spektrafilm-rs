@@ -26,6 +26,7 @@ dry=false
 bad=false
 seed_sensitive=false
 crop=false
+preview=false
 route=normal
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -39,6 +40,7 @@ while [ "$#" -gt 0 ]; do
                 *grain.engine=stale*) bad=true ;;
                 *seed_sensitive=true*) seed_sensitive=true ;;
                 *io.crop=true*) crop=true ;;
+                *preview_mode=true*) preview=true ;;
             esac ;;
     esac
     shift
@@ -55,7 +57,7 @@ if [ "$seed_sensitive" = true ] && [ "$seed" = 1 ]; then
     echo 'random_seed: seed 1 rejected by fixture' >&2
     exit 2
 fi
-printf '{"film_profile":"film","print_profile":"paper","parameters":{"random_seed":%s,"io":{"crop":%s,"output_color_space":"ACES2065-1","output_cctf_encoding":false},"workflow":{"route":"%s"},"settings":{},"magazine_print_color":{"active":false},"taps":{"inject":"rgb_in","collect":"rgb_out"}}}\n' "$seed" "$crop" "$route"
+printf '{"film_profile":"film","print_profile":"paper","parameters":{"random_seed":%s,"io":{"crop":%s,"output_color_space":"ACES2065-1","output_cctf_encoding":false},"workflow":{"route":"%s"},"settings":{"preview_mode":%s},"magazine_print_color":{"active":false},"taps":{"inject":"rgb_in","collect":"rgb_out"}}}\n' "$seed" "$crop" "$route" "$preview"
 "#).unwrap();
     fs::set_permissions(&renderer, fs::Permissions::from_mode(0o755)).unwrap();
     let input = json!({"kind":"raster","path":"input.png","sha256":common::sha256_file(&root.join("input.png")).unwrap(),"color_space":"sRGB","cctf_decoding":true});
@@ -270,4 +272,41 @@ fn target_owned_geometry_changes_are_rejected_in_both_modes() {
             );
         }
     }
+}
+
+#[test]
+fn stage_capture_under_preview_bounding_is_rejected_with_an_actionable_reason() {
+    let temp = fixture();
+    let root = temp.path();
+    let mut suite = read(&root.join("suite.json"));
+    suite["cases"][0]["configuration"] = json!({"set":["settings.preview_mode=true"]});
+    common::dump(&root.join("suite.json"), &suite).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+        .arg("run")
+        .arg("--suite")
+        .arg(root.join("suite.json"))
+        .arg("--target")
+        .arg(root.join("target.json"))
+        .arg("--out")
+        .arg(root.join("capture"))
+        .arg("--dry-run")
+        .arg("--stage-evidence")
+        .arg("--case")
+        .arg("first")
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        result["errors"][0]["error"]["code"], "stage_capture_unsupported",
+        "{result}"
+    );
+    // The same configuration keeps working without the capture request.
+    invoke(root, "plain", true, &["first"], 0);
 }

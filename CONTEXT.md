@@ -6,6 +6,9 @@ SpektraFilm models how a digital photograph forms a film image and how that imag
 
 Real operations of exposure, development, photographic printing, and film digitization own the unqualified vocabulary of this language. A modeled convention must carry a distinguishing qualifier and must not occupy an unqualified term of a real operation. The product models the real operational workflow first; a modeled convention extends it.
 
+**Record exposure**: The exposure received by one film or photographic-paper record before development. In a chromogenic material, cyan, magenta, and yellow identify the dye-forming records, not RGB image colors or developed record densities.
+_Avoid_: Receiver capture, record density
+
 **Record density**: The optical density formed in one developed record of a film or a photographic paper. It describes the developed material, before an output receiver interprets it.
 _Avoid_: Scanned density, receiver capture
 
@@ -55,3 +58,9 @@ _Avoid_: Scanner white and black correction, output levels
 
 **Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver the image.
 _Avoid_: Scanned medium, negative conversion
+
+**Prepared chart image**: A chart image with an explicitly established layout of its patch windows. Preparation does not establish measured color values or exposure equivalence.
+
+**Chart group**: Images declared to share the same ordered patch identities. A shared group does not establish the same spectral stimulus or pixel-level registration.
+
+**Patch window**: The declared rectangular area of one chart patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another chart group.

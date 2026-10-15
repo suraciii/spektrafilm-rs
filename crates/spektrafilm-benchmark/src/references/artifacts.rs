@@ -21,6 +21,7 @@ pub enum ArtifactRole {
     BaselineMaps,
     CandidateMaps,
     RegionalStatistics,
+    RegionPairStatistics,
     MaterialSource,
     MaterialCurve,
 }
@@ -34,6 +35,7 @@ impl ArtifactRole {
             Self::BaselineMaps => "reference_baseline_distance_maps",
             Self::CandidateMaps => "reference_candidate_distance_maps",
             Self::RegionalStatistics => "reference_regional_statistics",
+            Self::RegionPairStatistics => "reference_region_pair_statistics",
             Self::MaterialSource => "reference_material_source",
             Self::MaterialCurve => "reference_material_curve",
         }
@@ -119,6 +121,8 @@ impl<'a> Comparison<'a> {
         }
     }
     // Keep metric fields explicit: each argument is part of the frozen measurement payload.
+    // Per-capture entries carry their own availability: a `None` capture is
+    // recorded with `reason` while available captures keep their values.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn distances(
         &mut self,
@@ -128,32 +132,35 @@ impl<'a> Comparison<'a> {
         units: &str,
         estimator: &str,
         count: usize,
-        values: Option<Vec<f64>>,
+        values: Option<Vec<Option<f64>>>,
         reason: Option<&str>,
         refs: &[String],
     ) {
         let mut reason = reason.map(str::to_owned);
-        let mut expanded = None;
-        if let Some(v) = values {
-            if !v.iter().all(|x| x.is_finite()) {
+        let captures = if self.single { 1 } else { 2 };
+        let mut rows = vec![None; if self.single { 1 } else { 3 }];
+        if let Some(values) = values {
+            if values.len() != captures {
                 reason = Some("computation_failure".into());
                 self.finding(region, metric, "computation_failure", true, refs);
-            }
-            if reason.is_none() {
-                expanded = Some(if self.single {
-                    v
+            } else {
+                let mut expanded = values;
+                if !self.single {
+                    expanded.push(match (expanded[0], expanded[1]) {
+                        (Some(a), Some(b)) => Some(b - a),
+                        _ => None,
+                    });
+                }
+                if expanded.iter().flatten().any(|x| !x.is_finite()) {
+                    reason = Some("computation_failure".into());
+                    self.finding(region, metric, "computation_failure", true, refs);
                 } else {
-                    vec![v[0], v[1], v[1] - v[0]]
-                });
+                    if expanded.iter().any(Option::is_none) {
+                        reason = Some(reason.unwrap_or("missing_evidence".into()));
+                    }
+                    rows = expanded;
+                }
             }
-        }
-        if expanded
-            .as_ref()
-            .is_some_and(|v| v.iter().any(|x| !x.is_finite()))
-        {
-            reason = Some("computation_failure".into());
-            expanded = None;
-            self.finding(region, metric, "computation_failure", true, refs);
         }
         let sides: &[&str] = if self.single {
             &["simulation_distance"]
@@ -161,6 +168,7 @@ impl<'a> Comparison<'a> {
             &SIDES
         };
         for (i, side) in sides.iter().enumerate() {
+            let available = rows[i].is_some();
             self.body.measurements.push(Measurement {
                 case_id: self.case_id.clone(),
                 seed_population: self.seeds.clone(),
@@ -173,13 +181,13 @@ impl<'a> Comparison<'a> {
                     estimator: estimator.into(),
                     sample_count: count,
                     artifact_refs: refs.to_vec(),
-                    availability: if expanded.is_some() {
+                    availability: if available {
                         Availability::Available
                     } else {
                         Availability::Unavailable
                     },
-                    value: expanded.as_ref().map(|v| v[i]),
-                    reason: if expanded.is_some() {
+                    value: rows[i],
+                    reason: if available {
                         None
                     } else {
                         Some(reason.clone().unwrap_or("missing_evidence".into()))
@@ -189,7 +197,8 @@ impl<'a> Comparison<'a> {
                 protocol_id: self.protocol_id.clone(),
             });
         }
-        if let Some(v) = expanded {
+        if rows.iter().all(Option::is_some) {
+            let v: Vec<f64> = rows.iter().flatten().copied().collect();
             if self.single {
                 self.body.findings.push(json!({"id":format!("{}:{region}:{metric}:measured",self.prefix),"case_id":self.case_id,"region_id":region,"metric":format!("{metric}.simulation_distance"),"decision":"measured","evidence":refs,"simulation_distance":v[0],"interpretation":"Simulation distance to the selected reference; no acceptance threshold is inferred."}));
             } else {
@@ -199,6 +208,69 @@ impl<'a> Comparison<'a> {
             self.finding(
                 region,
                 metric,
+                reason.as_deref().unwrap_or("missing_evidence"),
+                false,
+                refs,
+            );
+        }
+    }
+    /// Reference-owned anchor row without side expansion: the retained
+    /// relation value every capture is compared against.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn relation_row(
+        &mut self,
+        region: &str,
+        metric: &str,
+        domain: &str,
+        units: &str,
+        estimator: &str,
+        count: usize,
+        value: Option<f64>,
+        reason: Option<&str>,
+        refs: &[String],
+    ) {
+        let full = format!("{metric}.{}", super::catalog::RELATION_SIDE);
+        let mut reason = reason.map(str::to_owned);
+        let mut value = value;
+        if value.is_some_and(|v| !v.is_finite()) {
+            reason = Some("computation_failure".into());
+            value = None;
+            self.finding(region, &full, "computation_failure", true, refs);
+        }
+        let available = value.is_some();
+        self.body.measurements.push(Measurement {
+            case_id: self.case_id.clone(),
+            seed_population: self.seeds.clone(),
+            shared: common::Measurement {
+                region_id: region.into(),
+                metric: full.clone(),
+                metric_version: METRIC_VERSION,
+                domain: domain.into(),
+                units: units.into(),
+                estimator: estimator.into(),
+                sample_count: count,
+                artifact_refs: refs.to_vec(),
+                availability: if available {
+                    Availability::Available
+                } else {
+                    Availability::Unavailable
+                },
+                value,
+                reason: if available {
+                    None
+                } else {
+                    Some(reason.clone().unwrap_or("missing_evidence".into()))
+                },
+            },
+            reference_id: self.reference["id"].as_str().unwrap_or("").into(),
+            protocol_id: self.protocol_id.clone(),
+        });
+        if available {
+            self.body.findings.push(json!({"id":format!("{}:{region}:{full}:measured",self.prefix),"case_id":self.case_id,"region_id":region,"metric":full,"decision":"measured","evidence":refs,"reference_relation":value,"interpretation":"Reference pair separation anchor; pair closeness alone does not imply correct endpoint colors; no acceptance threshold is inferred."}));
+        } else {
+            self.finding(
+                region,
+                &full,
                 reason.as_deref().unwrap_or("missing_evidence"),
                 false,
                 refs,

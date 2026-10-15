@@ -185,6 +185,35 @@ fail this configuration before publication.
 
 See [the telemetry contract](../specs/telemetry/spec.md) and [report metrics](../specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
 
+## Stage evidence
+
+`process` accepts `--stage-evidence DIRECTORY` to publish native numerical evidence of the
+executed render: one lossless f64 buffer per pipeline stage (input, film log exposure, film
+density, print log exposure, print density, output) plus the terminal `stage-evidence.json`
+manifest that names every buffer's geometry, domain, precision, and hash. The output stage is
+the pre-saving pipeline output, byte-identical to `--raw-out`.
+
+Capture observes one CPU reference render; it never changes parameters, exposure, the
+execution route, or output pixels, and capture-off rendering is unaffected. The command needs
+`--backend cpu` (build `spektrafilm-f64` for f64 reference evidence), and it refuses preview
+mode because preview bounding resizes the source before metering. Crop and resize inside the
+pipeline are supported and described by each stage's geometry record. Route-skipped stages
+are explicitly `not_applicable`, not failures. A missing required stage or failed write makes
+capture fail; invalid or conflicting bundle paths are rejected before rendering. Bundle files
+and temporary files must not alias the input, output, raw dump, parameter sources, or diagnostics.
+Pixel evidence stays out of `--diagnostics`; a stage-evidence failure is reported separately
+from telemetry persistence.
+
+```bash
+./target/release/spektrafilm-f64 process input.tif -o out.png \
+    --film kodak_portra_400 --paper kodak_portra_endura \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
+    --backend cpu --stage-evidence evidence/ --data-dir data
+```
+
+See [the CLI stage-evidence contract](../specs/cli/spec.md#stage-evidence) for the bundle
+format and its wire fields.
+
 ## See also
 
 - [Documentation index](README.md)

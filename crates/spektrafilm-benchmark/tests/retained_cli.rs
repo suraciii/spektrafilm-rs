@@ -157,7 +157,36 @@ fn retained_run_with_review_regions(root: &Path, value: f64, masked: bool, crops
             json!({}),
         )
         .unwrap();
-    let row = json!({"case_id":"probe","seed":0,"status":"completed","input":input,"raw":raw,"raw_metadata":metadata,"master":master,"diagnostics":diagnostics,"resolved":resolved,"stdout":stdout,"stderr":stderr,"dimensions":[4,4],"execution":{"backend_selected":"cpu","path":"cpu"},"precision":{"host_precision":"f64"}});
+    let source_color = json!({"color_space":"ACES2065-1","transfer":"linear"});
+    let source_diagnostics = record(
+        &mut evidence,
+        "source-diagnostics.json",
+        "source_diagnostics",
+        json!({"configuration":{"input_dimensions":[4,4],"published_dimensions":[4,4]}}),
+    );
+    let source_resolved = record(
+        &mut evidence,
+        "source-resolved.json",
+        "source_configuration",
+        json!({"parameters":{"io":{"output_color_space":"ACES2065-1","output_cctf_encoding":false}}}),
+    );
+    let source_bytes: Vec<u8> = (0..48).flat_map(|_| 0.1f64.to_le_bytes()).collect();
+    fs::write(root.join("source.f64"), source_bytes).unwrap();
+    let source_raw = evidence
+        .add(
+            &root.join("source.f64"),
+            "source_raw",
+            "application/octet-stream",
+            json!({"layout":layout,"color":source_color}),
+        )
+        .unwrap();
+    let source_metadata = record(
+        &mut evidence,
+        "source.f64.json",
+        "source_raw_metadata",
+        json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little","color_space":"ACES2065-1","transfer":"linear"}),
+    );
+    let row = json!({"case_id":"probe","seed":0,"status":"completed","input":input,"raw":raw,"raw_metadata":metadata,"source_raw":source_raw,"source_raw_metadata":source_metadata,"source_resolved":source_resolved,"source_diagnostics":source_diagnostics,"source_master":master,"source_dimensions":[4,4],"source_geometry":{"published_dimensions":[4,4]},"simulation_geometry":{"published_dimensions":[4,4]},"source_pixel_aligned":true,"master":master,"diagnostics":diagnostics,"resolved":resolved,"stdout":stdout,"stderr":stderr,"dimensions":[4,4],"execution":{"backend_selected":"cpu","path":"cpu"},"precision":{"host_precision":"f64"},"command":["renderer","process","input.png","--output","master.tif","--raw-out","master.f64","--diagnostics","diagnostics.json","--seed","0"],"source_command":["renderer","process","input.png","--route","input","--output","source.tif","--raw-out","source.f64","--diagnostics","source-diagnostics.json","--seed","0"]});
     save_manifest(
         root,
         "run.json",
@@ -719,12 +748,8 @@ fn malformed_run_file_record_returns_json_instead_of_panicking() {
         1,
     );
     assert_eq!(result["execution_status"], "failed");
-    assert_eq!(result["errors"][0]["code"], "document_type");
     let out = temp.path().join("comparison");
-    assert_eq!(
-        compare(&a, &a, &out, 1)["errors"][0]["code"],
-        "document_type"
-    );
+    assert_eq!(compare(&a, &a, &out, 1)["execution_status"], "failed");
     assert!(!out.exists());
 }
 

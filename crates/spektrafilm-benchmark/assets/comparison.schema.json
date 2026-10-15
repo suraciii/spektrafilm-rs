@@ -41,7 +41,18 @@
     "cases": {
       "type": "array",
       "items": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "run_evidence": {
+            "type": "object",
+            "minProperties": 1,
+            "properties": {
+              "baseline": { "$ref": "#/$defs/runEvidence" },
+              "candidate": { "$ref": "#/$defs/runEvidence" },
+              "simulation": { "$ref": "#/$defs/runEvidence" }
+            }
+          }
+        }
       },
       "minItems": 0,
       "uniqueItems": false
@@ -449,5 +460,125 @@
         ]
       }
     }
-  ]
+  ],
+  "$defs": {
+    "artifactReference": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "required": ["availability"],
+      "properties": {
+        "availability": { "enum": ["available", "unavailable", "not_applicable"] },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [{
+        "if": { "properties": { "availability": { "enum": ["unavailable", "not_applicable"] } } },
+        "then": { "required": ["reason"] }
+      }]
+    },
+    "runEvidence": {
+      "description": "Retained identities, executed conditions, and optional native-stage observations for one run role. Artifact references resolve in the comparison index.",
+      "type": "object",
+      "required": [
+        "role", "case_id", "seed", "run", "target", "input", "command",
+        "source_command", "environment", "precision", "execution", "data_inventory",
+        "resolved_configuration", "diagnostics", "declared", "observed", "stage_evidence"
+      ],
+      "properties": {
+        "role": { "enum": ["baseline", "candidate", "simulation"] },
+        "case_id": { "type": "string", "minLength": 1 },
+        "seed": { "type": "integer", "minimum": 0 },
+        "run": {
+          "type": "object",
+          "required": ["id", "schema_version", "execution_status"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "schema_version": { "const": 1 },
+            "execution_status": { "enum": ["completed", "failed"] }
+          }
+        },
+        "target": {
+          "type": "object",
+          "required": ["id", "digest"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "digest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        "input": {
+          "type": "object",
+          "required": ["declaration", "source_dimensions", "source_geometry", "simulation_geometry", "source_pixel_aligned", "source_raw", "source_raw_metadata", "source_master"],
+          "properties": {
+            "declaration": { "type": "object" },
+            "source_dimensions": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 1 } },
+            "source_geometry": { "type": "object" },
+            "simulation_geometry": { "type": "object" },
+            "source_pixel_aligned": { "type": "boolean" },
+            "source_raw": { "type": "object", "required": ["sha256", "layout", "color"] },
+            "source_raw_metadata": { "type": "object", "required": ["sha256"] },
+            "source_master": { "type": "object", "required": ["sha256", "dimensions", "color"] }
+          }
+        },
+        "preparation": { "type": "object", "required": ["original", "operations"] },
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "source_command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "environment": { "type": ["object", "null"] },
+        "precision": { "type": "object" },
+        "execution": { "type": "object" },
+        "data_inventory": {
+          "type": "object",
+          "required": ["sha256"],
+          "properties": { "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" } }
+        },
+        "resolved_configuration": { "$ref": "#/$defs/artifactReference" },
+        "diagnostics": { "$ref": "#/$defs/artifactReference" },
+        "declared": {
+          "type": "object",
+          "required": ["exposure", "print_normalization"],
+          "properties": {
+            "exposure": { "type": "object" },
+            "print_normalization": { "type": "object" }
+          }
+        },
+        "observed": {
+          "type": "object",
+          "required": ["exposure", "print_normalization", "stages"],
+          "properties": {
+            "exposure": { "$ref": "#/$defs/observation" },
+            "print_normalization": { "$ref": "#/$defs/observation" },
+            "stages": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  { "$ref": "#/$defs/observation" },
+                  { "required": ["id"], "properties": { "id": { "enum": ["rgb_in", "log_e_film", "cmy_film", "log_e_print", "cmy_print", "rgb_out"] } } }
+                ]
+              }
+            }
+          }
+        },
+        "stage_evidence": {
+          "allOf": [
+            { "$ref": "#/$defs/observation" },
+            {
+              "required": ["requested"],
+              "properties": {
+                "requested": { "type": "boolean" },
+                "manifest": { "$ref": "#/$defs/artifactReference" },
+                "buffers": { "type": "array", "items": { "$ref": "#/$defs/artifactReference" } }
+              },
+              "if": { "properties": { "requested": { "const": true } } },
+              "then": { "required": ["manifest", "buffers"] }
+            }
+          ]
+        }
+      }
+    }
+  }
 }

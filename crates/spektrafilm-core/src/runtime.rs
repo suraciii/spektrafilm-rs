@@ -290,7 +290,43 @@ impl Runtime {
             inject,
             collect,
             Some(&mut stage_timings),
+            None,
         );
+        self.record_elapsed(started, Some(stage_timings));
+        result
+    }
+
+    /// Process with an explicit operation context while capturing the native
+    /// stage evidence of the executed render. The capture observes the run;
+    /// it must not change its route, parameters or output pixels.
+    pub fn process_captured(
+        &self,
+        image: ImageBuf,
+        backend: &dyn ComputeBackend,
+        inject: Option<Tap>,
+        collect: Option<Tap>,
+        context: &ObservationContext,
+        capture: &mut crate::stage_evidence::StageCapture,
+    ) -> Result<ImageBuf, String> {
+        let started = Instant::now();
+        let mut stage_timings = BTreeMap::new();
+        let run = |backend: &dyn ComputeBackend| {
+            self.pipeline.process_with_taps_timed(
+                image,
+                backend,
+                inject,
+                collect,
+                Some(&mut stage_timings),
+                Some(capture),
+            )
+        };
+        let result = if !context.enabled() {
+            run(backend)
+        } else {
+            let _span = context.span().map(|span| span.enter());
+            let bound = spektrafilm_gpu::bind_backend(backend, context.clone());
+            run(bound.as_ref())
+        };
         self.record_elapsed(started, Some(stage_timings));
         result
     }

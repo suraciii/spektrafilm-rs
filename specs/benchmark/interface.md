@@ -9,13 +9,14 @@ The executable must accept the following command grammar:
 ```text
 spektrafilm-bench --help
 spektrafilm-bench --version
-spektrafilm-bench schema --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation
-spektrafilm-bench validate --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation --file FILE
-spektrafilm-bench run --suite FILE --target FILE --out DIRECTORY [--case ID ...] [--dry-run]
-spektrafilm-bench run --input FILE --configuration FILE --target FILE --out DIRECTORY [--input-kind raster|raw] [--input-color-space NAME --input-cctf-decoding true|false] [--seed UINT32 ...] [--regions FILE] [--reference FILE --reference-info FILE] [--preparation FILE] [--dry-run]
+spektrafilm-bench schema --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation|chart-report
+spektrafilm-bench validate --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation|chart-report --file FILE
+spektrafilm-bench run --suite FILE --target FILE --out DIRECTORY [--case ID ...] [--dry-run] [--stage-evidence]
+spektrafilm-bench run --input FILE --configuration FILE --target FILE --out DIRECTORY [--input-kind raster|raw] [--input-color-space NAME --input-cctf-decoding true|false] [--seed UINT32 ...] [--regions FILE] [--reference FILE --reference-info FILE] [--preparation FILE] [--dry-run] [--stage-evidence]
 spektrafilm-bench compare --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [--policy FILE] [--gate]
 spektrafilm-bench compare --run DIRECTORY --against input|reference|both --out DIRECTORY
-spektrafilm-bench report --comparison DIRECTORY --out DIRECTORY
+spektrafilm-bench report --comparison DIRECTORY --out DIRECTORY [--layout standard|diagnostic] [--focus-region ID ...]
+spektrafilm-bench chart-report --manifest FILE --out DIRECTORY [--left ID --right ID]
 spektrafilm-bench inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
 spektrafilm-bench target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --out FILE
 ```
@@ -29,6 +30,8 @@ Every option of the benchmark executable and of the fixture entry point must hav
 `run --dry-run` must use the same renderer configuration resolution, seed, environment isolation, selected profile containment, and case-owned geometry checks as execution. It must process all selected cases and seeds without decoding or rendering images. Identical seed failures must be grouped with their affected seed values and retained renderer logs. Unknown or duplicate case selections must identify the rejected identities and available choices. Renderer configuration errors must retain the actionable child error text and evidence paths.
 
 The dry-run destination must retain `preflight.json`, suite and target snapshots, resolved configurations, logs, and hashed evidence. A successful preflight must identify `mode: dry_run` and `execution_status: validated`; a failed preflight must identify `execution_status: failed` and structured errors. It must never publish `run.json` or completed render masters. Its `unchecked` list must identify image decoding, compute-device availability, observed output geometry, and numerical results. Preflight does not qualify a run or replace execution-time checks.
+
+`--stage-evidence` must request the renderer's native stage bundle for each simulation. It must accept suite and single-input execution. Capture must require the CPU route with `settings.preview_mode` disabled; unsupported requests must fail with an actionable error, not silently change rendering settings. Preflight must resolve both simulation and source-only configurations, retain the capture request, and identify applied exposure and stage values as unobserved. The request must not enable capture for the separate source-only decode.
 
 `run` must require exactly one of `--suite` and `--input`. Single-input options must conflict with `--suite`; `--case` must apply only to suite execution. `--configuration` must contain the existing case configuration object, with its file paths resolved relative to that file. `--input-kind` must default to `raster`; RAW must be selected explicitly and must use the renderer adapter. Raster input must require both source declaration flags. Repeated `--seed` must select distinct unsigned 32-bit seeds and default to `[0]`. `--regions` must contain the existing region array; omission must select no fixed regions. `--reference` and `--reference-info` must require each other. Reference info must contain the existing reference object except `path` and `sha256`, which the CLI must derive from the selected local file. Nested dependencies must resolve relative to the reference-info file.
 
@@ -46,7 +49,13 @@ Single-run `compare` must require `--run` and `--against` together and conflict 
 
 `report` must derive its views from the comparison and cited artifacts. It must not recompute metrics. Its output must remain usable without the run directories by copying required review artifacts and retaining their provenance. An external original that cannot be redistributed must remain excluded from a distributable report; the report must identify the omission rather than substitute another image.
 
+`report --layout` must default to `standard`. The `diagnostic` layout must feature exact repeated `--focus-region` identities before complete regional evidence. Focus selection must preserve request order and reject duplicate or unknown identities before publication. A focus selection with the standard layout must fail rather than be ignored. Layout selection must not change comparison measurements or acceptance.
+
+`chart-report` must read a prepared-chart manifest without invoking a renderer or computing comparison metrics. `--left` and `--right` must require each other and override the authored default pair for this generated report only. Both identities must exist. Invalid defaults or overrides must fail before publication. `validate --kind chart-report` must check authored structure, identities, grid arithmetic, and local file dependencies; its `unchecked` list must name image decoding, observed geometry, and display color conversion.
+
 `inspect` must validate and read a retained comparison without invoking a renderer or computing measurements. It must emit the retained comparison identity, execution and evaluation states, conditions, summary, failures, findings, and compact measurements. The compact measurements must be one top-level `measurements` array in version and single-run comparisons. Rows in both modes must carry the same fields, except that a single-run row must add `pair_id` to identify its pair. Per-seed/pair observations and cross-seed `seed_measurements` must remain separate. Measurement identity, domain, units, estimator, sample count, availability, value or reason, seed population, and artifact references must remain intact. Exact repeatable case, region, and metric filters must reject unknown selections with available choices; they must not silently return an empty result. Referenced evidence must resolve relative to the emitted `artifact_base`. A valid read of a failed comparison must complete successfully while exposing its failed comparison state. Inspection must not modify evidence, rank unlike units, or infer acceptance.
+
+Inspection must expose each selected case and seed's retained `run_evidence` in `case_conditions`, with a `roles` object keyed by run role. These records must include source and target identities, declared preparation, effective conditions, and observed exposure and print normalization when collected. They must retain native-stage artifact links and availability without reading human logs or recomputing image statistics. Region-pair diagnostics must preserve their own identity and both endpoint identities.
 
 `target` must construct the existing target document with canonical renderer/data paths, the actual renderer SHA-256, an ID derived from the destination filename, the explicit backend, and empty changes. It must reuse target validation and refuse any existing destination, including a symlink. It must not invoke the renderer, probe a GPU, select simulation settings, or generate test inputs. Fixture targets must share this construction rule while retaining their own IDs, edits, and environment.
 
@@ -94,6 +103,10 @@ Tone-response probe geometries may be declared in `protocol.probe.tone_response`
 
 The case's `measurements` must select full-image measurement families from `numeric`, `color`, `tone`, `flip`, `grain`, `halation`, and `edge`. Region `measurements` must select applicable families in that region. The protocol must resolve each family to explicit scalar identities, maps, curves, or spectra. A family selector must not request a hidden aggregate quality score.
 
+A case may contain `region_pairs`, an array of objects with `id`, `label`, `left`, and `right`. Pair identities must be unique and must not collide with region identities. Both endpoints must name distinct existing regions in that case. A pair must not infer correspondence across cases or chart groups.
+
+The protocol may contain `color` with a finite positive `hue_chroma_floor`. This declaration selects regional hue diagnostics and must contribute to protocol identity. Omitting it must not select an implicit hue threshold. The measurement protocol owns the diagnostic definitions and availability rules.
+
 A case may contain `reference`, `split`, and `split_group`. `split` must be `calibration` or `evaluation`. A case with fitted reference objectives must provide `split_group`. Related captures must use the same group.
 
 A reference must contain `id`, `path`, `sha256`, `scope`, `color`, `provenance`, and `processing`. `scope` must be `material`, `aligned_scene`, `regional`, or `visual`. `color` must select an explicit declaration or an embedded ICC profile with its hash. Unknown color interpretation must make color measurements unavailable.
@@ -102,7 +115,21 @@ A reference must contain `id`, `path`, `sha256`, `scope`, `color`, `provenance`,
 
 An `aligned_scene` reference must provide a frozen transform or already aligned derivative, its correspondence-review record, and a common-area mask. A `regional` reference must provide corresponding reference-region geometries. A `material` reference must provide the measurement domain, instrument, units, and conditions required by its selected metrics. A `visual` reference must not select full-reference scalar measurements.
 
+A `visual` reference may provide explicit reference-region geometries for crop inspection. The comparison must retain these geometries without calculating reference distances. A report must not borrow input-to-simulation alignment to locate a region in an unaligned reference.
+
 Reference transforms, masks, review records, and derivatives must be hashed dependencies. Their geometry and purpose must be explicit. The evaluator must not fit a new transform during `compare`.
+
+## Prepared-chart document
+
+A prepared-chart manifest must contain `schema_version: 1`, `title`, `charts`, `images`, and `default_pair`. The report and each image may contain a `description` string, omitted as empty. Unknown fields, duplicate JSON keys, and duplicate identities must fail. Authored image paths must resolve relative to this manifest. Chart and image array order must be preserved.
+
+Each chart must contain `id`, `label`, and `grid`. A grid must contain positive integer `rows` and `columns`, nonnegative integer `origin: [x, y]`, positive integer `patch_size: [width, height]`, and nonnegative integer `gap: [x, y]`. All geometry uses decoded image pixels. Patch windows are half-open rectangles. Column labels use `A` through `Z`, then `AA` and subsequent spreadsheet-style names; rows start at `1`. Windows must follow row-major order. Grid arithmetic must not overflow. Generation must check every window against actual image bounds and reject dimension differences within one chart group.
+
+Each image must contain `id`, `chart`, `path`, `label`, `color_space`, and `cctf_decoding`. The `chart` value must identify a declared chart group. The input must be a prepared RGB raster supported by the existing image reader. A camera RAW file must first use the existing RAW decoder and an explicitly established chart preparation; its name or extension must not imply a grid or source declaration. Explicit declarations must remain authoritative over embedded metadata and undeclared adjacent sidecars. The report must retain the original path and SHA-256 and identify the display conversion separately.
+
+`images` must contain at least two records. `default_pair` must contain `left` and `right` image identities. Same-group and cross-group defaults are permitted. A cross-group pair must remain a visual comparison with independent patch selection, not an inferred aligned pair.
+
+Successful generation must produce `index.html`, native display assets, and terminal `report.json`. The report must embed its view data for offline loading. Its command result must identify the HTML artifact, report manifest, and image and chart counts. Metadata must not execute as HTML or JavaScript. The fixture generator must publish a schema-validated `chart-report.json` example that refers to its existing controlled images.
 
 ## Target document
 
@@ -142,17 +169,23 @@ A run directory must contain `run.json`, the suite and target snapshots, resolve
 
 Each case result must identify case identity, seed, terminal status, input and output dimensions, configuration artifact, master artifact, diagnostics artifact, and errors when present. Actual backend, execution path, host precision, GPU precision, and adapter facts must come from observed diagnostics. Missing observations must remain unavailable.
 
+Each completed case must retain the full executed simulation command, including numerical-output, diagnostics, and requested stage-evidence arguments. The source-only command must remain separate. Required source evidence must remain required even when both source-master fields are absent; a valid manifest digest does not establish semantic completeness.
+
 Completed runs must retain a floating `source_raw` with `source_raw_metadata` from the real renderer's input route, including source color interpretation and observed dimensions. The input route must use the same RAW decoding options and case-owned geometry as simulation, force output to linear ACES2065-1, disable the independent magazine finishing treatment, and force `taps.inject=rgb_in` and `taps.collect=rgb_out`. Source configuration and observed diagnostics must remain retained dependencies of an input comparison. Original source dimensions and preparation metadata must remain separately identified. Input output geometry must be checked before declaring pixelwise correspondence with simulation.
 
 Completed case artifact references must be objects with an indexed `path`. A malformed required reference must return a structured command failure.
 
 The artifact index must identify relative path, content hash, media type, role, and dimensions or sample layout when applicable. All retained paths must resolve. Partial work must not be indexed as a complete master. A failed run must retain successfully completed cases and explicit failures, but must not be reused as a qualified baseline.
 
+A requested native stage bundle must be retained under the case's `stage_evidence` reference. Its manifest and every buffer must be indexed artifacts. Validation must check the producer schema version, terminal state, supported numerical layout, byte length, finite samples, content hashes, stage identities, geometry, and declared availability. A missing or failed required capture must prevent a completed run. A stage skipped by the selected workflow must remain not applicable rather than become zero-valued evidence. The renderer's native-stage contract owns buffer and preparation semantics; the benchmark must not reconstruct them.
+
 ## Comparison record
 
 A comparison directory must contain `comparison.json`, input run identities, the policy snapshot when selected, scalar measurements, map and curve artifacts, and selected detail-region records. Every finding must resolve to retained artifacts or verified source run artifacts.
 
 `comparison.json` must contain `schema_version`, `id`, `execution_status`, `evaluation_status`, `protocol`, `selection`, `condition_differences`, `cases`, `findings`, `summary`, and `artifacts`. Version comparisons must contain `baseline` and `candidate`, and must contain `policy` when selected. Single-run comparisons must contain `mode` equal to `single_run`, `run`, and `default_pair` equal to `input` or `reference`. Each case must retain a `pairs` array with unique `id`, `left_role`, `right_role`, `pixel_aligned`, `status`, pair-owned measurements and review artifacts, and reference applicability when selected. Input pairs must use roles `input` and `simulation`; reference pairs must use `reference` and `simulation`. Unavailable image evidence must remain labeled and must not fall back to another role. Pair ids must also identify scalar measurements and findings in single-run results.
+
+Each completed case must retain `run_evidence` keyed by `baseline` and `candidate` for a version comparison, or `simulation` for a single-run comparison. It must preserve run, target, input, data and configuration identities, declared preparation, actual command and observed stage context. Referenced native bundles must be copied with their relative buffer dependencies into the comparison artifact index. Report and inspection consumers must not require the original run directory to recover this evidence.
 
 `evaluation_status` must be `not_evaluated`, `passed`, `review_required`, `failed`, or `insufficient_evidence`. No policy must select `not_evaluated`. A protected or expected-change rule violation must select `failed`. A missing required rule measurement or an uncalibrated policy must select `insufficient_evidence` unless an observed violation already selects `failed`. An unresolved compatibility difference or required human decision must select `review_required` unless a stronger failure applies. `passed` must require all required rules and qualification conditions to be satisfied.
 
@@ -164,7 +197,7 @@ The summary must retain selected and completed case counts, required and unavail
 
 ## Publication and examples
 
-`run`, `compare`, and `report` must require a destination that does not exist. They must not replace completed evidence. They must publish a terminal manifest only after referenced local artifacts have been finalized and hashed. A handled operation failure may publish a failed terminal manifest and valid partial evidence. Forced termination before the terminal manifest must leave an incomplete directory that cannot be treated as a completed run.
+`run`, `compare`, `report`, and `chart-report` must require a destination that does not exist. They must not replace completed evidence. They must publish a terminal manifest only after referenced local artifacts have been finalized and hashed. A handled operation failure may publish a failed terminal manifest and valid partial evidence. Forced termination before the terminal manifest must leave an incomplete directory that cannot be treated as a completed run.
 
 A gate failure must preserve the completed comparison. A report-generation failure must not modify its source comparison. Publication failures must not produce a success result. This contract does not promise a transaction across different destination directories or power-loss durability.
 

@@ -1,7 +1,8 @@
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{
-    Error, Result, common, compare, documents, inspect, local_input, report, runner, target,
+    Error, Result, chart_report, common, compare, documents, inspect, local_input, report, runner,
+    target,
 };
 use std::path::{Path, PathBuf};
 
@@ -15,12 +16,12 @@ struct Cli {
 enum Command {
     /// Print the authoritative schema for an authored or retained document.
     Schema {
-        #[arg(long, help="Document kind", value_parser=["suite","target","policy","run","comparison","configuration","reference","regions","preparation"])]
+        #[arg(long, help="Document kind", value_parser=["suite","target","policy","run","comparison","configuration","reference","regions","preparation","chart-report"])]
         kind: String,
     },
     /// Validate document shape and available local dependencies without rendering.
     Validate {
-        #[arg(long, help="Document kind", value_parser=["suite","target","policy","run","comparison","configuration","reference","regions","preparation"])]
+        #[arg(long, help="Document kind", value_parser=["suite","target","policy","run","comparison","configuration","reference","regions","preparation","chart-report"])]
         kind: String,
         #[arg(long, help = "JSON document to validate")]
         file: PathBuf,
@@ -100,6 +101,11 @@ enum Command {
             help = "Resolve all selected configurations without decoding or rendering; retain preflight.json"
         )]
         dry_run: bool,
+        #[arg(
+            long,
+            help = "Retain native CPU stage buffers, applied exposure, and prepared print normalization"
+        )]
+        stage_evidence: bool,
     },
     /// Compare retained runs or input/reference against one run's simulation.
     Compare {
@@ -173,6 +179,27 @@ enum Command {
         comparison: PathBuf,
         #[arg(long, help = "New report directory; must not exist")]
         out: PathBuf,
+        #[arg(long, help = "Review layout", value_parser = ["standard", "diagnostic"], default_value = "standard")]
+        layout: String,
+        #[arg(
+            long = "focus-region",
+            help = "Exact region to feature in the diagnostic layout; repeat for multiple regions"
+        )]
+        focus_regions: Vec<String>,
+    },
+    /// Build an offline visual comparison of explicitly prepared chart images.
+    ChartReport {
+        #[arg(
+            long,
+            help = "Chart manifest with image declarations, grids, and captions"
+        )]
+        manifest: PathBuf,
+        #[arg(long, help = "New report directory; must not exist")]
+        out: PathBuf,
+        #[arg(long, help = "Override the default left image ID", requires = "right")]
+        left: Option<String>,
+        #[arg(long, help = "Override the default right image ID", requires = "left")]
+        right: Option<String>,
     },
 }
 fn emit(value: &Value) {
@@ -191,13 +218,29 @@ fn validate(kind: &str, file: &Path) -> Result<Value> {
             "suite" => documents::load_suite(file)?,
             "target" => documents::load_target(file)?,
             "policy" => documents::load_policy(file)?,
+            "chart-report" => chart_report::validate_manifest(file)?,
             "configuration" | "reference" | "regions" | "preparation" => {
                 local_input::load(kind, file)?
             }
             _ => return Err(Error::new("argument_syntax", "Unknown document kind")),
         }
     };
-    let mut result = json!({"schema_version":1,"command":"validate","execution_status":"completed","kind":kind,"digest":common::digest(&value)?,"unchecked":if matches!(kind,"suite"|"target"|"configuration"|"reference"|"regions"){json!(["rendering","compute_device","cross_document_applicability"])}else{json!([])}});
+    let unchecked = match kind {
+        "chart-report" => json!([
+            "image_decoding",
+            "observed_geometry",
+            "display_color_conversion"
+        ]),
+        "suite" | "target" | "configuration" | "reference" | "regions" => {
+            json!([
+                "rendering",
+                "compute_device",
+                "cross_document_applicability"
+            ])
+        }
+        _ => json!([]),
+    };
+    let mut result = json!({"schema_version":1,"command":"validate","execution_status":"completed","kind":kind,"digest":common::digest(&value)?,"unchecked":unchecked});
     if kind == "suite" {
         result["protocol_digest"] = json!(documents::protocol_digest(&value)?);
     }
@@ -225,12 +268,13 @@ fn execute(command: Command) -> Result<(Value, i32)> {
             out,
             case_ids,
             dry_run,
+            stage_evidence,
         } => {
             if let Some(suite) = suite {
                 if dry_run {
-                    runner::preflight(&suite, &target, &out, &case_ids)
+                    runner::preflight(&suite, &target, &out, &case_ids, stage_evidence)
                 } else {
-                    runner::run(&suite, &target, &out, &case_ids)
+                    runner::run(&suite, &target, &out, &case_ids, stage_evidence)
                 }
             } else {
                 let configuration = configuration
@@ -248,9 +292,23 @@ fn execute(command: Command) -> Result<(Value, i32)> {
                     preparation,
                 };
                 if dry_run {
-                    runner::preflight_suite(adapter.suite()?, &configuration, &target, &out, &[])
+                    runner::preflight_suite(
+                        adapter.suite()?,
+                        &configuration,
+                        &target,
+                        &out,
+                        &[],
+                        stage_evidence,
+                    )
                 } else {
-                    runner::run_suite(adapter.suite()?, &configuration, &target, &out, &[])
+                    runner::run_suite(
+                        adapter.suite()?,
+                        &configuration,
+                        &target,
+                        &out,
+                        &[],
+                        stage_evidence,
+                    )
                 }
             }
         }
@@ -296,14 +354,32 @@ fn execute(command: Command) -> Result<(Value, i32)> {
             backend,
             out,
         } => Ok((target::create(&renderer, &data_dir, &backend, &out)?, 0)),
-        Command::Report { comparison, out } => {
+        Command::Report {
+            comparison,
+            out,
+            layout,
+            focus_regions,
+        } => {
+            let layout = if layout == "diagnostic" {
+                report::Layout::Diagnostic
+            } else {
+                report::Layout::Standard
+            };
             let out = documents::normalize_path(&out)?;
-            report::build_report(&comparison, &out)?;
             Ok((
-                json!({"schema_version":1,"command":"report","execution_status":"completed","artifact":out.join("index.html")}),
+                report::build_report(&comparison, &out, layout, &focus_regions)?,
                 0,
             ))
         }
+        Command::ChartReport {
+            manifest,
+            out,
+            left,
+            right,
+        } => Ok((
+            chart_report::build_report(&manifest, &out, left.as_deref(), right.as_deref())?,
+            0,
+        )),
     }
 }
 fn run() -> i32 {
@@ -314,6 +390,7 @@ fn run() -> i32 {
         Command::Run { .. } => "run",
         Command::Compare { .. } => "compare",
         Command::Report { .. } => "report",
+        Command::ChartReport { .. } => "chart-report",
         Command::Inspect { .. } => "inspect",
         Command::Target { .. } => "target",
     };
