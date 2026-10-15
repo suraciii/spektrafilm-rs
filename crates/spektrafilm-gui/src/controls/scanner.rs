@@ -195,5 +195,4 @@ pub(crate) fn sections(
         );
         flags.raw_reload |= ui.button("reprocess raw").clicked();
     }
-
 }
