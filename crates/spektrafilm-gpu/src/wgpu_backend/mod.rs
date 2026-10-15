@@ -18,7 +18,7 @@ mod cache;
 #[cfg(feature = "wgpu-backend")]
 mod film_chain;
 #[cfg(feature = "wgpu-backend")]
-use cache::{CachedPipelineRef, PipelineCache};
+use cache::{CachedPipelineRef, CacheHit, PipelineCache};
 
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a
@@ -190,13 +190,12 @@ impl WgpuBackend {
             bindings.iter().map(|b| b.binding_type).collect();
         let (cached, hit) =
             self.pipeline_cache
-                .get_or_compile(&self.device, shader_source, &binding_types);
+                .pipeline_for(&self.device, shader_source, &binding_types);
         if self.device.context.enabled() {
             let mut work = WorkCounters::default();
-            if hit {
-                work.pipeline_cache_hit_count = Some(1);
-            } else {
-                work.pipeline_cache_miss_count = Some(1);
+            match hit {
+                CacheHit::Hit => work.pipeline_cache_hit_count = Some(1),
+                CacheHit::Miss => work.pipeline_cache_miss_count = Some(1),
             }
             self.device.context.record_work(&work);
         }
@@ -293,13 +292,12 @@ impl WgpuBackend {
     ) -> CachedPipelineRef {
         let (cached, hit) =
             self.pipeline_cache
-                .get_or_compile(&self.device.raw, shader_source, binding_types);
+                .pipeline_for(&self.device.raw, shader_source, binding_types);
         if self.device.context.enabled() {
             let mut w = WorkCounters::default();
-            if hit {
-                w.pipeline_cache_hit_count = Some(1)
-            } else {
-                w.pipeline_cache_miss_count = Some(1)
+            match hit {
+                CacheHit::Hit => w.pipeline_cache_hit_count = Some(1),
+                CacheHit::Miss => w.pipeline_cache_miss_count = Some(1),
             }
             self.device.context.record_work(&w);
         }

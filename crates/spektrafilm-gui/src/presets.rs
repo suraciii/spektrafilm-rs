@@ -685,7 +685,7 @@ impl App {
                     NameAction::Save(preset) => {
                         let mut preset = preset.clone();
                         preset.name = dialog.name.clone();
-                        self.presets.library.save_new(&preset, &self.data_dir)
+                        self.presets.library.save_unique(&preset, &self.data_dir)
                     }
                     NameAction::Rename(old) => {
                         self.presets
@@ -1125,7 +1125,7 @@ mod tests {
         );
         app.presets
             .library
-            .save_new(&preset, &app.data_dir)
+            .save_unique(&preset, &app.data_dir)
             .unwrap();
         app.presets.refresh();
         let entry = app
@@ -1211,7 +1211,7 @@ mod tests {
                 Preset::capture_section("Section", section, &app.params, provenance()).unwrap();
             app.presets
                 .library
-                .save_new(&preset, &app.data_dir)
+                .save_unique(&preset, &app.data_dir)
                 .unwrap();
             app.presets.refresh();
             let entry = app

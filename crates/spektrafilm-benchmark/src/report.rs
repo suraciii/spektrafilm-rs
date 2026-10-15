@@ -1,6 +1,6 @@
 //! Portable offline presentation of retained evidence; no rendering or measurement.
 use crate::{
-    common::{self, Error, Result, create_destination, destination_exists, dump, sha256_file},
+    common::{self, Error, Result, create_destination, destination_exists_error, dump, sha256_file},
     documents::{load_json_document, safe_artifact_path, validate_generated_document},
     image_data::read_npy,
     runner,
@@ -1091,7 +1091,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
 
 fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
     if fs::symlink_metadata(out).is_ok() {
-        return Err(destination_exists(out));
+        return Err(destination_exists_error(out));
     }
     let root = comparison.canonicalize()?;
     let document = safe_artifact_path(&root, "comparison.json")?;

@@ -4,7 +4,7 @@ use super::*;
 /// Pre-built halation passes — owns the per-sigma kernel buffers, params
 /// buffers, and bind groups so they live long enough for the encoder.
 ///
-/// The CPU equivalent is `spektrafilm_model::halation::apply_halation_um`.
+/// The CPU equivalent is `spektrafilm_model::halation::transform_halation_um`.
 /// All passes operate on the resident image buffer (passed in as `buf_b`),
 /// using `buf_a` as blur intermediate and two newly-allocated buffers
 /// `buf_c` / `buf_d` for scatter outputs and the halation accumulator.
@@ -84,7 +84,7 @@ pub(super) fn build_halation_state(
                 contents: bytemuck::bytes_of(&params),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
-            let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind_group_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("halation_blur_h_{label}")),
                 layout: &blur_pipe_h.layout,
                 entries: &[
@@ -106,7 +106,7 @@ pub(super) fn build_halation_state(
                     }, // mid
                 ],
             });
-            let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind_group_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("halation_blur_v_{label}")),
                 layout: &blur_pipe_v.layout,
                 entries: &[
@@ -131,8 +131,8 @@ pub(super) fn build_halation_state(
             BlurJob {
                 _kernel_buf: kernel_buf,
                 _params_buf: params_buf,
-                bg_h,
-                bg_v,
+                bind_group_h,
+                bind_group_v,
             }
         };
 
@@ -439,7 +439,7 @@ impl HalationState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_h.pipeline);
-                pass.set_bind_group(0, &job.bg_h, &[]);
+                pass.set_bind_group(0, &job.bind_group_h, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
             {
@@ -448,7 +448,7 @@ impl HalationState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_v.pipeline);
-                pass.set_bind_group(0, &job.bg_v, &[]);
+                pass.set_bind_group(0, &job.bind_group_v, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
         };

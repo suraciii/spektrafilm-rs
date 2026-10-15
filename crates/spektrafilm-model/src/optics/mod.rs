@@ -5,7 +5,7 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::from_f64;
 /// Apply Python's unsharp mask with the faithful CPU Gaussian filter.
 /// Keep sigma and amount in f64 before conversion to the image scalar type.
-pub fn apply_unsharp_mask(
+pub fn transform_unsharp_mask(
     image: &ImageBuf,
     sigma: impl Into<f64>,
     amount: impl Into<f64>,
@@ -30,7 +30,7 @@ pub fn apply_unsharp_mask(
 }
 
 /// Apply Gaussian blur in physical units (micrometers).
-pub fn apply_gaussian_blur_um(
+pub fn transform_gaussian_blur_um(
     image: &ImageBuf,
     sigma_um: f32,
     pixel_size_um: f32,

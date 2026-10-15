@@ -1,0 +1,620 @@
+//! Viewer composition worker. Prepares disposable fit data and bounded
+//! viewport pixels off the UI thread; immutable pipeline floats are shared.
+use egui::{Color32, Pos2, Rect};
+use parking_lot::{Condvar, Mutex};
+use spektrafilm_math::image::ImageBuf;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+
+use super::ViewLayer;
+use super::colortransform::{input_display_raster, output_display_raster};
+use super::decorations::{PolaroidState, virtual_paper_back};
+use super::raster::{DisplayRaster, Interpolation, sample_image_with, sample_rect};
+#[derive(Clone)]
+pub(super) struct PreparedDisplay {
+    pub(super) source: Arc<ImageBuf>,
+    pub(super) metadata: DisplaySource,
+    pub(super) max_size: usize,
+    pub(super) raster: DisplayRaster,
+}
+impl PreparedDisplay {
+    pub(super) fn matches(
+        &self,
+        source: &Arc<ImageBuf>,
+        metadata: &DisplaySource,
+        max_size: usize,
+    ) -> bool {
+        Arc::ptr_eq(&self.source, source) && self.metadata == *metadata && self.max_size == max_size
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct DisplayRequest {
+    pub(super) key: Vec<u64>,
+    pub(super) generation: u64,
+    pub(super) rect: Rect,
+    pub(super) border: Rect,
+    pub(super) paper_rect: Rect,
+    pub(super) image_rect: Rect,
+    pub(super) texture_size: [usize; 2],
+    pub(super) gray: Color32,
+    pub(super) layer: ViewLayer,
+    pub(super) interpolation: Interpolation,
+    pub(super) raster: Option<DisplayRaster>,
+    pub(super) paper_size: [usize; 2],
+    pub(super) previous: Option<DisplayRaster>,
+    pub(super) source: Option<Arc<ImageBuf>>,
+    pub(super) prepared: Option<PreparedDisplay>,
+    pub(super) metadata: DisplaySource,
+    pub(super) max_size: usize,
+    pub(super) full_source: bool,
+    pub(super) polaroid: bool,
+    pub(super) ctx: egui::Context,
+    pub(super) frame: usize,
+}
+
+#[derive(Clone, Default, PartialEq)]
+pub(super) struct DisplaySource {
+    pub(super) space: Option<String>,
+    pub(super) encoded: bool,
+    pub(super) transform: bool,
+    pub(super) profile: Option<PathBuf>,
+}
+
+pub(super) struct FitCacheEntry {
+    pub(super) prepared: PreparedDisplay,
+    pub(super) status: Option<String>,
+}
+
+#[derive(Default)]
+pub(super) struct CompositionCache {
+    pub(super) paper: Option<DisplayRaster>,
+    pub(super) polaroid: Option<(DisplayRaster, PolaroidState)>,
+    pub(super) fit: [Option<FitCacheEntry>; 2],
+}
+
+pub(super) struct DisplayResponse {
+    pub(super) key: Vec<u64>,
+    pub(super) generation: u64,
+    pub(super) image: egui::ColorImage,
+    pub(super) status: Option<String>,
+    pub(super) prepared: Option<PreparedDisplay>,
+}
+impl DisplayResponse {
+    pub(super) fn matches(&self, generation: u64, key: &[u64]) -> bool {
+        self.generation == generation && self.key == key
+    }
+}
+pub(super) struct WorkerState {
+    pub(super) request: Option<DisplayRequest>,
+    pub(super) response: Option<DisplayResponse>,
+    pub(super) stopping: bool,
+}
+pub(super) struct DisplayWorker {
+    pub(super) state: Arc<(Mutex<WorkerState>, Condvar)>,
+    pub(super) thread: Option<JoinHandle<()>>,
+}
+impl Default for DisplayWorker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl DisplayWorker {
+    fn new() -> Self {
+        let state = Arc::new((
+            Mutex::new(WorkerState {
+                request: None,
+                response: None,
+                stopping: false,
+            }),
+            Condvar::new(),
+        ));
+        let shared = Arc::clone(&state);
+        let thread = thread::Builder::new()
+            .name("viewer-composition".into())
+            .spawn(move || {
+                let mut cache = CompositionCache::default();
+                loop {
+                    let request = {
+                        let (lock, wake) = &*shared;
+                        let mut state = lock.lock();
+                        while state.request.is_none() && !state.stopping {
+                            wake.wait(&mut state);
+                        }
+                        if state.stopping {
+                            break;
+                        }
+                        state.request.take().unwrap()
+                    };
+                    let ctx = request.ctx.clone();
+                    let response = compose_display(request, &mut cache);
+                    let (lock, _) = &*shared;
+                    let mut state = lock.lock();
+                    if state.stopping {
+                        break;
+                    }
+                    if state.request.is_none() {
+                        state.response = Some(response);
+                        drop(state);
+                        ctx.request_repaint();
+                    }
+                }
+            })
+            .expect("viewer composition worker");
+        Self {
+            state,
+            thread: Some(thread),
+        }
+    }
+    pub(super) fn submit(&self, request: DisplayRequest) {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock();
+        state.request = Some(request);
+        state.response = None;
+        wake.notify_one();
+    }
+    pub(super) fn take_response(&self) -> Option<DisplayResponse> {
+        self.state.0.lock().response.take()
+    }
+}
+impl Drop for DisplayWorker {
+    fn drop(&mut self) {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock();
+        state.stopping = true;
+        state.request = None;
+        state.response = None;
+        wake.notify_one();
+        drop(state);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+impl DisplaySource {
+    /// Draws only visible pixels into a bounded texture. Large source images and
+    /// offscreen pans therefore cannot exceed the GPU texture dimension limit.
+    pub(super) fn full_source_view(
+        &self,
+        source: &ImageBuf,
+        layer: ViewLayer,
+        image_rect: Rect,
+        rect: Rect,
+        texture_size: [usize; 2],
+        interpolation: Interpolation,
+    ) -> Option<(DisplayRaster, Option<String>)> {
+        if source.width == 0 || source.height == 0 {
+            return None;
+        }
+        let (name, encoded, enabled) = (self.space.as_deref(), self.encoded, self.transform);
+        // Missing metadata must keep the prepared viewing artifact, never show raw output.
+        let name = name?;
+        let space = if enabled {
+            Some(spektrafilm_math::colorspace::resolve(name).ok()?)
+        } else {
+            None
+        };
+        let matrix = space.map(spektrafilm_math::colorspace::display_matrix);
+        let mut status = None;
+        let profile = if layer == ViewLayer::Output && enabled {
+            self.profile.as_deref().and_then(|path| {
+                use lcms2::{Intent, PixelFormat, Profile, Transform};
+                let result = Profile::new_file(path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|destination| {
+                        Transform::<[u8; 3], [u8; 3]>::new(
+                            &Profile::new_srgb(),
+                            PixelFormat::RGB_8,
+                            &destination,
+                            PixelFormat::RGB_8,
+                            Intent::Perceptual,
+                        )
+                        .map_err(|error| error.to_string())
+                    });
+                match result {
+                    Ok(transform) => Some(transform),
+                    Err(e) => {
+                        status = Some(format!(
+                            "Display transform: ICC failed ({e}); viewing sRGB preview"
+                        ));
+                        None
+                    }
+                }
+            })
+        } else {
+            None
+        };
+        let mut rgb = Vec::with_capacity(texture_size[0] * texture_size[1]);
+        for y in 0..texture_size[1] {
+            for x in 0..texture_size[0] {
+                let p = Pos2::new(
+                    rect.min.x + (x as f32 + 0.5) * rect.width() / texture_size[0] as f32,
+                    rect.min.y + (y as f32 + 0.5) * rect.height() / texture_size[1] as f32,
+                );
+                rgb.push(if image_rect.contains(p) {
+                    sample_image_with(source, p, image_rect, interpolation, |raw| {
+                        let value = match (space, matrix.as_ref()) {
+                            (Some(space), Some(matrix)) => {
+                                spektrafilm_math::colorspace::display_rgb(
+                                    raw.map(|v| v as f64),
+                                    space,
+                                    encoded,
+                                    matrix,
+                                )
+                                .map(|v| v.clamp(0.0, 1.0) as f32)
+                            }
+                            _ => raw,
+                        };
+                        if let Some(transform) = profile.as_ref() {
+                            let mut pixel = [value.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)];
+                            transform.transform_in_place(&mut pixel);
+                            pixel[0].map(|v| v as f32 / 255.0)
+                        } else {
+                            value
+                        }
+                    })
+                } else {
+                    [0.0; 3]
+                });
+            }
+        }
+        let raster = DisplayRaster::new(texture_size, rgb).ok()?;
+        Some((raster, status))
+    }
+}
+
+fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> DisplayResponse {
+    let DisplayRequest {
+        key,
+        generation,
+        rect,
+        border,
+        paper_rect,
+        image_rect,
+        texture_size,
+        gray,
+        layer,
+        interpolation,
+        mut raster,
+        paper_size,
+        previous,
+        source,
+        prepared,
+        metadata,
+        max_size,
+        full_source,
+        polaroid,
+        frame,
+        ..
+    } = request;
+    if (layer == ViewLayer::PaperBack || !image_rect.contains_rect(paper_rect))
+        && cache
+            .paper
+            .as_ref()
+            .is_none_or(|paper| paper.size != paper_size)
+    {
+        cache.paper = Some(virtual_paper_back(paper_size));
+    }
+    let mut status = None;
+    let mut current_prepared = None;
+    if layer != ViewLayer::PaperBack
+        && let (Some(source), Some(space)) = (source.as_ref(), metadata.space.as_deref())
+    {
+        let fit = &mut cache.fit[usize::from(layer == ViewLayer::Output)];
+        let cached = fit
+            .as_ref()
+            .is_some_and(|entry| entry.prepared.matches(source, &metadata, max_size));
+        if !cached
+            && let Some(seed) = prepared.filter(|seed| seed.matches(source, &metadata, max_size))
+        {
+            *fit = Some(FitCacheEntry {
+                prepared: seed,
+                status: None,
+            });
+        }
+        let cached = fit
+            .as_ref()
+            .is_some_and(|entry| entry.prepared.matches(source, &metadata, max_size));
+        if !cached {
+            let result = if layer == ViewLayer::Input {
+                input_display_raster(source, space, metadata.encoded, max_size)
+                    .map(|raster| (raster, None))
+            } else {
+                output_display_raster(
+                    source,
+                    space,
+                    metadata.encoded,
+                    metadata.transform,
+                    metadata.profile.as_deref(),
+                    max_size,
+                )
+                .map(|(raster, status)| (raster, Some(status)))
+            };
+            match result {
+                Ok((prepared, message)) => {
+                    *fit = Some(FitCacheEntry {
+                        prepared: PreparedDisplay {
+                            source: Arc::clone(source),
+                            metadata: metadata.clone(),
+                            max_size,
+                            raster: prepared,
+                        },
+                        status: message,
+                    })
+                }
+                Err(error) => status = Some(format!("Display transform: {error}")),
+            }
+        }
+        if let Some(entry) = fit.as_ref()
+            && entry.prepared.matches(source, &metadata, max_size)
+        {
+            raster = Some(entry.prepared.raster.clone());
+            status = entry.status.clone();
+            current_prepared = Some(entry.prepared.clone());
+        }
+    }
+    if layer == ViewLayer::PaperBack {
+        raster = cache.paper.clone();
+    }
+    let animation = if polaroid {
+        raster.as_ref().map(|raster| {
+            if cache
+                .polaroid
+                .as_ref()
+                .is_none_or(|(image, _)| !Arc::ptr_eq(&image.rgb, &raster.rgb))
+            {
+                cache.polaroid = Some((raster.clone(), PolaroidState::new(raster)));
+            }
+            cache
+                .polaroid
+                .as_ref()
+                .unwrap()
+                .1
+                .frame(frame as f32 / 49.0)
+        })
+    } else {
+        None
+    };
+    let raster = animation.as_ref().or(raster.as_ref());
+    let full = if full_source {
+        source.as_ref().and_then(|source| {
+            metadata.full_source_view(source, layer, image_rect, rect, texture_size, interpolation)
+        })
+    } else {
+        None
+    };
+    if let Some((_, message)) = full.as_ref() {
+        status = message.clone();
+    }
+    let mut pixels = Vec::with_capacity(texture_size[0] * texture_size[1]);
+    for y in 0..texture_size[1] {
+        for x in 0..texture_size[0] {
+            let p = Pos2::new(
+                rect.min.x + (x as f32 + 0.5) * rect.width() / texture_size[0] as f32,
+                rect.min.y + (y as f32 + 0.5) * rect.height() / texture_size[1] as f32,
+            );
+            let mut color = if border.contains(p) {
+                Color32::WHITE
+            } else {
+                gray
+            };
+            if paper_rect.contains(p)
+                && !image_rect.contains(p)
+                && let Some(paper) = cache.paper.as_ref()
+            {
+                color = pack(sample_rect(paper, p, paper_rect, Interpolation::Spline36));
+            }
+            if image_rect.contains(p)
+                && let Some(raster) = raster
+            {
+                let mut rgb = if let Some((view, _)) = full.as_ref() {
+                    view.rgb[y * texture_size[0] + x]
+                } else {
+                    sample_rect(raster, p, image_rect, interpolation)
+                };
+                if layer == ViewLayer::Output
+                    && let Some(previous) = previous.as_ref()
+                {
+                    let a = frame as f32 / 10.0;
+                    let old = sample_rect(previous, p, image_rect, interpolation);
+                    for c in 0..3 {
+                        rgb[c] = old[c].clamp(0.0, 1.0) * (1.0 - a) + rgb[c].clamp(0.0, 1.0) * a;
+                    }
+                }
+                color = pack(rgb);
+            }
+            pixels.push(color);
+        }
+    }
+    DisplayResponse {
+        key,
+        generation,
+        image: egui::ColorImage {
+            size: texture_size,
+            pixels,
+        },
+        status,
+        prepared: current_prepared,
+    }
+}
+
+fn pack(p: [f32; 3]) -> Color32 {
+    Color32::from_rgb(
+        (p[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (p[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (p[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::Vec2;
+    use std::time::Duration;
+    fn request(generation: u64) -> DisplayRequest {
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(4.0, 1.0));
+        DisplayRequest {
+            key: vec![1],
+            generation,
+            rect,
+            border: rect,
+            paper_rect: rect,
+            image_rect: rect,
+            texture_size: [4, 1],
+            gray: Color32::BLACK,
+            layer: ViewLayer::Output,
+            interpolation: Interpolation::Nearest,
+            raster: Some(DisplayRaster::new([1, 1], vec![[0.5; 3]]).unwrap()),
+            paper_size: [128, 128],
+            previous: None,
+            prepared: None,
+            source: Some(Arc::new(ImageBuf::from_data(
+                4,
+                1,
+                vec![
+                    0.0 as _, 0.0 as _, 0.0 as _, 1.0 as _, 1.0 as _, 1.0 as _, 0.0 as _, 0.0 as _,
+                    0.0 as _, 1.0 as _, 1.0 as _, 1.0 as _,
+                ],
+            ))),
+            metadata: DisplaySource {
+                space: Some("sRGB".into()),
+                encoded: true,
+                transform: false,
+                profile: None,
+            },
+            max_size: 1,
+            full_source: true,
+            polaroid: false,
+            ctx: egui::Context::default(),
+            frame: 0,
+        }
+    }
+
+    #[test]
+    fn worker_composition_keeps_full_resolution_and_rejects_old_generation() {
+        let mut cache = CompositionCache {
+            paper: Some(DisplayRaster::new([128, 128], vec![[1.0; 3]; 128 * 128]).unwrap()),
+            ..CompositionCache::default()
+        };
+        let response = compose_display(request(2), &mut cache);
+        assert_eq!(
+            response.image.pixels,
+            vec![
+                Color32::BLACK,
+                Color32::WHITE,
+                Color32::BLACK,
+                Color32::WHITE
+            ]
+        );
+        assert!(response.matches(2, &[1]));
+        assert!(!response.matches(3, &[1]));
+        assert!(!response.matches(2, &[2]));
+    }
+
+    #[test]
+    fn fit_composition_reuses_prepared_pixels_when_geometry_changes() {
+        let mut cache = CompositionCache {
+            paper: Some(DisplayRaster::new([128, 128], vec![[1.0; 3]; 128 * 128]).unwrap()),
+            ..CompositionCache::default()
+        };
+        let mut fit = request(1);
+        fit.full_source = false;
+        fit.max_size = 4;
+        let seed =
+            output_display_raster(fit.source.as_ref().unwrap(), "sRGB", true, false, None, 4)
+                .unwrap()
+                .0;
+        fit.prepared = Some(PreparedDisplay {
+            source: fit.source.as_ref().unwrap().clone(),
+            metadata: fit.metadata.clone(),
+            max_size: 4,
+            raster: seed.clone(),
+        });
+        let response = compose_display(fit.clone(), &mut cache);
+        assert_eq!(
+            response.image.pixels,
+            vec![
+                Color32::BLACK,
+                Color32::WHITE,
+                Color32::BLACK,
+                Color32::WHITE
+            ]
+        );
+        let pixels = Arc::clone(&cache.fit[1].as_ref().unwrap().prepared.raster.rgb);
+        assert!(Arc::ptr_eq(&pixels, &seed.rgb));
+        fit.generation = 2;
+        fit.image_rect = fit.image_rect.translate(Vec2::new(1.0, 0.0));
+        compose_display(fit, &mut cache);
+        assert!(Arc::ptr_eq(
+            &pixels,
+            &cache.fit[1].as_ref().unwrap().prepared.raster.rgb
+        ));
+    }
+
+    #[test]
+    fn fit_composition_rejects_stale_cache_and_seed() {
+        let mut original = request(1);
+        original.full_source = false;
+        original.max_size = 4;
+        for change in 0..3 {
+            let mut cache = CompositionCache::default();
+            let seed = compose_display(original.clone(), &mut cache)
+                .prepared
+                .unwrap();
+            let mut changed = original.clone();
+            changed.generation = 2;
+            changed.prepared = Some(seed.clone());
+            match change {
+                0 => changed.source = request(2).source,
+                1 => changed.metadata.encoded = false,
+                _ => changed.max_size = 2,
+            }
+            let response = compose_display(changed.clone(), &mut cache);
+            let prepared = response.prepared.unwrap();
+            assert!(Arc::ptr_eq(
+                &prepared.source,
+                changed.source.as_ref().unwrap()
+            ));
+            assert!(prepared.metadata == changed.metadata);
+            assert_eq!(prepared.max_size, changed.max_size);
+            assert!(!Arc::ptr_eq(&prepared.raster.rgb, &seed.raster.rgb));
+            assert!(Arc::ptr_eq(
+                &prepared.raster.rgb,
+                &cache.fit[1].as_ref().unwrap().prepared.raster.rgb
+            ));
+        }
+    }
+
+    #[test]
+    fn persistent_worker_publishes_latest_composition_and_shuts_down() {
+        let worker = DisplayWorker::new();
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let latest = request(7);
+            for _ in 0..3 {
+                let _ = latest.ctx.run(egui::RawInput::default(), |_| {});
+            }
+            latest.ctx.set_request_repaint_callback(move |_| {
+                let _ = tx.send(());
+            });
+            worker.submit(latest);
+            rx.recv_timeout(Duration::from_secs(10))
+                .expect("composition worker repaint timed out");
+            let response = worker
+                .take_response()
+                .expect("composition ready before repaint");
+            assert!(response.matches(7, &[1]));
+            assert_eq!(
+                response.image.pixels,
+                vec![
+                    Color32::BLACK,
+                    Color32::WHITE,
+                    Color32::BLACK,
+                    Color32::WHITE
+                ]
+            );
+        }
+        drop(worker);
+    }
+}

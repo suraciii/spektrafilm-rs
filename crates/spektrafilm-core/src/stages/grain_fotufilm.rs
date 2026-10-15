@@ -354,7 +354,7 @@ impl Prepared {
             softness = look.softness,
             "film grain Fotufilm: readout on CPU"
         );
-        bank.apply(&input, geometry, look, params.random_seed, cancel)
+        bank.transform(&input, geometry, look, params.random_seed, cancel)
     }
 
     /// The immutable bank for `identity`, preparing it on first use.

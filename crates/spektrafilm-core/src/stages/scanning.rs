@@ -299,10 +299,69 @@ fn interpret_negative_capture(
     Ok(rgb)
 }
 
+/// Nominal scanner density interval for `density_direct`.
+///
+/// The point window can only stretch this axis: `white_point - black_point <= 1`
+/// makes `PointMap::scale` at least one, so `positive_contrast` sets the scale
+/// and the window sets per-channel placement. The interval is therefore wider
+/// than any negative's record range.
+const DENSITY_DIRECT_RANGE: [f64; 2] = [0.0, 6.0];
+
+/// Scanner optics blur transmitted light record by record, before the sensor
+/// reads density, so blur runs in the density domain and no capture enters.
+fn blur_transmitted_density(
+    density_cmy: &ImageBuf,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+) -> ImageBuf {
+    let mut transmitted = density_cmy.clone();
+    transmitted
+        .data
+        .par_iter_mut()
+        .for_each(|value| *value = from_f64(10.0f64.powf(-to_f64(*value))));
+    let mut blurred = backend.gaussian_blur(&transmitted, params.scanner.lens_blur);
+    blurred
+        .data
+        .par_iter_mut()
+        .for_each(|value| *value = from_f64(-to_f64(*value).log10()));
+    blurred
+}
+
+/// Record-density conversion without the film's curve inverse: the recorded
+/// density itself is the tone axis, so the selected film's characteristic curve
+/// and spectral response reach the output unchanged. The point window, the
+/// brightness, the balance and the contrast stay the only calibration.
+fn interpret_negative_density_direct(
+    density_cmy: &ImageBuf,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+) -> Result<ImageBuf, String> {
+    let [start, end] = DENSITY_DIRECT_RANGE;
+    let points = PointMap::new(start, end, params)?;
+    let mut rgb = if params.scanner.lens_blur > 0.0 {
+        blur_transmitted_density(density_cmy, params, backend)
+    } else {
+        density_cmy.clone()
+    };
+    rgb.data
+        .par_chunks_exact_mut(3)
+        .try_for_each(|px| -> Result<(), String> {
+            for (channel, value) in px.iter_mut().enumerate() {
+                *value = from_f64(positive_tone(to_f64(*value), channel, &points, params).0);
+                if !value.is_finite() {
+                    return Err(
+                        "density interpretation output is not representable in the selected precision"
+                            .into(),
+                    );
+                }
+            }
+            Ok(())
+        })?;
+    Ok(rgb)
+}
+
 /// Record-density interpretation: the narrowband lab-scanner inverse of the
-/// film's own characteristic curves. Scanner optics blur transmitted light
-/// record by record, before the sensor reads density, so the blur runs here in
-/// the density domain and the capture never enters the loop.
+/// film's own characteristic curves, with the blur in the density domain.
 fn interpret_negative_density(
     density_cmy: &ImageBuf,
     calibration: &interpretation::DensityCalibration,
@@ -312,17 +371,7 @@ fn interpret_negative_density(
     let [start, end] = calibration.range();
     let points = PointMap::new(start, end, params)?;
     let mut rgb = if params.scanner.lens_blur > 0.0 {
-        let mut transmitted = density_cmy.clone();
-        transmitted
-            .data
-            .par_iter_mut()
-            .for_each(|value| *value = from_f64(10.0f64.powf(-to_f64(*value))));
-        let mut blurred = backend.gaussian_blur(&transmitted, params.scanner.lens_blur);
-        blurred
-            .data
-            .par_iter_mut()
-            .for_each(|value| *value = from_f64(-to_f64(*value).log10()));
-        blurred
+        blur_transmitted_density(density_cmy, params, backend)
     } else {
         density_cmy.clone()
     };
@@ -468,6 +517,23 @@ pub(crate) fn prepare_setup(
 ) -> Result<ScannerSetup, String> {
     let mut params = params.clone();
     params.io.scan_film = true;
+    if params.scanner.positive_interpretation
+        == crate::params::PositiveInterpretation::DensityDirect
+    {
+        // The film-blind conversion samples the record densities themselves, so
+        // automatic setup measures the axis it will actually read.
+        let samples: Vec<[f64; 3]> = density
+            .data
+            .par_chunks_exact(3)
+            .map(|px| [to_f64(px[0]), to_f64(px[1]), to_f64(px[2])])
+            .collect();
+        return ScannerSetup::from_samples(
+            &samples,
+            interpretation::camera_ev(&params),
+            DENSITY_DIRECT_RANGE,
+            &params.scanner,
+        );
+    }
     let prepared = crate::chain_prep::PreparedChain::for_scan(profile, &params, illuminant);
     let dyes = crate::chain_prep::channel_density(profile);
     let base = profile.data.base_density.as_slice();
@@ -835,7 +901,11 @@ fn scan_with_reference(
     // receiver correction it feeds are skipped entirely. Where a capture does
     // arrive, `density` behaves as `separable`.
     let density_reading = negative_to_positive
-        && params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Density
+        && matches!(
+            params.scanner.positive_interpretation,
+            crate::params::PositiveInterpretation::Density
+                | crate::params::PositiveInterpretation::DensityDirect
+        )
         && captured_rgb.is_none();
     let slide_points = params.io.scan_film && profile.is_positive() && points_active(params);
     let _negative_to_positive = negative_to_positive.then(|| {
@@ -910,8 +980,14 @@ fn scan_with_reference(
             .expect("validated prepared reference")
             .convert(density_cmy, params, backend)?
     } else if density_reading {
-        let calibration = interpretation::DensityCalibration::prepare(profile)?;
-        interpret_negative_density(density_cmy, &calibration, params, backend)?
+        if params.scanner.positive_interpretation
+            == crate::params::PositiveInterpretation::DensityDirect
+        {
+            interpret_negative_density_direct(density_cmy, params, backend)?
+        } else {
+            let calibration = interpretation::DensityCalibration::prepare(profile)?;
+            interpret_negative_density(density_cmy, &calibration, params, backend)?
+        }
     } else {
         captured_rgb.unwrap_or_else(|| {
             scan_spectral_rgb(
@@ -1075,7 +1151,7 @@ fn scan_with_reference(
     // Unsharp mask
     let [usm_sigma, usm_amount] = params.scanner.unsharp_mask;
     if usm_sigma > 0.0 && usm_amount > 0.0 {
-        rgb = spektrafilm_model::optics::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
+        rgb = spektrafilm_model::optics::transform_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
     }
 
     // Grain consumes native display-encoded RGB, with no internal transfer
@@ -1290,6 +1366,75 @@ mod tests {
         .unwrap();
         assert_eq!(legacy.data, lab_scan.data);
         assert!(legacy.data.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn direct_density_conversion_ignores_the_film_profile() {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let first = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let second = crate::profile::load_profile_by_name(&data, "kodak_ektar_100").unwrap();
+        let density = ImageBuf::from_data(
+            3,
+            1,
+            [0.15, 0.35, 0.55, 0.8, 0.8, 0.8, 1.4, 1.2, 1.0]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let color_ref = crate::color_reference::ColorReference::identity();
+        let gamut = crate::gamut_compression::OutputGamutCompress::identity();
+        let mut params = RuntimeParams::default();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.positive_interpretation =
+            crate::params::PositiveInterpretation::DensityDirect;
+        let first_output = scan_with_capture(
+            &density, &first, &params, &backend, &color_ref, &gamut, None, true, None,
+        )
+        .unwrap();
+        let second_output = scan_with_capture(
+            &density, &second, &params, &backend, &color_ref, &gamut, None, true, None,
+        )
+        .unwrap();
+        assert_eq!(first_output.data, second_output.data);
+        assert!(first_output.data.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn direct_density_reads_brighter_with_record_density() {
+        let values = [0.0, 0.05, 0.5, 1.5, 3.0]
+            .into_iter()
+            .flat_map(|value| [value; 3])
+            .collect::<Vec<_>>();
+        let input = ImageBuf::from_data(5, 1, values.iter().copied().map(from_f64).collect());
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let mut params = RuntimeParams::default();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.positive_interpretation =
+            crate::params::PositiveInterpretation::DensityDirect;
+        let output: Vec<f64> = interpret_negative_density_direct(&input, &params, &backend)
+            .unwrap()
+            .data
+            .iter()
+            .map(|value| to_f64(*value))
+            .step_by(3)
+            .collect();
+        assert!(output.windows(2).all(|pair| pair[1] > pair[0]));
+        assert!(output.iter().all(|value| (0.0..=1.0).contains(value)));
+        // The record density is the tone axis: the point window and the positive
+        // response are the whole conversion.
+        let points =
+            PointMap::new(DENSITY_DIRECT_RANGE[0], DENSITY_DIRECT_RANGE[1], &params).unwrap();
+        for (value, expected) in values.iter().step_by(3).zip(output.iter()) {
+            let tone = positive_tone(to_f64(from_f64(*value)), 0, &points, &params).0;
+            let tolerance = if std::mem::size_of::<Scalar>() == 4 {
+                2e-6
+            } else {
+                1e-12
+            };
+            assert!((tone - expected).abs() < tolerance);
+        }
     }
 
     #[test]

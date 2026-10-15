@@ -39,7 +39,7 @@ pub enum DigestMode {
 }
 
 impl DigestMode {
-    fn apply_stock_specifics(self) -> bool {
+    fn applies_stock_specifics(self) -> bool {
         matches!(self, Self::ApplyStockSpecifics)
     }
 }
@@ -68,7 +68,7 @@ pub fn digest_params_with_neutral(
         film,
         print,
         Some(neutral),
-        mode.apply_stock_specifics(),
+        mode.applies_stock_specifics(),
     )
 }
 

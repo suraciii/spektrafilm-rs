@@ -1,6 +1,6 @@
 //! Construction of pinned renderer targets without executing the renderer.
 use crate::{
-    common::{Error, Result, destination_exists, sha256_file},
+    common::{Error, Result, destination_exists_error, sha256_file},
     documents,
 };
 use serde_json::{Value, json};
@@ -31,7 +31,7 @@ pub fn construct(
 /// Existing files, directories and symlinks are refused; no device probe runs.
 pub fn create(renderer: &Path, data_dir: &Path, backend: &str, out: &Path) -> Result<Value> {
     if fs::symlink_metadata(out).is_ok() {
-        return Err(destination_exists(out));
+        return Err(destination_exists_error(out));
     }
     let id = out.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
         Error::new(
@@ -54,7 +54,7 @@ pub fn create(renderer: &Path, data_dir: &Path, backend: &str, out: &Path) -> Re
         .open(out)
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::AlreadyExists {
-                destination_exists(out)
+                destination_exists_error(out)
             } else {
                 error.into()
             }

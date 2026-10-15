@@ -58,6 +58,9 @@ fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> f64 {
         ys[i - 1] + (ys[i] - ys[i - 1]) * (x - xs[i - 1]) / span
     }
 }
+/// Per-channel sigma values for the 48mm equivalent focal length.
+/// The 48mm reference is the lens format used to normalize the
+/// effective-appearance grain population model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Metadata {
     pub sigma48: [f64; 3],
@@ -185,7 +188,7 @@ impl Population {
     }
 }
 impl Bank {
-    pub fn apply(
+    pub fn transform(
         &self,
         input: &ImageBuf,
         geometry: Geometry,

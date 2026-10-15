@@ -3,7 +3,7 @@ use super::*;
 
 /// Pre-built unsharp mask pass — owns the blur and the combine dispatch.
 ///
-/// CPU equivalent: `spektrafilm_model::optics::apply_unsharp_mask`.
+/// CPU equivalent: `spektrafilm_model::optics::transform_unsharp_mask`.
 /// The combine shader writes to a temp buffer (avoids same-pass
 /// aliasing); `encode_passes` then `copy_buffer_to_buffer`s the result
 /// back into buf_b so the rest of the pipeline doesn't need to know
@@ -83,7 +83,7 @@ pub(super) fn build_unsharp_state(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("unsharp_blur_h_bg"),
         layout: &blur_pipe_h.layout,
         entries: &[
@@ -105,7 +105,7 @@ pub(super) fn build_unsharp_state(
             }, // mid
         ],
     });
-    let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("unsharp_blur_v_bg"),
         layout: &blur_pipe_v.layout,
         entries: &[
@@ -130,8 +130,8 @@ pub(super) fn build_unsharp_state(
     let blur = BlurJob {
         _kernel_buf: kernel_buf,
         _params_buf: params_buf,
-        bg_h,
-        bg_v,
+        bind_group_h,
+        bind_group_v,
     };
 
     // ── Combine: out = (1+amount)*orig - amount*blurred
@@ -229,7 +229,7 @@ impl UnsharpState {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.blur_pipe_h.pipeline);
-            pass.set_bind_group(0, &self.blur.bg_h, &[]);
+            pass.set_bind_group(0, &self.blur.bind_group_h, &[]);
             pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
         }
         {
@@ -238,7 +238,7 @@ impl UnsharpState {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.blur_pipe_v.pipeline);
-            pass.set_bind_group(0, &self.blur.bg_v, &[]);
+            pass.set_bind_group(0, &self.blur.bind_group_v, &[]);
             pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
         }
         // Combine.

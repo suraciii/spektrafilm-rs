@@ -517,7 +517,7 @@ impl Pipeline {
             );
             return None;
         }
-        let resident = super::stages::StageObservation::new(backend, "film_chain");
+        let resident = crate::stages::StageObservation::new(backend, "film_chain");
         let result = resident.backend(backend).try_run_film_chain(&params);
         if let Some(context) = backend.observation_context() {
             if result.is_some() {
@@ -561,7 +561,7 @@ impl Pipeline {
         if self.params.magazine_print_color.active
             && self.params.magazine_print_color.strength > 0.0
         {
-            let _magazine = super::stages::StageObservation::cpu(
+            let _magazine = crate::stages::StageObservation::cpu(
                 backend,
                 "magazine_print_color",
                 spektrafilm_gpu::telemetry::CpuReason::BackendDefault,

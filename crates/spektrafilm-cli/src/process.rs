@@ -979,7 +979,7 @@ fn cmd_process(
             |_| {
                 use std::io::Write;
                 let buf: Vec<f64> = result.data.iter().map(|&v| v as f64).collect();
-                let bytes = bytemuck_cast_f64_to_bytes(&buf);
+                let bytes = f64_slice_as_bytes(&buf);
                 let mut f = std::fs::File::create(p)
                     .with_context(|| format!("creating raw_out file: {}", p.display()))?;
                 f.write_all(bytes)?;
@@ -996,7 +996,7 @@ fn cmd_process(
     Ok(())
 }
 
-fn bytemuck_cast_f64_to_bytes(v: &[f64]) -> &[u8] {
+fn f64_slice_as_bytes(v: &[f64]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of_val(v)) }
 }
 

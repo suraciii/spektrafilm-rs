@@ -80,10 +80,16 @@ fn document_entry(group: PresetGroup, path: Option<PathBuf>, preset: Preset) -> 
         preset: Some(preset),
     }
 }
-fn carrier(path: &Path) -> Result<bool, String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Carrier {
+    Toml,
+    Json,
+}
+
+fn carrier_kind(path: &Path) -> Result<Carrier, String> {
     match path.extension().and_then(|e| e.to_str()) {
-        Some("toml") => Ok(true),
-        Some("json") => Ok(false),
+        Some("toml") => Ok(Carrier::Toml),
+        Some("json") => Ok(Carrier::Json),
         _ => Err(format!("unsupported preset carrier {}", path.display())),
     }
 }
@@ -91,7 +97,7 @@ pub fn load_file(path: &Path) -> Result<Preset, String> {
     load_document(path).map_err(|error| format!("{}: {error}", path.display()))
 }
 fn load_document(path: &Path) -> Result<Preset, String> {
-    let is_toml = carrier(path)?;
+    let is_toml = carrier_kind(path)? == Carrier::Toml;
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     if is_toml {
         Preset::from_toml_str(&text)
@@ -153,7 +159,7 @@ impl PresetLibrary {
                 }
             };
             let path = item.path();
-            if carrier(&path).is_err() {
+            if carrier_kind(&path).is_err() {
                 continue;
             }
             let stem = path
@@ -328,11 +334,11 @@ impl PresetLibrary {
         }
         Ok(())
     }
-    pub fn save_new(&self, preset: &Preset, data_dir: &Path) -> Result<PathBuf, String> {
-        self.save_new_format(preset, data_dir, true)
+    pub fn save_unique(&self, preset: &Preset, data_dir: &Path) -> Result<PathBuf, String> {
+        self.save_unique_format(preset, data_dir, true)
     }
     /// Prefer the requested carrier, falling back to JSON for JSON-only sections.
-    pub fn save_new_format(
+    pub fn save_unique_format(
         &self,
         preset: &Preset,
         data_dir: &Path,
@@ -361,7 +367,7 @@ impl PresetLibrary {
         Self::validate_write(preset, data_dir)?;
         let _lock = self.lock_mutations(false)?;
         let path = self.user_path(&preset.name)?;
-        let text = if carrier(&path)? {
+        let text = if carrier_kind(&path)? == Carrier::Toml {
             preset.to_toml()?
         } else {
             preset.to_json()?
@@ -383,7 +389,7 @@ impl PresetLibrary {
             "{new_name}.{}",
             old.extension().unwrap().to_str().unwrap()
         ));
-        let text = if carrier(&old)? {
+        let text = if carrier_kind(&old)? == Carrier::Toml {
             preset.to_toml()?
         } else {
             preset.to_json()?
@@ -419,12 +425,11 @@ impl PresetLibrary {
             .and_then(|entry| entry.path);
         let toml = source_path
             .as_deref()
-            .map(carrier)
-            .transpose()?
+            .map(|p| carrier_kind(p).is_ok_and(|c| c == Carrier::Toml))
             .unwrap_or(true);
         let mut copy = preset.clone();
         copy.name = new_name.into();
-        self.save_new_format(&copy, data_dir, toml)
+        self.save_unique_format(&copy, data_dir, toml)
     }
     pub fn delete(&self, name: &str) -> Result<(), String> {
         let _lock = self.lock_mutations(false)?;
@@ -441,7 +446,7 @@ impl PresetLibrary {
         if let Some(name) = new_name {
             preset.name = name.into();
         }
-        self.save_new_format(&preset, data_dir, carrier(path)?)
+        self.save_unique_format(&preset, data_dir, carrier_kind(path)? == Carrier::Toml)
     }
     pub fn export(&self, preset: &Preset, path: &Path, data_dir: &Path) -> Result<PathBuf, String> {
         Self::validate_write(preset, data_dir)?;
@@ -470,7 +475,7 @@ impl PresetLibrary {
         } else {
             None
         };
-        let text = if carrier(&path)? {
+        let text = if carrier_kind(&path)? == Carrier::Toml {
             preset.to_toml()?
         } else {
             preset.to_json()?
@@ -702,7 +707,7 @@ mod tests {
         let temp = Temp::new();
         let library = PresetLibrary::new(temp.0.clone());
         let old = library
-            .save_new(&grain("Original", Value::from(0.5)), &data())
+            .save_unique(&grain("Original", Value::from(0.5)), &data())
             .unwrap();
         let new = library.rename("Original", "Renamed", &data()).unwrap();
         assert!(!old.exists());
@@ -724,10 +729,10 @@ mod tests {
         let operation = std::env::var("SPEKTRAFILM_MUTATION_OPERATION").unwrap();
         let result = match operation.as_str() {
             "create-toml" => {
-                library.save_new_format(&grain("Contended", Value::from(0.3)), &data(), true)
+                library.save_unique_format(&grain("Contended", Value::from(0.3)), &data(), true)
             }
             "create-json" => {
-                library.save_new_format(&grain("contended", Value::from(0.7)), &data(), false)
+                library.save_unique_format(&grain("contended", Value::from(0.7)), &data(), false)
             }
             "rename" => library.rename("Original", "Contended", &data()),
             _ => panic!("unknown mutation operation"),
@@ -753,7 +758,7 @@ mod tests {
         let library = PresetLibrary::new(temp.0.join("library"));
         let original = grain("Original", Value::from(0.5));
         if rename {
-            library.save_new(&original, &data()).unwrap();
+            library.save_unique(&original, &data()).unwrap();
         }
         let lock = library.lock_mutations(true).unwrap();
         let mut children = Vec::new();
@@ -843,7 +848,7 @@ mod tests {
         )
         .unwrap();
         let missing_data = temp.0.join("no-profiles");
-        let saved = library.save_new(&preset, &missing_data).unwrap();
+        let saved = library.save_unique(&preset, &missing_data).unwrap();
         let exported = library
             .export(&preset, &temp.0.join("export.json"), &missing_data)
             .unwrap();
@@ -856,7 +861,7 @@ mod tests {
         let temp = Temp::new();
         let library = PresetLibrary::new(temp.0.clone());
         let original = grain("Original", Value::from(0.5));
-        let path = library.save_new(&original, &data()).unwrap();
+        let path = library.save_unique(&original, &data()).unwrap();
         let old_bytes = std::fs::read(&path).unwrap();
         // Null is valid JSON but cannot replace this TOML document.
         assert!(
@@ -889,7 +894,7 @@ mod tests {
         let temp = Temp::new();
         let library = PresetLibrary::new(temp.0.join("library"));
         let original = grain("Original", Value::from(0.5));
-        let path = library.save_new(&original, &data()).unwrap();
+        let path = library.save_unique(&original, &data()).unwrap();
         assert!(
             library
                 .export(
@@ -965,15 +970,15 @@ mod tests {
         let temp = Temp::new();
         let library = PresetLibrary::new(temp.0.clone());
         let null = grain("Null", Value::Null);
-        let saved = library.save_new(&null, &data()).unwrap();
+        let saved = library.save_unique(&null, &data()).unwrap();
         assert_eq!(saved.extension().unwrap(), "json");
         assert_eq!(load_file(&saved).unwrap(), null);
         let finite = grain("Finite", Value::from(0.5));
-        library.save_new_format(&finite, &data(), false).unwrap();
+        library.save_unique_format(&finite, &data(), false).unwrap();
         let copied = library.duplicate(&finite, "Finite copy", &data()).unwrap();
         assert_eq!(copied.extension().unwrap(), "json");
         let default = library
-            .save_new(&grain("Default", Value::from(0.5)), &data())
+            .save_unique(&grain("Default", Value::from(0.5)), &data())
             .unwrap();
         assert_eq!(default.extension().unwrap(), "toml");
     }

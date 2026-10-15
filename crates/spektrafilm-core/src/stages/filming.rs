@@ -153,7 +153,7 @@ pub fn expose(
         // `Pipeline::new_with_spectral` before any stage runs; reaching
         // this point with an unknown family is a programming error.
         raw = if backend.is_gpu() {
-            spektrafilm_model::diffusion::apply_diffusion_filter_blur(
+            spektrafilm_model::diffusion::transform_diffusion_filter_blur(
                 &raw,
                 &dm,
                 pixel_size_um,
@@ -161,14 +161,14 @@ pub fn expose(
             )
             .expect("camera diffusion filter family validated at pipeline entry")
         } else {
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&raw, &dm, pixel_size_um)
+            spektrafilm_model::diffusion::transform_diffusion_filter_um(&raw, &dm, pixel_size_um)
                 .expect("camera diffusion filter family validated at pipeline entry")
         };
     }
 
     // Lens blur
     if params.camera.lens_blur_um > 0.0 {
-        raw = spektrafilm_model::optics::apply_gaussian_blur_um(
+        raw = spektrafilm_model::optics::transform_gaussian_blur_um(
             &raw,
             params.camera.lens_blur_um,
             pix_um,
@@ -179,7 +179,7 @@ pub fn expose(
     // Halation (on linear raw)
     let halation = &params.film_render.halation;
     if halation.active {
-        raw = spektrafilm_model::halation::apply_halation_um(
+        raw = spektrafilm_model::halation::transform_halation_um(
             &raw,
             pix_um,
             halation.scatter_amount,
@@ -247,7 +247,7 @@ pub fn develop(
     if dir.active {
         let t = Instant::now();
         let matrix = crate::chain_prep::dir_matrix(dir);
-        density_cmy = spektrafilm_model::couplers::apply_density_correction(
+        density_cmy = spektrafilm_model::couplers::transform_density_correction(
             &density_cmy,
             log_raw,
             pix_um,
@@ -287,7 +287,7 @@ pub fn develop(
         // `apply_grain` in the Python runtime.
         let particle_area_um2 = grain.particle_area_um2;
         if grain.sublayers_active {
-            // Python `apply_grain_to_density_layers`: sublayer densities
+            // Python `transform_grain_to_density_layers`: sublayer densities
             // come from interpolating the composite density against the
             // (normalized) composite curve, the layer maxima from the RAW
             // `density_curves_layers` tensor — upstream normalizes only
@@ -319,7 +319,7 @@ pub fn develop(
             );
             // Python multiplies the per-channel particle area by
             // `particle_scale` before applying the sublayer scale.
-            density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density_layers(
+            density_cmy = spektrafilm_model::grain::v1::transform_grain_to_density_layers(
                 &density_cmy_layers,
                 &density_max_layers,
                 density_cmy.width,
@@ -345,7 +345,7 @@ pub fn develop(
             );
         } else {
             let density_max = spektrafilm_model::density_curves::max_density_f64(norm_curves_f64);
-            density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density(
+            density_cmy = spektrafilm_model::grain::v1::transform_grain_to_density(
                 &density_cmy,
                 pixel_size_um,
                 particle_area_um2,
@@ -548,7 +548,7 @@ mod tests {
         }
 
         /// `n_sub_layers` is a composite-path control (upstream consumes it
-        /// only in `apply_grain_to_density`): 1 vs 3 sub-layers must differ
+        /// only in `transform_grain_to_density`): 1 vs 3 sub-layers must differ
         /// there, and must not touch the layered path.
         #[test]
         fn n_sub_layers_is_composite_only() {

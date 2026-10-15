@@ -4,7 +4,7 @@ use super::*;
 /// Pre-built DIR coupler passes — owns scratch buffers, kernel buffers,
 /// and bind groups so they live for the encoder.
 ///
-/// CPU equivalent: `spektrafilm_model::couplers::apply_density_correction`.
+/// CPU equivalent: `spektrafilm_model::couplers::transform_density_correction`.
 /// Encodes per-pixel matmul → two Gaussian blurs of the correction →
 /// weighted lerp via `add_scaled` → in-place subtract from log_raw via
 /// `add_scaled(scale=-1)` → re-interpolation of `density_curves_0`.
@@ -171,7 +171,7 @@ pub(super) fn build_dir_state(
                 contents: bytemuck::bytes_of(&params),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
-            let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind_group_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("dir_blur_h_{label}")),
                 layout: &blur_pipe_h.layout,
                 entries: &[
@@ -193,7 +193,7 @@ pub(super) fn build_dir_state(
                     }, // mid
                 ],
             });
-            let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind_group_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("dir_blur_v_{label}")),
                 layout: &blur_pipe_v.layout,
                 entries: &[
@@ -218,8 +218,8 @@ pub(super) fn build_dir_state(
             BlurJob {
                 _kernel_buf: kernel_buf,
                 _params_buf: params_buf,
-                bg_h,
-                bg_v,
+                bind_group_h,
+                bind_group_v,
             }
         };
     // Blur1: correction → buf_gaussian (gaussian_part)
@@ -497,7 +497,7 @@ impl DirState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_h.pipeline);
-                pass.set_bind_group(0, &job.bg_h, &[]);
+                pass.set_bind_group(0, &job.bind_group_h, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
             {
@@ -506,7 +506,7 @@ impl DirState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_v.pipeline);
-                pass.set_bind_group(0, &job.bg_v, &[]);
+                pass.set_bind_group(0, &job.bind_group_v, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
         };

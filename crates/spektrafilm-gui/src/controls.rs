@@ -209,13 +209,14 @@ pub(crate) fn show(
                 if positive_route && params.scanner.scan_output == "negative_to_positive" {
                     let methods = [
                         (PositiveInterpretation::Density, "density"),
+                        (PositiveInterpretation::DensityDirect, "density_direct"),
                         (PositiveInterpretation::Separable, "separable"),
                         (PositiveInterpretation::Coupled, "coupled"),
                         (PositiveInterpretation::DigitalReference, "Digital Reference (modeled)"),
                     ];
-                    let methods = &methods[..if params.workflow.route == "input > film > scan" { 4 } else { 3 }];
+                    let methods = &methods[..if params.workflow.route == "input > film > scan" { 5 } else { 4 }];
                     if enum_choice(ui, "Negative conversion method", &mut params.scanner.positive_interpretation, methods,
-                        "Density, separable and coupled reconstruct the selected film. Digital Reference uses a common modeled receiver and fixed positive response to preserve stock differences.") {
+                        "Density, separable and coupled reconstruct the selected film. Density_direct reads the record densities into the scanner response and keeps the film's own tone and colour visible. Digital Reference uses a common modeled receiver and fixed positive response to preserve stock differences.") {
                         if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference {
                             let defaults = spektrafilm_core::params::ScannerParams::default();
                             params.scanner.receiver_profile = ReceiverProfile::DigitalReference;

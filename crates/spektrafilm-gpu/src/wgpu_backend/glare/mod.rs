@@ -119,7 +119,7 @@ pub(super) fn build_glare_state(
             contents: bytemuck::bytes_of(&params),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("glare_blur_h_bg"),
             layout: &blur_pipe_h.layout,
             entries: &[
@@ -141,7 +141,7 @@ pub(super) fn build_glare_state(
                 }, // mid
             ],
         });
-        let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("glare_blur_v_bg"),
             layout: &blur_pipe_v.layout,
             entries: &[
@@ -166,8 +166,8 @@ pub(super) fn build_glare_state(
         Some(BlurJob {
             _kernel_buf: kernel_buf,
             _params_buf: params_buf,
-            bg_h,
-            bg_v,
+            bind_group_h,
+            bind_group_v,
         })
     } else {
         None
@@ -262,7 +262,7 @@ impl GlareState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_h.pipeline);
-                pass.set_bind_group(0, &b.bg_h, &[]);
+                pass.set_bind_group(0, &b.bind_group_h, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
             {
@@ -271,7 +271,7 @@ impl GlareState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_v.pipeline);
-                pass.set_bind_group(0, &b.bg_v, &[]);
+                pass.set_bind_group(0, &b.bind_group_v, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
         }

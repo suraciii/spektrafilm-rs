@@ -273,7 +273,7 @@ fn library_faults_conflicts_shadowing_and_management() {
     lib.scan().unwrap();
     assert!(!lib.directory().exists());
     let mut p = builtin_presets().remove(0);
-    lib.save_new(&p, &data()).unwrap();
+    lib.save_unique(&p, &data()).unwrap();
     let hit = lib.resolve_selector(&p.name).unwrap();
     assert_eq!(hit.group, Some(PresetGroup::User));
     assert!(hit.shadowed_builtin);
@@ -329,7 +329,7 @@ fn atomic_failure_retains_document() {
     let temp = Temp::new();
     let lib = PresetLibrary::new(temp.0.clone());
     let p = builtin_presets().remove(0);
-    let path = lib.save_new(&p, &data()).unwrap();
+    let path = lib.save_unique(&p, &data()).unwrap();
     let before = std::fs::read(&path).unwrap();
     let mut invalid = p.clone();
     invalid.name = "CON".into();

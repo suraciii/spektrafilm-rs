@@ -214,7 +214,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         let input = ImageBuf::from_data(width, height, data);
-        let output = bank.apply(
+        let output = bank.transform(
             &input,
             Geometry {
                 source_pitch_mm: [pitch_texels * 0.001; 2],

@@ -159,11 +159,11 @@ fn observe_sampler(
 
 /// Apply grain to a CMY density image.
 ///
-/// Port of Python `apply_grain_to_density` (the composite-density path,
+/// Port of Python `transform_grain_to_density` (the composite-density path,
 /// `grain.sublayers_active == false`). Upstream never passes `use_fast_stats`
 /// on this path, so it always samples the scipy regime.
 #[allow(clippy::too_many_arguments)]
-pub fn apply_grain_to_density(
+pub fn transform_grain_to_density(
     density_cmy: &ImageBuf,
     pixel_size_um: f64,
     particle_area_um2: f64,
@@ -349,7 +349,7 @@ fn apply_multiplicative_unsharp_mask(
 
 /// Apply layered (per-sublayer) grain to a CMY density image.
 ///
-/// Port of Python `apply_grain_to_density_layers` (the
+/// Port of Python `transform_grain_to_density_layers` (the
 /// `grain.sublayers_active == true` path). `density_cmy_layers` holds the
 /// per-sublayer densities from `interp_density_cmy_layers` as
 /// `[sublayer][channel]` planes and `density_max_layers` the per-sublayer
@@ -410,7 +410,7 @@ pub fn particle_area_from_rms_granularity(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn apply_grain_to_density_layers(
+pub fn transform_grain_to_density_layers(
     density_cmy_layers: &[[Vec<Scalar>; 3]; 3],
     density_max_layers: &[[f64; 3]; 3],
     width: u32,
@@ -591,7 +591,7 @@ mod tests {
         pixel_size_um: f64,
         use_fast_stats: bool,
     ) -> ImageBuf {
-        apply_grain_to_density_layers(
+        transform_grain_to_density_layers(
             &uniform_layers(d),
             &split_max_layers(),
             3,
@@ -728,7 +728,7 @@ mod tests {
         // decorrelates them.
         let layers = uniform_layers([0.9; 3]);
         let run = |monochrome: bool| {
-            apply_grain_to_density_layers(
+            transform_grain_to_density_layers(
                 &layers,
                 &split_max_layers(),
                 3,
@@ -768,7 +768,7 @@ mod tests {
             }
         }
         let run = |seed| {
-            apply_grain_to_density(
+            transform_grain_to_density(
                 &img,
                 12.0,
                 0.2,
