@@ -322,22 +322,34 @@ pub(crate) fn fotufilm_sublayer_shares(
     changed
 }
 
-pub(crate) fn scan_points(ui: &mut Ui, black: &mut [f64; 3], white: &mut [f64; 3]) -> bool {
-    point_tuple(
-        ui,
-        "film-scan black point",
-        black,
-        white,
-        true,
-        "scanner.black_point",
-    ) | point_tuple(
-        ui,
-        "film-scan white point",
-        white,
-        black,
-        false,
-        "scanner.white_point",
-    )
+pub(crate) fn scan_points(
+    ui: &mut Ui,
+    black: &mut [f64; 3],
+    white: &mut [f64; 3],
+    filter: &mut ControlFilter<'_>,
+) -> bool {
+    let mut changed = false;
+    if filter_matches(filter, "film-scan black point") {
+        changed |= point_tuple(
+            ui,
+            "film-scan black point",
+            black,
+            white,
+            true,
+            "scanner.black_point",
+        );
+    }
+    if filter_matches(filter, "film-scan white point") {
+        changed |= point_tuple(
+            ui,
+            "film-scan white point",
+            white,
+            black,
+            false,
+            "scanner.white_point",
+        );
+    }
+    changed
 }
 
 pub(crate) fn point_tuple(
