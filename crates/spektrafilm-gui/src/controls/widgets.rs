@@ -1,4 +1,5 @@
 //! Editors for the pinned experimental GUI sections.
+use super::{ControlFilter, filter_matches};
 use crate::editor_ranges;
 use crate::numeric::{numeric, numeric_field, numeric_field_validated};
 use egui::Ui;
@@ -125,83 +126,107 @@ pub(crate) fn diffusion(
     ui: &mut Ui,
     value: &mut DiffusionFilterParams,
     paths: &DiffusionPaths,
+    filter: &mut ControlFilter<'_>,
 ) -> bool {
-    let mut changed = toggle(
-        ui,
-        "active",
-        &mut value.active,
-        "Toggle the diffusion filter (Pro-Mist family).",
-    );
-    changed |= choice_tip(
-        ui,
-        "filter family",
-        &mut value.filter_family,
-        &["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"],
-        "PSF family. pro_mist / glimmerglass / cinebloom are transparent (energy-preserving); black_pro_mist absorbs a fraction of the deflected light, lifting shadows by reducing local contrast.",
-    );
-    changed |= param_numeric(
-        ui,
-        "strength",
-        &mut value.strength,
-        paths.strength,
-        "Commercial filter stop: 0, 1/8=0.125, 1/4=0.25, 1/2=0.5, 1, 2. Maps internally to the (p_s, p_a) deflected/absorbed photon fractions.",
-    );
-    changed |= param_numeric(
-        ui,
-        "spatial scale",
-        &mut value.spatial_scale,
-        paths.spatial_scale,
-        "Multiplier on the image-plane PSF widths (all per-group lambdas). Adjust for image-format / print-size differences.",
-    );
-    changed |= param_numeric(
-        ui,
-        "halo warmth",
-        &mut value.halo_warmth,
-        paths.halo_warmth,
-        "Additive offset on the family's halo warmth axis. Positive = warm outer halo / cool inner halo. Energy-preserving per channel. 0 = use family default.",
-    );
-    changed |= param_numeric(
-        ui,
-        "core intensity",
-        &mut value.core_intensity,
-        paths.core_intensity,
-        "Advanced. Multiplier on the core weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
-    );
-    changed |= param_numeric(
-        ui,
-        "core size",
-        &mut value.core_size,
-        paths.core_size,
-        "Advanced. Multiplier on the core lambda. 1.0 = use family default.",
-    );
-    changed |= param_numeric(
-        ui,
-        "halo intensity",
-        &mut value.halo_intensity,
-        paths.halo_intensity,
-        "Advanced. Multiplier on the halo weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
-    );
-    changed |= param_numeric(
-        ui,
-        "halo size",
-        &mut value.halo_size,
-        paths.halo_size,
-        "Advanced. Multiplier on the halo lambda. 1.0 = use family default.",
-    );
-    changed |= param_numeric(
-        ui,
-        "bloom intensity",
-        &mut value.bloom_intensity,
-        paths.bloom_intensity,
-        "Advanced. Multiplier on the bloom weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
-    );
-    changed |= param_numeric(
-        ui,
-        "bloom size",
-        &mut value.bloom_size,
-        paths.bloom_size,
-        "Advanced. Multiplier on the bloom lambda. 1.0 = use family default.",
-    );
+    let mut changed = false;
+    if filter_matches(filter, "active") {
+        changed |= toggle(
+            ui,
+            "active",
+            &mut value.active,
+            "Toggle the diffusion filter (Pro-Mist family).",
+        );
+    }
+    if filter_matches(filter, "filter family") {
+        changed |= choice_tip(
+            ui,
+            "filter family",
+            &mut value.filter_family,
+            &["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"],
+            "PSF family. pro_mist / glimmerglass / cinebloom are transparent (energy-preserving); black_pro_mist absorbs a fraction of the deflected light, lifting shadows by reducing local contrast.",
+        );
+    }
+    if filter_matches(filter, "strength") {
+        changed |= param_numeric(
+            ui,
+            "strength",
+            &mut value.strength,
+            paths.strength,
+            "Commercial filter stop: 0, 1/8=0.125, 1/4=0.25, 1/2=0.5, 1, 2. Maps internally to the (p_s, p_a) deflected/absorbed photon fractions.",
+        );
+    }
+    if filter_matches(filter, "spatial scale") {
+        changed |= param_numeric(
+            ui,
+            "spatial scale",
+            &mut value.spatial_scale,
+            paths.spatial_scale,
+            "Multiplier on the image-plane PSF widths (all per-group lambdas). Adjust for image-format / print-size differences.",
+        );
+    }
+    if filter_matches(filter, "halo warmth") {
+        changed |= param_numeric(
+            ui,
+            "halo warmth",
+            &mut value.halo_warmth,
+            paths.halo_warmth,
+            "Additive offset on the family's halo warmth axis. Positive = warm outer halo / cool inner halo. Energy-preserving per channel. 0 = use family default.",
+        );
+    }
+    if filter_matches(filter, "core intensity") {
+        changed |= param_numeric(
+            ui,
+            "core intensity",
+            &mut value.core_intensity,
+            paths.core_intensity,
+            "Advanced. Multiplier on the core weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
+        );
+    }
+    if filter_matches(filter, "core size") {
+        changed |= param_numeric(
+            ui,
+            "core size",
+            &mut value.core_size,
+            paths.core_size,
+            "Advanced. Multiplier on the core lambda. 1.0 = use family default.",
+        );
+    }
+    if filter_matches(filter, "halo intensity") {
+        changed |= param_numeric(
+            ui,
+            "halo intensity",
+            &mut value.halo_intensity,
+            paths.halo_intensity,
+            "Advanced. Multiplier on the halo weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
+        );
+    }
+    if filter_matches(filter, "halo size") {
+        changed |= param_numeric(
+            ui,
+            "halo size",
+            &mut value.halo_size,
+            paths.halo_size,
+            "Advanced. Multiplier on the halo lambda. 1.0 = use family default.",
+        );
+    }
+    if filter_matches(filter, "bloom intensity") {
+        changed |= param_numeric(
+            ui,
+            "bloom intensity",
+            &mut value.bloom_intensity,
+            paths.bloom_intensity,
+            "Advanced. Multiplier on the bloom weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
+        );
+    }
+    if filter_matches(filter, "bloom size") {
+        changed |= param_numeric(
+            ui,
+            "bloom size",
+            &mut value.bloom_size,
+            paths.bloom_size,
+            "Advanced. Multiplier on the bloom lambda. 1.0 = use family default.",
+        );
+    }
     changed
 }
 

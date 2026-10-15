@@ -128,6 +128,19 @@ The GUI must not present a selector that offers one choice.
 
 A parameter that no control can change and that no pipeline stage reads must not own a GUI section under the [preset section rule](../presets/design.md).
 
+## Control search
+
+The GUI must expose a search box at the top of the control panel. The search filters the controls of the parameter sections on the current tab by label.
+
+- The search box is a single-line text field, always visible above the tab content.
+- Filtering is case-insensitive substring match against the control label.
+- A control whose label does not match the filter must not appear while the filter is not empty.
+- A section with a matching control shows the section title and its matching controls. The section appears even when it is collapsed.
+- A section without a matching control must not appear.
+- The import, export, profile, viewer, and GUI-settings surfaces keep their normal layout.
+- The filter is transient UI state. It is not persisted and does not affect parameter values.
+- An empty filter must restore the normal panel layout, so no control is hidden by the search.
+
 ## Labels and surfaces
 
 A label must name the current product concept. A label must not name a removed implementation, a development tool, or a file format of a former dependency.
