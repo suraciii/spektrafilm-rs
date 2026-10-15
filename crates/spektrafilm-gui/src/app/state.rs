@@ -80,8 +80,10 @@ pub(crate) struct App {
     /// Transient control-search filter. Not persisted.
     pub(crate) filter: String,
     /// Labels the control sections rendered last, keyed by section name. The
-    /// control search hides a section whose cached labels do not match.
-    pub(crate) section_labels: std::collections::HashMap<String, Vec<&'static str>>,
+    /// control search hides a section whose cache was recorded by a filtered
+    /// render and does not match.
+    pub(crate) section_labels:
+        std::collections::HashMap<String, crate::controls::SectionLabelCache>,
     /// In-flight Convert controller action. The epoch drops results made stale
     /// by later parameter edits or a newer action.
     pub(crate) calibration_job: Option<CalibrationJob>,

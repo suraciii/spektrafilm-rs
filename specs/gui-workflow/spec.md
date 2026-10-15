@@ -135,9 +135,9 @@ The GUI must expose a search box at the top of the control panel. The search fil
 - The search box is a single-line text field, always visible above the tab content.
 - Filtering is case-insensitive substring match against the control label.
 - A control whose label does not match the filter must not appear while the filter is not empty.
-- A section with a matching control shows the section title and its matching controls. The section appears even when it is collapsed.
+- A section with a matching control shows the section title and its matching controls, also when the section or one of its sub-sections is collapsed.
 - A section without a matching control must not appear.
-- The import, export, profile, viewer, and GUI-settings surfaces keep their normal layout.
+- Surfaces outside the parameter sections — import file selection, export options, profiles, the viewer, and GUI settings — keep their normal layout.
 - The filter is transient UI state. It is not persisted and does not affect parameter values.
 - An empty filter must restore the normal panel layout, so no control is hidden by the search.
 

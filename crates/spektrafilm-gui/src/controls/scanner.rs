@@ -76,7 +76,14 @@ pub(crate) fn sections(
             if filter_matches(filter, "print illuminant (experimental)") {
                 flags.runtime_changed |= choice_tip(ui, "print illuminant (experimental)", &mut params.enlarger.illuminant, &["TH-KG3", "TH-KG3-L", "K75P", "T", "D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Print illuminant to simulate. Default is the bundled TH-KG3.");
             }
-            if filter_matches(filter, "preflash") {
+            if filter_matches_any(
+                filter,
+                &[
+                    "preflash exposure",
+                    "preflash y filter shift",
+                    "preflash m filter shift",
+                ],
+            ) {
                 preflash_controls(ui, params, flags, filter);
             }
         });
@@ -276,6 +283,8 @@ pub(crate) fn sections(
                 "Apply lens corrections",
             );
         }
-        flags.raw_reload |= ui.button("reprocess raw").clicked();
+        if filter_matches(filter, "reprocess raw") {
+            flags.raw_reload |= ui.button("reprocess raw").clicked();
+        }
     }
 }

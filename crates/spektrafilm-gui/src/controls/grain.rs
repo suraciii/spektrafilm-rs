@@ -29,14 +29,16 @@ pub(crate) fn sections(
                     .color(egui::Color32::GRAY),
                 );
             if grain.engine == GrainEngine::Procedural {
-                let mut profile = grain.v2_profile.clone();
-                egui::ComboBox::from_label("Grain Profiles").selected_text(&profile).show_ui(ui, |ui| {
-                    for name in PROFILE_NAMES { ui.selectable_value(&mut profile, (*name).to_owned(), name); }
-                    ui.selectable_value(&mut profile, "custom".to_owned(), "Custom");
-                });
-                if profile != grain.v2_profile {
-                    if profile == "custom" { grain.select_custom_grain_v2(); } else { grain.v2_profile = profile; grain.v2_amount = None; }
-                    flags.runtime_changed = true;
+                if filter_matches(filter, "grain profiles") {
+                    let mut profile = grain.v2_profile.clone();
+                    egui::ComboBox::from_label("Grain Profiles").selected_text(&profile).show_ui(ui, |ui| {
+                        for name in PROFILE_NAMES { ui.selectable_value(&mut profile, (*name).to_owned(), name); }
+                        ui.selectable_value(&mut profile, "custom".to_owned(), "Custom");
+                    });
+                    if profile != grain.v2_profile {
+                        if profile == "custom" { grain.select_custom_grain_v2(); } else { grain.v2_profile = profile; grain.v2_amount = None; }
+                        flags.runtime_changed = true;
+                    }
                 }
                 if grain.v2_profile == "custom" {
                     if filter_matches(filter, "film type") {
@@ -114,9 +116,8 @@ pub(crate) fn sections(
                     if filter_matches(filter, "radius span") {
                         flags.runtime_changed |= param_numeric(ui, "Radius span", &mut fotufilm.radius_span, "film_render.grain.fotufilm.radius_span", "Effective population radius span.");
                     }
-                    if filter_matches(filter, "sublayer shares") {
-                        flags.runtime_changed |= fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares);
-                    }
+                    flags.runtime_changed |=
+                        fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares, filter);
                     if filter_matches(filter, "coating density scale") {
                         flags.runtime_changed |= param_numeric(ui, "Coating density scale", &mut fotufilm.coating_density_scale, "film_render.grain.fotufilm.coating_density_scale", "Effective coating density scale.");
                     }

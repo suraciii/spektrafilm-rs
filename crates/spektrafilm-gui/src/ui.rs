@@ -517,16 +517,14 @@ impl App {
     /// Whether `section` rendered a control whose label matches the search
     /// filter.
     fn section_has_filter_match(&self, section: &str) -> bool {
-        let labels = self
-            .section_labels
-            .get(section)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        controls::cached_labels_match(&self.filter, labels)
+        match self.section_labels.get(section) {
+            Some(cache) => controls::cached_labels_match(&self.filter, cache),
+            None => true,
+        }
     }
 
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
-        let labels = self.section_labels.entry(section.to_owned()).or_default();
+        let cache = self.section_labels.entry(section.to_owned()).or_default();
         let changes = controls::show(
             ui,
             &mut self.params,
@@ -534,7 +532,7 @@ impl App {
             section,
             self.film_medium,
             &self.filter,
-            labels,
+            cache,
         );
         if changes.runtime_changed {
             self.mark_parameters_changed_invalidating_calibration();
@@ -702,11 +700,6 @@ impl App {
             self.params.io.input_cctf_decoding,
             self.params.settings.preview_max_size,
         );
-        ui.horizontal(|ui| {
-            let label = ui.label("Filter controls");
-            ui.text_edit_singleline(&mut self.filter)
-                .labelled_by(label.id);
-        });
         match self.gui_tab {
             GuiTab::Main => {
                 self.import_section(ui, false);
@@ -962,6 +955,12 @@ impl eframe::App for App {
                     }
                 });
                 ui.separator();
+                ui.horizontal(|ui| {
+                    let label = ui.label("Filter controls");
+                    ui.text_edit_singleline(&mut self.filter)
+                        .labelled_by(label.id);
+                });
+                ui.add_space(2.0);
                 let scroll_height = (ui.available_height() - 95.0).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
                     egui::ScrollArea::vertical()

@@ -17,7 +17,7 @@ fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         "Scanner",
         super::ScanMedium::Negative,
         "",
-        &mut Vec::new(),
+        &mut Default::default(),
     );
 }
 

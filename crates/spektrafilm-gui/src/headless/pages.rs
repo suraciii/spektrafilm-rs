@@ -628,6 +628,13 @@ fn control_search_filters_controls_and_hides_sections_without_matches() {
     assert!(h.query_by_label("upscale factor").is_none());
     assert!(h.query_by_label("exposure compensation ev").is_none());
 
+    // A group of controls between two route states is reachable by the full
+    // label of each member, not only by the shared prefix.
+    search(h, "preflash exposure");
+    assert!(h.query_by_label("preflash exposure").is_some());
+    assert!(h.query_by_label("preflash y filter shift").is_none());
+    assert!(h.query_by_label("print exposure").is_none());
+
     search(h, "");
     assert!(h.query_by_label("exposure compensation ev").is_some());
     // Clearing the search restores the collapsed layout.
@@ -670,4 +677,44 @@ fn control_search_reveals_a_collapsed_section_and_restores_it_when_cleared() {
     assert!(h.query_all_by_label("Engine").next().is_some());
     // The revealed sections collapse back behind their headers.
     assert!(h.query_by_label("halo warmth").is_none());
+}
+
+// specs/gui-workflow/spec.md#control-search: a control inside a collapsed
+// sub-section of a revealed section is found by its own label and does not
+// require the sub-section to be opened first.
+#[test]
+fn control_search_reveals_controls_of_a_collapsed_subsection() {
+    use spektrafilm_core::params::GrainEngine;
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "FILM");
+    h.state_mut().params.film_render.grain.engine = GrainEngine::Fotufilm;
+    h.step();
+
+    // The Fotufilm advanced sub-section is collapsed by default.
+    assert!(h.query_by_label("RMS density").is_none());
+    assert!(h.query_by_label("Softness").is_some());
+
+    search(h, "rms density");
+    assert!(h.query_all_by_label("Grain").next().is_some());
+    assert!(h.query_by_label("Fotufilm advanced").is_some());
+    assert!(h.query_by_label("RMS density").is_some());
+    // The sub-section's other controls do not match the filter.
+    assert!(h.query_by_label("Coating density scale").is_none());
+    assert!(h.query_by_label("Softness").is_none());
+
+    // Each share editor row matches by its own visible label.
+    search(h, "sublayer 2");
+    assert!(h.query_by_label("Sublayer 2").is_some());
+    assert!(h.query_by_label("Sublayer 1").is_none());
+    assert!(h.query_by_label("Sublayer 3").is_none());
+    assert!(
+        h.query_by_label_contains("Sublayer 4 (remainder)")
+            .is_none()
+    );
+
+    search(h, "");
+    // Clearing the search closes the sub-section again.
+    assert!(h.query_by_label("RMS density").is_none());
+    assert!(h.query_by_label("Softness").is_some());
 }

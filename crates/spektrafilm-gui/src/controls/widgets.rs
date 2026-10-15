@@ -283,10 +283,19 @@ pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
     .inner
 }
 
-pub(crate) fn fotufilm_sublayer_shares(ui: &mut Ui, shares: &mut [f64; 4]) -> bool {
-    ui.label("Sublayer shares").on_hover_text("Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive.");
+pub(crate) fn fotufilm_sublayer_shares(
+    ui: &mut Ui,
+    shares: &mut [f64; 4],
+    filter: &mut ControlFilter<'_>,
+) -> bool {
+    if filter_matches(filter, "sublayer shares") {
+        ui.label("Sublayer shares").on_hover_text("Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive.");
+    }
     let mut changed = false;
     for index in 0..3 {
+        if !filter_matches(filter, ["sublayer 1", "sublayer 2", "sublayer 3"][index]) {
+            continue;
+        }
         let other_sum: f64 = shares[..3]
             .iter()
             .enumerate()
@@ -307,7 +316,9 @@ pub(crate) fn fotufilm_sublayer_shares(ui: &mut Ui, shares: &mut [f64; 4]) -> bo
             changed = true;
         }
     }
-    ui.label(format!("Sublayer 4 (remainder): {:.6}", shares[3]));
+    if filter_matches(filter, "sublayer 4 (remainder)") {
+        ui.label(format!("Sublayer 4 (remainder): {:.6}", shares[3]));
+    }
     changed
 }
 

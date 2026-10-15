@@ -294,11 +294,29 @@ pub(crate) fn any_label_matches(filter: &str, labels: &[&str]) -> bool {
     labels.iter().any(|label| label_matches(filter, label))
 }
 
+/// The control labels a section reached in its last render, and whether that
+/// render ran with a non-empty filter. A miss hides the section only after a
+/// filtered render: an unfiltered render can skip the controls of a collapsed
+/// sub-section, so its label cache can be incomplete.
+#[derive(Default)]
+pub(crate) struct SectionLabelCache {
+    labels: Vec<&'static str>,
+    search_rendered: bool,
+}
+
+impl SectionLabelCache {
+    /// Whether `labels` came from a filtered render, so the control search may
+    /// hide the section on a cache miss.
+    fn complete_for_search(&self) -> bool {
+        self.search_rendered && !self.labels.is_empty()
+    }
+}
+
 /// Whether a section's cached control labels include a match for `filter`. An
-/// empty cache means the section has not finished a filtered render yet, so it
-/// reports a match and stays visible until the cache fills.
-pub(crate) fn cached_labels_match(filter: &str, labels: &[&str]) -> bool {
-    labels.is_empty() || any_label_matches(filter, labels)
+/// incomplete cache reports a match so the section renders until the cache
+/// fills.
+pub(crate) fn cached_labels_match(filter: &str, cache: &SectionLabelCache) -> bool {
+    filter.is_empty() || !cache.complete_for_search() || any_label_matches(filter, &cache.labels)
 }
 
 /// Control-search state threaded through one section render: the filter text,
@@ -308,22 +326,23 @@ pub(crate) fn cached_labels_match(filter: &str, labels: &[&str]) -> bool {
 pub(crate) struct ControlFilter<'a> {
     filter: &'a str,
     reached: Vec<&'static str>,
-    labels: &'a mut Vec<&'static str>,
+    cache: &'a mut SectionLabelCache,
 }
 
 impl<'a> ControlFilter<'a> {
-    pub(crate) fn new(filter: &'a str, labels: &'a mut Vec<&'static str>) -> Self {
+    pub(crate) fn new(filter: &'a str, cache: &'a mut SectionLabelCache) -> Self {
         Self {
             filter,
             reached: Vec::new(),
-            labels,
+            cache,
         }
     }
 
     /// Store the labels this render reached as the section's label cache.
     pub(crate) fn finish(&mut self) {
-        std::mem::swap(self.labels, &mut self.reached);
+        std::mem::swap(&mut self.cache.labels, &mut self.reached);
         self.reached.clear();
+        self.cache.search_rendered = self.active();
     }
 
     /// Whether the control search is active.
@@ -333,7 +352,7 @@ impl<'a> ControlFilter<'a> {
 
     /// Whether the filter matches a label the section rendered before.
     pub(crate) fn section_matches(&self) -> bool {
-        cached_labels_match(self.filter, self.labels)
+        cached_labels_match(self.filter, self.cache)
     }
 
     fn record(&mut self, label: &'static str) {
@@ -388,10 +407,10 @@ pub(crate) fn show(
     section: &str,
     film_medium: ScanMedium,
     filter: &str,
-    labels: &mut Vec<&'static str>,
+    cache: &mut SectionLabelCache,
 ) -> ChangeFlags {
     let mut flags = ChangeFlags::default();
-    let mut filter = ControlFilter::new(filter, labels);
+    let mut filter = ControlFilter::new(filter, cache);
     ui.push_id(("supplemental_controls", section), |ui| {
         render_sections(
             ui,
@@ -675,7 +694,7 @@ mod tests {
                         "Scanner",
                         medium,
                         "",
-                        &mut Vec::new(),
+                        &mut Default::default(),
                     );
                 });
             },
@@ -890,7 +909,7 @@ mod tests {
                             "Grain",
                             ScanMedium::Negative,
                             "",
-                            &mut Vec::new(),
+                            &mut Default::default(),
                         );
                     });
                 },
@@ -939,7 +958,7 @@ mod tests {
                             "Grain",
                             ScanMedium::Negative,
                             "",
-                            &mut Vec::new(),
+                            &mut Default::default(),
                         );
                     });
                 },
@@ -994,7 +1013,9 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        changed = fotufilm_sublayer_shares(ui, &mut shares);
+                        let mut cache = SectionLabelCache::default();
+                        let mut filter = ControlFilter::new("", &mut cache);
+                        changed = fotufilm_sublayer_shares(ui, &mut shares, &mut filter);
                     });
                 },
             );
