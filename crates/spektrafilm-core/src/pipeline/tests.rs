@@ -654,6 +654,7 @@ fn v3_final_crop_preserves_scanner_and_print_boundaries() {
                         &color_ref,
                         Some((3.1, 0.0)),
                         None,
+                        None,
                     )
                     .unwrap()
             };
@@ -903,6 +904,7 @@ fn fotufilm_dispatch_with_crop_and_optics_runs_once() {
             Some(Tap::RgbIn),
             Some(Tap::RgbOut),
             Some(&mut timings),
+            None,
         )
         .unwrap();
     assert!(timings.contains_key("grain_fotufilm_readout"));
@@ -1195,4 +1197,226 @@ fn output_mix_finished_rgb_keeps_magazine_only_in_result_branch() {
     for ((s, r), actual) in source.data.iter().zip(&complete.data).zip(&mixed.data) {
         assert_eq!(*actual, from_f64(0.5 * to_f64(*s) + 0.5 * to_f64(*r)));
     }
+}
+
+// --- Native stage evidence capture -----------------------------------------
+
+fn capture_manifest(dir: &std::path::Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(dir.join("stage-evidence.json")).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+fn stage<'a>(manifest: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+    manifest["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["id"] == id)
+        .unwrap()
+}
+
+#[test]
+fn stage_capture_preserves_output_and_publishes_the_executed_boundaries() {
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = true;
+    params.io.crop = true;
+    params.io.crop_size = [0.5, 0.25];
+    let pipeline = Pipeline::new(film, print, params);
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+    let image = ImageBuf::from_data(
+        8,
+        6,
+        (0..8 * 6 * 3)
+            .map(|i| from_f64((i % 7) as f64 * 0.1))
+            .collect(),
+    );
+    let expected = pipeline.process(image.clone(), &backend).unwrap();
+
+    let bundle = tempfile::tempdir().unwrap();
+    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
+    let captured = pipeline
+        .process_with_taps_timed(
+            image.clone(),
+            &backend,
+            None,
+            None,
+            None,
+            Some(&mut capture),
+        )
+        .unwrap();
+    assert_eq!(captured.data, expected.data, "capture changed the render");
+    capture.publish().unwrap();
+
+    let manifest = capture_manifest(bundle.path());
+    assert_eq!(manifest["execution_status"], "completed");
+    for id in [
+        "rgb_in",
+        "log_e_film",
+        "cmy_film",
+        "log_e_print",
+        "cmy_print",
+        "rgb_out",
+    ] {
+        assert_eq!(stage(&manifest, id)["availability"], "available", "{id}");
+    }
+    // Metering runs on the full source, before crop/resize; the intermediate
+    // grid is the cropped working geometry.
+    assert_eq!(
+        manifest["exposure"]["source_dimensions"],
+        serde_json::json!([8, 6])
+    );
+    assert_eq!(stage(&manifest, "rgb_in")["layout"]["width"], 8);
+    assert_ne!(stage(&manifest, "log_e_film")["layout"]["width"], 8);
+    assert_eq!(
+        manifest["print_normalization"]["value"],
+        pipeline.print_exposure_factor()
+    );
+    // The rgb_out buffer is byte-identical to the raw-out dump of the same
+    // output (pre-saving pipeline output).
+    let mut expected_bytes = Vec::new();
+    for &value in &expected.data {
+        expected_bytes.extend_from_slice(&to_f64(value).to_le_bytes());
+    }
+    assert_eq!(
+        std::fs::read(bundle.path().join("rgb_out.f64")).unwrap(),
+        expected_bytes
+    );
+}
+
+#[test]
+fn stage_capture_input_route_marks_film_and_print_stages_not_applicable() {
+    let mut pipeline = build();
+    pipeline.params.workflow.route = "input".into();
+    pipeline.params.film_render.grain.active = false;
+    pipeline.params.magazine_print_color.active = false;
+    pipeline.params.io.input_color_space = "ACES2065-1".into();
+    pipeline.params.io.output_color_space = "ACES2065-1".into();
+    pipeline.params.io.input_cctf_decoding = false;
+    pipeline.params.io.output_cctf_encoding = false;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+    let image = ImageBuf::from_data(8, 6, vec![from_f64(0.2); 8 * 6 * 3]);
+    let bundle = tempfile::tempdir().unwrap();
+    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
+    pipeline
+        .process_with_taps_timed(image, &backend, None, None, None, Some(&mut capture))
+        .unwrap();
+    capture.publish().unwrap();
+
+    let manifest = capture_manifest(bundle.path());
+    assert_eq!(manifest["execution_status"], "completed");
+    for id in ["log_e_film", "cmy_film"] {
+        assert_eq!(
+            stage(&manifest, id)["reason"],
+            "no_film_stage_on_route",
+            "{id}"
+        );
+    }
+    for id in ["log_e_print", "cmy_print"] {
+        assert_eq!(
+            stage(&manifest, id)["reason"],
+            "no_print_stage_on_route",
+            "{id}"
+        );
+    }
+    assert_eq!(manifest["exposure"]["availability"], "not_applicable");
+    assert_eq!(
+        manifest["exposure"]["reason"],
+        "no_exposure_application_on_route"
+    );
+    assert_eq!(
+        manifest["print_normalization"]["availability"],
+        "not_applicable"
+    );
+}
+
+#[test]
+fn stage_capture_scan_route_skips_print_stages_without_failing() {
+    let mut pipeline = build();
+    pipeline.params.workflow.route = "input > film > scan".into();
+    pipeline.params.io.scan_film = true;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+    let image = ImageBuf::from_data(8, 6, vec![from_f64(0.2); 8 * 6 * 3]);
+    let bundle = tempfile::tempdir().unwrap();
+    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
+    pipeline
+        .process_with_taps_timed(image, &backend, None, None, None, Some(&mut capture))
+        .unwrap();
+    capture.publish().unwrap();
+
+    let manifest = capture_manifest(bundle.path());
+    assert_eq!(manifest["execution_status"], "completed");
+    for id in ["log_e_print", "cmy_print"] {
+        assert_eq!(
+            stage(&manifest, id)["availability"],
+            "not_applicable",
+            "{id}"
+        );
+        assert_eq!(
+            stage(&manifest, id)["reason"],
+            "no_print_stage_on_route",
+            "{id}"
+        );
+    }
+    for id in ["rgb_in", "log_e_film", "cmy_film", "rgb_out"] {
+        assert_eq!(stage(&manifest, id)["availability"], "available", "{id}");
+    }
+}
+
+#[test]
+fn stage_capture_declares_film_frame_geometry_for_the_expanded_grain_grid() {
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > print > scan".into();
+    params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+    params.film_render.grain.active = true;
+    params.io.crop = true;
+    params.io.crop_size = [0.5, 0.5];
+    params.enlarger.lens_blur = 1.25;
+    params.scanner.lens_blur = 1.0;
+    params.random_seed = 41;
+    let pipeline = Pipeline::new(film, print, params);
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+    let image = ImageBuf::from_data(12, 8, vec![from_f64(0.2); 12 * 8 * 3]);
+    let bundle = tempfile::tempdir().unwrap();
+    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
+    let output = pipeline
+        .process_with_taps_timed(image, &backend, None, None, None, Some(&mut capture))
+        .unwrap();
+    capture.publish().unwrap();
+
+    let manifest = capture_manifest(bundle.path());
+    assert_eq!(manifest["execution_status"], "completed");
+    // The delivered crop is extracted after the spatial effects run on the
+    // full-film frame: intermediates must say so instead of inheriting the
+    // output grid silently.
+    assert_eq!(
+        stage(&manifest, "log_e_film")["geometry"]["coordinate_space"],
+        "working_pixels"
+    );
+    for id in ["cmy_film", "log_e_print", "cmy_print"] {
+        assert_eq!(
+            stage(&manifest, id)["geometry"]["coordinate_space"],
+            "film_frame_pixels",
+            "{id}"
+        );
+    }
+    assert_eq!(
+        stage(&manifest, "rgb_out")["geometry"]["coordinate_space"],
+        "output_pixels"
+    );
+    assert_eq!(stage(&manifest, "rgb_out")["layout"]["width"], output.width);
+    assert!(
+        stage(&manifest, "cmy_film")["layout"]["width"]
+            .as_u64()
+            .unwrap()
+            > stage(&manifest, "rgb_out")["layout"]["width"]
+                .as_u64()
+                .unwrap(),
+        "the film-frame grid must not be the delivered grid"
+    );
 }

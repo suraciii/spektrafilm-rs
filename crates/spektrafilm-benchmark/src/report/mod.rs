@@ -12,12 +12,23 @@ use std::{
 };
 
 mod assets;
+mod diagnostic;
+mod display;
 mod escape;
 mod html;
 
 pub(crate) use assets::*;
 pub(crate) use escape::*;
 pub(crate) use html::*;
+
+/// Review layout selection. The standard layout stays the default; the
+/// diagnostic layout is an explicit opt-in presentation of the same retained
+/// evidence. Layout selection never changes measurements or acceptance.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Layout {
+    Standard,
+    Diagnostic,
+}
 
 /// Publish a self-contained offline report from a validated comparison directory.
 ///
@@ -28,10 +39,22 @@ pub(crate) use html::*;
 /// absent); version comparisons use `baseline/candidate`. Unknown identities,
 /// duplicate/unknown keys, empty values and malformed encoding show an alert and
 /// hide the case panels until a valid link or case selection is chosen.
-pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
+///
+/// `focus_regions` selects exact region identities for the diagnostic layout.
+/// Request order is preserved; duplicates and unknown identities fail with an
+/// actionable error before any destination is created. A focus selection with
+/// the standard layout fails instead of being ignored. The returned value is
+/// the authoritative command result, including the published artifact and
+/// manifest identities.
+pub fn build_report(
+    comparison: &Path,
+    out: &Path,
+    layout: Layout,
+    focus_regions: &[String],
+) -> Result<Value> {
     let root = crate::documents::normalize_path(out)?;
     let preexisting = fs::symlink_metadata(out).is_ok();
-    let result = build_report_impl(comparison, out);
+    let result = build_report_impl(comparison, out, layout, focus_regions);
     if preexisting {
         result
     } else {
@@ -39,7 +62,12 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
     }
 }
 
-fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
+fn build_report_impl(
+    comparison: &Path,
+    out: &Path,
+    layout: Layout,
+    focus_regions: &[String],
+) -> Result<Value> {
     if fs::symlink_metadata(out).is_ok() {
         return Err(destination_exists(out));
     }
@@ -54,6 +82,7 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
         ));
     }
     validate_generated_document("comparison", &comparison, &root)?;
+    let focus = diagnostic::FocusSelection::new(layout, focus_regions, &comparison)?;
     let cases = comparison["cases"]
         .as_array()
         .ok_or_else(|| Error::new("invalid_document", "comparison must contain a cases array"))?;
@@ -73,6 +102,20 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
             "case result must be an object",
         ));
     }
+    let body = match layout {
+        Layout::Standard => standard_html(&comparison, &ordered, &mut assets, out)?,
+        Layout::Diagnostic => diagnostic::page(&comparison, &ordered, &mut assets, out, &focus)?,
+    };
+    publish(out, &comparison, &assets, body, layout, focus_regions)
+}
+
+fn standard_html(
+    comparison: &Value,
+    cases: &[&Value],
+    assets: &mut Assets,
+    out: &Path,
+) -> Result<String> {
+    let ordered: Vec<&Value> = cases.to_vec();
     let mut html = format!(
         "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'\"><title>SpektraFilm benchmark review</title><style>{CSS}</style><body><h1>SpektraFilm 人工审查</h1><p>选择场景查看 A/B；细节、差异图和完整数据按需展开。</p><nav class=\"case-nav\" aria-label=\"案例与种子\"><label>案例 / 种子 <select data-case-nav>"
     );
@@ -159,7 +202,7 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
         } else {
             pairs.iter().map(|pair| pair_case(case, pair)).collect()
         };
-        let default = get(&comparison, "default_pair", "input");
+        let default = get(comparison, "default_pair", "input");
         let default = if pairs.iter().any(|pair| pair["id"] == default) {
             default
         } else {
@@ -204,7 +247,7 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
             html.push_str(&format!("<div class=\"image-review\" data-pair-panel=\"pair-{index}-{pair_index}\" data-pair-id=\"{}\" data-default-pair=\"{}\"{}>", escape(pair_id), pair_id == default, if pair_id == default { "" } else { " hidden" }));
             let mut images = BTreeMap::new();
             for role in ["source", "baseline", "candidate", "reference", "difference"] {
-                let reference = role_reference(case, role, &assets);
+                let reference = role_reference(case, role, assets);
                 let mut image = assets.image(&reference)?;
                 if let Some(entry) = image.as_mut()
                     && let Some(preview) = entry.get("fit_preview").cloned()
@@ -357,7 +400,7 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
                     (b, "right_geometry", labels.1),
                 ] {
                     let locator_rect = if let Some(geometry) = region.get(geometry_key) {
-                        geometry_rectangle(geometry, &mut assets)?
+                        geometry_rectangle(geometry, assets)?
                     } else if case["pixel_aligned"] != false {
                         rect
                     } else {
@@ -380,7 +423,7 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
                     if case.get("pair_id").is_some() {
                         region["pair_id"] = case["pair_id"].clone();
                     }
-                    let reference = role_reference(&region, role, &assets);
+                    let reference = role_reference(&region, role, assets);
                     let retained = assets.image(&reference)?.filter(|e| {
                         !matches!(
                             Path::new(get(e, "path", ""))
@@ -398,7 +441,7 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
                             "right_geometry"
                         };
                         let crop_rect = if let Some(geometry) = region.get(geometry_key) {
-                            geometry_rectangle(geometry, &mut assets)?
+                            geometry_rectangle(geometry, assets)?
                         } else if case["pixel_aligned"] != false {
                             rect
                         } else {
@@ -476,7 +519,7 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
                 case.get("reason").map(text).unwrap_or_default()
             ));
             if case.get("pair_id").is_none() {
-                html.push_str(&change_summary(case, &comparison));
+                html.push_str(&change_summary(case, comparison));
             } else {
                 html.push_str(&folded("比较角色、对应关系与适用范围", case));
             }
@@ -565,6 +608,18 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
         }
         html.push_str("</section>");
     }
+    Ok(html)
+}
+
+fn publish(
+    out: &Path,
+    comparison: &Value,
+    assets: &Assets,
+    body: String,
+    layout: Layout,
+    focus_regions: &[String],
+) -> Result<Value> {
+    let mut html = body;
     let omissions: Vec<_> = assets
         .manifest
         .iter()
@@ -583,12 +638,22 @@ fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
     ));
     html.push_str(&format!("<p><a href=\"comparison.json\">比较快照</a> · <a href=\"report.json\">相对 artifact manifest</a></p><script>{JS}</script></body></html>"));
     fs::write(out.join("index.html"), html)?;
-    assets.manifest.push(json!({"path":"index.html","sha256":sha256_file(&out.join("index.html"))?,"role":"report","media_type":"text/html","availability":"available"}));
+    let mut manifest = assets.manifest.clone();
+    manifest.push(json!({"path":"index.html","sha256":sha256_file(&out.join("index.html"))?,"role":"report","media_type":"text/html","availability":"available"}));
     dump(
         &out.join("report.json"),
-        &json!({"schema_version":1,"command":"report","execution_status":"completed","comparison_id":comparison.get("id"),"artifact":"index.html","artifacts":assets.manifest}),
+        &json!({"schema_version":1,"command":"report","execution_status":"completed","comparison_id":comparison.get("id"),"artifact":"index.html","artifacts":manifest}),
     )?;
-    Ok(())
+    Ok(json!({
+        "schema_version":1,
+        "command":"report",
+        "execution_status":"completed",
+        "artifact":crate::documents::normalize_path(out)?.join("index.html"),
+        "manifest":crate::documents::normalize_path(out)?.join("report.json"),
+        "comparison_id":comparison.get("id"),
+        "layout":if layout == Layout::Diagnostic { "diagnostic" } else { "standard" },
+        "focus_regions":focus_regions,
+    }))
 }
 
 #[cfg(test)]

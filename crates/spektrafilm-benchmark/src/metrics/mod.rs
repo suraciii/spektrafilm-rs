@@ -694,53 +694,10 @@ pub fn metric_supported_with_protocol(
         .or_else(|| metric.strip_suffix(".seed_std"))
         .unwrap_or(metric);
     if metric.starts_with("reference.") {
-        let Some(base) = ["baseline_distance", "candidate_distance", "distance_delta"]
-            .iter()
-            .find_map(|side| metric.strip_suffix(&format!(".{side}")))
-        else {
+        let Some(base) = crate::references::metric_base_id(metric) else {
             return false;
         };
-        let reference = &case["reference"];
-        return match reference["scope"].as_str() {
-            Some("aligned_scene") => matches!(
-                base,
-                "reference.delta_e00.median"
-                    | "reference.delta_e00.p95"
-                    | "reference.delta_e00.p99"
-                    | "reference.delta_e00.max"
-                    | "reference.tone_l_star.q05"
-                    | "reference.tone_l_star.q25"
-                    | "reference.tone_l_star.q50"
-                    | "reference.tone_l_star.q75"
-                    | "reference.tone_l_star.q95"
-                    | "reference.chroma_ab.median"
-            ),
-            Some("regional") => {
-                reference["regions"].as_array().is_some_and(|regions| {
-                    regions
-                        .iter()
-                        .any(|region| region["id"].as_str() == Some(region_id))
-                }) && matches!(
-                    base,
-                    "reference.patch_delta_e00"
-                        | "reference.distribution_l_star"
-                        | "reference.patch_chroma_ab"
-                )
-            }
-            Some("material") => {
-                region_id == "full_image"
-                    && base
-                        .strip_prefix("reference.material.")
-                        .is_some_and(|curve| {
-                            case["probe_response"]["curves"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .any(|row| row["id"].as_str() == Some(curve))
-                        })
-            }
-            _ => false,
-        };
+        return crate::references::metric_supported(base, case, region_id, protocol);
     }
     metric_definitions(case, region_id, protocol).contains(metric)
 }
@@ -750,6 +707,50 @@ mod tests {
     use super::families::mtf50;
     use super::*;
     use std::{fs, path::PathBuf};
+
+    #[test]
+    fn policy_reference_relation_only_accepts_the_measured_pair_anchor() {
+        let case = json!({
+            "reference":{"scope":"regional","regions":[{"id":"a"},{"id":"b"}]},
+            "region_pairs":[{"id":"ab","left":"a","right":"b"}]
+        });
+        let protocol = json!({"color":{"hue_chroma_floor":2.0}});
+        assert!(metric_supported_with_protocol(
+            "reference.pair_separation_delta_e00.reference_relation",
+            &case,
+            "ab",
+            &protocol
+        ));
+        for (base, region) in [
+            ("reference.patch_delta_e00", "a"),
+            ("reference.patch_hue_shift", "a"),
+            ("reference.pair_separation_change", "ab"),
+            ("reference.pair_separation_departure", "ab"),
+        ] {
+            assert!(
+                !metric_supported_with_protocol(
+                    &format!("{base}.reference_relation"),
+                    &case,
+                    region,
+                    &protocol
+                ),
+                "unmeasured relation must not become a valid policy selector: {base}"
+            );
+            for side in [
+                "baseline_distance",
+                "candidate_distance",
+                "distance_delta",
+                "simulation_distance",
+            ] {
+                assert!(metric_supported_with_protocol(
+                    &format!("{base}.{side}"),
+                    &case,
+                    region,
+                    &protocol
+                ));
+            }
+        }
+    }
     fn image(value: f64, width: usize, height: usize) -> ImageData {
         ImageData {
             samples: vec![[value; 3]; width * height],

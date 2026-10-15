@@ -146,7 +146,7 @@ fn retained_run(root: &Path, value: f64, masked: bool) {
         "source_raw_metadata",
         json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little","color_space":"ACES2065-1","transfer":"linear"}),
     );
-    let row = json!({"case_id":"probe","seed":0,"status":"completed","input":input,"raw":raw,"raw_metadata":metadata,"source_raw":source_raw,"source_raw_metadata":source_metadata,"source_resolved":source_resolved,"source_diagnostics":source_diagnostics,"source_master":master,"source_dimensions":[4,4],"source_geometry":{"published_dimensions":[4,4]},"simulation_geometry":{"published_dimensions":[4,4]},"source_pixel_aligned":true,"master":master,"diagnostics":diagnostics,"resolved":resolved,"stdout":stdout,"stderr":stderr,"dimensions":[4,4],"execution":{"backend_selected":"cpu","path":"cpu"},"precision":{"host_precision":"f64"}});
+    let row = json!({"case_id":"probe","seed":0,"status":"completed","input":input,"raw":raw,"raw_metadata":metadata,"source_raw":source_raw,"source_raw_metadata":source_metadata,"source_resolved":source_resolved,"source_diagnostics":source_diagnostics,"source_master":master,"source_dimensions":[4,4],"source_geometry":{"published_dimensions":[4,4]},"simulation_geometry":{"published_dimensions":[4,4]},"source_pixel_aligned":true,"master":master,"diagnostics":diagnostics,"resolved":resolved,"stdout":stdout,"stderr":stderr,"dimensions":[4,4],"execution":{"backend_selected":"cpu","path":"cpu"},"precision":{"host_precision":"f64"},"command":["renderer","process","input.png","--output","master.tif","--raw-out","master.f64","--diagnostics","diagnostics.json","--seed","0"],"source_command":["renderer","process","input.png","--route","input","--output","source.tif","--raw-out","source.f64","--diagnostics","source-diagnostics.json","--seed","0"]});
     save_manifest(
         root,
         "run.json",
@@ -352,7 +352,7 @@ fn single_input_comparison_uses_real_retained_source_offline() {
         pair["source_diagnostics"]
     );
     let report_root = temp.path().join("report");
-    report::build_report(&out, &report_root).unwrap();
+    report::build_report(&out, &report_root, report::Layout::Standard, &[]).unwrap();
     fs::remove_dir_all(&out).unwrap();
     let snapshot = documents::load_json_document(&report_root.join("comparison.json")).unwrap();
     let report_manifest = documents::load_json_document(&report_root.join("report.json")).unwrap();
@@ -444,7 +444,13 @@ fn visual_and_unavailable_reference_findings_publish_inspectable_evidence() {
             }
         }
         fs::remove_dir_all(&run).unwrap();
-        report::build_report(&out, &temp.path().join("report")).unwrap();
+        report::build_report(
+            &out,
+            &temp.path().join("report"),
+            report::Layout::Standard,
+            &[],
+        )
+        .unwrap();
     }
 }
 
@@ -478,7 +484,7 @@ fn tone_contaminated_reference_map_remains_unavailable_in_offline_report() {
     );
     fs::remove_dir_all(&run).unwrap();
     let report_root = temp.path().join("report");
-    report::build_report(&out, &report_root).unwrap();
+    report::build_report(&out, &report_root, report::Layout::Standard, &[]).unwrap();
     fs::remove_dir_all(&out).unwrap();
     let report_manifest = documents::load_json_document(&report_root.join("report.json")).unwrap();
     let retained = report_manifest["artifacts"]
@@ -574,7 +580,8 @@ fn report_rejects_reference_scope_and_alignment_contradictions() {
         }
         save_manifest(&out, "comparison.json", manifest);
         let report_root = temp.path().join(format!("rejected-report-{index}"));
-        let error = report::build_report(&out, &report_root).unwrap_err();
+        let error =
+            report::build_report(&out, &report_root, report::Layout::Standard, &[]).unwrap_err();
         assert_eq!(error.code, expected);
     }
 }

@@ -42,6 +42,20 @@ CIEDE2000 must remain a color-difference measurement. Its lightness, chroma, and
 
 Color-card references must compare robust interior patch values with declared patch masks. The protocol must exclude patch edges, glare, and invalid correspondence. Patch measurements must not be substituted for a full-scene claim.
 
+### Regional color diagnosis
+
+Regional color diagnostics must use independent medians of the bounded-display Lab channels within the frozen interior masks. They must retain each side's Lab center, chroma, sample count, and geometry. Reference processing eligibility must apply before emitting any reference distance. Unknown grading or histogram matching must not become an eligible color target through a diagnostic layout or native-stage capture.
+
+`reference.patch_delta_e00_equal_l` must replace only the model center's L* with the reference center's L* before computing CIEDE2000. It must preserve both a*/b* pairs. This diagnostic must not change an image, estimate an exposure correction, or claim an additive component of ordinary CIEDE2000.
+
+Hue diagnostics must use the authored `color.hue_chroma_floor`. Hue must be `atan2(b*, a*)` in degrees. `reference.patch_hue_shift` must mean model minus reference on the shortest circular interval `(-180, 180]`. `reference.patch_hue_error` must report its absolute value. Both centers must meet the chroma floor; a center below it must produce `below_chroma_floor`, not zero hue error. Omission of the floor must produce `hue_diagnostics_not_selected`.
+
+For each authored region pair, `reference.pair_separation_delta_e00` must retain CIEDE2000 between the two model centers. Its `reference_relation` observation must retain the corresponding reference separation. `reference.pair_separation_change` must report signed model-minus-reference separation. `reference.pair_separation_departure` must report the absolute departure from the reference separation. A small model separation does not establish that either patch has the correct color. Pair diagnostics must identify both region endpoints and must not claim pixel correspondence between the images.
+
+Version measurements must use the existing `baseline_distance`, `candidate_distance`, and `distance_delta` suffixes. Single-run measurements must use `simulation_distance`. A version `distance_delta` must remain the arithmetic candidate-minus-baseline observation, including for signed hue shifts; it is not a separately wrapped candidate-to-baseline hue angle.
+
+Whole-chart evidence must retain all eligible regions and identify every summary population by its member identities and count. Color, neutral, and endpoint populations must remain separate. Tail summaries and worst regressions must remain visible beside focus-region improvements. This evidence must not create an automatic all-patch nonregression requirement or a universal acceptance score.
+
 ## Tone and contrast
 
 Controlled tone probes must identify their input exposure values in stops or log exposure. The response must preserve the input-to-output curve in linear luminance and Lab lightness. It must retain baseline and candidate response curves and signed differences.

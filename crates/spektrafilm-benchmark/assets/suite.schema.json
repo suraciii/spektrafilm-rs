@@ -18,6 +18,19 @@
           "type": "number",
           "exclusiveMinimum": 0
         },
+        "color": {
+          "type": "object",
+          "properties": {
+            "hue_chroma_floor": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "hue_chroma_floor"
+          ],
+          "additionalProperties": false
+        },
         "region_sampling_scales": {
           "type": "array",
           "items": {
@@ -514,6 +527,39 @@
                 "role",
                 "geometry",
                 "measurements"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0,
+            "uniqueItems": false
+          },
+          "region_pairs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "left": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+                },
+                "right": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "left",
+                "right"
               ],
               "additionalProperties": false
             },

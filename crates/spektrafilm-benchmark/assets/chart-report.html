@@ -1,0 +1,187 @@
+<header class="report-header">
+  <h1 id="chart-report-title">色卡视觉检查报告</h1>
+  <p class="report-description" id="chart-report-description"></p>
+  <p class="small">离线目视对照：显示副本按输入声明转换为 sRGB；色块窗口按声明网格固定裁切，不做曝光对齐、颜色拟合、测量或验收判定。</p>
+</header>
+<p class="hash-error" id="chart-hash-error" role="alert" hidden></p>
+<main>
+  <section class="card" aria-labelledby="chart-pair-heading">
+    <h2 id="chart-pair-heading">图像对照</h2>
+    <div class="controls">
+      <label class="field">左侧图像
+        <select id="chart-left-select" data-left-select></select>
+      </label>
+      <button type="button" class="swap" id="chart-swap" data-swap>交换左右</button>
+      <label class="field">右侧图像
+        <select id="chart-right-select" data-right-select></select>
+      </label>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-card">
+        <h3>左侧</h3>
+        <p><strong data-meta-label="left"></strong></p>
+        <p class="small" data-meta-chart="left"></p>
+        <p data-meta-description="left"></p>
+        <p class="small" data-meta-color="left"></p>
+      </div>
+      <div class="meta-card">
+        <h3>右侧</h3>
+        <p><strong data-meta-label="right"></strong></p>
+        <p class="small" data-meta-chart="right"></p>
+        <p data-meta-description="right"></p>
+        <p class="small" data-meta-color="right"></p>
+      </div>
+    </div>
+    <p class="warning" data-chart-warning hidden></p>
+  </section>
+
+  <section class="card viewer" aria-labelledby="chart-view-heading" data-viewer>
+    <h2 id="chart-view-heading">查看</h2>
+    <div class="controls">
+      <div class="button-group" role="group" aria-label="显示模式">
+        <button type="button" data-view-mode="whole" aria-pressed="true">整图对照</button>
+        <button type="button" data-view-mode="patch" aria-pressed="false">色块对照</button>
+      </div>
+      <label class="field">缩放
+        <select id="chart-zoom" data-zoom>
+          <option value="fit">适应窗口</option>
+          <option value="native">原始像素</option>
+          <option value="x2">2 倍</option>
+          <option value="x4">4 倍</option>
+          <option value="x8">8 倍</option>
+          <option value="x16">16 倍</option>
+        </select>
+      </label>
+      <button type="button" data-fullscreen>全屏</button>
+    </div>
+    <p class="small zoom-label" data-zoom-label></p>
+
+    <div data-whole-panel>
+      <div class="controls">
+        <div class="button-group" role="group" aria-label="整图排布方式">
+          <button type="button" data-layout="side" aria-pressed="true">并排</button>
+          <button type="button" data-layout="split" aria-pressed="false">分割</button>
+          <button type="button" data-layout="blink" aria-pressed="false">交替</button>
+        </div>
+      </div>
+      <div class="panes" data-whole-panes>
+        <figure class="pane">
+          <figcaption>左侧 · <span data-caption="left"></span></figcaption>
+          <div class="viewport" data-viewport="left" tabindex="0" aria-label="左侧整图视口；可拖动或滚动查看">
+            <div class="canvas" data-canvas="left"><img data-image="left" alt=""></div>
+          </div>
+        </figure>
+        <figure class="pane">
+          <figcaption>右侧 · <span data-caption="right"></span></figcaption>
+          <div class="viewport" data-viewport="right" tabindex="0" aria-label="右侧整图视口；可拖动或滚动查看">
+            <div class="canvas" data-canvas="right"><img data-image="right" alt=""></div>
+          </div>
+        </figure>
+      </div>
+      <div data-split-panel hidden>
+        <div class="viewport split-viewport" data-split-viewport tabindex="0" aria-label="分割对照视口；用下方滑块调整分割位置">
+          <div class="canvas" data-split-canvas>
+            <img data-split-image="left" alt="">
+            <img data-split-image="right" alt="">
+            <div class="split-divider" data-split-divider></div>
+          </div>
+        </div>
+        <div class="controls">
+          <label class="field">分割位置
+            <input type="range" id="chart-split-range" data-split-range min="0" max="100" step="1" value="50">
+          </label>
+          <span class="small" data-split-label></span>
+        </div>
+      </div>
+      <div data-blink-panel hidden>
+        <div class="controls">
+          <button type="button" data-blink>交替显示：当前左侧</button>
+          <span class="small" data-blink-label></span>
+        </div>
+        <div class="viewport" data-blink-viewport tabindex="0" aria-label="交替对照视口">
+          <div class="canvas" data-blink-canvas>
+            <img data-blink-image="left" alt="">
+            <img data-blink-image="right" alt="">
+          </div>
+        </div>
+      </div>
+      <p class="small" data-whole-note></p>
+    </div>
+
+    <div data-patch-panel hidden>
+      <div class="controls" data-patch-shared-controls>
+        <label class="field">色块窗口
+          <select id="chart-patch-select" data-patch-select></select>
+        </label>
+        <span class="small">同一色卡：左右同步选择，可用 ←/→ 切换色块。</span>
+      </div>
+      <div class="controls" data-patch-split-controls hidden>
+        <label class="field">左侧色块
+          <select id="chart-patch-left-select" data-patch-left-select></select>
+        </label>
+        <label class="field">右侧色块
+          <select id="chart-patch-right-select" data-patch-right-select></select>
+        </label>
+      </div>
+      <div class="panes">
+        <figure class="pane">
+          <figcaption>
+            <strong data-patch-label="left"></strong>
+            <span class="small" data-patch-rect="left"></span>
+          </figcaption>
+          <div class="viewport patch-viewport" data-patch-viewport="left" tabindex="0" aria-label="左侧色块视口；可拖动或滚动查看">
+            <div class="canvas crop" data-patch-canvas="left"><img data-patch-image="left" alt=""></div>
+          </div>
+          <figure class="locator">
+            <div class="locator-image">
+              <img data-locator-image="left" alt="">
+              <span class="rectangle" data-locator-rect="left"></span>
+            </div>
+            <figcaption class="small" data-locator-caption="left"></figcaption>
+          </figure>
+        </figure>
+        <figure class="pane">
+          <figcaption>
+            <strong data-patch-label="right"></strong>
+            <span class="small" data-patch-rect="right"></span>
+          </figcaption>
+          <div class="viewport patch-viewport" data-patch-viewport="right" tabindex="0" aria-label="右侧色块视口；可拖动或滚动查看">
+            <div class="canvas crop" data-patch-canvas="right"><img data-patch-image="right" alt=""></div>
+          </div>
+          <figure class="locator">
+            <div class="locator-image">
+              <img data-locator-image="right" alt="">
+              <span class="rectangle" data-locator-rect="right"></span>
+            </div>
+            <figcaption class="small" data-locator-caption="right"></figcaption>
+          </figure>
+        </figure>
+      </div>
+      <h3>色块对照表</h3>
+      <p class="small" data-sheet-hint></p>
+      <div class="contact-sheet" data-contact-sheet="shared"></div>
+      <div class="contact-sheet" data-contact-sheet="left" hidden></div>
+      <div class="contact-sheet" data-contact-sheet="right" hidden></div>
+    </div>
+  </section>
+
+  <details class="card" id="chart-provenance">
+    <summary>来源与文件</summary>
+    <p class="small">报告数据以 <a href="report.json">report.json</a> 为准；本页面图像均为发布目录内的显示副本，颜色与像素以源文件为准。</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>图像</th>
+            <th>色卡</th>
+            <th>颜色声明</th>
+            <th>尺寸</th>
+            <th>源文件</th>
+            <th>SHA-256</th>
+          </tr>
+        </thead>
+        <tbody data-provenance-body></tbody>
+      </table>
+    </div>
+  </details>
+</main>

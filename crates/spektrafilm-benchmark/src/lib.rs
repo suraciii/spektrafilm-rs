@@ -1,3 +1,4 @@
+pub mod chart_report;
 pub mod common;
 pub mod compare;
 pub mod documents;

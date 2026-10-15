@@ -108,6 +108,14 @@ pub(super) struct ProcessArgs {
     /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
     #[arg(long, help_heading = "Output")]
     raw_out: Option<PathBuf>,
+    /// Write a native stage-evidence bundle (terminal manifest and f64 stage
+    /// buffers) into DIRECTORY; CPU reference execution only.
+    #[arg(
+        long,
+        value_name = "DIRECTORY",
+        help_heading = "Execution and diagnostics"
+    )]
+    stage_evidence: Option<PathBuf>,
     /// Run the pipeline this many times in one process (at least 1).
     #[arg(long, default_value = "1", help_heading = "Execution and diagnostics")]
     iters: usize,
@@ -412,6 +420,23 @@ struct WorkflowOptions {
 
 pub(super) fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
     let data_dir = std::mem::take(&mut args.data_dir);
+    // Protect every bundle file, including publication temporaries, from
+    // invocation inputs, output/raw-out and optional diagnostics.
+    let evidence_paths = args
+        .stage_evidence
+        .as_deref()
+        .map(|directory| {
+            let mut paths = vec![
+                directory.join("stage-evidence.json"),
+                directory.join("stage-evidence.json.tmp"),
+            ];
+            for stage in spektrafilm_core::stage_evidence::StageId::ORDER {
+                paths.push(directory.join(format!("{}.f64", stage.id())));
+                paths.push(directory.join(format!("{}.f64.tmp", stage.id())));
+            }
+            paths
+        })
+        .unwrap_or_default();
     let mut protected = vec![args.input.as_path()];
     if let Some(output) = args.output.as_deref() {
         protected.push(output);
@@ -430,6 +455,8 @@ pub(super) fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result
             .filter(|source| source.ends_with(".toml") || source.ends_with(".json"))
             .map(Path::new),
     );
+    let invocation_path_count = protected.len();
+    protected.extend(evidence_paths.iter().map(PathBuf::as_path));
     telemetry::run(
         spektrafilm_core::telemetry::OperationKind::Process,
         args.diagnostics.as_deref(),
@@ -438,7 +465,13 @@ pub(super) fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result
         telemetry::requested_backend(args.backend),
         |invocation| {
             let data = select_data_dir(data_dir, command_matches)?;
-            cmd_process(&args, &data, invocation)
+            cmd_process(
+                &args,
+                &data,
+                invocation,
+                &protected[..invocation_path_count],
+                &evidence_paths,
+            )
         },
     )?;
     Ok(())
@@ -448,6 +481,8 @@ fn cmd_process(
     args: &ProcessArgs,
     data: &DataSelection,
     invocation: &mut telemetry::Invocation,
+    protected: &[&Path],
+    evidence_paths: &[PathBuf],
 ) -> Result<()> {
     let input = args.input.as_path();
     let output = args.output.as_deref();
@@ -466,6 +501,7 @@ fn cmd_process(
     let sources = &args.sources;
     let dry_run = args.dry_run;
     let raw_out = args.raw_out.as_deref();
+    let stage_evidence = args.stage_evidence.as_deref();
     let iters = args.iters;
     let backend_choice = args.backend;
     let data_dir = &data.path;
@@ -586,6 +622,12 @@ fn cmd_process(
     let mut params = resolved.params;
     params.random_seed = u64::from(args.seed.unwrap_or(0));
     process_report::warn_edits(&resolved.edits);
+    if stage_evidence.is_some() {
+        // Configuration-level rejection, before dry run or rendering: the
+        // capture route must not run a configuration it cannot describe.
+        spektrafilm_core::stage_evidence::ensure_supported_params(&params)
+            .map_err(anyhow::Error::msg)?;
+    }
     let inject = params
         .taps
         .inject
@@ -722,6 +764,40 @@ fn cmd_process(
         }
         return Ok(());
     }
+    if let Some(directory) = stage_evidence {
+        // Prepare the bundle destination before rendering: the terminal
+        // manifest is the completeness token, so a stale one from an earlier
+        // run must not survive into a run that fails before publication.
+        std::fs::create_dir_all(directory).with_context(|| {
+            format!("creating stage-evidence directory: {}", directory.display())
+        })?;
+        let manifest = directory.join("stage-evidence.json");
+        spektrafilm_core::telemetry::validate_report_destination(&manifest, protected)
+            .with_context(|| {
+                format!(
+                    "stage-evidence destination conflicts: {}",
+                    manifest.display()
+                )
+            })?;
+        match std::fs::remove_file(&manifest) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "removing stale stage-evidence manifest: {}",
+                        manifest.display()
+                    )
+                });
+            }
+        }
+        for path in evidence_paths.iter().skip(1) {
+            spektrafilm_core::telemetry::validate_report_destination(path, protected)
+                .with_context(|| {
+                    format!("stage-evidence destination conflicts: {}", path.display())
+                })?;
+        }
+    }
     let backend = invocation.phase(
         "backend_init",
         IssueCategory::Backend,
@@ -742,6 +818,10 @@ fn cmd_process(
         },
     )?;
     eprintln!("Backend: {}", backend.name());
+    if stage_evidence.is_some() {
+        spektrafilm_core::stage_evidence::ensure_supported_backend(backend.as_ref())
+            .map_err(anyhow::Error::msg)?;
+    }
     if grain_v3_active {
         eprintln!(
             "Backend (effective): {}",
@@ -864,10 +944,27 @@ fn cmd_process(
             .set_render_configuration(runtime.telemetry_configuration());
     }
     let output_attempt = std::cell::Cell::new(0);
-    let run_once = |image: ImageBuf, index: u64| -> Result<ImageBuf> {
+    let mut stage_capture = stage_evidence.map(spektrafilm_core::stage_evidence::StageCapture::new);
+    let mut run_once = |image: ImageBuf, index: u64| -> Result<ImageBuf> {
         let (attempt_id, result) =
             telemetry::simulation_attempt(invocation, index, |simulation_context| {
-                let out = if inject.is_none() && collect.is_none() {
+                let out = if let Some(capture) =
+                    stage_capture.as_mut().filter(|_| index == iters as u64)
+                {
+                    // Stage evidence observes the published run only: with
+                    // --iters the warm-cache iterations are not the captured
+                    // execution.
+                    runtime
+                        .process_captured(
+                            image,
+                            backend.as_ref(),
+                            inject,
+                            collect,
+                            simulation_context,
+                            capture,
+                        )
+                        .map_err(|e| anyhow::anyhow!("pipeline stage evidence: {e}"))?
+                } else if inject.is_none() && collect.is_none() {
                     runtime
                         .process_observed(image, backend.as_ref(), simulation_context)
                         .map_err(anyhow::Error::msg)?
@@ -985,6 +1082,29 @@ fn cmd_process(
                     .with_context(|| format!("creating raw_out file: {}", p.display()))?;
                 f.write_all(bytes)?;
                 eprintln!("raw f64 buffer: {} ({} values)", p.display(), buf.len());
+                Ok(())
+            },
+        )?;
+    }
+
+    // The stage-evidence bundle publishes last: its terminal manifest is the
+    // completeness token, so an output or capture failure can never leave
+    // complete-looking evidence behind. An incomplete bundle is a command
+    // failure, distinct from optional telemetry persistence.
+    if let Some(capture) = stage_capture.as_mut() {
+        invocation.phase(
+            "file_write",
+            IssueCategory::Writing,
+            IssueBoundary::FileWrite,
+            &context,
+            |_| {
+                capture
+                    .publish()
+                    .map_err(|e| anyhow::anyhow!("stage evidence: {e}"))?;
+                eprintln!(
+                    "stage evidence: {}",
+                    capture.destination().join("stage-evidence.json").display()
+                );
                 Ok(())
             },
         )?;
