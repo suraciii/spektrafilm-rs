@@ -5,6 +5,7 @@ use egui::Ui;
 pub(crate) fn sections(
     ui: &mut Ui,
     params: &mut RuntimeParams,
+    extras: &mut serde_json::Value,
     section: &str,
     flags: &mut ChangeFlags,
 ) {
@@ -32,6 +33,20 @@ pub(crate) fn sections(
                     flags.action = Some(CalibrationAction::NeutralizeFilters);
                 }
             });
+            flags.runtime_changed |= extra_channels(
+                ui,
+                extras,
+                "film_channel_swap",
+                "film_channel_swap (experimental)",
+                "extras.special.film_channel_swap",
+            );
+            flags.runtime_changed |= extra_channels(
+                ui,
+                extras,
+                "print_channel_swap",
+                "print_channel_swap (experimental)",
+                "extras.special.print_channel_swap",
+            );
         });
     }
 }

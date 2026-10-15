@@ -717,7 +717,6 @@ impl App {
                     "Spectral upsampling",
                     "Input gamut compress",
                     "Output gamut compress",
-                    "Experimental",
                 ] {
                     self.parameter_section(ui, section);
                 }
