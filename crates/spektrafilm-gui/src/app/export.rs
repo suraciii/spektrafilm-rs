@@ -59,17 +59,8 @@ impl App {
             .as_ref()
             .expect("output checked before dialog");
         let t = Instant::now();
-<<<<<<< HEAD
-        let destination = self.gui_state.sections["simulation"]["saving_color_space"]
-            .as_str()
-            .unwrap_or("sRGB");
-        let encoded = self.gui_state.sections["simulation"]["saving_cctf_encoding"]
-            .as_bool()
-            .unwrap_or(true);
-=======
         let destination = self.gui_state.saving_color_space();
         let encoded = self.gui_state.saving_cctf_encoding();
->>>>>>> origin/main-0.3.4
         let save_options = SaveOptions {
             depth: match actual_format {
                 image_io::ImageFormat::Jpeg | image_io::ImageFormat::Png => BitDepth::Eight,

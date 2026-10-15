@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-//! Telemetry observation context and collector.
-=======
 //! Observation collection infrastructure: scopes, collectors, and recorders.
->>>>>>> origin/main-0.3.4
 use super::types::*;
 use parking_lot::Mutex;
 use std::sync::{
@@ -441,21 +437,13 @@ impl ObservationContext {
     pub fn record_work(&self, work: &WorkCounters) {
         let _entered = self.span.as_ref().map(|span| span.enter());
         self.mutate(|s| {
-<<<<<<< HEAD
-            let mut overflow = s.totals.add_checked(work);
-=======
             let mut overflow = s.totals.add(work);
->>>>>>> origin/main-0.3.4
             let mut id = self.retained_id;
             while id != s.root_id {
                 let Some(o) = s.observations.iter_mut().find(|o| o.id == id) else {
                     break;
                 };
-<<<<<<< HEAD
-                overflow.extend(o.work.add_checked(work));
-=======
                 overflow.extend(o.work.add(work));
->>>>>>> origin/main-0.3.4
                 id = o.parent_id;
             }
             let coverage = &mut s.coverage;

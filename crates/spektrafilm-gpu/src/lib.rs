@@ -513,7 +513,7 @@ pub struct HighlightBoostGpuParams {
 
 /// DIR couplers parameters for the GPU-resident matmul + diffusion + final
 /// density-curve re-interpolation pass. Mirrors the CPU
-/// `transform_density_correction`.
+/// `apply_density_correction`.
 #[derive(Debug, Clone, Copy)]
 pub struct DirCouplersGpuParams<'a> {
     /// Already-scaled `couplers_matrix * amount`, row-major.
@@ -589,7 +589,7 @@ pub struct GlareGpuParams {
 }
 
 /// Halation parameters for the GPU-resident scatter + multi-bounce pass.
-/// Mirrors the field layout of the CPU `transform_halation_um`, but pre-converts
+/// Mirrors the field layout of the CPU `apply_halation_um`, but pre-converts
 /// the per-channel µm sigmas to a single pixel-space sigma (the GPU path
 /// uses the average across channels, matching the existing CPU impl).
 #[derive(Debug, Clone, Copy)]

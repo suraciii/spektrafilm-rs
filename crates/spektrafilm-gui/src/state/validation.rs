@@ -1,18 +1,10 @@
-<<<<<<< HEAD
-//! GUI state parameter validation and section normalization.
-=======
 //! State normalization and typed runtime validation.
->>>>>>> origin/main-0.3.4
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use spektrafilm_core::params::RuntimeParams;
 
-<<<<<<< HEAD
-use super::overlay_runtime;
-=======
 use super::{overlay_runtime, translate_legacy_print_exposure};
 
->>>>>>> origin/main-0.3.4
 pub(super) fn normalize_grain_section(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;
@@ -31,9 +23,6 @@ pub(super) fn normalize_grain_section(section: &mut Value) {
         object.remove(key);
     }
 }
-<<<<<<< HEAD
-pub(super) fn validate_state_parameters(value: &mut Value, legacy: bool) -> Result<()> {
-=======
 
 pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>) -> Result<()> {
     // Version 1 states may still carry the retired lightness leaf; versions
@@ -41,7 +30,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     // must fail unknown-field validation instead of being migrated.
     let legacy = version == Some(1);
     let legacy_conversion = matches!(version, Some(1 | 2));
->>>>>>> origin/main-0.3.4
     if value.get("output_mix").is_some() {
         bail!("output_mix belongs in rust.runtime.output_mix in GUI state");
     }
@@ -49,8 +37,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     if explicit.is_null() {
         explicit = json!({});
     }
-<<<<<<< HEAD
-=======
     if legacy_conversion {
         spektrafilm_core::params::sources::normalize_legacy_conversion_paths(value, true)
             .map_err(anyhow::Error::msg)?;
@@ -61,7 +47,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 .map_err(anyhow::Error::msg)?;
         }
     }
->>>>>>> origin/main-0.3.4
     if legacy {
         spektrafilm_core::params::sources::normalize_legacy_complete_params(value)
             .map_err(anyhow::Error::msg)?;
@@ -100,9 +85,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 explicit[group] = json!({});
             }
             if leaf.is_empty() {
-<<<<<<< HEAD
-                overlay_runtime(&mut explicit[group], fields);
-=======
                 if section == "preflashing" {
                     let (translated, tracking) = translate_legacy_print_exposure(fields);
                     if let Some(tracking) = tracking {
@@ -115,7 +97,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 } else {
                     overlay_runtime(&mut explicit[group], fields);
                 }
->>>>>>> origin/main-0.3.4
             } else {
                 explicit[group][leaf] = fields.clone();
             }
@@ -136,9 +117,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         if !explicit["enlarger"].is_object() {
             explicit["enlarger"] = json!({});
         }
-<<<<<<< HEAD
-        overlay_runtime(&mut explicit["enlarger"], enlarger);
-=======
         // The upstream boolean mirror is derived: it normalizes (auto) and
         // only toggles camera-EV tracking. It may only refine the default
         // (auto without tracking), never overwrite the mapping an
@@ -160,7 +138,6 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             }
         }
         overlay_runtime(&mut explicit["enlarger"], &enlarger);
->>>>>>> origin/main-0.3.4
     }
     if let Some(io) = value["simulation"].get("io") {
         let mut projected = json!({"io": io});

@@ -145,7 +145,7 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         // Halation is fully spatial (scatter + back-reflection blurs); kill
         // it at the active flag as well as zeroing the kernel sigmas, so it
         // stays a no-op even if a future sigma-independent term is added
-        // inside transform_halation_um.
+        // inside apply_halation_um.
         params.film_render.halation.active = false;
         params.film_render.halation.scatter_core_um = [0.0, 0.0, 0.0];
         params.film_render.halation.scatter_tail_um = [0.0, 0.0, 0.0];

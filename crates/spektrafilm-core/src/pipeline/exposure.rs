@@ -23,22 +23,12 @@ impl Pipeline {
     /// Metering plus the exposure multiply, under the `metering` observation
     /// scope. Both owned-image entry points apply the metered EV immediately,
     /// so the EV itself stays internal.
-<<<<<<< HEAD
-    pub(super) fn expose_full_input(&self, image: ImageBuf, backend: &dyn ComputeBackend) -> ImageBuf {
-        if self
-            .params
-            .workflow
-            .route
-            .starts_with("input > convert-film")
-        {
-=======
     pub(super) fn expose_full_input(
         &self,
         image: ImageBuf,
         backend: &dyn ComputeBackend,
     ) -> ImageBuf {
         if self.params.workflow.route_enum().is_convert_film() {
->>>>>>> origin/main-0.3.4
             return image;
         }
         let metering = crate::stages::StageObservation::cpu(

@@ -179,7 +179,7 @@ pub struct SpatialConfiguration {
     pub lens_blur: bool,
     pub halation: bool,
     pub optical_diffusion: bool,
-    pub directional_couplers: bool,
+    pub dir: bool,
     pub glare: bool,
     pub unsharp: bool,
 }
@@ -268,7 +268,6 @@ pub enum NegativeConversionMethod {
     Separable,
     Coupled,
     DigitalReference,
-    DensityDirect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,9 +374,6 @@ impl RenderConfiguration {
                 crate::params::NegativeConversionMethod::DigitalReference => {
                     NegativeConversionMethod::DigitalReference
                 }
-                crate::params::PositiveInterpretation::DensityDirect => {
-                    PositiveInterpretation::DensityDirect
-                }
             },
             receiver: ReceiverConfiguration {
                 profile: receiver.profile.as_str().to_string(),
@@ -425,7 +421,7 @@ impl RenderConfiguration {
                 optical_diffusion: spatial_active
                     && (params.camera.diffusion_filter.active
                         || params.enlarger.diffusion_filter.active),
-                directional_couplers: spatial_active && params.film_render.dir_couplers.active,
+                dir: spatial_active && params.film_render.dir_couplers.active,
                 glare: spatial_active
                     && (params.film_render.glare.active || params.print_render.glare.active),
                 unsharp: spatial_active

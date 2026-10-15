@@ -24,12 +24,6 @@ mod execution;
 mod exposure;
 mod output_mix;
 mod resident;
-<<<<<<< HEAD
-mod execution;
-mod exposure;
-mod output_mix;
-=======
->>>>>>> origin/main-0.3.4
 mod stages;
 
 #[cfg(test)]
@@ -116,14 +110,10 @@ pub struct Pipeline {
     cancellation: Option<Arc<AtomicBool>>,
 }
 impl Pipeline {
-<<<<<<< HEAD
-    pub(crate) fn with_scanner_setup(mut self, setup: crate::stages::scanning::ScannerSetup) -> Self {
-=======
     pub(crate) fn with_scanner_setup(
         mut self,
         setup: crate::stages::scanning::ScannerSetup,
     ) -> Self {
->>>>>>> origin/main-0.3.4
         self.scanner_setup = Some(setup);
         self
     }
