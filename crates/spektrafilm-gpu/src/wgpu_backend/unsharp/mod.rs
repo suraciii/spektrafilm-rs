@@ -3,7 +3,7 @@ use super::*;
 
 /// Pre-built unsharp mask pass — owns the blur and the combine dispatch.
 ///
-/// CPU equivalent: `spektrafilm_model::optics::transform_unsharp_mask`.
+/// CPU equivalent: `spektrafilm_model::optics::apply_unsharp_mask`.
 /// The combine shader writes to a temp buffer (avoids same-pass
 /// aliasing); `encode_passes` then `copy_buffer_to_buffer`s the result
 /// back into buf_b so the rest of the pipeline doesn't need to know
@@ -60,58 +60,6 @@ pub(super) fn build_unsharp_state(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-<<<<<<< HEAD
-    let bind_group_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("unsharp_blur_h_bg"),
-        layout: &blur_pipe_h.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: params_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buf_b.as_entire_binding(),
-            }, // src
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: kernel_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: buf_a.as_entire_binding(),
-            }, // mid
-        ],
-    });
-    let bind_group_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("unsharp_blur_v_bg"),
-        layout: &blur_pipe_v.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: params_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buf_a.as_entire_binding(),
-            }, // mid
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: kernel_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: blur_dst.as_entire_binding(),
-            }, // blurred output
-        ],
-    });
-    let blur = BlurJob {
-        _kernel_buf: kernel_buf,
-        _params_buf: params_buf,
-        bind_group_h,
-        bind_group_v,
-    };
-=======
     let blur = blur::make_blur_job(
         backend,
         up.sigma_px.max(0.01),
@@ -124,7 +72,6 @@ pub(super) fn build_unsharp_state(
         &blur_pipe_h,
         &blur_pipe_v,
     );
->>>>>>> origin/main-0.3.4
 
     // ── Combine: out = (1+amount)*orig - amount*blurred
     let combine_pipe = backend.cached_pipeline(
@@ -220,7 +167,7 @@ impl UnsharpState {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.blur_pipe_h.pipeline);
-            pass.set_bind_group(0, &self.blur.bind_group_h, &[]);
+            pass.set_bind_group(0, &self.blur.bg_h, &[]);
             pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
         }
         {
@@ -229,7 +176,7 @@ impl UnsharpState {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.blur_pipe_v.pipeline);
-            pass.set_bind_group(0, &self.blur.bind_group_v, &[]);
+            pass.set_bind_group(0, &self.blur.bg_v, &[]);
             pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
         }
         // Combine.

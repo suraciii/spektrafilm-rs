@@ -828,7 +828,7 @@ mod tests {
             footprint_mm: [0.01; 2],
         };
         let out = bank
-            .transform(
+            .apply(
                 &image,
                 g,
                 Look {

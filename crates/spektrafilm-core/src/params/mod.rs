@@ -187,11 +187,6 @@ pub enum NegativeConversionMethod {
     Coupled,
     /// Common modeled receiver and fixed Reference Exposure response.
     DigitalReference,
-    /// Read record densities into the scanner's own response, with no inverse
-    /// of the film's characteristic curves, so the selected film's tone and
-    /// spectral response stay visible. The point window and the reconstruction
-    /// controls remain the only calibration.
-    DensityDirect,
 }
 impl NegativeConversionMethod {
     pub const fn as_str(self) -> &'static str {
@@ -200,7 +195,6 @@ impl NegativeConversionMethod {
             Self::Separable => "separable",
             Self::Coupled => "coupled",
             Self::DigitalReference => "digital_reference",
-            Self::DensityDirect => "density_direct",
         }
     }
 }
@@ -1094,19 +1088,8 @@ mod tests {
                 ][..],
             ),
             (
-<<<<<<< HEAD
-                "scanner.positive_interpretation",
-                &[
-                    "density",
-                    "separable",
-                    "coupled",
-                    "digital_reference",
-                    "density_direct",
-                ][..],
-=======
                 "scanner.negative_conversion_method",
                 &["density", "separable", "coupled", "digital_reference"][..],
->>>>>>> origin/main-0.3.4
             ),
             ("scanner.auto_setup", &["off", "per_frame"][..]),
             ("scanner.finish", &["neutral", "lab_scan"][..]),

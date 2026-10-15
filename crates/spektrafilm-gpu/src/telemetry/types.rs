@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-//! Telemetry vocabulary types: enums and data structs.
-=======
 //! Vocabulary enums and bounded measurement data types for telemetry observations.
->>>>>>> origin/main-0.3.4
 use serde::{Deserialize, Serialize};
 
 macro_rules! vocabulary { ($name:ident { $($variant:ident),* $(,)? }) => { #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)] #[serde(rename_all="snake_case")] pub enum $name { $($variant),* } }; }
@@ -43,12 +39,9 @@ pub const PHASE_NAMES: &[&str] = &[
     "worker_wait",
 ];
 
-<<<<<<< HEAD
-=======
 // `Purpose::Telemetry` has no producer today. It is spec-reserved
 // vocabulary: the enum mirrors the published observation schema, so the
 // spelling is kept even while nothing emits it.
->>>>>>> origin/main-0.3.4
 vocabulary!(Purpose {
     Image,
     Calibration,
@@ -121,12 +114,9 @@ vocabulary!(ResidentDeclineReason {
     ScannerFilmPoints,
     ScannerReceiver,
 });
-<<<<<<< HEAD
-=======
 // `ReportPersistence` and `IssueBoundary::PresentationHandoff` likewise have
 // no producer today; both are spec-reserved vocabulary retained so a future
 // producer cannot introduce an unregistered wire spelling.
->>>>>>> origin/main-0.3.4
 vocabulary!(IssueCategory {
     Input,
     Configuration,
@@ -230,22 +220,14 @@ impl WorkCounters {
         [$( (stringify!($field), &self.$field), )*].into_iter()
     }
 
-<<<<<<< HEAD
-    pub fn counter(&self, name: &str) -> Option<Option<u64>> {
-=======
     pub fn named_value(&self, name: &str) -> Option<Option<u64>> {
->>>>>>> origin/main-0.3.4
         match name {
             $( stringify!($field) => Some(self.$field), )*
             _ => None,
         }
     }
 
-<<<<<<< HEAD
-    pub fn add_checked(&mut self,other:&Self)->Vec<&'static str> {let mut overflow=Vec::new();$(let old=self.$field;self.$field=self.$field.zip(other.$field).and_then(|(a,b)|a.checked_add(b));if old.is_some()&&self.$field.is_none(){overflow.push(stringify!($field));})*overflow}
-=======
     pub fn add(&mut self,other:&Self)->Vec<&'static str> {let mut overflow=Vec::new();$(let old=self.$field;self.$field=self.$field.zip(other.$field).and_then(|(a,b)|a.checked_add(b));if old.is_some()&&self.$field.is_none(){overflow.push(stringify!($field));})*overflow}
->>>>>>> origin/main-0.3.4
 }
 }; }
 counters!(

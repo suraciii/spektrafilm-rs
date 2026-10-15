@@ -21,8 +21,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize)]
 pub struct DeclarationSource {
     pub kind: String,
-    #[serde(rename = "option")]
-    pub flag: Option<String>,
+    pub option: Option<String>,
     pub index: Option<usize>,
     pub path: Option<PathBuf>,
 }
@@ -245,7 +244,7 @@ fn resolve_with_preview_mode(
             }
             let origin = DeclarationSource {
                 kind: "set".into(),
-                flag: Some("--set".into()),
+                option: Some("--set".into()),
                 index: Some(index + 1),
                 path: ParameterEdits::file_path(source)
                     .map(absolute_path)
@@ -286,7 +285,7 @@ fn resolve_with_preview_mode(
                 path.into(),
                 DeclarationSource {
                     kind: "argument".into(),
-                    flag: Some(option.into()),
+                    option: Some(option.into()),
                     index: None,
                     path: None,
                 },
@@ -378,14 +377,14 @@ fn resolve_with_preview_mode(
     crate::pipeline_calibration::validate_scan_output(&params, &film)?;
     let raw_source = DeclarationSource {
         kind: "raw".into(),
-        flag: None,
+        option: None,
         index: None,
         path: None,
     };
     // Internal protocol callers can retain implicit controls. Public callers cannot.
     let implicit_source = DeclarationSource {
         kind: "params".into(),
-        flag: None,
+        option: None,
         index: None,
         path: None,
     };
@@ -511,7 +510,7 @@ fn baseline_declarations(
                     leaf.into(),
                     DeclarationSource {
                         kind: "params".into(),
-                        flag: Some("--params".into()),
+                        option: Some("--params".into()),
                         index: None,
                         path: Some(absolute_path(path)?),
                     },

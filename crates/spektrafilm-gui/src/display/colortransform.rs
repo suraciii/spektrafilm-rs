@@ -45,11 +45,7 @@ pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> 
 
 /// Takes already encoded sRGB viewing pixels, never an export ImageBuf.
 /// ICC conversion is quantized to RGB8 as in the pinned Pillow workflow.
-<<<<<<< HEAD
-pub fn transform_display_profile(
-=======
 pub fn apply_display_profile(
->>>>>>> origin/main-0.3.4
     raster: &DisplayRaster,
     path: &std::path::Path,
 ) -> Result<DisplayRaster, String> {
@@ -110,11 +106,7 @@ pub fn prepare_display_raster(
             .map(std::path::Path::to_path_buf)
             .or_else(|| discovered.ok().flatten());
         if let Some(path) = profile {
-<<<<<<< HEAD
-            match transform_display_profile(&srgb, &path) {
-=======
             match apply_display_profile(&srgb, &path) {
->>>>>>> origin/main-0.3.4
                 Ok(raster) => {
                     return (
                         raster,
@@ -137,11 +129,7 @@ pub fn prepare_display_raster(
     #[cfg(not(windows))]
     {
         if let Some(path) = selected_profile {
-<<<<<<< HEAD
-            match transform_display_profile(&srgb, path) {
-=======
             match apply_display_profile(&srgb, path) {
->>>>>>> origin/main-0.3.4
                 Ok(raster) => {
                     return (
                         raster,
@@ -169,26 +157,15 @@ pub fn input_display_raster(
     decode: bool,
     max_edge: usize,
 ) -> Result<DisplayRaster, String> {
-<<<<<<< HEAD
-    use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
-    let space = resolve(space)?;
-    let matrix = display_matrix(space);
-=======
     use spektrafilm_math::colorspace::{display_rgb, resolve};
     let space = resolve(space)?;
->>>>>>> origin/main-0.3.4
     let raw = capped_raster(image, max_edge)?;
     DisplayRaster::new(
         raw.size,
         raw.rgb
             .iter()
             .map(|p| {
-<<<<<<< HEAD
-                display_rgb(p.map(|v| v as f64), space, decode, &matrix)
-                    .map(|v| v.clamp(0.0, 1.0) as f32)
-=======
                 display_rgb(p.map(|v| v as f64), space, decode).map(|v| v.clamp(0.0, 1.0) as f32)
->>>>>>> origin/main-0.3.4
             })
             .collect(),
     )
@@ -214,22 +191,14 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn enabled_non_srgb_output_matches_colour_conversion() {
-<<<<<<< HEAD
-        use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
-=======
         use spektrafilm_math::colorspace::{display_rgb, resolve};
->>>>>>> origin/main-0.3.4
 
         let image = ImageBuf::from_data(1, 1, vec![0.75 as _, 0.20 as _, 0.10 as _]);
         let source = image.data.clone();
         let (actual, status) =
             output_display_raster(&image, "Display P3", true, true, None, 1).unwrap();
         let space = resolve("Display P3").unwrap();
-<<<<<<< HEAD
-        let expected = display_rgb([0.75, 0.20, 0.10], space, true, &display_matrix(space));
-=======
         let expected = display_rgb([0.75, 0.20, 0.10], space, true);
->>>>>>> origin/main-0.3.4
 
         for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
             assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
@@ -241,21 +210,13 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn enabled_preview_applies_source_cctf_decoding() {
-<<<<<<< HEAD
-        use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
-=======
         use spektrafilm_math::colorspace::{display_rgb, resolve};
->>>>>>> origin/main-0.3.4
 
         let image = ImageBuf::from_data(1, 1, vec![0.18 as _, 0.18 as _, 0.18 as _]);
         let (actual, _) =
             output_display_raster(&image, "ITU-R BT.2020", true, true, None, 1).unwrap();
         let space = resolve("ITU-R BT.2020").unwrap();
-<<<<<<< HEAD
-        let expected = display_rgb([0.18, 0.18, 0.18], space, true, &display_matrix(space));
-=======
         let expected = display_rgb([0.18, 0.18, 0.18], space, true);
->>>>>>> origin/main-0.3.4
 
         for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
             assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
@@ -265,11 +226,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn enabled_preview_clips_out_of_gamut_display_values_only() {
-<<<<<<< HEAD
-        use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
-=======
         use spektrafilm_math::colorspace::{display_rgb, resolve};
->>>>>>> origin/main-0.3.4
 
         let image = ImageBuf::from_data(1, 1, vec![1.3 as _, -0.2 as _, 0.4 as _]);
         let source = image.data.clone();
@@ -277,11 +234,7 @@ mod tests {
         let (preview, _) =
             output_display_raster(&image, "Display P3", false, true, None, 1).unwrap();
         let space = resolve("Display P3").unwrap();
-<<<<<<< HEAD
-        let expected = display_rgb([1.3, -0.2, 0.4], space, false, &display_matrix(space));
-=======
         let expected = display_rgb([1.3, -0.2, 0.4], space, false);
->>>>>>> origin/main-0.3.4
 
         assert_eq!(raw.rgb[0], [1.3, -0.2, 0.4]);
         for (actual, expected) in preview.rgb[0].into_iter().zip(expected) {

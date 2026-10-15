@@ -1,16 +1,3 @@
-<<<<<<< HEAD
-//! State ⇄ runtime projection. Both directions consume the shared group
-//! tables below so an alias cannot exist in only one of them.
-use anyhow::{Context, Result, bail};
-use serde_json::{Value, json};
-use spektrafilm_core::params::RuntimeParams;
-
-use super::validation::validate_state_parameters;
-use super::{
-    ENLARGER_SIMULATION_ALIASES, GuiState, canonicalize_grain_state, copy_fields, merge,
-    overlay_runtime,
-};
-=======
 //! State ⇄ runtime projection.
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -21,7 +8,6 @@ use super::{
     overlay_runtime, translate_legacy_print_exposure,
 };
 
->>>>>>> origin/main-0.3.4
 const INPUT_IO: &[&str] = &[
     "input_color_space",
     "input_cctf_decoding",
@@ -49,15 +35,10 @@ const RUNTIME_GROUPS: &[(&str, &str, &str)] = &[
 ];
 
 impl GuiState {
-<<<<<<< HEAD
-    pub fn runtime_params(&self) -> Result<RuntimeParams> {
-        validate_state_parameters(&mut self.sections.clone(), false)?;
-=======
     /// Project the sections into runtime parameters. Validation is split from
     /// projection: the load, import and save paths each validate once, so this
     /// is a pure read that never clones or re-checks the carriers.
     pub fn runtime_params(&self) -> Result<RuntimeParams> {
->>>>>>> origin/main-0.3.4
         let s = &self.sections;
         let mut runtime = serde_json::to_value(RuntimeParams::default())?;
         if let Some(extra) = s["rust"].get("runtime") {
@@ -90,10 +71,6 @@ impl GuiState {
             &mut runtime["enlarger"]["diffusion_filter"],
             &s["enlarger_diffusion"],
         );
-<<<<<<< HEAD
-        merge(&mut runtime["enlarger"], &s["preflashing"]);
-        for &(simulation_key, enlarger_key) in ENLARGER_SIMULATION_ALIASES {
-=======
         let (preflashing, tracking) = translate_legacy_print_exposure(&s["preflashing"]);
         merge(&mut runtime["enlarger"], &preflashing);
         if let Some(tracking) = tracking {
@@ -118,7 +95,6 @@ impl GuiState {
                 }
                 continue;
             }
->>>>>>> origin/main-0.3.4
             runtime["enlarger"][enlarger_key] = s["simulation"][simulation_key].clone();
         }
         runtime["workflow"]["route"] = s["simulation"]["route"].clone();
@@ -152,10 +128,6 @@ impl GuiState {
             let order = s["special"][name]
                 .as_array()
                 .context("Channel swap must be an array")?;
-<<<<<<< HEAD
-            if order.len() != 3 || order.iter().any(|v| v.as_u64().is_none_or(|x| x > 2)) {
-                bail!("{name} must contain three channel indices in 0..2");
-=======
             if order.len() != 3 || order.iter().any(|v| v.as_u64().is_none_or(|x| x > 2)) || {
                 let mut seen = [false; 3];
                 let mut duplicate = false;
@@ -170,7 +142,6 @@ impl GuiState {
                 duplicate
             } {
                 bail!("{name} must be a permutation of [0, 1, 2]");
->>>>>>> origin/main-0.3.4
             }
         }
         if !matches!(
@@ -214,8 +185,6 @@ impl GuiState {
             {
                 bail!("Saving bit depth must be 8, 16 or 32");
             }
-<<<<<<< HEAD
-=======
             use spektrafilm_core::image_io::{
                 BitDepth, ImageFormat, SaveOptionViolation as V, SaveOptions,
                 save_option_violations,
@@ -243,16 +212,11 @@ impl GuiState {
                     compression: None,
                 }
             }
->>>>>>> origin/main-0.3.4
             if let Some(space) = rust.get("export_saving_color_space") {
                 let space = space
                     .as_str()
                     .context("Export saving color space must be a string")?;
                 spektrafilm_math::colorspace::resolve(space).map_err(anyhow::Error::msg)?;
-<<<<<<< HEAD
-                if rust.get("export_format").and_then(Value::as_str) == Some("exr")
-                    && !matches!(space, "sRGB" | "ACES2065-1")
-=======
                 if format == Some(ImageFormat::Exr)
                     && save_option_violations(
                         ImageFormat::Exr,
@@ -260,7 +224,6 @@ impl GuiState {
                         false,
                     )
                     .contains(&V::ExrColorSpace)
->>>>>>> origin/main-0.3.4
                 {
                     bail!("EXR saving color space must be sRGB or ACES2065-1");
                 }
@@ -269,17 +232,6 @@ impl GuiState {
                 let encoded = encoded
                     .as_bool()
                     .context("Export saving CCTF encoding must be a boolean")?;
-<<<<<<< HEAD
-                if rust.get("export_format").and_then(Value::as_str) == Some("exr") && encoded {
-                    bail!("EXR exports must use linear color");
-                }
-                if matches!(
-                    rust.get("export_format").and_then(Value::as_str),
-                    Some("jpeg" | "png")
-                ) && !encoded
-                {
-                    bail!("JPEG and PNG exports require encoded color");
-=======
                 if let Some(format) = format {
                     for violation in save_option_violations(
                         format,
@@ -294,7 +246,6 @@ impl GuiState {
                             _ => {}
                         }
                     }
->>>>>>> origin/main-0.3.4
                 }
             }
             if let Some(export_format) = rust.get("export_format") {
@@ -323,18 +274,6 @@ impl GuiState {
                 ) {
                     bail!("Unknown export compression");
                 }
-<<<<<<< HEAD
-                let depth = rust
-                    .get("save_bit_depth")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(16);
-                if matches!(export_format, "jpeg" | "png") && depth != 8 {
-                    bail!("{export_format} exports require 8-bit depth");
-                }
-                if export_format == "exr" && !matches!(depth, 16 | 32) {
-                    bail!("EXR exports require 16- or 32-bit depth");
-                }
-=======
                 let depth = match rust
                     .get("save_bit_depth")
                     .and_then(Value::as_u64)
@@ -355,7 +294,6 @@ impl GuiState {
                     }
                     bail!("{export_format} exports require 8-bit depth");
                 }
->>>>>>> origin/main-0.3.4
             }
         }
         if s["display"]["output_interpolation"].as_str().is_none() {
@@ -393,8 +331,6 @@ impl GuiState {
             runtime["film_render"]["development_time"].clone();
         s["chemistry"]["development_time"] = runtime["print_render"]["development_time"].clone();
         merge(&mut s["preflashing"], &runtime["enlarger"]);
-<<<<<<< HEAD
-=======
         // Keep the upstream boolean mirror in step with the mode and
         // tracking settings; the import mapping inverts this exactly, and
         // the degenerate tracking choices fold onto the mode default.
@@ -410,7 +346,6 @@ impl GuiState {
         s["preflashing"]["normalize_print_exposure"] = json!(normalize);
         s["preflashing"]["print_exposure_compensation"] = json!(compensation);
         s["simulation"]["print_exposure_compensation"] = json!(compensation);
->>>>>>> origin/main-0.3.4
         s["camera_diffusion"] = runtime["camera"]["diffusion_filter"].clone();
         s["enlarger_diffusion"] = runtime["enlarger"]["diffusion_filter"].clone();
         copy_fields(&mut s["input_image"], &runtime["io"], INPUT_IO);
@@ -421,14 +356,11 @@ impl GuiState {
         s["simulation"]["film_stock"] = json!(film);
         s["simulation"]["print_paper"] = json!(paper);
         for &(simulation_key, enlarger_key) in ENLARGER_SIMULATION_ALIASES {
-<<<<<<< HEAD
-=======
             if enlarger_key == "print_exposure_compensation" {
                 // The upstream mirror stays boolean and is derived from the
                 // mode and tracking settings above, like the import mapping.
                 continue;
             }
->>>>>>> origin/main-0.3.4
             s["simulation"][simulation_key] = runtime["enlarger"][enlarger_key].clone();
         }
         s["simulation"]["route"] = runtime["workflow"]["route"].clone();
@@ -445,11 +377,7 @@ impl GuiState {
                 }
             }
         }
-<<<<<<< HEAD
-        s["rust"]["version"] = json!(2);
-=======
         s["rust"]["version"] = json!(3);
->>>>>>> origin/main-0.3.4
         s["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         s["rust"]["scanner_provenance"] = serde_json::to_value(

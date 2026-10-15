@@ -1,9 +1,5 @@
 //! Viewer presentation: zoom, pan, layer controls and pixel inspection.
 //! Immutable pipeline floats are shared; viewing pixels stay disposable.
-<<<<<<< HEAD
-use crate::numeric::numeric;
-=======
->>>>>>> origin/main-0.3.4
 use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, Vec2};
 use serde_json::Value;
 use spektrafilm_math::image::ImageBuf;
@@ -41,10 +37,7 @@ struct Transition {
     previous: Option<DisplayRaster>,
     polaroid: bool,
 }
-<<<<<<< HEAD
-=======
 
->>>>>>> origin/main-0.3.4
 #[derive(Default)]
 pub struct Viewer {
     pub settings: DisplaySettings,
@@ -70,11 +63,8 @@ pub struct Viewer {
     output_source_profile: Option<PathBuf>,
     prepared_input: Option<PreparedDisplay>,
     prepared_output: Option<PreparedDisplay>,
-<<<<<<< HEAD
-=======
     /// Before/after split fraction (0..=1) of image width; `None` disables.
     compare_split: Option<f32>,
->>>>>>> origin/main-0.3.4
     revision: u64,
     worker: DisplayWorker,
     #[cfg(test)]
@@ -94,10 +84,7 @@ pub(crate) struct ViewerObservation {
     pub accepted_generation: u64,
     pub transition: Option<(usize, bool)>,
 }
-<<<<<<< HEAD
-=======
 
->>>>>>> origin/main-0.3.4
 impl Viewer {
     #[cfg(test)]
     pub(crate) fn observation(&self) -> ViewerObservation {
@@ -135,8 +122,6 @@ impl Viewer {
             ..Self::default()
         }
     }
-<<<<<<< HEAD
-=======
     /// Set the before/after split fraction (0..=1) of image width; `None`
     /// disables split rendering. Viewer-only, never affects saved pixels.
     pub fn set_compare_split(&mut self, fraction: Option<f32>) {
@@ -146,7 +131,6 @@ impl Viewer {
             self.revision = self.revision.wrapping_add(1);
         }
     }
->>>>>>> origin/main-0.3.4
     pub fn set_input(&mut self, raster: DisplayRaster, original_size: [usize; 2]) {
         self.input_size = Some(original_size);
         self.input = Some(raster);
@@ -339,19 +323,6 @@ impl Viewer {
             .on_hover_text("Apply the display transform to the viewer output only; saved and exported pixels are unchanged.");
         ui.checkbox(&mut self.settings.gray_18_canvas, "gray 18% canvas")
             .on_hover_text(
-<<<<<<< HEAD
-                "Use neutral 18% gray as backgroung to judge the exposure and neutral colors",
-            );
-        let tooltip = "Expand the white border layer around the normalized preview frame, expressed as a fraction of the image long edge.";
-        numeric(
-            ui,
-            "white padding",
-            &mut self.settings.white_padding,
-            0.0,
-            1.0,
-            0.01,
-            2,
-=======
                 "Use neutral 18% gray as background to judge the exposure and neutral colors",
             );
         ui.checkbox(&mut self.settings.reveal, "reveal transition")
@@ -364,7 +335,6 @@ impl Viewer {
             "white padding",
             &mut self.settings.white_padding,
             "display.white_padding",
->>>>>>> origin/main-0.3.4
             tooltip,
         );
         before
@@ -575,10 +545,7 @@ impl Viewer {
             output_float
                 .map(|source| Arc::as_ptr(source) as usize as u64)
                 .unwrap_or(0),
-<<<<<<< HEAD
-=======
             self.compare_split.map(f32::to_bits).unwrap_or(0) as u64,
->>>>>>> origin/main-0.3.4
         ];
         if self.cache_key.as_ref() != Some(&key) {
             self.generation = self.generation.wrapping_add(1);
@@ -613,8 +580,6 @@ impl Viewer {
                 raster: selected.cloned(),
                 paper_size,
                 previous: self.transition.as_ref().and_then(|t| t.previous.clone()),
-<<<<<<< HEAD
-=======
                 split: if layer == ViewLayer::Output {
                     self.compare_split.and_then(|fraction| {
                         self.prepared_input
@@ -624,7 +589,6 @@ impl Viewer {
                 } else {
                     None
                 },
->>>>>>> origin/main-0.3.4
                 source: source.cloned(),
                 prepared: match layer {
                     ViewLayer::Input => self.prepared_input.clone(),

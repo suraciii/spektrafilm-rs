@@ -45,24 +45,18 @@ pub(super) struct CachedPipelineRef {
     pub(super) layout: wgpu::BindGroupLayout,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum CacheHit {
-    Hit,
-    Miss,
-}
-
 #[derive(Default)]
 pub(super) struct PipelineCache {
     pipelines: Mutex<HashMap<PipelineKey, CachedPipeline>>,
 }
 
 impl PipelineCache {
-    pub(super) fn pipeline_for(
+    pub(super) fn get_or_compile(
         &self,
         device: &wgpu::Device,
         shader_source: &'static str,
         binding_types: &[wgpu::BufferBindingType],
-    ) -> (CachedPipelineRef, CacheHit) {
+    ) -> (CachedPipelineRef, bool) {
         let key = PipelineKey::new(shader_source, binding_types);
         let mut cache = self.pipelines.lock();
         let hit = cache.contains_key(&key);
@@ -117,7 +111,7 @@ impl PipelineCache {
                 pipeline: cached.pipeline.clone(),
                 layout: cached.bind_group_layout.clone(),
             },
-            if hit { CacheHit::Hit } else { CacheHit::Miss },
+            hit,
         )
     }
 }

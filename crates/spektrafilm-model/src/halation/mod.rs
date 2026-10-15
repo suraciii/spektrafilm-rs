@@ -5,13 +5,13 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{Scalar, ZERO, from_f64};
 /// Apply in-emulsion scatter and back-reflection halation.
 ///
-/// Port of Python `transform_halation_um`.
+/// Port of Python `apply_halation_um`.
 ///
 /// Ordering: scatter → halation.
 /// Scatter: energy-preserving mixture of Gaussian core + exponential tail.
 /// Halation: additive multi-bounce sum of Gaussians with sqrt(k)-spaced widths.
 #[allow(clippy::too_many_arguments)]
-pub fn transform_halation_um(
+pub fn apply_halation_um(
     raw: &ImageBuf,
     pixel_size_um: f32,
     scatter_amount: f64,
@@ -28,7 +28,7 @@ pub fn transform_halation_um(
     halation_renormalize: bool,
     _backend: &dyn ComputeBackend,
 ) -> ImageBuf {
-    // Per-channel implementation matching Python's `transform_halation_um`.
+    // Per-channel implementation matching Python's `apply_halation_um`.
     // The `_backend` argument is retained for API compat with the GPU
     // resident path; on the CPU export path we operate channel-by-
     // channel using `gaussian_blur_channel` and

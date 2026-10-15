@@ -24,11 +24,7 @@ impl App {
             self.film_name.clone(),
             self.print_name.clone(),
             self.data_dir.clone(),
-<<<<<<< HEAD
-            self.gui_state.sections["special"].clone(),
-=======
             self.gui_state.special().clone(),
->>>>>>> origin/main-0.3.4
             scanner_setup,
         )
     }
@@ -92,12 +88,6 @@ impl App {
             backend: self.backend.clone(),
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
-<<<<<<< HEAD
-            display_profile: self.gui_state.sections["rust"]["display_profile"]
-                .as_str()
-                .map(PathBuf::from),
-=======
->>>>>>> origin/main-0.3.4
             ctx: ctx.clone(),
             worker_wait: operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image),
             operation,
@@ -156,17 +146,8 @@ impl App {
                         diagnostics::color_space(&r.output_color_space),
                         r.output_cctf_encoding,
                     ));
-<<<<<<< HEAD
-                    let display_profile = self.gui_state.sections["rust"]["display_profile"]
-                        .as_str()
-                        .map(Path::new);
                     let display_current = r.display_enabled
                         == self.viewer.settings.use_display_transform
-                        && r.display_profile.as_deref() == display_profile
-=======
-                    let display_current = r.display_enabled
-                        == self.viewer.settings.use_display_transform
->>>>>>> origin/main-0.3.4
                         && r.display_max_size == self.params.settings.preview_max_size;
                     self.last_input_clone_ms = r.input_clone_ms;
                     self.last_scale_ms = r.scale_ms;
@@ -188,13 +169,7 @@ impl App {
                         &self.output_color_space,
                         self.output_cctf_encoding,
                         self.viewer.settings.use_display_transform,
-<<<<<<< HEAD
-                        self.gui_state.sections["rust"]["display_profile"]
-                            .as_str()
-                            .map(Path::new),
-=======
                         self.gui_state.display_profile().map(Path::new),
->>>>>>> origin/main-0.3.4
                     );
                     self.status = format!(
                         "{} · {} · {} × {} ({:.1} MP)",
@@ -210,11 +185,7 @@ impl App {
                         &self.output_color_space,
                         self.output_cctf_encoding,
                         r.display_enabled,
-<<<<<<< HEAD
-                        r.display_profile.as_deref(),
-=======
                         None,
->>>>>>> origin/main-0.3.4
                         r.display_max_size,
                     );
                     self.output_image = Some(output);

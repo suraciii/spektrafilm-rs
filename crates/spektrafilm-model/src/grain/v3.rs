@@ -78,7 +78,7 @@ pub struct GrainV3Params {
 /// `target` is the full-source developed CMY density and `pitch_um` its pixel
 /// pitch on the full film. The returned image holds the readout density with
 /// `density_min` subtracted once.
-pub fn transform(
+pub fn apply(
     target: &ImageBuf,
     pitch_um: f64,
     grid: ReadoutGrid,
@@ -92,7 +92,7 @@ pub fn transform(
 /// linear response. Exact cell overlaps average that response, before any
 /// nonlinear development or output encoding. Exactness is relative to the
 /// piecewise-constant field; it does not recover within-cell fluctuations.
-pub fn transform_with_response(
+pub fn apply_with_response(
     target: &ImageBuf,
     pitch_um: f64,
     grid: ReadoutGrid,
@@ -1139,14 +1139,14 @@ mod tests {
             }
             Ok(out)
         };
-        let actual = transform_with_response(&target, PITCH, coarse, &p, optical).unwrap();
+        let actual = apply_with_response(&target, PITCH, coarse, &p, optical).unwrap();
         let fine_grid = ReadoutGrid {
             origin_um: [7.0, 7.0],
             pitch_um: [h; 2],
             width: 24,
             height: 20,
         };
-        let cells = transform(&target, PITCH, fine_grid, &p).unwrap();
+        let cells = apply(&target, PITCH, fine_grid, &p).unwrap();
         let light = optical(&cells).unwrap();
         for y in 0..coarse.height as usize {
             for x in 0..coarse.width as usize {
@@ -1192,7 +1192,7 @@ mod tests {
             height: 2,
             ..coarse
         };
-        let cropped = transform_with_response(&target, PITCH, crop, &p, optical).unwrap();
+        let cropped = apply_with_response(&target, PITCH, crop, &p, optical).unwrap();
         for y in 0..2 {
             for x in 0..3 {
                 for c in 0..3 {
@@ -1235,7 +1235,7 @@ mod tests {
         height: u32,
         p: &GrainV3Params,
     ) -> Result<ImageBuf, String> {
-            transform(target, pitch, grid(rect, (width, height), pitch), p)
+        apply(target, pitch, grid(rect, (width, height), pitch), p)
     }
 
     fn region(width: u32, height: u32) -> SourceRect {
@@ -2078,7 +2078,7 @@ mod tests {
             width: 11,
             height: 9,
         };
-        let full = 	transform(&target, PITCH, full_grid, &p).unwrap();
+        let full = apply(&target, PITCH, full_grid, &p).unwrap();
         let crop_grid = ReadoutGrid {
             origin_um: [
                 full_grid.origin_um[0] + 3.0 * full_grid.pitch_um[0],
@@ -2088,7 +2088,7 @@ mod tests {
             height: 4,
             ..full_grid
         };
-        let crop = 	transform(&target, PITCH, crop_grid, &p).unwrap();
+        let crop = apply(&target, PITCH, crop_grid, &p).unwrap();
         for y in 0..4 {
             for x in 0..5 {
                 let a = pixel(&crop, x, y);
@@ -2182,11 +2182,11 @@ mod tests {
         assert!(err.contains("outside the supported"), "{err}");
         let mut bad_grid = grid(region(8, 8), (8, 8), PITCH);
         bad_grid.origin_um[0] = f64::NAN;
-        let err = 	transform(&flat(8, 8, 0.1), PITCH, bad_grid, &good).unwrap_err();
+        let err = apply(&flat(8, 8, 0.1), PITCH, bad_grid, &good).unwrap_err();
         assert!(err.contains("readout origin"), "{err}");
         bad_grid.origin_um = [0.0; 2];
         bad_grid.width = 0;
-        let err = 	transform(&flat(8, 8, 0.1), PITCH, bad_grid, &good).unwrap_err();
+        let err = apply(&flat(8, 8, 0.1), PITCH, bad_grid, &good).unwrap_err();
         assert!(err.contains("dimensions"), "{err}");
         // Support, pitch, and field pitch validation.
         let mut bad = good.clone();
