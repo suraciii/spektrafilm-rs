@@ -718,3 +718,27 @@ fn control_search_reveals_controls_of_a_collapsed_subsection() {
     assert!(h.query_by_label("RMS density").is_none());
     assert!(h.query_by_label("Softness").is_some());
 }
+
+// specs/gui-workflow/spec.md#control-search: a control whose visible label
+// extends the guard prefix stays reachable by the full label and keeps its
+// section visible, and the scan point rows filter as independent controls.
+#[test]
+fn control_search_reaches_scanner_controls_by_their_visible_labels() {
+    let mut s = session();
+    let h = &mut s.harness;
+    choose(h, "workflow", "input > film > scan");
+    h.state_mut().params.scanner.scan_output = "negative_to_positive".into();
+
+    search(h, "Negative conversion method");
+    assert!(
+        h.query_by_role_and_label(
+            egui::accesskit::Role::ComboBox,
+            "Negative conversion method"
+        )
+        .is_some()
+    );
+
+    search(h, "film-scan white point");
+    assert!(h.query_by_label("film-scan white point 0").is_some());
+    assert!(h.query_by_label("film-scan black point 0").is_none());
+}
