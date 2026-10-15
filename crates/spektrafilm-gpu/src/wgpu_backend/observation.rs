@@ -22,7 +22,6 @@ impl Deref for ObservedDevice {
 pub(super) struct ObservedQueue {
     pub raw: wgpu::Queue,
     pub context: ObservationContext,
-    pub batch: Option<Arc<Mutex<BatchState>>>,
 }
 impl Deref for ObservedQueue {
     type Target = wgpu::Queue;
@@ -35,6 +34,9 @@ pub(super) struct BatchState {
     submitted: Option<Instant>,
     ready: Option<Instant>,
     queries: Option<QueryResources>,
+    /// Device the batch submits on, used to complete the telemetry readback
+    /// at the batch boundary.
+    device: Option<wgpu::Device>,
     passes: Vec<PassObservation>,
     pending_details: u32,
     query_slots: Vec<bool>,
@@ -65,6 +67,28 @@ impl Drop for BatchGuard {
     fn drop(&mut self) {
         let Some(state) = &self.state else { return };
         let mut s = state.lock();
+        // Timestamp collection is completed here, at the batch boundary: the
+        // batch may hold several submissions, and a mapped readback must not
+        // outlive the submission that follows it. The blocking poll is
+        // confined to collected timings, which the batch already paid for.
+        if s.timed > 0
+            && let Some(q) = &mut s.queries
+            && !q.map_requested
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            q.readback
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    let _ = tx.send(result);
+                });
+            q.receiver = Some(rx);
+            q.map_requested = true;
+        }
+        if s.queries.as_ref().is_some_and(|q| q.map_requested)
+            && let Some(device) = &s.device
+        {
+            device.poll(wgpu::Maintain::Wait);
+        }
         let end = Instant::now();
         let prepare = s.submitted.map_or_else(
             || Measurement::unavailable(AvailabilityReason::Incomplete),
@@ -81,6 +105,9 @@ impl Drop for BatchGuard {
         let mut sum = 0.0;
         let mut valid = 0u64;
         let mut any = false;
+        // A readback is only unmapped once its mapping actually completed; a
+        // failed map leaves the buffer unmapped and `unmap` would panic.
+        let mut map_completed = false;
         let mut reason = self.scope.context().adapter_reason().unwrap_or_else(|| {
             if self.scope.context().mode() == CollectionMode::GpuTiming {
                 if s.queries.is_none() {
@@ -95,6 +122,7 @@ impl Drop for BatchGuard {
         if let Some(q) = &s.queries {
             reason = AvailabilityReason::NotReady;
             if let Some(result) = q.receiver.as_ref().and_then(|r| r.try_recv().ok()) {
+                map_completed = result.is_ok();
                 if result.is_ok() {
                     let mapped = q.readback.slice(..).get_mapped_range();
                     let ticks: &[u64] = match bytemuck::try_cast_slice(&mapped) {
@@ -214,6 +242,7 @@ impl Drop for BatchGuard {
         });
         if let Some(q) = &s.queries
             && q.map_requested
+            && map_completed
         {
             q.readback.unmap();
         }
@@ -282,6 +311,7 @@ impl WgpuBackend {
                 start: Instant::now(),
                 submitted: None,
                 ready: None,
+                device: queries.as_ref().map(|_| self.device.raw.clone()),
                 query_slots: vec![false; queries.as_ref().map_or(0, |q| q.capacity as usize / 2)],
                 queries,
                 passes: Vec::new(),
@@ -294,6 +324,17 @@ impl WgpuBackend {
             None
         };
         let backend = Self {
+            pipe: self.pipe.with_observed(
+                ObservedDevice {
+                    raw: self.device.raw.clone(),
+                    context: context.clone(),
+                    batch: state.clone(),
+                },
+                ObservedQueue {
+                    raw: self.queue.raw.clone(),
+                    context: context.clone(),
+                },
+            ),
             device: ObservedDevice {
                 raw: self.device.raw.clone(),
                 context: context.clone(),
@@ -302,11 +343,11 @@ impl WgpuBackend {
             queue: ObservedQueue {
                 raw: self.queue.raw.clone(),
                 context,
-                batch: state.clone(),
             },
             pipeline_cache: self.pipeline_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
+            explicit: self.explicit,
         };
         (backend, BatchGuard { scope, state })
     }
@@ -548,23 +589,10 @@ impl ObservedQueue {
             telemetry_copy_bytes: Some(telemetry_bytes),
             ..Default::default()
         };
-        if let Some(batch) = &self.batch {
-            let mut batch = batch.lock();
-            if batch.timed > 0
-                && let Some(query) = &mut batch.queries
-                && !query.map_requested
-            {
-                let (tx, rx) = std::sync::mpsc::channel();
-                query
-                    .readback
-                    .slice(..)
-                    .map_async(wgpu::MapMode::Read, move |result| {
-                        let _ = tx.send(result);
-                    });
-                query.receiver = Some(rx);
-                query.map_requested = true;
-            }
-        }
+        // The telemetry readback is mapped at the batch boundary, not here:
+        // a batch may hold several submissions (a host fence splits the
+        // resident chain), and a mapped readback must not outlive the
+        // submission that follows it.
         self.context.record_work(&work);
         result
     }
@@ -657,6 +685,13 @@ fn pass_name(label: Option<&str>) -> &'static str {
         "unsharp_blur_h" => "unsharp_blur_h",
         "unsharp_blur_v" => "unsharp_blur_v",
         "unsharp_combine" => "unsharp_combine",
+        // Pipe tail (S4): output transfer encoding and magazine appearance
+        // must identify their executed work rather than the generic name
+        // (telemetry metrics: pass names identify the executed work).
+        "cctf_transfer_params" => "cctf_transfer_params",
+        "output_transfer" => "output_transfer",
+        "magazine_params" => "magazine_params",
+        "magazine" => "magazine",
         x if x.starts_with("blur_multi_h") => "blur_h",
         x if x.starts_with("blur_multi_v") => "blur_v",
         _ => "compute",
@@ -752,3 +787,8 @@ impl ObservedEncoder {
 #[cfg(test)]
 #[path = "observation_tests.rs"]
 mod tests;
+
+/// Serial lock shared by all wgpu-backend test modules: the software Vulkan
+/// driver (llvmpipe) is not safe under concurrent device use in one process.
+#[cfg(test)]
+pub(super) static TEST_DEVICE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

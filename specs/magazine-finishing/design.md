@@ -8,7 +8,7 @@
 - Finishing runs after base-output color conversion, optical effects, and existing scanner-domain grain. It runs before image writing and must preserve the declared transfer state.
 - Finished RGB must not use film, paper, spectral preparation, or neutral print filters. Profile resolution still happens when the runtime is constructed because the pipeline is profile-typed; the output must not depend on which profiles were resolved. Its source and destination color definitions remain required.
 - The finished input must have explicit primaries, white point, and transfer state. A linear ProPhoto image remains finished RGB when the user selects that base workflow; it must not be reinterpreted as scene exposure.
-- The input loader remains responsible for supported file color metadata and explicit source overrides. Magazine print must not infer the input color space from pixel values.
+- The input loader remains responsible for supported file color metadata and explicit source overrides. Magazine finish must not infer the input color space from pixel values.
 - Film stages own exposure, emulsion, development, and film-domain effects. Magazine color owns the final tone and chroma treatment. It must not use photographic paper controls as a CMYK model.
 - Spatial print appearance remains outside `magazine_print_color`. A color LUT must not contain halftone or paper-texture behavior.
 
@@ -38,7 +38,7 @@ The study compared bounded display samples. Production headroom handling must be
 
 - Switching base workflows must retain Magazine settings. Enabling Magazine must not switch negative scan polarity or choose photographic paper.
 - Finished RGB must not require changing the film, paper, exposure, scanner, or grain controls, and their saved values must remain intact. The UI must state that the resolved film and print profiles are unused by Finished RGB.
-- The UI must distinguish a native negative-polarity scan from a positive interpretation. Magazine print must not implicitly invert a negative image.
+- The UI must distinguish a native negative-polarity scan from a positive interpretation. Magazine finish must not implicitly invert a negative image.
 - Preview and Export use one finishing definition. Backend execution and alignment follow [GPU execution](../gpu-execution/spec.md). An unsupported GPU operation must not disable the effect, select an old appearance, or conceal CPU image processing.
 - LUT metadata must record the base route and active finishing definition independently. Color Strength is bakeable; spatial print structure is not.
 

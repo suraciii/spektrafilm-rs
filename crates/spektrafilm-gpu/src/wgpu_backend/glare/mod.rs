@@ -1,4 +1,4 @@
-use super::blur::{BlurJob, BlurParams, DispatchJob, gaussian_kernel};
+use super::blur::{self, BlurJob, DispatchJob};
 use super::*;
 
 /// Pre-built glare pass — owns the noise-gen dispatch, optional blur,
@@ -10,7 +10,6 @@ use super::*;
 /// scan_spectral) in place; the lognormal noise is held in a fresh
 /// scratch buffer, blurred via the existing 3-channel separable
 /// Gaussian.
-#[cfg(feature = "wgpu-backend")]
 pub(super) struct GlareState {
     _scratch: wgpu::Buffer,
     gen_dispatch: DispatchJob,
@@ -20,7 +19,6 @@ pub(super) struct GlareState {
     blur_pipe_v: CachedPipelineRef,
 }
 
-#[cfg(feature = "wgpu-backend")]
 pub(super) fn build_glare_state(
     device: &ObservedDevice,
     gp: &crate::GlareGpuParams,
@@ -89,28 +87,21 @@ pub(super) fn build_glare_state(
     };
 
     // ── Optional blur (separable, in place on scratch via buf_a mid) ──
-    let blur_layout = &[
-        wgpu::BufferBindingType::Uniform,
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ];
-    let blur_pipe_h =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_h.wgsl"), blur_layout);
-    let blur_pipe_v =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
-    let blur = if gp.blur_px > 0.0 {
-        let sigma = gp.blur_px.max(0.01);
-        let (radius, kernel_f32) = gaussian_kernel(sigma);
-
-        let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("glare_blur_kernel"),
-            contents: bytemuck::cast_slice(&kernel_f32),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let params = BlurParams {
+    let blur_pipe_h = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_h.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
+    let blur_pipe_v = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_v.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
+    let blur = (gp.blur_px > 0.0).then(|| {
+        blur::make_blur_job(
+            backend,
+            gp.blur_px.max(0.01),
             width,
             height,
+<<<<<<< HEAD
             radius,
             _pad: 0,
         };
@@ -172,6 +163,16 @@ pub(super) fn build_glare_state(
     } else {
         None
     };
+=======
+            &scratch,
+            buf_a,
+            &scratch,
+            "glare",
+            &blur_pipe_h,
+            &blur_pipe_v,
+        )
+    });
+>>>>>>> origin/main-0.3.4
 
     // ── Apply: image[c] += glare_amount * rgb_offset[c] ───────────────
     let apply_pipe = backend.cached_pipeline(
@@ -236,7 +237,6 @@ pub(super) fn build_glare_state(
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl GlareState {
     pub(super) fn encode_passes(
         &self,

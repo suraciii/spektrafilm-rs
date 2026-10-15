@@ -1,4 +1,5 @@
 use super::{RuntimeParams, Tap};
+use crate::WorkflowRoute;
 use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 
 pub(crate) const SUPPORTED_ROUTES: [&str; 6] = [
@@ -105,11 +106,11 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
         "scanner.black_point" | "scanner.white_point" => Some((0.0, Some(1.0))),
         "scanner.finish_strength" => Some((0.0, Some(1.0))),
-        "scanner.positive_density_ev"
-        | "scanner.positive_balance_ev"
+        "scanner.conversion_brightness_ev"
+        | "scanner.conversion_balance_ev"
         | "scanner.reference_exposure_ev"
         | "scanner.reference_balance_ev" => Some((-16.0, Some(16.0))),
-        "scanner.positive_contrast" | "scanner.positive_dmax" => Some((0.0, Some(16.0))),
+        "scanner.conversion_contrast" | "scanner.conversion_dmax" => Some((0.0, Some(16.0))),
         _ => None,
     }
 }
@@ -302,6 +303,7 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
         .iter()
         .map(|v| (*v).into())
         .collect(),
+<<<<<<< HEAD
         "scanner.positive_interpretation" => [
             "density",
             "separable",
@@ -312,6 +314,14 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
         .iter()
         .map(|v| (*v).into())
         .collect(),
+=======
+        "scanner.negative_conversion_method" => {
+            ["density", "separable", "coupled", "digital_reference"]
+                .iter()
+                .map(|v| (*v).into())
+                .collect()
+        }
+>>>>>>> origin/main-0.3.4
         "scanner.auto_setup" => ["off", "per_frame"].iter().map(|v| (*v).into()).collect(),
         "scanner.finish" => ["neutral", "lab_scan"]
             .iter()
@@ -423,7 +433,7 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
             value,
             "legacy_colorimetric" | "lab_scan_approx" | "digital_reference"
         ),
-        "scanner.positive_interpretation" => matches!(
+        "scanner.negative_conversion_method" => matches!(
             value,
             "density" | "separable" | "coupled" | "digital_reference" | "density_direct"
         ),
@@ -636,7 +646,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
     let scanner = &params.scanner;
     let reference =
-        scanner.positive_interpretation == super::PositiveInterpretation::DigitalReference;
+        scanner.negative_conversion_method == super::NegativeConversionMethod::DigitalReference;
     if reference != (scanner.receiver_profile == super::ReceiverProfile::DigitalReference) {
         return Err("Digital Reference requires matching digital_reference receiver and positive interpretation".into());
     }
@@ -648,9 +658,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         }
     }
     if reference {
-        if params.workflow.route != "input > film > scan"
-            || scanner.scan_output != "negative_to_positive"
-        {
+        if params.workflow.route_enum() != WorkflowRoute::FilmScan {
+            return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
+        }
+        if scanner.scan_output != "negative_to_positive" {
             return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
         }
         if scanner.auto_setup != super::ScannerAutoSetup::Off {
@@ -662,10 +673,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             return Err("Digital Reference requires identity scanner black/white points".into());
         }
         let defaults = super::ScannerParams::default();
-        if scanner.positive_density_ev != defaults.positive_density_ev
-            || scanner.positive_balance_ev != defaults.positive_balance_ev
-            || scanner.positive_contrast != defaults.positive_contrast
-            || scanner.positive_dmax != defaults.positive_dmax
+        if scanner.conversion_brightness_ev != defaults.conversion_brightness_ev
+            || scanner.conversion_balance_ev != defaults.conversion_balance_ev
+            || scanner.conversion_contrast != defaults.conversion_contrast
+            || scanner.conversion_dmax != defaults.conversion_dmax
         {
             return Err("Digital Reference requires default reconstruction controls; use reference_exposure_ev and reference_balance_ev".into());
         }
@@ -691,8 +702,8 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     if scanner.scan_output != "negative_to_positive" {
         for (path, enabled) in [
             (
-                "scanner.positive_interpretation=coupled",
-                scanner.positive_interpretation == super::PositiveInterpretation::Coupled,
+                "scanner.negative_conversion_method=coupled",
+                scanner.negative_conversion_method == super::NegativeConversionMethod::Coupled,
             ),
             (
                 "scanner.positive_interpretation=density_direct",
@@ -728,21 +739,21 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             ));
         }
     }
-    if !scanner.positive_density_ev.is_finite()
-        || !(-16.0..=16.0).contains(&scanner.positive_density_ev)
+    if !scanner.conversion_brightness_ev.is_finite()
+        || !(-16.0..=16.0).contains(&scanner.conversion_brightness_ev)
     {
-        return Err("scanner.positive_density_ev: must be finite and in -16..=16".into());
+        return Err("scanner.conversion_brightness_ev: must be finite and in -16..=16".into());
     }
-    for (channel, value) in scanner.positive_balance_ev.iter().enumerate() {
+    for (channel, value) in scanner.conversion_balance_ev.iter().enumerate() {
         if !value.is_finite() || !(-16.0..=16.0).contains(value) {
             return Err(format!(
-                "scanner.positive_balance_ev[{channel}]: must be finite and in -16..=16"
+                "scanner.conversion_balance_ev[{channel}]: must be finite and in -16..=16"
             ));
         }
     }
     for (name, value) in [
-        ("scanner.positive_contrast", scanner.positive_contrast),
-        ("scanner.positive_dmax", scanner.positive_dmax),
+        ("scanner.conversion_contrast", scanner.conversion_contrast),
+        ("scanner.conversion_dmax", scanner.conversion_dmax),
     ] {
         if !value.is_finite() || value <= 0.0 || value > 16.0 {
             return Err(format!(

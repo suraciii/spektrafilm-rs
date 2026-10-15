@@ -9,6 +9,7 @@
 //! Film coordinates come from the profile and the geometry: a crop selects
 //! the readout region only, so field cells keep their global film positions
 //! and overlapping reads agree.
+use crate::WorkflowRoute;
 
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
@@ -59,14 +60,16 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
     if !enabled {
         return Ok(false);
     }
-    if params.scanner.positive_interpretation
-        == crate::params::PositiveInterpretation::DigitalReference
+    if params.scanner.negative_conversion_method
+        == crate::params::NegativeConversionMethod::DigitalReference
     {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} does not support Digital Reference; disable the exact-cell diagnostic"
         ));
     }
-    if params.workflow.route != PRINT_ROUTE && params.workflow.route != FILM_SCAN_ROUTE {
+    if params.workflow.route_enum() != WorkflowRoute::FilmPrintScan
+        && params.workflow.route_enum() != WorkflowRoute::FilmScan
+    {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
         ));
@@ -131,7 +134,7 @@ pub fn validate_aperture(params: &RuntimeParams) -> Result<Option<u32>, String> 
     let Some(factor) = aperture_factor()? else {
         return Ok(None);
     };
-    if params.io.scan_film || params.workflow.route != PRINT_ROUTE {
+    if params.io.scan_film || params.workflow.route_enum() != WorkflowRoute::FilmPrintScan {
         return Err(format!(
             "{APERTURE_FACTOR_ENV} supports only the {PRINT_ROUTE:?} route"
         ));
@@ -146,6 +149,31 @@ pub fn validate_aperture(params: &RuntimeParams) -> Result<Option<u32>, String> 
         ));
     }
     Ok(Some(factor))
+}
+
+/// Whether the resident chain can run the Dye field as an assembled fence on
+/// the developed film density.
+///
+/// The fence reads and writes the chain's fixed-size density buffer, so it
+/// requires the readout geometry to be the delivered raster the chain already
+/// holds: no crop and no upscale ([`geometry`]). The env-gated certification
+/// readouts are not fenceable either — the exact-cell response interleaves
+/// the field with the acquisition, and the aperture probe runs the print
+/// exposure at a finer lattice.
+pub fn resident_fence_supported(film: &Profile, params: &RuntimeParams) -> bool {
+    if !active(params) {
+        return false;
+    }
+    if validate_supported(film, params).is_err() {
+        return false;
+    }
+    if validate_cell_spectral(params).unwrap_or(true) {
+        return false;
+    }
+    if validate_aperture(params).unwrap_or(None).is_some() {
+        return false;
+    }
+    !params.io.crop && params.io.upscale_factor == 1.0
 }
 
 /// Integer rectangle, in source pixels or in the extended output grid.
@@ -246,10 +274,7 @@ pub fn crop_output(image: ImageBuf, rect: SourceRect) -> ImageBuf {
 /// the field is spatial by construction, and the LUT bake needs a
 /// pointwise chain. These modes must not resolve or allocate the field.
 pub fn active(params: &RuntimeParams) -> bool {
-    let grain = &params.film_render.grain;
-    grain.active
-        && matches!(grain.engine, GrainEngine::Dye)
-        && !params.debug.deactivate_spatial_effects
+    super::grain_engine_active(params, GrainEngine::Dye) && !params.debug.deactivate_spatial_effects
 }
 
 /// Fail before any work when Dye is selected outside its supported
@@ -450,10 +475,10 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
 
 /// Read the requested film region out of the full developed source.
 ///
-/// The field is realized on the CPU: Dye disables the fused WGPU/resident
-/// chain (see [`crate::pipeline::Pipeline::process`]), so the reported
-/// backend for an active Dye render is CPU regardless of the selected
-/// backend of the surrounding stages.
+/// The field is realized on the CPU: on the resident chain it runs inside the
+/// assembled density fence ([`resident_fence_supported`]), and otherwise it is
+/// the per-stage readout, so the reported executor for the field is CPU
+/// regardless of the backend selected for the surrounding stages.
 pub fn readout(
     source: &ImageBuf,
     film: &Profile,
@@ -514,7 +539,7 @@ pub fn readout_with_response(
 
 /// Effective-backend note for user-visible backend/capability output.
 pub fn effective_backend_note() -> &'static str {
-    "film grain Dye: field readout on CPU (resident WGPU chain disabled)"
+    "film grain Dye: field readout on CPU"
 }
 
 fn cell_um_override() -> Option<f64> {
@@ -532,6 +557,7 @@ fn expectation_requested() -> bool {
 mod tests {
     use super::*;
     use crate::params::RuntimeParams;
+    use crate::test_support::data_dir;
     use spektrafilm_math::precision::from_f64;
 
     #[test]
@@ -571,15 +597,6 @@ mod tests {
                 .unwrap_err()
                 .contains("divisible")
         );
-    }
-
-    fn data_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
     }
 
     fn load(stock: &str) -> Profile {

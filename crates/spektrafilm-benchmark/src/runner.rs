@@ -1,6 +1,6 @@
 use crate::{
     Error, Result,
-    common::{self, Evidence, Progress},
+    common::{self, Evidence, Progress, array, text},
     documents,
 };
 use serde_json::{Value, json};
@@ -23,25 +23,6 @@ const ENV_KEYS: &[&str] = &[
     "XDG_RUNTIME_DIR",
 ];
 
-pub fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| Error::new("missing_field", format!("Missing string: {key}")))
-}
-pub fn array<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .ok_or_else(|| Error::new("missing_field", format!("Missing array: {key}")))
-}
-pub fn absolute(path: &Path) -> Result<PathBuf> {
-    Ok(if path.is_absolute() {
-        path.into()
-    } else {
-        env::current_dir()?.join(path)
-    })
-}
 pub fn finalize(root: &Path, name: &str, value: &mut Value) -> Result<()> {
     value
         .as_object_mut()
@@ -62,7 +43,7 @@ pub fn finalize(root: &Path, name: &str, value: &mut Value) -> Result<()> {
     fs::rename(temp, root.join(name))?;
     Ok(())
 }
-pub fn tree_inventory(root: &Path) -> Result<Value> {
+fn tree_inventory(root: &Path) -> Result<Value> {
     fn visit(root: &Path, dir: &Path, records: &mut Vec<Value>) -> Result<()> {
         let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<std::io::Result<_>>()?;
         entries.sort_by_key(|e| e.path());
@@ -95,7 +76,7 @@ fn file_dependencies(
     target_path: &Path,
 ) -> Result<Vec<Value>> {
     fn dependency_path(value: &str, document: &Path) -> Result<PathBuf> {
-        Ok(absolute(document)?
+        Ok(documents::normalize_path(document)?
             .parent()
             .unwrap_or(Path::new("/"))
             .join(value))
@@ -491,21 +472,8 @@ fn check_configuration(
             "case-configuration",
         )?;
         let base: Value = serde_json::from_slice(&result.stdout)?;
-        for (section, names) in [
-            (
-                "io",
-                &[
-                    "input_color_space",
-                    "input_cctf_decoding",
-                    "crop",
-                    "crop_center",
-                    "crop_size",
-                    "upscale_factor",
-                ][..],
-            ),
-            ("settings", &["preview_mode", "preview_max_size"][..]),
-        ] {
-            for name in names {
+        for (section, names) in documents::CASE_OWNED_FIELDS {
+            for name in *names {
                 if resolved["parameters"][section][name] != base["parameters"][section][name] {
                     return Err(Error::new(
                         "target_geometry",
@@ -959,7 +927,7 @@ fn execute_suite(
     selections: &[String],
     dry_run: bool,
 ) -> Result<(Value, i32)> {
-    let suite_path = absolute(suite_path)?;
+    let suite_path = documents::normalize_path(suite_path)?;
     documents::validate_suite(&suite, &suite_path)?;
     let target_path = target_path.canonicalize()?;
     let target = documents::load_target(&target_path)?;
@@ -999,7 +967,7 @@ fn execute_suite(
         .collect();
     let dependencies = file_dependencies(&suite, &suite_path, &target, &target_path)?;
     let data_root = documents::resolve_path(text(&target, "data_dir")?, &target_path)?;
-    let root = absolute(out)?;
+    let root = documents::normalize_path(out)?;
     common::create_destination(&root)?;
     let result = (|| -> Result<(Value, i32)> {
         let mut evidence = Evidence::new(&root);

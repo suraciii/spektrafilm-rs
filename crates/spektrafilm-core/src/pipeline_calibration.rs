@@ -2,8 +2,9 @@ use std::path::Path;
 
 use spektrafilm_math::spectral::TcLut;
 
+use crate::WorkflowRoute;
 use crate::enlarger;
-use crate::params::RuntimeParams;
+use crate::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams};
 use crate::profile::Profile;
 use crate::spectral_service::{self, select_illuminant, select_illuminant_f64};
 
@@ -27,8 +28,8 @@ struct SpectralControlsKey {
 #[derive(Debug, Clone, PartialEq)]
 struct CalibrationControlsKey {
     exposure_compensation_ev: f32,
-    print_exposure_compensation: bool,
-    normalize_print_exposure: bool,
+    print_exposure_mode: PrintExposureMode,
+    print_exposure_ev_tracking: PrintExposureEvTracking,
     illuminant: String,
     y_filter_shift: f32,
     m_filter_shift: f32,
@@ -53,8 +54,8 @@ pub(crate) fn calibration_changed(old: &RuntimeParams, new: &RuntimeParams) -> b
 fn calibration_controls_key(params: &RuntimeParams) -> CalibrationControlsKey {
     CalibrationControlsKey {
         exposure_compensation_ev: params.camera.exposure_compensation_ev,
-        print_exposure_compensation: params.enlarger.print_exposure_compensation,
-        normalize_print_exposure: params.enlarger.normalize_print_exposure,
+        print_exposure_mode: params.enlarger.print_exposure_mode,
+        print_exposure_ev_tracking: params.settings.print_exposure_ev_tracking,
         illuminant: params.enlarger.illuminant.clone(),
         y_filter_shift: params.enlarger.y_filter_shift,
         m_filter_shift: params.enlarger.m_filter_shift,
@@ -65,7 +66,9 @@ fn calibration_controls_key(params: &RuntimeParams) -> CalibrationControlsKey {
         preflash_y_filter_shift: params.enlarger.preflash_y_filter_shift,
         preflash_m_filter_shift: params.enlarger.preflash_m_filter_shift,
         neutral_print_filters_from_database: params.settings.neutral_print_filters_from_database,
-        neutral_print_filters_protected: params.neutral_print_filters_protected,
+        neutral_print_filters_protected: params
+            .neutral_print_filters_protected
+            .unwrap_or([false; 3]),
     }
 }
 
@@ -263,8 +266,8 @@ pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), S
     if params.scanner.scan_output != "negative_to_positive" {
         return Ok(());
     }
-    let direct_film_scan = params.workflow.route == "input > film > scan";
-    let convert_scan = params.workflow.route == "input > convert-film > scan";
+    let direct_film_scan = params.workflow.route_enum() == WorkflowRoute::FilmScan;
+    let convert_scan = params.workflow.route_enum() == WorkflowRoute::ConvertFilmScan;
     if !direct_film_scan && !convert_scan {
         return Err(
             "scanner.scan_output=negative_to_positive requires a direct film scan route (input > film > scan or input > convert-film > scan)".into(),
@@ -353,19 +356,25 @@ pub(crate) fn build(
     // params.enlarger.{c,m,y}_filter_neutral when the combo isn't in the database.
     // Keep the f64 lookup values around (params is f32) — narrowing to
     // f32 here costs ~4e-8 precision through the `10^(-cc/100)` step.
+    // Authored-versus-baseline resolution is shared with preparation
+    // (`authored_filter_axes`): authored axes keep the carried value so
+    // replaying a resolved document reproduces its render; baseline axes
+    // follow the per-paper database.
     let mut neutral_cmy_f64: Option<[f64; 3]> = None;
     if params.settings.neutral_print_filters_from_database {
         let db = crate::neutral_filters::NeutralFilters::load(data_dir)?;
         let print_stock = print.info.stock.as_deref().unwrap_or("");
         let film_stock = film.info.stock.as_deref().unwrap_or("");
         if let Some(mut cmy) = db.lookup(print_stock, &params.enlarger.illuminant, film_stock) {
+            let protected =
+                crate::params_builder::authored_filter_axes(params.neutral_print_filters_protected);
             let controls = [
                 &mut params.enlarger.c_filter_neutral,
                 &mut params.enlarger.m_filter_neutral,
                 &mut params.enlarger.y_filter_neutral,
             ];
             for (axis, control) in controls.into_iter().enumerate() {
-                if params.neutral_print_filters_protected[axis] {
+                if protected[axis] {
                     cmy[axis] = *control as f64;
                 } else {
                     *control = cmy[axis] as f32;
@@ -557,10 +566,14 @@ pub(crate) fn build(
     // candidate factors:
     //   * `factor_midgray`     = 1 / geomean(raw_midgray)
     //   * `factor_midgray_comp`= 1 / geomean(raw_midgray_with_neg_EV)
-    // and four flag combinations of
-    // `enlarger.normalize_print_exposure` × `enlarger.print_exposure_compensation`.
+    // selected by `enlarger.print_exposure_mode` and
+    // `settings.print_exposure_ev_tracking`. The legacy boolean pair
+    // `normalize_print_exposure` × `print_exposure_compensation` maps
+    // one-to-one onto the two enums: (true, true) → auto/follow_mode,
+    // (true, false) → auto/never, (false, false) → manual/follow_mode,
+    // (false, true) → manual/always.
     //
-    // With both flags ON (defaults) and no EV compensation,
+    // With the defaults (auto/follow_mode) and no EV compensation,
     // Python returns `factor_midgray_comp == 1.0`. Rust used to
     // unconditionally apply `factor_midgray` here, which biased
     // the print exposure by ~3% on every render and was the root
@@ -570,35 +583,41 @@ pub(crate) fn build(
         &print_illuminant,
         &print_sensitivity,
     );
-    // Python builds `density_spectral_midgray_comp` whenever
-    // `print_exposure_compensation` is on — even when EV == 0, in
-    // which case `rgb_midgray_comp = rgb_midgray * 2^0` and so
+    // Python builds `density_spectral_midgray_comp` whenever EV
+    // tracking is on — even when EV == 0, in which case
+    // `rgb_midgray_comp = rgb_midgray * 2^0` and so
     // `factor_midgray_comp == factor_midgray`. We have to mirror
     // that (NOT short-circuit to 1.0) because the
     // `factor_midgray_comp` branch is what gets returned by default.
-    let factor_midgray_comp = if !params.enlarger.print_exposure_compensation {
-        1.0
-    } else if params.camera.exposure_compensation_ev == 0.0 {
-        factor_midgray
-    } else {
-        // Python: `rgb_midgray_comp = rgb_midgray * 2 ** exposure_compensation_ev`.
-        let scale = 2.0f64.powf(params.camera.exposure_compensation_ev as f64);
-        let density_spectral_midgray_comp =
-            enlarger::midgray_density_spectral_from_raw(midgray_raw(scale), &film, &params);
-        enlarger::compute_exposure_factor(
-            &density_spectral_midgray_comp,
-            &print_illuminant,
-            &print_sensitivity,
-        )
-    };
+    let factor_midgray_comp =
+        if params.settings.print_exposure_ev_tracking == PrintExposureEvTracking::Never {
+            1.0
+        } else if params.camera.exposure_compensation_ev == 0.0 {
+            factor_midgray
+        } else {
+            // Python: `rgb_midgray_comp = rgb_midgray * 2 ** exposure_compensation_ev`.
+            let scale = 2.0f64.powf(params.camera.exposure_compensation_ev as f64);
+            let density_spectral_midgray_comp =
+                enlarger::midgray_density_spectral_from_raw(midgray_raw(scale), &film, &params);
+            enlarger::compute_exposure_factor(
+                &density_spectral_midgray_comp,
+                &print_illuminant,
+                &print_sensitivity,
+            )
+        };
     let print_exposure_factor = match (
-        params.enlarger.normalize_print_exposure,
-        params.enlarger.print_exposure_compensation,
+        params.enlarger.print_exposure_mode,
+        params.settings.print_exposure_ev_tracking,
     ) {
-        (true, true) => factor_midgray_comp,
-        (true, false) => factor_midgray,
-        (false, true) => factor_midgray_comp / factor_midgray,
-        (false, false) => 1.0,
+        // `always` in `auto` folds onto the default tracked behavior;
+        // `never` in `manual` folds onto the default untracked behavior.
+        // They exist to carry the legacy mixed states.
+        (PrintExposureMode::Auto, PrintExposureEvTracking::Never) => factor_midgray,
+        (PrintExposureMode::Auto, _) => factor_midgray_comp,
+        (PrintExposureMode::Manual, PrintExposureEvTracking::Always) => {
+            factor_midgray_comp / factor_midgray
+        }
+        (PrintExposureMode::Manual, _) => 1.0,
     };
 
     tracing::info!(
@@ -654,6 +673,42 @@ mod tests {
             }
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn print_exposure_factor_folds_degenerate_tracking_onto_the_mode_default() {
+        use crate::params::{PrintExposureEvTracking, PrintExposureMode};
+        use crate::test_support::data_dir;
+        use PrintExposureEvTracking::{Always, FollowMode, Never};
+        use PrintExposureMode::{Auto, Manual};
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let factor = |mode: PrintExposureMode, tracking: PrintExposureEvTracking| {
+            let mut params = RuntimeParams::default();
+            params.enlarger.print_exposure_mode = mode;
+            params.settings.print_exposure_ev_tracking = tracking;
+            params.camera.exposure_compensation_ev = 0.5;
+            super::build(film.clone(), print.clone(), params, &dir)
+                .unwrap()
+                .print_exposure_factor
+        };
+        let auto_follow = factor(Auto, FollowMode);
+        let auto_never = factor(Auto, Never);
+        let auto_always = factor(Auto, Always);
+        let manual_follow = factor(Manual, FollowMode);
+        let manual_never = factor(Manual, Never);
+        let manual_always = factor(Manual, Always);
+        // The degenerate tracking choices fold exactly onto the mode
+        // default; they only carry the legacy mixed states.
+        assert_eq!(auto_always, auto_follow);
+        assert_eq!(manual_never, manual_follow);
+        // The manual default applies the print exposure alone.
+        assert_eq!(manual_follow, 1.0);
+        // The tracked branches stay distinct at nonzero camera EV ...
+        assert_ne!(auto_follow, auto_never);
+        // ... and manual+always carries exactly the tracking ratio.
+        assert!((manual_always * auto_never - auto_follow).abs() < 1e-12);
     }
 
     #[test]

@@ -246,6 +246,127 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
 }
 
 #[test]
+fn active_v3_field_fence_reports_its_cpu_stage_reason() {
+    // The delivered raster (no crop, no upscale) runs the Dye field as the
+    // assembled density fence: the render stays on the resident chain, the
+    // field's CPU stage keeps its published reason, and the fence is not a
+    // resident decline.
+    let gpu = spektrafilm_gpu::test_support::adapter();
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = false;
+    params.camera.film_format_mm = 36.0;
+    params.workflow.route = "input > film > scan".to_owned();
+    params.io.scan_film = true;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
+    params.film_render.grain.v3_dye_support_um = 8.0;
+    let runtime =
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let (width, height) = (32u32, 32u32);
+    let image = ImageBuf::from_data(
+        width,
+        height,
+        (0..(width * height * 3) as usize)
+            .map(|index| from_f64(0.05 + 0.9 * (index % 97) as f64 / 97.0))
+            .collect(),
+    );
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    operation.set_input_dimensions(width, height);
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    let output = runtime
+        .process_observed(image, &gpu, simulation.context())
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    report.validate().unwrap();
+    let summary = report.summary();
+    assert_eq!(
+        summary.path,
+        Some(ExecutionPath::GpuResident),
+        "the Dye fence must keep the resident chain: {:?}",
+        summary.path
+    );
+    assert!(
+        summary
+            .cpu_stage_reasons
+            .contains(&("grain_v3_field".to_owned(), CpuReason::GrainV3FieldCpu)),
+        "Dye field stage missing from the report: {:?}",
+        summary.cpu_stage_reasons
+    );
+    assert!(
+        summary.resident_decline_reasons.is_empty(),
+        "the Dye fence must not decline the resident route: {:?}",
+        summary.resident_decline_reasons
+    );
+    assert_eq!((output.width, output.height), (width, height));
+}
+
+#[test]
+fn gpu_timing_collection_survives_a_host_fence() {
+    // A host fence splits the resident chain into several submissions inside
+    // one batch. The timestamp readback is mapped at the batch boundary, so
+    // the submission that follows the fence must not see a mapped buffer
+    // (wgpu rejects that submit with a validation error), and the collected
+    // passes stay complete.
+    let gpu = spektrafilm_gpu::test_support::adapter();
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = false;
+    params.workflow.route = "input > film > scan".to_owned();
+    params.io.scan_film = true;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    // The default Spektra engine runs as the assembled density fence.
+    let runtime =
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let (width, height) = (32u32, 32u32);
+    let image = ImageBuf::from_data(
+        width,
+        height,
+        (0..(width * height * 3) as usize)
+            .map(|index| from_f64(0.05 + 0.9 * (index % 97) as f64 / 97.0))
+            .collect(),
+    );
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::GpuTiming);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    operation.set_input_dimensions(width, height);
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    let output = runtime
+        .process_observed(image, &gpu, simulation.context())
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    report.validate().unwrap();
+    assert_eq!(
+        report.summary().path,
+        Some(ExecutionPath::GpuResident),
+        "the fenced chain must stay resident"
+    );
+    let chain = report
+        .gpu_batches
+        .iter()
+        .find(|batch| batch.name == "film_chain")
+        .expect("the resident chain records its batch");
+    assert!(
+        chain.work.submit_count > Some(1),
+        "the fence must split the chain into several submissions: {:?}",
+        chain.work.submit_count
+    );
+    assert_eq!(chain.work.timed_pass_count, chain.work.executed_pass_count);
+    assert_eq!(chain.work.valid_pass_count, chain.work.executed_pass_count);
+    assert_eq!((output.width, output.height), (width, height));
+}
+
+#[test]
 fn active_fotufilm_engine_reports_its_cpu_stage_reason() {
     // The grain engine resolves on the CPU from the developed film density, so
     // a report must name the stage and the CPU reason that declined the
@@ -300,10 +421,7 @@ fn active_fotufilm_engine_reports_its_cpu_stage_reason() {
 
 #[test]
 fn slide_reference_batches_are_calibration_not_image_work() {
-    let Some(backend) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
-        eprintln!("WGPU adapter unavailable; calibration batch accounting not exercised");
-        return;
-    };
+    let backend = spektrafilm_gpu::test_support::adapter();
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();
@@ -315,6 +433,11 @@ fn slide_reference_batches_are_calibration_not_image_work() {
     params.settings.use_scanner_lut = false;
     params.scanner.black_point = [0.04; 3];
     params.scanner.white_point = [0.96; 3];
+    // The reference capture is device work only on the per-stage route: the
+    // resident chain runs the slide points on the host readout fence, where
+    // no calibration batch exists. The Mallett front pass keeps this check
+    // on the per-stage path (its execution-parity reason declines residency).
+    params.settings.rgb_to_raw_method = "mallett2019".into();
     let runtime =
         Runtime::from_stocks("fujifilm_provia_100f", "kodak_portra_endura", params, &data).unwrap();
     let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);

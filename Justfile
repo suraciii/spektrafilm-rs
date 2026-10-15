@@ -63,6 +63,10 @@ test-fast-precision precision_args:
 benchmark-test:
     cargo test --locked -p spektrafilm-benchmark
 
+# Measure CPU-reference vs GPU parity; fails on a budget breach or missing adapter.
+parity-backend:
+    cargo run --locked -p spektrafilm-core --example backend_parity --features precision-f64 -- data
+
 # Exercise the real GUI App and CPU workers without a desktop or OCR.
 gui-headless:
     cargo test --locked -p spektrafilm-gui --features precision-f64 headless::
@@ -98,7 +102,8 @@ test-pr:
 ci-pr: check-python-cache check-python fmt test-pr
 
 # Full local and main-branch gate, including slow rendering and GPU tests.
-ci: check-python-cache check-python fmt check check-f64 clippy test test-f64 benchmark-test
+ci: check-python-cache check-python fmt check check-f64 clippy test test-f64 benchmark-test parity-backend
+
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
     python3 scripts/verify.py {{quote(evidence_dir)}}

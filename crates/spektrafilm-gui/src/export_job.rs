@@ -16,9 +16,10 @@ use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_gpu::telemetry::{ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 
-use super::diagnostics::BackendRequested;
+use super::App;
+use super::diagnostics::{BackendRequested, effective_backend_name};
 use super::export::{ExportBackend, ExportOptions};
-use super::{App, effective_backend_name, observed_result};
+use super::render_worker::{observed_result, panic_message};
 
 /// One in-flight export owning an immutable input, pipeline and option snapshot.
 /// Cancellation discards its staged file once the current operation completes.
@@ -156,6 +157,7 @@ impl App {
                 "Export destination already exists: {}. Choose that exact filename to confirm replacement.",
                 out_path.display()
             );
+            self.last_export_error = Some(self.status.clone());
             operation.issue(IssueCategory::Publication, IssueBoundary::Operation);
             self.diagnostics.finish(operation, Outcome::Failed);
             return;
@@ -167,6 +169,7 @@ impl App {
             Ok(params) => params,
             Err(error) => {
                 self.status = format!("Export state error: {error:#}");
+                self.last_export_error = Some(self.status.clone());
                 operation.issue(IssueCategory::Configuration, IssueBoundary::Operation);
                 self.diagnostics.finish(operation, Outcome::Failed);
                 return;
@@ -229,9 +232,19 @@ impl App {
                             ExportBackend::Cpu => {
                                 Ok(Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend))
                             }
-                            ExportBackend::Gpu if selected_backend.is_gpu() => Ok(selected_backend),
-                            ExportBackend::Gpu => spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
-                                .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
+                            // The export "GPU" selection is an explicit request
+                            // (spec gpu-execution §Backend selection): a
+                            // configuration that needs a host-executed stage
+                            // fails at assembly instead of being demoted. The
+                            // preview backend is derived so device, pipeline
+                            // cache, and readback pool stay shared.
+                            ExportBackend::Gpu => selected_backend
+                                .with_explicit_request()
+                                .map(Arc::from)
+                                .or_else(|| {
+                                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit()
+                                        .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
+                                })
                                 .context("GPU export requested but no WGPU adapter is available"),
                         };
                         let backend = observed_result(
@@ -318,7 +331,7 @@ impl App {
                         })
                     },
                 ))
-                .unwrap_or_else(|panic| Err(anyhow::anyhow!(super::panic_message(&panic))));
+                .unwrap_or_else(|panic| Err(anyhow::anyhow!(panic_message(&panic))));
                 attempt.finish(if res.is_ok() {
                     Outcome::Succeeded
                 } else if cancel_for_worker.load(Ordering::SeqCst) {
@@ -382,6 +395,7 @@ impl App {
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.status = "Export error: worker thread vanished".into();
+                self.last_export_error = Some("Export error: worker thread vanished".into());
                 let mut job = self.export_job.take().expect("export job exists");
                 if let Some(handle) = job.handle.take() {
                     let _ = handle.join();
@@ -432,6 +446,7 @@ impl App {
                 match published {
                     Ok(report) => {
                         outcome = Outcome::Succeeded;
+                        self.last_export_error = None;
                         operation.set_published_dimensions(result.size[0], result.size[1]);
                         let mut status = format!(
                             "Exported ({}) {} · {} × {} in {:.1} s",
@@ -446,11 +461,19 @@ impl App {
                         }
                         status
                     }
-                    Err(e) => format!("Export error: {e:#}"),
+                    Err(e) => {
+                        let msg = format!("Export error: {e:#}");
+                        self.last_export_error = Some(msg.clone());
+                        msg
+                    }
                 }
             }
             Err(_) if cancelled => "Export cancelled.".into(),
-            Err(e) => format!("Export error: {e}"),
+            Err(e) => {
+                let msg = format!("Export error: {e}");
+                self.last_export_error = Some(msg.clone());
+                msg
+            }
         };
         if cancelled {
             operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);

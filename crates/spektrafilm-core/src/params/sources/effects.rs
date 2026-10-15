@@ -1,4 +1,5 @@
 //! Conditions shared by field discovery and winning-edit feedback.
+use crate::WorkflowRoute;
 use crate::params::{GrainEngine, RuntimeParams};
 use crate::profile::Profile;
 
@@ -76,7 +77,7 @@ impl Condition {
             Self::NegativeToPositive => "scanner.scan_output = negative_to_positive",
             Self::LabScanFinish => "scanner.finish = lab_scan",
             Self::FilmScan => "film-scan route",
-            Self::DigitalReference => "scanner.positive_interpretation = digital_reference",
+            Self::DigitalReference => "scanner.negative_conversion_method = digital_reference",
             Self::MagazineActive => "magazine_print_color.active = true",
             Self::MagazineStrength => "magazine_print_color.strength > 0",
             Self::FilmDevelopment => {
@@ -134,15 +135,17 @@ impl Condition {
             Self::AutoExposure => p.camera.auto_exposure,
             Self::Crop => p.io.crop,
             Self::ScannerPoints => {
-                (p.io.scan_film || p.workflow.route == "input > convert-film > scan")
+                (p.io.scan_film || p.workflow.route_enum() == WorkflowRoute::ConvertFilmScan)
                     && (film.is_positive() || p.scanner.scan_output == "negative_to_positive")
             }
             Self::NegativeToPositive => p.scanner.scan_output == "negative_to_positive",
             Self::LabScanFinish => p.scanner.finish == crate::params::ScannerFinish::LabScan,
-            Self::FilmScan => p.io.scan_film || p.workflow.route == "input > convert-film > scan",
+            Self::FilmScan => {
+                p.io.scan_film || p.workflow.route_enum() == WorkflowRoute::ConvertFilmScan
+            }
             Self::DigitalReference => {
-                p.scanner.positive_interpretation
-                    == crate::params::PositiveInterpretation::DigitalReference
+                p.scanner.negative_conversion_method
+                    == crate::params::NegativeConversionMethod::DigitalReference
             }
             Self::MagazineActive => p.magazine_print_color.active,
             Self::MagazineStrength => p.magazine_print_color.strength > 0.0,
@@ -264,8 +267,11 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         out.push(FilmScan);
     } else if path.starts_with("scanner.reference_") {
         out.push(DigitalReference);
-    } else if path.starts_with("scanner.positive_")
-        || matches!(path, "scanner.auto_setup" | "scanner.finish")
+    } else if path.starts_with("scanner.conversion_")
+        || matches!(
+            path,
+            "scanner.negative_conversion_method" | "scanner.auto_setup" | "scanner.finish"
+        )
     {
         out.push(NegativeToPositive);
     } else if path.starts_with("magazine_print_color.") {

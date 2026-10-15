@@ -510,8 +510,65 @@ fn report_and_render_use_identical_resolved_controls() {
         .iter()
         .map(|bytes| f64::from_ne_bytes(*bytes))
         .collect();
+    // Replaying the published parameters through the real entry point must
+    // reproduce the original render bit-identically: authored axes keep the
+    // carried values and baseline axes re-derive the same built-in table.
+    let params_file = f.root.join("params.json");
+    std::fs::write(
+        &params_file,
+        serde_json::to_vec(&report["parameters"]).unwrap(),
+    )
+    .unwrap();
+    let replay_raw = f.root.join("replay.raw");
+    let replay = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--params",
+        params_file.to_str().unwrap(),
+        "--backend",
+        "cpu",
+        "--raw-out",
+        replay_raw.to_str().unwrap(),
+        "--saving-color-space",
+        "ProPhoto RGB",
+        "--saving-cctf-encoding",
+        "true",
+    ]);
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let replayed: Vec<f64> = std::fs::read(replay_raw)
+        .unwrap()
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|bytes| f64::from_ne_bytes(*bytes))
+        .collect();
+    assert_eq!(
+        replayed, rendered,
+        "published parameters must replay the render bit-identically"
+    );
+    // The independent expected render consumes the published f32 views with
+    // the second lookup disabled; the exposure normalization then misses the
+    // f64 refinement of the built-in table values. That refinement is the
+    // documented precision rule (authored axes exact, baseline axes refined
+    // at f64 for Python parity), so the published-view render must agree
+    // within the measured budget. Measured: 6.4e-10 absolute for this
+    // fixture; 1e-8 keeps more than 10x headroom while still rejecting any
+    // real control or resolution regression.
     let expected: Vec<f64> = expected.data.iter().map(|&v| v as f64).collect();
-    assert_eq!(rendered, expected);
+    assert_eq!(rendered.len(), expected.len());
+    let max_diff = rendered
+        .iter()
+        .zip(expected.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f64, f64::max);
+    assert!(
+        max_diff <= 1e-8,
+        "published-view render diverges from the render by {max_diff:e}"
+    );
     assert!(f.root.join("output.tif").is_file());
 }
 
@@ -653,13 +710,13 @@ fn film_scan_without_preset_keeps_legacy_print_selection() {
 #[test]
 fn scanner_selectors_report_approximation_and_reject_unsupported_routes_before_pixels() {
     let f = Fixture::new();
-    let report = f.report(&["--film", "kodak_portra_400", "--scan-film", "--scan-output", "negative_to_positive", "--set", "scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled,scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.5", "--dry-run"]);
+    let report = f.report(&["--film", "kodak_portra_400", "--scan-film", "--scan-output", "negative_to_positive", "--set", "scanner.receiver_profile=lab_scan_approx,scanner.negative_conversion_method=coupled,scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.5", "--dry-run"]);
     assert_eq!(
         report["parameters"]["scanner"]["receiver_profile"],
         "lab_scan_approx"
     );
     assert_eq!(
-        report["parameters"]["scanner"]["positive_interpretation"],
+        report["parameters"]["scanner"]["negative_conversion_method"],
         "coupled"
     );
     assert_eq!(report["parameters"]["scanner"]["auto_setup"], "per_frame");
@@ -669,7 +726,7 @@ fn scanner_selectors_report_approximation_and_reject_unsupported_routes_before_p
     );
     std::fs::write(&f.input, b"invalid-pixels").unwrap();
     for selection in [
-        "scanner.positive_interpretation=coupled",
+        "scanner.negative_conversion_method=coupled",
         "scanner.auto_setup=per_frame",
         "scanner.finish=lab_scan",
         "scanner.receiver_profile=not_a_scanner",
@@ -2149,7 +2206,7 @@ fn describe_text_lists_non_settable_runtime_leaves_and_set_rejects_them() {
 #[test]
 fn digital_reference_explicit_carrier_renders_and_rejects_invalid_transactions() {
     let f = Fixture::new();
-    let selection = "scanner.scan_output=negative_to_positive,scanner.positive_interpretation=digital_reference,scanner.receiver_profile=digital_reference";
+    let selection = "scanner.scan_output=negative_to_positive,scanner.negative_conversion_method=digital_reference,scanner.receiver_profile=digital_reference";
     let base = [
         "--film",
         "kodak_portra_400",
@@ -2203,14 +2260,14 @@ fn digital_reference_explicit_carrier_renders_and_rejects_invalid_transactions()
     let input_before = std::fs::read(&f.input).unwrap();
     for invalid in [
         "scanner.receiver_profile=legacy_colorimetric",
-        "scanner.positive_interpretation=density",
+        "scanner.negative_conversion_method=density",
         "scanner.auto_setup=per_frame",
         "scanner.black_point=[0.1,0,0]",
         "scanner.white_point=[0.9,1,1]",
-        "scanner.positive_density_ev=1",
-        "scanner.positive_balance_ev=[1,0,0]",
-        "scanner.positive_contrast=1.5",
-        "scanner.positive_dmax=2",
+        "scanner.conversion_brightness_ev=1",
+        "scanner.conversion_balance_ev=[1,0,0]",
+        "scanner.conversion_contrast=1.5",
+        "scanner.conversion_dmax=2",
         "scanner.scan_output=direct_scan",
     ] {
         for dry_run in [false, true] {
@@ -2266,7 +2323,7 @@ fn digital_reference_recipe_render_preserves_output_on_invalid_receiver() {
     let f = Fixture::new();
     let report = f.report(&[
         "--film", "kodak_portra_400", "--route", "input > film > scan", "--set",
-        "scanner.scan_output=negative_to_positive,scanner.positive_interpretation=digital_reference,scanner.receiver_profile=digital_reference,scanner.reference_exposure_ev=0.5,scanner.reference_balance_ev=[0.25,-0.125,0],camera.auto_exposure=false,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true",
+        "scanner.scan_output=negative_to_positive,scanner.negative_conversion_method=digital_reference,scanner.receiver_profile=digital_reference,scanner.reference_exposure_ev=0.5,scanner.reference_balance_ev=[0.25,-0.125,0],camera.auto_exposure=false,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true",
         "--dry-run",
     ]);
     let input = f.root.join("reference-input.tiff");
@@ -2309,7 +2366,7 @@ fn digital_reference_recipe_render_preserves_output_on_invalid_receiver() {
         "process", input.to_str().unwrap(), "--output", process_output.to_str().unwrap(),
         "--film", "kodak_portra_400", "--route", "input > film > scan", "--backend", "cpu",
         "--input-color-space", "ProPhoto RGB", "--input-cctf-decoding", "false",
-        "--set", "scanner.scan_output=negative_to_positive,scanner.positive_interpretation=digital_reference,scanner.receiver_profile=digital_reference,scanner.reference_exposure_ev=0.5,scanner.reference_balance_ev=[0.25,-0.125,0],camera.auto_exposure=false,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true,settings.preview_mode=true,settings.preview_max_size=4,io.output_color_space=sRGB,io.output_cctf_encoding=true",
+        "--set", "scanner.scan_output=negative_to_positive,scanner.negative_conversion_method=digital_reference,scanner.receiver_profile=digital_reference,scanner.reference_exposure_ev=0.5,scanner.reference_balance_ev=[0.25,-0.125,0],camera.auto_exposure=false,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true,settings.preview_mode=true,settings.preview_max_size=4,io.output_color_space=sRGB,io.output_cctf_encoding=true",
     ]);
     assert!(
         process.status.success(),

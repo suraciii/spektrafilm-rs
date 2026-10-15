@@ -1,4 +1,5 @@
 use super::*;
+<<<<<<< HEAD
 
 fn data_dir() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -13,6 +14,13 @@ fn data_dir() -> std::path::PathBuf {
 fn film_chemistry_rebuilds_total_and_grain_layers_from_the_fitted_model() {
     let mut film =
         crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+=======
+use crate::test_support::data_dir;
+
+#[test]
+fn film_chemistry_rebuilds_total_and_grain_layers_from_the_fitted_model() {
+    let mut film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+>>>>>>> origin/main-0.3.4
     let fitted = film.data.density_curves.clone();
     let fitted_layers = film.data.density_curves_layers.clone();
     for active in [false, true] {
@@ -79,8 +87,12 @@ fn film_chemistry_rebuilds_total_and_grain_layers_from_the_fitted_model() {
     for channel in 0..3 {
         for (layer, expected_layer) in expected.iter().enumerate() {
             assert!(
+<<<<<<< HEAD
                 (film.data.density_curves_layers[128][layer][channel]
                     - expected_layer[channel])
+=======
+                (film.data.density_curves_layers[128][layer][channel] - expected_layer[channel])
+>>>>>>> origin/main-0.3.4
                     .abs()
                     < 1e-9
             );
@@ -100,8 +112,12 @@ fn build() -> Pipeline {
         .get_or_init(|| {
             let dir = data_dir();
             let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+<<<<<<< HEAD
             let print =
                 crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+=======
+            let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+>>>>>>> origin/main-0.3.4
             Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir).unwrap()
         })
         .clone()
@@ -139,9 +155,14 @@ fn input_route_preserves_requested_crop_pixels_without_exposure() {
             let result = (y * 4 + x) * 3;
             for channel in 0..3 {
                 assert!(
+<<<<<<< HEAD
                     (to_f64(output.data[result + channel])
                         - to_f64(image.data[source + channel]))
                     .abs()
+=======
+                    (to_f64(output.data[result + channel]) - to_f64(image.data[source + channel]))
+                        .abs()
+>>>>>>> origin/main-0.3.4
                         < 1e-6
                 );
             }
@@ -165,8 +186,13 @@ fn digital_reference_preserves_formed_negative_and_prepared_identity() {
     let mut params = baseline.params.clone();
     params.scanner.scan_output = "negative_to_positive".into();
     params.scanner.receiver_profile = crate::params::ReceiverProfile::DigitalReference;
+<<<<<<< HEAD
     params.scanner.positive_interpretation =
         crate::params::PositiveInterpretation::DigitalReference;
+=======
+    params.scanner.negative_conversion_method =
+        crate::params::NegativeConversionMethod::DigitalReference;
+>>>>>>> origin/main-0.3.4
     let reference = baseline.clone().with_params(params).unwrap();
     let image = ImageBuf::from_data(3, 1, vec![from_f64(0.18); 9]);
     let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
@@ -434,6 +460,7 @@ fn stock_edits_survive_construction_updates_and_spectral_rebuild() {
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "fujifilm_velvia_100").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+<<<<<<< HEAD
     let seeded = crate::params_builder::digest_params(
         RuntimeParams::default(),
         &film,
@@ -441,6 +468,10 @@ fn stock_edits_survive_construction_updates_and_spectral_rebuild() {
         None,
         true,
     );
+=======
+    let seeded =
+        crate::params_builder::digest_params(RuntimeParams::default(), &film, &print, None, true);
+>>>>>>> origin/main-0.3.4
     let mut edited = seeded;
     edited.film_render.halation.halation_strength = [0.3, 0.2, 0.1];
     edited.film_render.halation.halation_first_sigma_um = [13.0, 17.0, 23.0];
@@ -542,6 +573,7 @@ fn input_gamut_active_toggle_matches_fresh_lut() {
         let mut params = base.params.clone();
         params.io.input_gamut_compress.active = active;
         let rebuilt = updated.with_params(params.clone()).unwrap();
+<<<<<<< HEAD
         let fresh = Pipeline::new_with_spectral(
             base.film.clone(),
             base.print.clone(),
@@ -549,6 +581,11 @@ fn input_gamut_active_toggle_matches_fresh_lut() {
             &data_dir(),
         )
         .unwrap();
+=======
+        let fresh =
+            Pipeline::new_with_spectral(base.film.clone(), base.print.clone(), params, &data_dir())
+                .unwrap();
+>>>>>>> origin/main-0.3.4
         assert_eq!(lut_data(&rebuilt), lut_data(&fresh));
         assert_eq!(
             rebuilt.print_exposure_factor(),
@@ -944,6 +981,7 @@ fn fotufilm_lut_mode_matches_grain_disabled_and_prepares_no_bank() {
     params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
     params.film_render.grain.active = true;
     params.film_render.grain.fotufilm.amount = 1.0;
+<<<<<<< HEAD
     let digested =
         crate::params_builder::digest_params(params.clone(), &film, &print, None, true);
     assert!(!crate::stages::grain_fotufilm::active(&digested));
@@ -951,6 +989,13 @@ fn fotufilm_lut_mode_matches_grain_disabled_and_prepares_no_bank() {
     params.film_render.grain.active = false;
     let disabled_params =
         crate::params_builder::digest_params(params, &film, &print, None, true);
+=======
+    let digested = crate::params_builder::digest_params(params.clone(), &film, &print, None, true);
+    assert!(!crate::stages::grain_fotufilm::active(&digested));
+    let active = Pipeline::new(film.clone(), print.clone(), digested);
+    params.film_render.grain.active = false;
+    let disabled_params = crate::params_builder::digest_params(params, &film, &print, None, true);
+>>>>>>> origin/main-0.3.4
     let disabled = Pipeline::new(film, print, disabled_params);
     let image = ImageBuf::from_data(4, 4, vec![from_f64(0.18); 4 * 4 * 3]);
     let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
@@ -1177,7 +1222,12 @@ fn output_mix_source_matches_deferred_field_crop_rounding() {
         pipeline.params.film_render.grain.active = true;
         for scale in [0.5, 1.5, 2.1] {
             pipeline.params.io.upscale_factor = scale;
+<<<<<<< HEAD
             let geometry = crate::stages::grain_v3::geometry(&source, &pipeline.params, 2.0).unwrap();
+=======
+            let geometry =
+                crate::stages::grain_v3::geometry(&source, &pipeline.params, 2.0).unwrap();
+>>>>>>> origin/main-0.3.4
             let prepared = pipeline.prepare_output_mix_source(&source).unwrap();
             assert_eq!(
                 (prepared.width, prepared.height),
@@ -1218,6 +1268,7 @@ fn output_mix_finished_rgb_keeps_magazine_only_in_result_branch() {
         assert_eq!(*actual, from_f64(0.5 * to_f64(*s) + 0.5 * to_f64(*r)));
     }
 }
+<<<<<<< HEAD
 
 #[test]
 fn resident_finishing_applies_magazine_before_procedural_export_decode() {
@@ -1265,3 +1316,5 @@ fn resident_finishing_applies_magazine_before_procedural_export_decode() {
         }
     }
 }
+=======
+>>>>>>> origin/main-0.3.4

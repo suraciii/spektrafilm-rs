@@ -13,7 +13,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Numerical model revision shared by image, recipe and LUT provenance.
-pub const MODEL_VERSION: &str = "material_controls_optical_v1";
+/// `conversion_language_v1` renames the conversion-control paths
+/// (`scanner.negative_conversion_method`, `scanner.conversion_*`,
+/// `enlarger.print_exposure_mode`, `settings.print_exposure_ev_tracking`)
+/// without changing rendered pixels.
+pub const MODEL_VERSION: &str = "conversion_language_v1";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
@@ -571,17 +575,9 @@ pub type Simulator = Runtime;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::data_dir;
     use spektrafilm_gpu::cpu_backend::CpuBackend;
     use spektrafilm_math::precision::from_f64;
-
-    fn data_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
 
     #[test]
     fn runtime_preparation_rejects_removed_scan_output_before_calibration() {
@@ -664,7 +660,7 @@ mod tests {
     #[test]
     fn per_frame_setup_accepts_small_valid_positive_density() {
         let mut params = scanner_params();
-        params.scanner.positive_dmax = 1e-18;
+        params.scanner.conversion_dmax = 1e-18;
         let runtime = Runtime::from_stocks(
             "kodak_portra_400",
             "kodak_portra_endura",

@@ -321,10 +321,8 @@ impl DigitalReference {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::{PositiveInterpretation, ReceiverProfile};
-    fn data() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
-    }
+    use crate::params::{NegativeConversionMethod, ReceiverProfile};
+    use crate::test_support::data_dir as data;
     fn fixture() -> (Profile, RuntimeParams, DigitalReference) {
         let film = crate::profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap();
         let mut params = RuntimeParams::default();
@@ -332,7 +330,7 @@ mod tests {
         params.io.scan_film = true;
         params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.receiver_profile = ReceiverProfile::DigitalReference;
-        params.scanner.positive_interpretation = PositiveInterpretation::DigitalReference;
+        params.scanner.negative_conversion_method = NegativeConversionMethod::DigitalReference;
         params.scanner.unsharp_mask = [0.0; 2];
         params.io.output_color_space = "sRGB".into();
         params.io.output_cctf_encoding = false;
@@ -501,7 +499,7 @@ mod tests {
         p.scanner.receiver_profile = ReceiverProfile::LegacyColorimetric;
         variants.push(p);
         let mut p = params.clone();
-        p.scanner.positive_interpretation = PositiveInterpretation::Density;
+        p.scanner.negative_conversion_method = NegativeConversionMethod::Density;
         variants.push(p);
         let mut p = params.clone();
         p.scanner.auto_setup = crate::params::ScannerAutoSetup::PerFrame;
@@ -510,7 +508,7 @@ mod tests {
         p.scanner.black_point = [0.1; 3];
         variants.push(p);
         let mut p = params.clone();
-        p.scanner.positive_density_ev = 0.0;
+        p.scanner.conversion_brightness_ev = 0.0;
         variants.push(p);
         for p in variants {
             assert!(p.validate().is_err());

@@ -8,7 +8,7 @@ Runtime and GUI state accept passthrough, film-scan, film-print-scan, and the th
 
 `direct_scan` preserves the medium's polarity. Calibrated `negative_to_positive` supports direct `input > film > scan` and real negative-capture `input > convert-film > scan`. It rejects paper, positive-film, print-paper, scan-minus-base, white/black-corrected, and active-Grain-Procedural combinations. Convert-film inverts the spectral scan model with bounded Gauss-Newton. It supports scan illuminant, exposure, and calibration controls. It can reuse the calibrated positive interpretation on its direct scan route.
 
-`scanner.scan_output` accepts `direct_scan` and `negative_to_positive`. Replace the removed `positive_scan` value in CLI commands, parameter files, presets, recipes, and GUI states. Old values fail validation. The GUI displays **Preserve medium polarity** and **Negative to positive**. It displays **Negative conversion method** for the existing `scanner.positive_interpretation` field. Conversion includes the calibrated inverse and base positive tone. Automatic correction and the optional LabScan finish remain separate. This rename preserves the existing methods, defaults, and numerical behavior. See [scanner language](../specs/film-chain/spec.md#scanner-language).
+`scanner.scan_output` accepts `direct_scan` and `negative_to_positive`. Replace the removed `positive_scan` value in CLI commands, parameter files, presets, recipes, and GUI states. Old values fail validation. The GUI displays **Preserve medium polarity** and **Negative to positive**. It displays **Negative conversion method** for the `scanner.negative_conversion_method` field; the former `scanner.positive_interpretation` spelling migrates only through versioned preset and GUI state imports. Conversion includes the calibrated inverse and base positive tone. Automatic correction and the optional LabScan finish remain separate. This rename preserves the existing methods, defaults, and numerical behavior. See [scanner language](../specs/film-chain/spec.md#scanner-language).
 
 ## Negative conversion
 
@@ -19,7 +19,7 @@ The following command bypasses printing. It selects the receiver, inverse, autom
 ./target/release/spektrafilm-f64 process input.tif -o positive.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
-    --set scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled \
+    --set scanner.receiver_profile=lab_scan_approx,scanner.negative_conversion_method=coupled \
     --set scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.75 \
     --scan-output negative_to_positive --data-dir data
 
@@ -31,9 +31,9 @@ The following command bypasses printing. It selects the receiver, inverse, autom
 
 `negative_to_positive` reads each dye record's density like a narrowband lab scanner. It inverts that density through the record's own profile density curve. It then applies a print-like logistic tone curve. A record never borrows density from the others, so saturated negatives do not clip one channel. The inverse is profile-derived and monotone. It has finite endpoint slopes beyond the curves. The logistic tone keeps output within the paper range.
 
-`scanner.positive_density_ev` controls brightness in stops. `scanner.positive_balance_ev` supplies independent RGB exposure offsets. Zero renders a gray lit by the film's reference illuminant neutral. `scanner.positive_contrast` and `scanner.positive_dmax` control the tone curve. Scanner lens blur acts on transmitted light before the density reading.
+`scanner.conversion_brightness_ev` controls brightness in stops. `scanner.conversion_balance_ev` supplies independent RGB exposure offsets. Zero renders a gray lit by the film's reference illuminant neutral. `scanner.conversion_contrast` and `scanner.conversion_dmax` control the tone curve. Scanner lens blur acts on transmitted light before the density reading.
 
-`scanner.positive_interpretation` selects the method. `density`, the default, reads record densities as described here. It ignores `scanner.receiver_profile`. `separable` and `coupled` interpret the receiver capture instead. `coupled` uses a three-channel inverse sampled from the resolved film, receiver, and output response.
+`scanner.negative_conversion_method` selects the method. `density`, the default, reads record densities as described here. It ignores `scanner.receiver_profile`. `separable` and `coupled` interpret the receiver capture instead. `coupled` uses a three-channel inverse sampled from the resolved film, receiver, and output response.
 
 `density_direct` reads the same record densities into the scanner's own positive response without inverting the film's characteristic curves, so the film's tone and colour stay visible in the result. Use it when the picture should show the film rather than a reconstruction of the scene; its black and white points, brightness, balance and contrast are yours to dial, exactly as the controls above describe. A real photograph has no detectable black or white point, so set them by eye on the frame you are converting.
 
@@ -45,7 +45,7 @@ For a real negative scanner capture on `input > convert-film > scan`, disable vi
 
 Digital Reference is an optional modeled conversion for simulated negative film on `input > film > scan`. It uses a common spectral receiver and fixed positive response. It preserves film-record and dye differences through a shared output convention.
 
-Select both `scanner.positive_interpretation=digital_reference` and `scanner.receiver_profile=digital_reference`. Keep `scanner.auto_setup=off`. Keep identity black/white points. Keep the reconstruction controls at their defaults. The GUI pairs these selections under **Digital Reference (modeled)**. It shows the fixed **Reference Exposure** placement.
+Select both `scanner.negative_conversion_method=digital_reference` and `scanner.receiver_profile=digital_reference`. Keep `scanner.auto_setup=off`. Keep identity black/white points. Keep the reconstruction controls at their defaults. The GUI pairs these selections under **Digital Reference (modeled)**. It shows the fixed **Reference Exposure** placement.
 
 `scanner.reference_exposure_ev` adjusts output exposure in stops. `scanner.reference_balance_ev` supplies independent linear-sRGB RGB gains before output-space conversion. Both default to zero. Optional `scanner.finish=lab_scan` applies after conversion.
 
@@ -55,7 +55,7 @@ See the [Digital Reference contract](../specs/film-chain/digital-reference/spec.
 ./target/release/spektrafilm-f64 process input.tif -o reference.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --film kodak_portra_400 --scan-film --scan-output negative_to_positive \
-    --set scanner.positive_interpretation=digital_reference,scanner.receiver_profile=digital_reference \
+    --set scanner.negative_conversion_method=digital_reference,scanner.receiver_profile=digital_reference \
     --backend cpu --data-dir data
 ```
 

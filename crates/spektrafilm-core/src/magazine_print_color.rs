@@ -19,6 +19,7 @@ use spektrafilm_math::colorspace::{self, Cctf, RgbColorSpace};
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::from_f64;
 
+use crate::math::mat_vec;
 use crate::params::MagazinePrintColorParams;
 
 /// Tone-curve input knots in CIELAB L*.
@@ -156,15 +157,6 @@ fn mul3(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
     out
 }
 
-#[inline]
-fn mul3v(m: &[[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
-    [
-        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
-        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
-        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
-    ]
-}
-
 fn xyz_to_lab(xyz: [f64; 3]) -> [f64; 3] {
     let mut f = [0.0f64; 3];
     for c in 0..3 {
@@ -203,13 +195,13 @@ fn lab_to_xyz(lab: [f64; 3]) -> [f64; 3] {
 }
 
 /// Destination linear RGB to CIELAB D50 and back, prepared once per image.
-struct MagazineTransform {
+pub(crate) struct MagazineTransform {
     to_lab: [[f64; 3]; 3],
     from_lab: [[f64; 3]; 3],
 }
 
 impl MagazineTransform {
-    fn new(space: &RgbColorSpace) -> Self {
+    pub(crate) fn new(space: &RgbColorSpace) -> Self {
         let white = space.whitepoint_xyz();
         let forward =
             colorspace::chromatic_adaptation_matrix_bradford_f64(white, colorspace::D50_XYZ_F64);
@@ -223,13 +215,27 @@ impl MagazineTransform {
 
     #[inline]
     fn to_lab(&self, linear: [f64; 3]) -> [f64; 3] {
-        xyz_to_lab(mul3v(&self.to_lab, linear))
+        xyz_to_lab(mat_vec(&self.to_lab, linear))
     }
 
     #[inline]
     fn to_rgb(&self, lab: [f64; 3]) -> [f64; 3] {
-        mul3v(&self.from_lab, lab_to_xyz(lab))
+        mat_vec(&self.from_lab, lab_to_xyz(lab))
     }
+}
+
+impl MagazineTransform {
+    /// Prepared Lab matrices for the device magazine pass (pipe
+    /// architecture, S4): destination RGB → CIELAB D50 and back.
+    pub(crate) fn gpu_matrices(&self) -> ([[f64; 3]; 3], [[f64; 3]; 3]) {
+        (self.to_lab, self.from_lab)
+    }
+}
+
+/// Tone-curve knots and slopes for the device magazine pass: (inputs,
+/// outputs, Hermite slopes) in CIELAB L*.
+pub(crate) fn gpu_tone_curve() -> ([f64; 10], [f64; 10], [f64; 10]) {
+    (TONE_IN, TONE_OUT, TONE.slopes)
 }
 
 #[inline]

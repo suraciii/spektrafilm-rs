@@ -542,7 +542,7 @@ pub fn neutralize_filters(
     p.scanner.scan_output = "direct_scan".into();
     // This local calibration scans paper, independently of film-scan controls.
     p.scanner.receiver_profile = crate::params::ReceiverProfile::LegacyColorimetric;
-    p.scanner.positive_interpretation = crate::params::PositiveInterpretation::Separable;
+    p.scanner.negative_conversion_method = crate::params::NegativeConversionMethod::Separable;
     p.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
     p.scanner.finish = crate::params::ScannerFinish::Neutral;
     p.scanner.finish_strength = 1.0;
@@ -588,9 +588,11 @@ pub fn neutralize_filters(
 #[cfg(test)]
 mod action_tests {
     use super::*;
+    use crate::test_support::data_dir;
+
     #[test]
     fn print_neutralization_is_independent_of_negative_to_positive_mode() {
-        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let data = data_dir();
         let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
         let mut params = RuntimeParams::default();
@@ -607,8 +609,8 @@ mod action_tests {
         let positive = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
         assert_eq!(positive, direct);
         params.scanner.receiver_profile = crate::params::ReceiverProfile::DigitalReference;
-        params.scanner.positive_interpretation =
-            crate::params::PositiveInterpretation::DigitalReference;
+        params.scanner.negative_conversion_method =
+            crate::params::NegativeConversionMethod::DigitalReference;
         params.scanner.reference_exposure_ev = 0.5;
         params.scanner.reference_balance_ev = [0.25, -0.125, 0.0];
         let reference = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();

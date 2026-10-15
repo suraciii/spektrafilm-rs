@@ -1,6 +1,8 @@
 //! Process-only composition of legacy baselines, complete looks and sparse edits.
+use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
 use crate::params::RuntimeParams;
+use crate::params::sources::lookup;
 use crate::params::sources::{ParameterEdits, validate_finite};
 use crate::params::validation::REMOVED_MAGAZINE_ROUTE;
 use crate::params_builder::{
@@ -192,7 +194,7 @@ fn resolve_with_preview_mode(
         if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
             params.validate()?;
         }
-        let direct_scan = params.workflow.route == "input > film > scan"
+        let direct_scan = params.workflow.route_enum() == WorkflowRoute::FilmScan
             || (!request.require_input_declaration && !added_sources && request.scan_film);
         let name = request
             .film
@@ -302,7 +304,7 @@ fn resolve_with_preview_mode(
     if !added_sources {
         // Keep the legacy decoder, route/scan relationship and digest ordering.
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = params.workflow.route == "input > film > scan"
+        params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan
             || (!request.require_input_declaration && request.scan_film);
         if let Some(mode) = request.scan_output {
             params.scanner.scan_output = mode.to_owned();
@@ -330,9 +332,9 @@ fn resolve_with_preview_mode(
             edits.apply(&mut params)?;
             for path in edits.paths() {
                 match path {
-                    "enlarger.c_filter_neutral" => protected[0] = true,
-                    "enlarger.m_filter_neutral" => protected[1] = true,
-                    "enlarger.y_filter_neutral" => protected[2] = true,
+                    "enlarger.c_filter_neutral" => protected.get_or_insert([false; 3])[0] = true,
+                    "enlarger.m_filter_neutral" => protected.get_or_insert([false; 3])[1] = true,
+                    "enlarger.y_filter_neutral" => protected.get_or_insert([false; 3])[2] = true,
                     _ => {}
                 }
             }
@@ -345,7 +347,7 @@ fn resolve_with_preview_mode(
             params.io.input_cctf_decoding = value;
         }
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = params.workflow.route == "input > film > scan";
+        params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan;
         if request.input_is_raw {
             force_raw_input(&mut params);
         }
@@ -407,7 +409,7 @@ fn resolve_with_preview_mode(
     };
     let effective_params = serde_json::to_value(&params).map_err(|e| e.to_string())?;
     let edits = winning.into_iter().map(|(path, (requested, source))| {
-        let effective = parameter_value(&effective_params, &path).cloned().unwrap_or(Value::Null);
+        let effective = lookup(&effective_params, &path).cloned().unwrap_or(Value::Null);
         let override_option = match path.as_str() {
             "io.input_color_space" if request.input_color_space.is_some() => Some("--input-color-space"),
             "io.input_cctf_decoding" if request.input_cctf_decoding.is_some() => Some("--input-cctf-decoding"),
@@ -493,10 +495,6 @@ fn absolute_path(path: &Path) -> Result<PathBuf, String> {
     std::path::absolute(path).map_err(|e| format!("resolving {}: {e}", path.display()))
 }
 
-fn parameter_value<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.').try_fold(root, |value, key| value.get(key))
-}
-
 fn baseline_declarations(
     path: Option<&Path>,
 ) -> Result<BTreeMap<String, DeclarationSource>, String> {
@@ -508,7 +506,7 @@ fn baseline_declarations(
         )
         .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
         for leaf in ["io.input_color_space", "io.input_cctf_decoding"] {
-            if parameter_value(&value, leaf).is_some() {
+            if lookup(&value, leaf).is_some() {
                 declarations.insert(
                     leaf.into(),
                     DeclarationSource {
@@ -527,9 +525,7 @@ fn baseline_declarations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn data_dir() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
-    }
+    use crate::test_support::data_dir;
     fn request(sources: &[String]) -> ProcessParamsRequest<'_> {
         ProcessParamsRequest {
             film: Some("kodak_portra_400"),
@@ -580,7 +576,7 @@ mod tests {
             assert_eq!(resolved.params.workflow.route, route);
             assert_eq!(
                 resolved.print_name,
-                if scan_film || route == "input > film > scan" {
+                if scan_film || WorkflowRoute::parse(route) == WorkflowRoute::FilmScan {
                     "kodak_portra_400"
                 } else {
                     "kodak_portra_endura"
@@ -887,9 +883,10 @@ mod tests {
         runtime.update(updated).unwrap();
         assert_axes(runtime.params());
         let saved = serde_json::to_value(runtime.params()).unwrap();
-        assert!(saved.get("neutral_print_filters_protected").is_none());
+        // The protection flags persist so a resolved document replays its render.
+        assert!(saved.get("neutral_print_filters_protected").is_some());
         let restored: RuntimeParams = serde_json::from_value(saved).unwrap();
-        assert_eq!(restored.neutral_print_filters_protected, [false; 3]);
+        assert_eq!(restored.neutral_print_filters_protected, Some([true; 3]));
     }
 
     #[test]
@@ -983,11 +980,11 @@ mod tests {
 
         // Ownership alone changes calibration, even when the public values match.
         let mut updated = pipeline.params.clone();
-        updated.neutral_print_filters_protected = [false; 3];
+        updated.neutral_print_filters_protected = Some([false; 3]);
         let unprotected = pipeline.clone().with_params(updated).unwrap();
         assert_eq!(unprotected.print_illuminant_slice(), database_only);
         let mut updated = unprotected.params.clone();
-        updated.neutral_print_filters_protected = [true; 3];
+        updated.neutral_print_filters_protected = Some([true; 3]);
         let protected = unprotected.with_params(updated).unwrap();
         let promoted = crate::enlarger::enlarger_filtered_illuminant_f64(
             &illuminant,
@@ -1111,7 +1108,10 @@ mod tests {
                 let mut req = public_request(&sources);
                 req.route = Some(route);
                 let result = resolve(req, &data_dir()).unwrap();
-                assert_eq!(result.params.io.scan_film, *route == "input > film > scan");
+                assert_eq!(
+                    result.params.io.scan_film,
+                    WorkflowRoute::parse(route) == WorkflowRoute::FilmScan
+                );
                 results.push((
                     result.params.workflow.route,
                     result.params.io.scan_film,
@@ -1182,7 +1182,9 @@ mod tests {
                 0.4
             );
             for edit in &result.edits {
-                if edit.path.starts_with("film_render.") && route == "input > film > scan" {
+                if edit.path.starts_with("film_render.")
+                    && WorkflowRoute::parse(route) == WorkflowRoute::FilmScan
+                {
                     continue;
                 }
                 assert_eq!(

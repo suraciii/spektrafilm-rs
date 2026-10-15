@@ -6,26 +6,12 @@ use spektrafilm_benchmark::{
 };
 use std::{fs, path::Path};
 
+#[path = "support/fixtures.rs"]
+mod fixtures;
 #[path = "support/progress.rs"]
 mod progress;
-fn write(path: &Path, value: &Value) {
-    common::dump(path, value).unwrap();
-}
-fn identify(mut value: Value) -> Value {
-    value.as_object_mut().unwrap().remove("id");
-    value["id"] = json!(common::digest(&value).unwrap());
-    value
-}
-fn save_manifest(root: &Path, name: &str, value: Value) {
-    write(&root.join(name), &identify(value));
-}
-fn record(evidence: &mut Evidence, name: &str, role: &str, value: Value) -> Value {
-    let path = evidence.root.join(name);
-    write(&path, &value);
-    evidence
-        .add(&path, role, "application/json", json!({}))
-        .unwrap()
-}
+
+use fixtures::{record, save_manifest, write};
 
 // Retained masters exercise the public CLI without requiring a renderer or network in PR.
 fn retained_run(root: &Path, value: f64, masked: bool) {

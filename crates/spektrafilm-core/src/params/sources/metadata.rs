@@ -42,6 +42,7 @@ fn nullable_inner(path: &str) -> Option<&'static str> {
         | "film_render.grain.v2_chroma"
         | "film_render.grain.v2_resolution_factor" => "f32",
         "taps.inject" | "taps.collect" => "String",
+        "neutral_print_filters_protected" => "[bool; 3]",
         _ => return None,
     })
 }
@@ -362,7 +363,7 @@ fn conditions(path: &str) -> Vec<String> {
     }
     if path == "scanner.receiver_profile" {
         out.push("film scans only; legacy_colorimetric preserves CIE spectral-to-output acquisition; lab_scan_approx is an approximate uncalibrated Fotufilm narrow-band receiver (630/545/465 nm, sigma 8.5/14/9.5 nm), version fotufilm_lab_scan_approx_v1".into());
-    } else if path == "scanner.positive_interpretation" {
+    } else if path == "scanner.negative_conversion_method" {
         out.push("density reads record densities and acquires no receiver capture, so its output is receiver-independent; separable and coupled interpret a receiver capture and apply to a real negative capture or the exact-cell scan path; density behaves as separable where the incoming image is a capture".into());
         out.push("density_direct reads record densities into the base positive response over a nominal density interval and never inverts the selected film's characteristic curves, so the film's tone and spectral response stay visible; the point window, brightness, balance and contrast remain its only calibration, and it requires scanner.scan_output=negative_to_positive".into());
         out.push("digital_reference pairs its modeled receiver on input > film > scan only; Reference Exposure requires auto_setup off, identity points and default reconstruction controls; fixed Kodak Endura receiver and Portra400 dye basis, equal-energy light and fixed 18% response".into());

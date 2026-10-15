@@ -362,6 +362,44 @@ fn fotufilm_dry_run_reports_authored_controls_and_cpu_provenance() {
 }
 
 #[test]
+fn dye_dry_run_reports_the_density_fence_and_the_per_stage_fallback() {
+    let f = Fixture::new();
+    // The delivered raster runs the Dye field as the assembled density fence
+    // on the selected backend, so the report claims no CPU route.
+    let report = f.report(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--set",
+        "film_render.grain.engine=dye,film_render.grain.v3_dye_support_um=8",
+        "--dry-run",
+    ]);
+    let dye = &report["film_grain_dye"];
+    assert_eq!(dye["active"], true);
+    assert_eq!(dye["effective_backend"], serde_json::Value::Null);
+    assert!(
+        dye["note"]
+            .as_str()
+            .is_some_and(|note| note.contains("CPU"))
+    );
+    // A cropped request cannot be expressed by the fence, so the whole route
+    // is the per-stage CPU path.
+    let report = f.report(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--set",
+        "film_render.grain.engine=dye,io.crop=true",
+        "--dry-run",
+    ]);
+    let dye = &report["film_grain_dye"];
+    assert_eq!(dye["active"], true);
+    assert_eq!(dye["effective_backend"], "cpu");
+}
+
+#[test]
 fn fotufilm_zero_amount_is_not_reported_as_active() {
     let f = Fixture::new();
     let report = f.report(&[
@@ -609,4 +647,77 @@ fn scanner_setup_uses_selected_seed_for_film_grain_measurement() {
     for (bytes, expected) in actual.as_chunks::<8>().0.iter().zip(expected.data) {
         assert_eq!(f64::from_le_bytes(*bytes), to_f64(expected));
     }
+}
+
+/// `--backend gpu` is an explicit request: a configuration that still needs a
+/// host-executed stage (the default Spektra grain distribution is a fence) must
+/// fail at assembly without publishing an output file. Omitting the flag keeps
+/// automatic selection, which absorbs that stage as a CPU fence. A machine
+/// without an adapter fails earlier with the backend-unavailable message.
+#[test]
+fn explicit_gpu_request_fails_before_publication_and_automatic_still_renders() {
+    let f = Fixture::new();
+    let input_flags = [
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "false",
+    ];
+
+    let explicit = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .arg("process")
+        .arg(f.0.join("input.png"))
+        .arg("--output")
+        .arg(f.0.join("gpu.tif"))
+        .args([
+            "--film",
+            "kodak_portra_400",
+            "--backend",
+            "gpu",
+            "--data-dir",
+        ])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
+        .args(input_flags)
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&explicit.stderr);
+    assert!(!explicit.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("explicit GPU request") || stderr.contains("GPU backend unavailable"),
+        "unexpected failure: {stderr}"
+    );
+    assert!(
+        !f.0.join("gpu.tif").exists(),
+        "a failed explicit GPU request wrote an output file"
+    );
+
+    let automatic = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .arg("process")
+        .arg(f.0.join("input.png"))
+        .arg("--output")
+        .arg(f.0.join("auto.tif"))
+        .args(["--film", "kodak_portra_400", "--data-dir"])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
+        .args(input_flags)
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .output()
+        .unwrap();
+    assert!(
+        automatic.status.success(),
+        "{}",
+        String::from_utf8_lossy(&automatic.stderr)
+    );
+    assert!(
+        f.0.join("auto.tif").exists(),
+        "automatic render published no output"
+    );
 }

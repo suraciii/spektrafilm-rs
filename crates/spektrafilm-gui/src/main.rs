@@ -22,30 +22,47 @@ use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_gpu::telemetry::{CollectionMode, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 mod app;
+<<<<<<< HEAD
+=======
+mod backend;
+>>>>>>> origin/main-0.3.4
 mod calibration;
 mod chooser;
 mod controls;
 mod diagnostics;
 mod display;
+mod editor_ranges;
+mod embedded_bundle;
 mod export;
 mod export_job;
 #[cfg(test)]
 mod headless;
+mod histogram;
 mod numeric;
+mod platform;
 mod presets;
 mod profiles;
 mod render;
 mod render_worker;
 mod routes;
 mod state;
+mod theme;
 mod ui;
 use app::App;
+<<<<<<< HEAD
+=======
+use backend::{gui_backend, gui_renderer};
+>>>>>>> origin/main-0.3.4
 use calibration::CalibrationJob;
+use controls::{normalize_scan_output, scan_medium};
+use diagnostics::effective_backend_name;
 #[cfg(test)]
 use export::ExportBackend;
 use export::{ExportDialog, ExportOptions};
 use export_job::ExportJob;
-use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
+use profiles::{
+    ProfileEntry, dev_time_combo, pick_data_dir, profile_combo, profile_dev_times, scan_profiles,
+};
 #[cfg(test)]
 use render::RuntimeCache;
 use render::{RenderSnapshot, SharedScannerSetup, build_runtime_observed};
@@ -148,6 +165,7 @@ fn main() -> eframe::Result<()> {
         "spektrafilm",
         options,
         Box::new(|_cc| {
+            theme::apply(&_cc.egui_ctx);
             Ok(Box::new(App::new(
                 backend,
                 initial_image,
@@ -158,6 +176,7 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+<<<<<<< HEAD
 #[cfg(embed_bundle)]
 mod embedded_bundle {
     use std::io::Write;
@@ -435,6 +454,8 @@ fn tag_metal_layer_srgb<H: raw_window_handle::HasWindowHandle>(h: &H) -> Result<
     Ok(())
 }
 
+=======
+>>>>>>> origin/main-0.3.4
 #[cfg(test)]
 mod telemetry_lifecycle_tests {
     use super::*;
@@ -454,7 +475,7 @@ mod telemetry_lifecycle_tests {
                     .unwrap()
                     .as_nanos()
             )),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            crate::headless::data_dir(),
         );
         app.film_name = "kodak_portra_400".into();
         app.print_name = "kodak_portra_endura".into();
@@ -504,7 +525,7 @@ mod telemetry_lifecycle_tests {
             initial, source_setup,
             "new chromatic source must change measured scanner setup"
         );
-        app.params.scanner.positive_density_ev += 1.0;
+        app.params.scanner.conversion_brightness_ev += 1.0;
         app.parameter_revision = app.parameter_revision.wrapping_add(1);
         let edited = app.render_snapshot(app.params.clone());
         assert!(!Arc::ptr_eq(source.scanner_setup(), edited.scanner_setup()));
@@ -528,8 +549,8 @@ mod telemetry_lifecycle_tests {
             .unwrap()
             .with_scanner_setup(edited_setup);
         assert_eq!(
-            edited_runtime.params().scanner.positive_density_ev
-                - source_runtime.params().scanner.positive_density_ev,
+            edited_runtime.params().scanner.conversion_brightness_ev
+                - source_runtime.params().scanner.conversion_brightness_ev,
             1.0
         );
         let before = source_runtime
@@ -735,7 +756,7 @@ mod telemetry_lifecycle_tests {
         let revision = app.parameter_revision;
         let mut invalid = app.current_state().unwrap();
         invalid.sections["simulation"]["film_stock"] = "fujifilm_provia_100f".into();
-        invalid.sections["scanner"]["positive_interpretation"] = "coupled".into();
+        invalid.sections["scanner"]["negative_conversion_method"] = "coupled".into();
         invalid.sections["scanner"]["auto_setup"] = "per_frame".into();
         invalid.sections["scanner"]["finish"] = "lab_scan".into();
         let error = app.apply_state(invalid).unwrap_err();

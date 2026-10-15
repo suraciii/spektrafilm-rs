@@ -17,8 +17,9 @@
 //! In the pipeline params should be static and not be changed;
 //! `settings` and `debug` contain all the switching logic for the digesting.
 
+use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
-use crate::params::RuntimeParams;
+use crate::params::{PrintExposureEvTracking, RuntimeParams};
 use crate::profile::Profile;
 
 type HalationPreset = ((&'static str, &'static str), ([f64; 3], [f64; 3]));
@@ -117,7 +118,7 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         // exposure control
         params.camera.auto_exposure = false;
         params.camera.exposure_compensation_ev = 0.0;
-        params.enlarger.print_exposure_compensation = false;
+        params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Never;
         params.enlarger.print_exposure = 1.0;
         // Highlight boost normalizes by the image-wide max (np.max(x)), so it
         // is an image-global transform — the same input value maps to
@@ -179,13 +180,24 @@ pub fn apply_database_neutral_print_filters(
     apply_database_neutral_print_filters_protected(params, film, print, database, protected)
 }
 
+/// Resolve the authored/baseline state of the CMY filter axes.
+///
+/// Explicit preparation flags (a look carrying a value, an explicit edit, a
+/// restored state, or a document that persisted the flags) are authoritative.
+/// Documents written before the flags persisted treat every axis as baseline:
+/// the per-paper database supplies the values unless an edit or look marked
+/// the axis authored.
+pub(crate) fn authored_filter_axes(protection: Option<[bool; 3]>) -> [bool; 3] {
+    protection.unwrap_or([false; 3])
+}
+
 /// Protected axes are ordered cyan, magenta, yellow; calibration policy is retained.
 pub(crate) fn apply_database_neutral_print_filters_protected(
     mut params: RuntimeParams,
     film: &Profile,
     print: &Profile,
     database: Option<&NeutralFilters>,
-    protected: [bool; 3],
+    protection: Option<[bool; 3]>,
 ) -> RuntimeParams {
     if !params.settings.neutral_print_filters_from_database {
         return params;
@@ -195,6 +207,7 @@ pub(crate) fn apply_database_neutral_print_filters_protected(
     if let Some([c, m, y]) =
         database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock))
     {
+        let protected = authored_filter_axes(protection);
         if !protected[0] {
             params.enlarger.c_filter_neutral = c as f32;
         }
@@ -361,7 +374,7 @@ fn apply_halation_preset(params: &mut RuntimeParams, film: &Profile) {
 /// Normalize route and film topology for effective reports and pipeline construction.
 /// Scan-only routes enable film scanning; other routes preserve an explicit scan flag.
 pub(crate) fn normalize_runtime_topology(film: &Profile, params: &mut RuntimeParams) {
-    if params.workflow.route == "input > film > scan" {
+    if params.workflow.route_enum() == WorkflowRoute::FilmScan {
         params.io.scan_film = true;
     }
     broadcast_monochrome_layout(film, params);
@@ -461,7 +474,7 @@ mod tests {
         params.camera.auto_exposure = true;
         params.camera.exposure_compensation_ev = 2.5;
         params.enlarger.print_exposure = 3.0;
-        params.enlarger.print_exposure_compensation = true;
+        params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Always;
         params.film_render.halation.boost_ev = 1.5;
         params.scanner.white_correction = true;
         params.scanner.black_correction = true;
@@ -488,7 +501,10 @@ mod tests {
         );
         assert!(!d.camera.auto_exposure);
         assert_eq!(d.camera.exposure_compensation_ev, 0.0);
-        assert!(!d.enlarger.print_exposure_compensation);
+        assert_eq!(
+            d.settings.print_exposure_ev_tracking,
+            PrintExposureEvTracking::Never
+        );
         assert_eq!(d.enlarger.print_exposure, 1.0);
         assert_eq!(d.film_render.halation.boost_ev, 0.0);
         assert!(!d.scanner.white_correction);

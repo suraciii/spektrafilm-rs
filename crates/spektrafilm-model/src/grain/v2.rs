@@ -957,11 +957,7 @@ mod tests {
     }
     #[test]
     fn gpu_matches_cpu_reference_when_adapter_is_available() {
-        use spektrafilm_gpu::wgpu_backend::WgpuBackend;
-        let Some(gpu) = WgpuBackend::new() else {
-            eprintln!("Grain Procedural GPU parity skipped: no adapter");
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let image = ImageBuf::from_data(
             37,
             19,

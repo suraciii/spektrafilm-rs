@@ -44,7 +44,7 @@ Output polarity must remain `negative_to_positive`. Digital Reference must not a
 
 A reference conversion must use its matching reference receiver and response. An incompatible receiver or exposure-reconstruction method must fail validation. The GUI must not offer independent selections that produce such a combination.
 
-`scanner.positive_interpretation=digital_reference` selects reference conversion. It requires `scanner.receiver_profile=digital_reference`. The GUI labels the conversion `Digital Reference (modeled)` and displays its fixed `Reference Exposure` placement. Choosing it pairs the receiver and conversion, disables automatic setup, restores identity point windows, and resets reconstruction controls to their existing defaults. Explicit incompatible combinations must fail validation.
+`scanner.negative_conversion_method=digital_reference` selects reference conversion. It requires `scanner.receiver_profile=digital_reference`. The GUI labels the conversion `Digital Reference (modeled)` and displays its fixed `Reference Exposure` placement. Choosing it pairs the receiver and conversion, disables automatic setup, restores identity point windows, and resets reconstruction controls to their existing defaults. Explicit incompatible combinations must fail validation.
 
 Reconstruction brightness, balance, contrast, and maximum-density controls do not parameterize this model. Nondefault reconstruction controls must fail validation with reference conversion. Reference manual controls must remain neutral with other conversion methods.
 

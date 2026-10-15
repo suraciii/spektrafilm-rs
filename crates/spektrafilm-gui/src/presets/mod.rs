@@ -1,5 +1,6 @@
 //! Preset browser presentation and library actions. Documents and writes belong to core.
 use crate::App;
+use crate::theme;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 use spektrafilm_core::{
@@ -175,7 +176,7 @@ fn provenance() -> Provenance {
     }
 }
 
-enum PresetAction {
+pub(crate) enum PresetAction {
     Load,
     Update,
     Rename,
@@ -185,12 +186,13 @@ enum PresetAction {
     Delete,
 }
 
-enum NameAction {
+pub(crate) enum NameAction {
     Save(Preset),
     Rename(String),
     Duplicate(Preset),
     Import(PathBuf),
 }
+<<<<<<< HEAD:crates/spektrafilm-gui/src/presets.rs
 struct NameDialog {
     action: NameAction,
     name: String,
@@ -769,7 +771,17 @@ fn show_fault(ui: &mut egui::Ui, entry: &LibraryEntry) {
             entry.fault.as_deref().unwrap_or("Invalid document")
         ),
     );
+=======
+pub(crate) struct NameDialog {
+    pub(crate) action: NameAction,
+    pub(crate) name: String,
+    pub(crate) error: Option<String>,
+>>>>>>> origin/main-0.3.4:crates/spektrafilm-gui/src/presets/mod.rs
 }
+
+mod actions;
+mod render;
+pub use render::*;
 
 #[cfg(test)]
 mod tests {
@@ -787,7 +799,7 @@ mod tests {
             Some(state_path),
             None,
             directory.join("preset_browser_state.json"),
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            crate::headless::data_dir(),
         );
         app.presets.library = PresetLibrary::new(directory.join("presets"));
         app.presets.refresh();
@@ -896,7 +908,7 @@ mod tests {
                 initial_state,
                 None,
                 directory.join("preset_browser_state.json"),
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+                crate::headless::data_dir(),
             )
         };
         let mut restarted = reopen(None);
@@ -994,8 +1006,8 @@ mod tests {
         app.params.scanner.scan_output = "negative_to_positive".into();
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-        app.params.scanner.positive_interpretation =
-            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        app.params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Coupled;
         app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
         app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
         app.dirty = false;
@@ -1008,8 +1020,8 @@ mod tests {
             spektrafilm_core::params::ReceiverProfile::LegacyColorimetric
         );
         assert_eq!(
-            app.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Density
+            app.params.scanner.negative_conversion_method,
+            spektrafilm_core::params::NegativeConversionMethod::Density
         );
         assert_eq!(
             app.params.scanner.auto_setup,
@@ -1034,8 +1046,8 @@ mod tests {
         assert_eq!(app.parameter_revision, revision);
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-        app.params.scanner.positive_interpretation =
-            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        app.params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Coupled;
         app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
         app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
         app.select_film_profile("kodak_ektachrome_100".into());
@@ -1046,8 +1058,8 @@ mod tests {
             spektrafilm_core::params::ReceiverProfile::LabScanApprox
         );
         assert_eq!(
-            app.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Density
+            app.params.scanner.negative_conversion_method,
+            spektrafilm_core::params::NegativeConversionMethod::Density
         );
         assert_eq!(
             app.params.scanner.auto_setup,
@@ -1087,7 +1099,7 @@ mod tests {
             Some(path),
             None,
             directory.join("preset_browser_state.json"),
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            crate::headless::data_dir(),
         );
         assert!(
             restarted
@@ -1109,8 +1121,8 @@ mod tests {
         app.params.scanner.scan_output = "negative_to_positive".into();
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-        app.params.scanner.positive_interpretation =
-            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        app.params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Coupled;
         app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
         app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
         app.params.scanner.finish_strength = 0.0;
@@ -1139,8 +1151,8 @@ mod tests {
         app.params.scanner.white_point = [1.0; 3];
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LegacyColorimetric;
-        app.params.scanner.positive_interpretation =
-            spektrafilm_core::params::PositiveInterpretation::Separable;
+        app.params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Separable;
         app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::Neutral;
         app.params.scanner.finish_strength = 1.0;
         app.params.scanner.scan_output = "direct_scan".into();
@@ -1152,8 +1164,8 @@ mod tests {
             spektrafilm_core::params::ReceiverProfile::LabScanApprox
         );
         assert_eq!(
-            app.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Coupled
+            app.params.scanner.negative_conversion_method,
+            spektrafilm_core::params::NegativeConversionMethod::Coupled
         );
         assert_eq!(
             app.params.scanner.auto_setup,
@@ -1172,7 +1184,7 @@ mod tests {
             Some(path),
             None,
             directory.join("preset_browser_state.json"),
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            crate::headless::data_dir(),
         );
         assert_eq!(restarted.params.scanner.scan_output, "negative_to_positive");
         assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
@@ -1182,8 +1194,8 @@ mod tests {
             spektrafilm_core::params::ReceiverProfile::LabScanApprox
         );
         assert_eq!(
-            restarted.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Coupled
+            restarted.params.scanner.negative_conversion_method,
+            spektrafilm_core::params::NegativeConversionMethod::Coupled
         );
         assert_eq!(
             restarted.params.scanner.auto_setup,
@@ -1482,7 +1494,7 @@ mod tests {
         let preset =
             Preset::capture_section("Filters", Section::Enlarger, &params, provenance()).unwrap();
         let film = spektrafilm_core::profile::load_profile_by_name(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            &crate::headless::data_dir(),
             "kodak_gold_200",
         )
         .unwrap();

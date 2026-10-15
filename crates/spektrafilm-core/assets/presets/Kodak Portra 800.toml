@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 name = "Kodak Portra 800"
 author = "SpektraFilm"
 description = "SpektraFilm Portra 800 look; the hanatos2025 adaptation surface is fitted from Color Precision Portra 800 chart scans and the positive-scan timing is tuned on the default film-scan appearance"
@@ -14,8 +14,7 @@ version = "0.3.4"
 [parameters.enlarger]
 illuminant = "TH-KG3"
 print_exposure = 1.0
-print_exposure_compensation = true
-normalize_print_exposure = true
+print_exposure_mode = "auto"
 y_filter_shift = 0.0
 m_filter_shift = 0.0
 lens_blur = 0.0
@@ -38,7 +37,7 @@ bloom_size = 1.0
 
 [parameters.scanner]
 receiver_profile = "legacy_colorimetric"
-positive_interpretation = "density"
+negative_conversion_method = "density"
 auto_setup = "off"
 finish = "neutral"
 finish_strength = 1.0
@@ -68,14 +67,14 @@ white_point = [
 # minimizes the patch-median error instead. It is inert in this preset's print
 # route and applies to the film-scan route; contrast and dmax keep the profile
 # defaults.
-positive_density_ev = 2.0199265703217424
-positive_balance_ev = [
+conversion_brightness_ev = 2.0199265703217424
+conversion_balance_ev = [
     0.1590415018542717,
     0.0,
     -0.2930831529863899,
 ]
-positive_contrast = 0.7355140005821664
-positive_dmax = 1.5625841465572565
+conversion_contrast = 0.7355140005821664
+conversion_dmax = 1.5625841465572565
 
 [parameters.film_render]
 density_curve_gamma = 1.0

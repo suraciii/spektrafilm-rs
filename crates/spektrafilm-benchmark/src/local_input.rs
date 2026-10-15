@@ -1,4 +1,4 @@
-use crate::{Error, Result, common, documents, runner};
+use crate::{Error, Result, common, documents};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -47,7 +47,7 @@ fn resolve_paths(value: &mut Value, document: &Path) -> Result<()> {
 }
 
 fn authored_path(path: &str, document: &Path) -> Result<PathBuf> {
-    Ok(runner::absolute(document)?
+    Ok(documents::normalize_path(document)?
         .parent()
         .unwrap_or(Path::new("/"))
         .join(path))
@@ -71,7 +71,7 @@ impl LocalInput {
                 "Input kind must be raster or raw",
             ));
         }
-        let input_path = runner::absolute(&self.input)?;
+        let input_path = documents::normalize_path(&self.input)?;
         let mut input = json!({"kind":self.input_kind,"path":input_path,"sha256":common::sha256_file(&input_path)?});
         if self.input_kind == "raster" {
             input["color_space"] =
@@ -108,7 +108,7 @@ impl LocalInput {
         match (&self.reference, &self.reference_info) {
             (Some(image), Some(info)) => {
                 let mut reference = load("reference", info)?;
-                let path = runner::absolute(image)?;
+                let path = documents::normalize_path(image)?;
                 reference["path"] = json!(path);
                 reference["sha256"] = json!(common::sha256_file(&path)?);
                 case["reference"] = reference;
@@ -125,7 +125,7 @@ impl LocalInput {
             case["preparation"] = load("preparation", path)?;
         }
         let suite = json!({"schema_version":1,"id":"local-image","protocol":{"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0,0.4,0.16],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":4.0,"border_px":1},"spectrum":{"window":"hann"}},"hotspots":{"count":6,"min_area_px":151}},"cases":[case]});
-        documents::validate_suite(&suite, &runner::absolute(&self.configuration)?)?;
+        documents::validate_suite(&suite, &documents::normalize_path(&self.configuration)?)?;
         Ok(suite)
     }
 }

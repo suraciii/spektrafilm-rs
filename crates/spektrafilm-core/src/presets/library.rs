@@ -634,9 +634,7 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
-    fn data() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
-    }
+    use crate::test_support::data_dir as data;
     fn grain(name: &str, amount: Value) -> Preset {
         Preset::from_json_str(
             &serde_json::json!({

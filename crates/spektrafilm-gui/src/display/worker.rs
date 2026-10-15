@@ -2,6 +2,10 @@
 //! viewport pixels off the UI thread; immutable pipeline floats are shared.
 use egui::{Color32, Pos2, Rect};
 use parking_lot::{Condvar, Mutex};
+<<<<<<< HEAD
+=======
+use rayon::prelude::*;
+>>>>>>> origin/main-0.3.4
 use spektrafilm_math::image::ImageBuf;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,12 +23,16 @@ pub(super) struct PreparedDisplay {
     pub(super) raster: DisplayRaster,
 }
 impl PreparedDisplay {
+<<<<<<< HEAD
     pub(super) fn matches(
         &self,
         source: &Arc<ImageBuf>,
         metadata: &DisplaySource,
         max_size: usize,
     ) -> bool {
+=======
+    fn matches(&self, source: &Arc<ImageBuf>, metadata: &DisplaySource, max_size: usize) -> bool {
+>>>>>>> origin/main-0.3.4
         Arc::ptr_eq(&self.source, source) && self.metadata == *metadata && self.max_size == max_size
     }
 }
@@ -44,6 +52,13 @@ pub(super) struct DisplayRequest {
     pub(super) raster: Option<DisplayRaster>,
     pub(super) paper_size: [usize; 2],
     pub(super) previous: Option<DisplayRaster>,
+<<<<<<< HEAD
+=======
+    /// Before/after split: `(fraction of image_rect width, left-side raster)`.
+    /// When present and `layer == Output`, pixels left of the split sample the
+    /// left-side (input) raster while pixels right of it sample the output.
+    pub(super) split: Option<(f32, DisplayRaster)>,
+>>>>>>> origin/main-0.3.4
     pub(super) source: Option<Arc<ImageBuf>>,
     pub(super) prepared: Option<PreparedDisplay>,
     pub(super) metadata: DisplaySource,
@@ -62,6 +77,7 @@ pub(super) struct DisplaySource {
     pub(super) profile: Option<PathBuf>,
 }
 
+<<<<<<< HEAD
 pub(super) struct FitCacheEntry {
     pub(super) prepared: PreparedDisplay,
     pub(super) status: Option<String>,
@@ -72,6 +88,18 @@ pub(super) struct CompositionCache {
     pub(super) paper: Option<DisplayRaster>,
     pub(super) polaroid: Option<(DisplayRaster, PolaroidState)>,
     pub(super) fit: [Option<FitCacheEntry>; 2],
+=======
+struct FitCacheEntry {
+    prepared: PreparedDisplay,
+    status: Option<String>,
+}
+
+#[derive(Default)]
+struct CompositionCache {
+    paper: Option<DisplayRaster>,
+    polaroid: Option<(DisplayRaster, PolaroidState)>,
+    fit: [Option<FitCacheEntry>; 2],
+>>>>>>> origin/main-0.3.4
 }
 
 pub(super) struct DisplayResponse {
@@ -86,6 +114,7 @@ impl DisplayResponse {
         self.generation == generation && self.key == key
     }
 }
+<<<<<<< HEAD
 pub(super) struct WorkerState {
     pub(super) request: Option<DisplayRequest>,
     pub(super) response: Option<DisplayResponse>,
@@ -94,6 +123,16 @@ pub(super) struct WorkerState {
 pub(super) struct DisplayWorker {
     pub(super) state: Arc<(Mutex<WorkerState>, Condvar)>,
     pub(super) thread: Option<JoinHandle<()>>,
+=======
+struct WorkerState {
+    request: Option<DisplayRequest>,
+    response: Option<DisplayResponse>,
+    stopping: bool,
+}
+pub(super) struct DisplayWorker {
+    state: Arc<(Mutex<WorkerState>, Condvar)>,
+    thread: Option<JoinHandle<()>>,
+>>>>>>> origin/main-0.3.4
 }
 impl Default for DisplayWorker {
     fn default() -> Self {
@@ -172,6 +211,10 @@ impl Drop for DisplayWorker {
         }
     }
 }
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/main-0.3.4
 impl DisplaySource {
     /// Draws only visible pixels into a bounded texture. Large source images and
     /// offscreen pans therefore cannot exceed the GPU texture dimension limit.
@@ -195,7 +238,10 @@ impl DisplaySource {
         } else {
             None
         };
+<<<<<<< HEAD
         let matrix = space.map(spektrafilm_math::colorspace::display_matrix);
+=======
+>>>>>>> origin/main-0.3.4
         let mut status = None;
         let profile = if layer == ViewLayer::Output && enabled {
             self.profile.as_deref().and_then(|path| {
@@ -234,6 +280,7 @@ impl DisplaySource {
                 );
                 rgb.push(if image_rect.contains(p) {
                     sample_image_with(source, p, image_rect, interpolation, |raw| {
+<<<<<<< HEAD
                         let value = match (space, matrix.as_ref()) {
                             (Some(space), Some(matrix)) => {
                                 spektrafilm_math::colorspace::display_rgb(
@@ -245,6 +292,16 @@ impl DisplaySource {
                                 .map(|v| v.clamp(0.0, 1.0) as f32)
                             }
                             _ => raw,
+=======
+                        let value = match space {
+                            Some(space) => spektrafilm_math::colorspace::display_rgb(
+                                raw.map(|v| v as f64),
+                                space,
+                                encoded,
+                            )
+                            .map(|v| v.clamp(0.0, 1.0) as f32),
+                            None => raw,
+>>>>>>> origin/main-0.3.4
                         };
                         if let Some(transform) = profile.as_ref() {
                             let mut pixel = [value.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)];
@@ -279,6 +336,10 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
         mut raster,
         paper_size,
         previous,
+<<<<<<< HEAD
+=======
+        split,
+>>>>>>> origin/main-0.3.4
         source,
         prepared,
         metadata,
@@ -387,6 +448,7 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
     if let Some((_, message)) = full.as_ref() {
         status = message.clone();
     }
+<<<<<<< HEAD
     let mut pixels = Vec::with_capacity(texture_size[0] * texture_size[1]);
     for y in 0..texture_size[1] {
         for x in 0..texture_size[0] {
@@ -426,6 +488,64 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
             }
             pixels.push(color);
         }
+=======
+    let mut pixels = vec![Color32::TRANSPARENT; texture_size[0] * texture_size[1]];
+    let render_pixel = |x: usize, y: usize| -> Color32 {
+        let p = Pos2::new(
+            rect.min.x + (x as f32 + 0.5) * rect.width() / texture_size[0] as f32,
+            rect.min.y + (y as f32 + 0.5) * rect.height() / texture_size[1] as f32,
+        );
+        let mut color = if border.contains(p) {
+            Color32::WHITE
+        } else {
+            gray
+        };
+        if paper_rect.contains(p)
+            && !image_rect.contains(p)
+            && let Some(paper) = cache.paper.as_ref()
+        {
+            color = pack(sample_rect(paper, p, paper_rect, Interpolation::Spline36));
+        }
+        if image_rect.contains(p)
+            && let Some(raster) = raster
+        {
+            let mut rgb = if let Some((view, _)) = full.as_ref() {
+                view.rgb[y * texture_size[0] + x]
+            } else {
+                sample_rect(raster, p, image_rect, interpolation)
+            };
+            // Before/after split: left of the split samples the left-side
+            // (input) raster while pixels right of it keep the output.
+            if layer == ViewLayer::Output
+                && let Some((fraction, left)) = split.as_ref()
+            {
+                let split_x = image_rect.min.x + image_rect.width() * fraction.clamp(0.0, 1.0);
+                if p.x < split_x {
+                    rgb = sample_rect(left, p, image_rect, interpolation);
+                }
+            }
+            if layer == ViewLayer::Output
+                && let Some(previous) = previous.as_ref()
+                && split.is_none()
+            {
+                let a = frame as f32 / 10.0;
+                let old = sample_rect(previous, p, image_rect, interpolation);
+                for c in 0..3 {
+                    rgb[c] = old[c].clamp(0.0, 1.0) * (1.0 - a) + rgb[c].clamp(0.0, 1.0) * a;
+                }
+            }
+            color = pack(rgb);
+        }
+        color
+    };
+    // Debug builds sample about a microsecond per pixel and the headless
+    // suites run their cases concurrently on the same rayon pool, so the
+    // parallel fill loses there; release builds spread it over the cores.
+    if cfg!(debug_assertions) {
+        fill_canvas_serial(&mut pixels, texture_size[0], render_pixel);
+    } else {
+        fill_canvas_parallel(&mut pixels, texture_size[0], render_pixel);
+>>>>>>> origin/main-0.3.4
     }
     DisplayResponse {
         key,
@@ -439,6 +559,44 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
     }
 }
 
+<<<<<<< HEAD
+=======
+/// Fills canvas pixels in row-major order on the calling thread. The parallel
+/// fill must agree with this one pixel for pixel, which the test below checks.
+fn fill_canvas_serial(
+    pixels: &mut [Color32],
+    width: usize,
+    render: impl Fn(usize, usize) -> Color32,
+) {
+    for (y, row) in pixels.chunks_mut(width.max(1)).enumerate() {
+        for (x, slot) in row.iter_mut().enumerate() {
+            *slot = render(x, y);
+        }
+    }
+}
+
+/// Fills canvas pixels in row-major order across the rayon pool. Pixels are
+/// independent and keep their own arithmetic order, so the result is identical
+/// to `fill_canvas_serial` while the work spreads over the available cores.
+fn fill_canvas_parallel(
+    pixels: &mut [Color32],
+    width: usize,
+    render: impl Fn(usize, usize) -> Color32 + Send + Sync,
+) {
+    if width == 0 || pixels.is_empty() {
+        return;
+    }
+    pixels
+        .par_chunks_mut(width)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, slot) in row.iter_mut().enumerate() {
+                *slot = render(x, y);
+            }
+        });
+}
+
+>>>>>>> origin/main-0.3.4
 fn pack(p: [f32; 3]) -> Color32 {
     Color32::from_rgb(
         (p[0].clamp(0.0, 1.0) * 255.0).round() as u8,
@@ -452,6 +610,29 @@ mod tests {
     use super::*;
     use egui::Vec2;
     use std::time::Duration;
+<<<<<<< HEAD
+=======
+
+    #[test]
+    fn parallel_canvas_fill_matches_the_serial_fill() {
+        let (w, h) = (37usize, 19usize);
+        let render = |x: usize, y: usize| {
+            Color32::from_rgba_premultiplied(
+                (x * 7 % 251) as u8,
+                (y * 11 % 253) as u8,
+                ((x + 3 * y) % 255) as u8,
+                255,
+            )
+        };
+        let mut serial = vec![Color32::TRANSPARENT; w * h];
+        let mut parallel = vec![Color32::TRANSPARENT; w * h];
+        fill_canvas_serial(&mut serial, w, render);
+        fill_canvas_parallel(&mut parallel, w, render);
+        assert_eq!(serial, parallel);
+        // Row-major slot mapping: index x + y * width.
+        assert_eq!(serial[3 + 5 * w], render(3, 5));
+    }
+>>>>>>> origin/main-0.3.4
     fn request(generation: u64) -> DisplayRequest {
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(4.0, 1.0));
         DisplayRequest {
@@ -468,6 +649,10 @@ mod tests {
             raster: Some(DisplayRaster::new([1, 1], vec![[0.5; 3]]).unwrap()),
             paper_size: [128, 128],
             previous: None,
+<<<<<<< HEAD
+=======
+            split: None,
+>>>>>>> origin/main-0.3.4
             prepared: None,
             source: Some(Arc::new(ImageBuf::from_data(
                 4,

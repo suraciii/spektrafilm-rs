@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 name = "Fujifilm Provia 100F"
 author = "SpektraFilm"
 description = "SpektraFilm classic stock look"
@@ -20,8 +20,7 @@ apply_hanatos2025_adaptation_surface = true
 [parameters.enlarger]
 illuminant = "TH-KG3"
 print_exposure = 1.0
-print_exposure_compensation = true
-normalize_print_exposure = true
+print_exposure_mode = "auto"
 y_filter_shift = 0.0
 m_filter_shift = 0.0
 lens_blur = 0.0

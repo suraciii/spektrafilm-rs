@@ -21,7 +21,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 // runs at four threads, 0 of 12 serial). The guard is returned first so that
 // pattern bindings (dropped in reverse declaration order) destroy the backend
 // before releasing DEVICE_IN_USE; every caller holds it for the whole test.
-static DEVICE_IN_USE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+use super::TEST_DEVICE_LOCK as DEVICE_IN_USE;
 
 fn fresh_backend(
     features: wgpu::Features,
@@ -48,7 +48,7 @@ fn fresh_backend(
             "software Vulkan adapter is required for telemetry acceptance"
         );
     }
-    let adapter = adapter?;
+    let adapter = adapter.expect("WGPU adapter required for GPU tests");
     let supported = adapter.features();
     if cfg!(target_os = "linux") {
         assert!(
@@ -100,6 +100,18 @@ fn fresh_backend(
     Some((
         device_guard,
         WgpuBackend {
+            pipe: super::pipe::GpuPipe::new(
+                ObservedDevice {
+                    raw: device.clone(),
+                    context: ObservationContext::default(),
+                    batch: None,
+                },
+                ObservedQueue {
+                    raw: queue.clone(),
+                    context: ObservationContext::default(),
+                },
+                Arc::new(PipelineCache::default()),
+            ),
             device: ObservedDevice {
                 raw: device,
                 context: ObservationContext::default(),
@@ -108,10 +120,10 @@ fn fresh_backend(
             queue: ObservedQueue {
                 raw: queue,
                 context: ObservationContext::default(),
-                batch: None,
             },
             pipeline_cache: Arc::new(PipelineCache::default()),
             name: "telemetry_test".into(),
+            explicit: false,
             adapter: description,
         },
     ))
@@ -419,16 +431,14 @@ fn failed_and_pending_query_callbacks_preserve_completed_image() {
         if reason == AvailabilityReason::QueryFailed {
             tx.send(Err(wgpu::BufferAsyncError)).unwrap();
         }
-        scoped
-            .device
-            .batch
-            .as_ref()
-            .unwrap()
-            .lock()
-            .queries
-            .as_mut()
-            .unwrap()
-            .receiver = Some(rx);
+        // The batch boundary only requests the readback map when it has not
+        // been requested yet; this test injects the callback result directly,
+        // so it declares the request as made.
+        let mut state = scoped.device.batch.as_ref().unwrap().lock();
+        let queries = state.queries.as_mut().unwrap();
+        queries.map_requested = true;
+        queries.receiver = Some(rx);
+        drop(state);
         // Keeping tx alive makes NotReady an empty live callback channel, not a disconnection.
         drop(guard);
         drop(tx);

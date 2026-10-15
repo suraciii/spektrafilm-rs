@@ -3,6 +3,7 @@ use super::{
     coupled::{CoupledBounds, CoupledInverse},
     developed_density_curves,
 };
+use crate::WorkflowRoute;
 use crate::{params::RuntimeParams, profile::Profile};
 
 struct DensityAxis {
@@ -159,7 +160,7 @@ impl CoupledCalibration {
 }
 
 pub(super) fn camera_ev(params: &RuntimeParams) -> f64 {
-    if params.workflow.route == "input > film > scan" {
+    if params.workflow.route_enum() == WorkflowRoute::FilmScan {
         params.camera.exposure_compensation_ev as f64
     } else {
         0.0
@@ -207,9 +208,10 @@ impl DensityCalibration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::data_dir;
+
     fn profile(name: &str) -> Profile {
-        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-        crate::profile::load_profile_by_name(&data, name).unwrap()
+        crate::profile::load_profile_by_name(&data_dir(), name).unwrap()
     }
     #[test]
     fn coupled_real_receivers_recover_chromatic_density_and_exposure() {
@@ -218,7 +220,8 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Coupled;
+        params.scanner.negative_conversion_method =
+            crate::params::NegativeConversionMethod::Coupled;
         for receiver in [
             crate::params::ReceiverProfile::LegacyColorimetric,
             crate::params::ReceiverProfile::LabScanApprox,
@@ -287,7 +290,8 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Coupled;
+        params.scanner.negative_conversion_method =
+            crate::params::NegativeConversionMethod::Coupled;
         params.scanner.unsharp_mask = [0.0; 2];
         params.io.output_cctf_encoding = false;
         params.settings.use_scanner_lut = false;

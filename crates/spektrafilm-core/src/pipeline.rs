@@ -5,6 +5,7 @@
 ///   2. Process virtual gray card through filming to get midgray spectral density
 ///   3. Compute print exposure normalization factor from midgray spectral density
 ///   4. Pass all calibration data to the pipeline stages
+use crate::WorkflowRoute;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{
@@ -19,10 +20,16 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_math::spectral::TcLut;
 
-mod resident;
 mod execution;
 mod exposure;
 mod output_mix;
+mod resident;
+<<<<<<< HEAD
+mod execution;
+mod exposure;
+mod output_mix;
+=======
+>>>>>>> origin/main-0.3.4
 mod stages;
 
 #[cfg(test)]
@@ -56,15 +63,7 @@ pub(crate) fn dump_if_env(var: &str, image: &ImageBuf) {
 #[cfg(test)]
 use crate::enlarger;
 use crate::spectral_service::select_illuminant;
-fn stage_timings_enabled() -> bool {
-    std::env::var_os("SPEKTRAFILM_STAGE_TIMINGS").is_some()
-}
-
-fn print_stage_timing(enabled: bool, stage: &str, start: Instant) {
-    if enabled {
-        eprintln!("stage {stage}: {} ms", start.elapsed().as_millis());
-    }
-}
+use spektrafilm_gpu::timing::{print_stage_timing, stage_timings_enabled};
 
 fn record_stage_timing(
     timings: &mut Option<&mut BTreeMap<String, f64>>,
@@ -117,7 +116,14 @@ pub struct Pipeline {
     cancellation: Option<Arc<AtomicBool>>,
 }
 impl Pipeline {
+<<<<<<< HEAD
     pub(crate) fn with_scanner_setup(mut self, setup: crate::stages::scanning::ScannerSetup) -> Self {
+=======
+    pub(crate) fn with_scanner_setup(
+        mut self,
+        setup: crate::stages::scanning::ScannerSetup,
+    ) -> Self {
+>>>>>>> origin/main-0.3.4
         self.scanner_setup = Some(setup);
         self
     }
@@ -149,7 +155,7 @@ impl Pipeline {
         measurement.params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
         measurement.scanner_setup = None;
         let color_ref = measurement.color_reference(&backend);
-        let converting = self.params.workflow.route == "input > convert-film > scan";
+        let converting = self.params.workflow.route_enum() == WorkflowRoute::ConvertFilmScan;
         let density = if converting {
             crate::stages::converting::process(full_input, &measurement.film, &measurement.params)?
         } else {
@@ -230,9 +236,11 @@ impl Pipeline {
         let spectral_changed = crate::pipeline_calibration::spectral_changed(&self.params, &params);
         let calibration_changed =
             crate::pipeline_calibration::calibration_changed(&self.params, &params);
-        if self.params.scanner.positive_interpretation != params.scanner.positive_interpretation {
-            self.digital_reference = if params.scanner.positive_interpretation
-                == crate::params::PositiveInterpretation::DigitalReference
+        if self.params.scanner.negative_conversion_method
+            != params.scanner.negative_conversion_method
+        {
+            self.digital_reference = if params.scanner.negative_conversion_method
+                == crate::params::NegativeConversionMethod::DigitalReference
             {
                 Some(Arc::new(
                     crate::digital_reference::DigitalReference::prepare(
@@ -296,15 +304,6 @@ impl Pipeline {
             Err("operation cancelled".to_owned())
         } else {
             Ok(())
-        }
-    }
-    fn effective_backend<'a>(&self, backend: &'a dyn ComputeBackend) -> &'a dyn ComputeBackend {
-        if self.params.scanner.scan_output == "negative_to_positive" {
-            static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
-                spektrafilm_gpu::cpu_backend::CpuBackend;
-            &CPU_BACKEND
-        } else {
-            backend
         }
     }
 }
@@ -391,8 +390,8 @@ impl Pipeline {
             params.film_render.development_time,
         );
         let calibrated = crate::pipeline_calibration::build(film, print, params, data_dir)?;
-        let digital_reference = if calibrated.params.scanner.positive_interpretation
-            == crate::params::PositiveInterpretation::DigitalReference
+        let digital_reference = if calibrated.params.scanner.negative_conversion_method
+            == crate::params::NegativeConversionMethod::DigitalReference
         {
             Some(Arc::new(
                 crate::digital_reference::DigitalReference::prepare(&calibrated.film, data_dir)?,

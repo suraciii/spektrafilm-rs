@@ -40,9 +40,7 @@ impl App {
             &self.output_color_space,
             self.output_cctf_encoding,
             self.viewer.settings.use_display_transform,
-            self.gui_state.sections["rust"]["display_profile"]
-                .as_str()
-                .map(Path::new),
+            self.gui_state.display_profile().map(Path::new),
         );
         self.viewer.invalidate_display();
     }
@@ -76,33 +74,11 @@ impl App {
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Save current to file").clicked()
-                && let Some(path) = self.chooser.save_file(
-                    self.file_dialog("state")
-                        .set_file_name("gui_state.json")
-                        .add_filter("JSON", &["json"]),
-                )
-            {
-                self.remember_dialog("state", &path);
-                let result = self.current_state().and_then(|s| s.save(&path));
-                self.status = match result {
-                    Ok(()) => format!("Saved GUI state to {}", path.display()),
-                    Err(e) => format!("State save error: {e:#}"),
-                };
+            if ui.button("Save current to file").clicked() {
+                self.save_state_with_dialog();
             }
-            if ui.button("Load from file").clicked()
-                && let Some(path) = self
-                    .chooser
-                    .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
-            {
-                let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
-                self.status = match result {
-                    Ok(()) => {
-                        self.remember_dialog("state", &path);
-                        format!("Loaded GUI state from {}", path.display())
-                    }
-                    Err(e) => format!("State load error: {e:#}"),
-                };
+            if ui.button("Load from file").clicked() {
+                self.load_state_with_dialog();
             }
             if ui.button("Save current as default").clicked() {
                 let result = self
@@ -122,6 +98,37 @@ impl App {
                 };
             }
         });
+    }
+
+    fn save_state_with_dialog(&mut self) {
+        if let Some(path) = self.chooser.save_file(
+            self.file_dialog("state")
+                .set_file_name("gui_state.json")
+                .add_filter("JSON", &["json"]),
+        ) {
+            self.remember_dialog("state", &path);
+            let result = self.current_state().and_then(|s| s.save(&path));
+            self.status = match result {
+                Ok(()) => format!("Saved GUI state to {}", path.display()),
+                Err(e) => format!("State save error: {e:#}"),
+            };
+        }
+    }
+
+    fn load_state_with_dialog(&mut self) {
+        if let Some(path) = self
+            .chooser
+            .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
+        {
+            let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
+            self.status = match result {
+                Ok(()) => {
+                    self.remember_dialog("state", &path);
+                    format!("Loaded GUI state from {}", path.display())
+                }
+                Err(e) => format!("State load error: {e:#}"),
+            };
+        }
     }
 
     pub(super) fn toggle_scan_for_print(&mut self) {
@@ -155,7 +162,7 @@ impl App {
             controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
             if self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
                 let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-                if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
+                if ui.checkbox(&mut scan_for_print, "white and black correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
                     self.toggle_scan_for_print();
                 }
             }
@@ -173,9 +180,9 @@ impl App {
             if ui
                 .checkbox(
                     &mut self.params.magazine_print_color.active,
-                    "Magazine print",
+                    "Magazine finish",
                 )
-                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
+                .on_hover_text("Apply a magazine finish appearance after the selected workflow.")
                 .changed()
             {
                 self.mark_parameters_changed();
@@ -211,11 +218,35 @@ impl App {
                 self.save_dialog();
             }
         });
+        ui.horizontal(|ui| {
+            if ui
+                .button("Save state")
+                .on_hover_text("Save current GUI state to a JSON file")
+                .clicked()
+            {
+                self.save_state_with_dialog();
+            }
+            if ui
+                .button("Load state")
+                .on_hover_text("Load GUI state from a JSON file")
+                .clicked()
+            {
+                self.load_state_with_dialog();
+            }
+        });
+        if let Some(error) = self.last_export_error.clone() {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(error).color(theme::ERROR).small());
+                if ui.button("Dismiss").clicked() {
+                    self.last_export_error = None;
+                }
+            });
+        }
     }
 
     pub(super) fn file_dialog(&self, key: &str) -> rfd::FileDialog {
         let dialog = rfd::FileDialog::new();
-        match self.gui_state.sections["rust"]["dialog_dirs"][key].as_str() {
+        match self.gui_state.dialog_dirs()[key].as_str() {
             Some(path) => dialog.set_directory(path),
             None => dialog,
         }
@@ -679,14 +710,13 @@ impl App {
                 for section in ["Print base", "Glare", "Enlarger diffusion"] {
                     self.parameter_section(ui, section);
                 }
+                self.parameter_section(ui, "Magazine finish color");
             }
             GuiTab::Advanced => {
                 for section in [
                     "Spectral upsampling",
-                    "Magazine print color",
                     "Input gamut compress",
                     "Output gamut compress",
-                    "Experimental",
                 ] {
                     self.parameter_section(ui, section);
                 }
@@ -721,6 +751,59 @@ impl App {
             self.refresh_viewing_artifacts();
         }
     }
+
+    fn render_feedback_panel(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new("Film Profile")
+                .color(theme::ACCENT)
+                .size(12.0),
+        );
+        ui.separator();
+        ui.label(format!("Film: {}", self.film_name));
+        ui.label(format!("Print: {}", self.print_name));
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("Pipeline")
+                .color(theme::ACCENT)
+                .size(12.0),
+        );
+        ui.separator();
+        ui.label(format!("Route: {}", self.params.workflow.route));
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("Render Stats")
+                .color(theme::ACCENT)
+                .size(12.0),
+        );
+        ui.separator();
+        ui.label(format!("Render: {:.0} ms", self.last_render_ms));
+        ui.label(format!("Pipeline: {:.0} ms", self.last_pipeline_build_ms));
+        ui.label(format!("Preview: {:.0} ms", self.last_preview_ms));
+    }
+
+    fn render_library_panel(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new("Film Library")
+                .color(theme::ACCENT)
+                .size(12.0),
+        );
+        ui.separator();
+        let films = self.films.clone();
+        let mut selected = None;
+        for entry in &films {
+            let active = self.film_name == entry.stock;
+            if ui
+                .selectable_label(active, &entry.display)
+                .on_hover_text(&entry.stock)
+                .clicked()
+            {
+                selected = Some(entry.stock.clone());
+            }
+        }
+        if let Some(stock) = selected {
+            self.select_film_profile(stock);
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -732,7 +815,7 @@ impl eframe::App for App {
         if !self.metal_colorspace_tagged
             && raw_window_handle::HasWindowHandle::window_handle(frame).is_ok()
         {
-            match tag_metal_layer_srgb(frame) {
+            match crate::platform::tag_metal_layer_srgb(frame) {
                 Ok(()) => {
                     eprintln!("[spektrafilm] CAMetalLayer.colorspace = sRGB — tagged OK");
                     self.metal_colorspace_tagged = true;
@@ -769,12 +852,58 @@ impl eframe::App for App {
             self.start_export(ctx, options);
         }
         self.preset_panel(ctx);
-        egui::SidePanel::right("controls")
+        // Left nav: icon buttons for tab switching
+        egui::SidePanel::left("nav")
             .resizable(false)
-            .exact_width(420.0)
+            .exact_width(52.0)
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                let tabs = GuiTab::ALL;
+                for (i, tab) in tabs.iter().enumerate() {
+                    let icons = ["⚡", "🎞", "🖨", "🔧", "⚙"];
+                    let active = self.gui_tab == *tab;
+                    if ui
+                        .selectable_label(active, icons[i])
+                        .on_hover_text(tab.label())
+                        .clicked()
+                    {
+                        self.gui_tab = *tab;
+                    }
+                    ui.add_space(2.0);
+                }
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+                // Right panel toggles: feedback / film library
+                for (mode, icon, tip) in [
+                    ("feedback", "📊", "Histogram & feedback"),
+                    ("library", "🎞", "Film library"),
+                ] {
+                    let active = self.right_panel_mode.as_deref() == Some(mode);
+                    if ui
+                        .selectable_label(active, icon)
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
+                        self.right_panel_mode = if active { None } else { Some(mode.to_owned()) };
+                    }
+                    ui.add_space(2.0);
+                }
+            });
+        // Left control panel: histogram at top, tabs, scrollable controls, action bar
+        egui::SidePanel::left("controls")
+            .resizable(false)
+            .exact_width(320.0)
             .show(ctx, |ui| {
                 ui.heading("spektrafilm");
-                ui.add_space(6.0);
+                let output_id = self
+                    .output_image
+                    .as_ref()
+                    .map(|o| Arc::as_ptr(o) as usize as u64)
+                    .unwrap_or(0);
+                self.histogram.update(&self.output_image, output_id);
+                self.histogram.render(ui);
+                ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
                     for tab in GuiTab::ALL {
                         ui.selectable_value(&mut self.gui_tab, tab, tab.label());
@@ -798,6 +927,7 @@ impl eframe::App for App {
         if let Some(error) = self.diagnostics.take_publication_error() {
             self.status = format!("Diagnostic report publication error: {error}");
         }
+        // Central viewer
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -819,6 +949,40 @@ impl eframe::App for App {
                         self.viewer.reset_view();
                         ui.ctx().request_repaint();
                     }
+                    // Before/after compare slider
+                    let compare_label = if self.compare_active {
+                        "compare ON"
+                    } else {
+                        "compare"
+                    };
+                    if ui
+                        .selectable_label(self.compare_active, compare_label)
+                        .on_hover_text("Split-screen before/after comparison")
+                        .clicked()
+                    {
+                        self.compare_active = !self.compare_active;
+                        ui.ctx().request_repaint();
+                    }
+                    if self.compare_active {
+                        ui.add_space(8.0);
+                        let slider = ui.add(
+                            egui::Slider::new(&mut self.compare_split, 0.0..=1.0)
+                                .fixed_decimals(2)
+                                .trailing_fill(false),
+                        );
+                        if slider.changed() {
+                            ui.ctx().request_repaint();
+                        }
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "←input {:.0}% | {:.0}%output→",
+                                self.compare_split * 100.0,
+                                (1.0 - self.compare_split) * 100.0
+                            ))
+                            .color(theme::FG_MUTED)
+                            .size(9.0),
+                        );
+                    }
                     let zoom = self.viewer.zoom_percent().map_or_else(
                         || format!("{:.0}% fit", self.viewer.zoom * 100.0),
                         |percent| format!("{percent:.0}%"),
@@ -829,9 +993,57 @@ impl eframe::App for App {
             self.viewer.layer_controls(ui);
             self.viewer
                 .set_display_max_size(self.params.settings.preview_max_size);
+            self.viewer.set_compare_split(if self.compare_active {
+                Some(self.compare_split)
+            } else {
+                None
+            });
             self.viewer
                 .show(ui, self.image.as_ref(), self.output_image.as_ref());
+            // Before/after compare divider overlay
+            if self.compare_active {
+                let rect = ui.max_rect();
+                let painter = ui.painter_at(rect);
+                let x = rect.left() + rect.width() * self.compare_split;
+                // Divider line
+                painter.line_segment(
+                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                    egui::Stroke::new(2.0_f32, theme::ACCENT),
+                );
+                // Labels
+                painter.text(
+                    egui::pos2(x - 8.0, rect.top() + 12.0),
+                    egui::Align2::RIGHT_TOP,
+                    "input",
+                    egui::FontId::proportional(10.0),
+                    theme::ACCENT,
+                );
+                painter.text(
+                    egui::pos2(x + 8.0, rect.top() + 12.0),
+                    egui::Align2::LEFT_TOP,
+                    "output",
+                    egui::FontId::proportional(10.0),
+                    theme::ACCENT,
+                );
+            }
         });
+        // Right panel: feedback / film library
+        if self.right_panel_mode.is_some() {
+            egui::SidePanel::right("feedback")
+                .resizable(false)
+                .exact_width(280.0)
+                .show(ctx, |ui| {
+                    ui.heading(self.right_panel_mode.as_deref().unwrap_or(""));
+                    ui.separator();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if self.right_panel_mode.as_deref() == Some("feedback") {
+                            self.render_feedback_panel(ui);
+                        } else if self.right_panel_mode.as_deref() == Some("library") {
+                            self.render_library_panel(ui);
+                        }
+                    });
+                });
+        }
 
         // Accept drag-and-dropped image files.
         let dropped: Vec<PathBuf> = ctx.input(|i| {

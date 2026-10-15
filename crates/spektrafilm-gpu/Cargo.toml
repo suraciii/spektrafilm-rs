@@ -12,7 +12,6 @@ precision-f64 = ["spektrafilm-math/precision-f64"]
 [dependencies]
 spektrafilm-math.workspace = true
 rayon.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
 wgpu = { workspace = true, optional = true, features = ["wgsl"] }
@@ -30,7 +29,7 @@ accelerate-src = "0.3"
 [target.'cfg(all(not(target_os = "macos"), not(target_os = "windows")))'.dependencies]
 cblas = "0.4"
 blas-src = { version = "0.10", features = ["openblas"] }
-openblas-src = { version = "0.10", features = ["system"] }
+openblas-src = { version = "0.10", features = ["system"], default-features = false }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

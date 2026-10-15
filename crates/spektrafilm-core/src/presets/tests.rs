@@ -1,7 +1,5 @@
 use super::*;
-fn data() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
-}
+use crate::test_support::data_dir as data;
 fn test_film() -> Profile {
     profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap()
 }
@@ -93,7 +91,7 @@ impl Drop for Temp {
 fn version_one_maps_name_and_materializes_controls() {
     let text = r#"{"schema_version":1,"id":"old","name":"Portable","film_profile":{"stock":"kodak_portra_400"},"print_profile":{"stock":"kodak_portra_endura"},"parameters":{"enlarger":{},"scanner":{},"film_render":{},"print_render":{},"camera_diffusion_filter":{}},"provenance":{"implementation_version":"test","model_version":"test"}}"#;
     let p = Preset::from_json_str(text).unwrap();
-    assert_eq!(p.schema_version, 3);
+    assert_eq!(p.schema_version, 4);
     assert_eq!(p.name, "Portable");
     assert!(!p.to_json().unwrap().contains("\"id\""));
     assert!(p.to_toml().unwrap().contains("y_filter_neutral"));
@@ -106,6 +104,103 @@ fn version_one_maps_name_and_materializes_controls() {
 }
 
 #[test]
+fn version_three_looks_rename_conversion_paths_and_map_the_exposure_pair() {
+    let legacy_scanner = serde_json::json!({
+        "positive_interpretation": "separable",
+        "positive_density_ev": 0.25,
+        "positive_balance_ev": [0.05, 0.0, -0.05],
+        "positive_contrast": 0.8,
+        "positive_dmax": 1.4,
+    });
+    for (pair, mode, tracking) in [
+        (
+            serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": true}),
+            "auto",
+            serde_json::json!("follow_mode"),
+        ),
+        (
+            serde_json::json!({"normalize_print_exposure": false, "print_exposure_compensation": false}),
+            "manual",
+            serde_json::json!("follow_mode"),
+        ),
+        (
+            serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": false}),
+            "auto",
+            serde_json::json!("never"),
+        ),
+        (
+            serde_json::json!({"normalize_print_exposure": false, "print_exposure_compensation": true}),
+            "manual",
+            serde_json::json!("always"),
+        ),
+    ] {
+        let preset = builtin_presets().remove(0);
+        let mut document = serde_json::to_value(preset).unwrap();
+        document["schema_version"] = 3.into();
+        // Strip the canonical spelling before injecting the legacy one; a
+        // real v3 document predates both.
+        document["parameters"]["enlarger"]
+            .as_object_mut()
+            .unwrap()
+            .remove("print_exposure_mode");
+        document["parameters"]["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("print_exposure_ev_tracking");
+        document["parameters"]["scanner"] = legacy_scanner.clone();
+        document["parameters"]["enlarger"]
+            .as_object_mut()
+            .unwrap()
+            .extend(pair.as_object().unwrap().clone());
+        let migrated = Preset::from_json_str(&document.to_string()).unwrap();
+        assert_eq!(migrated.schema_version, PRESET_SCHEMA_VERSION);
+        let look = migrated.look_parameters().unwrap();
+        assert_eq!(
+            look.scanner.negative_conversion_method.as_str(),
+            "separable"
+        );
+        assert_eq!(look.scanner.conversion_brightness_ev, 0.25);
+        assert_eq!(look.scanner.conversion_balance_ev, [0.05, 0.0, -0.05]);
+        assert_eq!(look.scanner.conversion_contrast, 0.8);
+        assert_eq!(look.scanner.conversion_dmax, 1.4);
+        assert_eq!(look.enlarger.print_exposure_mode.as_str(), mode);
+        assert_eq!(
+            serde_json::to_value(&look.settings).unwrap()["print_exposure_ev_tracking"],
+            tracking
+        );
+        // A v4 document must not carry the legacy spelling.
+        let mut current = serde_json::to_value(migrated).unwrap();
+        current["parameters"]["scanner"]["positive_density_ev"] = 0.5.into();
+        assert!(Preset::from_json_str(&current.to_string()).is_err());
+    }
+    // A single enlarger section cannot carry the tracking setting, so a
+    // mixed legacy pair fails with an explicit error.
+    let section = serde_json::json!({
+        "schema_version": 3,
+        "name": "Mixed",
+        "parameters": {"enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": false}},
+        "provenance": provenance(),
+    });
+    let error = Preset::from_json_str(&section.to_string()).unwrap_err();
+    assert!(error.contains("print_exposure_mode"), "{error}");
+    // The aligned pair migrates into the section without a settings group.
+    let aligned = serde_json::json!({
+        "schema_version": 3,
+        "name": "Aligned",
+        "parameters": {"scanner": {"positive_density_ev": 0.5}},
+        "provenance": provenance(),
+    });
+    let migrated = Preset::from_json_str(&aligned.to_string()).unwrap();
+    assert!(
+        migrated
+            .to_json()
+            .unwrap()
+            .contains("conversion_brightness_ev")
+    );
+    assert!(!migrated.to_json().unwrap().contains("positive_"));
+}
+
+#[test]
 fn legacy_whole_looks_gain_full_mix_and_preserve_caller_io() {
     for version in [1, 2] {
         let preset = builtin_presets().remove(0);
@@ -115,7 +210,7 @@ fn legacy_whole_looks_gain_full_mix_and_preserve_caller_io() {
         parameters.remove("output_mix");
         parameters.remove("camera");
         let migrated = Preset::from_json_str(&document.to_string()).unwrap();
-        assert_eq!(migrated.schema_version, 3);
+        assert_eq!(migrated.schema_version, 4);
         assert_eq!(migrated.look_parameters().unwrap().output_mix.amount, 1.0);
         let mut caller = RuntimeParams::default();
         caller.output_mix.amount = 0.25;
@@ -130,7 +225,7 @@ fn legacy_whole_looks_gain_full_mix_and_preserve_caller_io() {
         assert_eq!(resolved.params.io, caller.io);
         assert_eq!(resolved.params.output_mix.amount, 1.0);
         let exported = serde_json::from_str::<Value>(&migrated.to_json().unwrap()).unwrap();
-        assert_eq!(exported["schema_version"], 3);
+        assert_eq!(exported["schema_version"], 4);
         assert!(exported["parameters"].get("io").is_none());
         document["parameters"]["io"] = serde_json::json!({});
         assert!(Preset::from_json_str(&document.to_string()).is_err());
@@ -358,8 +453,8 @@ fn carrier_validation_and_precision() {
     assert_eq!(Preset::from_toml_str(&p.to_toml().unwrap()).unwrap(), p);
     assert_eq!(Preset::from_json_str(&p.to_json().unwrap()).unwrap(), p);
     let text = p.to_json().unwrap().replacen(
-        "\"schema_version\": 3",
-        "\"schema_version\": 3, \"schema_version\": 3",
+        "\"schema_version\": 4",
+        "\"schema_version\": 4, \"schema_version\": 4",
         1,
     );
     assert!(Preset::from_json_str(&text).is_err());
@@ -385,10 +480,13 @@ fn sparse_section_roundtrip_and_database_protection() {
     );
     let mut current = RuntimeParams::default();
     current.enlarger.m_filter_neutral = 34.0;
-    current.neutral_print_filters_protected = [false, true, false];
+    current.neutral_print_filters_protected = Some([false, true, false]);
     let applied = preset.apply_section(&current, &test_film()).unwrap();
     assert_eq!(applied.enlarger.m_filter_neutral, 34.0);
-    assert_eq!(applied.neutral_print_filters_protected, [true, true, false]);
+    assert_eq!(
+        applied.neutral_print_filters_protected,
+        Some([true, true, false])
+    );
     let film = profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap();
     let print = profile::load_profile_by_name(&data(), "kodak_portra_endura").unwrap();
     let database = crate::neutral_filters::NeutralFilters::load(&data()).unwrap();
@@ -447,7 +545,7 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
     let mut current = RuntimeParams::default();
     current.film_render.grain.rms_granularity = [1.234; 3];
     current.enlarger.c_filter_neutral = 12.0;
-    current.neutral_print_filters_protected = [true, false, true];
+    current.neutral_print_filters_protected = Some([true, false, true]);
     current
         .explicit_section_paths
         .insert("film_render.grain.rms_granularity".into());
@@ -467,7 +565,9 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
         .push("film_render.grain".into());
     let serialized = serde_json::to_value(&current).unwrap();
     assert!(serialized.get("explicit_section_paths").is_none());
-    assert!(serialized.get("neutral_print_filters_protected").is_none());
+    // The protection flags persist in the parameter document so replaying a
+    // resolved document reproduces its render.
+    assert!(serialized.get("neutral_print_filters_protected").is_some());
     let mut restored: RuntimeParams = serde_json::from_value(serialized.clone()).unwrap();
     restored.restore_render_preparation_state(&state);
     assert_eq!(
@@ -489,7 +589,7 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
     assert_eq!(restored.enlarger.c_filter_neutral, 12.0);
     assert_eq!(
         restored.neutral_print_filters_protected,
-        [true, false, true]
+        Some([true, false, true])
     );
     assert_eq!(
         restored.settings.neutral_print_filters_from_database,

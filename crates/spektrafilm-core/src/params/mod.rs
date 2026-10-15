@@ -64,6 +64,47 @@ impl Default for CameraParams {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrintExposureMode {
+    /// Apply `print_exposure` without midgray normalization.
+    Manual,
+    /// Normalize the print exposure so the developed midgray density prints
+    /// to the paper midgray, and follow camera exposure compensation.
+    #[default]
+    Auto,
+}
+impl PrintExposureMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Auto => "auto",
+        }
+    }
+}
+
+/// Legacy carry-over of the two intermediate print-exposure behaviors that
+/// the `manual | auto` pair cannot express. `follow_mode` tracks in `auto`
+/// and does not track in `manual`; `never` disables tracking in `auto`;
+/// `always` applies the relative compensation factor in `manual`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrintExposureEvTracking {
+    #[default]
+    FollowMode,
+    Never,
+    Always,
+}
+impl PrintExposureEvTracking {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FollowMode => "follow_mode",
+            Self::Never => "never",
+            Self::Always => "always",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnlargerParams {
@@ -71,10 +112,8 @@ pub struct EnlargerParams {
     pub illuminant: String,
     #[serde(default = "default_one")]
     pub print_exposure: f32,
-    #[serde(default = "default_true")]
-    pub print_exposure_compensation: bool,
-    #[serde(default = "default_true")]
-    pub normalize_print_exposure: bool,
+    #[serde(default)]
+    pub print_exposure_mode: PrintExposureMode,
     #[serde(default)]
     pub y_filter_shift: f32,
     #[serde(default)]
@@ -102,8 +141,7 @@ impl Default for EnlargerParams {
         Self {
             illuminant: "TH-KG3".into(),
             print_exposure: 1.0,
-            print_exposure_compensation: true,
-            normalize_print_exposure: true,
+            print_exposure_mode: PrintExposureMode::Auto,
             y_filter_shift: 0.0,
             m_filter_shift: 0.0,
             y_filter_neutral: 55.0,
@@ -138,7 +176,7 @@ impl ReceiverProfile {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PositiveInterpretation {
+pub enum NegativeConversionMethod {
     /// Read record densities directly: the film's own monotone characteristic
     /// curves, with no synthetic capture in the loop.
     #[default]
@@ -155,7 +193,7 @@ pub enum PositiveInterpretation {
     /// controls remain the only calibration.
     DensityDirect,
 }
-impl PositiveInterpretation {
+impl NegativeConversionMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Density => "density",
@@ -205,7 +243,7 @@ pub struct ScannerParams {
     #[serde(default)]
     pub receiver_profile: ReceiverProfile,
     #[serde(default)]
-    pub positive_interpretation: PositiveInterpretation,
+    pub negative_conversion_method: NegativeConversionMethod,
     #[serde(default)]
     pub auto_setup: ScannerAutoSetup,
     #[serde(default)]
@@ -233,14 +271,14 @@ pub struct ScannerParams {
     pub black_point: [f64; 3],
     #[serde(default = "default_scanner_white_point")]
     pub white_point: [f64; 3],
-    #[serde(default = "default_positive_density_ev")]
-    pub positive_density_ev: f64,
+    #[serde(default = "default_conversion_brightness_ev")]
+    pub conversion_brightness_ev: f64,
     #[serde(default)]
-    pub positive_balance_ev: [f64; 3],
-    #[serde(default = "default_positive_contrast")]
-    pub positive_contrast: f64,
-    #[serde(default = "default_positive_dmax")]
-    pub positive_dmax: f64,
+    pub conversion_balance_ev: [f64; 3],
+    #[serde(default = "default_conversion_contrast")]
+    pub conversion_contrast: f64,
+    #[serde(default = "default_conversion_dmax")]
+    pub conversion_dmax: f64,
     /// Output-relative stops after the fixed reference response.
     #[serde(default)]
     pub reference_exposure_ev: f64,
@@ -253,7 +291,7 @@ impl Default for ScannerParams {
     fn default() -> Self {
         Self {
             receiver_profile: ReceiverProfile::default(),
-            positive_interpretation: PositiveInterpretation::default(),
+            negative_conversion_method: NegativeConversionMethod::default(),
             auto_setup: ScannerAutoSetup::default(),
             finish: ScannerFinish::default(),
             finish_strength: default_finish_strength(),
@@ -266,10 +304,10 @@ impl Default for ScannerParams {
             unsharp_mask: [0.7, 0.7],
             black_point: [0.0; 3],
             white_point: default_scanner_white_point(),
-            positive_density_ev: default_positive_density_ev(),
-            positive_balance_ev: [0.0; 3],
-            positive_contrast: default_positive_contrast(),
-            positive_dmax: default_positive_dmax(),
+            conversion_brightness_ev: default_conversion_brightness_ev(),
+            conversion_balance_ev: [0.0; 3],
+            conversion_contrast: default_conversion_contrast(),
+            conversion_dmax: default_conversion_dmax(),
             reference_exposure_ev: 0.0,
             reference_balance_ev: [0.0; 3],
         }
@@ -284,13 +322,13 @@ fn default_scanner_white_point() -> [f64; 3] {
     [1.0; 3]
 }
 
-fn default_positive_density_ev() -> f64 {
+fn default_conversion_brightness_ev() -> f64 {
     0.8781766618
 }
-fn default_positive_contrast() -> f64 {
+fn default_conversion_contrast() -> f64 {
     0.73551400058216643
 }
-fn default_positive_dmax() -> f64 {
+fn default_conversion_dmax() -> f64 {
     1.5625841465572565
 }
 
@@ -404,6 +442,11 @@ impl Default for WorkflowParams {
         Self {
             route: default_route(),
         }
+    }
+}
+impl WorkflowParams {
+    pub fn route_enum(&self) -> crate::WorkflowRoute {
+        crate::WorkflowRoute::parse(&self.route)
     }
 }
 
@@ -723,6 +766,11 @@ pub struct SettingsParams {
     /// CAT02 0.3.2 behavior.
     #[serde(default = "default_true")]
     pub use_cat16: bool,
+    /// Legacy carry-over of the two intermediate print-exposure behaviors
+    /// that `enlarger.print_exposure_mode` cannot express. See
+    /// `PrintExposureEvTracking`.
+    #[serde(default)]
+    pub print_exposure_ev_tracking: PrintExposureEvTracking,
 }
 
 impl Default for SettingsParams {
@@ -741,6 +789,7 @@ impl Default for SettingsParams {
             preview_mode: false,
             neutral_print_filters_from_database: true,
             use_cat16: true,
+            print_exposure_ev_tracking: PrintExposureEvTracking::default(),
         }
     }
 }
@@ -839,11 +888,15 @@ impl RuntimeParams {
         validation::validate(self)
     }
 
-    /// Snapshot transient preparation ownership separately from the runtime schema.
+    /// Snapshot preparation ownership for state carriers that keep it beside
+    /// the parameters. The filter flags also persist in the parameter
+    /// document itself so replays reproduce their render.
     pub fn render_preparation_state(&self) -> RenderPreparationState {
         RenderPreparationState {
             explicit_section_paths: self.explicit_section_paths.iter().cloned().collect(),
-            neutral_print_filters_protected: self.neutral_print_filters_protected,
+            neutral_print_filters_protected: self
+                .neutral_print_filters_protected
+                .unwrap_or([false; 3]),
         }
     }
 
@@ -858,11 +911,12 @@ impl RuntimeParams {
                 .filter(|path| sources::describe_field(path).is_ok())
                 .cloned(),
         );
-        self.neutral_print_filters_protected = state.neutral_print_filters_protected;
+        self.neutral_print_filters_protected = Some(state.neutral_print_filters_protected);
     }
 }
 /// Serde-visible GUI state carrier for runtime preparation ownership.
-/// Kept separate so runtime parameters, recipes and digests retain their shape.
+/// Kept beside the parameter document so state restoration can override the
+/// persisted flags explicitly.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderPreparationState {
@@ -881,10 +935,13 @@ pub struct RuntimeParams {
     /// it does not become part of the user parameter schema or digest.
     #[serde(skip)]
     pub random_seed: u64,
-    /// CMY axes owned by a resolved look or explicit parameter edits.
-    /// Calibration uses database precision only for unprotected axes.
-    #[serde(skip)]
-    pub(crate) neutral_print_filters_protected: [bool; 3],
+    /// CMY axes owned by a resolved look, explicit parameter edits, or
+    /// restored state. Calibration uses database precision only for
+    /// baseline (unprotected) axes. `None` marks documents without the
+    /// flags; resolution then treats every axis as baseline unless a look,
+    /// explicit edit, or restored state marked it authored.
+    #[serde(default)]
+    pub neutral_print_filters_protected: Option<[bool; 3]>,
     /// Editable leaves explicitly supplied by section documents. Stock initialization
     /// retains these values; legacy parameter decoding does not populate this set.
     #[serde(skip)]
@@ -1021,8 +1078,8 @@ mod tests {
             super::ReceiverProfile::LegacyColorimetric
         );
         assert_eq!(
-            legacy.positive_interpretation,
-            super::PositiveInterpretation::Density
+            legacy.negative_conversion_method,
+            super::NegativeConversionMethod::Density
         );
         assert_eq!(legacy.auto_setup, super::ScannerAutoSetup::Off);
         assert_eq!(legacy.finish, super::ScannerFinish::Neutral);
@@ -1037,6 +1094,7 @@ mod tests {
                 ][..],
             ),
             (
+<<<<<<< HEAD
                 "scanner.positive_interpretation",
                 &[
                     "density",
@@ -1045,9 +1103,18 @@ mod tests {
                     "digital_reference",
                     "density_direct",
                 ][..],
+=======
+                "scanner.negative_conversion_method",
+                &["density", "separable", "coupled", "digital_reference"][..],
+>>>>>>> origin/main-0.3.4
             ),
             ("scanner.auto_setup", &["off", "per_frame"][..]),
             ("scanner.finish", &["neutral", "lab_scan"][..]),
+            ("enlarger.print_exposure_mode", &["manual", "auto"][..]),
+            (
+                "settings.print_exposure_ev_tracking",
+                &["follow_mode", "never", "always"][..],
+            ),
         ] {
             for value in allowed {
                 assert!(super::sources::ParameterEdits::parse(&format!("{path}={value}")).is_ok());
@@ -1058,7 +1125,15 @@ mod tests {
         assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=-0.1").is_err());
         let encoded = serde_json::to_value(&legacy).unwrap();
         assert_eq!(encoded["receiver_profile"], "legacy_colorimetric");
-        assert_eq!(encoded["positive_interpretation"], "density");
+        assert_eq!(encoded["negative_conversion_method"], "density");
+        let enlarger = serde_json::to_value(super::EnlargerParams::default()).unwrap();
+        assert_eq!(enlarger["print_exposure_mode"], "auto");
+        assert!(
+            enlarger.get("normalize_print_exposure").is_none()
+                && enlarger.get("print_exposure_compensation").is_none()
+        );
+        let settings = serde_json::to_value(super::SettingsParams::default()).unwrap();
+        assert_eq!(settings["print_exposure_ev_tracking"], "follow_mode");
     }
 
     #[test]

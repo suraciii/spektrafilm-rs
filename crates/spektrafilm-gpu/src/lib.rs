@@ -3,9 +3,13 @@ pub mod telemetry;
 pub use observed_backend::{bind_backend, bind_cpu_fallback};
 pub mod cpu_backend;
 mod gpu_helpers;
+pub mod test_support;
+pub mod timing;
 #[cfg(feature = "wgpu-backend")]
 pub mod wgpu_backend;
 
+/// CPU stage closure type shared by all pipe fence fields.
+pub type CpuStageFn<'a> = Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>;
 use spektrafilm_math::image::ImageBuf;
 
 /// f32 boundary representation shared by the WGPU Grain Procedural shader and the
@@ -267,13 +271,37 @@ pub trait ComputeBackend: Send + Sync {
     /// Returns native encoded destination RGB when Grain Procedural is active, and
     /// linear destination RGB otherwise, or `None` for the per-stage path.
     /// The caller decodes only the transfer when linear grain output is requested.
-    fn try_run_film_chain(&self, _params: &FilmChainParams<'_>) -> Option<ImageBuf> {
-        None
+    /// `Ok(None)` selects the per-stage path; `Err` reports a CPU fence that
+    /// could not calibrate its output (the per-stage route returns the same
+    /// error, so the caller surfaces it instead of falling back).
+    fn try_run_film_chain(
+        &self,
+        _params: &FilmChainParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
     }
 
     /// True for GPU compute backends.
     fn is_gpu(&self) -> bool {
         false
+    }
+
+    /// True when the user explicitly requested this GPU backend (the CLI
+    /// `--backend gpu` flag, `SPEKTRAFILM_BACKEND=wgpu`, or the GUI export
+    /// "GPU" selection). An explicit request must not run a
+    /// capability-missing stage on the CPU silently: the operation fails
+    /// at assembly instead of demoting the route.
+    fn explicit_gpu_request(&self) -> bool {
+        false
+    }
+
+    /// Derive this backend as an explicit GPU request, sharing the device,
+    /// queue, pipeline cache, and resident pipe, or `None` when this backend
+    /// cannot serve a GPU request. A frontend that maps an explicit user
+    /// selection onto an already selected backend uses this instead of
+    /// opening a second device.
+    fn with_explicit_request(&self) -> Option<Box<dyn ComputeBackend>> {
+        None
     }
 
     fn name(&self) -> &str;
@@ -307,11 +335,12 @@ pub struct FilmChainParams<'a> {
     pub viewing_illuminant: &'a [f64],
     pub scan_normalization: f64,
     pub scan_xyz_to_rgb: &'a [[f64; 3]; 3],
-    /// B&W/slide scanner luminance remap `(m, q)` applied per-pixel on the
-    /// scan XYZ (`clip(m·Y+q, 0, 1)/(Y+1e-10)`). `None` is identity. The
-    /// filming/printing exposure halves of the correction are folded by the
-    /// caller into `rgb_to_adapted_xyz` / `print_normalization_factor`.
-    pub bw_xyz_remap: Option<(f64, f64)>,
+    /// Scanner white and black correction luminance remap `(m, q)` applied
+    /// per-pixel on the scan XYZ (`clip(m·Y+q, 0, 1)/(Y+1e-10)`). `None` is
+    /// identity. The filming/printing exposure halves of the correction are
+    /// folded by the caller into `rgb_to_adapted_xyz` /
+    /// `print_normalization_factor`.
+    pub white_black_xyz_remap: Option<(f64, f64)>,
     /// Scan the developed film directly instead of printing onto paper.
     /// When true the print_spectral + print density-curve passes are
     /// skipped and scan_spectral runs on the film density buffer using the
@@ -350,6 +379,86 @@ pub struct FilmChainParams<'a> {
     /// Optional highlight reconstruction on the raw film exposure buffer,
     /// immediately after the front pass and before optical scatter.
     pub highlight_boost: Option<HighlightBoostGpuParams>,
+    /// Optional CPU stage on the film density buffer after the film density
+    /// curve and DIR, before printing — the assembled fence for the host
+    /// grain engines (Spektra, and Dye for the delivered readout geometry;
+    /// pipe architecture, capability class). The closure receives the
+    /// materialized density_cmy image and returns the grained image, which
+    /// is written back to the same device buffer.
+    pub density_cpu_stage: Option<CpuStageFn<'a>>,
+    /// Optional CPU stage on the scanner readout buffer between glare and
+    /// output gamut compression — the assembled fence for the scanner
+    /// readout interpretation (slide points, the faithful luminance remap,
+    /// negative-to-positive conversion, and the LabScan finish; pipe
+    /// architecture, capability class). Receives the acquisition RGB and
+    /// returns the interpreted image, which is written back in place. When
+    /// present, `white_black_xyz_remap` must be `None`: the fence owns the
+    /// remap in the faithful order, after optical blur and glare.
+    pub scan_tail_cpu_stage: Option<CpuStageFn<'a>>,
+    /// Optional CPU stage replacing the GPU scan spectral pass whenever the
+    /// CPU route acquires differently: the PCHIP scanner LUT (the slide
+    /// luminance remap or `use_scanner_lut`), the modeled receiver capture,
+    /// and the negative-to-positive density reading and Digital Reference
+    /// (pipe architecture, capability class). Receives the film/print
+    /// density and returns the captured RGB, which is written to the
+    /// acquisition buffer.
+    pub scan_acquisition_cpu_stage: Option<CpuStageFn<'a>>,
+    /// Optional CPU stage replacing the fused GPU print spectral pass when
+    /// the CPU route would take the PCHIP enlarger LUT or the enlarger
+    /// diffusion filter (pipe architecture, capability class). Receives the
+    /// film density and returns the print log-raw after the outer log —
+    /// the same domain the fused shader emits — so the GPU print density
+    /// curve pass continues unchanged.
+    pub print_acquisition_cpu_stage: Option<CpuStageFn<'a>>,
+    /// Optional CPU stage on the raw film exposure buffer between
+    /// highlight reconstruction and the camera lens blur — the assembled
+    /// fence for the camera optical diffusion filter's discrete PSF
+    /// convolution (pipe architecture, capability class). Receives the
+    /// front-pass raw and returns the diffused raw, written back in place.
+    pub camera_diffusion_cpu_stage: Option<CpuStageFn<'a>>,
+    /// Optional output transfer encoding/decoding pass on the final buffer
+    /// after every scanner effect (pipe architecture, S4). Encode applies
+    /// the stored same-space roundtrip matrix and the space's encoding
+    /// transfer; decode restores linear for a Procedural-grain output when
+    /// the caller requested no encoding.
+    pub output_transfer: Option<OutputTransferGpuParams>,
+    /// Optional magazine print appearance pass on the final buffer after
+    /// the output transfer (pipe architecture, S4). The residual host
+    /// finishing moves onto the device; the input state is encoded exactly
+    /// when the caller requested output encoding.
+    pub magazine: Option<MagazineGpuParams>,
+}
+
+/// One pipe-tail transfer pass (pipe architecture, S4).
+pub struct OutputTransferGpuParams {
+    /// false = encode (matrix + cctf), true = decode (cctf only).
+    pub decode: bool,
+    /// `Cctf` discriminant: 0 Linear, 1 ACEScct, 2 sRGB, 3 ProPhoto,
+    /// 4 Rec2020, 5 Adobe RGB (1998), 6 Gamma 2.6.
+    pub cctf_kind: u32,
+    /// Same-space RGB roundtrip matrix (`rgb_to_rgb_identity`).
+    pub matrix: [[f32; 3]; 3],
+}
+
+/// One pipe-tail magazine appearance pass (pipe architecture, S4).
+pub struct MagazineGpuParams {
+    /// Mix strength, clamped to 0..=1 by the caller.
+    pub strength: f32,
+    /// Input/output state: true when the buffer carries encoded samples.
+    pub encoded: bool,
+    /// `Cctf` discriminant: 0 Linear, 1 ACEScct, 2 sRGB, 3 ProPhoto,
+    /// 4 Rec2020, 5 Adobe RGB (1998), 6 Gamma 2.6.
+    pub cctf_kind: u32,
+    /// Destination RGB → CIELAB D50 (Bradford-adapted).
+    pub to_lab: [[f32; 3]; 3],
+    /// CIELAB D50 → destination RGB.
+    pub from_lab: [[f32; 3]; 3],
+    /// Tone-curve input knots in CIELAB L*.
+    pub tone_in: [f32; 10],
+    /// Tone-curve output knots in CIELAB L*.
+    pub tone_out: [f32; 10],
+    /// Tone-curve Hermite slopes.
+    pub tone_slopes: [f32; 10],
 }
 
 /// GPU FIR kernels support a maximum 256-pixel half-width.
@@ -364,9 +473,13 @@ impl FilmChainParams<'_> {
             && self.scanner_lens_blur_px.is_none_or(supports)
             && self.unsharp.is_none_or(|p| supports(p.sigma_px))
             && self.glare.is_none_or(|p| supports(p.blur_px))
-            && self
-                .dir_couplers
-                .is_none_or(|p| supports(p.diffusion_size_px) && supports(p.diffusion_tail_px))
+            && self.dir_couplers.is_none_or(|p| {
+                let max_tail_ratio = spektrafilm_math::gaussian::EXPONENTIAL_GAUSSIAN_FITS
+                    .iter()
+                    .map(|(_, ratio)| *ratio as f32)
+                    .fold(0.0_f32, f32::max);
+                supports(p.diffusion_size_px) && supports(p.diffusion_tail_px * max_tail_ratio)
+            })
             && self.halation.is_none_or(|p| {
                 supports(p.scatter_core_px)
                     && supports(p.scatter_tail_px)
@@ -412,6 +525,19 @@ pub struct DirCouplersGpuParams<'a> {
     pub diffusion_size_px: f32,
     pub diffusion_tail_px: f32,
     pub diffusion_tail_weight: f32,
+    /// Donor Langmuir knee per channel (`langmuir_donor_k * d_max`) —
+    /// `Some` for negative films. `None` leaves the developed silver
+    /// linear.
+    pub donor_k: Option<[f32; 3]>,
+    /// Donor amplitude-match point per channel (`d_max / 2`), meaningful
+    /// only when `donor_k` is `Some`.
+    pub donor_ref: [f32; 3],
+    /// Receiver Langmuir knee per channel — `Some` for positive films;
+    /// applied to the arrived inhibitor after spatial diffusion.
+    pub receiver_knee: Option<[f32; 3]>,
+    /// Receiver operating-point inhibitor per channel, meaningful only
+    /// when `receiver_knee` is `Some`.
+    pub receiver_ref: [f32; 3],
     /// "Density curves before DIR" — re-interpolated by the final shader
     /// pass with the corrected log-exposure.
     pub density_curves_0: &'a [[f64; 3]],
@@ -521,7 +647,12 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
     #[cfg(feature = "wgpu-backend")]
     {
         if requested.as_deref().is_none() || requested.as_deref() == Some("wgpu") {
-            if let Some(gpu) = wgpu_backend::WgpuBackend::new() {
+            let constructor = if requested.as_deref() == Some("wgpu") {
+                wgpu_backend::WgpuBackend::new_explicit
+            } else {
+                wgpu_backend::WgpuBackend::new
+            };
+            if let Some(gpu) = constructor() {
                 tracing::info!(
                     precision = "f32",
                     reference = false,

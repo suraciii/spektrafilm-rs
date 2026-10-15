@@ -14,7 +14,10 @@ use validation::{normalize_grain_section, validate_state_parameters};
 /// Enlarger controls the upstream GUI also exposes under `simulation`
 /// aliases, as `(simulation key, enlarger key)`. Both directions of the
 /// state ⇄ runtime projection consume this one table, so an alias cannot be
-/// added for only one of them.
+/// added for only one of them. `print_exposure_compensation` is the one
+/// exception: its runtime leaf was replaced by
+/// `settings.print_exposure_ev_tracking`, so both projections translate it
+/// instead of copying it.
 const ENLARGER_SIMULATION_ALIASES: &[(&str, &str)] = &[
     ("print_illuminant", "illuminant"),
     ("print_exposure", "print_exposure"),
@@ -22,6 +25,28 @@ const ENLARGER_SIMULATION_ALIASES: &[(&str, &str)] = &[
     ("print_y_filter_shift", "y_filter_shift"),
     ("print_m_filter_shift", "m_filter_shift"),
 ];
+
+/// Translate the legacy print-exposure pair that the upstream-mirror state
+/// sections (`preflashing`, `simulation.enlarger`) still carry. The
+/// state-side keys stay boolean to mirror the upstream GUI; the runtime sees
+/// `enlarger.print_exposure_mode` and, for the mixed states, the tracking
+/// setting. A non-boolean pair passes through so unknown-field validation
+/// rejects it.
+fn translate_legacy_print_exposure(section: &Value) -> (Value, Option<Value>) {
+    let legacy = section.get("normalize_print_exposure").is_some()
+        || section.get("print_exposure_compensation").is_some();
+    if !legacy {
+        return (section.clone(), None);
+    }
+    let mut carrier = json!({"enlarger": section.clone()});
+    match spektrafilm_core::params::sources::normalize_legacy_conversion_paths(&mut carrier, true) {
+        Ok(()) => {
+            let tracking = carrier.get("settings").cloned();
+            (carrier["enlarger"].clone(), tracking)
+        }
+        Err(_) => (section.clone(), None),
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct GuiState {
@@ -61,7 +86,10 @@ fn flatten(source: &Value, groups: &[&str]) -> Value {
     }
     flat
 }
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main-0.3.4
 fn canonicalize_grain_state(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;
@@ -106,7 +134,7 @@ impl GuiState {
             .expect("scanner defaults serialize");
         for key in [
             "receiver_profile",
-            "positive_interpretation",
+            "negative_conversion_method",
             "auto_setup",
             "finish",
             "finish_strength",
@@ -129,10 +157,10 @@ impl GuiState {
             bail!("GUI state must be a JSON object");
         }
         let version = value["rust"].get("version").and_then(Value::as_u64);
-        if value.get("rust").is_some() && !matches!(version, Some(1 | 2)) {
+        if value.get("rust").is_some() && !matches!(version, Some(1..=3)) {
             bail!("Unsupported Rust GUI state extension version");
         }
-        validate_state_parameters(&mut value, version == Some(1))?;
+        validate_state_parameters(&mut value, version)?;
         for scanner in [&value["scanner"], &value["rust"]["runtime"]["scanner"]] {
             if let Some(selection) = scanner.get("scan_output") {
                 spektrafilm_core::params::sources::ParameterEdits::parse(&format!(
@@ -198,7 +226,7 @@ impl GuiState {
         for key in [
             "scan_output",
             "receiver_profile",
-            "positive_interpretation",
+            "negative_conversion_method",
             "auto_setup",
             "finish",
             "finish_strength",
@@ -228,7 +256,7 @@ impl GuiState {
         merge(&mut state.sections, &normalized);
         canonicalize_grain_state(&mut state.sections["grain"]);
         if let Some(extension) = normalized.get("rust") {
-            if !matches!(extension["version"].as_u64(), Some(1 | 2)) {
+            if !matches!(extension["version"].as_u64(), Some(1..=3)) {
                 bail!("Unsupported Rust GUI state extension version");
             }
             if let Some(fields) = extension.as_object() {
@@ -237,7 +265,7 @@ impl GuiState {
                 }
             }
         }
-        state.sections["rust"]["version"] = json!(2);
+        state.sections["rust"]["version"] = json!(3);
         state.sections["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         let params = state.runtime_params()?;
         // Metadata is derived from the selected built-ins, never trusted from an import.
@@ -253,6 +281,15 @@ impl GuiState {
         }
         Ok(state)
     }
+<<<<<<< HEAD
+=======
+    /// Reject a state the runtime cannot accept. Load, import and save each
+    /// call this once; [`Self::runtime_params`] is a pure projection that no
+    /// longer re-validates.
+    pub fn validate(&self) -> Result<()> {
+        validate_state_parameters(&mut self.sections.clone(), None)
+    }
+>>>>>>> origin/main-0.3.4
     pub fn film(&self) -> &str {
         self.sections["simulation"]["film_stock"]
             .as_str()
@@ -268,6 +305,28 @@ impl GuiState {
             .as_bool()
             .unwrap_or(true)
     }
+<<<<<<< HEAD
+=======
+    pub fn display_profile(&self) -> Option<&str> {
+        self.sections["rust"]["display_profile"].as_str()
+    }
+    pub fn saving_color_space(&self) -> &str {
+        self.sections["simulation"]["saving_color_space"]
+            .as_str()
+            .unwrap_or("sRGB")
+    }
+    pub fn saving_cctf_encoding(&self) -> bool {
+        self.sections["simulation"]["saving_cctf_encoding"]
+            .as_bool()
+            .unwrap_or(true)
+    }
+    pub fn special(&self) -> &Value {
+        &self.sections["special"]
+    }
+    pub fn dialog_dirs(&self) -> &Value {
+        &self.sections["rust"]["dialog_dirs"]
+    }
+>>>>>>> origin/main-0.3.4
 }
 
 #[cfg(test)]
@@ -281,7 +340,7 @@ mod tests {
         let saved =
             GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
                 .unwrap();
-        assert_eq!(saved.sections["rust"]["version"], 2);
+        assert_eq!(saved.sections["rust"]["version"], 3);
         let restored = GuiState::from_value(saved.sections.clone()).unwrap();
         assert_eq!(restored.runtime_params().unwrap().output_mix.amount, 0.25);
         for version in [1, 2] {
@@ -348,6 +407,116 @@ mod tests {
             let error = GuiState::from_value(json!({"rust":{"version":version},"simulation":{"io":{"finished_rgb_output_processing":true}}})).unwrap_err();
             assert!(format!("{error:#}").contains("finished_rgb_output_processing"));
         }
+    }
+
+    #[test]
+    fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
+        let legacy_scanner = json!({
+            "positive_interpretation": "separable",
+            "positive_density_ev": 0.4,
+            "positive_balance_ev": [0.1, 0.0, -0.1],
+            "positive_contrast": 0.8,
+            "positive_dmax": 1.3,
+        });
+        for (pair, mode, compensation, tracking) in [
+            (
+                json!({"normalize_print_exposure": true, "print_exposure_compensation": true}),
+                "auto",
+                true,
+                "follow_mode",
+            ),
+            (
+                json!({"normalize_print_exposure": false, "print_exposure_compensation": false}),
+                "manual",
+                false,
+                "follow_mode",
+            ),
+            (
+                json!({"normalize_print_exposure": true, "print_exposure_compensation": false}),
+                "auto",
+                false,
+                "never",
+            ),
+            (
+                json!({"normalize_print_exposure": false, "print_exposure_compensation": true}),
+                "manual",
+                true,
+                "always",
+            ),
+        ] {
+            // A saved version-2 state carries the legacy spellings in both
+            // the upstream-mirror sections and the Rust runtime extension.
+            let mut source = json!({
+                "rust": {"version": 2, "runtime": {
+                    "scanner": legacy_scanner.clone(),
+                    "enlarger": pair.clone(),
+                }},
+                "preflashing": pair.clone(),
+                "scanner": legacy_scanner.clone(),
+                "simulation": {"print_exposure_compensation": compensation},
+            });
+            let state = GuiState::from_value(source.clone()).unwrap();
+            let params = state.runtime_params().unwrap();
+            assert_eq!(
+                params.scanner.negative_conversion_method.as_str(),
+                "separable"
+            );
+            assert_eq!(params.scanner.conversion_brightness_ev, 0.4);
+            assert_eq!(params.scanner.conversion_balance_ev, [0.1, 0.0, -0.1]);
+            assert_eq!(params.scanner.conversion_contrast, 0.8);
+            assert_eq!(params.scanner.conversion_dmax, 1.3);
+            assert_eq!(params.enlarger.print_exposure_mode.as_str(), mode);
+            assert_eq!(
+                params.settings.print_exposure_ev_tracking.as_str(),
+                tracking
+            );
+            // The stored document migrates to the canonical paths and the
+            // upstream boolean mirror stays in step on save.
+            let saved =
+                GuiState::from_runtime(&params, state.film(), state.paper(), &state.sections)
+                    .unwrap();
+            assert_eq!(saved.sections["rust"]["version"], json!(3));
+            let runtime = serde_json::to_string(&saved.sections["rust"]["runtime"]).unwrap();
+            assert!(runtime.contains("negative_conversion_method"));
+            assert!(!runtime.contains("positive_"));
+            assert_eq!(
+                saved.sections["preflashing"]["normalize_print_exposure"],
+                json!(mode == "auto")
+            );
+            assert_eq!(
+                saved.sections["preflashing"]["print_exposure_compensation"],
+                json!(compensation)
+            );
+            assert_eq!(
+                saved.sections["simulation"]["print_exposure_compensation"],
+                json!(compensation)
+            );
+            let runtime = serde_json::to_string(&saved.sections["rust"]["runtime"]).unwrap();
+            assert!(runtime.contains("\"print_exposure_mode\""));
+            assert!(runtime.contains("negative_conversion_method"));
+            source["rust"]["version"] = json!(3);
+        }
+        // The upstream compensation boolean projects onto the tracking
+        // setting; the state-side key stays boolean.
+        let upstream = GuiState::from_value(json!({
+            "rust": {"version": 3},
+            "simulation": {"enlarger": {"print_exposure_compensation": false}}
+        }))
+        .unwrap();
+        assert_eq!(
+            upstream
+                .runtime_params()
+                .unwrap()
+                .settings
+                .print_exposure_ev_tracking
+                .as_str(),
+            "never"
+        );
+        // A current-version document must fail unknown-field validation.
+        let current = GuiState::from_value(json!({"rust": {"version": 3, "runtime": {
+            "scanner": {"positive_density_ev": 0.4}
+        }}}));
+        assert!(current.is_err());
     }
 
     #[test]
@@ -443,14 +612,14 @@ mod tests {
         let scanner = shared["scanner"].as_object_mut().unwrap();
         for key in [
             "scan_output",
-            "positive_density_ev",
-            "positive_balance_ev",
-            "positive_contrast",
-            "positive_dmax",
+            "conversion_brightness_ev",
+            "conversion_balance_ev",
+            "conversion_contrast",
+            "conversion_dmax",
             "black_point",
             "white_point",
             "receiver_profile",
-            "positive_interpretation",
+            "negative_conversion_method",
             "auto_setup",
             "finish",
             "finish_strength",
@@ -990,8 +1159,8 @@ mod tests {
         params.scanner.black_point = [0.1, 0.2, 0.3];
         params.scanner.white_point = [0.7, 0.8, 0.9];
         params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-        params.scanner.positive_interpretation =
-            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Coupled;
         params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
         params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
         params.scanner.finish_strength = 0.0;
@@ -1029,8 +1198,8 @@ mod tests {
             params.scanner.receiver_profile
         );
         assert_eq!(
-            restored.scanner.positive_interpretation,
-            params.scanner.positive_interpretation
+            restored.scanner.negative_conversion_method,
+            params.scanner.negative_conversion_method
         );
         assert_eq!(restored.scanner.auto_setup, params.scanner.auto_setup);
         assert_eq!(restored.scanner.finish, params.scanner.finish);
@@ -1045,7 +1214,7 @@ mod tests {
             "simulation": {"route": "input > convert-film > scan"},
             "rust": {"version": 1, "runtime": {"scanner": {
                 "scan_output": "negative_to_positive", "receiver_profile": "lab_scan_approx",
-                "positive_interpretation": "coupled", "auto_setup": "per_frame",
+                "negative_conversion_method": "coupled", "auto_setup": "per_frame",
                 "finish": "lab_scan", "finish_strength": 0.0
             }}}
         }))
@@ -1058,7 +1227,7 @@ mod tests {
         );
         for (key, expected) in [
             ("receiver_profile", json!("lab_scan_approx")),
-            ("positive_interpretation", json!("coupled")),
+            ("negative_conversion_method", json!("coupled")),
             ("auto_setup", json!("per_frame")),
             ("finish", json!("lab_scan")),
             ("finish_strength", json!(0.0)),
@@ -1072,7 +1241,7 @@ mod tests {
         // An explicit canonical selection takes precedence over the extension.
         let mut canonical = state.sections.clone();
         canonical["scanner"]["scan_output"] = json!("direct_scan");
-        canonical["scanner"]["positive_interpretation"] = json!("density");
+        canonical["scanner"]["negative_conversion_method"] = json!("density");
         canonical["scanner"]["auto_setup"] = json!("off");
         canonical["scanner"]["finish"] = json!("neutral");
         let canonical = GuiState::from_value(canonical).unwrap();
@@ -1087,7 +1256,7 @@ mod tests {
         let runtime_defaults = serde_json::to_value(RuntimeParams::default().scanner).unwrap();
         for key in [
             "receiver_profile",
-            "positive_interpretation",
+            "negative_conversion_method",
             "auto_setup",
             "finish",
             "finish_strength",
@@ -1096,7 +1265,7 @@ mod tests {
         }
         for scanner in [
             json!({"receiver_profile": "lab_scan_approx"}),
-            json!({"positive_interpretation": "coupled"}),
+            json!({"negative_conversion_method": "coupled"}),
             json!({"auto_setup": "per_frame"}),
             json!({"finish": "lab_scan"}),
             json!({"finish_strength": -0.01}),

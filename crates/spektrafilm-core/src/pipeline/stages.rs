@@ -130,7 +130,12 @@ impl Pipeline {
             }
             Tap::LogEPrint => {
                 let t = Instant::now();
+<<<<<<< HEAD
                 let result = crate::stages::printing::develop(&image, &self.print, &self.params, backend);
+=======
+                let result =
+                    crate::stages::printing::develop(&image, &self.print, &self.params, backend);
+>>>>>>> origin/main-0.3.4
                 observation.set_complete(result.is_ok());
                 let out = result?;
                 print_stage_timing(print_timings, "printing_develop", t);
@@ -279,7 +284,12 @@ impl Pipeline {
             )?;
             if order[i] == Tap::LogEFilm && crate::stages::grain_v3::active(&self.params) {
                 let t = Instant::now();
+<<<<<<< HEAD
                 let geometry = crate::stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
+=======
+                let geometry =
+                    crate::stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
+>>>>>>> origin/main-0.3.4
                 let glare = &self.params.print_render.glare;
                 let scan_spatial = collect == Tap::RgbOut
                     && (self.params.scanner.lens_blur > 0.0
@@ -377,7 +387,12 @@ impl Pipeline {
             }
             if order[i] == Tap::LogEFilm && crate::stages::grain_fotufilm::active(&self.params) {
                 let t = Instant::now();
+<<<<<<< HEAD
                 let geometry = crate::stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
+=======
+                let geometry =
+                    crate::stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
+>>>>>>> origin/main-0.3.4
                 let glare = &self.params.print_render.glare;
                 let scan_spatial = collect == Tap::RgbOut
                     && (self.params.scanner.lens_blur > 0.0

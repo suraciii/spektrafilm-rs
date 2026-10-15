@@ -1,7 +1,6 @@
 pub mod chain_prep;
 pub mod color_reference;
 pub mod config;
-pub mod data;
 pub mod enlarger;
 #[cfg(feature = "precision-f64")]
 pub mod fit;
@@ -16,7 +15,6 @@ pub mod lut_qa;
 pub mod lut_transport;
 pub mod magazine_print_color;
 pub mod mallett;
-pub mod measurement;
 pub mod neutral_filters;
 pub mod params;
 pub mod params_builder;
@@ -36,3 +34,8 @@ pub mod spectral_service;
 pub mod stages;
 mod suggest;
 pub mod telemetry;
+pub use telemetry::WorkflowRoute;
+
+pub mod math;
+#[cfg(test)]
+pub(crate) mod test_support;

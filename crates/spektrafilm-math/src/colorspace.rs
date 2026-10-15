@@ -3,14 +3,6 @@
 //! All matrices are row-major: output[i] = dot(matrix[i], input).
 //! Source: IEC 61966-2-1 (sRGB), ICC profiles, CIE standards.
 
-/// sRGB → CIE XYZ (D65), assuming linear input.
-/// Matches Python colour-science 4-digit precision for exact parity.
-pub const SRGB_TO_XYZ: [[f32; 3]; 3] = [
-    [0.4124, 0.3576, 0.1805],
-    [0.2126, 0.7152, 0.0722],
-    [0.0193, 0.1192, 0.9505],
-];
-
 /// f64 variants for the calibration chain (Python parity).
 pub const SRGB_TO_XYZ_F64: [[f64; 3]; 3] = [
     [0.4124, 0.3576, 0.1805],
@@ -80,175 +72,36 @@ pub const XYZ_TO_ACES_F64: [[f64; 3]; 3] = [
     [-0.4959030231, 1.3733130458, 0.0982400361],
     [0.0, 0.0, 0.9912520182],
 ];
-
-/// CIE XYZ (D65) → sRGB linear.
-/// Exact inverse of the 4-digit SRGB_TO_XYZ above.
-pub const XYZ_TO_SRGB: [[f32; 3]; 3] = [
-    [3.2406255, -1.5372080, -0.4986286],
-    [-0.9689307, 1.8757561, 0.0415175],
-    [0.0557101, -0.2040211, 1.0569959],
-];
-
-/// ProPhoto RGB → CIE XYZ (D50).
-pub const PROPHOTO_TO_XYZ: [[f32; 3]; 3] = [
-    [0.7976749, 0.1351917, 0.0313534],
-    [0.2880402, 0.7118741, 0.0000857],
-    [0.0000000, 0.0000000, 0.8252100],
-];
-
-/// CIE XYZ (D50) → ProPhoto RGB.
-pub const XYZ_TO_PROPHOTO: [[f32; 3]; 3] = [
-    [1.3459433, -0.2556075, -0.0511118],
-    [-0.5445989, 1.5081673, 0.0205351],
-    [0.0000000, 0.0000000, 1.2118128],
-];
-
-/// Rec. 2020 → CIE XYZ (D65).
-pub const REC2020_TO_XYZ: [[f32; 3]; 3] = [
-    [0.6369580, 0.1446169, 0.1688810],
-    [0.2627002, 0.6779981, 0.0593017],
-    [0.0000000, 0.0280727, 1.0609851],
-];
-
-/// CIE XYZ (D65) → Rec. 2020.
-pub const XYZ_TO_REC2020: [[f32; 3]; 3] = [
-    [1.7166512, -0.3556708, -0.2533663],
-    [-0.6666844, 1.6164812, 0.0157685],
-    [0.0176399, -0.0427706, 0.9421031],
-];
-
-/// ACES AP0 (ACES2065-1) → CIE XYZ (D60-ish, ACES white).
-pub const ACES_TO_XYZ: [[f32; 3]; 3] = [
-    [0.9525524, 0.0000000, 0.0000937],
-    [0.3439664, 0.7281661, -0.0721325],
-    [0.0000000, 0.0000000, 1.0088252],
-];
-
-/// CIE XYZ → ACES AP0.
-pub const XYZ_TO_ACES: [[f32; 3]; 3] = [
-    [1.0498110, 0.0000000, -0.0000974],
-    [-0.4959030, 1.3733131, 0.0982400],
-    [0.0000000, 0.0000000, 0.9912520],
-];
-
-/// CAT02 forward matrix (XYZ → LMS).
-pub const CAT02_FORWARD: [[f32; 3]; 3] = [
-    [0.7328, 0.4296, -0.1624],
-    [-0.7036, 1.6975, 0.0061],
-    [0.0030, 0.0136, 0.9834],
-];
-
-/// CAT02 inverse matrix (LMS → XYZ).
-pub const CAT02_INVERSE: [[f32; 3]; 3] = [
-    [1.096124, -0.278869, 0.182745],
-    [0.454369, 0.473533, 0.072098],
-    [-0.009628, -0.005698, 1.015326],
-];
-
-/// CIE D50 white point (XYZ, Y=1).
-pub const D50_XYZ: [f32; 3] = [0.96422, 1.0, 0.82521];
 /// CIE D50 white point (XYZ, Y=1) in f64 — the ICC PCS illuminant.
 pub const D50_XYZ_F64: [f64; 3] = [0.96422, 1.0, 0.82521];
-/// CIE D55 white point (XYZ, Y=1).
-pub const D55_XYZ: [f32; 3] = [0.95682, 1.0, 0.92149];
-/// CIE D65 white point (XYZ, Y=1).
-/// Derived from xy=(0.3127, 0.3290): X=0.3127/0.3290, Z=(1-0.3127-0.3290)/0.3290
-pub const D65_XYZ: [f32; 3] = [0.95047, 1.0, 1.08883];
 
-/// sRGB whitepoint as xy chromaticity (matches Python colour-science).
-pub const SRGB_WHITE_XY: (f32, f32) = (0.3127, 0.329);
-/// Convert xy chromaticity to XYZ (Y=1).
-pub fn xy_to_xyz(x: f32, y: f32) -> [f32; 3] {
-    if y <= 0.0 {
-        return [0.0, 1.0, 0.0];
-    }
-    [x / y, 1.0, (1.0 - x - y) / y]
-}
+/// colour-science's stored sRGB (D65) whitepoint chromaticity — the
+/// destination white of every display conversion.
+pub const D65_WHITEPOINT_XY: (f64, f64) = (0.3127, 0.329);
 
-/// Convert xy chromaticity to XYZ (Y=1) in f64.
-pub fn xy_to_xyz_f64(x: f64, y: f64) -> [f64; 3] {
-    if y <= 0.0 {
-        return [0.0, 1.0, 0.0];
-    }
-    [x / y, 1.0, (1.0 - x - y) / y]
-}
-
-/// Apply 3x3 matrix to RGB triple.
-#[inline]
-pub fn mat3_mul(m: &[[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
-    [
-        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
-        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
-        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
-    ]
-}
+/// High-precision CAT02 cone matrix and its inverse, shared by the f32 and
+/// f64 adaptation entry points.
+const CAT02_FWD_F64: [[f64; 3]; 3] = [
+    [0.7328, 0.4296, -0.1624],
+    [-0.7036, 1.6975, 0.0061],
+    [0.003, 0.0136, 0.9834],
+];
+const CAT02_INV_F64: [[f64; 3]; 3] = [
+    [1.096123820835514, -0.278869000218287, 0.182745179382773],
+    [0.454369041975359, 0.473533154307412, 0.072097803717229],
+    [-0.009627608738429, -0.005698031216113, 1.015325639954543],
+];
 
 /// Chromatic adaptation from source white to destination white using CAT02.
 /// Computes in f64 internally for precision, returns f32.
 pub fn chromatic_adaptation_matrix(src_white: [f32; 3], dst_white: [f32; 3]) -> [[f32; 3]; 3] {
-    // High-precision CAT02 matrices (f64)
-    const FWD: [[f64; 3]; 3] = [
-        [0.7328, 0.4296, -0.1624],
-        [-0.7036, 1.6975, 0.0061],
-        [0.003, 0.0136, 0.9834],
-    ];
-    const INV: [[f64; 3]; 3] = [
-        [1.096123820835514, -0.278869000218287, 0.182745179382773],
-        [0.454369041975359, 0.473533154307412, 0.072097803717229],
-        [-0.009627608738429, -0.005698031216113, 1.015325639954543],
-    ];
-
-    let sw = [
-        src_white[0] as f64,
-        src_white[1] as f64,
-        src_white[2] as f64,
-    ];
-    let dw = [
-        dst_white[0] as f64,
-        dst_white[1] as f64,
-        dst_white[2] as f64,
-    ];
-
-    // src/dst → LMS
-    let mut src_lms = [0.0f64; 3];
-    let mut dst_lms = [0.0f64; 3];
-    for i in 0..3 {
-        src_lms[i] = FWD[i][0] * sw[0] + FWD[i][1] * sw[1] + FWD[i][2] * sw[2];
-        dst_lms[i] = FWD[i][0] * dw[0] + FWD[i][1] * dw[1] + FWD[i][2] * dw[2];
-    }
-
-    let gain = [
-        dst_lms[0] / src_lms[0],
-        dst_lms[1] / src_lms[1],
-        dst_lms[2] / src_lms[2],
-    ];
-
-    // M_adapt = INV * diag(gain) * FWD
-    let mut result = [[0.0f32; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            let sum = INV[i][0] * gain[0] * FWD[0][j]
-                + INV[i][1] * gain[1] * FWD[1][j]
-                + INV[i][2] * gain[2] * FWD[2][j];
-            result[i][j] = sum as f32;
-        }
-    }
-    result
+    chromatic_adaptation_matrix_f64(src_white.map(|v| v as f64), dst_white.map(|v| v as f64))
+        .map(|row| row.map(|v| v as f32))
 }
 
 /// Chromatic adaptation in full f64 precision, returning f64 matrix.
 pub fn chromatic_adaptation_matrix_f64(src_white: [f64; 3], dst_white: [f64; 3]) -> [[f64; 3]; 3] {
-    const FWD: [[f64; 3]; 3] = [
-        [0.7328, 0.4296, -0.1624],
-        [-0.7036, 1.6975, 0.0061],
-        [0.003, 0.0136, 0.9834],
-    ];
-    const INV: [[f64; 3]; 3] = [
-        [1.096123820835514, -0.278869000218287, 0.182745179382773],
-        [0.454369041975359, 0.473533154307412, 0.072097803717229],
-        [-0.009627608738429, -0.005698031216113, 1.015325639954543],
-    ];
-    von_kries(src_white, dst_white, &FWD, &INV)
+    von_kries(src_white, dst_white, &CAT02_FWD_F64, &CAT02_INV_F64)
 }
 
 /// CAT16 (Li et al. 2017) von Kries chromatic adaptation. Same form as
@@ -371,29 +224,119 @@ fn mat3_mul3(a: &[[f32; 3]; 3], b: &[[f32; 3]; 3], out: &mut [[f32; 3]; 3]) {
 
 /// Transfer function attached to an RGB colour space (colour-science
 /// `cctf_decoding`/`cctf_encoding` of the space).
+///
+/// Discriminants are the wire codes `film_resolution.wgsl` switches on.
+/// `0` means "already encoded" (the shader's `default`), so the codes start
+/// at 1; the shader's `case` labels mirror this order.
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Cctf {
     /// Scene-linear (ACES2065-1) — identity.
-    Linear,
+    Linear = 1,
     /// ACEScct logarithmic encoding used by the ACEScct RGB transport space.
-    Acescct,
+    Acescct = 2,
     /// IEC 61966-2-1 sRGB piecewise curve (sRGB, Display P3).
-    Srgb,
+    Srgb = 3,
     /// ROMM/ProPhoto: gamma 1.8 with a 1/32 encoded toe (`x < 16·E_t` on
     /// decode, `E_t > x` on encode, `E_t = 16^(1.8/(1-1.8)) = 1/512`).
-    ProPhoto,
+    ProPhoto = 4,
     /// ITU-R BT.2020 OETF (colour-science's default 10-bit constants:
     /// α = 1.099, β = 0.018).
-    Rec2020,
+    Rec2020 = 5,
     /// Adobe RGB (1998): pure power 563/256 (negative → NaN, matching
     /// colour-science's `gamma_function`).
-    AdobeRgb1998,
+    AdobeRgb1998 = 6,
     /// DCI-P3: pure power 2.6 (negative → NaN, as above).
-    Gamma2_6,
+    Gamma2_6 = 7,
+}
+
+impl Cctf {
+    /// Shader wire code for `film_resolution.wgsl`.
+    #[inline]
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+/// 3x3 matrix product `a · b` in index form — the compile-time twin of the
+/// reference products below.
+const fn mat3_mul_f64(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let mut out = [[0.0f64; 3]; 3];
+    let mut i = 0;
+    while i < 3 {
+        let mut j = 0;
+        while j < 3 {
+            out[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
+            j += 1;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Whitepoint chromaticity → XYZ at Y = 1 — upstream `_xy_to_xyz_unit_y`.
+const fn whitepoint_xyz_f64((x, y): (f64, f64)) -> [f64; 3] {
+    let safe_y = y.max(1e-12);
+    [x / safe_y, 1.0, (1.0 - x - y) / safe_y]
+}
+
+/// Compile-time twin of `von_kries` for the CAT02 matrices.
+const fn von_kries_f64(src_white: [f64; 3], dst_white: [f64; 3]) -> [[f64; 3]; 3] {
+    let mut src_lms = [0.0f64; 3];
+    let mut dst_lms = [0.0f64; 3];
+    let mut i = 0;
+    while i < 3 {
+        src_lms[i] = CAT02_FWD_F64[i][0] * src_white[0]
+            + CAT02_FWD_F64[i][1] * src_white[1]
+            + CAT02_FWD_F64[i][2] * src_white[2];
+        dst_lms[i] = CAT02_FWD_F64[i][0] * dst_white[0]
+            + CAT02_FWD_F64[i][1] * dst_white[1]
+            + CAT02_FWD_F64[i][2] * dst_white[2];
+        i += 1;
+    }
+    let gain = [
+        dst_lms[0] / src_lms[0],
+        dst_lms[1] / src_lms[1],
+        dst_lms[2] / src_lms[2],
+    ];
+    let mut result = [[0.0f64; 3]; 3];
+    let mut i = 0;
+    while i < 3 {
+        let mut j = 0;
+        while j < 3 {
+            result[i][j] = CAT02_INV_F64[i][0] * gain[0] * CAT02_FWD_F64[0][j]
+                + CAT02_INV_F64[i][1] * gain[1] * CAT02_FWD_F64[1][j]
+                + CAT02_INV_F64[i][2] * gain[2] * CAT02_FWD_F64[2][j];
+            j += 1;
+        }
+        i += 1;
+    }
+    result
+}
+
+/// `destination_xyz_to_rgb · CAT02(src → dst) · source_rgb_to_xyz`, composed
+/// at compile time — the const twin of `conversion_matrix`.
+const fn conversion_matrix_f64(
+    source_rgb_to_xyz: &[[f64; 3]; 3],
+    source_whitepoint_xy: (f64, f64),
+    destination_xyz_to_rgb: &[[f64; 3]; 3],
+    destination_whitepoint_xy: (f64, f64),
+) -> [[f64; 3]; 3] {
+    let cat = von_kries_f64(
+        whitepoint_xyz_f64(source_whitepoint_xy),
+        whitepoint_xyz_f64(destination_whitepoint_xy),
+    );
+    mat3_mul_f64(
+        destination_xyz_to_rgb,
+        &mat3_mul_f64(&cat, source_rgb_to_xyz),
+    )
 }
 
 /// One registered RGB colour space: colour-science's stored matrices,
 /// whitepoint chromaticity and transfer function.
+///
+/// Every entry is built through `new`, which precomputes the derived
+/// matrices so per-pixel callers read them instead of recomputing.
 #[derive(Clone, Copy, Debug)]
 pub struct RgbColorSpace {
     /// Canonical colour-science name (params carry these verbatim).
@@ -406,14 +349,42 @@ pub struct RgbColorSpace {
     pub whitepoint_xy: (f64, f64),
     /// Transfer function.
     pub cctf: Cctf,
+    /// `matrix_xyz_to_rgb · matrix_rgb_to_xyz`.
+    identity: [[f64; 3]; 3],
+    /// `RGB_to_RGB(cs, sRGB, 'CAT02')`.
+    display: [[f64; 3]; 3],
 }
 
 impl RgbColorSpace {
+    /// Register one space, deriving the cached matrices at compile time.
+    pub const fn new(
+        name: &'static str,
+        matrix_rgb_to_xyz: [[f64; 3]; 3],
+        matrix_xyz_to_rgb: [[f64; 3]; 3],
+        whitepoint_xy: (f64, f64),
+        cctf: Cctf,
+    ) -> Self {
+        let identity = mat3_mul_f64(&matrix_xyz_to_rgb, &matrix_rgb_to_xyz);
+        let display = conversion_matrix_f64(
+            &matrix_rgb_to_xyz,
+            whitepoint_xy,
+            &XYZ_TO_SRGB_F64,
+            D65_WHITEPOINT_XY,
+        );
+        Self {
+            name,
+            matrix_rgb_to_xyz,
+            matrix_xyz_to_rgb,
+            whitepoint_xy,
+            cctf,
+            identity,
+            display,
+        }
+    }
+
     /// Whitepoint as XYZ at Y = 1 — upstream `_xy_to_xyz_unit_y`.
-    pub fn whitepoint_xyz(&self) -> [f64; 3] {
-        let (x, y) = self.whitepoint_xy;
-        let safe_y = y.max(1e-12);
-        [x / safe_y, 1.0, (1.0 - x - y) / safe_y]
+    pub const fn whitepoint_xyz(&self) -> [f64; 3] {
+        whitepoint_xyz_f64(self.whitepoint_xy)
     }
 
     /// The near-identity matrix colour's `RGB_to_RGB(cs, cs, 'CAT02')`
@@ -421,34 +392,30 @@ impl RgbColorSpace {
     /// spaces (sRGB, ProPhoto, Adobe RGB) are not exact inverses, so this
     /// product has ~1e-5 off-diagonals that the scan-stage encode pass
     /// reproduces for Python parity.
-    pub fn rgb_to_rgb_identity(&self) -> [[f64; 3]; 3] {
-        let mut m = [[0.0f64; 3]; 3];
-        // Keep reference matrix products in index form.
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..3 {
-            for j in 0..3 {
-                m[i][j] = self.matrix_xyz_to_rgb[i][0] * self.matrix_rgb_to_xyz[0][j]
-                    + self.matrix_xyz_to_rgb[i][1] * self.matrix_rgb_to_xyz[1][j]
-                    + self.matrix_xyz_to_rgb[i][2] * self.matrix_rgb_to_xyz[2][j];
-            }
-        }
-        m
+    pub const fn rgb_to_rgb_identity(&self) -> [[f64; 3]; 3] {
+        self.identity
+    }
+
+    /// `RGB_to_RGB(cs, sRGB, 'CAT02')` — native output → encoded sRGB for a
+    /// bounded display surface.
+    pub const fn display_matrix(&self) -> [[f64; 3]; 3] {
+        self.display
     }
 }
 
 /// sRGB — IEC 61966-2-1 4-decimal matrices as stored by colour-science.
-pub static SRGB: RgbColorSpace = RgbColorSpace {
-    name: "sRGB",
-    matrix_rgb_to_xyz: SRGB_TO_XYZ_F64,
-    matrix_xyz_to_rgb: XYZ_TO_SRGB_F64,
-    whitepoint_xy: (0.3127, 0.329),
-    cctf: Cctf::Srgb,
-};
+pub static SRGB: RgbColorSpace = RgbColorSpace::new(
+    "sRGB",
+    SRGB_TO_XYZ_F64,
+    XYZ_TO_SRGB_F64,
+    D65_WHITEPOINT_XY,
+    Cctf::Srgb,
+);
 
 /// DCI-P3 (theatrical, DCI white ≈ 6300 K, gamma 2.6).
-pub static DCI_P3: RgbColorSpace = RgbColorSpace {
-    name: "DCI-P3",
-    matrix_rgb_to_xyz: [
+pub static DCI_P3: RgbColorSpace = RgbColorSpace::new(
+    "DCI-P3",
+    [
         [0.44516981556455232, 0.27713440920677762, 0.1722826698155645],
         [
             0.20949167791273049,
@@ -457,7 +424,7 @@ pub static DCI_P3: RgbColorSpace = RgbColorSpace {
         ],
         [0.0, 0.047060560053981147, 0.9073553943619731],
     ],
-    matrix_xyz_to_rgb: [
+    [
         [
             2.7253940304917332,
             -1.0180030062271852,
@@ -474,19 +441,19 @@ pub static DCI_P3: RgbColorSpace = RgbColorSpace {
             1.1009293786463223,
         ],
     ],
-    whitepoint_xy: (0.314, 0.351),
-    cctf: Cctf::Gamma2_6,
-};
+    (0.314, 0.351),
+    Cctf::Gamma2_6,
+);
 
 /// Display P3 — P3 primaries at D65 with the sRGB curve.
-pub static DISPLAY_P3: RgbColorSpace = RgbColorSpace {
-    name: "Display P3",
-    matrix_rgb_to_xyz: [
+pub static DISPLAY_P3: RgbColorSpace = RgbColorSpace::new(
+    "Display P3",
+    [
         [0.486570948648216, 0.2656676931690931, 0.19821728523436247],
         [0.2289745640697487, 0.6917385218365064, 0.07928691409374498],
         [0.0, 0.04511338185890264, 1.0439443689009757],
     ],
-    matrix_xyz_to_rgb: [
+    [
         [
             2.4934969119414263,
             -0.9313836179191244,
@@ -503,62 +470,62 @@ pub static DISPLAY_P3: RgbColorSpace = RgbColorSpace {
             0.9568845240076874,
         ],
     ],
-    whitepoint_xy: (0.3127, 0.329),
-    cctf: Cctf::Srgb,
-};
+    D65_WHITEPOINT_XY,
+    Cctf::Srgb,
+);
 
 /// Adobe RGB (1998) — D65, pure power 563/256.
-pub static ADOBE_RGB_1998: RgbColorSpace = RgbColorSpace {
-    name: "Adobe RGB (1998)",
-    matrix_rgb_to_xyz: [
+pub static ADOBE_RGB_1998: RgbColorSpace = RgbColorSpace::new(
+    "Adobe RGB (1998)",
+    [
         [0.57667, 0.18556, 0.18823],
         [0.29734, 0.62736, 0.07529],
         [0.02703, 0.07069, 0.99134],
     ],
-    matrix_xyz_to_rgb: [
+    [
         [2.04159, -0.56501, -0.34473],
         [-0.96924, 1.87597, 0.04156],
         [0.01344, -0.11836, 1.01517],
     ],
-    whitepoint_xy: (0.3127, 0.329),
-    cctf: Cctf::AdobeRgb1998,
-};
+    D65_WHITEPOINT_XY,
+    Cctf::AdobeRgb1998,
+);
 
 /// ITU-R BT.2020 — D65, BT.2020 OETF.
-pub static ITU_R_BT2020: RgbColorSpace = RgbColorSpace {
-    name: "ITU-R BT.2020",
-    matrix_rgb_to_xyz: REC2020_TO_XYZ_F64,
-    matrix_xyz_to_rgb: XYZ_TO_REC2020_F64,
-    whitepoint_xy: (0.3127, 0.329),
-    cctf: Cctf::Rec2020,
-};
+pub static ITU_R_BT2020: RgbColorSpace = RgbColorSpace::new(
+    "ITU-R BT.2020",
+    REC2020_TO_XYZ_F64,
+    XYZ_TO_REC2020_F64,
+    D65_WHITEPOINT_XY,
+    Cctf::Rec2020,
+);
 
 /// ProPhoto RGB (ROMM) — D50, 4-decimal standard matrices as stored by
 /// colour-science (NOT the high-precision derived variants).
-pub static PROPHOTO_RGB: RgbColorSpace = RgbColorSpace {
-    name: "ProPhoto RGB",
-    matrix_rgb_to_xyz: [
+pub static PROPHOTO_RGB: RgbColorSpace = RgbColorSpace::new(
+    "ProPhoto RGB",
+    [
         [0.7977, 0.1352, 0.0313],
         [0.2880, 0.7119, 0.0001],
         [0.0, 0.0, 0.8249],
     ],
-    matrix_xyz_to_rgb: [
+    [
         [1.3460, -0.2556, -0.0511],
         [-0.5446, 1.5082, 0.0205],
         [0.0, 0.0, 1.2123],
     ],
-    whitepoint_xy: (0.3457, 0.3585),
-    cctf: Cctf::ProPhoto,
-};
+    (0.3457, 0.3585),
+    Cctf::ProPhoto,
+);
 
 /// ACES2065-1 (AP0) — ACES white (~D60), scene-linear.
-pub static ACES2065_1: RgbColorSpace = RgbColorSpace {
-    name: "ACES2065-1",
-    matrix_rgb_to_xyz: ACES_TO_XYZ_F64,
-    matrix_xyz_to_rgb: XYZ_TO_ACES_F64,
-    whitepoint_xy: (0.32168, 0.33767),
-    cctf: Cctf::Linear,
-};
+pub static ACES2065_1: RgbColorSpace = RgbColorSpace::new(
+    "ACES2065-1",
+    ACES_TO_XYZ_F64,
+    XYZ_TO_ACES_F64,
+    (0.32168, 0.33767),
+    Cctf::Linear,
+);
 
 /// Resolve a colour-space name against the registry. Unknown names are an
 /// actionable error — the caller must fail before producing any artifact.
@@ -680,6 +647,8 @@ pub fn cctf_encode(v: f64, cctf: Cctf) -> f64 {
 
 /// Encode the same-space RGB roundtrip used by upstream scanning. Floating
 /// output keeps negative and super-white values; integer writers own clipping.
+/// `rgb_to_rgb_identity` is precomputed on the registry entry, so the
+/// per-pixel hot path never rebuilds it.
 pub fn encode_rgb(rgb: [f64; 3], space: &RgbColorSpace) -> [f64; 3] {
     let m = space.rgb_to_rgb_identity();
     let mut out = [0.0; 3];
@@ -688,12 +657,6 @@ pub fn encode_rgb(rgb: [f64; 3], space: &RgbColorSpace) -> [f64; 3] {
         out[i] = cctf_encode(linear, space.cctf);
     }
     out
-}
-
-/// Convert native output to encoded sRGB for a bounded display surface.
-/// Native image exports retain their chosen colour space and floating range.
-pub fn display_matrix(space: &RgbColorSpace) -> [[f64; 3]; 3] {
-    conversion_matrix(space, &SRGB)
 }
 
 /// Compose the stored destination inverse, CAT02, and source matrix once.
@@ -723,13 +686,11 @@ pub fn conversion_matrix(source: &RgbColorSpace, destination: &RgbColorSpace) ->
     result
 }
 
-pub fn display_rgb(
-    rgb: [f64; 3],
-    space: &RgbColorSpace,
-    encoded: bool,
-    matrix: &[[f64; 3]; 3],
-) -> [f64; 3] {
-    convert_rgb(rgb, space, encoded, &SRGB, true, matrix)
+/// Convert one native pixel to encoded sRGB for a bounded display surface,
+/// composing the space's display matrix once. Native image exports retain
+/// their chosen colour space and floating range.
+pub fn display_rgb(rgb: [f64; 3], space: &RgbColorSpace, encoded: bool) -> [f64; 3] {
+    convert_rgb(rgb, space, encoded, &SRGB, true, &space.display_matrix())
 }
 
 /// Convert a native pixel without clipping or gamut compression. The caller
@@ -1463,38 +1424,6 @@ mod tests {
             assert!(
                 (s - decoded).abs() < from_f64(1e-5),
                 "roundtrip failed for {v}: encoded={encoded}, decoded={decoded}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_identity_adaptation() {
-        let m = chromatic_adaptation_matrix(D65_XYZ, D65_XYZ);
-        // Keep reference matrix indices for the identity comparison.
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..3 {
-            for j in 0..3 {
-                let expected = if i == j { 1.0 } else { 0.0 };
-                assert!(
-                    (m[i][j] - expected).abs() < 1e-4,
-                    "identity adaptation [{i}][{j}]: expected {expected}, got {}",
-                    m[i][j]
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_srgb_xyz_roundtrip() {
-        let rgb = [0.5, 0.3, 0.8];
-        let xyz = mat3_mul(&SRGB_TO_XYZ, rgb);
-        let rgb2 = mat3_mul(&XYZ_TO_SRGB, xyz);
-        for i in 0..3 {
-            assert!(
-                (rgb[i] - rgb2[i]).abs() < 1e-5,
-                "RGB roundtrip failed channel {i}: {:.6} vs {:.6}",
-                rgb[i],
-                rgb2[i]
             );
         }
     }

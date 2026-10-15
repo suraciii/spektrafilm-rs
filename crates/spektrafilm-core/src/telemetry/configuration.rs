@@ -60,6 +60,34 @@ impl WorkflowRoute {
             _ => Self::Custom,
         }
     }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::FilmScan => "input > film > scan",
+            Self::FilmPrintScan => "input > film > print > scan",
+            Self::ConvertFilmPrintScan => "input > convert-film > print > scan",
+            Self::ConvertFilmScanMinusBase => "input > convert-film > scan-minus-base",
+            Self::ConvertFilmScan => "input > convert-film > scan",
+            Self::Custom => "",
+        }
+    }
+    pub fn scans_film(&self) -> bool {
+        matches!(
+            self,
+            Self::FilmScan | Self::ConvertFilmScan | Self::ConvertFilmScanMinusBase
+        )
+    }
+
+    pub fn prints(&self) -> bool {
+        matches!(self, Self::FilmPrintScan | Self::ConvertFilmPrintScan)
+    }
+
+    pub fn is_convert_film(&self) -> bool {
+        matches!(
+            self,
+            Self::ConvertFilmPrintScan | Self::ConvertFilmScanMinusBase | Self::ConvertFilmScan
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,7 +262,7 @@ pub enum ScanOutput {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PositiveInterpretation {
+pub enum NegativeConversionMethod {
     #[default]
     Density,
     Separable,
@@ -279,7 +307,7 @@ pub struct RenderConfiguration {
     #[serde(default)]
     pub scan_output: ScanOutput,
     #[serde(default)]
-    pub positive_interpretation: PositiveInterpretation,
+    pub negative_conversion_method: NegativeConversionMethod,
     #[serde(default)]
     pub receiver: ReceiverConfiguration,
     #[serde(default)]
@@ -334,14 +362,18 @@ impl RenderConfiguration {
             } else {
                 ScanOutput::DirectScan
             },
-            positive_interpretation: match params.scanner.positive_interpretation {
-                crate::params::PositiveInterpretation::Density => PositiveInterpretation::Density,
-                crate::params::PositiveInterpretation::Separable => {
-                    PositiveInterpretation::Separable
+            negative_conversion_method: match params.scanner.negative_conversion_method {
+                crate::params::NegativeConversionMethod::Density => {
+                    NegativeConversionMethod::Density
                 }
-                crate::params::PositiveInterpretation::Coupled => PositiveInterpretation::Coupled,
-                crate::params::PositiveInterpretation::DigitalReference => {
-                    PositiveInterpretation::DigitalReference
+                crate::params::NegativeConversionMethod::Separable => {
+                    NegativeConversionMethod::Separable
+                }
+                crate::params::NegativeConversionMethod::Coupled => {
+                    NegativeConversionMethod::Coupled
+                }
+                crate::params::NegativeConversionMethod::DigitalReference => {
+                    NegativeConversionMethod::DigitalReference
                 }
                 crate::params::PositiveInterpretation::DensityDirect => {
                     PositiveInterpretation::DensityDirect

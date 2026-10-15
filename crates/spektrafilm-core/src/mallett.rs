@@ -444,9 +444,9 @@ pub fn compute_core_matrix(sensitivity: &[[f64; 3]], illuminant: &[f64]) -> [[f6
 /// Input colour space → linear sRGB with the registry's stored matrices and
 /// CAT02 adaptation. No fallback primary set is selected for unknown names.
 pub fn input_cs_to_srgb(color_space: &str) -> [[f64; 3]; 3] {
-    let space =
-        spektrafilm_math::colorspace::resolve(color_space).expect("validated input colour space");
-    spektrafilm_math::colorspace::display_matrix(space)
+    spektrafilm_math::colorspace::resolve(color_space)
+        .expect("validated input colour space")
+        .display_matrix()
 }
 
 /// Full per-pixel matrix `core · M_cs` mapping input-colour-space RGB to raw.
@@ -467,16 +467,7 @@ pub fn apply(m: &[[f64; 3]; 3], rgb: [f64; 3]) -> [f64; 3] {
 #[cfg(test)]
 mod parity_tests {
     use super::*;
-    use std::path::{Path, PathBuf};
-
-    fn data_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
+    use crate::test_support::data_dir;
 
     fn sensitivity(film: &crate::profile::Profile) -> Vec<[f64; 3]> {
         film.log_sensitivity_f64()
@@ -610,10 +601,7 @@ mod parity_tests {
         use spektrafilm_math::image::ImageBuf;
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
-            eprintln!("no GPU adapter available; skipping");
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
 
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
