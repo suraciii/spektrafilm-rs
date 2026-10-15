@@ -6,6 +6,8 @@ use egui::Ui;
 use serde_json::{Map, Value};
 use spektrafilm_core::params::diffusion::DiffusionFilterParams;
 
+/// Editor range for `path`, from the single per-path table. A missing entry
+/// is a defect, not a silent default to the machine range.
 pub(crate) fn editor_range_for(path: &str) -> editor_ranges::EditorRange {
     editor_ranges::editor_range(path).unwrap_or_else(|| panic!("missing editor range for {path}"))
 }

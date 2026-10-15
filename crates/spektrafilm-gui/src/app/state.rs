@@ -157,7 +157,7 @@ impl App {
         let mut params = gui_state
             .runtime_params()
             .expect("validated GUI factory state");
-        normalize_scan_output(&mut params, film_medium);
+        normalize_scanner_selections(&mut params, film_medium);
         let film_dev_times = film_profile
             .as_ref()
             .map(|f| f.data.development_time.clone())
@@ -298,7 +298,7 @@ impl App {
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         let film_medium = scan_medium(&film);
-        normalize_scan_output(&mut params, film_medium);
+        normalize_scanner_selections(&mut params, film_medium);
         self.film_name = state.film().to_owned();
         self.film_medium = film_medium;
         self.print_name = state.paper().to_owned();

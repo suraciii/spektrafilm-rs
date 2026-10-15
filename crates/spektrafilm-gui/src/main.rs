@@ -48,7 +48,7 @@ mod ui;
 use app::App;
 use backend::{gui_backend, gui_renderer};
 use calibration::CalibrationJob;
-use controls::{normalize_scan_output, scan_medium};
+use controls::{normalize_scanner_selections, scan_medium};
 use diagnostics::effective_backend_name;
 #[cfg(test)]
 use export::ExportBackend;
