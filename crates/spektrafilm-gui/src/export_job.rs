@@ -325,7 +325,7 @@ impl App {
                                 .and_then(|s| s.to_str())
                                 .unwrap_or("(file)")
                                 .to_owned(),
-                            backend_name: effective_backend_name(backend.name(), pipeline.params()),
+                            backend_name: effective_backend_name(&*backend, pipeline.params()),
                             size: [output.width, output.height],
                             staged,
                         })

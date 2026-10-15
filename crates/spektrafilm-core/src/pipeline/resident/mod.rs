@@ -12,6 +12,7 @@ mod tests {
     use super::*;
     use crate::params::RuntimeParams;
     use crate::test_support::data_dir;
+    use spektrafilm_gpu::ComputeBackend as _;
     use spektrafilm_math::image::ImageBuf;
 
     /// Parameters for the negative-to-positive acquisition-replacement
@@ -50,13 +51,13 @@ mod tests {
     }
 
     /// Run a render through an observed backend and return the recorded
-    /// execution path: a fence check that silently ran on the per-stage CPU
-    /// route would satisfy its budget vacuously.
-    fn observed_execution_path(
+    /// snapshot: a check that silently ran on another route or executor
+    /// would satisfy its budget vacuously.
+    fn observed_render(
         pipeline: &Pipeline,
         image: ImageBuf,
         backend: &dyn spektrafilm_gpu::ComputeBackend,
-    ) -> spektrafilm_gpu::telemetry::ExecutionPath {
+    ) -> spektrafilm_gpu::telemetry::ObservationSnapshot {
         let context = spektrafilm_gpu::telemetry::ObservationContext::new(
             spektrafilm_gpu::telemetry::CollectionMode::Summary,
         );
@@ -64,8 +65,18 @@ mod tests {
         pipeline
             .process(image, observed.as_ref())
             .expect("observed resident render");
-        context
-            .snapshot()
+        context.snapshot()
+    }
+
+    /// Run a render through an observed backend and return the recorded
+    /// execution path: a fence check that silently ran on the per-stage CPU
+    /// route would satisfy its budget vacuously.
+    fn observed_execution_path(
+        pipeline: &Pipeline,
+        image: ImageBuf,
+        backend: &dyn spektrafilm_gpu::ComputeBackend,
+    ) -> spektrafilm_gpu::telemetry::ExecutionPath {
+        observed_render(pipeline, image, backend)
             .execution
             .path
             .expect("resident renders record their execution path")
@@ -689,11 +700,13 @@ mod tests {
         params
     }
 
-    /// The Dye field resolves on the CPU from the full developed density; the
-    /// resident chain runs it as the assembled density fence when the request
-    /// resolves to the delivered raster.
+    /// The supported Dye field is a device pass on the resident chain: the
+    /// render stays resident and records no host field stage, while the CPU
+    /// route keeps its own host field (unchanged CPU behavior). Device and
+    /// host realize one count law but not one draw sequence, so the budget
+    /// bounds two realizations of the law, not draw identity.
     #[test]
-    fn dye_grain_density_fence_matches_cpu() {
+    fn dye_grain_field_runs_on_the_resident_device_chain() {
         let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
@@ -706,6 +719,27 @@ mod tests {
             ResidentDecision::UseResident
         ));
         let image = comparison_image(64);
+        let snapshot = observed_render(&pipeline, image.clone(), &gpu);
+        assert_eq!(
+            snapshot.execution.path,
+            Some(spektrafilm_gpu::telemetry::ExecutionPath::GpuResident),
+            "backend {} did not keep the resident route",
+            gpu.name()
+        );
+        assert!(
+            !snapshot
+                .observations
+                .iter()
+                .any(|stage| stage.name == "grain_v3_field"),
+            "the resident Dye field recorded a host stage on {}: {:?}",
+            gpu.name(),
+            snapshot
+                .observations
+                .iter()
+                .map(|stage| stage.name.as_str())
+                .collect::<Vec<_>>()
+        );
+
         let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
         let out_cpu = pipeline
             .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
@@ -717,15 +751,13 @@ mod tests {
         let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
         assert!(
             mean < 5e-2 && max_diff < 5e-1,
-            "dye density fence: mean={mean:.6} max={max_diff:.6}"
-        );
-        assert_eq!(
-            observed_execution_path(&pipeline, image.clone(), &gpu),
-            spektrafilm_gpu::telemetry::ExecutionPath::GpuResident
+            "device vs host Dye realization on {}: mean={mean:.6} max={max_diff:.6}",
+            gpu.name()
         );
 
         // The field changes the image, and it is the Dye engine rather than
-        // the Procedural one: both must be visible.
+        // the Procedural one: both must be visible. Both baselines run the
+        // host field, so they pin the unchanged CPU behavior.
         let mut off = params.clone();
         off.film_render.grain.active = false;
         let baseline = Pipeline::new_with_spectral(film.clone(), print.clone(), off, &dir).unwrap();
@@ -1217,7 +1249,10 @@ mod tests {
     /// must fail at assembly for every capability-missing stage the fences
     /// absorbed (pipe architecture "Policy ... demonstrated by test for each
     /// S3 migration"), while the automatic route runs them — the per-fence
-    /// `*_fence_matches_cpu` tests hold that side.
+    /// `*_fence_matches_cpu` tests hold that side. The Dye field is not a
+    /// case here: a supported request is a device pass
+    /// (`explicit_gpu_request_runs_the_dye_field_on_the_device`), and its
+    /// host-only form is covered by `experimental_mass_law_keeps_the_host_field`.
     #[test]
     fn explicit_gpu_request_fails_for_every_fenced_stage() {
         let gpu = spektrafilm_gpu::test_support::explicit_adapter();
@@ -1248,12 +1283,6 @@ mod tests {
                     params.film_render.grain.active = true;
                     params
                 },
-            ),
-            (
-                "dye grain field",
-                "film grain distribution",
-                portra(),
-                dye_fence_params(),
             ),
             (
                 "camera optical diffusion",
@@ -1347,13 +1376,18 @@ mod tests {
         }
     }
 
-    /// An explicitly requested GPU backend must fail at assembly when a
-    /// capability-missing stage would otherwise demote the route to CPU
-    /// silently (pipe architecture fence policy). The negative-to-positive
-    /// density reading replaces the acquisition itself and has no fence, so
-    /// requesting it with an explicit backend errors before publication.
+    /// A cropped Dye request leaves the resident raster for the per-stage
+    /// readout, but that is a routing choice, not a capability gap: the device
+    /// field serves any readout region, so an explicit GPU request is accepted
+    /// (the fence policy itself is covered by
+    /// `explicit_gpu_request_fails_for_every_fenced_stage`, and the host field
+    /// reason by `experimental_mass_law_keeps_the_host_field`). What refuses
+    /// this request is the field's own band budget: a four-pixel source gives a
+    /// film pitch so large that one output row exceeds the cell limit, so the
+    /// run must fail with that named budget instead of silently demoting to
+    /// the host field.
     #[test]
-    fn explicit_gpu_request_fails_on_capability_gap() {
+    fn explicit_gpu_request_fails_on_the_field_band_budget() {
         let gpu = spektrafilm_gpu::test_support::explicit_adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
@@ -1363,21 +1397,199 @@ mod tests {
         params.io.scan_film = true;
         params.camera.auto_exposure = false;
         params.io.output_gamut_compress.algorithm = "off".into();
-        // Capability gap: a cropped Dye request resolves its field on a
-        // readout region the resident chain's fixed-size density buffer
-        // cannot hold, so no resident fence exists for it.
         params.io.crop = true;
         params.io.crop_size = [0.5, 0.5];
         params.film_render.grain.active = true;
         params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
+        assert_eq!(
+            crate::stages::grain_v3::effective_field_backend(&params, true),
+            "gpu"
+        );
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(
+            matches!(
+                pipeline.resident_decision(),
+                ResidentDecision::PerStage { .. }
+            ),
+            "a cropped Dye request reads out per stage: {:?}",
+            pipeline.resident_decision()
+        );
         let img = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5; 48]);
         let err = pipeline
             .process(img, &gpu)
-            .expect_err("explicit GPU request must fail on a capability gap");
+            .expect_err("an output row above the band budget must fail by name");
         assert!(
-            err.contains("explicit GPU request"),
+            err.contains("film grain Dye") && err.contains("field cells") && err.contains("limit"),
             "unexpected error: {err}"
+        );
+    }
+
+    /// An explicit GPU request with a supported active Dye succeeds on the
+    /// resident chain: the field is a device pass, so no host stage is left
+    /// to fail on (pipe architecture fence policy). The capability output
+    /// agrees that the field resolves on the device.
+    #[test]
+    fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let params = dye_fence_params();
+        assert_eq!(
+            crate::stages::grain_v3::effective_field_backend(&params, true),
+            "gpu"
+        );
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let image = comparison_image(16);
+        let snapshot = observed_render(&pipeline, image, &gpu);
+        assert_eq!(
+            snapshot.execution.path,
+            Some(spektrafilm_gpu::telemetry::ExecutionPath::GpuResident),
+            "backend {} did not keep the resident route",
+            gpu.name()
+        );
+        assert!(
+            !snapshot
+                .observations
+                .iter()
+                .any(|stage| stage.name == "grain_v3_field"),
+            "the explicit GPU Dye field recorded a host stage: {:?}",
+            snapshot
+                .observations
+                .iter()
+                .map(|stage| stage.name.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A cropped Dye request keeps the device field. The resident raster
+    /// cannot express the readout geometry, so the chain takes the per-stage
+    /// route — a routing choice, not a capability gap — and an explicit GPU
+    /// request must render instead of failing before publication. The field
+    /// stage is recorded without a CPU reason, which is how the host field is
+    /// labelled (`cpu_field` sets `CpuReason::GrainV3FieldCpu`).
+    #[test]
+    fn explicit_gpu_request_runs_a_cropped_dye_field_on_the_device() {
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = dye_fence_params();
+        params.io.crop = true;
+        params.io.crop_size = [0.5, 0.5];
+        assert_eq!(
+            crate::stages::grain_v3::effective_field_backend(&params, true),
+            "gpu"
+        );
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(
+            matches!(
+                pipeline.resident_decision(),
+                ResidentDecision::PerStage { .. }
+            ),
+            "a cropped Dye request reads out per stage: {:?}",
+            pipeline.resident_decision()
+        );
+        let snapshot = observed_render(&pipeline, comparison_image(16), &gpu);
+        assert_eq!(
+            snapshot.execution.path,
+            Some(spektrafilm_gpu::telemetry::ExecutionPath::PerStage),
+            "backend {} did not take the per-stage route",
+            gpu.name()
+        );
+        let field = snapshot
+            .observations
+            .iter()
+            .find(|stage| stage.name == "grain_v3_field")
+            .expect("the cropped Dye field must record its stage");
+        assert_eq!(
+            field.cpu_reason, None,
+            "the cropped field resolved on the host: {:?}",
+            field
+        );
+    }
+
+    /// The experimental mass-law selector has no device count law, so its
+    /// field stays the assembled host fence: the automatic route renders
+    /// with the published host reason, and an explicit GPU request fails by
+    /// name instead of silently running host arithmetic. The selector is
+    /// process-global, so the case runs in a child process (the presets
+    /// mutation pattern).
+    #[test]
+    fn experimental_mass_law_keeps_the_host_field() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "pipeline::resident::tests::experimental_mass_law_child",
+                "--nocapture",
+            ])
+            .env("SPEKTRAFILM_GRAIN_V3_MASS_LAW", "two_class")
+            .output()
+            .expect("run the mass-law child case");
+        assert!(
+            output.status.success(),
+            "mass-law child case failed:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    /// Child of `experimental_mass_law_keeps_the_host_field`; skipped unless
+    /// the selector is set (the suite runs it directly as well).
+    #[test]
+    fn experimental_mass_law_child() {
+        if std::env::var("SPEKTRAFILM_GRAIN_V3_MASS_LAW").as_deref() != Ok("two_class") {
+            eprintln!("skipped: run through the parent case with the mass-law selector set");
+            return;
+        }
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let params = dye_fence_params();
+        // The capability output names the host field and its reason.
+        assert_eq!(
+            crate::stages::grain_v3::effective_field_backend(&params, true),
+            "cpu"
+        );
+        let note = crate::stages::grain_v3::effective_backend_note(&film, &params, true);
+        assert!(
+            note.contains("MASS_LAW") && note.contains("resident chain"),
+            "{note}"
+        );
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let image = comparison_image(8);
+        let err = pipeline
+            .process(image.clone(), &gpu)
+            .expect_err("explicit GPU must name the host field");
+        assert!(
+            err.contains("explicit GPU request") && err.contains("film grain distribution"),
+            "{err}"
+        );
+        // The automatic route keeps the host fence with its published reason.
+        let auto = spektrafilm_gpu::test_support::adapter();
+        let snapshot = observed_render(&pipeline, image, &auto);
+        assert_eq!(
+            snapshot.execution.path,
+            Some(spektrafilm_gpu::telemetry::ExecutionPath::GpuResident),
+            "backend {} did not keep the resident route",
+            auto.name()
+        );
+        assert!(
+            snapshot.observations.iter().any(|stage| {
+                stage.name == "grain_v3_field"
+                    && stage.cpu_reason
+                        == Some(spektrafilm_gpu::telemetry::CpuReason::GrainV3FieldCpu)
+            }),
+            "the host field must keep its published reason: {:?}",
+            snapshot.observations
         );
     }
 
@@ -1703,8 +1915,9 @@ mod tests {
             ResidentDecision::UseResident
         ));
 
-        // Dye resolves its field on the CPU from the full developed density.
-        // The delivered raster runs as the assembled density fence; a cropped
+        // Dye resolves its field from the full developed density: the
+        // delivered raster runs inside the resident chain (device pass, or
+        // host fence for a device-unrepresentable request); a cropped
         // request keeps the whole-route fallback.
         pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
         assert!(matches!(

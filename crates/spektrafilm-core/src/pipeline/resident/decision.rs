@@ -3,8 +3,10 @@ use super::super::Pipeline;
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ResidentFallbackReason {
     WorkflowRoute,
-    /// Active Dye resolves its film-coordinate field on the CPU; the
-    /// resident chain has no equivalent readout.
+    /// Active Dye needs a film-coordinate readout the resident chain's
+    /// fixed-size density buffer cannot express (a crop or upscale, or the
+    /// env-gated certification readouts); the field resolves on the
+    /// per-stage route instead.
     FilmGrainV3FieldCpu,
     FilmGrainFotufilmCpu,
     UnsupportedOutputGamut,
@@ -69,13 +71,15 @@ impl Pipeline {
         // Spektra grain no longer declines: it runs on the host as an
         // assembled fence on the film density buffer (pipe architecture,
         // capability class — see `density_cpu_stage` in `try_gpu_resident`).
-        // An active Dye field is resolved on the CPU from the full developed
-        // film density. The identity-geometry case runs as an assembled fence
-        // on the film density buffer; the readout geometries the pipe cannot
-        // express and the env-gated certification readouts keep the
-        // whole-route CPU fallback (see `resident_fence_supported` in
-        // `stages::grain_v3`). This decision is the capability authority for
-        // every resident entry point.
+        // An active Dye field resolves its film-coordinate readout from the
+        // full developed film density. The identity-geometry case runs
+        // inside the resident chain — the device pass, or the assembled
+        // density fence for a request the device cannot realize (see
+        // `resident_device_params` in `stages::grain_v3`) — while the
+        // readout geometries the chain cannot express and the env-gated
+        // certification readouts keep the whole-route fallback to the
+        // per-stage readout (`resident_fence_supported`). This decision is
+        // the capability authority for every resident entry point.
         if crate::stages::grain_v3::active(&self.params)
             && !crate::stages::grain_v3::resident_fence_supported(&self.film, &self.params)
         {

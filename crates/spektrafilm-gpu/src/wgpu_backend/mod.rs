@@ -250,7 +250,11 @@ impl WgpuBackend {
     /// The one readback protocol: map `buffer`, wait for the GPU, record the
     /// materialized bytes, then copy the mapped range out as f32.
     fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
-        self.pipe.read_mapped_f32(buffer, bytes)
+        self.pipe.read_mapped(buffer, bytes)
+    }
+
+    fn read_mapped_u32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<u32> {
+        self.pipe.read_mapped(buffer, bytes)
     }
 
     /// Get or compile a pipeline using the shared shader-and-layout cache.
@@ -320,7 +324,11 @@ mod gamut;
 #[cfg(feature = "wgpu-backend")]
 mod glare;
 #[cfg(feature = "wgpu-backend")]
-mod grain;
+pub mod grain;
+
+pub use grain::dye::{DyeGpuParams, DyeReadoutGrid};
+pub use grain::dye_decisions::{DYE_DECISION_FAILED, DyeDecisionCase};
+pub use grain::dye_layers::{DyeChannelParts, DyeChannelTableGpu, DyeChannelTablesGpu};
 #[cfg(feature = "wgpu-backend")]
 mod halation;
 #[cfg(feature = "wgpu-backend")]

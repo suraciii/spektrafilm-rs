@@ -64,8 +64,8 @@ impl App {
                 return;
             }
         };
-        // Report the Dye field's effective CPU route next to the selected backend.
-        let backend_name = effective_backend_name(self.backend.name(), &params);
+        // Report the Dye field's effective path next to the selected backend.
+        let backend_name = effective_backend_name(&*self.backend, &params);
         let parameter_revision = self.parameter_revision;
         let snapshot = self
             .render_snapshot(params)

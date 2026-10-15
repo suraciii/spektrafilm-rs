@@ -266,6 +266,21 @@ pub trait ComputeBackend: Send + Sync {
         None
     }
 
+    /// Film-grain Dye field readout on the device: realize the conditional
+    /// dye field from the resolved model tables in `params` and read it out
+    /// to `params.grid`. `None` marks a backend without a device field path,
+    /// so the caller keeps its host field and records the fallback; `Some`
+    /// marks an attempted device run whose error is a real failure to
+    /// surface before publication, never a fallback trigger.
+    #[cfg(feature = "wgpu-backend")]
+    fn dye_field(
+        &self,
+        _image: &ImageBuf,
+        _params: &crate::wgpu_backend::DyeGpuParams,
+    ) -> Option<Result<ImageBuf, String>> {
+        None
+    }
+
     /// Optional fused fast-path: runs filming + printing + scanning as a single
     /// GPU-resident command buffer (one upload at start, one readback at end).
     /// Returns native encoded destination RGB when Grain Procedural is active, and
@@ -379,10 +394,20 @@ pub struct FilmChainParams<'a> {
     /// Optional highlight reconstruction on the raw film exposure buffer,
     /// immediately after the front pass and before optical scatter.
     pub highlight_boost: Option<HighlightBoostGpuParams>,
+    /// Optional film-grain Dye field pass — the device realization of the
+    /// Dye field on the film density buffer, in the same position as
+    /// `density_cpu_stage` (after the film density curve and DIR, before
+    /// printing). The pass resolves the conditional field from the model
+    /// tables and reads it out to `grid`; the chain preflights its resources
+    /// before any allocation and checks its bounded status before the output
+    /// is published. A Dye request the device cannot realize keeps the host
+    /// fence in `density_cpu_stage` instead.
+    #[cfg(feature = "wgpu-backend")]
+    pub grain_dye: Option<crate::wgpu_backend::DyeGpuParams>,
     /// Optional CPU stage on the film density buffer after the film density
     /// curve and DIR, before printing — the assembled fence for the host
-    /// grain engines (Spektra, and Dye for the delivered readout geometry;
-    /// pipe architecture, capability class). The closure receives the
+    /// grain engines (Spektra, and Dye whenever the field has no device
+    /// path; pipe architecture, capability class). The closure receives the
     /// materialized density_cmy image and returns the grained image, which
     /// is written back to the same device buffer.
     pub density_cpu_stage: Option<CpuStageFn<'a>>,

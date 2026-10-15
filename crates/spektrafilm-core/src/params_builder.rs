@@ -651,7 +651,13 @@ mod tests {
         params.film_render.grain.uniformity = [0.5; 3];
         params.film_render.dir_couplers.gamma_samelayer_rgb = [0.9; 3];
         let seeded = digest_params(params.clone(), &film, &print, None, true);
-        assert_eq!(seeded.film_render.grain.rms_granularity, [4.5; 3]);
+        // The stock preset replaces the caller's value with the table's; the
+        // channel ratio of this stock comes from its measured granularity
+        // (data/presets/grain.toml).
+        assert_eq!(
+            seeded.film_render.grain.rms_granularity,
+            [5.6385, 4.5, 5.544]
+        );
         assert_eq!(seeded.film_render.grain.uniformity, [0.97, 0.99, 0.97]);
         assert_eq!(
             seeded.film_render.dir_couplers.gamma_samelayer_rgb,

@@ -213,7 +213,10 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
             {
                 out.push(Custom);
             }
-        } else if path.contains(".v3_") || path.ends_with(".rms_granularity") {
+        } else if path.contains(".v3_")
+            || path.ends_with(".rms_granularity")
+            || path.ends_with(".channel_correlation")
+        {
             out.push(Dye);
         } else if ["density_min", "uniformity", "particle_scale_sublayers"]
             .iter()

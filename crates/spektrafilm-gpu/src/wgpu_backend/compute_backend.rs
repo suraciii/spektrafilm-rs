@@ -189,6 +189,16 @@ impl ComputeBackend for WgpuBackend {
     fn grain_v2(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> Option<ImageBuf> {
         Some(self.grain_v2_gpu(img, params))
     }
+    fn dye_field(
+        &self,
+        img: &ImageBuf,
+        params: &crate::wgpu_backend::DyeGpuParams,
+    ) -> Option<Result<ImageBuf, String>> {
+        // The device entry point is the inherent `WgpuBackend::dye_field`;
+        // this hook only marks the attempt so a backend without a device
+        // field path keeps the caller's host fallback.
+        Some(WgpuBackend::dye_field(self, img, params))
+    }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
         if sigma <= 0.0 {
             return img.clone();

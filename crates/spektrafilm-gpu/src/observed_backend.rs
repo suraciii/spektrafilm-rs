@@ -162,6 +162,14 @@ impl ComputeBackend for ObservedBackend<'_> {
         self.cpu();
         self.backend.grain_v2(i, p)
     }
+    #[cfg(feature = "wgpu-backend")]
+    fn dye_field(
+        &self,
+        i: &ImageBuf,
+        p: &crate::wgpu_backend::DyeGpuParams,
+    ) -> Option<Result<ImageBuf, String>> {
+        self.backend.dye_field(i, p)
+    }
     fn try_run_film_chain(&self, p: &FilmChainParams<'_>) -> Result<Option<ImageBuf>, String> {
         self.backend.try_run_film_chain(p)
     }

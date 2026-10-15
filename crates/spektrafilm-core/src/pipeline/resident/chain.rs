@@ -50,14 +50,21 @@ impl Pipeline {
                 // route. Frontend-class reasons select a route; they do not
                 // demote one and stay permitted.
                 if backend.explicit_gpu_request() {
-                    let capability_missing = reasons.iter().any(|r| {
-                        !matches!(
-                            r,
-                            ResidentFallbackReason::WorkflowRoute
-                                | ResidentFallbackReason::MissingResidentFrontPass
-                                | ResidentFallbackReason::MallettExecutionParity
-                                | ResidentFallbackReason::UnsupportedOutputGamut
-                        )
+                    // A readout geometry the resident chain cannot express
+                    // selects the per-stage route; the device realizes the
+                    // field there, so that decline is route selection rather
+                    // than a capability gap. A request the device cannot
+                    // realize at all stays capability-missing.
+                    let host_field =
+                        crate::stages::grain_v3::published_host_field_reason(&self.params)
+                            .is_some();
+                    let capability_missing = reasons.iter().any(|r| match r {
+                        ResidentFallbackReason::WorkflowRoute
+                        | ResidentFallbackReason::MissingResidentFrontPass
+                        | ResidentFallbackReason::MallettExecutionParity
+                        | ResidentFallbackReason::UnsupportedOutputGamut => false,
+                        ResidentFallbackReason::FilmGrainV3FieldCpu => host_field,
+                        _ => true,
                     });
                     if capability_missing {
                         return Err(format!(
@@ -350,14 +357,45 @@ impl Pipeline {
         } else {
             None
         };
+        // Film-grain Dye resolves its field on the device whenever the
+        // request is device-representable: the pass runs on the film density
+        // buffer in the density-fence position and no host arithmetic
+        // touches the field. A request the device cannot realize (the
+        // experimental mass-law selector) keeps the host field as the
+        // assembled density fence below, so an explicit GPU request fails by
+        // name at assembly instead of silently running host arithmetic.
+        let grain_dye = if crate::stages::grain_v3::active(&self.params) {
+            match crate::stages::grain_v3::resident_device_params(
+                &self.film,
+                &self.params,
+                image,
+                pixel_size_um,
+            ) {
+                Ok(params) => Some(params),
+                Err(reason) => {
+                    tracing::info!(
+                        target: "spektrafilm_core::pipeline",
+                        %reason,
+                        "film grain Dye: the field falls back to the assembled host fence"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
         // Host grain runs as an assembled fence on the film density buffer:
         // the resident chain keeps device residency for every other stage,
         // transferring 2 + 2 × fence count times total. Spektra resolves its
         // field from the normalized density; Dye reads the same buffer with
-        // the identity readout geometry, which the decision admits only when
-        // the requested geometry is the delivered raster
-        // (`stages::grain_v3::resident_fence_supported`).
-        let density_cpu_stage = self.density_cpu_stage(film_curves_norm, backend, pixel_size_um);
+        // the identity readout geometry only when its field has no device
+        // path (`stages::grain_v3::resident_device_params`).
+        let density_cpu_stage = self.density_cpu_stage(
+            film_curves_norm,
+            backend,
+            pixel_size_um,
+            grain_dye.is_some(),
+        );
 
         // Scanner readout interpretation (slide points, faithful B&W/slide
         // luminance remap, negative-to-positive conversion, LabScan finish)
@@ -581,6 +619,7 @@ impl Pipeline {
             camera_lens_blur_px,
             scanner_lens_blur_px,
             highlight_boost,
+            grain_dye,
             density_cpu_stage,
             scan_tail_cpu_stage,
             scan_acquisition_cpu_stage,

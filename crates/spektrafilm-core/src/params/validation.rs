@@ -99,6 +99,10 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.grain.v3_dye_support_um" | "film_render.grain.v3_event_area_um2" => {
             Some((0.0, None))
         }
+        "film_render.grain.channel_correlation" => Some((
+            0.0,
+            Some(super::grain::MEASURED_CHANNEL_CORRELATION_CEILING),
+        )),
         // Discovery range only; `validate` and the sparse-source leaf check
         // own the strict positivity.
         "camera.film_format_mm" => Some((0.0, None)),
@@ -569,6 +573,18 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             "film_render.grain.v3_event_area_um2: must be finite and strictly positive (square micrometers)"
                 .into(),
         );
+    }
+    // The bound is the measured band, not the structural limit: the split
+    // itself tolerates anything below one, but the record coherence above the
+    // band is what the evidence attributes to the scanner, so a preset may not
+    // reach it.
+    let ceiling = super::grain::MEASURED_CHANNEL_CORRELATION_CEILING;
+    if !grain.channel_correlation.is_finite()
+        || !(0.0..=ceiling).contains(&grain.channel_correlation)
+    {
+        return Err(format!(
+            "film_render.grain.channel_correlation: must be finite and in [0, {ceiling}]"
+        ));
     }
     for (name, value) in [
         ("v2_size", grain.v2_size),
