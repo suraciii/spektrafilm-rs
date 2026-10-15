@@ -55,7 +55,10 @@ fn gui_child_preserves_edits_while_batch_applies_stock_specifics() {
             .arg("cpu")
             .arg("--raw-out")
             .arg(&raw)
-            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS");
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+            .env("SPEKTRAFILM_CONFIG_DIR", scratch.0.join("config"))
+            .env("SPEKTRAFILM_DATA_DIR", &data)
+            .env_remove("SPEKTRAFILM_BACKEND");
         if preserve {
             command.env("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS", "1");
         }
@@ -146,6 +149,9 @@ fn bounded_png_recipe_publishes_an_eight_bit_preview() {
         .arg("--data-dir")
         .arg(&data)
         .env("SPEKTRAFILM_BACKEND", "cpu")
+        .env("SPEKTRAFILM_CONFIG_DIR", scratch.0.join("config"))
+        .env("SPEKTRAFILM_DATA_DIR", &data)
+        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
         .env("RUST_LOG", "off")
         .output()
         .unwrap();
@@ -214,6 +220,9 @@ fn lut_cli_applies_legacy_exposure_once() {
             .arg("--data-dir")
             .arg(&data)
             .env("SPEKTRAFILM_BACKEND", "cpu")
+            .env("SPEKTRAFILM_CONFIG_DIR", scratch.0.join("config"))
+            .env("SPEKTRAFILM_DATA_DIR", &data)
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
             .env("RUST_LOG", "off")
             .output()
             .unwrap();

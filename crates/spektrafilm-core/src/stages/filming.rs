@@ -440,13 +440,14 @@ mod tests {
                 .join("data")
         }
 
-        fn portra() -> Option<Profile> {
+        fn portra() -> Profile {
             let path = data_dir().join("profiles/kodak_portra_400.json");
-            if !path.exists() {
-                eprintln!("Skipping test — profile not found at {}", path.display());
-                return None;
-            }
-            Some(profile::load_profile(&path).unwrap())
+            assert!(
+                path.exists(),
+                "test fixture required: {}",
+                path.display()
+            );
+            profile::load_profile(&path).unwrap()
         }
 
         /// Small log-exposure image spread across the curve axis.
@@ -499,7 +500,7 @@ mod tests {
         /// untouched).
         #[test]
         fn grain_disabled_is_density_identity() {
-            let Some(film) = portra() else { return };
+            let film = portra();
             let backend = CpuBackend;
             let mut params = base_params();
             params.film_render.grain.active = false;
@@ -523,7 +524,7 @@ mod tests {
         /// outputs differ, and each is deterministic across runs.
         #[test]
         fn sublayers_toggle_switches_models() {
-            let Some(film) = portra() else { return };
+            let film = portra();
             let backend = CpuBackend;
             let log_raw = log_raw();
             let mut params = base_params();
@@ -544,7 +545,7 @@ mod tests {
         /// density variance, matching Python's channel-wise area scaling.
         #[test]
         fn layered_grain_particle_scale_changes_channel_variance() {
-            let Some(film) = portra() else { return };
+            let film = portra();
             let backend = CpuBackend;
             let log_raw = log_raw();
             let mut params = base_params();
@@ -575,7 +576,7 @@ mod tests {
         /// there, and must not touch the layered path.
         #[test]
         fn n_sub_layers_is_composite_only() {
-            let Some(film) = portra() else { return };
+            let film = portra();
             let backend = CpuBackend;
             let log_raw = log_raw();
 
@@ -600,7 +601,7 @@ mod tests {
         /// — bit parity is impossible for upstream's numba kernels).
         #[test]
         fn use_fast_stats_switches_regime() {
-            let Some(film) = portra() else { return };
+            let film = portra();
             let backend = CpuBackend;
             let log_raw = log_raw();
             let mut params = base_params();
@@ -630,11 +631,12 @@ mod tests {
         #[test]
         fn layered_grain_positive_profile_runs_negated_axis() {
             let path = data_dir().join("profiles/fujifilm_provia_100f.json");
-            if !path.exists() {
-                eprintln!("Skipping test — profile not found at {}", path.display());
-                return;
-            }
-            let film = profile::load_profile(&path).unwrap();
+        assert!(
+            path.exists(),
+            "test fixture required: {}",
+            path.display()
+        );
+        let film = profile::load_profile(&path).unwrap();
             assert!(film.is_positive());
             let backend = CpuBackend;
             let params = base_params();
@@ -655,7 +657,7 @@ mod tests {
         #[test]
         #[should_panic(expected = "grain.sublayers_active requires the film profile")]
         fn sublayers_without_layer_curves_fails() {
-            let Some(mut film) = portra() else { return };
+            let mut film = portra();
             film.data.density_curves_layers.clear();
             let backend = CpuBackend;
             let params = base_params();
@@ -669,11 +671,12 @@ mod tests {
         #[test]
         fn layered_grain_monochrome_keeps_channels_equal() {
             let path = data_dir().join("profiles/kodak_doublex.json");
-            if !path.exists() {
-                eprintln!("Skipping test — profile not found at {}", path.display());
-                return;
-            }
-            let film = profile::resolve_for_render(profile::load_profile(&path).unwrap(), None);
+        assert!(
+            path.exists(),
+            "test fixture required: {}",
+            path.display()
+        );
+        let film = profile::resolve_for_render(profile::load_profile(&path).unwrap(), None);
             let backend = CpuBackend;
             let mut params = base_params();
             // Mirror `Pipeline::apply_film_specific_params`: monochrome
