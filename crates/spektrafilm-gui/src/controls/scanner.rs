@@ -282,4 +282,53 @@ pub(crate) fn sections(
             flags.raw_reload |= ui.button("reprocess raw").clicked();
         }
     }
+    if section == "Camera diffusion" || section == "Enlarger diffusion" {
+        ui.scope(|ui| {
+            let (diffusion_filter, paths) = if section == "Camera diffusion" {
+                (&mut params.camera.diffusion_filter, &CAMERA_DIFFUSION_PATHS)
+            } else {
+                (
+                    &mut params.enlarger.diffusion_filter,
+                    &ENLARGER_DIFFUSION_PATHS,
+                )
+            };
+            flags.runtime_changed |= diffusion(ui, diffusion_filter, paths, filter);
+        });
+    }
+}
+
+fn preflash_controls(
+    ui: &mut Ui,
+    params: &mut RuntimeParams,
+    flags: &mut ChangeFlags,
+    filter: &mut ControlFilter<'_>,
+) {
+    // Gate the whole group on its member labels: a search that matches no
+    // member hides the inactive notice together with the rows. Keep the list
+    // complete for every row this function renders.
+    if !filter_matches_any(
+        filter,
+        &[
+            "preflash exposure",
+            "preflash y filter shift",
+            "preflash m filter shift",
+        ],
+    ) {
+        return;
+    }
+    let active = params.workflow.route.contains(" > print > ");
+    if !active {
+        ui.label("Preflash inactive on this route; stored values are retained.");
+    }
+    ui.add_enabled_ui(active, |ui| {
+        if filter_matches(filter, "preflash exposure") {
+            flags.runtime_changed |= param_numeric(ui, "preflash exposure", &mut params.enlarger.preflash_exposure, "enlarger.preflash_exposure", "Linear multiplier of the integrated spectral flash, not EV. Zero disables flash and retains its filters. For negative-to-photographic-paper printing, flash can bring weak highlight exposure differences into a responsive part of the paper curve; it cannot recover absent detail. Excess may lower paper white, add fog, alter midtones and change color. Other print materials retain their own polarity.");
+        }
+        if filter_matches(filter, "preflash y filter shift") {
+            flags.runtime_changed |= param_numeric(ui, "preflash y filter shift", &mut params.enlarger.preflash_y_filter_shift, "enlarger.preflash_y_filter_shift", "Independent preflash Yellow shift around the calibrated neutral filter pack, in Kodak CC units.");
+        }
+        if filter_matches(filter, "preflash m filter shift") {
+            flags.runtime_changed |= param_numeric(ui, "preflash m filter shift", &mut params.enlarger.preflash_m_filter_shift, "enlarger.preflash_m_filter_shift", "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units.");
+        }
+    });
 }
