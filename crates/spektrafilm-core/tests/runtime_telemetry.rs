@@ -246,11 +246,13 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
 }
 
 #[test]
-fn active_v3_field_fence_reports_its_cpu_stage_reason() {
-    // The delivered raster (no crop, no upscale) runs the Dye field as the
-    // assembled density fence: the render stays on the resident chain, the
-    // field's CPU stage keeps its published reason, and the fence is not a
-    // resident decline.
+fn active_v3_field_reports_its_device_stage() {
+    use spektrafilm_gpu::ComputeBackend as _;
+    // The delivered raster (no crop, no upscale) resolves the Dye field as
+    // the resident device pass: the render stays on the resident chain and
+    // records no host field stage. The host field and its published reason
+    // are held by `active_v3_field_reports_its_cpu_stage_reason` (a host
+    // backend) and the mass-law case in the resident tests.
     let gpu = spektrafilm_gpu::test_support::adapter();
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
@@ -289,19 +291,22 @@ fn active_v3_field_fence_reports_its_cpu_stage_reason() {
     assert_eq!(
         summary.path,
         Some(ExecutionPath::GpuResident),
-        "the Dye fence must keep the resident chain: {:?}",
+        "the device Dye field must keep the resident chain on {}: {:?}",
+        gpu.name(),
         summary.path
     );
     assert!(
-        summary
+        !summary
             .cpu_stage_reasons
-            .contains(&("grain_v3_field".to_owned(), CpuReason::GrainV3FieldCpu)),
-        "Dye field stage missing from the report: {:?}",
+            .iter()
+            .any(|(stage, _)| stage == "grain_v3_field"),
+        "the device Dye field recorded a host stage on {}: {:?}",
+        gpu.name(),
         summary.cpu_stage_reasons
     );
     assert!(
         summary.resident_decline_reasons.is_empty(),
-        "the Dye fence must not decline the resident route: {:?}",
+        "the Dye field must not decline the resident route: {:?}",
         summary.resident_decline_reasons
     );
     assert_eq!((output.width, output.height), (width, height));

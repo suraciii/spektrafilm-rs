@@ -629,37 +629,19 @@ fn cmd_process(
         spektrafilm_math::colorspace::resolve(saving_space)
             .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
     }
-    // Active Dye resolves its field on the CPU. When the request resolves to
-    // the delivered raster the field runs as the assembled density fence and
-    // the render stays on the selected backend; otherwise the whole route is
-    // the per-stage CPU path. Its supported condition is validated here so
-    // the dry run reports and rejects exactly what a render does, and the
-    // effective backend is reported next to the selected one.
+    // Validate configuration without creating a compute device for dry runs.
     spektrafilm_core::stages::grain_v3::validate_supported(&film, &params)
         .map_err(anyhow::Error::msg)?;
     let grain_v3_active = spektrafilm_core::stages::grain_v3::active(&params);
-    let grain_v3_on_cpu = grain_v3_active
-        && !spektrafilm_core::stages::grain_v3::resident_fence_supported(&film, &params);
-    if grain_v3_active {
-        eprintln!(
-            "Backend (effective): {}",
-            spektrafilm_core::stages::grain_v3::effective_backend_note()
-        );
-    }
-    // Every active Dye field resolves on the CPU; only a request the fence
-    // cannot express (a crop or upscale, or the env-gated certification
-    // readouts) moves the whole route to the per-stage CPU path.
-    let grain_v3 = json!({
-        "active": grain_v3_active,
-        "effective_backend": if grain_v3_on_cpu { Some("cpu") } else { None },
-        "note": if grain_v3_active {
-            Some(spektrafilm_core::stages::grain_v3::effective_backend_note())
-        } else {
-            None
-        },
-    });
     let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
     if dry_run {
+        let grain_v3 = json!({
+            "active": grain_v3_active,
+            "effective_backend": null,
+            "note": grain_v3_active.then_some(
+                "Dye executor resolves when rendering; compute-device availability is unchecked."
+            ),
+        });
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let output_format = plan.as_ref().map(|plan| plan.format.name());
         let output_bit_depth = plan
@@ -760,6 +742,16 @@ fn cmd_process(
         },
     )?;
     eprintln!("Backend: {}", backend.name());
+    if grain_v3_active {
+        eprintln!(
+            "Backend (effective): {}",
+            spektrafilm_core::stages::grain_v3::effective_backend_note(
+                &film,
+                &params,
+                backend.is_gpu(),
+            )
+        );
+    }
 
     let t = Instant::now();
     let (image, metadata) = invocation.phase(

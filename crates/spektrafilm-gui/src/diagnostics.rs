@@ -157,16 +157,23 @@ impl Diagnostics {
 }
 
 /// Effective backend label for Scan and Export reports. An active Dye field
-/// resolves on the CPU — inside the assembled density fence on the resident
-/// route, or as the per-stage readout — so the selected backend name alone
-/// would understate where the grain runs.
-pub(crate) fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
+/// resolves on the device whenever the render backend has one and the
+/// request is device-representable, and on the host with its fallback reason
+/// otherwise (`grain_v3::effective_field_backend` is the authority), so the
+/// selected backend name alone would misreport where the grain runs.
+pub(crate) fn effective_backend_name(
+    backend: &dyn spektrafilm_gpu::ComputeBackend,
+    params: &RuntimeParams,
+) -> String {
     if spektrafilm_core::stages::grain_v3::active(params) {
-        format!("{selected} · grain Dye on CPU")
+        let executor =
+            spektrafilm_core::stages::grain_v3::effective_field_backend(params, backend.is_gpu());
+        let executor = if executor == "gpu" { "GPU" } else { "CPU" };
+        format!("{} · grain Dye on {executor}", backend.name())
     } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
-        format!("{selected} · grain Fotufilm on CPU")
+        format!("{} · grain Fotufilm on CPU", backend.name())
     } else {
-        selected.to_owned()
+        backend.name().to_owned()
     }
 }
 

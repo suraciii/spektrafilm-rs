@@ -37,6 +37,14 @@ impl WgpuBackend {
         let scan_normalization = p.scan_normalization;
         let scan_xyz_to_rgb = p.scan_xyz_to_rgb;
 
+        // Bounded Dye resources are validated before the chain allocates
+        // anything (pipe architecture: resource validation precedes chain
+        // allocations), so a request the device cannot hold is a named
+        // failure instead of an allocation trap.
+        if let Some(dye) = p.grain_dye.as_ref() {
+            self.validate_dye_resources(image.width, image.height, dye)?;
+        }
+
         let n_pixels = image.pixel_count() as u32;
         let img_bytes = n_pixels as usize * 3 * 4;
 
@@ -596,10 +604,9 @@ impl WgpuBackend {
         });
 
         // ── Assemble the stage list, then run it on the pipe ────────────
-        // Consecutive GPU nodes share one command buffer and one submission,
-        // exactly like the former fused inline sequence. Each closure owns
-        // the bind groups and state it encodes; buffers ride along as
-        // Arc-cloned handles (wgpu resources are cheap clones).
+        // GPU nodes use ordered submissions while sharing resident buffers.
+        // Keeping node workloads separate avoids a whole-frame watchdog job.
+        // Each closure owns its bind groups and state; buffers use cheap handles.
         let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
         let mut stages: Vec<super::super::pipe::ChainStage<'_>> = Vec::new();
         let pass = |name: &'static str,
@@ -722,6 +729,19 @@ impl WgpuBackend {
                     Ok(())
                 }),
             });
+        }
+        // 3c. Film-grain Dye: the device field on the developed density in
+        //     buf_a, in the density-fence position (after the film density
+        //     curve and DIR, before printing). The pass resolves the
+        //     conditional field and writes its readout back into the same
+        //     buffer, so the pre-bound print bind groups keep addressing it.
+        //     Its bounded status is checked after the run and before the
+        //     output is published below.
+        let mut dye_status = None;
+        if let Some(dye) = p.grain_dye.as_ref() {
+            let dye_state = self.prepare_dye(image.width, image.height, &buf_a, dye)?;
+            dye_status = Some(dye_state.status_buffer());
+            dye_state.append_stages(&mut stages, &buf_a);
         }
         // 4 + 5. Printing: print_spectral (buf_a → buf_b) then the print
         //     density curve (buf_b → buf_a). Skipped for scan_film — the
@@ -1044,7 +1064,7 @@ impl WgpuBackend {
         }
         // Zero-copy path: when buf_b is mappable, skip the blit and map it
         // directly below. Otherwise stage it into the MAP_READ readback
-        // buffer, still inside the single submission.
+        // buffer in the last ordered device submission.
         if let Some(rb) = readback.as_ref() {
             let rb = rb.clone();
             let buf_b = buf_b.clone();
@@ -1060,6 +1080,12 @@ impl WgpuBackend {
         // creation/uploads, and stage assembly.
         let cpu_setup_ms = t_start.elapsed().as_secs_f32() * 1000.0;
         self.pipe.run_chain(stages)?;
+        // The Dye pass publishes only a bounded flag; it is checked after the
+        // run and before the output is read back and published (pipe
+        // architecture), so an out-of-bounds field fails instead of escaping.
+        if let Some(status) = dye_status.as_ref() {
+            self.check_dye_status(status)?;
+        }
 
         // Single sync point at the end. Map buf_b directly on the zero-copy
         // path, or the staging buffer otherwise.
@@ -1109,7 +1135,10 @@ const MAX_FIXED_AUX_BYTES: u64 = 4 * 1024;
 pub(in crate::wgpu_backend) struct RequiredChainBuffers {
     /// One image-sized buffer: the `img_a`/`img_b` ping-pong pair, the
     /// readback buffer, and every stage scratch buffer (blur, halation,
-    /// DIR, glare, unsharp, grain) is created at this size or smaller.
+    /// DIR, glare, unsharp, grain) is created at this size or smaller. The
+    /// Dye field's bounded band scratch is not derived here: it is planned
+    /// against the device limits by `validate_dye_resources`, which runs
+    /// before the chain allocates anything.
     pub(super) image_bytes: u64,
     /// Largest static buffer: the f32-narrowed lookup tables (spectral
     /// densities, density curves, front-pass LUT, gamut `C_max`) plus the
@@ -1255,6 +1284,7 @@ mod tests {
             camera_lens_blur_px: None,
             scanner_lens_blur_px: None,
             highlight_boost: None,
+            grain_dye: None,
             density_cpu_stage: None,
             scan_tail_cpu_stage: None,
             scan_acquisition_cpu_stage: None,

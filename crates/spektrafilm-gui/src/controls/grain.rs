@@ -140,6 +140,9 @@ pub(crate) fn sections(
                 if filter_matches(filter, "event area (µm²)") {
                     flags.runtime_changed |= param_numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, "film_render.grain.v3_event_area_um2", "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
                 }
+                if filter_matches(filter, "channel correlation") {
+                    flags.runtime_changed |= param_numeric(ui, "Channel correlation", &mut grain.channel_correlation, "film_render.grain.channel_correlation", "Shared fraction of each emulsion layer's per-channel event rate; the realized channel correlation is a lower bound of this value, and no channel's strength changes.");
+                }
                 if filter_matches(filter, "rms granularity (experimental)") {
                     flags.runtime_changed |= param_tuple(ui, "rms granularity (experimental)", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
                 }

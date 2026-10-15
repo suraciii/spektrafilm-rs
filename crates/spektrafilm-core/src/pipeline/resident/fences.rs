@@ -26,11 +26,16 @@ pub(crate) fn fence_cpu_backend(
 
 impl super::super::Pipeline {
     /// Host grain as an assembled fence on the film density buffer.
+    ///
+    /// `dye_on_device` marks a Dye field the device pass realizes; the
+    /// fence then serves the host grain engine only, so a supported active
+    /// Dye keeps no host arithmetic at all.
     pub(crate) fn density_cpu_stage<'a>(
         &'a self,
         film_curves_norm: &'a [[f64; 3]],
         backend: &'a dyn ComputeBackend,
         pixel_size_um: f64,
+        dye_on_device: bool,
     ) -> Option<CpuStageFn<'a>> {
         if self.params.film_render.grain.active {
             match self.params.film_render.grain.engine {
@@ -61,9 +66,11 @@ impl super::super::Pipeline {
                 // Spatial deactivation must bypass Dye before its field is
                 // resolved (spec film-grain/v3 §Controls and compatibility),
                 // exactly like the per-stage route: `grain_v3::active` is the
-                // one authoritative gate.
+                // one authoritative gate. The fence holds the host field only
+                // for a request the device cannot realize; a device-realized
+                // field runs as the `grain_dye` pass instead.
                 crate::params::grain::GrainEngine::Dye
-                    if crate::stages::grain_v3::active(&self.params) =>
+                    if crate::stages::grain_v3::active(&self.params) && !dye_on_device =>
                 {
                     let film = &self.film;
                     let params = &self.params;

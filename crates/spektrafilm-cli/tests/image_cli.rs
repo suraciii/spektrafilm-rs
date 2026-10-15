@@ -362,10 +362,8 @@ fn fotufilm_dry_run_reports_authored_controls_and_cpu_provenance() {
 }
 
 #[test]
-fn dye_dry_run_reports_the_density_fence_and_the_per_stage_fallback() {
+fn dye_dry_run_does_not_claim_an_unchecked_executor() {
     let f = Fixture::new();
-    // The delivered raster runs the Dye field as the assembled density fence
-    // on the selected backend, so the report claims no CPU route.
     let report = f.report(&[
         "--input-color-space",
         "sRGB",
@@ -375,28 +373,16 @@ fn dye_dry_run_reports_the_density_fence_and_the_per_stage_fallback() {
         "film_render.grain.engine=dye,film_render.grain.v3_dye_support_um=8",
         "--dry-run",
     ]);
-    let dye = &report["film_grain_dye"];
-    assert_eq!(dye["active"], true);
-    assert_eq!(dye["effective_backend"], serde_json::Value::Null);
+    assert_eq!(report["film_grain_dye"]["active"], true);
+    assert!(report["film_grain_dye"]["effective_backend"].is_null());
+    assert_eq!(report["backend"]["requested"], "cpu");
     assert!(
-        dye["note"]
-            .as_str()
-            .is_some_and(|note| note.contains("CPU"))
+        report["unchecked"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("compute_device"))
     );
-    // A cropped request cannot be expressed by the fence, so the whole route
-    // is the per-stage CPU path.
-    let report = f.report(&[
-        "--input-color-space",
-        "sRGB",
-        "--input-cctf-decoding",
-        "true",
-        "--set",
-        "film_render.grain.engine=dye,io.crop=true",
-        "--dry-run",
-    ]);
-    let dye = &report["film_grain_dye"];
-    assert_eq!(dye["active"], true);
-    assert_eq!(dye["effective_backend"], "cpu");
+    assert!(!f.0.join("output.tif").exists());
 }
 
 #[test]

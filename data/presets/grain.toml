@@ -25,21 +25,36 @@ particle_scale_sublayers = [1.0, 0.4, 0.25]
 
 
 # --- still color
-[kodak_gold_200]
-rms_granularity = [5.0, 5.0, 5.0]
+#
+# Per-channel granularity. The channel ratio of each stock below comes from the
+# measured field of a commercial film-simulation product, green-normalized; the
+# green value is the stock's own magnitude and stays as it was. Only stocks with
+# a measured source carry a ratio: `channel_correlation` and the remaining
+# `rms_granularity` entries stay uniform, because the available chart samples
+# (Portra 160 [1.046, 1.000, 1.101], Ektar 100 [0.992, 1.000, 1.012]) show no
+# channel ratio beyond scanner crosstalk and are limited to one scanner.
+#
+# Entries marked "same class" map by stock class, not by name. The provenance of
+# these ratios, the normalization rule, and why the magnitude is a lower bound
+# are in specs/film-grain/v3/design.md#evidence-and-limits.
+[kodak_gold_200] # KodakEliteColor200, same class
+rms_granularity = [3.765, 5.0, 4.9]
 
-[kodak_ultramax_400]
-rms_granularity = [6.0, 6.0, 6.0]
+[kodak_ultramax_400] # KodakEliteColor400, same class; a native scan [1.213, 1.000, 1.511] agrees on blue over green only
+rms_granularity = [5.088, 6.0, 8.388]
 
-[kodak_ektar_100]
-rms_granularity = [4.0, 4.0, 4.0]
+[kodak_ektar_100] # KodakEktar100
+rms_granularity = [3.756, 4.0, 7.536]
 
-[kodak_portra_160]
-rms_granularity = [3.5, 3.5, 3.5]
+[kodak_portra_160] # Portra160NC/VC median
+rms_granularity = [2.919, 3.5, 4.284]
 
-[kodak_portra_400]
-rms_granularity = [4.5, 4.5, 4.5]
+[kodak_portra_400] # KodakPortra400
+rms_granularity = [5.6385, 4.5, 5.544]
 
+# The reference stock of the Dye anchor. Its `k_c = 1` is what makes
+# `v3_event_area_um2` the validated absolute event area, so it stays uniform and
+# so do its pushes.
 [kodak_portra_800]
 rms_granularity = [6.0, 6.0, 6.0]
 
@@ -49,14 +64,14 @@ rms_granularity = [7.0, 7.0, 7.0]
 [kodak_portra_800_push2]
 rms_granularity = [9.0, 9.0, 9.0]
 
-[fujifilm_c200]
-rms_granularity = [4.0, 4.0, 4.0]
+[fujifilm_c200] # FujiSuperia200, same class
+rms_granularity = [4.092, 4.0, 2.108]
 
-[fujifilm_xtra_400]
-rms_granularity = [4.0, 4.0, 4.0]
+[fujifilm_xtra_400] # FujiSuperiaXtra400
+rms_granularity = [3.456, 4.0, 5.564]
 
-[fujifilm_pro_400h]
-rms_granularity = [4.0, 4.0, 4.0]
+[fujifilm_pro_400h] # FujiPro400H
+rms_granularity = [6.132, 4.0, 9.392]
 
 
 # --- still color positive

@@ -10,7 +10,7 @@
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
-use spektrafilm_math::stats::FastStatsRng;
+use spektrafilm_math::stats::{FastStatsRng, cell_stream_index, poisson_exact};
 
 mod experiment_mass;
 use experiment_mass::MassLaw;
@@ -28,6 +28,17 @@ const BAND_OUTPUT_ROWS: usize = 128;
 /// holds fewer output rows; the field is never coarsened. A single output
 /// row above the budget fails with an actionable error.
 const MAX_BAND_CELLS: u64 = 1 << 24;
+
+/// First stream tag reserved for the per-layer shared counts.
+///
+/// Tags `0..=8` are the per-`(channel, layer)` streams (`c * 3 + l`) and stay
+/// as they are, so adding the shared streams cannot move any existing
+/// sequence. Tags `9..=11` are the shared stream of layers 0..=2. The shared
+/// stream is per layer, not one stream for all three: all three layers of one
+/// cell share the same cell address, so a single shared tag would hand them
+/// the same uniform sequence and correlate three independently coated
+/// emulsions.
+const SHARED_TAG_BASE: u64 = 9;
 
 /// Rectangular readout footprints in global film coordinates. Cropping
 /// changes the origin and dimensions, while retaining the full-frame pitch.
@@ -51,6 +62,12 @@ pub struct GrainV3Params {
     /// Statistical event area in square micrometers before channel and layer
     /// scaling. It controls count variance, never the support width.
     pub event_area_um2: f64,
+    /// Fraction of a layer's count rate shared by its active channels. The
+    /// structural domain is `[0, 1)`; the accepted range stops at the measured
+    /// inter-record coherence ceiling, so validation rejects a value above it.
+    /// It sets the channel correlation without changing any channel's marginal
+    /// count law.
+    pub channel_correlation: f64,
     /// Per-channel event-area scale (the stock granularity ratio squared).
     pub channel_scale: [f64; 3],
     /// Per-layer event-area scale.
@@ -389,8 +406,38 @@ fn apply_impl(
     Ok(out)
 }
 
+/// Named rejection of a device field request for the selected mass law.
+///
+/// The device realizes the fixed-mass conditional Poisson count law. The
+/// experimental random-mark laws of `SPEKTRAFILM_GRAIN_V3_MASS_LAW` are
+/// host-only diagnostics, so a device request for one fails by name instead
+/// of silently rendering with the production law. Expectation mode and the
+/// field-pitch override are part of the production law and stay device-side.
+pub fn check_device_mass_law() -> Result<(), String> {
+    check_mass_law(MassLaw::from_env()?)
+}
+
+fn check_mass_law(law: MassLaw) -> Result<(), String> {
+    let name = match law {
+        MassLaw::Fixed => return Ok(()),
+        MassLaw::TwoClass => "two_class",
+        MassLaw::Gamma4 => "gamma4",
+    };
+    Err(format!(
+        "film grain Dye: the experimental {name} mass law (SPEKTRAFILM_GRAIN_V3_MASS_LAW) has \
+         no device field path; unset it or render on the CPU backend"
+    ))
+}
+
 /// Derived model state: taps, per-channel capacity/curve tables.
-struct Model {
+/// The Dye field model: the channel tables derived from a resolved
+/// [`GrainV3Params`], plus the seed and mass law the realization uses.
+///
+/// [`apply`] owns the whole CPU realization. It is public because the device
+/// path has to evaluate the same stages against the same tables instead of
+/// re-deriving them, and a second derivation would be a second
+/// implementation of the conditioning.
+pub struct Model {
     /// One-dimensional cell-integrated formation taps for offsets
     /// `-radius..=radius`.
     taps: Vec<f64>,
@@ -399,6 +446,7 @@ struct Model {
     channels: [Channel; 3],
     seed: u64,
     expectation: bool,
+    channel_correlation: f64,
     mass_law: MassLaw,
 }
 
@@ -442,8 +490,67 @@ impl Channel {
     }
 }
 
+/// One channel's lookup tables and capacities, as plain data.
+///
+/// A faithful view of [`Channel`] for consumers that have to evaluate the same
+/// stages elsewhere: the device path packs these into its own layout instead
+/// of deriving them again, which would be a second implementation of the
+/// conditioning. The curves are borrowed — the consumer packs them into its
+/// own buffers, so an owned view would clone every knot twice for nothing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChannelTable<'a> {
+    /// `M_lc = m_lc + f_lc * density_min_c`.
+    pub cap: [f64; 3],
+    /// `sum_l M_lc`.
+    pub cap_total: f64,
+    /// `f_lc = m_lc / sum_l m_lc`.
+    pub frac: [f64; 3],
+    /// `a_lc`, the effective event area in square micrometers.
+    pub area: [f64; 3],
+    /// `density_min_c`.
+    pub min: f64,
+    /// Uniformity control of this channel.
+    pub uniformity: f64,
+    /// Composite-axis knots with the positive-film sign applied.
+    pub knots: &'a [f64],
+    /// Inverse knot spacing (`0` for duplicate knots).
+    pub inv_dx: &'a [f64],
+    /// Raw layer curves at the knots, per layer.
+    pub layers: [&'a [f64]; 3],
+}
+
 impl Model {
-    fn new(params: &GrainV3Params, pitch_um: f64) -> Result<Self, String> {
+    /// The three channel tables, in channel order.
+    pub fn channel_tables(&self) -> [ChannelTable<'_>; 3] {
+        std::array::from_fn(|c| {
+            let channel = &self.channels[c];
+            ChannelTable {
+                cap: channel.cap,
+                cap_total: channel.cap_total,
+                frac: channel.frac,
+                area: channel.area,
+                min: channel.min,
+                uniformity: channel.uniformity,
+                knots: &channel.knots,
+                inv_dx: &channel.inv_dx,
+                layers: [&channel.layers[0], &channel.layers[1], &channel.layers[2]],
+            }
+        })
+    }
+
+    /// Field-cell pitch in micrometers the realization uses.
+    pub fn cell_um(&self) -> f64 {
+        self.cell_um
+    }
+
+    /// One-dimensional cell-integrated formation taps for offsets
+    /// `-radius..=radius`.
+    pub fn taps(&self) -> &[f64] {
+        &self.taps
+    }
+
+    /// Build the model from resolved parameters and the source pitch.
+    pub fn new(params: &GrainV3Params, pitch_um: f64) -> Result<Self, String> {
         if !params.support_um.is_finite() || params.support_um <= 0.0 {
             return Err(format!(
                 "film grain Dye: v3_dye_support_um must be finite and > 0 (got {})",
@@ -482,6 +589,12 @@ impl Model {
                 std::array::from_fn(|l| params.layer_curves.iter().map(|row| row[l][c]).collect()),
             )?);
         }
+        let channel_correlation = params.channel_correlation;
+        if !channel_correlation.is_finite() || !(0.0..1.0).contains(&channel_correlation) {
+            return Err(
+                "film grain Dye: channel correlation must be finite and in [0, 1)".to_owned(),
+            );
+        }
         let mass_law = MassLaw::from_env()?;
         for (c, channel) in channels.iter().enumerate() {
             channel.check_sampling_bounds(c, cell_area)?;
@@ -496,6 +609,7 @@ impl Model {
                 .map_err(|_| "film grain Dye: channel state".to_owned())?,
             seed: params.seed,
             expectation: params.expectation,
+            channel_correlation,
             mass_law,
         })
     }
@@ -505,7 +619,8 @@ impl Model {
     /// Implements `design.md#sublayer-target-allocation`: bracket lookup on
     /// the normalized composite axis, weights `v_lc + b_lc`, then iterative
     /// weighted capacity allocation of `T_c = D_c + density_min_c`.
-    fn layer_targets(&self, target: [f64; 3]) -> [[f64; 3]; 3] {
+    /// Realized absolute cell density per channel for one cell target.
+    pub fn layer_targets(&self, target: [f64; 3]) -> [[f64; 3]; 3] {
         let mut out = [[0.0f64; 3]; 3];
         for (c, ch) in self.channels.iter().enumerate() {
             let total = (target[c] + ch.min).clamp(0.0, ch.cap_total);
@@ -528,6 +643,23 @@ impl Model {
     /// `i`/`j` are global signed cell coordinates: they alone select the
     /// random stream, so a crop or a tile boundary cannot change a cell's
     /// counts.
+    ///
+    /// Each layer splits its per-channel rate `lambda_c` into a shared part
+    /// `corr * min_c(lambda_c)` and an independent remainder
+    /// `lambda_c - shared`. The shared part is drawn once per layer, so the
+    /// channels of one layer correlate while every channel keeps its marginal
+    /// count law (the split is a thinning, so it holds for the default law and
+    /// for the scale-mixture laws alike). `min` runs over the layer's active channels only:
+    /// an inactive channel has no rate to correlate with, and counting it as
+    /// zero would silently collapse the layer's correlation to zero.
+    ///
+    /// Layers are the outer loop here because the shared draw needs all three
+    /// channels of a layer. A channel's contributions are still added in
+    /// ascending layer order into one accumulator, which is what keeps
+    /// `corr = 0` bit-identical to the previous per-channel loop.
+    // The layer index is a layer *number*: it selects the shared stream tag and
+    // indexes three per-channel arrays, not one collection.
+    #[allow(clippy::needless_range_loop)]
     fn accumulate(
         &self,
         i: i64,
@@ -537,30 +669,71 @@ impl Model {
     ) -> Result<[f64; 3], String> {
         let mut out = [0.0f64; 3];
         let index = cell_stream_index(i, j);
-        for (c, ch) in self.channels.iter().enumerate() {
-            let mut density = 0.0f64;
-            for (l, &target) in layers[c].iter().enumerate() {
+        for l in 0..3 {
+            // Per-channel rate and mass of this layer; `active[c]` marks the
+            // channels whose `(channel, layer)` contributes a count at all.
+            let mut rate = [0.0f64; 3];
+            let mut mass = [0.0f64; 3];
+            let mut active = [false; 3];
+            for (c, ch) in self.channels.iter().enumerate() {
+                let target = layers[c][l];
                 if target <= 0.0 || ch.cap[l] <= 0.0 {
                     continue;
                 }
                 let p = (target / ch.cap[l]).clamp(0.0, 1.0);
                 let s = 1.0 - ch.uniformity * (1.0 - 1e-6) * p;
-                let mass = ch.cap[l] * ch.area[l] * s / ch.frac[l];
-                let lambda = cell_area * ch.frac[l] * p / (ch.area[l] * s);
+                mass[c] = ch.cap[l] * ch.area[l] * s / ch.frac[l];
+                rate[c] = cell_area * ch.frac[l] * p / (ch.area[l] * s);
+                active[c] = true;
+            }
+
+            // One shared rate serves the whole layer, so it must be one the
+            // smallest rate can fund without going negative.
+            let mut shared = 0.0f64;
+            let mut active_channels = 0usize;
+            let mut smallest = f64::INFINITY;
+            for c in 0..3 {
+                if active[c] && rate[c] > 0.0 {
+                    active_channels += 1;
+                    smallest = smallest.min(rate[c]);
+                }
+            }
+            if active_channels >= 2 {
+                shared = self.channel_correlation * smallest;
+            }
+
+            let shared_count = if self.expectation || shared <= 0.0 {
+                0.0
+            } else {
+                let mut rng = FastStatsRng::stream(self.seed, SHARED_TAG_BASE + l as u64, index);
+                self.mass_law.sample(&mut rng, shared)?
+            };
+
+            for (c, _) in self.channels.iter().enumerate() {
+                if !active[c] {
+                    continue;
+                }
                 let count = if self.expectation {
-                    lambda
+                    // The expectation is the marginal mean and must not move
+                    // with the correlation, so it is not split at all.
+                    rate[c]
                 } else {
-                    let mut rng = FastStatsRng::stream(self.seed, (c * 3 + l) as u64, index);
-                    self.mass_law.sample(&mut rng, lambda)?
+                    let independent = rate[c] - shared;
+                    let own = if independent > 0.0 {
+                        let mut rng = FastStatsRng::stream(self.seed, (c * 3 + l) as u64, index);
+                        self.mass_law.sample(&mut rng, independent)?
+                    } else {
+                        0.0
+                    };
+                    shared_count + own
                 };
-                density += mass * count / cell_area;
-                if !density.is_finite() {
+                out[c] += mass[c] * count / cell_area;
+                if !out[c].is_finite() {
                     return Err(
                         "film grain Dye: sampled dye mass exceeds finite density range".to_owned(),
                     );
                 }
             }
-            out[c] = density;
         }
         Ok(out)
     }
@@ -1006,76 +1179,6 @@ fn allocate(target: f64, capacity: &[f64; 3], weights: &[f64; 3]) -> [f64; 3] {
     out
 }
 
-/// Exact Poisson variate: Knuth's multiplication below 30, Hörmann's PTRS
-/// above. Rounded normal approximations must not replace it.
-fn poisson_exact(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
-    if lambda <= 0.0 {
-        return Ok(0);
-    }
-    if lambda < 30.0 {
-        let limit = (-lambda).exp();
-        let mut product = 1.0f64;
-        let mut count = 0u64;
-        loop {
-            product *= rng.rand();
-            if product <= limit {
-                return Ok(count);
-            }
-            count += 1;
-        }
-    }
-    poisson_ptrs(rng, lambda)
-}
-
-/// Hörmann 1993 transformed rejection with squeeze (PTRS), the same
-/// algorithm numpy uses for large rates.
-fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
-    let slam = lambda.sqrt();
-    let loglam = lambda.ln();
-    let b = 0.931 + 2.53 * slam;
-    let a = -0.059 + 0.02483 * b;
-    let inv_alpha = 1.1239 + 1.1328 / (b - 3.4);
-    let vr = 0.9277 - 3.6224 / (b - 2.0);
-    loop {
-        let u = rng.rand() - 0.5;
-        let v = rng.rand();
-        let us = 0.5 - u.abs();
-        if us == 0.0 {
-            continue;
-        }
-        let k = ((2.0 * a / us + b) * u + lambda + 0.43).floor();
-        if k < 0.0 {
-            continue;
-        }
-        if us < 0.013 && v > us {
-            continue;
-        }
-        if !k.is_finite() || k >= (1u64 << 53) as f64 {
-            return Err("film grain Dye: Poisson proposal exceeds the exact f64 integer range; increase event area or reduce field pitch".to_owned());
-        }
-        if us >= 0.07 && v <= vr {
-            return Ok(k as u64);
-        }
-        let lhs = v.ln() + inv_alpha.ln() - (a / (us * us) + b).ln();
-        let rhs = -lambda + k * loglam - libm::lgamma(k + 1.0);
-        if lhs <= rhs {
-            return Ok(k as u64);
-        }
-    }
-}
-
-/// Global-cell address of one `(channel, layer)` stream. Crop bounds, tile
-/// size, traversal order and thread scheduling must not enter the address.
-fn cell_stream_index(i: i64, j: i64) -> u64 {
-    debug_assert!(i32::try_from(i).is_ok() && i32::try_from(j).is_ok());
-    let mut address = ((i as u32 as u64) << 32) | j as u32 as u64;
-    // SplitMix64's finalizer is a permutation: odd multipliers and xor
-    // shifts preserve the packed address's uniqueness.
-    address = (address ^ (address >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    address = (address ^ (address >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    address ^ (address >> 31)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1105,6 +1208,9 @@ mod tests {
             support_um: SIGMA,
             cell_um,
             event_area_um2: area,
+            // The shipped default. The correlation tests set their own
+            // values instead of relying on this helper.
+            channel_correlation: 0.0,
             channel_scale: [1.0; 3],
             particle_scale_sublayers: [1.0; 3],
             density_min: [MIN_DENSITY; 3],
@@ -1444,6 +1550,19 @@ mod tests {
     }
 
     #[test]
+    fn device_mass_law_rejects_host_only_experiments() {
+        assert!(check_mass_law(MassLaw::Fixed).is_ok());
+        for law in [MassLaw::TwoClass, MassLaw::Gamma4] {
+            let error = check_mass_law(law).unwrap_err();
+            assert!(
+                error.contains("SPEKTRAFILM_GRAIN_V3_MASS_LAW")
+                    && error.contains("no device field path"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
     fn count_law_matches_poisson_probabilities() {
         let samples = 50_000u64;
         for &lambda in &[0.35f64, 3.0, 29.5, 30.5, 200.0] {
@@ -1464,7 +1583,10 @@ mod tests {
                 (mean - lambda).abs() <= 5.0 * mean_sigma.max(1e-9),
                 "lambda {lambda}: mean {mean}"
             );
-            let variance_sigma = (2.0 * lambda * lambda / samples as f64).sqrt();
+            // Exact variance of the unbiased sample variance for Poisson data:
+            // mu4=lambda+3*lambda^2, not the Gaussian 3*lambda^2.
+            let variance_sigma =
+                (lambda / samples as f64 + 2.0 * lambda * lambda / (samples as f64 - 1.0)).sqrt();
             assert!(
                 (variance - lambda).abs() <= 5.0 * variance_sigma.max(1e-9),
                 "lambda {lambda}: variance {variance}"
@@ -2027,6 +2149,277 @@ mod tests {
             (variance / expected_variance - 1.0).abs() < 0.1,
             "corner variance {variance}, independent-field variance {expected_variance}"
         );
+    }
+
+    /// FNV-1a digest of the realized cell densities of a fixed 3x3 grid at a
+    /// fixed configuration.
+    ///
+    /// `accumulate` returns plain f64 and takes plain f64, so this digest is
+    /// the same in both `precision-f64` configurations: it pins the count
+    /// realization, not the pixel pipeline.
+    fn cell_density_digest(correlation: f64) -> u64 {
+        let mut p = params(None, false, 0x5EED, 1.0);
+        p.channel_correlation = correlation;
+        let model = Model::new(&p, PITCH).unwrap();
+        let layers = model.layer_targets([0.12; 3]);
+        let area = model.cell_um.powi(2);
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for j in -1..=1 {
+            for i in -1..=1 {
+                for value in model.accumulate(i, j, layers, area).unwrap() {
+                    for byte in value.to_bits().to_le_bytes() {
+                        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+                    }
+                }
+            }
+        }
+        hash
+    }
+
+    #[test]
+    fn zero_correlation_reproduces_the_frozen_cell_densities() {
+        // Recorded from the build that predates the shared-rate split. Zero
+        // correlation must leave the independent per-`(channel, layer)` draws
+        // exactly as they were, including their accumulation order.
+        //
+        // The digest is a constant of the default mass law, so an experiment
+        // that selects another one is skipped by name instead of failing with a
+        // digest mismatch that says nothing about the split.
+        if std::env::var("SPEKTRAFILM_GRAIN_V3_MASS_LAW").is_ok() {
+            eprintln!(
+                "skipped: the frozen digest is recorded for the default mass law, and \
+                 SPEKTRAFILM_GRAIN_V3_MASS_LAW selects another one"
+            );
+            return;
+        }
+        assert_eq!(cell_density_digest(0.0), 0x51df_8f68_423e_c90b);
+        // And the correlation is not a no-op: it must move the realization.
+        assert_ne!(cell_density_digest(0.5), cell_density_digest(0.0));
+        assert_ne!(cell_density_digest(0.9), cell_density_digest(0.5));
+    }
+
+    /// Per-channel means, standard deviations and cross-channel correlations
+    /// of the realized density of one cell, over a seed ensemble.
+    #[allow(clippy::type_complexity)]
+    fn cell_channel_statistics(
+        correlation: f64,
+        samples: u64,
+    ) -> ([f64; 3], [f64; 3], [[f64; 3]; 3]) {
+        let mut first = [0.0f64; 3];
+        let mut second = [0.0f64; 3];
+        let mut pairs = [[0.0f64; 3]; 3];
+        for seed in 0..samples {
+            let mut p = params(None, false, seed, 1.0);
+            p.channel_correlation = correlation;
+            let model = Model::new(&p, PITCH).unwrap();
+            let layers = model.layer_targets([0.12; 3]);
+            let value = model
+                .accumulate(1, 1, layers, model.cell_um.powi(2))
+                .unwrap();
+            for a in 0..3 {
+                first[a] += value[a];
+                second[a] += value[a] * value[a];
+                for (b, item) in pairs[a].iter_mut().enumerate() {
+                    *item += value[a] * value[b];
+                }
+            }
+        }
+        let n = samples as f64;
+        let mean = std::array::from_fn(|c| first[c] / n);
+        let deviation =
+            std::array::from_fn(|c| (second[c] / n - (first[c] / n).powi(2)).max(0.0).sqrt());
+        let correlation_matrix = std::array::from_fn(|a| {
+            std::array::from_fn(|b| {
+                let covariance = pairs[a][b] / n - mean[a] * mean[b];
+                covariance / (deviation[a] * deviation[b])
+            })
+        });
+        (mean, deviation, correlation_matrix)
+    }
+
+    #[test]
+    fn correlation_raises_cross_channel_coupling_without_moving_marginals() {
+        let samples = 8192;
+        let (mean0, deviation0, corr0) = cell_channel_statistics(0.0, samples);
+        let (mean5, deviation5, corr5) = cell_channel_statistics(0.5, samples);
+        let (mean9, deviation9, _) = cell_channel_statistics(0.9, samples);
+        for (a, row) in corr0.iter().enumerate() {
+            for (b, value) in row.iter().enumerate() {
+                if a != b {
+                    assert!(
+                        value.abs() < 0.05,
+                        "channels {a},{b} correlate without the control: {}",
+                        corr0[a][b]
+                    );
+                }
+            }
+        }
+        // The shared rate is `corr * min_c(lambda_c)`, so the realized
+        // correlation is at most the control value and reaches it when the
+        // channels of a layer have equal rates.
+        for (a, row) in corr0.iter().enumerate() {
+            for (b, control) in row.iter().enumerate() {
+                if a != b {
+                    let low = control.abs().max(0.05);
+                    assert!(
+                        corr5[a][b] > 0.2 && corr5[a][b] <= 0.75,
+                        "corr 0.5 gave {} for {a},{b}",
+                        corr5[a][b]
+                    );
+                    assert!(corr5[a][b] > low, "corr 0.5 did not exceed the floor");
+                }
+            }
+        }
+        // The marginals are the same law at every correlation: the split only
+        // regroups the same total rate.
+        for c in 0..3 {
+            let band = 4.0 * deviation0[c] / (samples as f64).sqrt();
+            assert!(
+                (mean0[c] - mean5[c]).abs() < band && (mean0[c] - mean9[c]).abs() < band,
+                "channel {c} mean moved with the correlation: {} {} {}",
+                mean0[c],
+                mean5[c],
+                mean9[c]
+            );
+            let relative = (deviation5[c] / deviation0[c] - 1.0).abs();
+            assert!(
+                relative < 0.05,
+                "channel {c} sigma moved with the correlation: {} vs {}",
+                deviation0[c],
+                deviation5[c]
+            );
+            let relative = (deviation9[c] / deviation0[c] - 1.0).abs();
+            assert!(relative < 0.05, "channel {c} sigma moved at 0.9");
+        }
+    }
+
+    #[test]
+    fn inactive_channel_leaves_the_layer_correlation_intact() {
+        // `min` must run over the layer's active channels: a layer whose third
+        // channel realizes nothing has no rate to correlate with, and counting
+        // it as zero would silently drop the whole layer's correlation.
+        let mut p = params(None, false, 0x77, 1.0);
+        p.channel_correlation = 0.9;
+        let model = Model::new(&p, PITCH).unwrap();
+        let mut layers = model.layer_targets([0.12; 3]);
+        layers[2] = [0.0; 3];
+        let area = model.cell_um.powi(2);
+        let mut first = [0.0f64; 2];
+        let mut second = [0.0f64; 2];
+        let mut pair = 0.0f64;
+        let samples = 8192u64;
+        for seed in 0..samples {
+            let mut p = params(None, false, seed, 1.0);
+            p.channel_correlation = 0.9;
+            let model = Model::new(&p, PITCH).unwrap();
+            let value = model.accumulate(1, 1, layers, area).unwrap();
+            assert_eq!(value[2], 0.0, "the silenced channel still realized mass");
+            first[0] += value[0];
+            first[1] += value[1];
+            second[0] += value[0] * value[0];
+            second[1] += value[1] * value[1];
+            pair += value[0] * value[1];
+        }
+        let n = samples as f64;
+        let covariance = pair / n - (first[0] / n) * (first[1] / n);
+        let sigma_a = (second[0] / n - (first[0] / n).powi(2)).sqrt();
+        let sigma_b = (second[1] / n - (first[1] / n).powi(2)).sqrt();
+        let correlation = covariance / (sigma_a * sigma_b);
+        assert!(
+            correlation > 0.4,
+            "correlation collapsed to {correlation} with one channel inactive"
+        );
+    }
+
+    #[test]
+    fn a_layer_with_one_active_channel_takes_no_shared_rate() {
+        // A layer needs two active channels to have a rate worth sharing. With
+        // one, the layer must fall back to its own independent draw, so the
+        // correlated model has to realize exactly what the uncorrelated model
+        // realized for that channel -- not merely a matching mean.
+        let area = Model::new(&params(None, false, 0, 1.0), PITCH)
+            .unwrap()
+            .cell_um
+            .powi(2);
+        let mut realized = 0usize;
+        for seed in 0..64u64 {
+            let build = |correlation: f64| {
+                let mut p = params(None, false, seed, 1.0);
+                p.channel_correlation = correlation;
+                let model = Model::new(&p, PITCH).unwrap();
+                let mut layers = model.layer_targets([0.12; 3]);
+                // Rearrange so that exactly one layer realizes channel 2 and no
+                // layer realizes anything else: the computed targets need not be
+                // nonzero in a given layer, so the shapes are set directly from
+                // the channel capacities instead of being read back.
+                let spare = model.channels[2].cap[1] * 0.25;
+                for channel in layers.iter_mut() {
+                    *channel = [0.0; 3];
+                }
+                layers[0][0] = model.channels[0].cap[0] * 0.25;
+                layers[1][2] = model.channels[1].cap[2] * 0.25;
+                layers[2][1] = spare.max(model.channels[2].cap[1] * 0.25);
+                (model, layers)
+            };
+            let (independent, independent_layers) = build(0.0);
+            let (correlated, correlated_layers) = build(0.9);
+            let plain = independent
+                .accumulate(3, 4, independent_layers, area)
+                .unwrap();
+            let shared = correlated
+                .accumulate(3, 4, correlated_layers, area)
+                .unwrap();
+            assert_eq!(
+                plain[2], shared[2],
+                "a layer with one active channel drew a shared rate"
+            );
+            if plain[2] > 0.0 {
+                realized += 1;
+            }
+        }
+        // A quarter of the channel capacity at one cell is a small rate, so the
+        // point of the loop is that some seed realizes mass at all; the equality
+        // above is what the test is about.
+        assert!(realized > 0, "the single active layer never realized mass");
+    }
+
+    #[test]
+    fn expectation_is_independent_of_the_correlation() {
+        let layers = [0.12; 3];
+        let mut expected = None;
+        for correlation in [0.0, 0.5, 0.9] {
+            let mut p = params(None, true, 0x5EED, 1.0);
+            p.channel_correlation = correlation;
+            let model = Model::new(&p, PITCH).unwrap();
+            let value = model
+                .accumulate(1, 1, model.layer_targets(layers), model.cell_um.powi(2))
+                .unwrap();
+            match expected {
+                None => expected = Some(value),
+                Some(reference) => assert_eq!(
+                    reference, value,
+                    "correlation {correlation} moved the deterministic expectation"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn channel_correlation_out_of_range_fails_before_rendering() {
+        for value in [-0.01, 1.0, 1.5, f64::NAN, f64::INFINITY] {
+            let mut p = params(None, false, 1, 1.0);
+            p.channel_correlation = value;
+            let err = match Model::new(&p, PITCH) {
+                Err(err) => err,
+                Ok(_) => panic!("channel correlation {value} was accepted"),
+            };
+            assert!(err.contains("channel correlation"), "{value}: {err}");
+        }
+        for value in [0.0, 0.5, 0.999_999] {
+            let mut p = params(None, false, 1, 1.0);
+            p.channel_correlation = value;
+            Model::new(&p, PITCH).unwrap();
+        }
     }
 
     #[test]

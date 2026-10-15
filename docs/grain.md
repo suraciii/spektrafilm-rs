@@ -8,7 +8,7 @@ Use this page to select a grain engine and configure its controls. It also descr
 
 - Spektra is the default upstream experimental original.
 - Procedural derives from Dehancer. It provides Analogue/Noise grain with twelve format/speed profiles. Its controls include Size, Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution. Pixel parity with Dehancer is not claimed.
-- Dye is a self-developed experimental film-coordinate dye field. It is opt-in. `v3_dye_support_um` and `v3_event_area_um2` control it.
+- Dye is a self-developed experimental film-coordinate dye field. It is opt-in. `v3_dye_support_um`, `v3_event_area_um2`, and `channel_correlation` control it.
 - Fotufilm Film is an adapted appearance population model fitted to resolved film curves. It is opt-in. `film_render.grain.fotufilm.*` controls it.
 
 ## Spektra
@@ -77,6 +77,8 @@ Dye realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c
 
 The channel scale is `k_c = (rms_granularity_c / 6)²`. Here, `6` is the preset of the reference stock `kodak_portra_800`. This scale is the only per-channel strength input. Dye does not read Spektra's `particle_area_um2` or `particle_scale`. Their blue-heavy default would double a coarser blue record.
 
+`channel_correlation` defaults to `0.0`. It accepts `[0, 0.45]`: the structural domain is `[0, 1)`, but an enabled value must stay inside the measured inter-record coherence band, so validation rejects anything above `0.45`. It is the fraction of one emulsion layer's per-channel event rate that the layer's active channels share; the shared part correlates those channels while every channel keeps its own marginal count rate, so strength, support, and readout do not move. The configured value is an upper bound on realized correlation, because a layer whose channels have unequal rates shares only the smallest of them. Zero leaves the independent per-channel realization exactly as it was. Correlation of this kind is off by default: the available measurements do not separate the film's own record correlation from the scanner's, and a lab scan's strong coherence belongs to the scanner.
+
 ### Film geometry and routes
 
 The field belongs to film coordinates. The pipeline develops the full frame. The readout produces the requested region at the requested grid. A crop selects the readout region and never restarts texture.
@@ -91,9 +93,9 @@ The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` 
 
 When downstream spatial processing is active, Dye extends the output grid to cover the full film before those stages. It extracts the requested crop afterward. Physical optical controls use the actual output pitch. Scanner blur and unsharp masking remain pixel controls. See [film geometry](../specs/film-grain/v3/design.md#film-geometry) for rounded and anisotropic output limits.
 
-### CPU execution
+### Execution
 
-Dye resolves its field on the CPU. On the resident route the field runs as an assembled fence on the developed film density, and only a request the fence cannot express — a crop or an upscale, or the gated certification readouts — takes the per-stage CPU path. The CLI/GUI report the effective backend. Preview, LUT, stochastic, and spatial deactivation bypass Dye.
+Dye resolves its field on the selected executor. On the resident route the device evaluates the count law, formation, and readout as bounded per-band passes on the developed film density; a crop or upscale the resident raster cannot express keeps the per-stage route and still reads the field from the device. A backend without a device field path, the experimental `SPEKTRAFILM_GRAIN_V3_MASS_LAW` selector, and the gated exact-cell spectral readout resolve on the host and name that reason. An explicit GPU request fails by name instead of demoting a device-incapable request silently. The CLI/GUI report the effective executor. Preview, LUT, stochastic, and spatial deactivation bypass Dye.
 
 See [the Dye specification](../specs/film-grain/v3/spec.md) for experimental readouts and diagnostic controls.
 

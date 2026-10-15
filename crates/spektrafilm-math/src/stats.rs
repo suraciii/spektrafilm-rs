@@ -198,6 +198,89 @@ pub fn fast_binomial_array(base_seed: u64, tag: u64, n: &[i64], p: &[f64]) -> Ve
         .collect()
 }
 
+/// Exact Poisson variate: Knuth's multiplication below 30, Hörmann's PTRS
+/// above. Rounded normal approximations must not replace it -- this is the law
+/// the Dye model realizes and the one its device kernel must reproduce
+/// decision for decision (`specs/film-grain/v3/design.md#device-count-law`),
+/// unlike [`fast_poisson`], which ports a reference implementation's normal
+/// approximation.
+///
+/// The error text is part of the Dye engine's user-facing contract.
+///
+/// This is the Dye model's law. [`crate::numpy_rng::rk_poisson_ptrs`] is a
+/// separate port of NumPy's own `random_poisson` for parity tests, with
+/// MT19937 state and a different switch point; the two are not
+/// interchangeable and must not be merged.
+pub fn poisson_exact(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
+    if lambda <= 0.0 {
+        return Ok(0);
+    }
+    if lambda < 30.0 {
+        let limit = (-lambda).exp();
+        let mut product = 1.0f64;
+        let mut count = 0u64;
+        loop {
+            product *= rng.rand();
+            if product <= limit {
+                return Ok(count);
+            }
+            count += 1;
+        }
+    }
+    poisson_ptrs(rng, lambda)
+}
+
+fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
+    let slam = lambda.sqrt();
+    let loglam = lambda.ln();
+    let b = 0.931 + 2.53 * slam;
+    let a = -0.059 + 0.02483 * b;
+    let inv_alpha = 1.1239 + 1.1328 / (b - 3.4);
+    let vr = 0.9277 - 3.6224 / (b - 2.0);
+    loop {
+        let u = rng.rand() - 0.5;
+        let v = rng.rand();
+        let us = 0.5 - u.abs();
+        if us == 0.0 {
+            continue;
+        }
+        let k = ((2.0 * a / us + b) * u + lambda + 0.43).floor();
+        if k < 0.0 {
+            continue;
+        }
+        if us < 0.013 && v > us {
+            continue;
+        }
+        if !k.is_finite() || k >= (1u64 << 53) as f64 {
+            return Err("film grain Dye: Poisson proposal exceeds the exact f64 integer range; increase event area or reduce field pitch".to_owned());
+        }
+        if us >= 0.07 && v <= vr {
+            return Ok(k as u64);
+        }
+        let lhs = v.ln() + inv_alpha.ln() - (a / (us * us) + b).ln();
+        let rhs = -lambda + k * loglam - libm::lgamma(k + 1.0);
+        if lhs <= rhs {
+            return Ok(k as u64);
+        }
+    }
+}
+
+/// Global-cell address of one `(channel, layer)` stream of the Dye field.
+///
+/// A `SplitMix64` finalizer of the packed cell coordinate is a permutation:
+/// odd multipliers and xor shifts preserve the packed address's uniqueness.
+/// Crop bounds, tile size, traversal order and thread scheduling must not
+/// enter the address, and this function is the only thing that decides it.
+pub fn cell_stream_index(i: i64, j: i64) -> u64 {
+    debug_assert!(i32::try_from(i).is_ok() && i32::try_from(j).is_ok());
+    let mut address = ((i as u32 as u64) << 32) | j as u32 as u64;
+    // SplitMix64's finalizer is a permutation: odd multipliers and xor
+    // shifts preserve the packed address's uniqueness.
+    address = (address ^ (address >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    address = (address ^ (address >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    address ^ (address >> 31)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

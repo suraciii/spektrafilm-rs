@@ -95,6 +95,12 @@ vocabulary!(CpuReason {
     ScannerFilmPoints,
     ScannerReceiver,
 });
+// `ResidentDeclineReason::GrainV3FieldCpu` names the *routing* decline the
+// resident raster records when the field's readout geometry (a crop or an
+// upscale) does not fit it. It does not say where the field then resolves:
+// `stages::grain_v3` publishes the effective field executor separately
+// (`published_host_field_reason` / `effective_field_backend`), and on a device
+// backend a cropped Dye request still reads its field out on the device.
 vocabulary!(ResidentDeclineReason {
     WorkflowRoute,
     LangmuirChemistry,
