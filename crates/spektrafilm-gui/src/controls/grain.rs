@@ -53,6 +53,10 @@ fn follow_selection(ui: &Ui, selected: GrainEngine) {
 /// switching engines. The control search shows only the selected engine's
 /// controls, because editing another engine's parameters has no effect until
 /// that engine is selected.
+///
+/// An engine that is not selected shows its set read-only: the engines share
+/// fields — rms granularity, particle scale, density minimum, and uniformity
+/// — so two editable copies would give one persisted value two entries.
 fn engine_group(
     ui: &mut Ui,
     filter: &mut ControlFilter<'_>,
@@ -69,11 +73,31 @@ fn engine_group(
         return;
     }
     follow_selection(ui, selected);
-    CollapsingState::load_with_default_open(ui.ctx(), group_id(engine), engine == selected)
+    let active = engine == selected;
+    let mut label_clicked = false;
+    let mut header = CollapsingState::load_with_default_open(ui.ctx(), group_id(engine), active)
         .show_header(ui, |ui| {
-            ui.label(engine_label(engine));
-        })
-        .body(|ui| add_contents(ui, filter));
+            label_clicked = ui
+                .add(egui::Label::new(engine_label(engine)).sense(egui::Sense::click()))
+                .clicked();
+        });
+    if label_clicked {
+        header.toggle();
+    }
+    header.body(|ui| {
+        if !active {
+            ui.label(
+                egui::RichText::new(
+                    "Inactive until this engine is selected; stored values are retained.",
+                )
+                .small()
+                .color(egui::Color32::GRAY),
+            );
+            ui.add_enabled_ui(false, |ui| add_contents(ui, filter));
+            return;
+        }
+        add_contents(ui, filter);
+    });
 }
 
 /// One `show()` section group, split out of the dispatcher for readability.
