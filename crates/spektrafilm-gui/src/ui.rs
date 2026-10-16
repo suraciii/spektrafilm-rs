@@ -936,6 +936,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    // Orientation: rotate the input.
                     if ui.button("ccw rotate").clicked() {
                         self.rotate_input_image_counterclockwise();
                         ui.ctx().request_repaint();
@@ -944,6 +945,8 @@ impl eframe::App for App {
                         self.rotate_input_image_clockwise();
                         ui.ctx().request_repaint();
                     }
+                    ui.separator();
+                    // View: zoom presets and the fit reset.
                     for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
                         if ui.button(label).clicked() {
                             self.viewer.set_zoom_percent(percent);
@@ -954,7 +957,8 @@ impl eframe::App for App {
                         self.viewer.reset_view();
                         ui.ctx().request_repaint();
                     }
-                    // Before/after compare slider
+                    ui.separator();
+                    // Comparison: the before/after toggle and its split.
                     let compare_label = if self.compare_active {
                         "compare ON"
                     } else {
@@ -969,7 +973,7 @@ impl eframe::App for App {
                         ui.ctx().request_repaint();
                     }
                     if self.compare_active {
-                        ui.add_space(8.0);
+                        ui.add_space(theme::SPACE_GROUP);
                         let slider = ui.add(
                             egui::Slider::new(&mut self.compare_split, 0.0..=1.0)
                                 .fixed_decimals(2)
@@ -985,14 +989,20 @@ impl eframe::App for App {
                                 (1.0 - self.compare_split) * 100.0
                             ))
                             .color(theme::FG_MUTED)
-                            .size(9.0),
+                            .size(theme::SIZE_HINT),
                         );
                     }
+                    ui.separator();
+                    // Read-only: the current zoom.
                     let zoom = self.viewer.zoom_percent().map_or_else(
                         || format!("{:.0}% fit", self.viewer.zoom * 100.0),
                         |percent| format!("{percent:.0}%"),
                     );
-                    ui.label(format!("zoom {zoom}"));
+                    ui.label(
+                        egui::RichText::new(format!("zoom {zoom}"))
+                            .color(theme::FG_MUTED)
+                            .size(theme::SIZE_HINT),
+                    );
                 });
             });
             self.viewer.layer_controls(ui);
