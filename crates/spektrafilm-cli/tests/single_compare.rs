@@ -1,3 +1,4 @@
+#![cfg(feature = "precision-f64")]
 use image::{GrayImage, Luma, Rgb, RgbImage};
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{
@@ -39,7 +40,7 @@ fn retained_run(root: &Path, value: f64, masked: bool) {
             .add(&root.join("mask.png"), "mask", "image/png", json!({}))
             .unwrap();
         retained["source_path"] = json!(root.parent().unwrap().join("original/mask.png"));
-        regions.push(json!({"id":"patch","label":"Patch","role":"other","geometry":{"path":"mask.png","sha256":retained["sha256"],"width":4,"height":4},"measurements":["numeric"]}));
+        regions.push(json!({"id":"patch","label":"Patch","role":"other","geometry":{"path":"mask.png","sha256":retained["sha256"],"width":4,"height":4,"space":"render"},"measurements":["numeric"]}));
         dependencies.push(retained);
     }
     let suite = json!({"schema_version":1,"id":"retained","protocol":{"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":1.0,"border_px":0},"spectrum":{"window":"hann"}},"hotspots":{"count":0,"min_area_px":1}},"cases":[{"id":"probe","kind":"probe","input":{"kind":"raster","path":"input.png","sha256":input["sha256"],"color_space":"sRGB","cctf_decoding":true},"configuration":{},"seeds":[0],"regions":regions,"measurements":["numeric"]}]});
@@ -67,7 +68,7 @@ fn retained_run(root: &Path, value: f64, masked: bool) {
         "render_diagnostics",
         json!({"configuration":{"published_dimensions":[4,4]}}),
     );
-    let color = json!({"color_space":"ACES2065-1","transfer":"linear"});
+    let color = json!({"color_space":"ACES2065-1","cctf_decoding":false});
     let layout = json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little"});
     let mut bytes = Vec::new();
     for _ in 0..48 {
@@ -117,7 +118,7 @@ fn retained_run(root: &Path, value: f64, masked: bool) {
             json!({}),
         )
         .unwrap();
-    let source_color = json!({"color_space":"ACES2065-1","transfer":"linear"});
+    let source_color = json!({"color_space":"ACES2065-1","cctf_decoding":false});
     let source_diagnostics = record(
         &mut evidence,
         "source-diagnostics.json",
@@ -144,13 +145,13 @@ fn retained_run(root: &Path, value: f64, masked: bool) {
         &mut evidence,
         "source.f64.json",
         "source_raw_metadata",
-        json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little","color_space":"ACES2065-1","transfer":"linear"}),
+        json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little","color_space":"ACES2065-1","cctf_decoding":false}),
     );
     let row = json!({"case_id":"probe","seed":0,"status":"completed","input":input,"raw":raw,"raw_metadata":metadata,"source_raw":source_raw,"source_raw_metadata":source_metadata,"source_resolved":source_resolved,"source_diagnostics":source_diagnostics,"source_master":master,"source_dimensions":[4,4],"source_geometry":{"published_dimensions":[4,4]},"simulation_geometry":{"published_dimensions":[4,4]},"source_pixel_aligned":true,"master":master,"diagnostics":diagnostics,"resolved":resolved,"stdout":stdout,"stderr":stderr,"dimensions":[4,4],"execution":{"backend_selected":"cpu","path":"cpu"},"precision":{"host_precision":"f64"},"command":["renderer","process","input.png","--output","master.tif","--raw-out","master.f64","--diagnostics","diagnostics.json","--seed","0"],"source_command":["renderer","process","input.png","--route","input","--output","source.tif","--raw-out","source.f64","--diagnostics","source-diagnostics.json","--seed","0"]});
     save_manifest(
         root,
         "run.json",
-        json!({"schema_version":1,"execution_status":"completed","suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":["probe"],"full_suite":true},"dependencies":dependencies,"cases":[row],"artifacts":evidence.values(),"environment":{}}),
+        json!({"schema_version":1,"kind":"run","id":"retained-run","execution_status":"completed","suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":["probe"],"full_suite":true},"dependencies":dependencies,"cases":[row],"artifacts":evidence.values(),"environment":{}}),
     );
 }
 
@@ -234,9 +235,9 @@ fn cli_report_opens_unaligned_reference_as_side_views() {
     let report = temp.path().join("report");
     for (command, source_option, source, destination) in [
         ("compare", "--run", &run, &comparison),
-        ("generate-report", "--comparison", &comparison, &report),
+        ("report", "--comparison", &comparison, &report),
     ] {
-        let mut cli = std::process::Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"));
+        let mut cli = std::process::Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
         cli.arg(command)
             .arg(source_option)
             .arg(source)

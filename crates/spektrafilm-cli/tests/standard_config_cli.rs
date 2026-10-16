@@ -1,4 +1,5 @@
 #![cfg(unix)]
+#![cfg(feature = "precision-f64")]
 
 use serde_json::{Value, json};
 use spektrafilm_benchmark::common;
@@ -98,8 +99,9 @@ esac
 }
 
 fn fixtures(root: &Path, destination: &str) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench-fixtures"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
     command
+        .arg("fixtures")
         .arg("--renderer")
         .arg(root.join("renderer"))
         .arg("--data-dir")
@@ -185,7 +187,7 @@ fn standard_bundle_is_portable_validated_and_frozen_against_library_and_destinat
         let path = bundle.join(name);
         assert!(path.is_file());
         assert_eq!(&read_json(&path), expected);
-        let validated = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+        let validated = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
             .args(["validate", "--kind", "configuration", "--file"])
             .arg(&path)
             .env("SPEKTRAFILM_CONFIG_DIR", root.join("config"))
