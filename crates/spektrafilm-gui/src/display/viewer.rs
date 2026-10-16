@@ -358,9 +358,7 @@ impl Viewer {
                 }
             })
             .response
-            .on_hover_text(
-                "Interpolation used to display the output layer in the viewer.",
-            );
+            .on_hover_text("Interpolation used to display the output layer in the viewer.");
     }
     fn display_source(&self, layer: ViewLayer) -> DisplaySource {
         if layer == ViewLayer::Input {

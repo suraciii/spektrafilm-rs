@@ -774,7 +774,6 @@ impl App {
             self.refresh_viewing_artifacts();
         }
     }
-
 }
 
 impl eframe::App for App {
