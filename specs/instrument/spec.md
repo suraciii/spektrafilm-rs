@@ -191,7 +191,7 @@ The command must resolve the chain before executing it. When one of these operat
 
 A stimulus document declares the values a chain measurement injects. It must contain `schema_version`, an `id`, a `domain`, and the sample arrays beside it as `.npy`/`.npz` files.
 
-`cctf_decoding` must name the state the stored values are already in: `true` when they are already transfer-decoded, and `false` when they are transfer-encoded and the chain must decode them.
+`cctf_decoding` must name the state the chain reads the stored values in, matching `io.input_cctf_decoding`: `true` when the stored values are transfer-encoded and the chain must decode them, and `false` when they are already transfer-decoded.
 
 `domain` must match the `--enter` boundary and be one of `reflectance`, `scene_rgb`, `film_log_e`, or `film_density`. A `scene_rgb` document must declare `color_space` and `cctf_decoding`, exactly as a raster input to `process` declares them. A `reflectance` document must declare `color_space`, `cctf_decoding`, and its illuminant pair as `condition: {"reference": ..., "target": ...}`. A film-domain document must declare none of them, because its values are already film-domain numbers.
 

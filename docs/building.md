@@ -57,7 +57,7 @@ just install
 
 ## Packaging and installation
 
-Packages must distribute the native shared libraries and their transitive dependencies with the CLI, GUI, and `decode_raw_gui`. They must also include the Lensfun XML database. Preserve Lensfun's default database lookup location or deploy it in the platform's standard data directory.
+Packages must distribute the native shared libraries and their transitive dependencies with the CLI, GUI, `decode_raw_gui`, and the instrument binary `spektrafilm-lab`. They must also include the Lensfun XML database. Preserve Lensfun's default database lookup location or deploy it in the platform's standard data directory.
 
 LibRaw is dual LGPL 2.1/CDDL 1.0. Lensfun's library is LGPL 3.0, and its database is CC BY-SA 3.0. Exiv2 is GPL 2.0 or later. GLib is LGPL 2.1 or later. Packages must include applicable license texts. The application remains GPL 3.0.
 

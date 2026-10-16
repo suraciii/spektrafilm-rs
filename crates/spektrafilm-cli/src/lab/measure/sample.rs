@@ -183,7 +183,9 @@ fn image_source(args: &MeasureSampleArgs, path: &Path) -> Result<Source> {
         pixels: Pixels::Image(loaded.image),
         color_space: Some(color_space.to_owned()),
         space: Some(space),
-        encoded: Some(!cctf_decoding),
+        // The flag carries `process`'s own meaning: true declares that the
+        // stored values are transfer-encoded, so the reading decodes them.
+        encoded: Some(cctf_decoding),
         stage: None,
         // A raster carries no stage vocabulary of its own; its reading lives
         // in the declared source raster's coordinate space.

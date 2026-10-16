@@ -308,9 +308,9 @@ fn resolve_measurement_chain(
     stimulus: &Stimuli,
 ) -> Result<ResolvedChain> {
     let request = match (args.enter, stimulus) {
-        (MeasureEntry::Spectra, _) => InputRequest {
+        (MeasureEntry::Spectra, Stimuli::Spectra(set)) => InputRequest {
             color_space: Some(SCENE_RGB_SPACE),
-            cctf_decoding: false,
+            cctf_decoding: set.cctf_decoding,
             require: true,
         },
         (MeasureEntry::RgbIn, Stimuli::Points(set)) => InputRequest {
@@ -320,6 +320,9 @@ fn resolve_measurement_chain(
         },
         (MeasureEntry::RgbIn, Stimuli::Spectra(_)) => {
             bail!("--enter rgb_in reads a points manifest, not a measured-spectra set")
+        }
+        (MeasureEntry::Spectra, Stimuli::Points(_)) => {
+            bail!("--enter spectra reads a measured-spectra manifest, not a points manifest")
         }
         (MeasureEntry::LogEFilm | MeasureEntry::CmyFilm, Stimuli::Points(_)) => InputRequest {
             color_space: None,
@@ -336,7 +339,11 @@ fn resolve_measurement_chain(
     let chain = resolve_chain(&args.chain, data_dir, request)?;
     match args.enter {
         MeasureEntry::Spectra => {
-            require_declaration(&chain, Some(SCENE_RGB_SPACE), false)?;
+            let (color_space, cctf_decoding) = match stimulus {
+                Stimuli::Spectra(set) => (Some(SCENE_RGB_SPACE), set.cctf_decoding),
+                Stimuli::Points(_) => (None, false),
+            };
+            require_declaration(&chain, color_space, cctf_decoding)?;
         }
         MeasureEntry::RgbIn => {
             let (color_space, cctf_decoding) = match stimulus {

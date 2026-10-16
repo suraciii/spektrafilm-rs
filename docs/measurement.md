@@ -93,17 +93,18 @@ pair as `condition`:
 ```
 
 `color_space` names the scene color space the values are read in and `cctf_decoding` declares
-whether the stored values are already transfer-decoded. `condition.reference` names the film
-reference illuminant and `condition.target` the scene illuminant that produced the input.
+whether the chain must decode them, exactly as `--input-cctf-decoding` declares it for a raster.
+`condition.reference` names the film reference illuminant and `condition.target` the scene
+illuminant that produced the input.
 
 Every other entry reads a points manifest: an `N` by 3 array of values at that boundary. The
 `domain` must match the entry (`scene_rgb` for `rgb_in`, `film_log_e` for `log_e_film`,
 `film_density` for `cmy_film`).
 
 A `scene_rgb` manifest declares its `color_space` and its `cctf_decoding` state, exactly as a
-raster input to `process` does. Declare `true` when the array already carries transfer-decoded
-values, and `false` when it carries transfer-encoded values; the chain then decodes them the
-same way it decodes a raster:
+raster input to `process` does. Declare `true` when the array carries transfer-encoded values
+that the chain must decode, and `false` when it already carries transfer-decoded values; the
+chain then treats them exactly as it treats a raster:
 
 ```json
 {
@@ -178,13 +179,13 @@ stage's coordinate space, channel order, units, color space, and transfer state.
 
 An image source reports its readings under the stage name `source`, with the domain
 `source_rgb` and the declared color space. An evidence source reports the bundle's own stage
-identifier and declaration. When the bundle stage declares transfer-encoded values, the reading
-decodes them with that stage's own declared color space and records `cctf_decoding: true` in
-its stage record, because the values the reading stores are decoded; the `source` block keeps
-the bundle's own declaration verbatim, so `source.cctf_decoding` still reads `false`. A stage
-that declares no color space or transfer state — the density and exposure stages do not, since
-their values carry no transfer encoding — records `null` for both rather than a state the
-bundle never declared.
+identifier and declaration. When the bundle stage declares transfer-encoded values
+(`cctf_decoding: true`), the reading decodes them with that stage's own declared color space
+and records `cctf_decoding: false` in its stage record, because the values the reading stores
+are decoded; the `source` block keeps the bundle's own declaration verbatim, so
+`source.cctf_decoding` still reads `true`. A stage that declares no color space or transfer
+state — the density and exposure stages do not, since their values carry no transfer encoding
+— records `null` for both rather than a state the bundle never declared.
 
 ### The regions document
 
