@@ -95,7 +95,3 @@ The following stages define dependencies, not reduced deliverables:
 Cutover requires the complete CLI and fixture surface, numerical and resource acceptance, supported-platform package smoke evidence, and actual offline browser verification. A partially migrated launcher or reduced metric set must not become the default.
 
 Permanent deterministic behavioral regressions must run through the repository's existing Justfile and required CI gate. Real-renderer contract checks must use the public renderer entry point. Generated evidence, reference environments, performance probes, and migration logs must remain outside the repository. Build, usage, and package instructions must be updated together with the final cutover.
-
-## Delivered implementation
-
-The delivered benchmark is the Rust workspace implementation. The frozen migration budgets, cross-implementation acceptance corpus, resource evidence, and pinned Python reference remain outside the repository with the acceptance evidence. The measured migration comparison establishes observed resource behavior for that evidence run; it is not a release performance promise.
