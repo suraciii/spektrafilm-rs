@@ -100,6 +100,16 @@ fn factory_value(params: &RuntimeParams, path: &str) -> Option<Value> {
     Some(current)
 }
 
+/// The projected factory state, computed once.
+///
+/// `GuiState::factory` parses the embedded JSON, so reading it per frame
+/// would make every section header pay for it.
+static FACTORY: std::sync::LazyLock<RuntimeParams> = std::sync::LazyLock::new(|| {
+    GuiState::factory()
+        .runtime_params()
+        .expect("the pinned factory state projects")
+});
+
 /// Whether a section's live parameters differ from the projected factory state.
 ///
 /// Exact-bit comparison, so a value typed back to the factory value clears the
@@ -108,12 +118,9 @@ pub fn is_modified(section: &str, live: &RuntimeParams) -> bool {
     let Some(paths) = factory_paths(section) else {
         return false;
     };
-    let Ok(factory) = GuiState::factory().runtime_params() else {
-        return false;
-    };
+    let factory = &*FACTORY;
     paths.iter().any(|path| {
-        let (Some(live), Some(factory)) =
-            (factory_value(live, path), factory_value(&factory, path))
+        let (Some(live), Some(factory)) = (factory_value(live, path), factory_value(factory, path))
         else {
             return false;
         };
@@ -126,9 +133,9 @@ pub fn is_modified(section: &str, live: &RuntimeParams) -> bool {
 /// Only the section's own keys are replaced, so neighbouring sections keep
 /// their values. Returns whether anything changed.
 pub fn reset(state: &mut GuiState, section: &str) -> bool {
-    let Some(_) = factory_paths(section) else {
+    if section_keys(section).is_empty() {
         return false;
-    };
+    }
     let factory = GuiState::factory();
     let mut changed = false;
     for key in section_keys(section) {
