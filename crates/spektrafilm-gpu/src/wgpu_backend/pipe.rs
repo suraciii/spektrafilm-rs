@@ -5,9 +5,13 @@
 //! fences, and the final readback. Per-stage trait methods dispatch through
 //! `dispatch_host` with unchanged stage placement and telemetry semantics.
 //! The assembled chain runs through `ChainStage` with `readback_buffer` and
-//! `write_image_buffer` at each fence. The device-resident primitives
-//! (`DeviceImage`, `dispatch_device`, `upload_image`, `fence`) are the
-//! general execution core, exercised by this module's own tests.
+//! `write_image_buffer` at each fence.
+//!
+//! The device-resident primitives (`DeviceImage`, `dispatch_device`,
+//! `upload_image`, `fence`, `readback_image`) are a complete zero-copy
+//! execution path that the production chain does not take: production
+//! materializes at every fence. They are kept because they pin the pipe's
+//! transfer contract and are exercised by this module's own tests.
 
 use super::cache::PipelineCache;
 use super::observation::{ObservedDevice, ObservedEncoder, ObservedQueue};

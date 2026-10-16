@@ -339,50 +339,6 @@ fn apply_multiplicative_unsharp_mask(
     out
 }
 
-/// Derive the coarsest-sub-layer particle area from the datasheet RMS
-/// granularity, matching the upstream multilayer peak calculation.
-pub fn particle_area_from_rms_granularity(
-    density_curves_layers: &[[[f64; 3]; 3]],
-    density_max_layers: &[[f64; 3]; 3],
-    density_min: [f64; 3],
-    grain_uniformity: [f64; 3],
-    rms_granularity: [f64; 3],
-    particle_scale_sublayers: [f64; 3],
-) -> [f64; 3] {
-    const APERTURE_AREA_UM2: f64 = std::f64::consts::PI * 24.0 * 24.0;
-    let mut total = [0.0f64; 3];
-    for layer in density_max_layers {
-        for ch in 0..3 {
-            total[ch] += layer[ch];
-        }
-    }
-    let mut peak = [0.0f64; 3];
-    for ch in 0..3 {
-        let mut weighted = [0.0; 3];
-        for sl in 0..3 {
-            let fraction = density_max_layers[sl][ch] / total[ch].max(1e-12);
-            weighted[sl] = fraction * density_min[ch];
-        }
-        for curve in density_curves_layers {
-            let mut variance = 0.0;
-            for sl in 0..3 {
-                let density = curve[sl][ch] + weighted[sl];
-                let dmax = density_max_layers[sl][ch] + weighted[sl];
-                let fraction = density_max_layers[sl][ch] / total[ch].max(1e-12);
-                variance += (particle_scale_sublayers[sl] / fraction.max(1e-12))
-                    * density
-                    * (dmax - grain_uniformity[ch] * density);
-            }
-            peak[ch] = peak[ch].max(variance);
-        }
-    }
-    [
-        (rms_granularity[0] / 1000.0).powi(2) * APERTURE_AREA_UM2 / peak[0].max(1e-9),
-        (rms_granularity[1] / 1000.0).powi(2) * APERTURE_AREA_UM2 / peak[1].max(1e-9),
-        (rms_granularity[2] / 1000.0).powi(2) * APERTURE_AREA_UM2 / peak[2].max(1e-9),
-    ]
-}
-
 /// Apply layered (per-sublayer) grain to a CMY density image.
 ///
 /// Port of Python `apply_grain_to_density_layers` (the

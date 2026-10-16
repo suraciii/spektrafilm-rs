@@ -37,11 +37,6 @@ pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> 
         Ok(Some(std::ffi::OsString::from_wide(&path[..end]).into()))
     }
 }
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> {
-    Ok(None)
-}
 
 /// Takes already encoded sRGB viewing pixels, never an export ImageBuf.
 /// ICC conversion is quantized to RGB8 as in the pinned Pillow workflow.
