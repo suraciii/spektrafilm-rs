@@ -25,5 +25,5 @@ Get-ChildItem -LiteralPath $packageRoot | ForEach-Object {
 
 Write-Host "Installed Spektrafilm to: $InstallRoot"
 Write-Host "Launch: $InstallRoot\spektrafilm-gui.exe"
-Write-Host "Benchmark: $InstallRoot\spektrafilm-bench.exe and $InstallRoot\spektrafilm-bench-fixtures.exe"
+Write-Host "Instrument: $InstallRoot\spektrafilm-lab.exe"
 Write-Host 'The install directory is intentionally not added to PATH; add it manually if CLI commands should be global.'

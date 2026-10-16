@@ -1,12 +1,13 @@
 # Measurement
 
-`spektrafilm-lab measure` reads the executed chain and reports what it produced. The group
-carries four commands: `run` measures the chain on a declared stimulus set, `sample` reads
-declared points from an image or a retained stage capture, `compare` matches two retained
-measurements, and `verify` re-resolves a recorded run. The commands exist only in the lab
-binary and run at f64 reference precision. They compute values and write evidence; they do
-not fit parameters, render images, or judge a result. See the [measurement
-contract](../specs/instrument/spec.md#measurement) for the requirements.
+`spektrafilm-lab` reads the executed chain and reports what it produced. Four commands carry
+the measurement surface: `run --stimuli` measures the chain on a declared stimulus set,
+`sample` reads declared regions from an image or a retained stage capture, `compare
+--reading-baseline` matches two retained measurements, and `verify` re-resolves a recorded
+run. The commands exist only in the instrument binary and run at f64 reference precision. They
+compute values and write evidence; they do not fit parameters, render images, or judge a
+result. See the [measurement contract](../specs/instrument/spec.md#measurement) for the
+requirements.
 
 ## The point-wise requirement
 
@@ -15,7 +16,7 @@ neighborhood, so a stage that mixes samples, measures the whole image, or draws 
 values after the entry would describe a different signal than the measured one. Halation,
 glare, lens blur, automatic camera exposure, and grain are such stages.
 
-`measure run` resolves the chain first and fails before executing when one of them executes
+`run --stimuli` resolves the chain first and fails before executing when one of them executes
 inside the measured range: at or after the boundary `--enter` injects the stimulus at, and at
 or before the last stage `--read` asks for. An operation the range never reaches cannot change
 a reading, and a stage that does not execute at all cannot either, so neither is named.
@@ -38,10 +39,10 @@ active.
 
 The command does not disable a stage on your behalf. Pass the `--set` edits it names.
 
-## `measure run`
+## `run --stimuli`
 
 ```bash
-./target/release/spektrafilm-lab measure run \
+./target/release/spektrafilm-lab run \
     --stimuli points.json --enter log_e_film \
     --read log_e_film,cmy_film,rgb_out \
     --preset "Kodak Portra 800" \
@@ -59,23 +60,29 @@ The command does not disable a stage on your behalf. Pass the `--set` edits it n
 available stage. A stimulus enters through the same `taps.inject` control the user binaries
 expose, and the run records the chain it resolved, the values it read, and the stage
 evidence it read them from. The chain options are the ones `process` takes: `--preset`, `--film`,
-`--paper`, `--set`, `--data-dir`, plus `--route` for the workflow route, `--scan-output` for
-the film scanner mode, and `--seed` for the stochastic seed the measurement records.
-`--dry-run` resolves the chain and writes `measure.json` with the identity record only.
+`--paper`, `--set`, `--data-dir`, plus `--route` for the workflow route and `--scan-output` for
+the film scanner mode. A chain run resolves its own seed from the parameter surface, so the
+instrument records that seed in the measurement's identity instead of accepting a `--seed`
+option on this form. `--dry-run` resolves the chain and writes `run.json` with the identity
+record only.
 
 ### The stimulus document
 
 `--stimuli` names a JSON manifest. The arrays live beside it as `.npy` or `.npz` files.
 
 A `spectra` entry reads a measured-spectra manifest. It declares the wavelength grid, the
-valid band, the per-sample reflectance arrays, and the sample labels. The grid must match
-the film profile's own wavelength grid, and `--condition REFERENCE=TARGET` names the scene
-illuminant:
+valid band, the per-sample reflectance arrays, the sample labels, and the scene illuminant
+pair. The grid must match the film profile's own wavelength grid, and the manifest itself
+declares the scene color space, the transfer state of the input values, and the illuminant
+pair as `condition`:
 
 ```json
 {
   "schema_version": 1,
   "name": "portra-800-spectra",
+  "color_space": "sRGB",
+  "cctf_decoding": true,
+  "condition": {"reference": "D65", "target": "Tungsten 3200K"},
   "grid_nm": {"start": 380.0, "end": 780.0, "step": 5.0},
   "valid_band": [380.0, 780.0],
   "reflectances": {"path": "reflectances.npy"},
@@ -85,13 +92,17 @@ illuminant:
 }
 ```
 
+`color_space` names the scene color space the values are read in and `cctf_decoding` declares
+whether the stored values are already transfer-decoded. `condition.reference` names the film
+reference illuminant and `condition.target` the scene illuminant that produced the input.
+
 Every other entry reads a points manifest: an `N` by 3 array of values at that boundary. The
 `domain` must match the entry (`scene_rgb` for `rgb_in`, `film_log_e` for `log_e_film`,
 `film_density` for `cmy_film`).
 
-A `scene_rgb` manifest declares its `color_space` and its `transfer` state, exactly as a
-raster input to `process` does. Declare `"encoded"` when the array carries transfer-encoded
-values, and `"linear"` when it carries scene-linear values; the chain then decodes them the
+A `scene_rgb` manifest declares its `color_space` and its `cctf_decoding` state, exactly as a
+raster input to `process` does. Declare `true` when the array already carries transfer-decoded
+values, and `false` when it carries transfer-encoded values; the chain then decodes them the
 same way it decodes a raster:
 
 ```json
@@ -99,7 +110,7 @@ same way it decodes a raster:
   "schema_version": 1,
   "domain": "scene_rgb",
   "color_space": "sRGB",
-  "transfer": "encoded",
+  "cctf_decoding": true,
   "points": {"path": "scene.npy"},
   "samples": [
     {"id": "p00", "source": "chart", "partition": "all", "row": 0}
@@ -126,7 +137,7 @@ report summarizes.
 
 ### Artifacts
 
-A run writes `measure.json` and `points.csv` into `--out`. It writes nothing when the
+A run writes `run.json` and `readings.csv` into `--out`. It writes nothing when the
 measurement does not complete, and it never replaces an existing artifact. An executed run
 also retains the stage evidence it read under `evidence/`.
 
@@ -137,19 +148,27 @@ point-wise while `film_render.dir_couplers.active` is true, and `log_e_film`, ta
 development, is unaffected by them. That is why the guard is measured per stage rather than
 named after a flag.
 
-`measure.json` carries the declared inputs and their hashes, the resolved chain identity,
+`run.json` carries the declared inputs and their hashes, the resolved chain identity,
 the entry boundary, the read stages, the stimulus identity, and the group summaries.
-`points.csv` carries one row per sample per available stage: the sample identity, its group,
+`readings.csv` carries one row per sample per available stage: the sample identity, its group,
 the stage, channel order, the three channel values, the unit, and a validity flag. A sample
 whose values include a non-finite number is invalid and reports an empty field; the command
 does not clip, extrapolate, or repair it.
 
-## `measure sample`
+### The command result
+
+Every successful measurement command prints one JSON object on stdout with `schema_version`,
+`command`, `execution_status`, and `artifact`, the record the command published. Human
+messages, progress, and errors use stderr, so the two streams stay separable. A failed
+command prints its human text on stderr and a result object on stdout whose
+`execution_status` is `failed` and whose `errors` name the failure.
+
+## `sample`
 
 ```bash
-./target/release/spektrafilm-lab measure sample \
+./target/release/spektrafilm-lab sample \
     --source chart.tif --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
-    --plan plan.json --out sample-1
+    --regions regions.json --out sample-1
 ```
 
 `--source` declares a raster image and requires the same input declaration as `process`: a
@@ -159,34 +178,52 @@ stage's coordinate space, channel order, units, color space, and transfer state.
 
 An image source reports its readings under the stage name `source`, with the domain
 `source_rgb` and the declared color space. An evidence source reports the bundle's own stage
-identifier and declaration. When the bundle stage declares encoded transfer, the reading
-decodes it with that stage's own declared color space and records `transfer: "linear"` in its
-stage record; the `source` block keeps the bundle's own declaration verbatim, so
-`source.transfer` still reads `encoded`. A stage that declares no color space or transfer
-state — the density and exposure stages do not, since their values carry no transfer encoding
-— records `null` for both rather than a state the bundle never declared.
+identifier and declaration. When the bundle stage declares transfer-encoded values, the reading
+decodes them with that stage's own declared color space and records `cctf_decoding: true` in
+its stage record, because the values the reading stores are decoded; the `source` block keeps
+the bundle's own declaration verbatim, so `source.cctf_decoding` still reads `false`. A stage
+that declares no color space or transfer state — the density and exposure stages do not, since
+their values carry no transfer encoding — records `null` for both rather than a state the
+bundle never declared.
 
-`--plan` declares the sample geometry with stable identities:
+### The regions document
+
+`--regions` declares the sample geometry with stable identities:
 
 ```json
 {
   "schema_version": 1,
+  "id": "chart-regions",
   "name": "chart-plan",
-  "samples": [
-    {"id": "patch-01", "source": "it8", "partition": "color", "x": 64, "y": 32, "width": 8, "height": 8}
+  "regions": [
+    {"id": "patch-01", "label": "skin", "source": "it8", "partition": "color",
+     "role": "skin", "measurements": ["color", "tone"],
+     "geometry": {"x": 64, "y": 32, "width": 8, "height": 8, "space": "source"}}
   ]
 }
 ```
 
-A sample window that leaves the source bounds fails with the sample identity. The command
-does not clamp, pad, extrapolate, or repair a sample, and it does not resize, re-encode, or
-convert the source beyond the declared input declaration.
+Each region carries a stable `id`, an optional `label`, optional `source` and `partition`
+group labels, a `role`, and the `measurements` families it selects. The role is one of `skin`,
+`neutral`, `shadow`, `highlight`, `color`, `flat_field`, `edge`, `texture`, or `other`. The
+`geometry` names the rectangle with `x`, `y`, `width`, and `height`; `width` and `height`
+default to 1, and `space` declares the coordinate space as `source` for the declared source
+image's pixels or `render` for the coordinates of a completed simulation, defaulting to
+`source`. Identities are unique within the document, and `full_image` stays reserved for the
+whole declared source. Regions may overlap: a reading carries its own identity.
 
-## `measure compare`
+The same document serves a suite case, a reference, and this sampling command, and `regions
+--manifest` derives one from a review manifest's grid set. A region window that leaves the
+source bounds fails with the region identity. The command does not clamp, pad, extrapolate, or
+repair a region, and it does not resize, re-encode, or convert the source beyond the declared
+input declaration.
+
+## `compare --reading-baseline`
 
 ```bash
-./target/release/spektrafilm-lab measure compare \
-    --baseline run-1 --candidate run-2 --reference run-ref --out compare-1
+./target/release/spektrafilm-lab compare \
+    --reading-baseline run-1 --reading-candidate run-2 \
+    --reference-run run-ref --out compare-1
 ```
 
 Readings match by sample identity and stage identity. An incompatible identity set is
@@ -197,8 +234,8 @@ An identity difference between the two runs is evidence rather than an error: th
 reports it beside the numeric deltas and does not refuse the pair. That is how a retained
 reference reading makes chain drift visible.
 
-`--reference` adds a third retained reading and compares it under its own role: the primary
-comparison is `candidate_minus_baseline`, and the reference adds
+`--reference-run` adds a third retained reading and compares it under its own role: the
+primary comparison is `candidate_minus_baseline`, and the reference adds
 `candidate_minus_reference` and `baseline_minus_reference`. Each comparison decides its own
 availability from its own two sides, so a stage that joins for one comparison is not
 reported for another on its behalf. Differences that name only a value's group label
@@ -214,7 +251,7 @@ reason instead of a number, and an unavailable distance is never written as zero
  "metric": "delta_e_2000", "reason": "no declared color space"}
 ```
 
-`compare.json` carries the side records, the identity differences, the unmatched readings,
+`comparison.json` carries the side records, the identity differences, the unmatched readings,
 the joined stages, one summary group per comparison per channel, the color-distance summaries
 with their clipped count, and the unavailable records. `deltas.csv` carries one row per joined
 sample and stage per comparison, with the comparison in its `pair` column, the subtrahend
@@ -225,22 +262,25 @@ empty field rather than a zero, and a pair whose two sides declare different col
 interpretations reports its channel deltas empty and its validity `false`, exactly as the same
 comparison's record reports that metric unavailable.
 
-## `measure verify`
+## `verify`
 
 ```bash
-./target/release/spektrafilm-lab measure verify --run run-1 --data-dir data
+./target/release/spektrafilm-lab verify --record run-1 --data-dir data
 ```
 
-The command re-resolves the declaration recorded in `run-1/measure.json` against the data
+The command re-resolves the declaration recorded in `run-1/run.json` against the data
 directory you name, then re-hashes the renderer executable, the data inventory, the
 profiles, and the retained stage buffers. It reports every difference from the recorded
 identity. It renders nothing, rewrites nothing, and judges nothing: it exits 0 whenever it
 could read the record and re-resolve the chain, because a difference is evidence rather than
 a failure.
 
+The command writes no artifact. It prints its full report object on stdout and then the usual
+command result, so a verification cannot overwrite the record it verifies.
+
 This is how a guard run stays useful. Retain a measurement of a frozen stimulus set, then
 verify it later to see whether the executable, the data, the profiles, or the parameters
-moved. A comparison against retained readings is a `measure compare`.
+moved. A comparison against retained readings is `compare --reading-baseline`.
 
 ## Worked example
 
@@ -249,7 +289,7 @@ halation, DIR couplers, grain, print glare, and scanner unsharp masking, so the 
 fails before it executes:
 
 ```bash
-./target/release/spektrafilm-lab measure run \
+./target/release/spektrafilm-lab run \
     --stimuli log_e.json --enter log_e_film \
     --preset "Kodak Portra 800" \
     --data-dir data --out run-1
@@ -271,7 +311,7 @@ do. The list names exactly the operations the measured range can reach.
 Disable the stages the failure names, and the same run completes:
 
 ```bash
-./target/release/spektrafilm-lab measure run \
+./target/release/spektrafilm-lab run \
     --stimuli log_e.json --enter log_e_film \
     --preset "Kodak Portra 800" \
     --set film_render.dir_couplers.active=false \
@@ -298,7 +338,7 @@ stages before it, which the route never executed for this measurement, report
 `not_applicable`. Retain the run, then verify it after a rebuild or a data change:
 
 ```bash
-./target/release/spektrafilm-lab measure verify --run run-1 --data-dir data
+./target/release/spektrafilm-lab verify --record run-1 --data-dir data
 ```
 
 ## See also

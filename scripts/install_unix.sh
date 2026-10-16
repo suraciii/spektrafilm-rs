@@ -19,7 +19,7 @@ if [[ "$(uname -s)" == Linux ]]; then
         bash "$repo_root/scripts/package_linux_app.sh"
     mkdir -p "$install_root"
     cp -a "$package_dir/." "$install_root/"
-    for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
+    for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
         ln -sfn "$install_root/bin/$binary" "$bin_dir/$binary"
     done
 elif [[ "$(uname -s)" == Darwin ]]; then
@@ -28,13 +28,13 @@ elif [[ "$(uname -s)" == Darwin ]]; then
         bash "$repo_root/scripts/package_macos_app.sh"
     mkdir -p "$install_root"
     cp -a "$app_dist_dir/Spektrafilm.app" "$install_root/"
-    for binary in spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
+    for binary in spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
         ln -sfn "$install_root/Spektrafilm.app/Contents/MacOS/$binary" "$bin_dir/$binary"
     done
     ln -sfn "$install_root/Spektrafilm.app/Contents/MacOS/spektrafilm-gui" "$bin_dir/spektrafilm-gui"
 else
     mkdir -p "$install_root" "$bin_dir"
-    for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
+    for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
         source="$repo_root/target/release/$binary"
         test -x "$source" || { echo "missing release binary: $source" >&2; exit 1; }
         cp "$source" "$install_root/$binary"
@@ -42,7 +42,7 @@ else
     done
     rm -rf "$install_root/data"
     cp -R "$repo_root/data" "$install_root/data"
-    for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
+    for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
         ln -sfn "$install_root/$binary" "$bin_dir/$binary"
     done
 fi
@@ -55,8 +55,7 @@ Installed Spektrafilm to:
   $bin_dir/spektrafilm
   $bin_dir/spektrafilm-f64
   $bin_dir/decode_raw_gui
-  $bin_dir/spektrafilm-bench
-  $bin_dir/spektrafilm-bench-fixtures
+  $bin_dir/spektrafilm-lab
 
 Add $bin_dir to PATH if it is not already there.
 EOF

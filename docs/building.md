@@ -26,7 +26,7 @@ cargo build --release -p spektrafilm-cli
 # f64 CLI — reference precision (CPU only; WGSL has no f64)
 cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-f64
 
-# lab CLI — development commands at f64 reference precision (never packaged)
+# instrument CLI — the research command surface at f64 reference precision
 cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-lab
 
 # Optional RAW decoding helper using the shared native decoder
@@ -38,7 +38,7 @@ This produces:
 - `target/release/spektrafilm-gui` — desktop GUI.
 - `target/release/spektrafilm` — fast f32 CLI.
 - `target/release/spektrafilm-f64` — CPU reference exporter.
-- `target/release/spektrafilm-lab` — development command surface (f64 reference precision; not shipped).
+- `target/release/spektrafilm-lab` — the instrument command surface (f64 reference precision; shipped in packages).
 - `target/release/decode_raw_gui` — standalone RAW decoding helper.
 
 The `just` command surface also covers packaging and per-user installation:
@@ -61,7 +61,7 @@ Packages must distribute the native shared libraries and their transitive depend
 
 LibRaw is dual LGPL 2.1/CDDL 1.0. Lensfun's library is LGPL 3.0, and its database is CC BY-SA 3.0. Exiv2 is GPL 2.0 or later. GLib is LGPL 2.1 or later. Packages must include applicable license texts. The application remains GPL 3.0.
 
-On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after `just build`. This builds the CLI, f64 exporter, GUI, RAW helper, and both native benchmark tools. `BUILD_TARGET_DIR` selects Cargo's output directory. `DIST_DIR` selects the generated package directory. The script copies recursive ELF dependencies, LittleCMS, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML, and native license notices. It verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`.
+On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after `just build`. This builds the CLI, f64 exporter, GUI, RAW helper, and the instrument. `BUILD_TARGET_DIR` selects Cargo's output directory. `DIST_DIR` selects the generated package directory. The script copies recursive ELF dependencies, LittleCMS, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML, and native license notices. It verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`.
 
 Extract the entire archive and launch the wrappers in `bin/`. They locate bundled data and libraries relative to their own location. The host supplies glibc, the display server, and graphics drivers. Windows and macOS use `scripts/package_windows_app.ps1` and `scripts/package_macos_app.sh`.
 
@@ -83,7 +83,7 @@ See [scripts/parity/README.md](../scripts/parity/README.md) for release package 
 - [CLI usage](cli.md)
 - [GUI usage](gui.md)
 - [RAW decoding](raw.md)
-- [Native benchmark tools](benchmark.md)
+- [Appearance benchmark](benchmark.md)
 - [Parity and acceptance evidence](parity.md)
 - [Test architecture](../eng/testing.md)
 - [Native package and GUI acceptance tools](../scripts/parity/README.md)

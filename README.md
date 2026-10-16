@@ -4,7 +4,7 @@
 
 SpektraFilm simulates analog color film and the print-and-scan chain spectrally. A digital image exposes a film stock, the developed record is enlarged onto photographic paper, and a scanner reads the result. Film, paper, enlarger light and scanner response are integrated over 81 wavelengths, so a stock, a paper, or a light source changes the image through its spectral profile rather than through a color preset. Bundled profiles carry measured or fitted spectral data; the CineStill 800T Cs41 material is an experimental fit, see [scanning](docs/scanning.md).
 
-This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm). The desktop GUI renders at the build's native precision; GPU execution is f32 WGPU with faithful CPU stages where a GPU implementation would change the result. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Numeric agreement is judged against per-scenario budgets, not universal bit identity; see [parity and backends](docs/parity.md).
+This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm), forked from [turbasvin/spektrafilm-rs](https://github.com/turbasvin/spektrafilm-rs), the original Rust port. The desktop GUI renders at the build's native precision; GPU execution is f32 WGPU with faithful CPU stages where a GPU implementation would change the result. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Numeric agreement is judged against per-scenario budgets, not universal bit identity; see [parity and backends](docs/parity.md).
 
 ## What you can do
 
@@ -14,7 +14,8 @@ This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolp
 - **Process in batch.** `spektrafilm` is the fast f32 processor and `spektrafilm-f64` is the CPU reference exporter; both keep floating samples in float TIFF/EXR, copy source EXIF/IPTC/XMP to non-EXR output, and write color tags or ICC profiles. See [the CLI guide](docs/cli.md).
 - **Choose a grain engine.** Spektra, Procedural (Dehancer-derived), Dye and Fotufilm Film are selectable, each with its own controls and defaults. See [grain engines](docs/grain.md).
 - **Deliver LUTs for a camera.** Bake deterministic bundles for Panasonic V-Log with CUBE, 3DL, Hald, OCIO and QA artifacts. See [LUT delivery](docs/luts.md).
-- **Compare versions.** `spektrafilm-bench` renders immutable evidence from color, tone, FLIP, grain, halation and edge measurements and builds an offline review. See [the appearance benchmark](docs/benchmark.md).
+- **Compare versions.** `spektrafilm-lab` renders immutable evidence from color, tone, FLIP, grain, halation and edge measurements. Read retained measurements through `inspect`, then use `report --comparison` for an offline visual review. See [the appearance benchmark](docs/benchmark.md).
+- **Review prepared images.** `spektrafilm-lab report --manifest` builds an offline viewer for prepared image sets — a shared grid with linked patch selection or explicit per-image regions — with Chinese captions and a declared default pair. `spektrafilm-lab regions` derives a set's declared measurement regions for cases, references, or `run`. See [prepared image review](docs/benchmark.md#review-prepared-images).
 - **Decode camera RAW.** `decode_raw_gui` shares the native LibRaw and Lensfun path with the pipeline and writes linear ACES2065-1 TIFF. See [RAW decoding](docs/raw.md).
 
 ## Build
@@ -60,19 +61,11 @@ List the shipped films, papers and presets:
 
 ## Documentation
 
-[specs/](specs/README.md) holds the product contracts: what the program must do and the invariants it protects. [CONTEXT.md](CONTEXT.md) defines the film-simulation language. The guides below explain how to use the product.
-
-- [Building, packaging, and verification](docs/building.md) — dependencies, build commands, package scripts, install locations, and which gate runs when.
-- [Simulation pipeline and profiles](docs/pipeline.md) — the spectral chain, selectable upsampling methods, camera filters, and shipped profiles.
-- [GUI guide](docs/gui.md) — controls, Preview, Scan, Save, Export, states, and diagnostics.
-- [CLI guide](docs/cli.md) — commands, formats, parameter overrides, geometry, color management, and reports.
-- [Attribution](docs/attribution.md) — upstream sources, third-party components, and their license terms.
-
-[docs/README.md](docs/README.md) carries the complete guide list. [Crate architecture](eng/architecture.md), [testing](eng/testing.md), [documentation language](eng/documentation-language.md), and [coding standards](CODING_STANDARDS.md) cover engineering practices.
+[specs/](specs/) holds the product contracts: what the program must do and the invariants it protects. [CONTEXT.md](CONTEXT.md) defines the film-simulation language. [docs/README.md](docs/README.md) carries the complete guide list. [Crate architecture](eng/architecture.md), [testing](eng/testing.md), [documentation language](eng/documentation-language.md), and [coding standards](CODING_STANDARDS.md) cover engineering practices.
 
 ## Project status
 
-The migration target is the pinned Python 0.3.4 reference. Measured agreement and budgets live in [baseline parity evidence](docs/parity/baseline_evidence.md), the [parity matrix](docs/parity/parity_matrix.md), and the [Python ↔ Rust differential harness](scripts/parity/README.md).
+The Python 0.3.4 migration is complete; development continues with new features and optimizations. LUT acceptance and the package spectral fixture use `experimental` instead. Measured agreement and budgets live in [baseline parity evidence](docs/parity/baseline_evidence.md), the [parity matrix](docs/parity/parity_matrix.md), and the [Python ↔ Rust differential harness](scripts/parity/README.md).
 
 ## Credits and license
 

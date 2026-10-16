@@ -14,7 +14,7 @@ crates/
   spektrafilm-cli/        `spektrafilm`, `spektrafilm-f64`, `spektrafilm-lab`, `decode_raw_gui` and `lut`
   spektrafilm-gui/        egui/eframe preview window
   spektrafilm-raw/        LibRaw white balance and Lensfun correction
-  spektrafilm-benchmark/  benchmark CLI, fixture generator, metrics and offline review
+  spektrafilm-benchmark/  evaluation library: metrics, documents, comparison, fixture generation, offline review
 data/
   profiles/               film and paper JSON profiles
   luts/                   Hanatos2025 spectral basis and observer data
@@ -49,9 +49,9 @@ Feature ownership stays inside the existing crates:
 - `spektrafilm-model/src/`: `grain/{v1,v2}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests. `optics/` owns shared physical blur, unsharp masking, and highlight boost.
 - `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate. Serialized JSON fields are unchanged.
 - `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. `blur/` owns Gaussian FIR weight generation and its shared uniform layout. `film_chain.rs` owns resident orchestration and its resource lifetimes. `mod.rs` retains device setup and shared dispatch.
-- `spektrafilm-cli/src/process.rs` owns process arguments, invocation setup, preflight, rendering, and publication. `lib.rs` owns the shared command plumbing and data selection for the `spektrafilm`, `spektrafilm-f64`, and `spektrafilm-lab` binaries; each binary's `main.rs` owns its command surface.
+- `spektrafilm-cli/src/process.rs` owns process arguments, invocation setup, preflight, rendering, and publication. `lib.rs` owns the shared command plumbing and data selection for the `spektrafilm`, `spektrafilm-f64`, and `spektrafilm-lab` binaries; `bin/lab.rs` owns the instrument's command surface, which the `lab/` module serves.
 - `spektrafilm-core/src/lut_baker/bundle.rs` owns canonical topology stage roles, taps, suffixes, and print sharing. Baking, QA, and OCIO consume those descriptors, including magazine final-stage roles.
-- `spektrafilm-core/src/spectral_service.rs` owns the filming front end: the filtered film sensitivity, the RGB → film-raw upsampler (Hanatos2025 spectral LUT, the other registered LUTs, or the Mallett matrix), and the input-gamut remap at one boundary after the LUT. The matrix-only Mallett path stays separate. `pipeline_calibration` and the lab spectral evaluation call the same builder.
+- `spektrafilm-core/src/spectral_service.rs` owns the filming front end: the filtered film sensitivity, the RGB → film-raw upsampler (Hanatos2025 spectral LUT, the other registered LUTs, or the Mallett matrix), and the input-gamut remap at one boundary after the LUT. The matrix-only Mallett path stays separate. `pipeline_calibration` and the instrument's spectral evaluation call the same builder.
 - `spektrafilm-gui/src/main.rs` owns contiguous parameter-revision/dirty transitions, with a separate calibration-invalidating transition. State restoration retains its explicit ordering around profile and viewer updates.
 - `spektrafilm-benchmark/src/documents.rs` owns authored-document validation and shared document helpers. `documents/evidence.rs` owns generated run/comparison validation. `documents/masks.rs` owns render/reference geometry-mask decoding with their distinct acceptance rules.
 
