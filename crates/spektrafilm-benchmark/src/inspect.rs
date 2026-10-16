@@ -153,6 +153,29 @@ fn measurement_rows(
     })
 }
 
+fn retained_readouts(
+    cases: &[Value],
+    key: &str,
+    case_ids: &[String],
+    region_ids: &[String],
+) -> Vec<Value> {
+    let mut result = Vec::new();
+    for case in cases.iter().filter(|c| selected(case_ids, &c["case_id"])) {
+        for owner in std::iter::once(case).chain(rows(&case["pairs"]).iter()) {
+            for row in rows(&owner[key])
+                .iter()
+                .filter(|r| selected(region_ids, &r["region_id"]))
+            {
+                let mut row = row.clone();
+                row["case_id"] = case["case_id"].clone();
+                row["seed"] = case["seed"].clone();
+                result.push(row);
+            }
+        }
+    }
+    result
+}
+
 /// Read and validate a retained comparison, without rendering or measuring.
 /// Repeated exact filters are OR within each selector and AND across selectors;
 /// unknown choices and empty filtered intersections are errors. Per-seed/pair
@@ -217,10 +240,25 @@ pub fn inspect(
         .iter()
         .filter(|row| matches(row, case_ids, region_ids, metrics))
         .collect();
+    // Metric selectors apply to scalar measurements, not to the independent
+    // retained coordinate and native-stage records for the selected regions.
+    let region_readouts = retained_readouts(cases, "region_readouts", case_ids, region_ids);
+    let stage_readouts = retained_readouts(cases, "stage_readouts", case_ids, region_ids);
+    let readout_status: Vec<Value> = cases.iter().filter(|c| selected(case_ids, &c["case_id"]))
+        .flat_map(|case| {
+            let owners: Vec<&Value> = if single { rows(&case["pairs"]).iter().collect() } else { vec![case] };
+            owners.into_iter().map(move |owner| json!({
+                "case_id": case["case_id"], "seed": case["seed"],
+                "pair_id": owner.get("id").cloned().unwrap_or(json!("baseline/candidate")),
+                "region_readouts": if owner.get("region_readouts").is_some() { "retained" } else { "not_retained" },
+                "stage_readouts": if case.get("stage_readouts").is_some() { "retained" } else { "not_retained" },
+            }))
+        }).collect();
     if (!region_ids.is_empty() || !metrics.is_empty())
         && selected_measurements.is_empty()
         && seed_measurements.is_empty()
         && selected_findings.is_empty()
+        && (!metrics.is_empty() || (region_readouts.is_empty() && stage_readouts.is_empty()))
     {
         return Err(Error::new(
             "empty_selection",
@@ -306,6 +344,7 @@ pub fn inspect(
         "summary":comparison["summary"],"artifact_base":root,
         "available":{"case_ids":available_cases,"region_ids":available_regions,"metrics":available_metrics},
         "case_conditions":case_conditions,
+        "region_readouts":region_readouts,"stage_readouts":stage_readouts,"readout_status":readout_status,
         "failed_results":failed_results,"findings":selected_findings,
         "measurements":selected_measurements,"seed_measurements":seed_measurements}),
     )

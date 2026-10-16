@@ -2,6 +2,7 @@ use super::DOMAIN;
 use super::artifacts::{ArtifactRole, Comparison};
 use super::catalog::{self, Metric};
 use super::io::{err, field, mask, mean, optional_array, percentile, population, text};
+use crate::color_readouts::{chroma_ab, shortest_hue_shift};
 use crate::common::Result;
 use crate::image_data;
 use serde_json::{Map, Value, json};
@@ -103,20 +104,8 @@ fn identifier(x: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
-fn chroma_ab(p: [f64; 3]) -> f64 {
-    p[1].hypot(p[2])
-}
-
 fn chroma_distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     (a[1] - b[1]).hypot(a[2] - b[2])
-}
-
-/// Shortest circular hue-angle difference, model minus reference, degrees in
-/// (-180, 180].
-fn shortest_hue_shift(model: [f64; 3], reference: [f64; 3]) -> f64 {
-    let raw = model[2].atan2(model[1]).to_degrees() - reference[2].atan2(reference[1]).to_degrees();
-    let wrapped = (raw + 180.).rem_euclid(360.) - 180.;
-    if wrapped == -180. { 180. } else { wrapped }
 }
 
 fn side_entry(value: Option<f64>, reason: Option<&str>) -> Value {
@@ -145,8 +134,10 @@ struct RegionRecord {
 pub fn regional(
     c: &mut Comparison,
     ref_lab: &[[f64; 3]],
+    ref_encoded: &[[f64; 3]],
     reference_dims: [usize; 2],
     labs: &[Vec<[f64; 3]>],
+    encoded: &[Vec<[f64; 3]>],
     dims: [usize; 2],
     case: &Value,
     base: &Path,
@@ -172,6 +163,11 @@ pub fn regional(
     }
     let pairs = validate_region_pairs(case)?;
     let floor = catalog::hue_floor(&c.protocol)?;
+    let gating = crate::color_readouts::Gating {
+        tone,
+        chroma,
+        hue_floor: floor,
+    };
     if let Some(f) = floor {
         c.review["hue_chroma_floor"] = json!(f);
     }
@@ -205,8 +201,10 @@ pub fn regional(
                     "Reference region has no matching render region",
                 )
             })?;
-        let render_pop = population(&mask(field(render, "geometry")?, dims, base)?);
-        let ref_pop = population(&mask(field(region, "geometry")?, reference_dims, base)?);
+        let render_mask = mask(field(render, "geometry")?, dims, base)?;
+        let render_pop = population(&render_mask);
+        let ref_mask = mask(field(region, "geometry")?, reference_dims, base)?;
+        let ref_pop = population(&ref_mask);
         if render_pop.is_empty() || ref_pop.is_empty() {
             return Err(err(
                 "empty_reference_population",
@@ -271,26 +269,20 @@ pub fn regional(
             .collect();
         let reference_chroma = chroma_ab(reference_center);
         let model_chroma: Vec<f64> = (0..labs.len()).map(|s| chroma_ab(centers[s])).collect();
-        let (hue_shift, hue_reason): (Vec<Option<f64>>, Option<&'static str>) = match floor {
-            None => (vec![None; labs.len()], Some("hue_diagnostics_not_selected")),
-            Some(_) if !chroma => (
-                vec![None; labs.len()],
-                Some("unknown_or_graded_color_reference"),
-            ),
-            Some(f) => {
-                let per_side: Vec<Option<f64>> = (0..labs.len())
-                    .map(|s| {
-                        (reference_chroma >= f && model_chroma[s] >= f)
-                            .then(|| shortest_hue_shift(centers[s], reference_center))
-                    })
-                    .collect();
-                let reason = per_side
-                    .iter()
-                    .any(Option::is_none)
-                    .then_some("below_chroma_floor");
-                (per_side, reason)
-            }
-        };
+        let reference_hue_reason = crate::color_readouts::hue_gate(&gating, reference_chroma);
+        let mut hue_reason = reference_hue_reason;
+        let hue_shift: Vec<Option<f64>> = model_chroma
+            .iter()
+            .enumerate()
+            .map(|(s, &model_chroma)| {
+                let reason = reference_hue_reason
+                    .or_else(|| crate::color_readouts::hue_gate(&gating, model_chroma));
+                hue_reason = hue_reason.or(reason);
+                reason
+                    .is_none()
+                    .then(|| shortest_hue_shift(centers[s], reference_center))
+            })
+            .collect();
         let hue_error: Vec<Option<f64>> = hue_shift.iter().map(|v| v.map(f64::abs)).collect();
         let tone_reason = (!tone).then_some("tone_contaminated_reference");
         let chroma_reason = (!chroma).then_some("unknown_or_graded_color_reference");
@@ -329,6 +321,46 @@ pub fn regional(
             .and_then(Value::as_str)
             .unwrap_or(id)
             .to_owned();
+        let render_geometry = field(render, "geometry")?;
+        let reference_geometry = field(region, "geometry")?;
+        let readouts = if optional_array(render, "measurements")
+            .iter()
+            .any(|family| family == "color")
+        {
+            // The readouts reuse the regional centres and populations directly, so
+            // no second sort of the same samples happens here. The reference is
+            // the displacement source: every model side yields one
+            // reference-to-model displacement.
+            let mut readout_sides: Vec<crate::color_readouts::Side<'_>> =
+                vec![crate::color_readouts::Side {
+                    role: "reference",
+                    geometry: reference_geometry,
+                    lab: ref_lab,
+                    encoded: ref_encoded,
+                    linear: None,
+                    population: &ref_pop,
+                    median: Some(centers[reference_index]),
+                }];
+            readout_sides.extend((0..labs.len()).map(|s| crate::color_readouts::Side {
+                role: captures[s],
+                geometry: render_geometry,
+                lab: &labs[s],
+                encoded: &encoded[s],
+                linear: None,
+                population: &render_pop,
+                median: Some(centers[s]),
+            }));
+            crate::color_readouts::region_readouts(
+                id,
+                "native_image_pixels",
+                &readout_sides,
+                &gating,
+                Some((tone, chroma)),
+            )?
+        } else {
+            crate::color_readouts::unavailable_pair(id, "color_family_not_selected")
+        };
+        c.readouts(readouts);
         let mut payload = json!({"region_id":id,"label":label,"role":role,"population":catalog::population_label(&role),"render_geometry":render["geometry"],"reference_geometry":region["geometry"],"render_sample_count":render_pop.len(),"reference_sample_count":ref_pop.len(),"lab_median":{"reference":centers[reference_index]},"lightness_quantile_probabilities":(0..=100).map(|q|q as f64/100.).collect::<Vec<_>>(),"lightness_quantiles":{"reference":quantiles[reference_index]},"domain":DOMAIN,"units":"L*,a*,b*"});
         for s in 0..labs.len() {
             payload["lab_median"][captures[s]] = json!(centers[s]);

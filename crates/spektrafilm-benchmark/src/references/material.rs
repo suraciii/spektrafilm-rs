@@ -321,6 +321,10 @@ pub fn material(
             }
             pixel_counts.push(pop.len());
             regions.push(region_id);
+            c.readouts(crate::color_readouts::unavailable_pair(
+                region_id,
+                "reference_scope_not_color_comparable",
+            ));
             for s in 0..images.len() {
                 measured[s].push(estimator.reduce(pop.iter().map(|i| arrays[s][*i][ch]).collect()));
             }

@@ -56,6 +56,20 @@ Version measurements must use the existing `baseline_distance`, `candidate_dista
 
 Whole-chart evidence must retain all eligible regions and identify every summary population by its member identities and count. Color, neutral, and endpoint populations must remain separate. Tail summaries and worst regressions must remain visible beside focus-region improvements. This evidence must not create an automatic all-patch nonregression requirement or a universal acceptance score.
 
+### Retained region coordinates
+
+Comparison must retain two separate color-center estimators for declared regions that select `color`. The implicit full-image population used by scalar metrics must not create region readouts, including on measurement failure. `bounded_lab_channel_median` must reuse the componentwise bounded-display Lab medians. `unclipped_linear_srgb_mean` must average the unclipped linear sRGB samples before one XYZ-to-Lab conversion. Both must identify D65, CIE 1931 2-degree observer, and readout version `color-region-v1`. Neither estimator may replace pixel-map aggregates or ordinary patch metrics.
+
+Each side must retain Lab, C*, gated hue, geometry, coordinate space, and pixel count. The mean estimator must also retain its linear sRGB mean. Independent reference regions must use each image's own geometry. Aligned references must use the intersection of the declared region and the retained common-area mask, and must cite that mask.
+
+Each displacement must identify its source and destination roles. Signed Lab and chroma changes must mean destination minus source. The record must retain the three-component Lab vector, signed L*/C*/h changes, Euclidean `delta_e76`, CIEDE2000, and the separately named equal-L CIEDE2000 diagnostic. Full Lab vectors, lightness, DE76, and DE00 must obey tone eligibility. Chroma and equal-L diagnostics must obey chroma eligibility. Hue must also obey the authored floor. Visual-only references must not acquire numerical readouts. Unselected families and empty populations must retain reasons, not zero-valued coordinates. Nonfinite derived values must fail measurement.
+
+### Native-stage region statistics
+
+Comparison must derive native-stage channel means, minima, and maxima only from captured buffers. Each available record must identify the run role, stage, output-region geometry, producer coordinate space, native domain, units, channel order, pixel count, host precision, f64 storage, and buffer artifact. CMY log10 record exposure and optical density must not be converted to Lab or relabeled RGB.
+
+An output region may measure an output-stage buffer of matching published dimensions. A working grid must also have retained source-alignment evidence and matching working/output dimensions. A source grid must additionally have explicit crop-free, unit-scale, preview-free geometry on both routes. Dimension equality alone must not map film-frame or grain-aperture grids. Unmapped grids must report `stage_region_geometry_unmapped`. Uncaptured stages must remain unavailable; route-skipped stages must retain the producer's not-applicable reason. Missing, malformed, or nonfinite captured buffers must fail validation or measurement.
+
 ## Tone and contrast
 
 Controlled tone probes must identify their input exposure values in stops or log exposure. The response must preserve the input-to-output curve in linear luminance and Lab lightness. It must retain baseline and candidate response curves and signed differences.
