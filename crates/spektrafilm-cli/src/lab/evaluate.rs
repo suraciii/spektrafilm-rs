@@ -19,6 +19,7 @@ use spektrafilm_math::spectral as math_spectral;
 
 use super::cli::EvaluateArgs;
 use super::metrics::{self, SampleMetrics};
+use super::report::{csv_field, number_field};
 use super::spectra::SpectraSet;
 use crate::select_data_dir;
 
@@ -375,20 +376,4 @@ fn build_samples_csv(
         out.push('\n');
     }
     out
-}
-
-fn csv_field(value: &str) -> String {
-    if value.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_owned()
-    }
-}
-
-fn number_field(value: f64) -> String {
-    if value.is_finite() {
-        format!("{value}")
-    } else {
-        String::new()
-    }
 }

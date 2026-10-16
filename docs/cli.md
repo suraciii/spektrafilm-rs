@@ -214,6 +214,9 @@ from telemetry persistence.
 See [the CLI stage-evidence contract](../specs/cli/spec.md#stage-evidence) for the bundle
 format and its wire fields.
 
+The lab binary reads the same bundle with `measure sample --from-evidence` and re-hashes a
+retained bundle with `measure verify`. See [measurement](measurement.md).
+
 ## See also
 
 - [Documentation index](README.md)
