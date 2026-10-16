@@ -162,11 +162,10 @@ impl ComputeBackend for ObservedBackend<'_> {
         self.cpu();
         self.backend.grain_v2(i, p)
     }
-    #[cfg(feature = "wgpu-backend")]
     fn dye_field(
         &self,
         i: &ImageBuf,
-        p: &crate::wgpu_backend::DyeGpuParams,
+        p: &crate::dye_params::DyeGpuParams,
     ) -> Option<Result<ImageBuf, String>> {
         self.backend.dye_field(i, p)
     }

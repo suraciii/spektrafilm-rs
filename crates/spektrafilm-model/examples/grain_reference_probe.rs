@@ -1,4 +1,5 @@
-use spektrafilm_gpu::{GrainV2GpuParams, wgpu_backend::WgpuBackend};
+use spektrafilm_backend::GrainV2GpuParams;
+use spektrafilm_gpu::wgpu_backend::WgpuBackend;
 use spektrafilm_math::{
     image::ImageBuf,
     precision::{from_f32, to_f32},

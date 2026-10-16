@@ -1,7 +1,7 @@
 use super::*;
 use crate::export_job::ExportPause;
 use parking_lot::{Condvar, Mutex};
-use spektrafilm_gpu::telemetry::CollectionMode;
+use spektrafilm_backend::telemetry::CollectionMode;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 

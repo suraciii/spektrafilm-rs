@@ -3831,6 +3831,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "spektrafilm-backend"
+version = "0.1.2"
+dependencies = [
+ "accelerate-src",
+ "blas-src",
+ "bytemuck",
+ "cblas",
+ "openblas-src",
+ "parking_lot",
+ "rayon",
+ "serde",
+ "spektrafilm-math",
+ "tracing",
+]
+
+[[package]]
 name = "spektrafilm-benchmark"
 version = "0.1.2"
 dependencies = [
@@ -3861,6 +3877,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spektrafilm-backend",
  "spektrafilm-core",
  "spektrafilm-gpu",
  "spektrafilm-math",
@@ -3889,6 +3906,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spektrafilm-backend",
  "spektrafilm-gpu",
  "spektrafilm-math",
  "spektrafilm-model",
@@ -3904,15 +3922,10 @@ dependencies = [
 name = "spektrafilm-gpu"
 version = "0.1.2"
 dependencies = [
- "accelerate-src",
- "blas-src",
  "bytemuck",
- "cblas",
- "openblas-src",
  "parking_lot",
  "pollster",
- "rayon",
- "serde",
+ "spektrafilm-backend",
  "spektrafilm-math",
  "tracing",
  "tracing-subscriber",
@@ -3939,6 +3952,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spektrafilm-backend",
  "spektrafilm-core",
  "spektrafilm-gpu",
  "spektrafilm-math",
@@ -3971,6 +3985,7 @@ dependencies = [
  "rand_mt",
  "rayon",
  "serde_json",
+ "spektrafilm-backend",
  "spektrafilm-gpu",
  "spektrafilm-math",
  "tracing",

@@ -18,7 +18,7 @@ pub(super) struct UnsharpState {
 
 pub(super) fn build_unsharp_state(
     device: &ObservedDevice,
-    up: &crate::UnsharpGpuParams,
+    up: &spektrafilm_backend::UnsharpGpuParams,
     width: u32,
     height: u32,
     buf_a: &wgpu::Buffer,

@@ -294,13 +294,13 @@ impl Prepared {
         params: &RuntimeParams,
         source_pitch_um: f64,
         grid: ReadoutGrid,
-        backend: &dyn spektrafilm_gpu::ComputeBackend,
+        backend: &dyn spektrafilm_backend::ComputeBackend,
         cancel: &(dyn Fn() -> Result<(), String> + Sync),
     ) -> Result<ImageBuf, String> {
         let mut observation = super::StageObservation::cpu(
             backend,
             "grain_fotufilm",
-            spektrafilm_gpu::telemetry::CpuReason::FotufilmFilmCpu,
+            spektrafilm_backend::telemetry::CpuReason::FotufilmFilmCpu,
         );
         let result = self.readout_inner(source, film, params, source_pitch_um, grid, cancel);
         observation.set_complete(result.is_ok());

@@ -2,10 +2,12 @@ use std::cell::Cell;
 use std::path::Path;
 
 use anyhow::Result;
+use spektrafilm_backend::telemetry::{
+    CollectionMode, ObservationContext, ObservationKind, Purpose,
+};
 use spektrafilm_core::telemetry::{
     BackendRequested, IssueBoundary, IssueCategory, Operation, OperationKind, Outcome,
 };
-use spektrafilm_gpu::telemetry::{CollectionMode, ObservationContext, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 
 /// One accepted CLI invocation. Report persistence is deliberately outside its lifetime.
@@ -133,14 +135,14 @@ pub(crate) fn requested_backend(explicit: Option<crate::Backend>) -> BackendRequ
 }
 
 pub(crate) fn observe_backend(
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
     context: &ObservationContext,
 ) {
     if !context.enabled() {
         return;
     }
     if !backend.is_gpu() {
-        context.set_backend_selected(spektrafilm_gpu::telemetry::BackendSelected::Cpu);
+        context.set_backend_selected(spektrafilm_backend::telemetry::BackendSelected::Cpu);
     }
-    drop(spektrafilm_gpu::bind_backend(backend, context.clone()));
+    drop(spektrafilm_backend::bind_backend(backend, context.clone()));
 }

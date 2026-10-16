@@ -2,7 +2,7 @@
 ///
 /// Uses the pre-computed enlarger illuminant and exposure normalization factor.
 use rayon::prelude::*;
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::pchip3d::{PreparedPchip3d, pchip_interp, prepare_pchip_3d};
 use spektrafilm_math::precision::from_f64;
@@ -36,13 +36,13 @@ fn print_spectral_via_lut(
         .map(|context| {
             context.scope(
                 "enlarger_lut_prepare",
-                spektrafilm_gpu::telemetry::ObservationKind::Stage,
-                spektrafilm_gpu::telemetry::Purpose::Calibration,
+                spektrafilm_backend::telemetry::ObservationKind::Stage,
+                spektrafilm_backend::telemetry::Purpose::Calibration,
             )
         });
     let calibrated_backend = calibration
         .as_ref()
-        .map(|scope| spektrafilm_gpu::bind_backend(backend, scope.context().clone()));
+        .map(|scope| spektrafilm_backend::bind_backend(backend, scope.context().clone()));
     let calibration_backend = calibrated_backend.as_deref().unwrap_or(backend);
     let lut_image = calibration_backend.print_spectral(
         &grid,
@@ -63,7 +63,7 @@ fn print_spectral_via_lut(
     let _interpolation = super::StageObservation::cpu(
         backend,
         "enlarger_lut_interpolate",
-        spektrafilm_gpu::telemetry::CpuReason::SpectralLut,
+        spektrafilm_backend::telemetry::CpuReason::SpectralLut,
     );
     apply_pchip_lut(cmy_film, &prepared, data_min, data_max)
 }
@@ -221,7 +221,7 @@ pub fn expose_calibrated(
         let _diffusion = super::StageObservation::cpu(
             backend,
             "optical_diffusion",
-            spektrafilm_gpu::telemetry::CpuReason::OpticalDiffusion,
+            spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion,
         );
         let mut lin = log_raw_print;
         lin.data.par_chunks_mut(BLOCK).for_each(|chunk| {

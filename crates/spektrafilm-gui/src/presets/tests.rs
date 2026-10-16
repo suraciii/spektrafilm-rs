@@ -7,7 +7,7 @@ fn test_app(label: &str) -> (App, PathBuf) {
     let state_path = directory.join("state.json");
     state::GuiState::factory().save(&state_path).unwrap();
     let mut app = App::new_with_browser_path(
-        std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+        std::sync::Arc::new(spektrafilm_backend::cpu_backend::CpuBackend),
         None,
         Some(state_path),
         None,
@@ -116,7 +116,7 @@ fn ordinary_restart_restores_browser_only_and_explicit_state_wins() {
     assert!(carrier["rust"].get("runtime").is_none());
     let reopen = |initial_state| {
         App::new_with_browser_path(
-            std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+            std::sync::Arc::new(spektrafilm_backend::cpu_backend::CpuBackend),
             None,
             initial_state,
             None,
@@ -305,7 +305,7 @@ fn slide_startup_rejects_positive_output_with_visible_error() {
     let path = directory.join("slide.json");
     state.save(&path).unwrap();
     let restarted = App::new_with_browser_path(
-        std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+        std::sync::Arc::new(spektrafilm_backend::cpu_backend::CpuBackend),
         None,
         Some(path),
         None,
@@ -389,7 +389,7 @@ fn scanner_points_survive_section_preset_and_restart() {
     let path = directory.join("saved.json");
     app.current_state().unwrap().save(&path).unwrap();
     let mut restarted = App::new_with_browser_path(
-        std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+        std::sync::Arc::new(spektrafilm_backend::cpu_backend::CpuBackend),
         None,
         Some(path),
         None,

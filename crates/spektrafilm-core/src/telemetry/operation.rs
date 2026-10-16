@@ -5,7 +5,7 @@ use super::{
         OperationKind, Precision, Report, ReportSummary, SourceRender, UnavailableField,
     },
 };
-use spektrafilm_gpu::telemetry::{
+use spektrafilm_backend::telemetry::{
     AvailabilityReason, CollectionMode, IssueBoundary, IssueCategory, ObservationContext,
     ObservationKind, ObservationScope, Outcome, Purpose,
 };
@@ -215,7 +215,7 @@ impl Operation {
                     AvailabilityReason::CounterOverflow
                 } else if self.kind == OperationKind::Save
                     || snapshot.execution.backend_selected
-                        == Some(spektrafilm_gpu::telemetry::BackendSelected::Cpu)
+                        == Some(spektrafilm_backend::telemetry::BackendSelected::Cpu)
                 {
                     AvailabilityReason::NotApplicable
                 } else {
@@ -255,7 +255,7 @@ impl Operation {
                 reason: AvailabilityReason::DetailLimit,
             });
             if diagnostic_issues.len() < 64 {
-                diagnostic_issues.push(spektrafilm_gpu::telemetry::DiagnosticIssue {
+                diagnostic_issues.push(spektrafilm_backend::telemetry::DiagnosticIssue {
                     category: IssueCategory::CollectionUnavailable,
                     boundary: IssueBoundary::Operation,
                 });
@@ -344,7 +344,9 @@ impl Operation {
     }
 }
 
-fn merge_counter_overflow_fields(snapshot: &mut spektrafilm_gpu::telemetry::ObservationSnapshot) {
+fn merge_counter_overflow_fields(
+    snapshot: &mut spektrafilm_backend::telemetry::ObservationSnapshot,
+) {
     for (name, value) in snapshot.totals.named_fields() {
         if value.is_none()
             && !snapshot
@@ -393,8 +395,8 @@ impl Report {
                     .filter(|_| {
                         matches!(
                             stage.executor,
-                            Some(spektrafilm_gpu::telemetry::Executor::Cpu)
-                                | Some(spektrafilm_gpu::telemetry::Executor::Mixed)
+                            Some(spektrafilm_backend::telemetry::Executor::Cpu)
+                                | Some(spektrafilm_backend::telemetry::Executor::Mixed)
                         )
                     })
                     .map(|reason| (stage.name.clone(), reason))
@@ -413,7 +415,7 @@ impl Report {
             resident_decline_reasons: self.execution.resident_decline_reasons.clone(),
             cpu_stage_reasons,
             software_adapter: self.execution.adapter.as_ref().is_some_and(|adapter| {
-                adapter.device_type == spektrafilm_gpu::telemetry::AdapterDeviceType::Cpu
+                adapter.device_type == spektrafilm_backend::telemetry::AdapterDeviceType::Cpu
             }),
         }
     }

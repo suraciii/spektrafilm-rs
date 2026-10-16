@@ -1,7 +1,7 @@
 use super::*;
 use crate::params::RuntimeParams;
 use crate::test_support::data_dir;
-use spektrafilm_gpu::ComputeBackend as _;
+use spektrafilm_backend::ComputeBackend as _;
 use spektrafilm_math::image::ImageBuf;
 
 /// Parameters for the negative-to-positive acquisition-replacement
@@ -45,12 +45,12 @@ fn n2p_comparison_image(n: u32) -> ImageBuf {
 fn observed_render(
     pipeline: &Pipeline,
     image: ImageBuf,
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
-) -> spektrafilm_gpu::telemetry::ObservationSnapshot {
-    let context = spektrafilm_gpu::telemetry::ObservationContext::new(
-        spektrafilm_gpu::telemetry::CollectionMode::Summary,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> spektrafilm_backend::telemetry::ObservationSnapshot {
+    let context = spektrafilm_backend::telemetry::ObservationContext::new(
+        spektrafilm_backend::telemetry::CollectionMode::Summary,
     );
-    let observed = spektrafilm_gpu::bind_backend(backend, context.clone());
+    let observed = spektrafilm_backend::bind_backend(backend, context.clone());
     pipeline
         .process(image, observed.as_ref())
         .expect("observed resident render");
@@ -63,8 +63,8 @@ fn observed_render(
 fn observed_execution_path(
     pipeline: &Pipeline,
     image: ImageBuf,
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
-) -> spektrafilm_gpu::telemetry::ExecutionPath {
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> spektrafilm_backend::telemetry::ExecutionPath {
     observed_render(pipeline, image, backend)
         .execution
         .path
@@ -134,7 +134,7 @@ fn resident_positive_slide_matches_cpu_per_stage() {
     let image = comparison_image(16);
     let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
     let cpu_out = pipeline
-        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
     assert!(
@@ -170,10 +170,10 @@ fn active_slide_points_stay_resident_and_match_cpu() {
     let image = comparison_image(16);
     let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
     let cpu_out = pipeline
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let cpu_base = baseline
-        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (effect, _) = parity_metrics(&cpu_out, &cpu_base);
     assert!(effect > 1e-3, "slide points had no effect: {effect:.6}");
@@ -216,10 +216,10 @@ fn luminance_correction_matches_cpu_on_the_resident_route() {
     let image = comparison_image(16);
     let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
     let cpu_out = pipeline
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let cpu_base = baseline
-        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (effect, _) = parity_metrics(&cpu_out, &cpu_base);
     assert!(
@@ -262,10 +262,10 @@ fn luminance_correction_matches_cpu_on_the_print_route() {
     let image = comparison_image(16);
     let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
     let cpu_out = pipeline
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let cpu_base = baseline
-        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (effect, _) = parity_metrics(&cpu_out, &cpu_base);
     assert!(
@@ -313,7 +313,7 @@ fn scanner_lut_acquisition_fence_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -366,7 +366,7 @@ fn scanner_receiver_acquisition_fence_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -423,7 +423,7 @@ fn scanner_receiver_luminance_correction_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
     assert!(
@@ -445,7 +445,7 @@ fn scanner_receiver_luminance_correction_matches_cpu() {
     let uncorrected =
         Pipeline::new_with_spectral(film.clone(), print.clone(), plain, &dir).unwrap();
     let out_plain = uncorrected
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (_, uncorrected_max) = parity_metrics(&out_cpu, &out_plain);
     assert!(
@@ -484,7 +484,7 @@ fn enlarger_lut_print_fence_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -539,7 +539,7 @@ fn enlarger_diffusion_print_fence_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -598,7 +598,7 @@ fn negative_to_positive_capture_fence_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -649,7 +649,7 @@ fn spektra_grain_resident_fence_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -706,7 +706,7 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
     let snapshot = observed_render(&pipeline, image.clone(), &gpu);
     assert_eq!(
         snapshot.execution.path,
-        Some(spektrafilm_gpu::telemetry::ExecutionPath::GpuResident),
+        Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident),
         "backend {} did not keep the resident route",
         gpu.name()
     );
@@ -726,7 +726,7 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
 
     let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     assert_eq!(
         (out_gpu.width, out_gpu.height),
@@ -746,7 +746,7 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
     off.film_render.grain.active = false;
     let baseline = Pipeline::new_with_spectral(film.clone(), print.clone(), off, &dir).unwrap();
     let out_off = baseline
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (effect, _) = parity_metrics(&out_cpu, &out_off);
     assert!(effect > 1e-3, "dye field had no effect: mean={effect:.6}");
@@ -755,7 +755,7 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
     procedural.film_render.grain.engine = crate::params::grain::GrainEngine::Procedural;
     let other = Pipeline::new_with_spectral(film, print, procedural, &dir).unwrap();
     let out_procedural = other
-        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (branch, _) = parity_metrics(&out_cpu, &out_procedural);
     assert!(
@@ -788,7 +788,7 @@ fn spatial_deactivation_bypasses_the_dye_density_fence() {
     let image = comparison_image(16);
     let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
     assert!(
@@ -806,7 +806,7 @@ fn spatial_deactivation_bypasses_the_dye_density_fence() {
     enabled.debug.deactivate_spatial_effects = false;
     let with_field = Pipeline::new_with_spectral(film, print, enabled, &dir).unwrap();
     let field_cpu = with_field
-        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (effect, _) = parity_metrics(&out_cpu, &field_cpu);
     let (residual, _) = parity_metrics(&out_gpu, &out_cpu);
@@ -845,7 +845,7 @@ fn input_transfer_decoding_resident_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -889,7 +889,7 @@ fn langmuir_dir_non_default_donor_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -927,7 +927,7 @@ fn n2p_density_reading_fence_matches_cpu() {
     let image = n2p_comparison_image(16);
     let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
     assert!(
@@ -936,7 +936,7 @@ fn n2p_density_reading_fence_matches_cpu() {
     );
     assert_eq!(
         observed_execution_path(&pipeline, image.clone(), &gpu),
-        spektrafilm_gpu::telemetry::ExecutionPath::GpuResident
+        spektrafilm_backend::telemetry::ExecutionPath::GpuResident
     );
 
     // The reading changes the image (a direct scan of the same negative
@@ -946,7 +946,7 @@ fn n2p_density_reading_fence_matches_cpu() {
     direct.scanner.scan_output = "direct_scan".into();
     let baseline = Pipeline::new_with_spectral(film.clone(), print.clone(), direct, &dir).unwrap();
     let out_direct = baseline
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (effect, _) = parity_metrics(&out_cpu, &out_direct);
     assert!(
@@ -962,7 +962,7 @@ fn n2p_density_reading_fence_matches_cpu() {
     )
     .unwrap();
     let out_separable = separable
-        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (branch, _) = parity_metrics(&out_cpu, &out_separable);
     assert!(
@@ -993,7 +993,7 @@ fn digital_reference_fence_matches_cpu() {
     let image = n2p_comparison_image(16);
     let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
     assert!(
@@ -1002,7 +1002,7 @@ fn digital_reference_fence_matches_cpu() {
     );
     assert_eq!(
         observed_execution_path(&pipeline, image.clone(), &gpu),
-        spektrafilm_gpu::telemetry::ExecutionPath::GpuResident
+        spektrafilm_backend::telemetry::ExecutionPath::GpuResident
     );
 
     // Reference Exposure scales the response, so a one-stop variant must
@@ -1012,7 +1012,7 @@ fn digital_reference_fence_matches_cpu() {
     shifted.scanner.reference_exposure_ev += 1.0;
     let brighter = Pipeline::new_with_spectral(film.clone(), print.clone(), shifted, &dir).unwrap();
     let out_brighter = brighter
-        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (effect, _) = parity_metrics(&out_cpu, &out_brighter);
     assert!(
@@ -1028,7 +1028,7 @@ fn digital_reference_fence_matches_cpu() {
     )
     .unwrap();
     let out_density = density
-        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (branch, _) = parity_metrics(&out_cpu, &out_density);
     assert!(
@@ -1044,7 +1044,7 @@ fn digital_reference_fence_matches_cpu() {
 /// assertion also pins the measurement the plan promised.
 #[test]
 fn second_resident_render_reuses_static_buffers() {
-    use spektrafilm_gpu::telemetry::{CollectionMode, ObservationContext};
+    use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
     let dir = data_dir();
     let pipeline = Pipeline::new_with_spectral(
         crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap(),
@@ -1060,7 +1060,7 @@ fn second_resident_render_reuses_static_buffers() {
     let image = comparison_image(32);
     let render = |backend: &spektrafilm_gpu::wgpu_backend::WgpuBackend, image: ImageBuf| {
         let context = ObservationContext::new(CollectionMode::Summary);
-        let observed = spektrafilm_gpu::bind_backend(backend, context.clone());
+        let observed = spektrafilm_backend::bind_backend(backend, context.clone());
         let start = std::time::Instant::now();
         let out = pipeline
             .process(image, observed.as_ref())
@@ -1119,7 +1119,7 @@ fn second_resident_render_reuses_static_buffers() {
 /// renders measurably differently.
 #[test]
 fn static_cache_does_not_serve_stale_data_after_a_configuration_change() {
-    use spektrafilm_gpu::telemetry::{CollectionMode, ObservationContext};
+    use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
     let gpu = spektrafilm_gpu::test_support::adapter();
     let dir = data_dir();
     let build = |film: &str| {
@@ -1141,7 +1141,7 @@ fn static_cache_does_not_serve_stale_data_after_a_configuration_change() {
     let image = comparison_image(32);
     let render = |pipeline: &Pipeline| {
         let context = ObservationContext::new(CollectionMode::Summary);
-        let observed = spektrafilm_gpu::bind_backend(&gpu, context.clone());
+        let observed = spektrafilm_backend::bind_backend(&gpu, context.clone());
         pipeline
             .process(image.clone(), observed.as_ref())
             .expect("resident render")
@@ -1427,7 +1427,7 @@ fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
     let snapshot = observed_render(&pipeline, image, &gpu);
     assert_eq!(
         snapshot.execution.path,
-        Some(spektrafilm_gpu::telemetry::ExecutionPath::GpuResident),
+        Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident),
         "backend {} did not keep the resident route",
         gpu.name()
     );
@@ -1476,7 +1476,7 @@ fn explicit_gpu_request_runs_a_cropped_dye_field_on_the_device() {
     let snapshot = observed_render(&pipeline, comparison_image(16), &gpu);
     assert_eq!(
         snapshot.execution.path,
-        Some(spektrafilm_gpu::telemetry::ExecutionPath::PerStage),
+        Some(spektrafilm_backend::telemetry::ExecutionPath::PerStage),
         "backend {} did not take the per-stage route",
         gpu.name()
     );
@@ -1557,14 +1557,15 @@ fn experimental_mass_law_child() {
     let snapshot = observed_render(&pipeline, image, &auto);
     assert_eq!(
         snapshot.execution.path,
-        Some(spektrafilm_gpu::telemetry::ExecutionPath::GpuResident),
+        Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident),
         "backend {} did not keep the resident route",
         auto.name()
     );
     assert!(
         snapshot.observations.iter().any(|stage| {
             stage.name == "grain_v3_field"
-                && stage.cpu_reason == Some(spektrafilm_gpu::telemetry::CpuReason::GrainV3FieldCpu)
+                && stage.cpu_reason
+                    == Some(spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu)
         }),
         "the host field must keep its published reason: {:?}",
         snapshot.observations
@@ -1607,7 +1608,7 @@ fn camera_diffusion_fence_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -1658,7 +1659,7 @@ fn output_transfer_encode_pipe_tail_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -1706,7 +1707,7 @@ fn output_transfer_decode_pipe_tail_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -1756,7 +1757,7 @@ fn magazine_pipe_tail_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
 
     let mut max_diff = 0.0f64;
@@ -1812,7 +1813,7 @@ fn procedural_grain_linear_export_with_magazine_matches_cpu() {
 
     let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
     let out_cpu = pipeline
-        .process(img.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
     assert!(
@@ -1825,7 +1826,7 @@ fn procedural_grain_linear_export_with_magazine_matches_cpu() {
     off.magazine_print_color.active = false;
     let without = Pipeline::new_with_spectral(film, print, off, &dir).unwrap();
     let out_without = without
-        .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (effect, _) = parity_metrics(&out_cpu, &out_without);
     assert!(effect > 1e-3, "magazine had no effect: mean={effect:.6}");
@@ -1847,7 +1848,7 @@ fn resident_negative_matches_cpu_per_stage() {
     let image = comparison_image(16);
     let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
     let cpu_out = pipeline
-        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
     assert!(

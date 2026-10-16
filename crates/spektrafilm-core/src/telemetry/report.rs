@@ -1,6 +1,6 @@
 use super::configuration::{RenderConfiguration, SavingConfiguration};
 use serde::{Deserialize, Serialize};
-use spektrafilm_gpu::telemetry::{AvailabilityReason, CollectionMode, Outcome};
+use spektrafilm_backend::telemetry::{AvailabilityReason, CollectionMode, Outcome};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,17 +83,17 @@ pub struct Configuration {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Execution {
     pub backend_requested: Option<BackendRequested>,
-    pub backend_selected: Option<spektrafilm_gpu::telemetry::BackendSelected>,
-    pub path: Option<spektrafilm_gpu::telemetry::ExecutionPath>,
-    pub resident_decline_reasons: Vec<spektrafilm_gpu::telemetry::ResidentDeclineReason>,
-    pub adapter: Option<spektrafilm_gpu::telemetry::AdapterDescription>,
+    pub backend_selected: Option<spektrafilm_backend::telemetry::BackendSelected>,
+    pub path: Option<spektrafilm_backend::telemetry::ExecutionPath>,
+    pub resident_decline_reasons: Vec<spektrafilm_backend::telemetry::ResidentDeclineReason>,
+    pub adapter: Option<spektrafilm_backend::telemetry::AdapterDescription>,
     pub unavailable_fields: Vec<UnavailableField>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Measurements {
-    pub work: spektrafilm_gpu::telemetry::WorkCounters,
-    pub gpu_timing: spektrafilm_gpu::telemetry::GpuTimingMeasurements,
+    pub work: spektrafilm_backend::telemetry::WorkCounters,
+    pub gpu_timing: spektrafilm_backend::telemetry::GpuTimingMeasurements,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -105,12 +105,12 @@ pub struct Report {
     pub configuration: Configuration,
     pub execution: Execution,
     pub measurements: Measurements,
-    pub attempts: Vec<spektrafilm_gpu::telemetry::Observation>,
-    pub phases: Vec<spektrafilm_gpu::telemetry::Observation>,
-    pub stages: Vec<spektrafilm_gpu::telemetry::Observation>,
-    pub gpu_batches: Vec<spektrafilm_gpu::telemetry::Observation>,
-    pub diagnostic_issues: Vec<spektrafilm_gpu::telemetry::DiagnosticIssue>,
-    pub coverage: spektrafilm_gpu::telemetry::Coverage,
+    pub attempts: Vec<spektrafilm_backend::telemetry::Observation>,
+    pub phases: Vec<spektrafilm_backend::telemetry::Observation>,
+    pub stages: Vec<spektrafilm_backend::telemetry::Observation>,
+    pub gpu_batches: Vec<spektrafilm_backend::telemetry::Observation>,
+    pub diagnostic_issues: Vec<spektrafilm_backend::telemetry::DiagnosticIssue>,
+    pub coverage: spektrafilm_backend::telemetry::Coverage,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -121,10 +121,10 @@ pub struct ReportSummary {
     pub working_dimensions: Option<[u32; 2]>,
     pub duration_seconds: Option<f64>,
     pub backend_requested: Option<BackendRequested>,
-    pub backend_selected: Option<spektrafilm_gpu::telemetry::BackendSelected>,
-    pub path: Option<spektrafilm_gpu::telemetry::ExecutionPath>,
+    pub backend_selected: Option<spektrafilm_backend::telemetry::BackendSelected>,
+    pub path: Option<spektrafilm_backend::telemetry::ExecutionPath>,
     pub largest_phase: Option<(String, f64)>,
-    pub resident_decline_reasons: Vec<spektrafilm_gpu::telemetry::ResidentDeclineReason>,
-    pub cpu_stage_reasons: Vec<(String, spektrafilm_gpu::telemetry::CpuReason)>,
+    pub resident_decline_reasons: Vec<spektrafilm_backend::telemetry::ResidentDeclineReason>,
+    pub cpu_stage_reasons: Vec<(String, spektrafilm_backend::telemetry::CpuReason)>,
     pub software_adapter: bool,
 }

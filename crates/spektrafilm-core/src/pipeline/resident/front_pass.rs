@@ -6,7 +6,7 @@ impl Pipeline {
         &self,
         color_ref: &crate::color_reference::ColorReference,
         ae_ev: f64,
-    ) -> Option<spektrafilm_gpu::FrontPass<'_>> {
+    ) -> Option<spektrafilm_backend::FrontPass<'_>> {
         // Bake the exposure scale (auto-exposure × manual EV compensation)
         // into the front-pass matrix. Both upsamplers (hanatos and mallett)
         // are homogeneous in the input RGB, so scaling the matrix is
@@ -47,7 +47,7 @@ impl Pipeline {
                 self.params.settings.use_cat16,
             );
             fold_exposure(&mut rgb_to_adapted);
-            spektrafilm_gpu::FrontPass::Hanatos2025 {
+            spektrafilm_backend::FrontPass::Hanatos2025 {
                 tc_lut,
                 rgb_to_adapted_xyz: rgb_to_adapted,
             }
@@ -55,7 +55,7 @@ impl Pipeline {
             let core = self.mallett_core.as_ref()?;
             let mut matrix = crate::mallett::film_matrix(core, &self.params.io.input_color_space);
             fold_exposure(&mut matrix);
-            spektrafilm_gpu::FrontPass::Mallett2019 { matrix }
+            spektrafilm_backend::FrontPass::Mallett2019 { matrix }
         };
         Some(front)
     }

@@ -2,7 +2,7 @@
 ///
 /// Dispatches the spectral integration to the GPU backend when available.
 use rayon::prelude::*;
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::colorspace;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{Scalar, from_f64, to_f64};
@@ -444,7 +444,7 @@ fn prepare_exposure_calibration(
             interpretation::DensityCalibration::prepare(profile)?,
         ));
     }
-    let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
+    let cpu = spektrafilm_backend::cpu_backend::CpuBackend;
     if params.scanner.negative_conversion_method == crate::params::NegativeConversionMethod::Coupled
         && !profile.is_bw()
     {
@@ -580,13 +580,13 @@ impl SlidePoints {
             .map(|c| {
                 c.scope(
                     "scanner_film_points",
-                    spektrafilm_gpu::telemetry::ObservationKind::Stage,
-                    spektrafilm_gpu::telemetry::Purpose::Calibration,
+                    spektrafilm_backend::telemetry::ObservationKind::Stage,
+                    spektrafilm_backend::telemetry::Purpose::Calibration,
                 )
             });
         let calibration_backend = calibration_scope
             .as_ref()
-            .map(|scope| spektrafilm_gpu::bind_backend(backend, scope.context().clone()));
+            .map(|scope| spektrafilm_backend::bind_backend(backend, scope.context().clone()));
         let backend = calibration_backend.as_deref().unwrap_or(backend);
         let mut maximum = [f64::NEG_INFINITY; 3];
         for row in &developed_density_curves(profile) {
@@ -858,14 +858,14 @@ fn scan_with_reference(
         super::StageObservation::cpu(
             backend,
             "negative_to_positive",
-            spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
+            spektrafilm_backend::telemetry::CpuReason::NegativeToPositiveOutput,
         )
     });
     let _slide_points = slide_points.then(|| {
         super::StageObservation::cpu(
             backend,
             "scanner_film_points",
-            spektrafilm_gpu::telemetry::CpuReason::ScannerFilmPoints,
+            spektrafilm_backend::telemetry::CpuReason::ScannerFilmPoints,
         )
     });
     let cpu_fallback = negative_to_positive
@@ -874,16 +874,16 @@ fn scan_with_reference(
                 .observation_context()
                 .filter(|context| context.enabled())
                 .map(|context| {
-                    spektrafilm_gpu::bind_cpu_fallback(
+                    spektrafilm_backend::bind_cpu_fallback(
                         context.clone(),
-                        spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
+                        spektrafilm_backend::telemetry::CpuReason::NegativeToPositiveOutput,
                     )
                 })
         })
         .flatten();
     let backend = if negative_to_positive {
-        static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
-            spektrafilm_gpu::cpu_backend::CpuBackend;
+        static CPU_BACKEND: spektrafilm_backend::cpu_backend::CpuBackend =
+            spektrafilm_backend::cpu_backend::CpuBackend;
         cpu_fallback
             .as_deref()
             .unwrap_or(&CPU_BACKEND as &dyn ComputeBackend)
@@ -971,7 +971,7 @@ fn scan_with_reference(
         let _glare = super::StageObservation::cpu(
             backend,
             "glare",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         // Shared scan context keeps the CPU two-step CAT→RGB operation
         // order used by the reference path.
@@ -1008,7 +1008,7 @@ fn scan_with_reference(
         let _gamut = super::StageObservation::cpu(
             backend,
             "output_gamut",
-            spektrafilm_gpu::telemetry::CpuReason::UnsupportedOutputGamut,
+            spektrafilm_backend::telemetry::CpuReason::UnsupportedOutputGamut,
         );
         rgb.data.par_chunks_exact_mut(3).for_each(|px| {
             let out = gamut.compress([px[0] as f64, px[1] as f64, px[2] as f64]);
@@ -1043,7 +1043,7 @@ fn scan_with_reference(
         let _encoding = super::StageObservation::cpu(
             backend,
             "output_transfer",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         rgb.data.par_chunks_exact_mut(3).for_each(|px| {
             let encoded =
@@ -1069,7 +1069,7 @@ fn scan_with_reference(
             let _cpu = super::StageObservation::cpu(
                 backend,
                 "grain_v2_cpu",
-                spektrafilm_gpu::telemetry::CpuReason::GrainV2Unsupported,
+                spektrafilm_backend::telemetry::CpuReason::GrainV2Unsupported,
             );
             spektrafilm_model::grain::v2::apply_cpu(&rgb, grain)
         });
@@ -1081,7 +1081,7 @@ fn scan_with_reference(
         let _magazine = super::StageObservation::cpu(
             backend,
             "magazine_print_color",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         crate::magazine_print_color::apply(
             &mut rgb,
@@ -1096,7 +1096,7 @@ fn scan_with_reference(
         let _encoding = super::StageObservation::cpu(
             backend,
             "output_transfer",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         rgb.data.par_iter_mut().for_each(|value| {
             *value = from_f64(colorspace::cctf_decode(*value as f64, output_space.cctf));
@@ -1207,7 +1207,7 @@ pub(crate) fn apply_scan_readout_interpretation(
         let _finish = super::StageObservation::cpu(
             backend,
             "scanner_finish",
-            spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
+            spektrafilm_backend::telemetry::CpuReason::NegativeToPositiveOutput,
         );
         finish::apply(
             rgb,
@@ -1283,7 +1283,7 @@ mod tests {
             1,
             density.iter().copied().map(from_f64).collect(),
         );
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         interpret_negative_density(&input, &density_calibration(), params, &backend)
             .unwrap()
             .data
@@ -1333,7 +1333,7 @@ mod tests {
                 .map(from_f64)
                 .collect(),
         );
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let color_ref = crate::color_reference::ColorReference::identity();
         let gamut = crate::gamut_compression::OutputGamutCompress::identity();
         let mut params = RuntimeParams::default();
@@ -1549,7 +1549,7 @@ mod tests {
         );
         let context = crate::chain_prep::PreparedChain::for_scan(&film, &params, None);
         let channel = crate::chain_prep::channel_density(&film);
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let input = ImageBuf::from_data(
             3,
             1,
@@ -1632,7 +1632,7 @@ mod tests {
         );
         let context = crate::chain_prep::PreparedChain::for_scan(&film, &params, None);
         let channel = crate::chain_prep::channel_density(&film);
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let input = ImageBuf::from_data(
             3,
             1,
@@ -1681,7 +1681,7 @@ mod tests {
         params.film_render.grain.active = false;
         params.scanner.lens_blur = 0.0;
         params.scanner.unsharp_mask = [0.0; 2];
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let correction = crate::color_reference::ColorReference::identity();
         let context = crate::chain_prep::PreparedChain::for_scan(&film, &params, None);
         let channel = crate::chain_prep::channel_density(&film);
@@ -1718,7 +1718,7 @@ mod tests {
 
     #[test]
     fn paper_and_direct_negative_ignore_stored_points() {
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let correction = crate::color_reference::ColorReference::identity();
         let gamut = crate::gamut_compression::OutputGamutCompress::identity();
         let input = ImageBuf::from_data(1, 1, vec![from_f64(0.5); 3]);
@@ -1747,7 +1747,7 @@ mod tests {
             &ImageBuf::from_data(1, 1, vec![from_f64(0.5); 3]),
             &film,
             &params,
-            &spektrafilm_gpu::cpu_backend::CpuBackend,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
             &crate::color_reference::ColorReference::identity(),
             &crate::gamut_compression::OutputGamutCompress::identity(),
         );
@@ -1770,7 +1770,7 @@ mod tests {
             &ImageBuf::from_data(1, 1, vec![from_f64(0.5); 3]),
             &film,
             &params,
-            &spektrafilm_gpu::cpu_backend::CpuBackend,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
             &crate::color_reference::ColorReference::identity(),
             &crate::gamut_compression::OutputGamutCompress::identity(),
         );

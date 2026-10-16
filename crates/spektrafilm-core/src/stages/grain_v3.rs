@@ -493,7 +493,7 @@ pub fn readout(
     params: &RuntimeParams,
     source_pitch_um: f64,
     grid: ReadoutGrid,
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<ImageBuf, String> {
     let resolved = resolve(film, params)?;
     if backend.is_gpu() {
@@ -551,13 +551,13 @@ fn cpu_field(
     source_pitch_um: f64,
     grid: ReadoutGrid,
     resolved: &GrainV3Params,
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<ImageBuf, String> {
     // The observation records the host executor and its published reason.
     let _observation = super::StageObservation::cpu(
         backend,
         "grain_v3_field",
-        spektrafilm_gpu::telemetry::CpuReason::GrainV3FieldCpu,
+        spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu,
     );
     v3::apply(source, source_pitch_um, grid, resolved)
 }
@@ -573,8 +573,8 @@ pub fn readout_with_response(
     params: &RuntimeParams,
     source_pitch_um: f64,
     grid: ReadoutGrid,
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
-    response: impl Fn(&ImageBuf, &dyn spektrafilm_gpu::ComputeBackend) -> Result<ImageBuf, String>
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+    response: impl Fn(&ImageBuf, &dyn spektrafilm_backend::ComputeBackend) -> Result<ImageBuf, String>
     + Sync,
 ) -> Result<ImageBuf, String> {
     if backend.explicit_gpu_request() {
@@ -587,7 +587,7 @@ pub fn readout_with_response(
     let observation = super::StageObservation::cpu(
         backend,
         "grain_v3_field",
-        spektrafilm_gpu::telemetry::CpuReason::GrainV3FieldCpu,
+        spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu,
     );
     let backend = observation.backend(backend);
     v3::apply_with_response(source, source_pitch_um, grid, &resolved, |cells| {
@@ -608,11 +608,11 @@ fn device_params(
     resolved: &GrainV3Params,
     source_pitch_um: f64,
     grid: ReadoutGrid,
-) -> Result<spektrafilm_gpu::wgpu_backend::DyeGpuParams, String> {
+) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
     v3::check_device_mass_law()?;
     let model = v3::Model::new(resolved, source_pitch_um)?;
     let tables = model.channel_tables();
-    let parts = std::array::from_fn(|c| spektrafilm_gpu::wgpu_backend::DyeChannelParts {
+    let parts = std::array::from_fn(|c| spektrafilm_backend::dye_params::DyeChannelParts {
         min: tables[c].min,
         cap_total: tables[c].cap_total,
         cap: tables[c].cap,
@@ -623,12 +623,12 @@ fn device_params(
         inv_dx: tables[c].inv_dx,
         layers: tables[c].layers,
     });
-    Ok(spektrafilm_gpu::wgpu_backend::DyeGpuParams {
-        tables: spektrafilm_gpu::wgpu_backend::DyeChannelTablesGpu::pack(parts),
+    Ok(spektrafilm_backend::dye_params::DyeGpuParams {
+        tables: spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts),
         cell_um: model.cell_um(),
         taps: model.taps().to_vec(),
         source_pitch_um,
-        grid: spektrafilm_gpu::wgpu_backend::DyeReadoutGrid {
+        grid: spektrafilm_backend::dye_params::DyeReadoutGrid {
             origin_um: grid.origin_um,
             pitch_um: grid.pitch_um,
             width: grid.width,
@@ -651,7 +651,7 @@ pub fn resident_device_params(
     params: &RuntimeParams,
     source: &ImageBuf,
     source_pitch_um: f64,
-) -> Result<spektrafilm_gpu::wgpu_backend::DyeGpuParams, String> {
+) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
     let resolved = resolve(film, params)?;
     let grid = geometry(source, params, source_pitch_um)?.grid();
     if grid.width != source.width || grid.height != source.height {
@@ -885,7 +885,7 @@ mod tests {
         let resolved = resolve(&film, &params).unwrap();
         let model = v3::Model::new(&resolved, 2.0).unwrap();
         let tables = model.channel_tables();
-        let parts = std::array::from_fn(|c| spektrafilm_gpu::wgpu_backend::DyeChannelParts {
+        let parts = std::array::from_fn(|c| spektrafilm_backend::dye_params::DyeChannelParts {
             min: tables[c].min,
             cap_total: tables[c].cap_total,
             cap: tables[c].cap,
@@ -896,7 +896,7 @@ mod tests {
             inv_dx: tables[c].inv_dx,
             layers: tables[c].layers,
         });
-        let packed = spektrafilm_gpu::wgpu_backend::DyeChannelTablesGpu::pack(parts);
+        let packed = spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts);
         // Cover each channel's own interval, including both clamps and the
         // region where a layer saturates and the split redistributes.
         let mut densities = Vec::new();
@@ -942,7 +942,7 @@ mod tests {
     /// source-edge extension, and a band seam must preserve the same field.
     #[test]
     fn device_field_matches_the_cpu_reference_in_expectation() {
-        use spektrafilm_gpu::ComputeBackend as _;
+        use spektrafilm_backend::ComputeBackend as _;
         let backend = spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
             .expect("this test needs a usable device");
         let film = load("kodak_portra_800");
@@ -970,7 +970,7 @@ mod tests {
             for grid in grids {
                 let device = device_params(&resolved, 2.0, grid).unwrap();
                 let gpu_out =
-                    spektrafilm_gpu::ComputeBackend::dye_field(&backend, &source, &device)
+                    spektrafilm_backend::ComputeBackend::dye_field(&backend, &source, &device)
                         .expect("the backend exposes a device field path")
                         .expect("the device field runs");
                 let cpu_out = v3::apply(&source, 2.0, grid, &resolved).unwrap();
@@ -992,7 +992,7 @@ mod tests {
     fn cell_spectral_matches_independent_aligned_print_and_scan_reading() {
         let film = load("kodak_portra_800");
         let print = load("kodak_portra_endura");
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let source = density_target(16, 12);
         let mut params = supported_params();
         params.random_seed = 19273;

@@ -5,7 +5,10 @@ use super::{
 };
 
 impl WgpuBackend {
-    pub fn run_film_chain(&self, p: &crate::FilmChainParams<'_>) -> Result<ImageBuf, String> {
+    pub fn run_film_chain(
+        &self,
+        p: &spektrafilm_backend::FilmChainParams<'_>,
+    ) -> Result<ImageBuf, String> {
         if !self.device.context.enabled() {
             return self.run_film_chain_inner(p);
         }
