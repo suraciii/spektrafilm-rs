@@ -9,14 +9,15 @@ The executable must accept the following command grammar:
 ```text
 spektrafilm-bench --help
 spektrafilm-bench --version
-spektrafilm-bench schema --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation|chart-report
-spektrafilm-bench validate --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation|chart-report --file FILE
+spektrafilm-bench schema --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation|review
+spektrafilm-bench validate --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation|review --file FILE
 spektrafilm-bench run --suite FILE --target FILE --out DIRECTORY [--case ID ...] [--dry-run] [--stage-evidence]
 spektrafilm-bench run --input FILE --configuration FILE --target FILE --out DIRECTORY [--input-kind raster|raw] [--input-color-space NAME --input-cctf-decoding true|false] [--seed UINT32 ...] [--regions FILE] [--reference FILE --reference-info FILE] [--preparation FILE] [--dry-run] [--stage-evidence]
 spektrafilm-bench compare --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [--policy FILE] [--gate]
 spektrafilm-bench compare --run DIRECTORY --against input|reference|both --out DIRECTORY
 spektrafilm-bench report --comparison DIRECTORY --out DIRECTORY [--layout standard|diagnostic] [--focus-region ID ...]
-spektrafilm-bench chart-report --manifest FILE --out DIRECTORY [--left ID --right ID]
+spektrafilm-bench review --manifest FILE --out DIRECTORY [--left ID --right ID]
+spektrafilm-bench regions --review FILE --set ID --out FILE [--sample WIDTHxHEIGHT] [--role ROLE] [--measurements FAMILY,...]
 spektrafilm-bench inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
 spektrafilm-bench target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --out FILE
 ```
@@ -51,7 +52,9 @@ Single-run `compare` must require `--run` and `--against` together and conflict 
 
 `report --layout` must default to `standard`. The `diagnostic` layout must feature exact repeated `--focus-region` identities before complete regional evidence. Focus selection must preserve request order and reject duplicate or unknown identities before publication. A focus selection with the standard layout must fail rather than be ignored. Layout selection must not change comparison measurements or acceptance.
 
-`chart-report` must read a prepared-chart manifest without invoking a renderer or computing comparison metrics. `--left` and `--right` must require each other and override the authored default pair for this generated report only. Both identities must exist. Invalid defaults or overrides must fail before publication. `validate --kind chart-report` must check authored structure, identities, grid arithmetic, and local file dependencies; its `unchecked` list must name image decoding, observed geometry, and display color conversion.
+`review` must read a review manifest without invoking a renderer or computing comparison metrics. `--left` and `--right` must require each other and override the authored default pair for this generated report only. Both identities must exist. Invalid defaults or overrides must fail before publication. `validate --kind review` must check authored structure, identities, grid arithmetic, region declarations, and local file dependencies; its `unchecked` list must name image decoding, observed geometry, and display color conversion.
+
+`regions` must derive a region array from one grid set of a review manifest without invoking a renderer or computing measurements; it may read image dimensions to check bounds. `--set` must identify a set that declares `grid`; unknown identities must be rejected with the available choices, and a set without derived geometry must fail. The command must reuse the review page's window arithmetic and reject windows or samples that leave the decoded image bounds. `--sample WIDTHxHEIGHT` must select a sample window centered inside each patch window; a sample that does not fit must fail rather than be clipped. `--role` must default to `other` and `--measurements` to an empty selection, using the existing region roles and measurement family names. The written file must validate as the existing `regions` kind and must be usable as a case `regions` value, a reference `regions` value, and `run --regions` input; generated identities must follow the review patch names. The command must refuse an existing destination.
 
 `inspect` must validate and read a retained comparison without invoking a renderer or computing measurements. It must emit the retained comparison identity, execution and evaluation states, conditions, summary, failures, findings, and compact measurements. The compact measurements must be one top-level `measurements` array in version and single-run comparisons. Rows in both modes must carry the same fields, except that a single-run row must add `pair_id` to identify its pair. Per-seed/pair observations and cross-seed `seed_measurements` must remain separate. Measurement identity, domain, units, estimator, sample count, availability, value or reason, seed population, and artifact references must remain intact. Exact repeatable case, region, and metric filters must reject unknown selections with available choices; they must not silently return an empty result. Referenced evidence must resolve relative to the emitted `artifact_base`. A valid read of a failed comparison must complete successfully while exposing its failed comparison state. Inspection must not modify evidence, rank unlike units, or infer acceptance.
 
@@ -103,7 +106,7 @@ Tone-response probe geometries may be declared in `protocol.probe.tone_response`
 
 The case's `measurements` must select full-image measurement families from `numeric`, `color`, `tone`, `flip`, `grain`, `halation`, and `edge`. Region `measurements` must select applicable families in that region. The protocol must resolve each family to explicit scalar identities, maps, curves, or spectra. A family selector must not request a hidden aggregate quality score.
 
-A case may contain `region_pairs`, an array of objects with `id`, `label`, `left`, and `right`. Pair identities must be unique and must not collide with region identities. Both endpoints must name distinct existing regions in that case. A pair must not infer correspondence across cases or chart groups.
+A case may contain `region_pairs`, an array of objects with `id`, `label`, `left`, and `right`. Pair identities must be unique and must not collide with region identities. Both endpoints must name distinct existing regions in that case. A pair must not infer correspondence across cases or image sets.
 
 The protocol may contain `color` with a finite positive `hue_chroma_floor`. This declaration selects regional hue diagnostics and must contribute to protocol identity. Omitting it must not select an implicit hue threshold. The measurement protocol owns the diagnostic definitions and availability rules.
 
@@ -119,17 +122,21 @@ A `visual` reference may provide explicit reference-region geometries for crop i
 
 Reference transforms, masks, review records, and derivatives must be hashed dependencies. Their geometry and purpose must be explicit. The evaluator must not fit a new transform during `compare`.
 
-## Prepared-chart document
+## Review manifest
 
-A prepared-chart manifest must contain `schema_version: 1`, `title`, `charts`, `images`, and `default_pair`. The report and each image may contain a `description` string, omitted as empty. Unknown fields, duplicate JSON keys, and duplicate identities must fail. Authored image paths must resolve relative to this manifest. Chart and image array order must be preserved.
+A review manifest must contain `schema_version: 1`, `title`, `sets`, `images`, and `default_pair`. The manifest and each image may contain a `description` string, omitted as empty. Unknown fields, duplicate JSON keys, and duplicate identities must fail. Authored image paths must resolve relative to this manifest. Set and image array order must be preserved.
 
-Each chart must contain `id`, `label`, and `grid`. A grid must contain positive integer `rows` and `columns`, nonnegative integer `origin: [x, y]`, positive integer `patch_size: [width, height]`, and nonnegative integer `gap: [x, y]`. All geometry uses decoded image pixels. Patch windows are half-open rectangles. Column labels use `A` through `Z`, then `AA` and subsequent spreadsheet-style names; rows start at `1`. Windows must follow row-major order. Grid arithmetic must not overflow. Generation must check every window against actual image bounds and reject dimension differences within one chart group.
+A set must contain `id`, `label`, and exactly one of `grid` or `regions`. A `grid` must contain positive integer `rows` and `columns`, nonnegative integer `origin: [x, y]`, positive integer `patch_size: [width, height]`, and nonnegative integer `gap: [x, y]`. All geometry uses decoded image pixels. Patch windows are half-open rectangles. Column labels use `A` through `Z`, then `AA` and subsequent spreadsheet-style names; rows start at `1`. Windows must follow row-major order. Grid arithmetic must not overflow. Generation must check every window against actual image bounds and reject dimension differences within one grid set.
 
-Each image must contain `id`, `chart`, `path`, `label`, `color_space`, and `cctf_decoding`. The `chart` value must identify a declared chart group. The input must be a prepared RGB raster supported by the existing image reader. A camera RAW file must first use the existing RAW decoder and an explicitly established chart preparation; its name or extension must not imply a grid or source declaration. Explicit declarations must remain authoritative over embedded metadata and undeclared adjacent sidecars. The report must retain the original path and SHA-256 and identify the display conversion separately.
+A `regions` set must contain a nonempty array of region records with `id`, `label`, and a `geometry` object keyed by image identity. Each key must identify an image of the same set; each value must be a half-open `[x, y, width, height]` rectangle in that image's decoded pixels. A region may cover a subset of its set's images. Duplicate region identities, unresolved image keys, and overlapping rectangles on one image must fail validation; rectangle bounds must be checked against decoded image dimensions during generation. Region identities are scoped to their set: the same identity in another set must not pair.
 
-`images` must contain at least two records. `default_pair` must contain `left` and `right` image identities. Same-group and cross-group defaults are permitted. A cross-group pair must remain a visual comparison with independent patch selection, not an inferred aligned pair.
+Each image must contain `id`, `set`, `path`, `label`, `color_space`, and `cctf_decoding`. The `set` value must identify a declared set. The input must be a prepared RGB raster supported by the existing image reader. A camera RAW file must first use the existing RAW decoder and an explicitly established preparation; its name or extension must not imply a grid, a region, or a source declaration. Explicit declarations must remain authoritative over embedded metadata and undeclared adjacent sidecars. The report must retain the original path and SHA-256 and identify the display conversion separately.
 
-Successful generation must produce `index.html`, native display assets, and terminal `report.json`. The report must embed its view data for offline loading. Its command result must identify the HTML artifact, report manifest, and image and chart counts. Metadata must not execute as HTML or JavaScript. The fixture generator must publish a schema-validated `chart-report.json` example that refers to its existing controlled images.
+`images` must contain at least two records. `default_pair` must contain `left` and `right` image identities. Same-set and cross-set defaults are permitted. A cross-set pair must remain a visual comparison with independent selection. A `regions` set must remain independently selectable on each side; its shared region identities are explicit author declarations, not an inferred aligned pair.
+
+Successful generation must produce `index.html`, native display assets, and terminal `report.json`. The report must embed its view data for offline loading. Its command result must identify the HTML artifact, report manifest, and image and set counts. Metadata must not execute as HTML or JavaScript. The fixture generator must publish a schema-validated review manifest example that refers to its existing controlled images and exercises both set forms.
+
+Migration: the `review` command and kind replace the `chart-report` v1 manifest. `charts` become `sets`, `images[].chart` becomes `images[].set`, and each set keeps its `grid` or declares explicit `regions`. A chart-report v1 manifest must not be accepted as a review manifest.
 
 ## Target document
 
@@ -197,7 +204,7 @@ The summary must retain selected and completed case counts, required and unavail
 
 ## Publication and examples
 
-`run`, `compare`, `report`, and `chart-report` must require a destination that does not exist. They must not replace completed evidence. They must publish a terminal manifest only after referenced local artifacts have been finalized and hashed. A handled operation failure may publish a failed terminal manifest and valid partial evidence. Forced termination before the terminal manifest must leave an incomplete directory that cannot be treated as a completed run.
+`run`, `compare`, `report`, and `review` must require a destination that does not exist. They must not replace completed evidence. They must publish a terminal manifest only after referenced local artifacts have been finalized and hashed. A handled operation failure may publish a failed terminal manifest and valid partial evidence. Forced termination before the terminal manifest must leave an incomplete directory that cannot be treated as a completed run.
 
 A gate failure must preserve the completed comparison. A report-generation failure must not modify its source comparison. Publication failures must not produce a success result. This contract does not promise a transaction across different destination directories or power-loss durability.
 
