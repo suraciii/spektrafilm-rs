@@ -114,18 +114,6 @@ enum Commands {
         #[command(subcommand)]
         command: preset::PresetCommand,
     },
-    /// Run the declared corpus and write a structured parity report.
-    Parity {
-        /// Declared parity corpus JSON file.
-        #[arg(long)]
-        corpus: PathBuf,
-        /// Destination parity report JSON file.
-        #[arg(long)]
-        report: PathBuf,
-        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
-        #[arg(long, default_value = "data")]
-        data_dir: PathBuf,
-    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -243,15 +231,6 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&inspect(&input)?)?);
         }
         Commands::Preset { command } => preset::run(command, command_matches)?,
-        Commands::Parity {
-            corpus,
-            report,
-            data_dir,
-        } => runner::cmd_parity(
-            &corpus,
-            &report,
-            &select_data_dir(data_dir, command_matches)?.path,
-        )?,
     }
     Ok(())
 }
