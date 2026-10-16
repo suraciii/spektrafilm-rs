@@ -21,7 +21,7 @@ pub(super) struct GlareState {
 
 pub(super) fn build_glare_state(
     device: &ObservedDevice,
-    gp: &crate::GlareGpuParams,
+    gp: &spektrafilm_backend::GlareGpuParams,
     width: u32,
     height: u32,
     buf_a: &wgpu::Buffer,

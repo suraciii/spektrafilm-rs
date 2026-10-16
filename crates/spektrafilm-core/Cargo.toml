@@ -12,6 +12,7 @@ precision-f64 = [
 ]
 
 [dependencies]
+spektrafilm-backend.workspace = true
 spektrafilm-math.workspace = true
 spektrafilm-gpu.workspace = true
 spektrafilm-model.workspace = true

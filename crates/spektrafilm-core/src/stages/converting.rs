@@ -532,7 +532,7 @@ pub fn neutralize_filters(
     print: &Profile,
     params: &RuntimeParams,
     data: &std::path::Path,
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<(f32, f32), String> {
     let mut p = params.clone();
     p.workflow.route = "input > film > print > scan".into();
@@ -601,7 +601,7 @@ mod action_tests {
         params.film_render.halation.active = false;
         params.film_render.dir_couplers.active = false;
         params.print_render.glare.active = false;
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let direct = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
         params.scanner.scan_output = "negative_to_positive".into();
         let positive = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();

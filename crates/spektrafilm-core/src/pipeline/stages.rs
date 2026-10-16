@@ -53,7 +53,7 @@ impl Pipeline {
         let mut observation = crate::stages::StageObservation::cpu(
             backend,
             name,
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         let backend = observation.backend(backend);
         match at {

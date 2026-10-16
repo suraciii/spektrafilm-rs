@@ -3,7 +3,7 @@
 /// Full Hanatos2025 path: RGB → XYZ → xy chromaticity → tc coordinates →
 /// 2D LUT lookup (spectra × sensitivity) → per-channel film raw exposure.
 use rayon::prelude::*;
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::colorspace;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f32, from_f64, to_f64};
@@ -78,7 +78,7 @@ pub fn expose(
         let _decode = super::StageObservation::cpu(
             backend,
             "input_transfer",
-            spektrafilm_gpu::telemetry::CpuReason::InputTransferDecoding,
+            spektrafilm_backend::telemetry::CpuReason::InputTransferDecoding,
         );
         rgb.data.par_iter_mut().for_each(|v| {
             *v = from_f64(colorspace::cctf_decode(to_f64(*v), input_space.cctf));
@@ -96,7 +96,7 @@ pub fn expose(
         let _mallett = super::StageObservation::cpu(
             backend,
             "rgb_to_raw",
-            spektrafilm_gpu::telemetry::CpuReason::Mallett,
+            spektrafilm_backend::telemetry::CpuReason::Mallett,
         );
         // Mallett2019: per-pixel `raw = (core · M_cs) · rgb`, a single 3×3
         // matrix folding the input-colour-space → linear-sRGB conversion.
@@ -129,7 +129,7 @@ pub fn expose(
         let _boost = super::StageObservation::cpu(
             backend,
             "highlight_boost",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         raw = spektrafilm_model::optics::boost_highlights(
             &raw,
@@ -146,7 +146,7 @@ pub fn expose(
         let _diffusion = super::StageObservation::cpu(
             backend,
             "optical_diffusion",
-            spektrafilm_gpu::telemetry::CpuReason::OpticalDiffusion,
+            spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion,
         );
         let dm = df.to_model();
         // An invalid family is rejected by `RuntimeParams::validate` /
@@ -404,7 +404,7 @@ mod tests {
         use super::super::*;
         use crate::params::RuntimeParams;
         use crate::profile::{self, Profile};
-        use spektrafilm_gpu::cpu_backend::CpuBackend;
+        use spektrafilm_backend::cpu_backend::CpuBackend;
         use spektrafilm_math::image::ImageBuf;
         use spektrafilm_math::precision::{Scalar, from_f64, to_f64};
 

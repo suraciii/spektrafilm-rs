@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
 
@@ -583,7 +583,7 @@ mod tests {
             let error = BundleBuilder::with_params(spec, params.clone())
                 .build(
                     Path::new("missing-profile-directory"),
-                    &spektrafilm_gpu::cpu_backend::CpuBackend,
+                    &spektrafilm_backend::cpu_backend::CpuBackend,
                 )
                 .expect_err("segmented mixing must fail");
             assert!(error.contains("no prepared source branch"), "{error}");
@@ -600,7 +600,7 @@ mod tests {
         s.resolution = 4;
         assert!(s.input_gamut_compress.active);
         let bundle = BundleBuilder::new(s)
-            .build(&data, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .build(&data, &spektrafilm_backend::cpu_backend::CpuBackend)
             .unwrap();
         // Independent 28bf883 Python BundleBuilder, NumPy 2.5.3, float32
         // transport input; resolution 4, gain 1, retained chroma knees with

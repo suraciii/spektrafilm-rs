@@ -2,13 +2,16 @@
 //!
 //! The pipeline develops the *full* source and hands the developed CMY
 //! density to this module. The module owns Dye field resolution and the
-//! readout to the requested output geometry
+//! readout to the requested output geometry — on the device through
+//! `dye_field` when the backend has one and the request is
+//! device-representable, otherwise with the CPU realization
 //! ([`spektrafilm_model::grain::v3::apply`]); scanner interpretation and
 //! encoding stay with their owners.
 //!
 //! Film coordinates come from the profile and the geometry: a crop selects
 //! the readout region only, so field cells keep their global film positions
 //! and overlapping reads agree.
+use crate::WorkflowRoute;
 
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
@@ -66,7 +69,9 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
             "{CELL_SPECTRAL_ENV} does not support Digital Reference; disable the exact-cell diagnostic"
         ));
     }
-    if params.workflow.route != PRINT_ROUTE && params.workflow.route != FILM_SCAN_ROUTE {
+    if params.workflow.route_enum() != WorkflowRoute::FilmPrintScan
+        && params.workflow.route_enum() != WorkflowRoute::FilmScan
+    {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
         ));
@@ -131,7 +136,7 @@ pub fn validate_aperture(params: &RuntimeParams) -> Result<Option<u32>, String> 
     let Some(factor) = aperture_factor()? else {
         return Ok(None);
     };
-    if params.io.scan_film || params.workflow.route != PRINT_ROUTE {
+    if params.io.scan_film || params.workflow.route_enum() != WorkflowRoute::FilmPrintScan {
         return Err(format!(
             "{APERTURE_FACTOR_ENV} supports only the {PRINT_ROUTE:?} route"
         ));
@@ -146,6 +151,33 @@ pub fn validate_aperture(params: &RuntimeParams) -> Result<Option<u32>, String> 
         ));
     }
     Ok(Some(factor))
+}
+
+/// Whether the resident chain can host the Dye field on the developed film
+/// density.
+///
+/// The chain reads and writes its fixed-size density buffer, so the field
+/// must resolve to the delivered raster the chain already holds: no crop and
+/// no upscale ([`geometry`]). The env-gated certification readouts are not
+/// chainable either — the exact-cell response interleaves the field with the
+/// acquisition, and the aperture probe runs the print exposure at a finer
+/// lattice. A field the chain can host runs as the device pass
+/// ([`resident_device_params`]), or as the assembled density fence when the
+/// request has no device path.
+pub fn resident_fence_supported(film: &Profile, params: &RuntimeParams) -> bool {
+    if !active(params) {
+        return false;
+    }
+    if validate_supported(film, params).is_err() {
+        return false;
+    }
+    if validate_cell_spectral(params).unwrap_or(true) {
+        return false;
+    }
+    if validate_aperture(params).unwrap_or(None).is_some() {
+        return false;
+    }
+    !params.io.crop && params.io.upscale_factor == 1.0
 }
 
 /// Integer rectangle, in source pixels or in the extended output grid.
@@ -432,6 +464,7 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
         support_um,
         cell_um: cell_um_override(),
         event_area_um2: grain.v3_event_area_um2,
+        channel_correlation: grain.channel_correlation,
         channel_scale: channel_event_scale(grain.rms_granularity),
         particle_scale_sublayers: grain.particle_scale_sublayers,
         density_min: grain.density_min,
@@ -447,61 +480,114 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
 
 /// Read the requested film region out of the full developed source.
 ///
-/// The field is realized on the CPU: Dye disables the fused WGPU/resident
-/// chain (see [`crate::pipeline::Pipeline::process`]), so the reported
-/// backend for an active Dye render is CPU regardless of the selected
-/// backend of the surrounding stages.
+/// The field resolves on the device whenever the backend has one and the
+/// request is device-representable (`device_params`): the same resolved
+/// model tables, formation taps and readout grid go to the backend's
+/// `dye_field`. A request the device cannot realize — the experimental
+/// mass-law selector, or a backend without a device field path — resolves
+/// the field on the CPU with the published reason, and an explicit GPU
+/// request fails by name instead of demoting silently.
 pub fn readout(
     source: &ImageBuf,
     film: &Profile,
     params: &RuntimeParams,
     source_pitch_um: f64,
     grid: ReadoutGrid,
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<ImageBuf, String> {
     let resolved = resolve(film, params)?;
-    // The field resolves on the CPU whatever backend the surrounding stages
-    // use; the observation records that executor and its reason.
+    if backend.is_gpu() {
+        match device_params(&resolved, source_pitch_um, grid) {
+            Ok(device) => {
+                let observation = super::StageObservation::new(backend, "grain_v3_field");
+                let observed = observation.backend(backend);
+                tracing::info!(
+                    stock = film.info.stock.as_deref().unwrap_or(""),
+                    source = format_args!("{}x{}", source.width, source.height),
+                    origin_um = ?grid.origin_um,
+                    output_pitch_um = ?grid.pitch_um,
+                    output = format_args!("{}x{}", grid.width, grid.height),
+                    support_um = resolved.support_um,
+                    cell_um = device.cell_um,
+                    expectation = resolved.expectation,
+                    "film grain Dye: field readout on GPU"
+                );
+                match observed.dye_field(source, &device) {
+                    Some(result) => return result,
+                    None if backend.explicit_gpu_request() => {
+                        return Err(format!(
+                            "explicit GPU request cannot run the film grain Dye field: {} has no \
+                             device field path; retry with an explicit CPU request",
+                            backend.name()
+                        ));
+                    }
+                    None => {
+                        tracing::info!(
+                            stock = film.info.stock.as_deref().unwrap_or(""),
+                            backend = backend.name(),
+                            "film grain Dye: the backend has no device field path, resolving on CPU"
+                        );
+                    }
+                }
+            }
+            Err(reason) if backend.explicit_gpu_request() => return Err(reason),
+            Err(reason) => {
+                tracing::info!(
+                    stock = film.info.stock.as_deref().unwrap_or(""),
+                    backend = backend.name(),
+                    %reason,
+                    "film grain Dye: the request has no device field path, resolving on CPU"
+                );
+            }
+        }
+    }
+    cpu_field(source, source_pitch_um, grid, &resolved, backend)
+}
+
+/// The host field readout: one CPU realization with the published stage
+/// reason, shared by the host-backend route and the device fallbacks.
+fn cpu_field(
+    source: &ImageBuf,
+    source_pitch_um: f64,
+    grid: ReadoutGrid,
+    resolved: &GrainV3Params,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> Result<ImageBuf, String> {
+    // The observation records the host executor and its published reason.
     let _observation = super::StageObservation::cpu(
         backend,
         "grain_v3_field",
-        spektrafilm_gpu::telemetry::CpuReason::GrainV3FieldCpu,
+        spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu,
     );
-    tracing::info!(
-        stock = film.info.stock.as_deref().unwrap_or(""),
-        source = format_args!("{}x{}", source.width, source.height),
-        origin_um = ?grid.origin_um,
-        output_pitch_um = ?grid.pitch_um,
-        output = format_args!("{}x{}", grid.width, grid.height),
-        support_um = resolved.support_um,
-        event_area_um2 = resolved.event_area_um2,
-        channel_scale = format_args!(
-            "{:.4}/{:.4}/{:.4}",
-            resolved.channel_scale[0], resolved.channel_scale[1], resolved.channel_scale[2]
-        ),
-        cell_um = resolved.cell_um.unwrap_or(resolved.support_um / 2.0),
-        expectation = resolved.expectation,
-        "film grain Dye: field readout on CPU"
-    );
-    v3::apply(source, source_pitch_um, grid, &resolved)
+    v3::apply(source, source_pitch_um, grid, resolved)
 }
 
 /// Read linear route response with the same formed field and exact cell overlaps.
+///
+/// The response interleaves with the field realization per band, so this
+/// readout is host-only by construction: an explicit GPU request fails by
+/// name instead of silently resolving the field on the host.
 pub fn readout_with_response(
     source: &ImageBuf,
     film: &Profile,
     params: &RuntimeParams,
     source_pitch_um: f64,
     grid: ReadoutGrid,
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
-    response: impl Fn(&ImageBuf, &dyn spektrafilm_gpu::ComputeBackend) -> Result<ImageBuf, String>
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+    response: impl Fn(&ImageBuf, &dyn spektrafilm_backend::ComputeBackend) -> Result<ImageBuf, String>
     + Sync,
 ) -> Result<ImageBuf, String> {
+    if backend.explicit_gpu_request() {
+        return Err(format!(
+            "explicit GPU request cannot run the film grain Dye {CELL_SPECTRAL_ENV} exact-cell \
+             response readout on WGPU (the field is host-only); retry with an explicit CPU request"
+        ));
+    }
     let resolved = resolve(film, params)?;
     let observation = super::StageObservation::cpu(
         backend,
         "grain_v3_field",
-        spektrafilm_gpu::telemetry::CpuReason::GrainV3FieldCpu,
+        spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu,
     );
     let backend = observation.backend(backend);
     v3::apply_with_response(source, source_pitch_um, grid, &resolved, |cells| {
@@ -509,9 +595,140 @@ pub fn readout_with_response(
     })
 }
 
+/// Device parameters for one readout of the resolved model: the channel
+/// tables and formation taps the device evaluates against, and the output
+/// grid.
+///
+/// This is the host→device mapping of the Dye field — the resident chain
+/// and the per-stage readout share it — so the device cannot drift from the
+/// CPU model's conditioning. The experimental mass-law selector has no
+/// device count law and is rejected by name; expectation mode and the
+/// field-pitch override are part of the production law and map through.
+fn device_params(
+    resolved: &GrainV3Params,
+    source_pitch_um: f64,
+    grid: ReadoutGrid,
+) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
+    v3::check_device_mass_law()?;
+    let model = v3::Model::new(resolved, source_pitch_um)?;
+    let tables = model.channel_tables();
+    let parts = std::array::from_fn(|c| spektrafilm_backend::dye_params::DyeChannelParts {
+        min: tables[c].min,
+        cap_total: tables[c].cap_total,
+        cap: tables[c].cap,
+        frac: tables[c].frac,
+        area: tables[c].area,
+        uniformity: tables[c].uniformity,
+        knots: tables[c].knots,
+        inv_dx: tables[c].inv_dx,
+        layers: tables[c].layers,
+    });
+    Ok(spektrafilm_backend::dye_params::DyeGpuParams {
+        tables: spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts),
+        cell_um: model.cell_um(),
+        taps: model.taps().to_vec(),
+        source_pitch_um,
+        grid: spektrafilm_backend::dye_params::DyeReadoutGrid {
+            origin_um: grid.origin_um,
+            pitch_um: grid.pitch_um,
+            width: grid.width,
+            height: grid.height,
+        },
+        seed: resolved.seed,
+        channel_correlation: resolved.channel_correlation as f32,
+        expectation: resolved.expectation,
+    })
+}
+
+/// Device parameters for the resident chain's developed density raster.
+///
+/// The chain holds the delivered raster at a fixed size, so the field reads
+/// it with the identity readout geometry: [`geometry`] must resolve to the
+/// raster itself (the resident route carries no crop or upscale). The check
+/// mirrors the one the host density fence performs.
+pub fn resident_device_params(
+    film: &Profile,
+    params: &RuntimeParams,
+    source: &ImageBuf,
+    source_pitch_um: f64,
+) -> Result<spektrafilm_backend::dye_params::DyeGpuParams, String> {
+    let resolved = resolve(film, params)?;
+    let grid = geometry(source, params, source_pitch_um)?.grid();
+    if grid.width != source.width || grid.height != source.height {
+        return Err(format!(
+            "film grain Dye: readout geometry {}x{} does not match the resident raster {}x{}",
+            grid.width, grid.height, source.width, source.height
+        ));
+    }
+    device_params(&resolved, source_pitch_um, grid)
+}
+
+/// Named reason an active Dye field resolves on the host instead of the
+/// device, or `None` when the device realizes the request.
+///
+/// The device/host decision the per-stage readout and the capability output
+/// share; the resident chain assembly decides through
+/// [`resident_device_params`], which rejects the same requests by name. The
+/// device realizes the fixed-mass conditional Poisson count law at any
+/// readout geometry, including the expectation and field-pitch diagnostics;
+/// the experimental mass-law selector and the exact-cell response readout
+/// are host-only.
+fn host_field_reason(params: &RuntimeParams, gpu_backend: bool) -> Option<String> {
+    if !gpu_backend {
+        return Some("the selected backend has no device field path".to_owned());
+    }
+    if validate_cell_spectral(params).unwrap_or(true) {
+        return Some(format!(
+            "{CELL_SPECTRAL_ENV} exact-cell response readout is host-only"
+        ));
+    }
+    if v3::check_device_mass_law().is_err() {
+        return Some(
+            "the experimental SPEKTRAFILM_GRAIN_V3_MASS_LAW mass law has no device field path"
+                .to_owned(),
+        );
+    }
+    None
+}
+
+/// The published host reason for an active Dye field on a device backend, or
+/// `None` when the device realizes it.
+///
+/// Route classification reads this: a resident decline for readout geometry
+/// the chain cannot express selects the per-stage route, and the device still
+/// realizes the field there, while a `Some` reason names a request the device
+/// cannot realize at all.
+pub fn published_host_field_reason(params: &RuntimeParams) -> Option<String> {
+    host_field_reason(params, true)
+}
+
+/// The effective executor of an active Dye field for capability output:
+/// `"gpu"` when the device realizes the field, `"cpu"` when it resolves on
+/// the host ([`effective_backend_note`] names the fallback reason).
+pub fn effective_field_backend(params: &RuntimeParams, gpu_backend: bool) -> &'static str {
+    if host_field_reason(params, gpu_backend).is_some() {
+        "cpu"
+    } else {
+        "gpu"
+    }
+}
+
 /// Effective-backend note for user-visible backend/capability output.
-pub fn effective_backend_note() -> &'static str {
-    "film grain Dye: field readout on CPU (resident WGPU chain disabled)"
+///
+/// Reports the effective Dye field path of an active field instead of
+/// unconditionally naming the CPU: the executor that resolves the field, the
+/// route that delivers it, and the fallback reason a host field keeps.
+pub fn effective_backend_note(film: &Profile, params: &RuntimeParams, gpu_backend: bool) -> String {
+    let executor = match host_field_reason(params, gpu_backend) {
+        Some(reason) => format!("field readout on CPU ({reason})"),
+        None => "field readout on GPU".to_owned(),
+    };
+    let route = if resident_fence_supported(film, params) {
+        "resident chain"
+    } else {
+        "per-stage readout"
+    };
+    format!("film grain Dye: {executor}, {route}")
 }
 
 fn cell_um_override() -> Option<f64> {
@@ -657,10 +874,125 @@ mod tests {
     }
 
     #[test]
+    fn device_layer_targets_match_the_cpu_conditioning() {
+        // G2: the device evaluates the same conditioning from the same tables.
+        // Both sides read `Model::channel_tables`, so this compares two
+        // evaluations of one derivation instead of two derivations.
+        let backend = spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
+            .expect("this test needs a usable device");
+        let film = load("kodak_portra_800");
+        let params = supported_params();
+        let resolved = resolve(&film, &params).unwrap();
+        let model = v3::Model::new(&resolved, 2.0).unwrap();
+        let tables = model.channel_tables();
+        let parts = std::array::from_fn(|c| spektrafilm_backend::dye_params::DyeChannelParts {
+            min: tables[c].min,
+            cap_total: tables[c].cap_total,
+            cap: tables[c].cap,
+            frac: tables[c].frac,
+            area: tables[c].area,
+            uniformity: tables[c].uniformity,
+            knots: tables[c].knots,
+            inv_dx: tables[c].inv_dx,
+            layers: tables[c].layers,
+        });
+        let packed = spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts);
+        // Cover each channel's own interval, including both clamps and the
+        // region where a layer saturates and the split redistributes.
+        let mut densities = Vec::new();
+        for i in 0..24usize {
+            for j in 0..24usize {
+                let x = i as f64 / 23.0;
+                let y = j as f64 / 23.0;
+                let z = (i + j) as f64 / 46.0;
+                densities.push([
+                    (1.2 * x * tables[0].cap_total) as f32,
+                    (1.2 * y * tables[1].cap_total) as f32,
+                    (1.2 * z * tables[2].cap_total) as f32,
+                ]);
+            }
+        }
+        let device = backend.dye_layer_targets(&densities, &packed);
+        assert_eq!(device.len(), densities.len());
+        let mut worst = 0.0f64;
+        for (index, density) in densities.iter().enumerate() {
+            let cpu = model.layer_targets([
+                f64::from(density[0]),
+                f64::from(density[1]),
+                f64::from(density[2]),
+            ]);
+            for channel in 0..3usize {
+                for layer in 0..3usize {
+                    let want = cpu[channel][layer];
+                    let got = f64::from(device[index][channel * 3 + layer]);
+                    let scale = want.abs().max(tables[channel].cap[layer]).max(1e-6);
+                    worst = worst.max((got - want).abs() / scale);
+                    assert!(
+                        (got - want).abs() <= 1e-4 * scale,
+                        "channel {channel} layer {layer} at {density:?}: device {got} vs CPU {want}"
+                    );
+                }
+            }
+        }
+        assert!(worst <= 1e-4, "worst relative error {worst}");
+    }
+
+    /// Deterministic conditional means isolate conditioning, remap, formation,
+    /// and readout from the CPU/device draw streams. Fractional footprints,
+    /// source-edge extension, and a band seam must preserve the same field.
+    #[test]
+    fn device_field_matches_the_cpu_reference_in_expectation() {
+        use spektrafilm_backend::ComputeBackend as _;
+        let backend = spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
+            .expect("this test needs a usable device");
+        let film = load("kodak_portra_800");
+        let params = supported_params();
+        let mut resolved = resolve(&film, &params).unwrap();
+        resolved.expectation = true;
+        let source = density_target(24, 129);
+        let grids = [
+            geometry(&source, &params, 2.0).unwrap().grid(),
+            ReadoutGrid {
+                origin_um: [1.25, 3.125],
+                pitch_um: [1.75, 2.125],
+                width: 23,
+                height: 111,
+            },
+            ReadoutGrid {
+                origin_um: [-3.25, -4.125],
+                pitch_um: [0.75, 1.375],
+                width: 19,
+                height: 131,
+            },
+        ];
+        for cell in [None, Some(resolved.support_um / 4.0)] {
+            resolved.cell_um = cell;
+            for grid in grids {
+                let device = device_params(&resolved, 2.0, grid).unwrap();
+                let gpu_out =
+                    spektrafilm_backend::ComputeBackend::dye_field(&backend, &source, &device)
+                        .expect("the backend exposes a device field path")
+                        .expect("the device field runs");
+                let cpu_out = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+                assert_eq!(
+                    (gpu_out.width, gpu_out.height),
+                    (cpu_out.width, cpu_out.height)
+                );
+                let worst = max_abs_diff(&gpu_out, &cpu_out);
+                eprintln!(
+                    "Dye expectation on {}: cell {cell:?}, grid {grid:?}, max {worst:.2e}",
+                    backend.name()
+                );
+                assert!(worst <= 1e-4, "device vs CPU expectation error {worst:.2e}");
+            }
+        }
+    }
+
+    #[test]
     fn cell_spectral_matches_independent_aligned_print_and_scan_reading() {
         let film = load("kodak_portra_800");
         let print = load("kodak_portra_endura");
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let source = density_target(16, 12);
         let mut params = supported_params();
         params.random_seed = 19273;

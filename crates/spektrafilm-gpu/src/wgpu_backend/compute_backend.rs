@@ -186,8 +186,22 @@ impl ComputeBackend for WgpuBackend {
         );
         ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
-    fn grain_v2(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> Option<ImageBuf> {
+    fn grain_v2(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::GrainV2GpuParams,
+    ) -> Option<ImageBuf> {
         Some(self.grain_v2_gpu(img, params))
+    }
+    fn dye_field(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::dye_params::DyeGpuParams,
+    ) -> Option<Result<ImageBuf, String>> {
+        // The device entry point is the inherent `WgpuBackend::dye_field`;
+        // this hook only marks the attempt so a backend without a device
+        // field path keeps the caller's host fallback.
+        Some(WgpuBackend::dye_field(self, img, params))
     }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
         if sigma <= 0.0 {
@@ -683,7 +697,7 @@ impl ComputeBackend for WgpuBackend {
 
     fn try_run_film_chain(
         &self,
-        params: &crate::FilmChainParams<'_>,
+        params: &spektrafilm_backend::FilmChainParams<'_>,
     ) -> Result<Option<ImageBuf>, String> {
         // Bounded-execution preflight: compare the arithmetically required
         // buffer sizes with the device limits before any allocation, so an
@@ -748,10 +762,7 @@ mod tests {
         let device_guard = super::super::observation::TEST_DEVICE_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(base) = WgpuBackend::new() else {
-            eprintln!("no GPU adapter available; skipping");
-            return;
-        };
+        let base = crate::test_support::adapter();
         assert!(!base.explicit_gpu_request());
         let derived = base
             .with_explicit_request()

@@ -1,18 +1,24 @@
-// Run after integrating geometry and central color semantics.
-// cargo run -p spektrafilm-core --example backend_parity --features precision-f64 -- data
+//! Differential CPU-vs-GPU parity over the color-space, control, fence and
+//! grain matrix. Run with `just parity-backend`; the recipe builds the f64
+//! binary and passes the data directory.
+use spektrafilm_backend::{ComputeBackend, cpu_backend::CpuBackend};
 use spektrafilm_core::{
     params::{RuntimeParams, Tap},
     pipeline::Pipeline,
     profile,
 };
-use spektrafilm_gpu::{ComputeBackend, cpu_backend::CpuBackend, wgpu_backend::WgpuBackend};
+use spektrafilm_gpu::wgpu_backend::WgpuBackend;
 use spektrafilm_math::{
     image::ImageBuf,
     precision::{from_f64, to_f64},
 };
 use std::path::PathBuf;
 
-const BUDGET: f64 = 0.005; // Provisional smoke limit, report actual errors independently.
+/// CPU-reference vs GPU maximum absolute error. Measured worst cases are the
+/// f64 grain fence (4.1e-4) and the f32 controls path (1.0e-4); the budget
+/// keeps an order of magnitude of headroom while still failing the 2.9e-1
+/// input-CCTF double-decode regression. See docs/parity.md.
+const BUDGET: f64 = 5e-3;
 
 fn difference(a: &ImageBuf, b: &ImageBuf) -> Result<(f64, f64), String> {
     if (a.width, a.height) != (b.width, b.height) {
@@ -39,7 +45,7 @@ fn main() -> Result<(), String> {
     let gpu = WgpuBackend::new().ok_or("WGSL adapter unavailable; no GPU pass recorded")?;
     let cpu = CpuBackend;
     println!(
-        "backend={} cpu={} reference=3bb2c2d provisional_max_abs_budget={BUDGET}",
+        "backend={} cpu={} reference=3bb2c2d max_abs_budget={BUDGET}",
         gpu.name(),
         cpu.name()
     );
@@ -98,8 +104,12 @@ fn main() -> Result<(), String> {
                 let mut p = base.clone();
                 p.io.output_color_space = space.into();
                 p.io.output_cctf_encoding = encoded;
-                let resident_expected =
-                    !matches!(case, "diffusion" | "decode" | "spectral_lut" | "wide_blur");
+                // Every case except the FIR blur-support limit keeps the
+                // resident route: the capability-class stages the per-stage
+                // route used to own (camera diffusion, input transfer
+                // decoding, scanner/enlarger LUT acquisition) now run as
+                // assembled fences inside the chain.
+                let resident_expected = !matches!(case, "wide_blur");
                 match case {
                     "scan" => p.io.scan_film = true,
                     "geometry" => {
@@ -175,7 +185,7 @@ fn main() -> Result<(), String> {
                     );
                     if max > BUDGET {
                         return Err(format!(
-                            "{space}/{encoded}/{case}/{label}: {max} exceeds provisional {BUDGET}"
+                            "{space}/{encoded}/{case}/{label}: {max} exceeds {BUDGET}"
                         ));
                     }
                     if range.1 - range.0 < 1e-6 {
@@ -208,19 +218,24 @@ fn main() -> Result<(), String> {
         p.film_render.grain.active = true;
         p.film_render.grain.sublayers_active = layered;
         let pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), p, &dir)?;
-        if pipeline.process_resident_borrowed(&input, &gpu)?.is_some() {
-            return Err(format!(
-                "grain layered={layered}: expected faithful CPU sampler fallback"
-            ));
-        }
+        // Spektra grain distribution runs as the assembled density fence, so
+        // the route stays resident instead of falling back to the CPU
+        // sampler route.
+        let resident = pipeline
+            .process_resident_borrowed(&input, &gpu)?
+            .ok_or("grain: expected the resident density fence")?;
         let reference = pipeline.process_with_taps(input.clone(), &cpu, None, None)?;
         let routed = pipeline.process(input.clone(), &gpu)?;
         let (max, mean) = difference(&reference, &routed)?;
+        let (resident_max, resident_mean) = difference(&reference, &resident)?;
         println!(
-            "grain layered={layered} execution=cpu_sampler max_abs={max:.9e} mean_abs={mean:.9e}"
+            "grain layered={layered} execution=resident_fence max_abs={max:.9e} mean_abs={mean:.9e} \
+             resident_max_abs={resident_max:.9e} resident_mean_abs={resident_mean:.9e}"
         );
-        if max > BUDGET {
-            return Err(format!("grain CPU fallback drift {max}"));
+        if max > BUDGET || resident_max > BUDGET {
+            return Err(format!(
+                "grain resident fence drift max={max} resident_max={resident_max}"
+            ));
         }
     }
     Ok(())

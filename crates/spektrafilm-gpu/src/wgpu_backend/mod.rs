@@ -1,8 +1,8 @@
 //! wgpu compute backend — dispatches WGSL shaders on GPU via Metal/Vulkan/DX12.
 
 mod observation;
-use crate::telemetry::*;
 use observation::{ObservedDevice, ObservedEncoder, ObservedPass, ObservedQueue};
+use spektrafilm_backend::telemetry::*;
 
 #[cfg(feature = "wgpu-backend")]
 use spektrafilm_math::image::ImageBuf;
@@ -11,7 +11,8 @@ use crate::gpu_helpers::{
     f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
 };
 #[cfg(feature = "wgpu-backend")]
-use crate::{ComputeBackend, Lut3D, cpu_backend};
+use spektrafilm_backend::cpu_backend;
+use spektrafilm_backend::{ComputeBackend, Lut3D};
 
 #[cfg(feature = "wgpu-backend")]
 mod cache;
@@ -250,7 +251,11 @@ impl WgpuBackend {
     /// The one readback protocol: map `buffer`, wait for the GPU, record the
     /// materialized bytes, then copy the mapped range out as f32.
     fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
-        self.pipe.read_mapped_f32(buffer, bytes)
+        self.pipe.read_mapped(buffer, bytes)
+    }
+
+    fn read_mapped_u32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<u32> {
+        self.pipe.read_mapped(buffer, bytes)
     }
 
     /// Get or compile a pipeline using the shared shader-and-layout cache.
@@ -320,7 +325,12 @@ mod gamut;
 #[cfg(feature = "wgpu-backend")]
 mod glare;
 #[cfg(feature = "wgpu-backend")]
-mod grain;
+pub mod grain;
+
+pub use grain::dye_decisions::{DYE_DECISION_FAILED, DyeDecisionCase};
+pub use spektrafilm_backend::dye_params::{
+    DyeChannelParts, DyeChannelTableGpu, DyeChannelTablesGpu, DyeGpuParams, DyeReadoutGrid,
+};
 #[cfg(feature = "wgpu-backend")]
 mod halation;
 #[cfg(feature = "wgpu-backend")]

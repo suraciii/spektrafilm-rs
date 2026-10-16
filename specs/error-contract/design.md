@@ -12,7 +12,7 @@ The coupling is deeper than the trait's return types. `CpuStageFn` is a type ali
 
 ## Current shape
 
-The workspace reports failure as `Result<T, String>` at 312 sites: 255 in core, 35 in model, 22 in the device crate. No typed error exists anywhere in the workspace. An earlier `SpektraError` definition in `spektrafilm-core/src/error.rs` was removed on 2026-10-16 because no call site used it and the precondition below had not been met; it was speculation rather than a contract.
+The workspace reports failure as `Result<T, String>` at 312 sites: 255 in core, 35 in model, 22 in the device crate. `spektrafilm-core` already defines `SpektraError`, `SpektraErrorCode`, and `SpektraResult` in `error.rs`, and re-exports them from the crate root. No call site uses them yet.
 
 A `String` failure carries one field: human text. A caller can print it and can substring-match it. A caller cannot branch on it without parsing prose.
 
@@ -20,7 +20,7 @@ A `String` failure carries one field: human text. A caller can print it and can 
 
 The migration must not change any observable failure behavior.
 
-Error message text must stay byte-identical. The typed error must forward its message verbatim through `Display`, so an existing assertion such as `assert!(err.contains("scanner.conversion_brightness_ev"))` must keep passing without edit. Any migration step that changes a message string is a defect, not a cleanup.
+Error message text must stay byte-identical. `SpektraError` forwards its message verbatim through `Display`, so an existing assertion such as `assert!(err.contains("scanner.conversion_brightness_ev"))` must keep passing without edit. Any migration step that changes a message string is a defect, not a cleanup.
 
 Exit codes must not change. CLI failure outcomes must stay the same for the same input. A GUI dialog must show the same text.
 

@@ -12,8 +12,8 @@
 use super::cache::PipelineCache;
 use super::observation::{ObservedDevice, ObservedEncoder, ObservedQueue};
 use super::{GpuBuffer, dispatch_linear};
-use crate::telemetry::*;
 use parking_lot::Mutex;
+use spektrafilm_backend::telemetry::*;
 /// A device-resident RGB f32 image: storage buffer, pixel count, byte size.
 #[allow(dead_code)]
 pub(super) struct DeviceImage {

@@ -3,8 +3,8 @@ use crate::params::{RuntimeParams, Tap};
 use crate::pipeline::Pipeline;
 use crate::profile;
 pub use crate::stages::scanning::ScannerSetup;
-use spektrafilm_gpu::ComputeBackend;
-use spektrafilm_gpu::telemetry::{ObservationContext, ObservationKind, Purpose};
+use spektrafilm_backend::ComputeBackend;
+use spektrafilm_backend::telemetry::{ObservationContext, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -115,8 +115,8 @@ impl RuntimePhotoParams {
             Purpose::Calibration,
         );
         preparation.context().record_executor(
-            spektrafilm_gpu::telemetry::Executor::Cpu,
-            Some(spektrafilm_gpu::telemetry::CpuReason::BackendDefault),
+            spektrafilm_backend::telemetry::Executor::Cpu,
+            Some(spektrafilm_backend::telemetry::CpuReason::BackendDefault),
         );
         let _span = preparation.context().span().map(|span| span.enter());
         let result = self.into_runtime(mode);
@@ -176,8 +176,8 @@ impl Runtime {
             Purpose::Calibration,
         );
         preparation.context().record_executor(
-            spektrafilm_gpu::telemetry::Executor::Cpu,
-            Some(spektrafilm_gpu::telemetry::CpuReason::BackendDefault),
+            spektrafilm_backend::telemetry::Executor::Cpu,
+            Some(spektrafilm_backend::telemetry::CpuReason::BackendDefault),
         );
         let _span = preparation.context().span().map(|span| span.enter());
         let result = Self::new(film, print, params, data_dir);
@@ -255,7 +255,7 @@ impl Runtime {
             return self.process_with_taps(image, backend, inject, collect);
         }
         let _span = context.span().map(|span| span.enter());
-        let bound = spektrafilm_gpu::bind_backend(backend, context.clone());
+        let bound = spektrafilm_backend::bind_backend(backend, context.clone());
         self.process_with_taps(image, bound.as_ref(), inject, collect)
     }
 
@@ -270,7 +270,7 @@ impl Runtime {
             return self.pipeline.process_resident_borrowed(image, backend);
         }
         let _span = context.span().map(|span| span.enter());
-        let bound = spektrafilm_gpu::bind_backend(backend, context.clone());
+        let bound = spektrafilm_backend::bind_backend(backend, context.clone());
         self.pipeline
             .process_resident_borrowed(image, bound.as_ref())
     }
@@ -290,7 +290,43 @@ impl Runtime {
             inject,
             collect,
             Some(&mut stage_timings),
+            None,
         );
+        self.record_elapsed(started, Some(stage_timings));
+        result
+    }
+
+    /// Process with an explicit operation context while capturing the native
+    /// stage evidence of the executed render. The capture observes the run;
+    /// it must not change its route, parameters or output pixels.
+    pub fn process_captured(
+        &self,
+        image: ImageBuf,
+        backend: &dyn ComputeBackend,
+        inject: Option<Tap>,
+        collect: Option<Tap>,
+        context: &ObservationContext,
+        capture: &mut crate::stage_evidence::StageCapture,
+    ) -> Result<ImageBuf, String> {
+        let started = Instant::now();
+        let mut stage_timings = BTreeMap::new();
+        let run = |backend: &dyn ComputeBackend| {
+            self.pipeline.process_with_taps_timed(
+                image,
+                backend,
+                inject,
+                collect,
+                Some(&mut stage_timings),
+                Some(capture),
+            )
+        };
+        let result = if !context.enabled() {
+            run(backend)
+        } else {
+            let _span = context.span().map(|span| span.enter());
+            let bound = spektrafilm_backend::bind_backend(backend, context.clone());
+            run(bound.as_ref())
+        };
         self.record_elapsed(started, Some(stage_timings));
         result
     }
@@ -576,7 +612,7 @@ pub type Simulator = Runtime;
 mod tests {
     use super::*;
     use crate::test_support::data_dir;
-    use spektrafilm_gpu::cpu_backend::CpuBackend;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
     use spektrafilm_math::precision::from_f64;
 
     #[test]

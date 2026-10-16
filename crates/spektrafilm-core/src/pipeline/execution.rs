@@ -111,12 +111,12 @@ impl Pipeline {
             && (inject != Tap::RgbIn || collect != Tap::RgbOut)
         {
             context.decline_resident(
-                spektrafilm_gpu::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
+                spektrafilm_backend::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
             );
             context.set_path(if backend.is_gpu() {
-                spektrafilm_gpu::telemetry::ExecutionPath::PerStage
+                spektrafilm_backend::telemetry::ExecutionPath::PerStage
             } else {
-                spektrafilm_gpu::telemetry::ExecutionPath::Cpu
+                spektrafilm_backend::telemetry::ExecutionPath::Cpu
             });
         }
         if inject == Tap::RgbIn && collect == Tap::RgbOut {
@@ -172,13 +172,13 @@ impl Pipeline {
             let _observation = crate::stages::StageObservation::cpu(
                 backend,
                 "post_scan",
-                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+                spektrafilm_backend::telemetry::CpuReason::BackendDefault,
             );
             if let Some(context) = backend.observation_context() {
-                context.set_path(spektrafilm_gpu::telemetry::ExecutionPath::Cpu);
+                context.set_path(spektrafilm_backend::telemetry::ExecutionPath::Cpu);
                 context.set_working_dimensions(image.width, image.height);
                 context.decline_resident(
-                    spektrafilm_gpu::telemetry::ResidentDeclineReason::WorkflowRoute,
+                    spektrafilm_backend::telemetry::ResidentDeclineReason::WorkflowRoute,
                 );
             }
             use spektrafilm_math::colorspace::{conversion_matrix, convert_rgb, resolve};
@@ -242,12 +242,13 @@ impl Pipeline {
     ) -> Result<ImageBuf, String> {
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
-                spektrafilm_gpu::telemetry::ExecutionPath::PerStage
+                spektrafilm_backend::telemetry::ExecutionPath::PerStage
             } else {
-                spektrafilm_gpu::telemetry::ExecutionPath::Cpu
+                spektrafilm_backend::telemetry::ExecutionPath::Cpu
             });
-            context
-                .decline_resident(spektrafilm_gpu::telemetry::ResidentDeclineReason::WorkflowRoute);
+            context.decline_resident(
+                spektrafilm_backend::telemetry::ResidentDeclineReason::WorkflowRoute,
+            );
         }
         let route = self.params.workflow.route.as_str();
         let print_after_convert = route == "input > convert-film > print > scan";
@@ -255,7 +256,7 @@ impl Pipeline {
         let mut converting = crate::stages::StageObservation::cpu(
             backend,
             "converting",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         let converted = crate::stages::converting::process(&image, &self.film, &self.params);
         converting.set_complete(converted.is_ok());
@@ -356,9 +357,9 @@ impl Pipeline {
         }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
-                spektrafilm_gpu::telemetry::ExecutionPath::PerStage
+                spektrafilm_backend::telemetry::ExecutionPath::PerStage
             } else {
-                spektrafilm_gpu::telemetry::ExecutionPath::Cpu
+                spektrafilm_backend::telemetry::ExecutionPath::Cpu
             });
         }
 
@@ -417,7 +418,7 @@ impl Pipeline {
         if inject != Tap::RgbIn || collect != Tap::RgbOut {
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
-                    spektrafilm_gpu::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
+                    spektrafilm_backend::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
                 );
             }
             return Ok(None);
@@ -425,7 +426,7 @@ impl Pipeline {
         if self.tc_lut.is_none() && self.mallett_core.is_none() {
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
-                    spektrafilm_gpu::telemetry::ResidentDeclineReason::MissingResidentFrontPass,
+                    spektrafilm_backend::telemetry::ResidentDeclineReason::MissingResidentFrontPass,
                 );
             }
             return Ok(None);
@@ -442,7 +443,7 @@ impl Pipeline {
         let metering = crate::stages::StageObservation::cpu(
             backend,
             "metering",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         let ae_ev = self.meter_autoexposure(image);
         // Clone only when the exposure multiply actually needs owned pixels;

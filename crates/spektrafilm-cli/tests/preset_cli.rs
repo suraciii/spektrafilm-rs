@@ -452,8 +452,8 @@ fn final_workflow_and_runtime_constraints_resolve_after_edits() {
 
 #[test]
 fn report_and_render_use_identical_resolved_controls() {
+    use spektrafilm_backend::cpu_backend::CpuBackend;
     use spektrafilm_core::{params::RuntimeParams, profile, runtime::Runtime};
-    use spektrafilm_gpu::cpu_backend::CpuBackend;
     let f = Fixture::new();
     let edits = "camera.auto_exposure=false,camera.exposure_compensation_ev=0.5,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true,enlarger.y_filter_neutral=12";
     let report = f.report(&[

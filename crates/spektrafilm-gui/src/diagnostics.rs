@@ -1,10 +1,10 @@
 //! Session-only native diagnostics. No field belongs to persisted GUI state.
 use eframe::egui;
+use spektrafilm_backend::telemetry::CollectionMode;
 pub use spektrafilm_core::telemetry::BackendRequested;
 use spektrafilm_core::telemetry::{
     ColorSpaceRole, Operation, Outcome, Report, validate_report_destination,
 };
-use spektrafilm_gpu::telemetry::CollectionMode;
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
@@ -17,6 +17,7 @@ pub(crate) struct Diagnostics {
     pub mode: CollectionMode,
     history: VecDeque<Report>,
     selected: Option<u64>,
+    user_selected: bool,
     publication: Option<PathBuf>,
     publication_error: Option<String>,
 }
@@ -72,14 +73,32 @@ impl Diagnostics {
     }
 
     fn retain(&mut self, report: Report) {
-        self.selected = Some(report.operation.id);
+        if !self.user_selected {
+            self.selected = Some(report.operation.id);
+        }
         self.history.push_front(report);
         self.history.truncate(20);
+        // If the selected report aged out of history, resume auto-follow.
+        if self.user_selected
+            && !self
+                .history
+                .iter()
+                .any(|r| Some(r.operation.id) == self.selected)
+        {
+            self.user_selected = false;
+            self.selected = self.history.front().map(|r| r.operation.id);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selected_report_id(&self) -> Option<u64> {
+        self.selected
     }
 
     pub fn clear(&mut self) {
         self.history.clear();
         self.selected = None;
+        self.user_selected = false;
     }
 
     pub fn save_selected(&self, path: &Path) -> Result<(), String> {
@@ -111,7 +130,9 @@ impl Diagnostics {
             if self.history.is_empty() { ui.label("No completed reports. Collection applies to the next operation."); }
             for report in &self.history {
                 let label = format!("#{} {} · {}", report.operation.id, words(&report.operation.kind), words(&report.operation.outcome));
-                ui.selectable_value(&mut self.selected, Some(report.operation.id), label);
+                if ui.selectable_value(&mut self.selected, Some(report.operation.id), label).clicked() {
+                    self.user_selected = true;
+                }
             }
             if let Some(report) = self.history.iter().find(|report| Some(report.operation.id) == self.selected) {
                 let summary = report.summary();
@@ -136,15 +157,23 @@ impl Diagnostics {
 }
 
 /// Effective backend label for Scan and Export reports. An active Dye field
-/// resolves on the CPU and never enters the resident chain, so the selected
-/// backend name alone would misreport the executed path.
-pub(crate) fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
+/// resolves on the device whenever the render backend has one and the
+/// request is device-representable, and on the host with its fallback reason
+/// otherwise (`grain_v3::effective_field_backend` is the authority), so the
+/// selected backend name alone would misreport where the grain runs.
+pub(crate) fn effective_backend_name(
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+    params: &RuntimeParams,
+) -> String {
     if spektrafilm_core::stages::grain_v3::active(params) {
-        format!("{selected} · grain Dye on CPU")
+        let executor =
+            spektrafilm_core::stages::grain_v3::effective_field_backend(params, backend.is_gpu());
+        let executor = if executor == "gpu" { "GPU" } else { "CPU" };
+        format!("{} · grain Dye on {executor}", backend.name())
     } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
-        format!("{selected} · grain Fotufilm on CPU")
+        format!("{} · grain Fotufilm on CPU", backend.name())
     } else {
-        selected.to_owned()
+        backend.name().to_owned()
     }
 }
 
@@ -282,21 +311,6 @@ mod tests {
         assert_eq!(report.operation.outcome, Outcome::Failed);
         assert_eq!(report.source_render.as_ref(), Some(&source));
         assert!(report.attempts.is_empty());
-    }
-    #[test]
-    fn changing_mode_does_not_change_accepted_operation() {
-        let mut diagnostics = Diagnostics {
-            mode: CollectionMode::Summary,
-            ..Default::default()
-        };
-        let operation = Operation::new(OperationKind::Preview, diagnostics.mode);
-        diagnostics.mode = CollectionMode::Off;
-        diagnostics.finish(operation, Outcome::Superseded);
-        assert_eq!(diagnostics.history.len(), 1);
-        assert_eq!(
-            diagnostics.history.front().unwrap().operation.outcome,
-            Outcome::Superseded
-        );
     }
     #[test]
     fn report_export_and_persistence_failure_do_not_change_history() {

@@ -1042,7 +1042,7 @@ mod tests {
                             params.timer = Some(0.25);
                         }
                         let cpu = apply_cpu(&image, params);
-                        let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
+                        let gpu_params = spektrafilm_backend::GrainV2GpuParams {
                             mode: params.mode as u32,
                             resolution_type: params.resolution_type,
                             amount: params.amount,

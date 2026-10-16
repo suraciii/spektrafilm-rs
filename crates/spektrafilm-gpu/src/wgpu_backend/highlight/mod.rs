@@ -10,7 +10,7 @@ pub(super) struct HighlightBoostState {
 
 pub(super) fn build_highlight_boost_state(
     device: &ObservedDevice,
-    hp: &crate::HighlightBoostGpuParams,
+    hp: &spektrafilm_backend::HighlightBoostGpuParams,
     n_pixels: u32,
     img: &wgpu::Buffer,
     backend: &WgpuBackend,

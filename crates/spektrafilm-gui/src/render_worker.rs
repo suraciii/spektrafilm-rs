@@ -6,11 +6,11 @@ use std::time::Instant;
 
 use eframe::egui;
 use parking_lot::{Condvar, Mutex};
+use spektrafilm_backend::ComputeBackend;
+use spektrafilm_backend::telemetry::{CollectionMode, ObservationKind, ObservationScope, Purpose};
 use spektrafilm_core::image_io::ImageMetadata;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, Outcome};
-use spektrafilm_gpu::ComputeBackend;
-use spektrafilm_gpu::telemetry::{CollectionMode, ObservationKind, ObservationScope, Purpose};
 use spektrafilm_math::image::ImageBuf;
 
 use super::display;

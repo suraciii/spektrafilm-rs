@@ -1,6 +1,6 @@
 //! Optical diffusion filters: discrete PSFs and reflected FFT convolution.
 
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{Scalar, from_f64};
 
@@ -542,7 +542,7 @@ mod family_tests {
             &img,
             &df("black_promist", 0.5),
             10.0,
-            &spektrafilm_gpu::cpu_backend::CpuBackend,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
         )
         .unwrap_err();
         assert!(e.contains("Unknown diffusion filter family"));
@@ -664,9 +664,13 @@ mod preview_parity_tests {
             bloom_intensity: 1.0,
             bloom_size: 1.0,
         };
-        let preview =
-            apply_diffusion_filter_blur(&img, &df, 10.0, &spektrafilm_gpu::cpu_backend::CpuBackend)
-                .unwrap();
+        let preview = apply_diffusion_filter_blur(
+            &img,
+            &df,
+            10.0,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
+        )
+        .unwrap();
         // (x, y, RGB): dark/hot corners, both sides of the hotspot boundary,
         // its inner corner (the former approximation's maximum-error pixel),
         // the surrounding ramp, and the opposite image edges.

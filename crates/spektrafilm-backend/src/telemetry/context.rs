@@ -663,6 +663,21 @@ mod collector_edges {
     }
 
     #[test]
+    fn incomplete_gpu_sum_is_sticky_with_valid_subset() {
+        let mut timing = GpuTimingMeasurements::default();
+        timing.add(
+            &Measurement::unavailable(AvailabilityReason::QueryFailed),
+            &Measurement::available(0.5),
+        );
+        timing.add(&Measurement::available(1.0), &Measurement::available(1.0));
+        assert_eq!(
+            timing.compute_pass_sum.reason,
+            Some(AvailabilityReason::Incomplete)
+        );
+        assert_eq!(timing.partial_compute_pass_sum.value, Some(1.5));
+    }
+
+    #[test]
     fn unavailable_batches_preserve_root_partial_reasons() {
         for reason in [
             AvailabilityReason::QueryFailed,
@@ -686,6 +701,16 @@ mod collector_edges {
                 Measurement::unavailable(reason)
             );
         }
+    }
+
+    #[test]
+    fn cpu_gpu_timing_preserves_unsupported() {
+        let root = ObservationContext::new(CollectionMode::GpuTiming);
+        root.set_backend_selected(BackendSelected::Cpu);
+        assert_eq!(
+            root.snapshot().gpu_timing.compute_pass_sum.reason,
+            Some(AvailabilityReason::Unsupported)
+        );
     }
 
     #[test]

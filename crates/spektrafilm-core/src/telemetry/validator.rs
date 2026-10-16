@@ -1,5 +1,7 @@
 use super::report::{OperationKind, Report};
-use spektrafilm_gpu::telemetry::{MeasurementStatus, Observation, ObservationKind, PHASE_NAMES};
+use spektrafilm_backend::telemetry::{
+    MeasurementStatus, Observation, ObservationKind, PHASE_NAMES,
+};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -376,7 +378,7 @@ fn validate_unavailable(fields: &[super::report::UnavailableField]) -> Result<()
 }
 
 fn validate_execution_parts(
-    adapter: Option<&spektrafilm_gpu::telemetry::AdapterDescription>,
+    adapter: Option<&spektrafilm_backend::telemetry::AdapterDescription>,
     dimensions: Option<[u32; 2]>,
 ) -> Result<(), ValidationError> {
     if let Some(adapter) = adapter {
@@ -398,7 +400,7 @@ fn validate_execution_parts(
 }
 
 fn validate_measurement(
-    measurement: &spektrafilm_gpu::telemetry::Measurement,
+    measurement: &spektrafilm_backend::telemetry::Measurement,
 ) -> Result<(), ValidationError> {
     match measurement.status {
         MeasurementStatus::Available => {
