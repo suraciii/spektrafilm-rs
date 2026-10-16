@@ -91,7 +91,8 @@ pub fn load(path: &Path) -> Result<SpectraSet, String> {
     let grid = &manifest.grid_nm;
     if !grid.start.is_finite()
         || !grid.end.is_finite()
-        || !(grid.step > 0.0)
+        || !grid.step.is_finite()
+        || grid.step <= 0.0
         || grid.end <= grid.start
     {
         return Err("spectra manifest grid_nm needs finite start < end and a positive step".into());
@@ -227,6 +228,44 @@ mod tests {
         assert_eq!(set.sample_count(), 2);
         assert!(set.band_valid(0));
         assert!(!set.band_valid(1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_a_grid_that_cannot_step() {
+        let dir = std::env::temp_dir().join(format!("spektrafilm-lab-grid-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // The grid is validated before the array is read, so the referenced
+        // array never has to exist.
+        let cases = [
+            (380.0, 390.0, 0.0, "grid_nm"),
+            (380.0, 390.0, -5.0, "grid_nm"),
+            (390.0, 380.0, 5.0, "grid_nm"),
+            (380.0, 391.0, 5.0, "integral"),
+        ];
+        for (start, end, step, expected) in cases {
+            std::fs::write(
+                dir.join("manifest.json"),
+                format!(
+                    r#"{{
+                        "schema_version": 1,
+                        "grid_nm": {{"start": {start}, "end": {end}, "step": {step}}},
+                        "valid_band": [380.0, 390.0],
+                        "reflectances": {{"path": "missing.npy"}},
+                        "samples": [{{"id": "a", "source": "set", "partition": "warm"}}]
+                    }}"#
+                ),
+            )
+            .unwrap();
+            let Err(error) = load(&dir.join("manifest.json")) else {
+                panic!("start {start} end {end} step {step} was accepted");
+            };
+            assert!(
+                error.contains(expected),
+                "start {start} end {end} step {step}: {error}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

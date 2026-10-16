@@ -17,6 +17,8 @@ struct LabCli {
 }
 
 #[derive(Subcommand)]
+// Clap subcommands are built once at startup, outside hot paths.
+#[allow(clippy::large_enum_variant)]
 enum LabCommands {
     /// Fit profile and look parameters against reference patch data.
     Fit(fit::FitArgs),
