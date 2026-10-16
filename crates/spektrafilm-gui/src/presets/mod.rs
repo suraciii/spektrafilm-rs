@@ -1,6 +1,5 @@
 //! Preset browser presentation and library actions. Documents and writes belong to core.
 use crate::App;
-use crate::theme;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 use spektrafilm_core::{

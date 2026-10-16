@@ -20,7 +20,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use crate::theme;
-use egui::{Color32, Context, Pos2, Rect, Ui};
+use egui::{Context, Pos2, Rect, Ui};
 use spektrafilm_math::colorspace::srgb_encode_f64;
 use spektrafilm_math::image::ImageBuf;
 

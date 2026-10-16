@@ -126,7 +126,7 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     let prev = *value;
     // Label first, selector second, so a choice row reads like every other
     // parameter row.
-    let label_response = ui.label(label).on_hover_text(tooltip);
+    ui.label(label).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(label)
         .selected_text(selected)
         .show_ui(ui, |ui| {
@@ -136,15 +136,13 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
         })
         .response
         .on_hover_text(tooltip);
-    if let Some(response) = ui
-        .ctx()
-        .read_response(ui.make_persistent_id(egui::Id::new(label)))
-    {
-        let id = response.id;
-        response.labelled_by(label_response.id);
-        ui.ctx()
-            .accesskit_node_builder(id, |node| node.clear_label());
-    }
+    let id = ui.make_persistent_id(egui::Id::new(label));
+    // The selector carries the parameter's own accessible name; a
+    // `labelled_by` link would make the visible label node the one a label
+    // query returns.
+    ui.ctx().accesskit_node_builder(id, |node| {
+        node.set_label(label);
+    });
     prev != *value
 }
 

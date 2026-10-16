@@ -111,11 +111,13 @@ pub(crate) fn param_tuple_named<T: egui::emath::Numeric, const N: usize>(
 
 pub(crate) fn param_numeric_field_validated<T, Id>(
     ui: &mut Ui,
+    label: &str,
     id_salt: Id,
     value: &mut T,
     path: &str,
     tooltip: &str,
     unit: Option<&str>,
+    labelled_by: Option<egui::Id>,
     valid: impl Fn(T) -> bool,
 ) -> bool
 where
@@ -124,7 +126,18 @@ where
 {
     let (min, max, step, decimals) = editor_range_for(path);
     numeric_field_validated(
-        ui, id_salt, value, min, max, step, decimals, tooltip, unit, valid,
+        ui,
+        label,
+        id_salt,
+        value,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        unit,
+        labelled_by,
+        valid,
     )
 }
 
@@ -315,14 +328,19 @@ pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
                         .get(index)
                         .copied()
                         .unwrap_or_else(|| index_identifier(index));
-                    ui.label(
-                        egui::RichText::new(identifier)
-                            .color(theme::FG_MUTED)
-                            .size(theme::SIZE_HINT),
-                    )
-                    .on_hover_text(tooltip);
+                    let identifier_response = ui
+                        .label(
+                            egui::RichText::new(identifier)
+                                .color(theme::FG_MUTED)
+                                .size(theme::SIZE_HINT),
+                        )
+                        .on_hover_text(tooltip);
                     let changed = numeric_field(
                         ui,
+                        // The visible identifier and the accessible name agree,
+                        // so the component is named the same way for every
+                        // reader.
+                        &format!("{label} {identifier}"),
                         (label, index),
                         value,
                         min,
@@ -331,13 +349,8 @@ pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
                         decimals,
                         tooltip,
                         None,
+                        Some(identifier_response.id),
                     );
-                    let id = ui.make_persistent_id(("numeric-field", (label, index)));
-                    // The visible identifier and the accessible name agree, so
-                    // the component is named the same way for every reader.
-                    ui.ctx().accesskit_node_builder(id, |node| {
-                        node.set_label(format!("{label} {identifier}"));
-                    });
                     changed
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
@@ -438,19 +451,25 @@ pub(crate) fn point_tuple(
                 .iter_mut()
                 .enumerate()
                 .map(|(channel, value)| {
-                    ui.label(
-                        egui::RichText::new(CHANNEL_IDENTIFIERS[channel])
-                            .color(theme::FG_MUTED)
-                            .size(theme::SIZE_HINT),
-                    )
-                    .on_hover_text(tooltip);
+                    let identifier_response = ui
+                        .label(
+                            egui::RichText::new(CHANNEL_IDENTIFIERS[channel])
+                                .color(theme::FG_MUTED)
+                                .size(theme::SIZE_HINT),
+                        )
+                        .on_hover_text(tooltip);
                     let changed = param_numeric_field_validated(
                         ui,
+                        // The visible identifier and the accessible name agree,
+                        // so the component is named the same way for every
+                        // reader.
+                        &format!("{label} {}", CHANNEL_IDENTIFIERS[channel]),
                         (label, channel),
                         value,
                         path,
                         tooltip,
                         None,
+                        Some(identifier_response.id),
                         |next| {
                             if is_black {
                                 next < other[channel]
@@ -459,10 +478,6 @@ pub(crate) fn point_tuple(
                             }
                         },
                     );
-                    let id = ui.make_persistent_id(("numeric-field", (label, channel)));
-                    ui.ctx().accesskit_node_builder(id, |node| {
-                        node.set_label(format!("{label} {}", CHANNEL_IDENTIFIERS[channel]));
-                    });
                     changed
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
@@ -567,7 +582,7 @@ pub(crate) fn choice_tip_options<'a>(
     // Label first, selector second, so a choice row reads like every other
     // parameter row. `from_id_salt` paints the box where it is placed instead
     // of appending its own label after it.
-    let label_response = ui.label(label).on_hover_text(tooltip);
+    ui.label(label).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(label)
         .selected_text(selected_label)
         .width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
@@ -586,24 +601,20 @@ pub(crate) fn choice_tip_options<'a>(
         })
         .response
         .on_hover_text(tooltip);
-    link_choice_label(ui, label, label_response.id);
+    name_choice(ui, label);
     prev != *value
 }
 
-/// Associate a selector's visible label with the selector's own node.
+/// Name a choice row's selector with the parameter's own accessible name.
 ///
-/// The selector's own widget info carries an empty label, which would leave an
-/// accessible node named nothing beside the visible label node.
-fn link_choice_label(ui: &Ui, salt: &str, label_id: egui::Id) {
-    if let Some(response) = ui
-        .ctx()
-        .read_response(ui.make_persistent_id(egui::Id::new(salt)))
-    {
-        let id = response.id;
-        response.labelled_by(label_id);
-        ui.ctx()
-            .accesskit_node_builder(id, |node| node.clear_label());
-    }
+/// The selector's own widget info carries an empty label, and a `labelled_by`
+/// link to the visible label would make that label node the one a label query
+/// returns, so the selector is named directly instead.
+fn name_choice(ui: &Ui, label: &str) {
+    let id = ui.make_persistent_id(egui::Id::new(label));
+    ui.ctx().accesskit_node_builder(id, |node| {
+        node.set_label(label);
+    });
 }
 
 // UI helpers keep their existing parameter interfaces.
@@ -620,7 +631,7 @@ pub(crate) fn extra_choice(
 ) -> bool {
     let current = extras[section][key].as_str().unwrap_or(default);
     let mut selected = None;
-    let label_response = ui.label(label).on_hover_text(tooltip);
+    ui.label(label).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(label)
         .selected_text(current)
         .show_ui(ui, |ui| {
@@ -637,7 +648,7 @@ pub(crate) fn extra_choice(
         })
         .response
         .on_hover_text(tooltip);
-    link_choice_label(ui, label, label_response.id);
+    name_choice(ui, label);
     if let Some(selected) = selected {
         set_extra(extras, section, key, Value::from(selected));
         true

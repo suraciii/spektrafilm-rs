@@ -131,12 +131,20 @@ pub(crate) fn numeric<T: egui::emath::Numeric>(
             .add(egui::Label::new(egui::RichText::new(label)).sense(egui::Sense::click()))
             .on_hover_text(tooltip);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= numeric_field(ui, label, value, min, max, step, decimals, tooltip, unit);
+            changed |= numeric_field(
+                ui,
+                label,
+                label,
+                value,
+                min,
+                max,
+                step,
+                decimals,
+                tooltip,
+                unit,
+                Some(label_response.id),
+            );
         });
-        let id = ui.make_persistent_id(("numeric-field", label));
-        if let Some(response) = ui.ctx().read_response(id) {
-            response.labelled_by(label_response.id);
-        }
     });
     changed |= row_slider(ui, label, value, min, max, step);
     changed
@@ -179,6 +187,7 @@ fn tooltip_for(label: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn numeric_field<T, Id>(
     ui: &mut Ui,
+    label: &str,
     id_salt: Id,
     value: &mut T,
     min: f64,
@@ -187,6 +196,7 @@ pub(crate) fn numeric_field<T, Id>(
     decimals: usize,
     tooltip: &str,
     unit: Option<&str>,
+    labelled_by: Option<egui::Id>,
 ) -> bool
 where
     T: egui::emath::Numeric,
@@ -194,6 +204,7 @@ where
 {
     numeric_field_validated(
         ui,
+        label,
         id_salt,
         value,
         min,
@@ -202,6 +213,7 @@ where
         decimals,
         tooltip,
         unit,
+        labelled_by,
         |_| true,
     )
 }
@@ -209,6 +221,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn numeric_field_validated<T, Id>(
     ui: &mut Ui,
+    label: &str,
     id_salt: Id,
     value: &mut T,
     min: f64,
@@ -217,6 +230,7 @@ pub(crate) fn numeric_field_validated<T, Id>(
     decimals: usize,
     tooltip: &str,
     unit: Option<&str>,
+    labelled_by: Option<egui::Id>,
     valid: impl Fn(T) -> bool,
 ) -> bool
 where
@@ -259,7 +273,17 @@ where
             // Invalid state is colour plus a border, never colour alone.
             text_edit = text_edit.text_color(theme::ERROR);
         }
-        let response = ui.add(text_edit).on_hover_text(tooltip);
+        let mut response = ui.add(text_edit).on_hover_text(tooltip);
+        // Name the editor itself, so assistive technology and the
+        // accessibility tree's label lookup both find the field rather than a
+        // separate label node, and declare the visible label as the field's
+        // labelling node so the two read as one control.
+        ui.ctx().accesskit_node_builder(id, |node| {
+            node.set_label(label);
+        });
+        if let Some(label_id) = labelled_by {
+            response = response.labelled_by(label_id);
+        }
         if let Some(unit) = unit {
             ui.label(
                 egui::RichText::new(unit)
@@ -453,7 +477,8 @@ mod tests {
                             ctx.memory_mut(|memory| memory.request_focus(id));
                         }
                         numeric_field(
-                            ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure", None,
+                            ui, "exposure", "exposure", &mut value, -10.0, 10.0, 0.25, 2,
+                            "Exposure", None, None,
                         );
                         field_rect = ctx.read_response(id).unwrap().rect;
                     });
@@ -518,7 +543,8 @@ mod tests {
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     numeric_field(
-                        ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure", None,
+                        ui, "exposure", "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure",
+                        None, None,
                     );
                     let id = ui.make_persistent_id(("numeric-field", "exposure"));
                     field_rect.set(ctx.read_response(id).unwrap().rect);
@@ -545,7 +571,8 @@ mod tests {
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     numeric_field(
-                        ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure", None,
+                        ui, "exposure", "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure",
+                        None, None,
                     );
                 });
             },
@@ -579,7 +606,9 @@ mod tests {
                     }) {
                         ctx.memory_mut(|memory| memory.request_focus(id));
                     }
-                    *changed = numeric_field(ui, "exposure", value, 0.0, 1.0, 0.05, 3, "tip", None);
+                    *changed = numeric_field(
+                        ui, "exposure", "exposure", value, 0.0, 1.0, 0.05, 3, "tip", None, None,
+                    );
                     rect.set(ctx.read_response(id).unwrap().rect);
                 });
             },
@@ -717,12 +746,14 @@ mod tests {
                         *changed = super::numeric_field_validated(
                             ui,
                             "black",
+                            "black",
                             value,
                             0.0,
                             1.0,
                             0.05,
                             3,
                             "tip",
+                            None,
                             None,
                             |next| next < other.get(),
                         );
