@@ -32,7 +32,7 @@ The [Digital Reference contract](digital-reference/spec.md) defines a common ref
 2. GUI controls must display `Preserve medium polarity` for `direct_scan`, `Negative to positive` for `negative_to_positive`, and `Negative conversion method` for `scanner.negative_conversion_method`.
 3. Replacing the removed value with `negative_to_positive` must preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls. Verify density, separable, coupled, direct-negative, reversal-film, and paper paths with the same executable precision.
 4. Removed-value rejection must occur before output publication. A failed GUI import must retain the accepted parameters and image.
-5. Conversion telemetry must identify stage `negative_to_positive` and its actual executor under [Telemetry](../telemetry/metrics.md#effective-configuration). Selecting this mode must not require a CPU reason or a resident decline.
+5. Conversion telemetry must identify stage `negative_to_positive` and its actual executor under [Telemetry](../telemetry/metrics/spec.md#effective-configuration). Selecting this mode must not require a CPU reason or a resident decline.
 
 ## Scan medium and scanner controls
 

@@ -1,6 +1,6 @@
 # Benchmark measurement protocol
 
-The [product specification](spec.md) defines evaluation scope and terms. This document owns measurement domains, algorithms, populations, and interpretation limits. The [machine interface](interface.md) defines serialization.
+The [product specification](../spec.md) defines evaluation scope and terms. This document owns measurement domains, algorithms, populations, and interpretation limits. The [machine interface](../interface/spec.md) defines serialization.
 
 ## Protocol identity
 

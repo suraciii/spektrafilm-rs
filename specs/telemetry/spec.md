@@ -30,7 +30,7 @@ The report path must name a regular local file, not stdout, a pipe, or a device.
 
 CLI report publication must create a new file atomically and must not replace an existing destination, including one created by another process after validation. GUI report saving may replace an existing file only after the normal save-dialog overwrite confirmation. Report persistence must not affect image publication. Serialization and report writing occur after the operation terminal boundary and must not enter image operation duration.
 
-A report must contain a schema version, application build identity, operation identity, effective execution configuration, dimensions, timing observations, GPU work observations, and measurement availability. Report fields and units are defined in [metrics](metrics.md). Operation identifiers must be local correlation values, not persistent user or machine identifiers.
+A report must contain a schema version, application build identity, operation identity, effective execution configuration, dimensions, timing observations, GPU work observations, and measurement availability. Report fields and units are defined in [metrics](metrics/spec.md). Operation identifiers must be local correlation values, not persistent user or machine identifiers.
 
 A failure before loading, parameter resolution, or device selection must retain only the configuration observed before failure. Required fields that were not reached must report availability rather than guess their values.
 
@@ -42,7 +42,7 @@ Reports must remain valid for historical and explicit CPU execution, WGPU reside
 
 Telemetry must remain local. Collection must not start a network connection or install a remote exporter. Local report export must be a user action or an explicit CLI request.
 
-Default reports must exclude image pixels, image or profile content hashes, absolute paths, filenames, EXIF/IPTC/XMP, camera serial numbers, and complete parameter snapshots. They may include bundled stock identifiers and the effective algorithm settings required by [metrics](metrics.md). Error records must use stable error categories; user data in error messages must not enter default reports.
+Default reports must exclude image pixels, image or profile content hashes, absolute paths, filenames, EXIF/IPTC/XMP, camera serial numbers, and complete parameter snapshots. They may include bundled stock identifiers and the effective algorithm settings required by [metrics](metrics/spec.md). Error records must use stable error categories; user data in error messages must not enter default reports.
 
 Recoverable collection and report persistence failures must not fail an image operation or change its destination publication. They must produce a separate diagnostic failure or unavailable measurement. Device loss, invalid image command submission, and process-wide allocation failure remain real execution failures; they must not be hidden as successful image operations. Collection must not block on an external consumer.
 

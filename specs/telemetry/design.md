@@ -61,7 +61,7 @@ Requested GPU buffer bytes describe API resource sizes. They do not describe com
 
 ## Terminal records and overhead
 
-The frontend finalizes the record at the [operation terminal boundary](metrics.md#operation-and-phase-wall-time). CPU or GPU failure may leave partial observations; those values must identify their completed scope. Telemetry persistence errors must not rewrite the operation outcome. Preview completion ends at the presentation handoff, not at physical display scanout.
+The frontend finalizes the record at the [operation terminal boundary](metrics/spec.md#operation-and-phase-wall-time). CPU or GPU failure may leave partial observations; those values must identify their completed scope. Telemetry persistence errors must not rewrite the operation outcome. Preview completion ends at the presentation handoff, not at physical display scanout.
 
 Detailed reports must use stable schema fields and stable enumerated categories. Paths and raw exceptions must not enter those fields. Operation and revision identifiers are correlation fields for local reports and traces; they must not become metric labels. Device names, stock identifiers, dimensions, seeds, and arbitrary user strings must not become aggregate metric labels.
 
