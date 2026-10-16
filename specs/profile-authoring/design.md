@@ -2,7 +2,7 @@
 
 ## Boundaries
 
-Profile fitting lives in `spektrafilm-core::fit` and is gated on the `precision-f64` feature. The CLI subcommand lives in the f64 binary and contains argument parsing, file loading, and file writing only.
+Profile fitting lives in `spektrafilm-core::fit` and is gated on the `precision-f64` feature. The CLI subcommand lives in the lab binary and contains argument parsing, file loading, and file writing only.
 
 The module owns: the chart layout and patch tables, chart image assembly and patch sampling, the objective, the optimizer, the metrics, the report, and the forward evaluation over the calibrated pipeline.
 
