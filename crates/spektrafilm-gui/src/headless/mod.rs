@@ -966,6 +966,9 @@ mod layout_snapshots {
             click(h, label);
             render(h, "PREVIEW");
             settle_animation(h);
+            // The histogram is binned off the UI thread; the PNG is layout
+            // evidence for the readout, so wait for the distribution to land.
+            wait_until(h, |a| a.histogram.cached_data().is_some());
             h.run_steps(3);
             let image = h.render().expect("offscreen app render");
             assert_eq!((image.width(), image.height()), (1460, 980));

@@ -9,11 +9,19 @@
 //! before binning: the readout is a display-referred (sRGB-encoded) tonal
 //! distribution, not a distribution of linear values. Binning is derived
 //! from the retained output without a second render.
+//!
+//! Binning is a full pass over the retained output, so it runs on a worker
+//! thread: the frame that reveals a new render paints the previous
+//! distribution until the replacement arrives, rather than waiting for the
+//! pass to finish.
 
-use egui::{Color32, Pos2, Rect, Ui};
+use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread::JoinHandle;
+
+use egui::{Color32, Context, Pos2, Rect, Ui};
 use spektrafilm_math::colorspace::srgb_encode_f64;
 use spektrafilm_math::image::ImageBuf;
-use std::sync::Arc;
 
 /// Number of histogram bins per channel.
 const BINS: usize = 64;
@@ -126,16 +134,91 @@ impl HistogramData {
     }
 }
 
+/// One binning request: the output image to bin and the identity its result
+/// carries back to the readout.
+struct HistogramRequest {
+    generation: u64,
+    image: Arc<ImageBuf>,
+    ctx: Context,
+}
+
+/// Background binning for the readout.
+///
+/// The worker holds one image at a time: a request that arrives while an
+/// earlier one is still queued replaces it, so a run of renders does not
+/// build a backlog of distributions nobody will look at.
+struct HistogramWorker {
+    requests: Option<Sender<HistogramRequest>>,
+    results: Receiver<(u64, HistogramData)>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl HistogramWorker {
+    fn new() -> Self {
+        let (request_tx, request_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let handle = std::thread::Builder::new()
+            .name("spektrafilm-histogram".into())
+            .spawn(move || {
+                while let Ok(request) = request_rx.recv() {
+                    let mut latest: HistogramRequest = request;
+                    while let Ok(newer) = request_rx.try_recv() {
+                        latest = newer;
+                    }
+                    let data = HistogramData::compute(&latest.image);
+                    if result_tx.send((latest.generation, data)).is_err() {
+                        return; // the readout that asked for it is gone
+                    }
+                    // The result lands outside any frame, so wake the UI.
+                    latest.ctx.request_repaint();
+                }
+            })
+            .expect("OS thread spawn");
+        Self {
+            requests: Some(request_tx),
+            results: result_rx,
+            handle: Some(handle),
+        }
+    }
+
+    fn submit(&mut self, generation: u64, image: Arc<ImageBuf>, ctx: &Context) {
+        if let Some(requests) = &self.requests {
+            let _ = requests.send(HistogramRequest {
+                generation,
+                image,
+                ctx: ctx.clone(),
+            });
+        }
+    }
+
+    /// The next finished computation, if the worker has reported one.
+    fn next_result(&self) -> Option<(u64, HistogramData)> {
+        self.results.try_recv().ok()
+    }
+}
+
+impl Drop for HistogramWorker {
+    fn drop(&mut self) {
+        // Closing the request channel ends the worker's loop; joining keeps
+        // the thread from outliving the readout that owns it.
+        self.requests.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 /// State for the histogram strip in the control panel.
-#[derive(Clone, Debug)]
 pub struct HistogramStrip {
     /// Whether the strip is expanded. Default-on; the collapse state is
     /// persisted as the readout's visibility state.
     pub visible: bool,
-    /// Cached histogram data.
+    /// Cached histogram data for the output the strip shows or is waiting for.
     data: Option<HistogramData>,
-    /// Source image identity for cache invalidation.
+    /// Identity of the output image the cached data belongs to.
     source_id: Option<u64>,
+    /// Worker that bins new output images off the UI thread.
+    worker: HistogramWorker,
 }
 
 impl Default for HistogramStrip {
@@ -144,6 +227,7 @@ impl Default for HistogramStrip {
             visible: true,
             data: None,
             source_id: None,
+            worker: HistogramWorker::new(),
         }
     }
 }
@@ -168,15 +252,30 @@ impl HistogramStrip {
     }
 
     /// Update the histogram from the current output image.
-    pub fn update(&mut self, output_image: &Option<Arc<ImageBuf>>, generation: u64) {
-        if let Some(img) = output_image {
-            if self.source_id != Some(generation) {
-                self.data = Some(HistogramData::compute(img));
-                self.source_id = Some(generation);
+    ///
+    /// The image itself is binned on the worker thread, so this returns
+    /// without a pass over the pixels: it adopts a finished computation and
+    /// hands a newly accepted output to the worker. The cached data stays on
+    /// screen until its replacement arrives, so a new render never blanks the
+    /// readout. A result for an output the strip has already moved past is
+    /// dropped.
+    pub fn update(&mut self, output_image: &Option<Arc<ImageBuf>>, generation: u64, ctx: &Context) {
+        while let Some((finished, data)) = self.worker.next_result() {
+            if self.source_id == Some(finished) {
+                self.data = Some(data);
             }
-        } else {
-            self.data = None;
-            self.source_id = None;
+        }
+        match output_image {
+            Some(image) => {
+                if self.source_id != Some(generation) {
+                    self.source_id = Some(generation);
+                    self.worker.submit(generation, Arc::clone(image), ctx);
+                }
+            }
+            None => {
+                self.data = None;
+                self.source_id = None;
+            }
         }
     }
 
@@ -277,6 +376,88 @@ mod tests {
         assert!(data.r[0] > 0.0);
         assert!(data.r[BINS - 1] > 0.0);
         assert!(data.r[1..BINS - 1].iter().all(|&v| v == 0.0));
+    }
+
+    /// Pump `update` until the worker has reported a result. `update` only
+    /// adopts work the worker already finished, so repeating it with the same
+    /// arguments neither resubmits the image nor discards a finished result.
+    fn settle(
+        strip: &mut HistogramStrip,
+        output_image: &Option<Arc<ImageBuf>>,
+        generation: u64,
+        ctx: &egui::Context,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while strip.cached_data().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the histogram worker never reported a result"
+            );
+            strip.update(output_image, generation, ctx);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    fn flat_image(value: f32) -> Option<Arc<ImageBuf>> {
+        Some(Arc::new(ImageBuf::from_data(
+            2,
+            1,
+            vec![
+                value as _, value as _, value as _, value as _, value as _, value as _,
+            ],
+        )))
+    }
+
+    #[test]
+    fn binning_runs_off_the_ui_thread() {
+        let ctx = egui::Context::default();
+        let image = flat_image(0.5);
+        let mut strip = HistogramStrip::new();
+        strip.update(&image, 1, &ctx);
+        assert!(
+            strip.cached_data().is_none(),
+            "the frame must not bin the image itself"
+        );
+        settle(&mut strip, &image, 1, &ctx);
+        let data = strip.cached_data().expect("worker reported a result");
+        assert_eq!(peak_bin(&data.r), 46);
+        assert_eq!(peak_bin(&data.g), 46);
+        assert_eq!(peak_bin(&data.b), 46);
+    }
+
+    #[test]
+    fn the_readout_ends_on_the_output_it_is_showing() {
+        // Two outputs land before the worker reports the first one. Whichever
+        // request the worker picks up, the readout settles on the second
+        // image's distribution, never on the one a later render replaced.
+        let ctx = egui::Context::default();
+        let first = flat_image(0.5);
+        let second = flat_image(0.25);
+        let mut strip = HistogramStrip::new();
+        strip.update(&first, 1, &ctx);
+        strip.update(&second, 2, &ctx);
+        settle(&mut strip, &second, 2, &ctx);
+        let data = strip.cached_data().expect("worker reported a result");
+        // 0.25 linear encodes to display tone ~0.5371 -> bin 34, not the
+        // bin 46 of the superseded image.
+        assert_eq!(peak_bin(&data.r), 34);
+        assert_eq!(peak_bin(&data.g), 34);
+        assert_eq!(peak_bin(&data.b), 34);
+    }
+
+    #[test]
+    fn a_new_render_keeps_the_previous_distribution_until_its_replacement_arrives() {
+        let ctx = egui::Context::default();
+        let first = flat_image(0.5);
+        let second = flat_image(0.25);
+        let mut strip = HistogramStrip::new();
+        strip.update(&first, 1, &ctx);
+        settle(&mut strip, &first, 1, &ctx);
+        strip.update(&second, 2, &ctx);
+        let data = strip
+            .cached_data()
+            .expect("the readout keeps the previous distribution while binning");
+        assert_eq!(peak_bin(&data.r), 46);
     }
 
     #[test]

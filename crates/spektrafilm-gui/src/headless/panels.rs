@@ -250,6 +250,9 @@ fn histogram_draws_retained_output_without_advancing_viewer_or_render_generation
     let h = &mut s.harness;
     let _ = render(h, "PREVIEW");
     settle_animation(h);
+    // Binning runs on the worker thread, so the strip adopts the finished
+    // distribution a frame or more after the output is retained.
+    wait_until(h, |a| a.histogram.cached_data().is_some());
     let observation = h.state().viewer.observation();
     let output = h.state().output_image.as_ref().unwrap().clone();
     let expected = histogram::HistogramData::compute(&output);

@@ -838,7 +838,8 @@ impl eframe::App for App {
                     .as_ref()
                     .map(|o| Arc::as_ptr(o) as usize as u64)
                     .unwrap_or(0);
-                self.histogram.update(&self.output_image, output_id);
+                self.histogram
+                    .update(&self.output_image, output_id, ui.ctx());
                 self.histogram.render(ui);
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
