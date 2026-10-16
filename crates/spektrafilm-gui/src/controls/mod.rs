@@ -435,6 +435,26 @@ mod tests {
             })
             .unwrap_or_else(|| panic!("rendered control text {text:?}"))
     }
+
+    /// Position of an option inside an open combo popup.
+    ///
+    /// A popup paints in the foreground layer, after the panel that opened it,
+    /// so its option text is the last matching shape. Panel content can share
+    /// an option's label — a grain engine group header carries the engine's
+    /// name — and that label paints first, so the last match is the popup's.
+    fn popup_text_position(output: &egui::FullOutput, text: &str) -> egui::Pos2 {
+        output
+            .shapes
+            .iter()
+            .rev()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(shape) if shape.galley.job.text == text => {
+                    Some(shape.pos + shape.galley.size() * 0.5)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("rendered popup text {text:?}"))
+    }
     fn replace_text(text: &str) -> Vec<egui::Event> {
         vec![
             egui::Event::Key {
@@ -543,11 +563,18 @@ mod tests {
         frame(click(selector, false));
         let (_, popup) = frame(vec![]);
         assert!(has_text(&popup, "Fotufilm Film"));
-        let fotufilm = text_position(&popup, "Fotufilm Film");
+        let fotufilm = popup_text_position(&popup, "Fotufilm Film");
         frame(click(fotufilm, true));
         let (flags, _) = frame(click(fotufilm, false));
         assert!(flags.runtime_changed);
-        let (_, selected) = frame(vec![]);
+        // The accordion animates the selected engine's group open and the
+        // previous one closed; a mid-animation frame still clips the tail of
+        // the opening group and the body of the closing one, so wait for the
+        // layout to settle before reading the controls.
+        let mut selected = frame(vec![]).1;
+        for _ in 0..8 {
+            selected = frame(vec![]).1;
+        }
         let advanced = text_position(&selected, "Fotufilm advanced");
         frame(click(advanced, true));
         frame(click(advanced, false));

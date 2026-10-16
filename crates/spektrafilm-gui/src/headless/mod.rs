@@ -250,15 +250,22 @@ fn scroll_controls_down(h: &mut Harness<'_, App>) {
     h.run_steps(10);
 }
 
+/// Pick `option` from the combo labeled `label`.
+///
+/// The option is looked up by button role: a grain engine group is a
+/// `CollapsingHeader` whose title carries the engine's label, so a plain
+/// label query would match both the header and the popup option.
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .simulate_click();
     h.run_steps(3);
     if h.state().export_dialog.is_open() {
-        h.get_by_label(option).simulate_click();
+        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+            .simulate_click();
         h.run_steps(3);
     } else {
-        h.get_by_label(option).click();
+        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+            .click();
         h.run_steps(3);
         h.press_key(egui::Key::Escape);
         h.run_steps(3);

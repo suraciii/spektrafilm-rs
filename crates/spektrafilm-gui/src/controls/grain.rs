@@ -1,5 +1,80 @@
 use super::*;
 use egui::Ui;
+use egui::collapsing_header::CollapsingState;
+
+/// The grain engines, in the order the Engine combo lists them.
+const GRAIN_ENGINES: [GrainEngine; 4] = [
+    GrainEngine::Spektra,
+    GrainEngine::Procedural,
+    GrainEngine::Dye,
+    GrainEngine::Fotufilm,
+];
+
+/// The label the Engine combo and a group header use for one engine, so the
+/// group a parameter belongs to reads the same as the selection.
+fn engine_label(engine: GrainEngine) -> &'static str {
+    match engine {
+        GrainEngine::Spektra => "Spektra",
+        GrainEngine::Procedural => "Procedural",
+        GrainEngine::Dye => "Dye",
+        GrainEngine::Fotufilm => "Fotufilm Film",
+    }
+}
+
+/// Identity of one engine's parameter group. A global id keeps a group's open
+/// state independent of the control panel's render path, so a collapsed group
+/// survives the panel relaying out around it.
+fn group_id(engine: GrainEngine) -> egui::Id {
+    egui::Id::new(("grain_engine_parameters", engine_label(engine)))
+}
+
+/// Close every engine group but the newly selected one when the engine
+/// selection changes, so the accordion follows the selection. Between
+/// switches the user's own open and closed groups stand.
+fn follow_selection(ui: &Ui, selected: GrainEngine) {
+    let key = egui::Id::new("grain_engine_group_selection");
+    let previous: Option<GrainEngine> = ui.ctx().data(|d| d.get_temp(key));
+    if previous == Some(selected) {
+        return;
+    }
+    for engine in GRAIN_ENGINES {
+        if let Some(mut state) = CollapsingState::load(ui.ctx(), group_id(engine)) {
+            state.set_open(engine == selected);
+            state.store(ui.ctx());
+        }
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(key, selected));
+}
+
+/// One grain engine's parameters under a collapsible header named for the
+/// engine.
+///
+/// Browsing shows every engine, so each parameter set is discoverable without
+/// switching engines. The control search shows only the selected engine's
+/// controls, because editing another engine's parameters has no effect until
+/// that engine is selected.
+fn engine_group(
+    ui: &mut Ui,
+    filter: &mut ControlFilter<'_>,
+    selected: GrainEngine,
+    engine: GrainEngine,
+    add_contents: impl FnOnce(&mut Ui, &mut ControlFilter<'_>),
+) {
+    if filter.active() && engine != selected {
+        return;
+    }
+    if filter.active() {
+        ui.label(egui::RichText::new(engine_label(engine)).strong());
+        add_contents(ui, filter);
+        return;
+    }
+    follow_selection(ui, selected);
+    CollapsingState::load_with_default_open(ui.ctx(), group_id(engine), engine == selected)
+        .show_header(ui, |ui| {
+            ui.label(engine_label(engine));
+        })
+        .body(|ui| add_contents(ui, filter));
+}
 
 /// One `show()` section group, split out of the dispatcher for readability.
 pub(crate) fn sections(
@@ -17,10 +92,10 @@ pub(crate) fn sections(
             }
             if filter_matches(filter, "engine") {
                 flags.runtime_changed |= enum_choice(ui, "Engine", &mut grain.engine, &[
-                    (GrainEngine::Spektra, "Spektra"),
-                    (GrainEngine::Procedural, "Procedural"),
-                    (GrainEngine::Dye, "Dye"),
-                    (GrainEngine::Fotufilm, "Fotufilm Film"),
+                    (GrainEngine::Spektra, engine_label(GrainEngine::Spektra)),
+                    (GrainEngine::Procedural, engine_label(GrainEngine::Procedural)),
+                    (GrainEngine::Dye, engine_label(GrainEngine::Dye)),
+                    (GrainEngine::Fotufilm, engine_label(GrainEngine::Fotufilm)),
                 ], "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model.");
             }
             ui.label(
@@ -28,7 +103,37 @@ pub(crate) fn sections(
                     .small()
                     .color(egui::Color32::GRAY),
                 );
-            if grain.engine == GrainEngine::Procedural {
+            let engine = grain.engine;
+            engine_group(ui, filter, engine, GrainEngine::Spektra, |ui, filter| {
+                if filter_matches(filter, "rms granularity (experimental)") {
+                    flags.runtime_changed |= param_tuple(ui, "rms granularity (experimental)", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel RMS granularity.");
+                }
+                if filter_matches(filter, "density min") {
+                    flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density.");
+                }
+                if filter_matches(filter, "uniformity") {
+                    flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity.");
+                }
+                if filter_matches(filter, "particle scale sublayers") {
+                    flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Relative particle scale per emulsion sublayer.");
+                }
+                if filter_matches(filter, "blur") {
+                    flags.runtime_changed |= param_numeric(ui, "blur", &mut grain.blur, "film_render.grain.blur", "Post-blur sigma.");
+                }
+                if filter_matches(filter, "dye-cloud blur") {
+                    flags.runtime_changed |= param_numeric(ui, "dye-cloud blur", &mut grain.blur_dye_clouds_um, "film_render.grain.blur_dye_clouds_um", "Dye-cloud blur in micrometers.");
+                }
+                if filter_matches(filter, "mult usm amount") {
+                    flags.runtime_changed |= param_numeric(ui, "mult usm amount", &mut grain.mult_usm_amount, "film_render.grain.mult_usm_amount", "Density unsharp-mask amount.");
+                }
+                if filter_matches(filter, "mult usm sigma") {
+                    flags.runtime_changed |= param_numeric(ui, "mult usm sigma", &mut grain.mult_usm_sigma, "film_render.grain.mult_usm_sigma", "Density unsharp-mask radius.");
+                }
+                if filter_matches(filter, "micro structure") {
+                    flags.runtime_changed |= param_tuple(ui, "micro structure", &mut grain.micro_structure, "film_render.grain.micro_structure", "Micro-structure scale and clump size.");
+                }
+            });
+            engine_group(ui, filter, engine, GrainEngine::Procedural, |ui, filter| {
                 if filter_matches(filter, "grain profiles") {
                     let mut profile = grain.v2_profile.clone();
                     egui::ComboBox::from_label("Grain Profiles").selected_text(&profile).show_ui(ui, |ui| {
@@ -83,7 +188,31 @@ pub(crate) fn sections(
                 if filter_matches(filter, "amount") {
                     flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, "film_render.grain.v2_amount", "Overall grain amount.");
                 }
-            } else if grain.engine == GrainEngine::Fotufilm {
+            });
+            engine_group(ui, filter, engine, GrainEngine::Dye, |ui, filter| {
+                if filter_matches(filter, "dye support (µm)") {
+                    flags.runtime_changed |= param_numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, "film_render.grain.v3_dye_support_um", "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");
+                }
+                if filter_matches(filter, "event area (µm²)") {
+                    flags.runtime_changed |= param_numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, "film_render.grain.v3_event_area_um2", "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
+                }
+                if filter_matches(filter, "channel correlation") {
+                    flags.runtime_changed |= param_numeric(ui, "Channel correlation", &mut grain.channel_correlation, "film_render.grain.channel_correlation", "Shared fraction of each emulsion layer's per-channel event rate; the realized channel correlation is a lower bound of this value, and no channel's strength changes.");
+                }
+                if filter_matches(filter, "rms granularity (experimental)") {
+                    flags.runtime_changed |= param_tuple(ui, "rms granularity (experimental)", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
+                }
+                if filter_matches(filter, "particle scale sublayers") {
+                    flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Positive relative particle scale per emulsion sublayer.");
+                }
+                if filter_matches(filter, "density min") {
+                    flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density.");
+                }
+                if filter_matches(filter, "uniformity") {
+                    flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity.");
+                }
+            });
+            engine_group(ui, filter, engine, GrainEngine::Fotufilm, |ui, filter| {
                 let fotufilm = &mut grain.fotufilm;
                 if filter_matches(filter, "amount") {
                     flags.runtime_changed |= param_numeric(ui, "Amount", &mut fotufilm.amount, "film_render.grain.fotufilm.amount", "Effective Fotufilm grain amount.");
@@ -133,57 +262,7 @@ pub(crate) fn sections(
                         ], "Effective grain material.");
                     }
                 });
-            } else if grain.engine == GrainEngine::Dye {
-                if filter_matches(filter, "dye support (µm)") {
-                    flags.runtime_changed |= param_numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, "film_render.grain.v3_dye_support_um", "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");
-                }
-                if filter_matches(filter, "event area (µm²)") {
-                    flags.runtime_changed |= param_numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, "film_render.grain.v3_event_area_um2", "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
-                }
-                if filter_matches(filter, "channel correlation") {
-                    flags.runtime_changed |= param_numeric(ui, "Channel correlation", &mut grain.channel_correlation, "film_render.grain.channel_correlation", "Shared fraction of each emulsion layer's per-channel event rate; the realized channel correlation is a lower bound of this value, and no channel's strength changes.");
-                }
-                if filter_matches(filter, "rms granularity (experimental)") {
-                    flags.runtime_changed |= param_tuple(ui, "rms granularity (experimental)", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
-                }
-                if filter_matches(filter, "particle scale sublayers") {
-                    flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Positive relative particle scale per emulsion sublayer.");
-                }
-                if filter_matches(filter, "density min") {
-                    flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density.");
-                }
-                if filter_matches(filter, "uniformity") {
-                    flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity.");
-                }
-            } else {
-                if filter_matches(filter, "rms granularity (experimental)") {
-                    flags.runtime_changed |= param_tuple(ui, "rms granularity (experimental)", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel RMS granularity.");
-                }
-                if filter_matches(filter, "density min") {
-                    flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density.");
-                }
-                if filter_matches(filter, "uniformity") {
-                    flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity.");
-                }
-                if filter_matches(filter, "particle scale sublayers") {
-                    flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Relative particle scale per emulsion sublayer.");
-                }
-                if filter_matches(filter, "blur") {
-                    flags.runtime_changed |= param_numeric(ui, "blur", &mut grain.blur, "film_render.grain.blur", "Post-blur sigma.");
-                }
-                if filter_matches(filter, "dye-cloud blur") {
-                    flags.runtime_changed |= param_numeric(ui, "dye-cloud blur", &mut grain.blur_dye_clouds_um, "film_render.grain.blur_dye_clouds_um", "Dye-cloud blur in micrometers.");
-                }
-                if filter_matches(filter, "mult usm amount") {
-                    flags.runtime_changed |= param_numeric(ui, "mult usm amount", &mut grain.mult_usm_amount, "film_render.grain.mult_usm_amount", "Density unsharp-mask amount.");
-                }
-                if filter_matches(filter, "mult usm sigma") {
-                    flags.runtime_changed |= param_numeric(ui, "mult usm sigma", &mut grain.mult_usm_sigma, "film_render.grain.mult_usm_sigma", "Density unsharp-mask radius.");
-                }
-                if filter_matches(filter, "micro structure") {
-                    flags.runtime_changed |= param_tuple(ui, "micro structure", &mut grain.micro_structure, "film_render.grain.micro_structure", "Micro-structure scale and clump size.");
-                }
-            }
+            });
         });
     }
 }
