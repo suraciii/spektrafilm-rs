@@ -83,3 +83,21 @@ impl std::error::Error for SpektraError {}
 
 /// Convenience alias for `Result<T, SpektraError>`.
 pub type SpektraResult<T> = Result<T, SpektraError>;
+
+impl From<String> for SpektraError {
+    fn from(message: String) -> Self {
+        Self::new(SpektraErrorCode::Internal, message)
+    }
+}
+
+impl From<&str> for SpektraError {
+    fn from(message: &str) -> Self {
+        Self::new(SpektraErrorCode::Internal, message)
+    }
+}
+
+impl From<std::io::Error> for SpektraError {
+    fn from(error: std::io::Error) -> Self {
+        Self::new(SpektraErrorCode::Io, error.to_string())
+    }
+}
