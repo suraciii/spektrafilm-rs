@@ -377,6 +377,9 @@ pub fn build_report(
         .map_err(|error| common::incomplete_destination(error, &root, "report.json"))
 }
 
+/// Rectangles declared per (set, image), keyed by the set's region ids.
+type RegionBounds<'a> = BTreeMap<(&'a str, &'a str), Vec<(&'a str, [u64; 4])>>;
+
 fn build_report_impl(
     manifest: &Path,
     out: &Path,
@@ -402,7 +405,7 @@ fn build_report_impl(
     let sets = authored["sets"].as_array().unwrap();
     let images = authored["images"].as_array().unwrap();
     let mut grids = BTreeMap::new();
-    let mut region_bounds: BTreeMap<(&str, &str), Vec<(&str, [u64; 4])>> = BTreeMap::new();
+    let mut region_bounds: RegionBounds = BTreeMap::new();
     for set in sets {
         let o = obj(set)?;
         let set_id = text(o, "id")?;
