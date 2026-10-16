@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a reproducible defect
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >
+        CLI command or GUI actions, plus the input file, film profile, parameters,
+        and build used (default f32 or the spektrafilm-f64 reference build).
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect instead?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Release version, or the commit the build was made from.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      description: >
+        wgpu is the only GPU backend; CPU is the fallback when no usable adapter
+        is available. Paste `--dry-run` output below if you are unsure.
+      options:
+        - GPU (wgpu)
+        - CPU
+        - Automatic
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or output
+      description: Error messages, CLI output, or input/output images that show the defect.
+      render: shell
