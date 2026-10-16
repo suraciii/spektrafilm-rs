@@ -823,8 +823,8 @@ impl eframe::App for App {
             self.start_export(ctx, options);
         }
         self.preset_panel(ctx);
-        // Left control panel: histogram at top, tabs, scrollable controls, action bar
-        egui::SidePanel::left("controls")
+        // Right control panel: histogram at top, tabs, scrollable controls, action bar
+        egui::SidePanel::right("controls")
             .resizable(false)
             .exact_width(320.0)
             .show(ctx, |ui| {
