@@ -138,11 +138,21 @@ pub fn verify_with_result(
 /// identities and the evidence the comparison cites. A comparison computes no
 /// chain, so there is nothing to re-resolve.
 fn verify_comparison(run: &Path, record: &Value) -> Result<(Value, i32)> {
+    // A reading comparison names its sides rather than carrying one identity,
+    // so the report identifies the pair it re-hashed.
     let recorded = record
         .get("id")
         .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            ["baseline", "candidate", "reference"]
+                .into_iter()
+                .filter_map(|key| record.get(key))
+                .filter_map(|side| side.get("path"))
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" vs ")
+        });
     let mut differences = Vec::new();
     for key in ["baseline", "candidate", "reference"] {
         let Some(side) = record.get(key).filter(|side| side.is_object()) else {
@@ -156,10 +166,13 @@ fn verify_comparison(run: &Path, record: &Value) -> Result<(Value, i32)> {
             .get("measure_sha256")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let actual = sha256_file(Path::new(path)).unwrap_or_default();
+        // `path` is the side's measurement directory and the hash names that
+        // directory's `run.json`, which is what the comparison recorded.
+        let actual = sha256_file(&Path::new(path).join("run.json")).unwrap_or_default();
         if actual != declared {
             differences.push(json!({
                 "field": format!("{key}.measure_sha256"),
+                "path": path,
                 "recorded": declared,
                 "current": actual,
             }));
@@ -185,9 +198,22 @@ fn verify_comparison(run: &Path, record: &Value) -> Result<(Value, i32)> {
     Ok((result, 0))
 }
 
-/// Read the retained run record and require it to be a `measure run` record.
+/// Read the retained record a directory holds and require it to be one this
+/// command can re-resolve.
 fn read_run_record(run: &Path) -> Result<(Value, PathBuf)> {
-    let path = run.join("run.json");
+    // A measurement directory holds `run.json`; a comparison directory holds
+    // `comparison.json`. The record names its own kind, so the directory's
+    // single record file is found rather than assumed.
+    let path = ["run.json", "comparison.json"]
+        .into_iter()
+        .map(|name| run.join(name))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            anyhow!(
+                "{} holds no run.json or comparison.json to verify",
+                run.display()
+            )
+        })?;
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let record: Value =
