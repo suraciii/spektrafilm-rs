@@ -10,7 +10,7 @@ The benchmark must expose measurements and their evidence before an interpretati
 
 This capability owns appearance comparison, evaluation decisions, and review artifacts. [CLI parameters](../cli/spec.md) owns rendering parameter resolution. [Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations. The benchmark must not redefine these contracts.
 
-The delivered benchmark must run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery/spec.md) defines distribution and migration acceptance. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
+The delivered benchmark must run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery/spec.md) defines distribution, workspace boundaries, and numerical implementation. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
 
 ## Terms
 
