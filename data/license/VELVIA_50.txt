@@ -1,0 +1,32 @@
+Fujifilm Velvia 50 profile and source data
+
+The coordinate digitization and Status A tables are from Jan Lohse's
+spectral_film_lut at commit 6307a98f3cf4f2d7b6d09bab82fbf6f64356ccfe.
+Copyright (c) 2026 Jan Lohse. The MIT notice is in JAN_LOHSE_MIT.txt.
+
+New fitted profile contributions are Copyright (c) 2026 SpektraFilm contributors
+and licensed under Creative Commons Attribution-ShareAlike 4.0 International:
+https://creativecommons.org/licenses/by-sa/4.0/
+https://creativecommons.org/licenses/by-sa/4.0/legalcode
+The full CC BY-SA 4.0 legal text is also reproduced in SPEKTRAFILM_LICENSE.txt.
+That file's Andrea Volpato preamble describes his original assets, not the
+origin of this new fit. No existing stock profile supplies this fit's numbers.
+
+Original Fujifilm technical material remains the property of its rights holder.
+The MIT license of the digitization repository does not transfer rights in the
+manufacturer PDF. The PDF is linked as a reference, not redistributed here.
+
+Calibration uses the bundled Hanatos2025 spectral LUT and its existing license
+and attribution, and CIE 2017 TCS/BabelColor data distributed by Colour Science.
+Calibration data are consumed from the pinned colour-science package and are
+not copied into this source directory.
+
+Changes, 2026-10-11: reconstructed CMY amounts by forward Status A integration;
+inferred a smooth clear-film base; fitted three decreasing Gaussian-CDF
+components; referenced exposure to green Status A D-min + 1.0 independently
+of print and scanner appearance; independently fitted Hanatos input-adaptation
+window and surface parameters. The upstream borrowed grain curve and
+color_masking adjustment were not imported.
+
+Source URLs, hashes, assumptions and reproduction steps are recorded in
+../profile_sources/fujifilm_velvia_50.json and ../../docs/profile-preparation.md.
