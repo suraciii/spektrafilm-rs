@@ -2,7 +2,7 @@
 
 ## Product model
 
-This is the final target scope for material-control simplification, Output lightness retirement, and overall effect mixing. It specifies implementation requirements, not completed runtime behavior. Existing material controls remain authoritative; this capability does not add a digital material-response layer, another workflow, or a second RGB film pipeline.
+This is the final target scope for material-control simplification, Output lightness retirement, and overall effect mixing. Existing material controls remain authoritative; this capability does not add a digital material-response layer, another workflow, or a second RGB film pipeline.
 
 **Preflash** is an independent, spatially uniform exposure added at the print material plane before development. **Simulation blend** blends the complete result with the prepared source; it does not scale material parameters. **Prepared source** means decoded, geometrically aligned input before simulated camera exposure and processing, not the Input viewer raster or an automatically inverted negative.
 

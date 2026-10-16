@@ -1,8 +1,6 @@
 # Dye grain
 
-## Status
-
-Dye is an opt-in engine. This specification defines its support and the reference validation condition. Acceptance evidence belongs to the delivering pull request.
+Dye is an opt-in engine. This specification defines its support and the reference validation condition.
 
 ## Goal
 
@@ -52,7 +50,7 @@ Dye must not read `particle_area_um2` or `particle_scale`. Spektra final blur, d
 `active = false` must produce the existing grain-off result exactly. Preview mode, stochastic deactivation, spatial deactivation, and LUT mode must bypass Dye before its field parameters are resolved. Preview must be identified as grain-free. Scan and Export must execute active Dye.
 Timing, diagnostic taps, and output dumps must continue to exercise active Dye. Only the named bypass modes may suppress its allocation.
 
-Dye must execute the same formation, exact Poisson count law, global-coordinate-addressed random streams, and readout algorithm on CPU and GPU under [GPU algorithm alignment](../../gpu-execution/spec.md#algorithm-alignment). CPU f64 remains the numerical reference for the law and for the conditioning that feeds it; the device evaluates the same law in its own precision, and the statistical evidence that establishes it is defined by [device count law](design.md#device-count-law). A device that cannot realize the law must fail under [GPU computation scope](../../gpu-execution/spec.md#computation-scope). Backend selection, residency, and failure behavior follow [GPU backend selection](../../gpu-execution/spec.md#backend-selection). GPU execution must not consume CPU-prepared image-sized or stochastic population/field data, substitute a generic stochastic approximation, switch engines, or use CPU grain arithmetic after GPU selection.
+Dye must execute the same formation, exact Poisson count law, global-coordinate-addressed random streams, and readout algorithm on CPU and GPU under [GPU algorithm alignment](../../gpu-execution/spec.md#algorithm-alignment). The device evaluates the same law in its own precision, and the statistical evidence that establishes it is defined by [device count law](design.md#device-count-law). A device that cannot realize the law must fail under [GPU computation scope](../../gpu-execution/spec.md#computation-scope). Backend selection, residency, and failure behavior follow [GPU backend selection](../../gpu-execution/spec.md#backend-selection). GPU execution must not consume CPU-prepared image-sized or stochastic population/field data, substitute a generic stochastic approximation, switch engines, or use CPU grain arithmetic after GPU selection.
 
 ## Appearance
 
@@ -78,7 +76,7 @@ Refining internal sampling must converge toward the same declared response. It m
 
 ## Acceptance
 
-GPU acceptance must pair CPU native-f32, CPU f64, and hardware-GPU Dye renders with identical resolved curves, controls, seeds, source identity, film coordinates, footprints, and downstream settings. It must prove that the device realizes the reference's count law: the same branches on the same conditioning, checked for Poisson mean, variance, and skewness in bands derived from the case count, against a control build that replaces the law and must fail, with the count invariant to dispatch shape, as [device count law](design.md#device-count-law) defines. It must preserve crop/tile identity. Output statistics or photographic agreement cannot substitute for this. Upstream/source precision and source-parity evidence remain separate from CPU/GPU alignment evidence. Follow [GPU execution acceptance](../../gpu-execution/spec.md#acceptance) and [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment).
+GPU acceptance must pair CPU native-f32, CPU f64, and hardware-GPU Dye renders with identical resolved curves, controls, seeds, source identity, film coordinates, footprints, and downstream settings. It must prove that the device realizes the reference's count law: the same branches on the same conditioning, checked for Poisson mean, variance, and skewness in bands derived from the case count, against a control build that replaces the law and must fail, with the count invariant to dispatch shape, as [device count law](design.md#device-count-law) defines. It must preserve crop/tile identity. Output statistics or photographic agreement cannot substitute for this. Follow [GPU execution acceptance](../../gpu-execution/spec.md#acceptance) and [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment).
 
 Acceptance must use lossless output from the actual Scan or Export path on the reference condition. The set must contain at least two photographs and one color chart. Together they must include a portrait, a smooth region, dark and bright regions, saturated color, and fine subject detail.
 

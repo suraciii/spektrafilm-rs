@@ -44,7 +44,7 @@ Image and LUT provenance must identify the selected amount, model revision, opti
 
 ## Numerical acceptance
 
-Use the [product acceptance matrix](spec.md#acceptance) and [benchmark contract](../benchmark/spec.md); no new benchmark framework is required. Compare unchanged amount-1 paths against the established per-scenario budgets, with scanner-order differences isolated. CPU f64 is the reference, not a promise of cross-backend bit identity.
+Use the [product acceptance matrix](spec.md#acceptance) and [benchmark contract](../benchmark/spec.md); no new benchmark framework is required. Compare unchanged amount-1 paths against the established per-scenario budgets, with scanner-order differences isolated. Cross-backend bit identity is not promised.
 
 Preflash evidence records the derived `F0`, main exposure, total material exposure, print density and output under fixed scan settings. Check both main and flash filter isolation, gain conventions, zero flash, and constant-field behavior. Compare photographic-paper highlight/detail tradeoffs on real profiles and images; do not use a toy logarithm to claim those outcomes. Existing developer exhaustion is not required to match a withdrawn digital compressor, and no saturation acceptance is attached to this scope.
 

@@ -11,7 +11,7 @@
 - The profile selection module owns catalog discovery and stock and development-time pickers. The application owns selection state and render invalidation.
 - Viewer presentation uses disposable device or host display rasters under [GPU residency](../gpu-execution/design.md#device-residency). Save and Export consume retained floating output or invoke the export renderer and shared writer.
 - The private raster module owns interpolation kernels and pixel sampling. The viewer owns color transforms, caching, and presentation state.
-- Full-source sampling transforms each source tap before interpolation. Capped display rasters reduce the source before color conversion. CPU f64 defines reference reduction; GPU viewing must satisfy [numerical alignment](../gpu-execution/design.md#numerical-alignment) without CPU image arithmetic.
+- Full-source sampling transforms each source tap before interpolation. Capped display rasters reduce the source before color conversion. GPU viewing must satisfy [numerical alignment](../gpu-execution/design.md#numerical-alignment) without CPU image arithmetic.
 - Preview and viewport composition use separate persistent workers. Each worker retains one queued snapshot and replaces it when a newer request arrives.
 - A render request, the pending UI job, and the worker result share one captured render identity. The worker must preserve its collection mode and animation intent.
 - The UI accepts pipeline output only when request, input, and parameter revisions match. It accepts composed frames only when the generation and viewport key match.

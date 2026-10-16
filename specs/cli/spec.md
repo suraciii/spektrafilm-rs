@@ -307,11 +307,6 @@ Legacy `--params` must retain its existing decoding and relationship to stock in
 
 Acceptance must identify the source commit, both binary identities and build configurations, input provenance, complete invocation, exit status, stdout/stderr, and observed files or pixel comparisons. Specs and parser-only results must not count as image-processing acceptance. Unavailable RAW or GPU environments must be reported as unverified, not passed.
 
-## Implementation status
-The current `process` implementation provides the dedicated raster input declarations, deterministic seed selection, text and JSON dry-run reports, input provenance, winning-edit feedback, shared route resolution, and staged image publication described above. The acceptance section remains the source of required behavioral evidence; this specification alone does not establish that every scenario has been exercised in every supported environment.
-
-Native writer behavior, including platform-specific failure and cancellation scenarios, remains owned by [photo export](../photo-export/spec.md#publication). RAW and GPU scenarios still require environment-specific evidence when those dependencies or adapters are unavailable.
-
 ## Workflow contract
 
 Both `spektrafilm` and `spektrafilm-f64` must expose the same command syntax and discovery behavior. Their computation precision contracts must remain distinct. The [parameter contract](#parameter-contract) owns preset selection, parameter overrides, field discovery, and dry run.
@@ -367,8 +362,3 @@ Automatic discovery must exercise relocated executable-relative data, working-di
 A misspelled known field or preset name must fail and suggest its nearby canonical spelling, including a library name. An unrelated unknown value must fail without a misleading correction. Existing invalid-option suggestions must remain available.
 
 JSON and TOML discovery, dry-run, render, and inspect output must remain parseable with stderr captured separately. LUT bake and quality messages must use stderr. Normal image rendering must preserve its stdout behavior and output pixels.
-
-## Workflow implementation status
-The current executable implements the help, version, signed-number, data-selection, discovery, dry-run, and stderr/stdout separation described above. Native image publication requirements and failure scenarios remain owned by [photo export](../photo-export/spec.md#publication). LUT QA exit semantics, bundle replacement protection, and multi-print naming collisions remain separate behavioral investigations; they are not inferred from this CLI workflow contract.
-
-LUT QA exit semantics, bundle replacement protection, and multi-print naming collisions require a separate behavioral investigation before a publication or quality contract is changed. They are not acceptance criteria for this implementation.
