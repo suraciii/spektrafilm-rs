@@ -33,6 +33,33 @@ pub fn geometry_mask(g: &Value, width: usize, height: usize, base: &Path) -> Res
         return Ok(m);
     }
     let o = obj(g)?;
+    // A named rectangle carries its own span; a hashed mask carries its file.
+    if !o.contains_key("path") {
+        let named = |key: &str| o.get(key).and_then(Value::as_u64);
+        let (Some(x), Some(y), Some(w), Some(h)) =
+            (named("x"), named("y"), named("width"), named("height"))
+        else {
+            return Err(err(
+                "invalid_bounds",
+                "geometry requires x, y, width, height",
+            ));
+        };
+        let (x, y, w, h) = (x as usize, y as usize, w as usize, h as usize);
+        if w == 0
+            || h == 0
+            || x.checked_add(w).is_none_or(|n| n > width)
+            || y.checked_add(h).is_none_or(|n| n > height)
+        {
+            return Err(err("invalid_bounds", "geometry exceeds image"));
+        }
+        let mut m = vec![false; count];
+        for yy in y..y + h {
+            for xx in x..x + w {
+                m[yy * width + xx] = true
+            }
+        }
+        return Ok(m);
+    }
     file_record(g, base)?;
     if o.get("width").and_then(Value::as_u64) != Some(width as u64)
         || o.get("height").and_then(Value::as_u64) != Some(height as u64)

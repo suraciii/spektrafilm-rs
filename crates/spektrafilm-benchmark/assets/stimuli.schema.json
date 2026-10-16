@@ -1,0 +1,75 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+    "domain": {
+      "type": "string",
+      "enum": ["reflectance", "scene_rgb", "film_log_e", "film_density"]
+    },
+    "color_space": { "type": "string", "minLength": 1 },
+    "cctf_decoding": { "type": "boolean" },
+    "condition": {
+      "type": "object",
+      "properties": {
+        "reference": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 }
+      },
+      "required": ["reference", "target"],
+      "additionalProperties": false
+    },
+    "wavelengths": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "required": ["start", "end", "step"],
+      "additionalProperties": false
+    },
+    "band": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "samples": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          "source": { "type": "string" },
+          "partition": { "type": "string" },
+          "row": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["id", "source", "partition"],
+        "additionalProperties": false
+      }
+    },
+    "points": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "key": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["path", "sha256"],
+      "additionalProperties": false
+    },
+    "reflectances": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "key": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["path", "sha256"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "id", "domain", "samples"],
+  "additionalProperties": false
+}

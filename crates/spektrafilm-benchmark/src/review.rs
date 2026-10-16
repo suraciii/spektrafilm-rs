@@ -220,12 +220,12 @@ fn source_path(image: &Map<String, Value>, manifest: &Path) -> Result<PathBuf> {
             "source_declaration",
             "review sources must be self-describing rasters (TIFF, PNG, NPY, JPEG, WebP); raw sidecar carriers are not supported",
         )
-        .at(shown));
+        .file(shown));
     }
-    let metadata =
-        fs::metadata(&path).map_err(|e| err("dependency_read", e.to_string()).at(shown.clone()))?;
+    let metadata = fs::metadata(&path)
+        .map_err(|e| err("dependency_read", e.to_string()).file(shown.clone()))?;
     if !metadata.is_file() {
-        return Err(err("dependency_read", "review source must be a regular file").at(shown));
+        return Err(err("dependency_read", "review source must be a regular file").file(shown));
     }
     Ok(path)
 }
@@ -452,7 +452,7 @@ fn build_report_impl(manifest: &Path, out: &Path, root: &Path) -> Result<Value> 
         let source = source_path(o, &manifest_path)?;
         let source_error = |mut error: Error| {
             error.message = format!("image {id}: {}", error.message);
-            error.at(source.display().to_string())
+            error.file(source.display().to_string())
         };
         // Load only an isolated snapshot with the declared color source so a
         // sidecar appearing next to the source can never be consumed here.
@@ -473,7 +473,7 @@ fn build_report_impl(manifest: &Path, out: &Path, root: &Path) -> Result<Value> 
                         "invalid_image_layout",
                         format!("images sharing grid set {set} must have identical dimensions"),
                     )
-                    .at(id));
+                    .boundary(id));
                 }
             } else {
                 grid_layouts.insert(set, layout);
@@ -484,7 +484,7 @@ fn build_report_impl(manifest: &Path, out: &Path, root: &Path) -> Result<Value> 
                     "invalid_bounds",
                     format!("grid windows for set {set} leave the decoded image"),
                 )
-                .at(id));
+                .boundary(id));
             }
         } else if let Some(regions) = region_bounds.get(&(set, id)) {
             for (region_id, rectangle) in regions {
@@ -495,7 +495,7 @@ fn build_report_impl(manifest: &Path, out: &Path, root: &Path) -> Result<Value> 
                         "invalid_bounds",
                         format!("region {region_id} of set {set} leaves the decoded image"),
                     )
-                    .at(id));
+                    .boundary(id));
                 }
             }
         }
@@ -565,7 +565,7 @@ fn build_report_impl(manifest: &Path, out: &Path, root: &Path) -> Result<Value> 
     dump(&out.join("report.json"), &payload)?;
     Ok(json!({
         "schema_version": 1,
-        "command": "generate-report",
+        "command": "report",
         "source": "manifest",
         "execution_status": "completed",
         "artifact": root.join("index.html"),
@@ -605,7 +605,7 @@ fn set_dimensions(
             }))
             .map_err(|mut error: Error| {
                 error.message = format!("image {id}: {}", error.message);
-                error.at(source.display().to_string())
+                error.file(source.display().to_string())
             })?;
             dimensions.push((id, [image.width, image.height]));
         }
@@ -704,11 +704,24 @@ pub fn derive_regions(manifest: &Path, set_id: &str, out: &Path) -> Result<Value
             "id": label,
             "label": label,
             "role": &role,
-            "geometry": window,
+            "geometry": {
+                "x": window[0],
+                "y": window[1],
+                "width": window[2],
+                "height": window[3],
+                "space": "render",
+            },
             "measurements": &measurements,
         }));
     }
-    let value = Value::Array(regions);
+    // The derived file is a regions document, so it carries the same envelope
+    // a case's `regions` element and a standalone document carry: one kind,
+    // one schema version, one identity, one nonempty regions array.
+    let value = json!({
+        "schema_version": 1,
+        "id": format!("{set_id}-regions"),
+        "regions": regions,
+    });
     documents::validate_shape("regions", &value)?;
     documents::validate_local_dependencies("regions", &value, &root)?;
     let bytes = serde_json::to_vec_pretty(&value)?;
@@ -735,10 +748,10 @@ pub fn derive_regions(manifest: &Path, set_id: &str, out: &Path) -> Result<Value
         fs::remove_file(out)?;
         return Err(error);
     }
-    let region_count = value.as_array().map(Vec::len).unwrap_or(0);
+    let region_count = value["regions"].as_array().map(Vec::len).unwrap_or(0);
     Ok(json!({
         "schema_version": 1,
-        "command": "generate-regions",
+        "command": "regions",
         "execution_status": "completed",
         "artifact": root,
         "set": set_id,
@@ -816,7 +829,7 @@ mod tests {
         // `resolve_path` canonicalizes the source, so on macOS the temp dir
         // arrives as `/private/var/...` rather than the `/var/...` symlink.
         let expected = broken.canonicalize().unwrap();
-        assert_eq!(error.path.as_deref(), expected.to_str());
+        assert_eq!(error.file.as_deref(), expected.to_str());
         assert!(error.message.contains("broken"));
         assert!(!out.join("report.json").exists());
     }
@@ -921,7 +934,7 @@ mod tests {
         let valid = manifest(dir.path(), &document(&sets, &images, "a", "b"));
         let out = dir.path().join("out");
         let result = build_report(&valid, &out).unwrap();
-        assert_eq!(result["command"], "generate-report");
+        assert_eq!(result["command"], "report");
         assert_eq!(result["source"], "manifest");
         assert!(out.join("index.html").is_file());
     }

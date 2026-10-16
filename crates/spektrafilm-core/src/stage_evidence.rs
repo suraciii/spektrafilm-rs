@@ -376,11 +376,11 @@ impl StageCapture {
                     let color = match id {
                         StageId::RgbIn => Some(Color {
                             color_space: statics.input_color_space.clone(),
-                            transfer: transfer(statics.input_cctf_decoding),
+                            cctf_decoding: statics.input_cctf_decoding,
                         }),
                         StageId::RgbOut => Some(Color {
                             color_space: statics.output_color_space.clone(),
-                            transfer: transfer(statics.output_cctf_encoding),
+                            cctf_decoding: !statics.output_cctf_encoding,
                         }),
                         _ => None,
                     };
@@ -493,10 +493,6 @@ impl StageCapture {
         (self.inject.position() as usize) <= id.position()
             && id.position() <= (self.collect.position() as usize)
     }
-}
-
-fn transfer(encoded: bool) -> &'static str {
-    if encoded { "encoded" } else { "linear" }
 }
 
 /// Declared host storage precision: buffers always store f64, widened from
@@ -663,7 +659,7 @@ struct Geometry {
 #[derive(Serialize)]
 struct Color {
     color_space: String,
-    transfer: &'static str,
+    cctf_decoding: bool,
 }
 
 #[cfg(test)]
@@ -755,7 +751,7 @@ mod tests {
         assert_eq!(stages[1]["layout"]["channel_order"], "CMY");
         assert!(stages[1].get("color").is_none());
         assert_eq!(stages[0]["layout"]["channel_order"], "RGB");
-        assert_eq!(stages[0]["color"]["transfer"], "linear");
+        assert_eq!(stages[0]["color"]["cctf_decoding"], false);
         assert_eq!(stages[2]["availability"], "not_applicable");
         assert_eq!(stages[2].get("path"), None);
         assert_eq!(stages[2].get("layout"), None);

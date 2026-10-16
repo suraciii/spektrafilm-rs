@@ -14,35 +14,57 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct Error {
     pub code: String,
     pub message: String,
-    pub path: Option<String>,
     pub boundary: Option<String>,
+    /// The file the offending value lives in, when one is known.
+    pub file: Option<String>,
+    /// The RFC 6901 JSON Pointer of the offending value, when it can be named
+    /// exactly. A pointer that would only approximate the value is omitted.
+    pub pointer: Option<String>,
 }
 impl Error {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
-            path: None,
             boundary: None,
+            file: None,
+            pointer: None,
         }
-    }
-    pub fn at(mut self, path: impl Into<String>) -> Self {
-        self.path = Some(path.into());
-        self
     }
     pub fn boundary(mut self, boundary: impl Into<String>) -> Self {
         self.boundary = Some(boundary.into());
         self
     }
+    /// The file the offending value lives in.
+    pub fn file(mut self, file: impl Into<String>) -> Self {
+        self.file = Some(file.into());
+        self
+    }
+    /// The RFC 6901 JSON Pointer of the offending value.
+    pub fn pointer(mut self, pointer: impl Into<String>) -> Self {
+        self.pointer = Some(pointer.into());
+        self
+    }
     pub fn to_value(&self) -> Value {
         let mut value = json!({"code":self.code,"message":self.message});
-        if let Some(path) = &self.path {
-            value["path"] = json!(path);
-        }
         if let Some(boundary) = &self.boundary {
             value["boundary"] = json!(boundary);
         }
+        if let Some(file) = &self.file {
+            value["file"] = json!(file);
+        }
+        if let Some(pointer) = &self.pointer {
+            value["pointer"] = json!(pointer);
+        }
         value
+    }
+    /// Adopt an arbitrary error's message with a stable code.
+    ///
+    /// The instrument reports one structured error envelope; a failure from a
+    /// layer without a code still carries its message instead of being
+    /// replaced by a generic one.
+    pub fn with_message(code: impl Into<String>, message: impl fmt::Display) -> Self {
+        Self::new(code, message.to_string())
     }
 }
 impl fmt::Display for Error {
@@ -182,8 +204,9 @@ pub fn digest(value: &Value) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(canonical_json(value)?)))
 }
 pub fn sha256_file(path: &Path) -> Result<String> {
-    let mut input = fs::File::open(path)
-        .map_err(|e| Error::new("dependency_read", e.to_string()).at(path.display().to_string()))?;
+    let mut input = fs::File::open(path).map_err(|e| {
+        Error::new("dependency_read", e.to_string()).file(path.display().to_string())
+    })?;
     let mut hash = Sha256::new();
     let mut bytes = [0u8; 65536];
     loop {
@@ -201,15 +224,131 @@ pub fn dump(path: &Path, value: &Value) -> Result<()> {
     output.write_all(b"\n")?;
     Ok(())
 }
+pub fn destination_exists(path: &Path) -> Error {
+    Error::new(
+        "destination_exists",
+        format!(
+            "Destination already exists: {}; choose a new destination or remove the existing destination before retrying",
+            path.display()
+        ),
+    )
+    .file(path.display().to_string())
+    .boundary("publication")
+}
+
+/// Report that an operation retained evidence but did not publish its terminal manifest.
+///
+/// A failed terminal manifest is a valid, published record and is deliberately not
+/// described as incomplete. This helper is only used after a destination has been
+/// created and an operation fails before its terminal manifest is written.
+pub fn incomplete_destination(mut error: Error, root: &Path, manifest: &str) -> Error {
+    if error.code == "destination_exists" {
+        return error;
+    }
+    let terminal = root.join(manifest);
+    if root.is_dir() && !terminal.is_file() {
+        error.message = format!(
+            "{}; destination {} is incomplete evidence because {} was not published; partial evidence was retained. Remove it or choose a new destination before retrying",
+            error.message,
+            root.display(),
+            manifest,
+        );
+    }
+    error
+}
+
+pub struct Progress<'a> {
+    operation: &'static str,
+    active: Option<(&'a str, u64, std::time::Instant)>,
+    started: std::time::Instant,
+    completed: usize,
+    failed: usize,
+    summarized: bool,
+}
+
+impl<'a> Progress<'a> {
+    pub fn new(operation: &'static str) -> Self {
+        Self {
+            operation,
+            active: None,
+            started: std::time::Instant::now(),
+            completed: 0,
+            failed: 0,
+            summarized: false,
+        }
+    }
+
+    pub fn start(&mut self, case_id: &'a str, seed: u64) -> std::time::Instant {
+        eprintln!("Starting {} {} seed {}", self.operation, case_id, seed);
+        let started = std::time::Instant::now();
+        self.active = Some((case_id, seed, started));
+        started
+    }
+
+    pub fn finish(&mut self, case_id: &str, seed: u64, status: &str, started: std::time::Instant) {
+        self.active = None;
+        if matches!(status, "completed" | "validated") {
+            self.completed += 1;
+        } else {
+            self.failed += 1;
+        }
+        eprintln!(
+            "Completed {} {} seed {}: status={} elapsed_seconds={:.3}",
+            self.operation,
+            case_id,
+            seed,
+            status,
+            started.elapsed().as_secs_f64()
+        );
+    }
+
+    pub fn summary_rows(&mut self, rows: &[Value]) {
+        self.completed = rows
+            .iter()
+            .filter(|row| matches!(row["status"].as_str(), Some("completed" | "validated")))
+            .count();
+        self.failed = rows
+            .iter()
+            .filter(|row| !matches!(row["status"].as_str(), Some("completed" | "validated")))
+            .count();
+        self.summary();
+    }
+
+    pub fn summary(&mut self) {
+        if self.summarized {
+            return;
+        }
+        self.summarized = true;
+        eprintln!(
+            "{} summary: completed={} failed={} elapsed_seconds={:.3}",
+            self.operation,
+            self.completed,
+            self.failed,
+            self.started.elapsed().as_secs_f64()
+        );
+    }
+}
+
+impl Drop for Progress<'_> {
+    fn drop(&mut self) {
+        if let Some((case_id, seed, started)) = self.active.take() {
+            self.finish(case_id, seed, "failed", started);
+        }
+        if !self.summarized {
+            self.summary();
+        }
+    }
+}
+
 pub fn create_destination(path: &Path) -> Result<()> {
     if fs::symlink_metadata(path).is_ok() {
-        return Err(Error::new("destination_exists", path.display().to_string()));
+        return Err(destination_exists(path));
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::create_dir(path).map_err(|e| {
-        Error::new("publication_failure", e.to_string()).at(path.display().to_string())
+        Error::new("publication_failure", e.to_string()).file(path.display().to_string())
     })?;
     Ok(())
 }
@@ -313,8 +452,10 @@ impl Evidence {
         media_type: &str,
         metadata: Value,
     ) -> Result<Value> {
-        let relative = path
-            .strip_prefix(&self.root)
+        let canonical_root = self.root.canonicalize()?;
+        let canonical_path = path.canonicalize()?;
+        let relative = canonical_path
+            .strip_prefix(&canonical_root)
             .map_err(|_| Error::new("unsafe_artifact_path", "Artifact is outside destination"))?
             .to_str()
             .ok_or_else(|| Error::new("invalid_path", "Artifact path must be UTF-8"))?
@@ -358,7 +499,7 @@ impl Evidence {
                 "artifact_changed",
                 "Source changed while retaining evidence",
             )
-            .at(source.display().to_string()));
+            .file(source.display().to_string()));
         }
         let media_type = metadata
             .get("media_type")

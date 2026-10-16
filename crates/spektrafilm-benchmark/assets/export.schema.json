@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "const": "export" },
+    "id": { "type": "string" },
+    "execution_status": {
+      "type": "string",
+      "enum": ["completed", "failed", "validated", "not_evaluated"]
+    },
+    "tool": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      },
+      "required": ["name", "version"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "kind"],
+  "additionalProperties": true
+}

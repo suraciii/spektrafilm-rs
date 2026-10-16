@@ -138,6 +138,19 @@ pub(crate) fn crop_thumbnail(
 
 pub(crate) fn rectangle(region: &Value) -> Result<Option<[u32; 4]>> {
     let geometry = &region["geometry"];
+    // A named geometry carries its span as its own fields; the array and
+    // `rectangle` forms stay readable for retained records that use them.
+    let mut named: Option<Value> = None;
+    if let Some(object) = geometry.as_object()
+        && let (Some(x), Some(y), Some(width), Some(height)) = (
+            object.get("x").and_then(Value::as_u64),
+            object.get("y").and_then(Value::as_u64),
+            object.get("width").and_then(Value::as_u64),
+            object.get("height").and_then(Value::as_u64),
+        )
+    {
+        named = Some(json!([x, y, width, height]));
+    }
     let rect = region
         .get("rectangle")
         .or_else(|| region.get("rect"))
@@ -147,7 +160,8 @@ pub(crate) fn rectangle(region: &Value) -> Result<Option<[u32; 4]>> {
             } else {
                 geometry.get("rectangle").or_else(|| geometry.get("rect"))
             }
-        });
+        })
+        .or(named.as_ref());
     let Some(rect) = rect else { return Ok(None) };
     let values = rect.as_array().filter(|v| v.len() == 4).ok_or_else(|| {
         Error::new(

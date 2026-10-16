@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 mod evidence;
 mod masks;
 
-pub use evidence::{Availability, MeasurementRecord, validate_generated_document};
+pub use evidence::{
+    Availability, MeasurementRecord, STAGE_IDS, StageBuffer, StageBundle, check_output_boundary,
+    validate_generated_document, validate_stage_bundle,
+};
 pub use masks::{geometry_mask, reference_geometry_mask};
 
 pub const ID_PATTERN: &str = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$";
@@ -165,10 +168,10 @@ fn scan_duplicate(b: &[u8], mut i: usize) -> Result<usize> {
 
 pub fn load_json_value(path: &Path) -> Result<Value> {
     let b = fs::read(path)
-        .map_err(|e| err("document_read", e.to_string()).at(path.display().to_string()))?;
+        .map_err(|e| err("document_read", e.to_string()).file(path.display().to_string()))?;
     scan_duplicate(&b, 0)?;
     let v: Value = serde_json::from_slice(&b)
-        .map_err(|e| err("document_read", e.to_string()).at(path.display().to_string()))?;
+        .map_err(|e| err("document_read", e.to_string()).file(path.display().to_string()))?;
     finite(&v)?;
     Ok(v)
 }
@@ -178,6 +181,18 @@ pub fn load_json_document(path: &Path) -> Result<Value> {
         return Err(err("document_type", "document root must be an object"));
     }
     Ok(v)
+}
+
+/// Validate one authored document the instrument owns directly.
+///
+/// The shape comes from the kind's schema; the local dependencies the
+/// document names are then read and hashed, so a declared file that is
+/// missing or unreadable fails validation instead of an execution.
+pub fn validate_authored_document(kind: &str, path: &Path) -> Result<Value> {
+    let value = load_json_document(path)?;
+    validate_schema(kind, &value)?;
+    validate_local_dependencies(kind, &value, path)?;
+    Ok(value)
 }
 /// Absolute form of a path: relative paths resolve against the process working
 /// directory, then `.` and `..` components are removed lexically.
@@ -294,7 +309,19 @@ fn file_record(v: &Value, doc: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// One geometry: a named half-open rectangle, or a hashed mask. Both declare
+/// their coordinate space, which is what makes a region's position readable
+/// without knowing which document carried it.
 fn geometry(v: &Value, doc: &Path) -> Result<()> {
+    let o = obj(v)?;
+    if let Some(space) = o.get("space").and_then(Value::as_str)
+        && !matches!(space, "source" | "render")
+    {
+        return Err(err(
+            "invalid_bounds",
+            "geometry space must be `source` or `render`",
+        ));
+    }
     if let Some(a) = v.as_array() {
         if a.len() != 4 || a.iter().any(|x| x.as_u64().is_none()) {
             return Err(err(
@@ -309,8 +336,7 @@ fn geometry(v: &Value, doc: &Path) -> Result<()> {
             ));
         };
         Ok(())
-    } else {
-        let o = obj(v)?;
+    } else if o.contains_key("path") {
         let p = text(o, "path")?;
         file_record(v, doc)?;
         if !matches!(
@@ -327,6 +353,22 @@ fn geometry(v: &Value, doc: &Path) -> Result<()> {
             || o.get("height").and_then(Value::as_u64).unwrap_or(0) == 0
         {
             return Err(err("invalid_mask", "mask dimensions must be positive"));
+        }
+        Ok(())
+    } else {
+        // A named rectangle: the schema requires the four fields and a
+        // positive span, and this confirms the span so a zero-width rectangle
+        // cannot pass on shape alone.
+        for key in ["x", "y", "width", "height"] {
+            if o.get(key).and_then(Value::as_u64).is_none() {
+                return Err(err("invalid_bounds", format!("geometry requires {key}")));
+            }
+        }
+        if o["width"].as_u64() == Some(0) || o["height"].as_u64() == Some(0) {
+            return Err(err(
+                "invalid_bounds",
+                "region width and height must be positive",
+            ));
         }
         Ok(())
     }
@@ -410,24 +452,64 @@ fn config(v: &Value, doc: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Region role names accepted by case and region records. The suite schema
+/// stays the single authority for the closed set.
+pub fn region_roles() -> Result<Vec<String>> {
+    enum_names(
+        &schema_for("regions")?["properties"]["regions"]["items"]["properties"]["role"]["enum"],
+    )
+}
+
+/// Measurement family names accepted by case and region records.
+pub fn measurement_families() -> Result<Vec<String>> {
+    enum_names(
+        &schema_for("regions")?["properties"]["regions"]["items"]["properties"]["measurements"]["items"]
+            ["enum"],
+    )
+}
+
+fn enum_names(value: &Value) -> Result<Vec<String>> {
+    value
+        .as_array()
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .ok_or_else(|| err("schema_asset", "enum schema is missing its names"))
+}
+
 pub fn schema_for(kind: &str) -> Result<Value> {
-    if matches!(
-        kind,
-        "configuration" | "reference" | "regions" | "preparation"
-    ) {
+    // `metrics` is not a document: it is the closed vocabulary of metric
+    // identities a policy may name. The emitted object is the vocabulary, not
+    // a JSON Schema.
+    if kind == "metrics" {
+        return Ok(metrics_vocabulary());
+    }
+    if matches!(kind, "configuration" | "reference" | "preparation") {
         let suite = schema_for("suite")?;
         let mut schema = suite["properties"]["cases"]["items"]["properties"][kind].clone();
         if kind == "reference" {
-            schema["properties"].as_object_mut().unwrap().remove("path");
-            schema["properties"]
-                .as_object_mut()
-                .unwrap()
-                .remove("sha256");
+            let properties = schema["properties"].as_object_mut().unwrap();
+            properties.remove("path");
+            properties.remove("sha256");
             schema["required"]
                 .as_array_mut()
                 .unwrap()
                 .retain(|v| v != "path" && v != "sha256");
         }
+        schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");
+        return Ok(schema);
+    }
+    // A regions document is its own kind: the same region records a suite case
+    // embeds, in the document envelope that carries the schema version and the
+    // identity. `schema --kind regions` emits the document.
+    if kind == "regions" {
+        let raw = include_str!("../assets/regions.schema.json");
+        let mut schema: Value =
+            serde_json::from_str(raw).map_err(|e| err("schema_asset", e.to_string()))?;
         schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");
         return Ok(schema);
     }
@@ -437,6 +519,19 @@ pub fn schema_for(kind: &str) -> Result<Value> {
         "policy" => include_str!("../assets/policy.schema.json"),
         "run" => include_str!("../assets/run.schema.json"),
         "comparison" => include_str!("../assets/comparison.schema.json"),
+        "review" => include_str!("../assets/review.schema.json"),
+        "regions" => include_str!("../assets/regions.schema.json"),
+        "stimuli" => include_str!("../assets/stimuli.schema.json"),
+        "experiment" => include_str!("../assets/experiment.schema.json"),
+        "preflight" => include_str!("../assets/preflight.schema.json"),
+        "provenance" => include_str!("../assets/provenance.schema.json"),
+        "report" => include_str!("../assets/report.schema.json"),
+        "resolved" => include_str!("../assets/resolved.schema.json"),
+        "command" => include_str!("../assets/command.schema.json"),
+        "export" => include_str!("../assets/export.schema.json"),
+        "evidence" => include_str!("../assets/evidence.schema.json"),
+        "material_measurement" => include_str!("../assets/material_measurement.schema.json"),
+        "correspondence_review" => include_str!("../assets/correspondence_review.schema.json"),
         _ => {
             return Err(err(
                 "unknown_document_kind",
@@ -445,6 +540,32 @@ pub fn schema_for(kind: &str) -> Result<Value> {
         }
     };
     serde_json::from_str(raw).map_err(|e| err("schema_asset", e.to_string()))
+}
+
+/// The closed metric-identity vocabulary a policy may name.
+///
+/// The measurement protocol owns the identities; this vocabulary states the
+/// families, the per-family identities, the seed aggregates, and the domains
+/// so a policy author can read them from `schema` alone.
+fn metrics_vocabulary() -> Value {
+    json!({
+        "kind": "metrics",
+        "metric_version": crate::metrics::METRIC_VERSION,
+        "color_transform": crate::metrics::COLOR_TRANSFORM,
+        "families": {
+            "numeric": ["max_abs_difference", "rmse"],
+            "color": ["delta_e00", "delta_e00_p95"],
+            "tone": ["mtf50", "tone_delta_e00"],
+            "flip": ["flip_mean"],
+            "grain": ["grain_residual_rms", "grain_spectrum_rmse"],
+            "halation": ["halation_radius_px", "halation_energy_ratio"],
+            "edge": ["edge_mtf50", "edge_shift_px"],
+        },
+        "seed_aggregates": ["seed_mean", "seed_std"],
+        "domains": ["scalar", "curve", "map", "spectrum"],
+        "estimators": ["mean", "median", "p95"],
+        "notes": "A metric identity is `<family>.<name>` optionally suffixed with `.seed_mean` or `.seed_std`. The protocol resolves each family to explicit identities for the selected case and region; a policy must name an identity the selected case and region can produce."
+    })
 }
 fn validate_schema(kind: &str, v: &Value) -> Result<()> {
     let schema = schema_for(kind)?;
@@ -463,26 +584,29 @@ fn validate_schema(kind: &str, v: &Value) -> Result<()> {
             jsonschema::error::ValidationErrorKind::Pattern { .. } => "invalid_identifier",
             _ => "schema_validation",
         };
-        let p = format!(
-            "${}",
-            e.instance_path
-                .to_string()
-                .split('/')
-                .skip(1)
-                .map(|part| format!("[{}]", part.replace("~1", "/").replace("~0", "~")))
-                .collect::<String>()
-        );
-        return Err(err(code, e.to_string()).at(p));
+        // The instance path is already a JSON Pointer; `$` is a private
+        // syntax, so the error carries the pointer itself.
+        return Err(err(code, e.to_string()).pointer(format!(
+            "/{}",
+            e.instance_path.to_string().trim_start_matches('/')
+        )));
     }
     Ok(())
 }
 pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -> Result<()> {
     match kind {
         "configuration" => config(value, document)?,
+        // A regions document carries its regions under `regions`; a suite case
+        // embeds the same records as its own array. Both shapes reach this one
+        // validator, so one region shape has one authority.
         "regions" => {
-            let regions = value
-                .as_array()
-                .ok_or_else(|| err("schema_validation", "regions must be array"))?;
+            let regions = if let Some(array) = value.get("regions").and_then(Value::as_array) {
+                array
+            } else {
+                value
+                    .as_array()
+                    .ok_or_else(|| err("schema_validation", "regions must be an array"))?
+            };
             unique(regions, "id")?;
             for region in regions {
                 if region["id"] == "full_image" {
@@ -559,7 +683,84 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
                 ));
             }
         }
+        // A stimulus document names the arrays it carries; those files are its
+        // dependencies, and they are read beside the document.
+        "stimuli" => {
+            for key in ["points", "reflectances"] {
+                if let Some(record) = value.get(key) {
+                    file_record(record, document)?;
+                }
+            }
+        }
+        // An experiment document names the suite, the input, and every
+        // parameter carrier its chain declares.
+        "experiment" => {
+            file_record(&value["input"], document)?;
+            for key in ["transform", "aligned_derivative"] {
+                if let Some(record) = value.get(key) {
+                    file_record(record, document)?;
+                }
+            }
+        }
+        "material_measurement" => {
+            for key in ["source", "measurement"] {
+                if let Some(record) = value.get(key) {
+                    file_record(record, document)?;
+                }
+            }
+        }
+        "correspondence_review" => {
+            for key in ["left", "right", "transform"] {
+                if let Some(record) = value.get(key) {
+                    file_record(record, document)?;
+                }
+            }
+        }
         _ => return Err(err("unknown_document_kind", kind)),
+    }
+    Ok(())
+}
+
+/// A tone-response probe needs at least two strictly increasing exposure
+/// coordinates: the response curve is sampled at those coordinates, so a
+/// probe that cannot order them cannot produce a curve.
+fn validate_tone_probe(points: &Value) -> Result<()> {
+    let points = points.as_array().map(Vec::as_slice).unwrap_or_default();
+    if points.is_empty() {
+        return Ok(());
+    }
+    let mut previous: Option<f64> = None;
+    for point in points {
+        let exposure = point
+            .get("exposure_stops")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| {
+                err(
+                    "invalid_protocol",
+                    "tone response point requires a finite exposure_stops",
+                )
+            })?;
+        if !exposure.is_finite() {
+            return Err(err(
+                "invalid_protocol",
+                "tone response exposure_stops must be finite",
+            ));
+        }
+        if let Some(previous) = previous
+            && exposure <= previous
+        {
+            return Err(err(
+                "invalid_protocol",
+                "tone response exposures must be strictly increasing with at least two points",
+            ));
+        }
+        previous = Some(exposure);
+    }
+    if points.len() < 2 {
+        return Err(err(
+            "invalid_protocol",
+            "tone response exposures must be strictly increasing with at least two points",
+        ));
     }
     Ok(())
 }
@@ -591,6 +792,10 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
     {
         geometry(&x["geometry"], path)?
     }
+    // A tone probe whose exposure coordinates are not at least two strictly
+    // increasing values cannot produce a response curve, so it fails
+    // validation instead of a later measurement.
+    validate_tone_probe(&v["protocol"]["probe"]["tone_response"])?;
     for c in cases {
         let parsed: CaseDocument = serde_json::from_value(c.clone())?;
         file_record(&c["input"], path)?;
@@ -633,6 +838,7 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
             }
             geometry(&r.geometry, path)?
         }
+        crate::references::validate_region_pairs(c)?;
         for x in c["probe"]["tone_response"].as_array().into_iter().flatten() {
             geometry(&x["geometry"], path)?
         }
@@ -869,6 +1075,7 @@ pub fn protocol_digest(suite: &Value) -> Result<String> {
                 "input",
                 "seeds",
                 "regions",
+                "region_pairs",
                 "measurements",
                 "probe",
                 "probe_response",
@@ -935,12 +1142,71 @@ pub fn validate_policy_selectors(policy: &Value, suite: &Value) -> Result<()> {
             && !case["regions"]
                 .as_array()
                 .is_some_and(|a| a.iter().any(|x| x["id"].as_str() == Some(reg)))
+            && !case["region_pairs"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|x| x["id"].as_str() == Some(reg)))
         {
             return Err(err(
                 "unresolved_identifier",
                 "policy selector does not resolve",
             ));
         }
+        // The rule's metric identity is decidable from the document: the
+        // measurement definitions the protocol resolves for this case and
+        // region decide whether the rule can ever produce a measurement. The
+        // same definitions decide it at compare time, so the check is not a
+        // second registry.
+        let metric = r["metric"].as_str().unwrap_or("");
+        if !crate::metrics::metric_supported_with_protocol(metric, case, reg, &suite["protocol"]) {
+            return Err(err(
+                "unresolved_metric",
+                format!("Metric is unknown or unselected: {metric}"),
+            ));
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suite(color: Option<Value>, pairs: Value) -> Value {
+        let mut protocol = json!({"id":"appearance-v1","pixels_per_degree":60.,"region_sampling_scales":[1.],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":1.,"border_px":0},"spectrum":{"window":"boxcar"}},"hotspots":{"count":0,"min_area_px":1}});
+        if let Some(color) = color {
+            protocol["color"] = color;
+        }
+        json!({"schema_version":1,"id":"t","protocol":protocol,"cases":[{"id":"c","kind":"probe","input":{"path":"x.png","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"configuration":{},"seeds":[0],"regions":[{"id":"a","label":"A","role":"color","geometry":{"x":0,"y":0,"width":1,"height":1,"space":"render"},"measurements":[]},{"id":"b","label":"B","role":"neutral","geometry":{"x":1,"y":0,"width":1,"height":1,"space":"render"},"measurements":[]}],"region_pairs":pairs,"measurements":[]}]})
+    }
+
+    #[test]
+    fn suite_schema_bounds_the_hue_floor_and_pair_documents() {
+        assert!(
+            validate_shape(
+                "suite",
+                &suite(
+                    Some(json!({"hue_chroma_floor": 2.})),
+                    json!([{"id":"ab","label":"A/B","left":"a","right":"b"}])
+                )
+            )
+            .is_ok()
+        );
+        assert!(validate_shape("suite", &suite(None, json!([]))).is_ok());
+        for invalid in [
+            json!({"hue_chroma_floor": 0.}),
+            json!({"hue_chroma_floor": -1.}),
+            json!({"hue_chroma_floor": "2"}),
+            json!({}),
+        ] {
+            assert!(validate_shape("suite", &suite(Some(invalid), json!([]))).is_err());
+        }
+        for invalid in [
+            json!([{"id":"ab","label":"A/B","left":"a"}]),
+            json!([{"id":"ab","label":"A/B","left":"a","right":"b","extra":1}]),
+            json!([{"id":"a b","label":"A/B","left":"a","right":"b"}]),
+            json!([{"id":"ab","label":"","left":"a","right":"b"}]),
+        ] {
+            assert!(validate_shape("suite", &suite(None, invalid)).is_err());
+        }
+    }
 }

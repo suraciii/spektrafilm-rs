@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+    "case_id": { "type": "string" }
+  },
+  "required": ["schema_version", "id"],
+  "additionalProperties": true
+}
