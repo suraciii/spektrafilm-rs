@@ -4,7 +4,7 @@
 
 SpektraFilm simulates analog color film and the print-and-scan chain spectrally. A digital image exposes a film stock, the developed record is enlarged onto photographic paper, and a scanner reads the result. Film, paper, enlarger light and scanner response are integrated over 81 wavelengths, so a stock, a paper, or a light source changes the image through its spectral profile rather than through a color preset. Bundled profiles carry measured or fitted spectral data; the CineStill 800T Cs41 material is an experimental fit, see [scanning](docs/scanning.md).
 
-This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm). The desktop GUI renders at the build's native precision; GPU execution is f32 WGPU with faithful CPU stages where a GPU implementation would change the result. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Numeric agreement is judged against per-scenario budgets, not universal bit identity; see [parity and backends](docs/parity.md).
+This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm), forked from [turbasvin/spektrafilm-rs](https://github.com/turbasvin/spektrafilm-rs), the original Rust port. The desktop GUI renders at the build's native precision; GPU execution is f32 WGPU with faithful CPU stages where a GPU implementation would change the result. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Numeric agreement is judged against per-scenario budgets, not universal bit identity; see [parity and backends](docs/parity.md).
 
 ## What you can do
 
@@ -65,7 +65,7 @@ List the shipped films, papers and presets:
 
 ## Project status
 
-The migration target is the pinned Python 0.3.4 reference. Measured agreement and budgets live in [baseline parity evidence](docs/parity/baseline_evidence.md), the [parity matrix](docs/parity/parity_matrix.md), and the [Python ↔ Rust differential harness](scripts/parity/README.md).
+The Python 0.3.4 migration is complete; development continues with new features and optimizations. LUT acceptance and the package spectral fixture use `experimental` instead. Measured agreement and budgets live in [baseline parity evidence](docs/parity/baseline_evidence.md), the [parity matrix](docs/parity/parity_matrix.md), and the [Python ↔ Rust differential harness](scripts/parity/README.md).
 
 ## Credits and license
 
