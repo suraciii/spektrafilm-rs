@@ -34,7 +34,7 @@ Intermediate density/exposure taps are upstream and unchanged. Final collection 
 
 ## Persistence and delivery
 
-The [preset contract](../presets/spec.md) owns schema version 3 and migration; [CLI parameters](../cli/spec.md) owns sparse composition and discovery. Complete GUI state uses its versioned Rust extension for the added group instead of inserting unsupported keys into Python-compatible sections. Older complete looks and complete state/recipe documents gain only an absent output-mix default of 1. Older section presets preserve omission. No response fields or cyan shift are materialized.
+The [preset contract](../presets/spec.md) owns schema version 3 and migration; [CLI parameters](../cli/spec.md) owns sparse composition and discovery. Complete GUI state stores the added group under the [GUI state compatibility contract](../presets/spec.md#gui-state-compatibility). Older complete looks and complete state/recipe documents gain only an absent output-mix default of 1. Older section presets preserve omission. No response fields or cyan shift are materialized.
 
 Retired-field migration inspects explicit legacy presence before typed defaults erase it. Absent/null lightness is eligible only in a versioned legacy complete document; an explicit numeric triplet fails even if the previous algorithm ignored it. Current schemas and sparse validators do not retain a deprecated optional field. Withdrawn draft response and cyan keys fail as unknown fields. Candidate validation precedes source writes, active-state mutation and publication.
 

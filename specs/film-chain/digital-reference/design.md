@@ -48,10 +48,6 @@ Each prepared reference configuration must retain SHA-256 identities of both run
 
 Native-f32 and GPU comparisons must use measured budgets recorded with acceptance evidence under [GPU numerical alignment](../../gpu-execution/design.md#numerical-alignment). Reference conversion must execute on the requested backend without a conversion-specific CPU override.
 
-### Additional placements and controls
-
-Reference Exposure is the supported placement. Graded Print, Auto Levels, custom receiver-band editing, paper grade, and reference-axis black/white points are outside this addition. Existing nonidentity point windows fail validation. Their exposure-reconstruction coordinates must not be silently reused for reference conversion.
-
 ### Source reuse
 
 If Fotufilm source or spectral assets are reused, record the license and provenance of each selected asset. Code licensing and data licensing are separate inputs to that decision. Record source revisions and content identities with the implemented model. The model's researched basis is Fotufilm revision `59d43471dbef45c85ae442e507a291fdebfb2ec5`.
