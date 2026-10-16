@@ -2,7 +2,7 @@
 
 ## Scope and authority
 
-This document defines the Rust migration and its acceptance criteria. The [product specification](../spec.md) owns evaluation meaning and human review. The [machine interface](../interface.md) owns commands and documents. The [measurement protocol](../metrics.md) owns measurement semantics. The [system design](../design.md) owns runtime boundaries.
+This document defines the Rust migration and its acceptance criteria. The [product specification](../spec.md) owns evaluation meaning and human review. The [machine interface](../interface/spec.md) owns commands and documents. The [measurement protocol](../metrics/spec.md) owns measurement semantics. The [system design](../design.md) owns runtime boundaries.
 
 The delivered implementation must provide the complete benchmark as a Rust CLI. A Rust launcher that requires the Python benchmark does not satisfy this contract. All existing command families, reference scopes, measurement families, failure states, and review capabilities must remain supported.
 
@@ -10,7 +10,7 @@ The migration must not change film simulation algorithms, add measurement famili
 
 ## Installation and distribution
 
-The release must include `spektrafilm-bench` and the existing `spektrafilm-bench-fixtures` entry point. The fixture entry point must retain its current options and source attribution behavior, and it must answer the [standard configuration generation](../interface.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. Both entry points must run without Python, uv, pip, or Python packages.
+The release must include `spektrafilm-bench` and the existing `spektrafilm-bench-fixtures` entry point. The fixture entry point must retain its current options and source attribution behavior, and it must answer the [standard configuration generation](../interface/spec.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. Both entry points must run without Python, uv, pip, or Python packages.
 
 Release archives must provide binaries for the platforms supported by the application's packaging workflows. Every non-system runtime dependency must be bundled or linked into the delivered executable. The release must identify required system libraries and third-party licenses. A Rust executable with C or C++ dependencies satisfies this requirement; a pure-Rust dependency graph is not required.
 
@@ -30,7 +30,7 @@ Metric adapters must return structured evidence. A report must consume that evid
 
 The implementation must use f64 for the standard protocol's native diagnostics, color transforms, Lab calculations, statistics, and spectrum normalization unless the protocol explicitly identifies another precision. Artifact storage must not imply a higher computation precision.
 
-LDR-FLIP must use the pinned [official NVlabs implementation](https://github.com/NVlabs/flip). A narrow native bridge to the official C++ implementation is the selected integration boundary. The bridge must identify its source revision and build settings. It must use the declared input domain and pixels-per-degree settings. It must return the official error map without a palette transform. The migration must not replace official FLIP with an unverified Rust reimplementation.
+LDR-FLIP must keep the pinned official implementation required by the [measurement protocol](../metrics/spec.md#perceptual-spatial-difference). A narrow native bridge to the official C++ implementation is the selected integration boundary. The bridge must identify its source revision and build settings. It must use the declared input domain and pixels-per-degree settings. It must return the official error map without a palette transform. The migration must not replace official FLIP with an unverified Rust reimplementation.
 
 ICC conversion must continue to use an identified LittleCMS implementation with the existing transform settings. The release must not fall back to an approximate RGB transform when ICC conversion is unavailable.
 

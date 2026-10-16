@@ -4,7 +4,7 @@
 
 Dye must retain the developed film-density boundary and the profile's three-sublayer response. It must realize conditional Poisson dye masses in global film coordinates. A normalized spatial operator must form the complete realization, including its subject-dependent expectation. Rectangular output footprints must integrate that field. The next existing spectral stage must receive the resulting CMY density.
 
-Dye uses one Gaussian dye-support width shared by the layers and channels. Statistical event area controls count variance independently of this width. The CMY realizations are independent. The common width does not imply neutral grain or correlated channel samples. A raw, unprocessed negative scan shows weak inter-record grain correlation, consistent with this choice; see [evidence and limits](#evidence-and-limits).
+Dye uses one Gaussian dye-support width shared by the layers and channels. Statistical event area controls count variance independently of this width. The CMY realizations are independent. The common width does not imply neutral grain or correlated channel samples. A raw, unprocessed negative scan shows weak inter-record grain correlation, consistent with this choice.
 
 The microscopic Spektra-derived support formula is a diagnostic alternative, not the production default. With resolved Portra 800 default controls it gives sigma about 0.38–1.15 micrometers. Resolving its narrowest support at half-sigma requires about 23 billion field cells for a 36 mm long-edge 3:2 frame. Tiling reduces memory but does not remove this sampling cost. This alternative must not determine the full-frame allocation policy.
 
@@ -68,7 +68,7 @@ Resolve `rms_granularity`, `particle_scale_sublayers`, `density_min`, and `unifo
 
 The stock granularity preset sets the channel event-area scale `k_c`. For preset value `G_c`, `k_c = (G_c / 6)^2`. The anchor `6` is the preset of the reference stock `kodak_portra_800`. A non-finite or non-positive `G_c` gives `k_c = 1`. Readout variance is proportional to event area, so at fixed density and support the readout RMS is proportional to `G_c`. The preset is a ratio only. Its absolute value is not Kodak density RMS, and it does not enter the sampler by another path.
 
-`k_c` is the only source of channel-to-channel strength differences. Dye must not read `particle_scale`. That Spektra control defaults to `[1.6, 1.6, 3.2]` and already makes the blue record coarser. A blue-heavy granularity preset would count the same difference twice; see [evidence and limits](#evidence-and-limits). Monochrome resolution equalizes `rms_granularity` across channels and therefore `k_c`.
+`k_c` is the only source of channel-to-channel strength differences. Dye must not read `particle_scale`. That Spektra control defaults to `[1.6, 1.6, 3.2]` and already makes the blue record coarser. A blue-heavy granularity preset would count the same difference twice. Monochrome resolution equalizes `rms_granularity` across channels and therefore `k_c`.
 
 `v3_event_area_um2` gives the base event area in square micrometers, with default `1.28`. It must be finite and strictly positive. With the reference stock, `k_c = 1`, and the default is the validated absolute event area of every channel. Dye must not read `particle_area_um2`, which keeps its Spektra meaning and default.
 
@@ -290,33 +290,6 @@ Permanent tests must cover allocation including zero weights, bypass precedence,
 
 The format change must retain the existing 36 mm realization for the same source, seed, recipe, precision, and implementation. Permanent regression tests must cover the default 35 mm recipe, an arbitrary positive non-36 mm long edge, format persistence, invalid format values, unchanged output dimensions, and crop/tile identity at both smaller and larger formats. Resource-limit checks must exercise an exceeded limit without allocating the oversized canvas.
 
-
 ## Evidence and limits
 
-Normally processed color-negative film retains image dyes after silver removal. Kodak distinguishes subjective graininess from measured granularity. Conventional diffuse RMS uses a 48-micrometer diameter aperture at net density 1.00. Output-pixel RMS is not that measurement.
-
-Portra 800's Print Grain Index cannot be compared with density RMS. Repository granularity presets are not verified Kodak density-RMS values.
-
-Independent CMY fields are consistent with the available negative evidence. A raw UltraMax 400 negative scan from a Coolscan V ED, without disclosed noise reduction, shows inter-record grain coherence of about 0.0–0.45 across 5–160-micrometer wavelengths. The Dye film-scan negative of a flat patch at the same pitch measures −0.1–0.25. Finished lab scans of CineStill 800T and pushed Portra 800 show coherence of 0.56–0.99 and chroma-to-luma ratios of 0.3–0.77 at fine scales. In the night-sky window, red-green coherence falls from 0.94 at fine scales to 0.70 at coarse scales. This pattern matches scanner chroma low-pass filtering more closely than intrinsic record correlation. A prototype that correlated the record counts produced a flat coherence spectrum and d…
-
-Matched-tone comparisons against high-speed lab scans at the same film pitch agree on grain-clump size (4.0–4.6 versus 4.5–5.6 micrometers by half-autocorrelation radius) and on tonal polarity: bright regions show sparse light specks and dark regions show sparse dark specks. Luminance grain RMS agrees within about 20% on the pushed Portra 800 sky and the 800T night sky. In bright regions, the real scans are more strongly skewed toward sparse light specks (skewness −0.48 and −0.98) than Dye (−0.18 and −0.62). The references pass through unknown lab tone curves, sharpening, and JPEG encoding, so this difference is not attributed to the film model.
-
-The per-channel `rms_granularity` ratios of eight stocks come from single-channel noise fields extracted from a commercial film-simulation product, normalized to each stock's green channel, and mapped to a stock by class rather than by name where the product names a class (`KodakEliteColor200` covers `kodak_gold_200`). The green value of each row is the repository's previous magnitude, so only the tint moved. That extraction reads the product's rendered field, so its *direction* is the usable part, and even there it only partly matches a native scan: for UltraMax 400 the product measures `[0.848, 1.000, 1.398]` and a native scan `[1.213, 1.000, 1.511]`, which agree that blue exceeds green and disagree on red. Its magnitude is a lower bound, because the one-pixel high-pass that isolates the field also reads the product's anisotropy and MTF, and those spread energy across channels and flatten the ratio; the measured values are therefore recorded as measured rather than scaled up. Stocks without a measured source keep a uniform ratio, and two of them have chart samples (Portra 160 `[1.046, 1.000, 1.101]`, Ektar 100 `[0.992, 1.000, 1.012]`) that show no ratio beyond scanner crosstalk and come from a single scanner.
-
-A coarser blue record is a real negative property. Kodak's VISION3 500T 5219 data publish diffuse RMS granularity per record with a 48-micrometer aperture. At low and middle exposures, blue reads about 0.02–0.03 sigma D, and green and red about 0.005–0.008. The repository 500T preset `[9, 13, 30]` has the same direction. Finished lab scans of CineStill 800T, which uses this emulsion, show a much smaller blue excess: the blue-to-green ratio of high-passed grain RMS is 1.29 and 1.13 in two tone-matched windows. Before the channel-scale rule above, Dye on the print route gave 3.13 and 2.71. Removing the doubled blue `particle_scale` gives 2.55 and 2.43 and halves the blue mean shift caused by grain through the nonlinear print response. An 8-micrometer scanner ch…
-
-The field boundary and exact Poisson mass law are mathematical choices. The 3.5-micrometer support is resolvable at the comparison scale and was preferred in user review over 8 micrometers. Unknown reference provenance and the supported output range remain explicit acceptance limits.
-
-Cine profiles are available without a passed stock-specific optical gate. A CPU f32 CLI diagnostic for VISION3 500T with Kodak 2383 used a 36 mm long edge, 5.357 micrometer output pitch, 3.5 micrometer support, and 1.28 square micrometer base event area. It retained the native cine stock controls and disabled downstream spatial processing. The density-average readout exceeded the spectral aperture gate: the middle patch had a maximum channel mean bias of 2.732 8-bit codes, the low patch had a maximum grain RMS error of 11.62%, and the edge and line profile differed by up to 3.757 codes. The fine CMY read averaged to the coarse read within 8.94e-8. These results limit optical accuracy; they do not justify reducing grain strength or rejecting a cine usage label. Film-scan optical accuracy and cine photographic calibration remain unverified.
-
-## References
-
-- [Dye product contract](spec.md)
-- [Film grain architecture](../design.md)
-- [Spektra contract](../v1/spec.md)
-- [Procedural contract](../v2/spec.md)
-- Kodak, [The Essential Reference Guide for Filmmakers](https://www.kodak.com/content/products-brochures/Film/kodak-essential-reference-guide-for-filmmakers.pdf), printed pages 31 and 56–57.
-- Kodak Alaris, [Portra 800 E-4040](https://kodakprofessional.com/sites/default/files/2025-07/e4040.pdf), printed page 3.
-- Kodak, [VISION3 500T 5219/7219 technical data H-1-5219t, July 2015](https://www.kodak.com/content/products-brochures/Film/VISION3-500T-Color-Negative-Film-7219-TECHNICAL-DATA.pdf), page 4.
-- Newson et al., [Realistic Film Grain Rendering](https://www.ipol.im/pub/art/2017/192/), sections 2–4.
-- Last and Penrose, [Lectures on the Poisson Process](https://stoch.math.kit.edu/img/Last/lastpenrose2017.pdf), sections 5.3 and 15.4.
+Unknown reference provenance and the supported output range remain explicit acceptance limits. Film-scan optical accuracy and cine photographic calibration remain unverified.

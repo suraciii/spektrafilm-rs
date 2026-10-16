@@ -189,7 +189,7 @@ Native-stage buffers stay in the retained artifact index rather than the page im
 
 Provide reference `regions` when a visual-only reference needs patch crops. These coordinates describe the reference image, not the simulation. Without reference geometry, its patch crop remains unavailable. The report folds the complete measurement table below the image review.
 
-For a processing-qualified regional reference, author case `region_pairs` to name two existing regions and protocol `color.hue_chroma_floor` to select hue diagnostics. `inspect` exposes ordinary patch DE00, the separately named equal-L diagnostic, signed hue shift, absolute hue error, and pair separation. A low-chroma patch has an unavailable hue value. Color, neutral, and endpoint summaries keep their member regions and tails separate. Exact field syntax is in the [suite interface](../specs/benchmark/interface.md#suite-document); metric identities and interpretation limits are in the [regional protocol](../specs/benchmark/metrics.md#regional-color-diagnosis).
+For a processing-qualified regional reference, author case `region_pairs` to name two existing regions and protocol `color.hue_chroma_floor` to select hue diagnostics. `inspect` exposes ordinary patch DE00, the separately named equal-L diagnostic, signed hue shift, absolute hue error, and pair separation. A low-chroma patch has an unavailable hue value. Color, neutral, and endpoint summaries keep their member regions and tails separate. Exact field syntax is in the [suite interface](../specs/benchmark/interface/spec.md#suite-document); metric identities and interpretation limits are in the [regional protocol](../specs/benchmark/metrics/spec.md#regional-color-diagnosis).
 
 ## Use camera RAW and prepared inputs
 

@@ -183,7 +183,7 @@ Report paths must not alias input, output, or configuration files.
 selection can absorb the default grain distribution as a CPU fence; `--backend gpu` would
 fail this configuration before publication.
 
-See [the telemetry contract](../specs/telemetry/spec.md) and [report metrics](../specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
+See [the telemetry contract](../specs/telemetry/spec.md) and [report metrics](../specs/telemetry/metrics/spec.md) for report semantics, bounded detail, and measurement limits.
 
 ## Stage evidence
 
@@ -229,4 +229,4 @@ format and its wire fields.
 - [Data directory selection](../specs/cli/spec.md#data-directory-selection)
 - [Image input contract](../specs/image-input/spec.md)
 - [Telemetry contract](../specs/telemetry/spec.md)
-- [Report metrics](../specs/telemetry/metrics.md)
+- [Report metrics](../specs/telemetry/metrics/spec.md)

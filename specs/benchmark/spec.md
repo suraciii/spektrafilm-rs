@@ -115,7 +115,7 @@ The benchmark must support explicitly requested native CPU stage evidence from t
 
 ## Measurements and decisions
 
-The [measurement protocol](metrics.md) owns domains, algorithms, aggregation, and availability rules. The [machine interface](interface.md) owns serialized inputs, results, and command status.
+The [measurement protocol](metrics/spec.md) owns domains, algorithms, aggregation, and availability rules. The [machine interface](interface/spec.md) owns serialized inputs, results, and command status.
 
 Every finding must identify its measurement population and applicable region. Signed color and tone changes must use candidate minus baseline. A reference-distance improvement must use candidate distance minus baseline distance and must identify that a negative value means closer.
 

@@ -623,7 +623,7 @@ fn negative_to_positive_capture_fence_matches_cpu() {
 /// CPU fence on the film density buffer (pipe architecture, capability
 /// class). The fence readback narrows the grain's density conditioning
 /// to f32, which perturbs Poisson count decisions at their boundaries;
-/// this re-frozen budget (pipe-architecture spec, fence-error mode) is
+/// this re-frozen budget (GPU execution design, fence semantics) is
 /// one decade wider than the pure-resident budget for exactly that
 /// reason. Transfer accounting: 1 readback per fence plus the final
 /// readback — 2 + 2 × fence_count total.

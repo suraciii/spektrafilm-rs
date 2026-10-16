@@ -12,6 +12,8 @@ The selected film's base and single reference reading may supply fixed normaliza
 
 Manual corrections must apply in a declared reference-output coordinate system. Existing reconstruction controls must not be silently reused where their exposure-axis meaning differs. Reference conversion must own its endpoint policy; shared output processing must retain its clipping and encoding boundaries.
 
+The existing `density`, `separable`, and `coupled` methods retain exposure reconstruction, optional automatic setup, and independent neutral or Lab Scan finishing. Digital Reference supplies the common reference alternative; `legacy_colorimetric` and `density` with neutral finish retain their prior meanings.
+
 ## Alternatives
 
 A preset over `density`, disabled setup, and neutral finish would reuse all existing controls. It would still reconstruct exposure through the selected film and would not implement reference conversion. Such a preset must not be labeled Digital Reference.
@@ -52,14 +54,4 @@ Reference Exposure is the supported placement. Graded Print, Auto Levels, custom
 
 ### Source reuse
 
-If Fotufilm source or spectral assets are reused, record the license and provenance of each selected asset. Code licensing and data licensing are separate inputs to that decision. Record source revisions and content identities with the implemented model.
-
-## Research basis
-
-The researched source is Fotufilm revision `59d43471dbef45c85ae442e507a291fdebfb2ec5`:
-
-- [Receiver definition](https://github.com/DhaliwalX/fotufilm-engine/blob/59d43471dbef45c85ae442e507a291fdebfb2ec5/Sources/FotufilmCore/DigitalReferenceReceiver.swift#L168) distinguishes the common reference model from a selected-film inverse.
-- [Common curve and base placement](https://github.com/DhaliwalX/fotufilm-engine/blob/59d43471dbef45c85ae442e507a291fdebfb2ec5/Sources/FotufilmCore/DigitalReferenceReceiver.swift#L197) show that fixed placement still includes a tone convention and stock-specific base normalization.
-- [Dye separation](https://github.com/DhaliwalX/fotufilm-engine/blob/59d43471dbef45c85ae442e507a291fdebfb2ec5/Sources/FotufilmCore/DigitalReferenceReceiver.swift#L502) derives a common small-signal response from a shared dye basis.
-
-The existing `density`, `separable`, and `coupled` methods retain exposure reconstruction, optional automatic setup, and independent neutral or Lab Scan finishing. Digital Reference supplies the common reference alternative. The `legacy_colorimetric` receiver and `density` with neutral finish retain their prior meanings.
+If Fotufilm source or spectral assets are reused, record the license and provenance of each selected asset. Code licensing and data licensing are separate inputs to that decision. Record source revisions and content identities with the implemented model. The model's researched basis is Fotufilm revision `59d43471dbef45c85ae442e507a291fdebfb2ec5`.

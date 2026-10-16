@@ -10,7 +10,7 @@ The CPU implementation owns reference evaluation. The WGPU backend owns device r
 
 The execution policy must be resolved once per operation from the accepted backend request and available adapter. Lower layers must not select CPU through trait defaults or effect-specific fallback. A GPU capability check must cover the complete operation before dispatch where the limitation is knowable. Mid-operation failures must preserve publication guarantees.
 
-The stage sequence is carried by the internal [pipe architecture](pipe-architecture.md): nodes are assembled per operation from the resolved parameters, unported stages become explicit CPU fence nodes, and the fixed sequence in the backend is retired. Stage ordering and image-domain transitions remain explicit. A generic public effect graph, new backend, or backend-specific serialized model is still not required.
+The stage sequence is carried by an internal pipe: nodes are assembled per operation from the resolved parameters, and stages without a GPU node become explicit CPU fence nodes on the automatic route under [pipe assembly](#pipe-assembly) and [fence semantics](#fence-semantics). A generic public effect graph, new backend, or backend-specific serialized model is still not required.
 
 ## Preparation boundary
 
@@ -28,13 +28,25 @@ Native RAW unpacking must expose the sensor samples and metadata needed by the s
 
 Device image ownership must represent dimensions, sample domain, color and transfer state, working pixel pitch, and lifetime. Stages must consume that representation without obtaining host pixels implicitly. CPU reference execution may use host images under the same domain contracts.
 
-The operation must retain device ownership through input numerical preparation, film and scan work, output composition, and final saving or display conversion. Save must consume retained output in its actual storage domain without rerendering. A final host materialization for the native writer or a diagnostic output is an explicit handoff, not an internal stage boundary. The [pipe architecture](pipe-architecture.md) adds one further explicit handoff class: a fence around a `Cpu` capability node on the automatic route. Fences are assembled in advance, never appear on a full-GPU render, and are governed by the residency rule that a full-GPU render must not materialize intermediates on the host.
+The operation must retain device ownership through input numerical preparation, film and scan work, output composition, and final saving or display conversion. Save must consume retained output in its actual storage domain without rerendering. A final host materialization for the native writer or a diagnostic output is an explicit handoff, not an internal stage boundary. The pipe adds one further explicit handoff class under [fence semantics](#fence-semantics): a fence around a `Cpu` capability node on the automatic route. Fences are assembled in advance, never appear on a full-GPU render, and are governed by the residency rule that a full-GPU render must not materialize intermediates on the host.
 
 A viewer must consume resident image data when compute and presentation devices can share it. Separate devices may require a final presentation transfer. Presentation must not download an image for CPU resampling or ICC evaluation and upload that computed raster as if it were full-GPU viewing. Software WGPU must remain visibly identified.
 
-Multiple submissions, ping-pong buffers, GPU reductions, and tiles are valid resident execution. Device memory residency must not be equated with one command buffer, one binding, or physical VRAM counters. Logical transfer accounting follows [telemetry metrics](../telemetry/metrics.md#actual-gpu-work).
+Multiple submissions, ping-pong buffers, GPU reductions, and tiles are valid resident execution. Device memory residency must not be equated with one command buffer, one binding, or physical VRAM counters. Logical transfer accounting follows [telemetry metrics](../telemetry/metrics/spec.md#actual-gpu-work).
 
 A full-source reduction must retain the specified source population before crop or resize. GPU reductions must preserve the reference measurement law and supply device-side scanner or exposure interpretation. Only bounded control results and validation flags may return to host orchestration.
+
+## Pipe assembly
+
+The stage sequence is carried by an internal pipe. Each numerical stage is a node: a `Gpu` node dispatches a registered shader over device buffers and never reads host pixels; a `Cpu` node wraps an existing CPU stage implementation unchanged. Node selection happens at assembly time from the resolved parameters; an inactive feature does not enter the pipe, create a pass-through node, or appear in decline accounting. Fixed stage ordering, image-domain transitions, and the runtime's ordering ownership are preserved exactly; only which nodes exist is dynamic. Compute pipelines are created lazily per shader identity and held for the process lifetime; device buffers are reused through the pipe's pools and a cross-frame cache, and buffer lifetime must respect command-completion rules.
+
+## Fence semantics
+
+A fence is an explicit, assembled-in-advance host materialization around a `Cpu` node: readback of the stage input, execution of the existing CPU stage, and re-upload of the stage output. A fence is a transfer optimization for the automatic-selection route, not a form of CPU fallback: the set of stages that execute on each processor is identical to the per-stage route, and the pipe only removes the redundant transfers around them, so the transfer count becomes `2 + 2 × fence_count` instead of `2 × stage_count`. An explicit GPU request must still satisfy the contract: a capability-missing `Cpu` node for any stage in the computation scope fails the operation before output publication. A fence must never appear silently on an explicit GPU route. A fence boundary introduces explicit conversion between device and CPU arithmetic whose error must fit the existing per-stage budgets; parity comparisons for fenced configurations must be re-frozen per stage because the rounding pattern changes even though no algorithm changes.
+
+The permitted CPU fallback of small-sigma `gaussian_blur` remains an owned exception with its existing justification and telemetry. A reduction node, for example metering, may return only bounded scalar results to host orchestration; it is not an image fence.
+
+Stages without a GPU implementation are capability declines: the automatic route assembles a `Cpu` node behind a fence, and an explicit GPU request fails until that stage gains a GPU node. A stage that consumes a CPU intermediate, such as the Dye grain field that needs developed-film density, is a semantic decline: the pipe materializes the intermediate once as an explicit tap fence and continues, with a GPU node as the owned end state. Route selection, such as Mallett execution parity, workflow route, or an unsupported output gamut, is not a decline: it remains an assembly-time route decision that selects a route without demoting one.
 
 ## Numerical alignment
 
