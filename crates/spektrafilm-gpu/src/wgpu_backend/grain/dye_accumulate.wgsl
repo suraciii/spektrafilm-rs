@@ -55,7 +55,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
             enabled[channel] = true;
             if (!(rate[channel] > 0.0 && rate[channel] <= MAX_RATE && mass[channel] > 0.0 && mass[channel] <= 3.402823466e38)) {
                 atomicOr(&status, 2u);
-                return;
+                // `break`, not `return`: the D3D12/FXC path (no DXC) lowers this
+                // loop to `while(true)` and forces an unroll, which fails on an
+                // early exit from inside the loop body.
+                break;
             }
             active_channels += 1u;
             smallest = min(smallest, rate[channel]);
