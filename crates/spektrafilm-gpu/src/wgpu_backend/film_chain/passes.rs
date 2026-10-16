@@ -31,7 +31,6 @@ struct ChainSetup<'a> {
     readback: Option<wgpu::Buffer>,
     halation_state: Option<HalationState>,
     highlight_state: Option<HighlightBoostState>,
-    dye_status: Option<wgpu::Buffer>,
     camera_lens_blur_state: Option<SimpleBlurState>,
     unsharp_state: Option<UnsharpState>,
     grain_v2_state: Option<GrainV2State>,
@@ -633,13 +632,6 @@ impl WgpuBackend {
             )
         });
 
-        let dye_status = if let Some(dye) = p.grain_dye.as_ref() {
-            let dye_state = self.prepare_dye(image.width, image.height, &buf_a, dye)?;
-            Some(dye_state.status_buffer())
-        } else {
-            None
-        };
-
         Ok(ChainSetup {
             image,
             n_pixels,
@@ -677,7 +669,6 @@ impl WgpuBackend {
             readback,
             halation_state,
             highlight_state,
-            dye_status,
             camera_lens_blur_state,
             unsharp_state,
             grain_v2_state,
@@ -722,7 +713,6 @@ impl WgpuBackend {
             ref readback,
             ref halation_state,
             ref highlight_state,
-            dye_status: _,
             ref camera_lens_blur_state,
             ref unsharp_state,
             ref grain_v2_state,
@@ -870,8 +860,10 @@ impl WgpuBackend {
         //     buffer, so the pre-bound print bind groups keep addressing it.
         //     Its bounded status is checked after the run and before the
         //     output is published below.
+        let mut dye_status = None;
         if let Some(dye) = p.grain_dye.as_ref() {
             let dye_state = self.prepare_dye(image.width, image.height, buf_a, dye)?;
+            dye_status = Some(dye_state.status_buffer());
             dye_state.append_stages(&mut stages, buf_a);
         }
         // 4 + 5. Printing: print_spectral (buf_a → buf_b) then the print
@@ -1219,7 +1211,7 @@ impl WgpuBackend {
         // The Dye pass publishes only a bounded flag; it is checked after the
         // run and before the output is read back and published (pipe
         // architecture), so an out-of-bounds field fails instead of escaping.
-        if let Some(status) = setup.dye_status.as_ref() {
+        if let Some(status) = dye_status.as_ref() {
             self.check_dye_status(status)?;
         }
 
