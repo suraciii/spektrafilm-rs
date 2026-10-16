@@ -65,7 +65,7 @@ List the shipped films, papers and presets:
 
 ## Project status
 
-The migration target is the pinned Python 0.3.4 reference. LUT acceptance and the package spectral fixture use `experimental` instead. Measured agreement and budgets live in [baseline parity evidence](docs/parity/baseline_evidence.md), the [parity matrix](docs/parity/parity_matrix.md), and the [Python ↔ Rust differential harness](scripts/parity/README.md).
+The Python 0.3.4 migration is complete; development continues with new features and optimizations. LUT acceptance and the package spectral fixture use `experimental` instead. Measured agreement and budgets live in [baseline parity evidence](docs/parity/baseline_evidence.md), the [parity matrix](docs/parity/parity_matrix.md), and the [Python ↔ Rust differential harness](scripts/parity/README.md).
 
 ## Credits and license
 
