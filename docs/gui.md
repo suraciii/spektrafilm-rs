@@ -24,7 +24,15 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 **Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value. The text resets when focus leaves the field. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
 
+Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear.
+
+A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name on the left and its selector on the right. A row marked experimental carries an `experimental` chip beside its name.
+
 Pages and their section assignment follow [page ownership](../specs/gui-workflow/spec.md#page-ownership).
+
+Page navigation is one segmented control above the control list; the current page is the selected segment.
+
+A section header shows a `modified` chip while any of the section's parameters differs from the factory state, and a `reset` button that restores the section to that state. The reset touches only the section's own parameters, so a neighbouring section keeps its values. See [section reset](../specs/gui-workflow/spec.md#section-reset).
 
 The GUI shows scanner controls for the scanned medium:
 
@@ -69,6 +77,8 @@ See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the acti
 **Viewer controls** include `ccw rotate` and `cw rotate`. These actions physically rotate the in-memory input used by Preview, Scan, and Export. Quarter-turn actions preserve source metadata. Save writes the retained output of the latest render.
 
 `100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. Reset view returns to fit. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
+
+The viewer footer groups its controls by target: rotation, view zoom, before/after comparison with its split position, and the current zoom as a read-only readout.
 
 **Viewer** switches between Input / Output / Paper back from one selector in the viewer footer. Output supports nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling. Input retains the upstream nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
 
