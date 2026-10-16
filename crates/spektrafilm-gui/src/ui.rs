@@ -178,7 +178,9 @@ impl App {
                 }
             }
         });
-        ui.horizontal_wrapped(|ui| {
+        // The workflow selector's own row: its selected text is long, and a
+        // checkbox sharing the row would be pushed past the panel.
+        ui.horizontal(|ui| {
             if controls::choice_tip_entries(
                 ui,
                 "workflow",
@@ -188,6 +190,8 @@ impl App {
             ) {
                 self.finish_route_change();
             }
+        });
+        ui.horizontal(|ui| {
             if ui
                 .checkbox(
                     &mut self.params.magazine_print_color.active,
@@ -941,7 +945,10 @@ impl eframe::App for App {
                         .labelled_by(label.id);
                 });
                 ui.add_space(2.0);
-                let scroll_height = (ui.available_height() - 95.0).max(1.0);
+                // Reserve the action bar's height below the scrollable
+                // controls, so the bar stays inside the panel.
+                let scroll_height =
+                    (ui.available_height() - theme::HEIGHT_ACTION_BAR_RESERVE).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("controls-scroll")

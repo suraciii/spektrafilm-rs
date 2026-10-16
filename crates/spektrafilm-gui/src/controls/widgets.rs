@@ -636,9 +636,18 @@ pub(crate) fn choice_tip_options<'a>(
     // of appending its own label after it. The width is capped so a selector
     // sharing a row with another control leaves room for it.
     row_label(ui, label, experimental).on_hover_text(tooltip);
+    // The selector takes the width still unclaimed in its row, capped, so a
+    // selector sharing a row with another control leaves room for it and never
+    // pushes the row past its container.
+    let width = ui
+        .available_width()
+        .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
     egui::ComboBox::from_id_salt(label)
         .selected_text(selected_label)
-        .width(theme::WIDTH_COMBO_MAX)
+        .width(width)
+        // Truncate rather than extend: an extending selector takes its text's
+        // full width and pushes whatever shares the row past the container.
+        .wrap_mode(egui::TextWrapMode::Truncate)
         .show_ui(ui, |ui| {
             for (option, display_label) in choices {
                 // Allocate only when a selection changes, not for every option each frame.

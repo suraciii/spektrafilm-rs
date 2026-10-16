@@ -54,6 +54,8 @@ pub const SERIES_FILL_ALPHA: f32 = 0.45;
 pub const SPACE_ROW: f32 = 2.0;
 /// Gap between the page navigation and the search box.
 pub const SPACE_BLOCK: f32 = 4.0;
+/// Height reserved below the scrollable controls for the action bar.
+pub const HEIGHT_ACTION_BAR_RESERVE: f32 = 112.0;
 /// Gap between two action groups inside one region.
 pub const SPACE_GROUP: f32 = 8.0;
 // ---------------------------------------------------------------------------
@@ -101,6 +103,9 @@ fn font_family(role: TextStyle) -> egui::FontFamily {
 
 /// Width of the value column in a parameter row.
 pub const WIDTH_VALUE: f32 = 72.0;
+/// Narrowest a choice row's selector may be, so a long label still leaves a
+/// usable selector.
+pub const WIDTH_COMBO_MIN: f32 = 60.0;
 /// Widest a choice row's selector may be. Narrow enough that a selector
 /// sharing a row with another control leaves room for it inside the control
 /// panel.
