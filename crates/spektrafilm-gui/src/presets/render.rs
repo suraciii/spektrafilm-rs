@@ -166,26 +166,37 @@ impl App {
                             });
                             // Film → print route metadata
                             ui.horizontal(|ui| {
+                                // Resolve through the same profile entries the
+                                // header and the combo use, so one stock has
+                                // one visual identifier.
                                 let film_label = entry
                                     .film_profile
                                     .as_ref()
-                                    .map(|p| p.stock.as_str())
-                                    .unwrap_or("?");
+                                    .map(|p| {
+                                        crate::profiles::selected_display(&self.films, &p.stock)
+                                    })
+                                    .unwrap_or_else(|| "?".to_owned());
                                 let print_label = entry
                                     .print_profile
                                     .as_ref()
-                                    .map(|p| p.stock.as_str())
-                                    .unwrap_or("?");
+                                    .map(|p| {
+                                        crate::profiles::selected_display(&self.papers, &p.stock)
+                                    })
+                                    .unwrap_or_else(|| "?".to_owned());
                                 ui.label(
                                     egui::RichText::new(film_label)
                                         .color(theme::ACCENT_DIM)
-                                        .size(9.0),
+                                        .size(theme::SIZE_HINT),
                                 );
-                                ui.label(egui::RichText::new("→").color(theme::FG_MUTED).size(9.0));
+                                ui.label(
+                                    egui::RichText::new("→")
+                                        .color(theme::FG_MUTED)
+                                        .size(theme::SIZE_HINT),
+                                );
                                 ui.label(
                                     egui::RichText::new(print_label)
                                         .color(theme::ACCENT_DIM)
-                                        .size(9.0),
+                                        .size(theme::SIZE_HINT),
                                 );
                             });
                         });
