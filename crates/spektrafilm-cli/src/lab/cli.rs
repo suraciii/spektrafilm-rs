@@ -1,4 +1,5 @@
 //! Command-line surface of the lab binary's spectral group and measurement group.
+//! Command-line surface of the lab binary's groups.
 
 use std::path::PathBuf;
 
@@ -260,6 +261,16 @@ pub struct MeasureVerifyArgs {
     pub data_dir: PathBuf,
 }
 
+/// The development loop for a film profile: render one declared experiment,
+/// then convert its boundary values for a measurement tool.
+#[derive(Subcommand)]
+pub enum ExperimentCommand {
+    /// Render one declared experiment and retain its boundary values.
+    Run(ExperimentRunArgs),
+    /// Convert a bundle's buffers into .npy arrays.
+    Export(ExperimentExportArgs),
+}
+
 #[derive(Args)]
 #[command(group(
     clap::ArgGroup::new("chain").required(true).multiple(false).args(["preset", "profile"])
@@ -287,4 +298,62 @@ pub struct EvaluateArgs {
     /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
     #[arg(long, default_value = "data", help_heading = "Chain")]
     pub data_dir: PathBuf,
+}
+
+#[derive(Args)]
+pub struct ExperimentRunArgs {
+    /// Experiment document declaring the case, grid, chain, and input.
+    #[arg(long, value_name = "PATH", help_heading = "Experiment")]
+    pub experiment: PathBuf,
+    /// Report destination; an existing report is never replaced without --force.
+    #[arg(long, value_name = "DIR", help_heading = "Experiment")]
+    pub out: PathBuf,
+    /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+    #[arg(long, value_name = "DIR", help_heading = "Experiment")]
+    pub data_dir: Option<PathBuf>,
+    /// Image container written beside the bundle.
+    #[arg(long, value_enum, default_value = "tiff", help_heading = "Experiment")]
+    pub output_format: OutputFormatArg,
+    /// Replace an existing report in the destination.
+    #[arg(long, help_heading = "Experiment")]
+    pub force: bool,
+}
+
+#[derive(Args)]
+pub struct ExperimentExportArgs {
+    /// Stage-evidence bundle directory holding the terminal manifest.
+    #[arg(long, value_name = "DIR", help_heading = "Export")]
+    pub stage_evidence: PathBuf,
+    /// Array destination; an existing array is never replaced without --force.
+    #[arg(long, value_name = "DIR", help_heading = "Export")]
+    pub out: PathBuf,
+    /// Stage to convert; repeat to convert several. The default is every
+    /// available stage in manifest order.
+    #[arg(long, value_name = "ID", action = clap::ArgAction::Append, help_heading = "Export")]
+    pub stage: Vec<String>,
+    /// Replace an existing array in the destination.
+    #[arg(long, help_heading = "Export")]
+    pub force: bool,
+}
+
+/// Image container for the experiment's rendered output, named as on the
+/// process surface.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum OutputFormatArg {
+    Jpeg,
+    Png,
+    Tiff,
+    Exr,
+}
+
+impl OutputFormatArg {
+    /// The process surface's spelling of the container.
+    pub fn into_name(self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpeg",
+            Self::Png => "png",
+            Self::Tiff => "tiff",
+            Self::Exr => "exr",
+        }
+    }
 }

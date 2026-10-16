@@ -285,7 +285,7 @@ pub fn compare(args: &MeasureCompareArgs) -> Result<()> {
 
     let deltas = build_deltas_csv(&pairings);
     let compare_text = format!("{}\n", serde_json::to_string_pretty(&document)?);
-    report::write_named(
+    report::write_measure_named(
         &args.out,
         &[("compare.json", compare_text), ("deltas.csv", deltas)],
     )

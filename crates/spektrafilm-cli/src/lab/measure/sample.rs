@@ -517,7 +517,7 @@ fn write_report(
     });
     let measure_text = format!("{}\n", serde_json::to_string_pretty(&measure_json)?);
     let points_text = build_points_csv(plan, source, readings);
-    report::write_named(
+    report::write_measure_named(
         &args.out,
         &[("measure.json", measure_text), ("points.csv", points_text)],
     )

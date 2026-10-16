@@ -4,7 +4,13 @@
 
 The lab CLI is a sibling of `spektrafilm` and `spektrafilm-f64`, not a mode of them. Those binaries keep a stable, user-facing surface. Lab commands may change while a method is developed. A new development command lands in the lab CLI, not in `spektrafilm`, `spektrafilm-f64`, or `spektrafilm-bench`. The extra binary keeps the user surface clean. The lab contract can move quickly without dragging the user binaries along.
 
-Lab commands compute through `spektrafilm-core` and share the user binaries' command plumbing and parameter surface (`--preset`, `--data-dir`, `--set`). They must not duplicate spectral math, parameter resolution, or the rendering entry. A research render remains `spektrafilm-f64 process`.
+Lab commands compute through `spektrafilm-core` and share the user binaries' command plumbing and parameter surface (`--preset`, `--data-dir`, `--set`). They must not duplicate spectral math, parameter resolution, or the rendering entry. A research render remains `spektrafilm-f64 process`, and `experiment run` reaches it through the shared `process` entry rather than a second render path.
+
+A lab document that names a chain carries parameter *values*, not a parameter language. It uses the process surface's names and precedence so that resolving it is the same resolution the user binaries perform, and it must not accept a parameter file path that would resolve outside the document's own directory tree.
+
+A lab document that names a case consumes the region vocabulary the [benchmark](../benchmark/spec.md) owns. It references one case and declares the grid that reproduces its regions; it does not restate the region list, the roles, or the measurement families. A geometry that does not match the declared grid is a failure, not a crop.
+
+`experiment` converts a bundle's buffers byte-for-byte. It does not measure regions, compute color differences, or resample: those belong to the benchmark, and a converter that "helpfully" averages or reorders channels would hide a misread.
 
 ## Determinism
 

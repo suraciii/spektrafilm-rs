@@ -1,9 +1,73 @@
 //! Report writing for the lab commands: the report pair of `spectral evaluate`
 //! and the named artifacts of `measure`.
+//!
+//! A command completes in memory before this is called; a failed write
+//! unlinks whatever this call already created so no partial record set
+//! remains. Each record is created fresh, so a destination that already holds
+//! one is never silently replaced.
 
 use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::Path;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+
+/// Write the named records into `root`, refusing to replace any existing
+/// record and unlinking whatever this call created on failure.
+///
+/// `replace` permits overwriting a record a previous run left behind; each
+/// file is still written as a complete unit through a temporary sibling.
+pub fn write_named(
+    root: &Path,
+    records: &[(&str, &str)],
+    refusal: &str,
+    replace: bool,
+) -> Result<(), String> {
+    if !replace {
+        for (name, _) in records {
+            if root.join(name).exists() {
+                return Err(format!("{refusal} in {}", root.display()));
+            }
+        }
+    }
+    std::fs::create_dir_all(root).map_err(|e| format!("creating {}: {e}", root.display()))?;
+    let mut created: Vec<PathBuf> = Vec::with_capacity(records.len());
+    let result = records.iter().try_for_each(|(name, text)| {
+        let path = root.join(name);
+        replace_file(&path, text).map(|()| created.push(path))
+    });
+    if let Err(error) = result {
+        for path in created {
+            let _ = std::fs::remove_file(path);
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Write one record as a complete unit: full write to a sibling temporary
+/// file, then an atomic rename over the destination.
+fn replace_file(path: &Path, text: &str) -> Result<(), String> {
+    let temporary = path.with_extension(format!(
+        "{}.tmp",
+        path.extension().and_then(|e| e.to_str()).unwrap_or("json")
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temporary)
+            .map_err(|e| format!("creating {}: {e}", temporary.display()))?;
+        file.write_all(text.as_bytes())
+            .map_err(|e| format!("writing {}: {e}", temporary.display()))?;
+        file.sync_all()
+            .map_err(|e| format!("flushing {}: {e}", temporary.display()))?;
+        std::fs::rename(&temporary, path).map_err(|e| format!("publishing {}: {e}", path.display()))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
 
 /// Quote a CSV field when it carries a separator, a quote, or a line break,
 /// doubling any quote inside it. The artifact writers and their readers share
@@ -28,21 +92,20 @@ pub fn number_field(value: f64) -> String {
 
 /// Write the report pair into `root`, refusing to replace existing files.
 ///
-/// The evaluation completes in memory before this is called; a failed write
-/// unlinks whatever this call already created so no partial report remains.
+/// A failed write unlinks whatever this call already created so no partial
+/// report remains.
 pub fn write(root: &Path, report: &str, samples: &str) -> Result<(), String> {
     write_named(
         root,
-        &[
-            ("report.json", report.to_owned()),
-            ("samples.csv", samples.to_owned()),
-        ],
+        &[("report.json", report), ("samples.csv", samples)],
+        "refusing to replace an existing report",
+        false,
     )
 }
 
 /// Write one named artifact set into `root`, refusing to replace existing
 /// files. A failed write unlinks whatever this call already created.
-pub fn write_named(root: &Path, files: &[(&str, String)]) -> Result<(), String> {
+pub fn write_measure_named(root: &Path, files: &[(&str, String)]) -> Result<(), String> {
     if let Some((name, _)) = files.iter().find(|(name, _)| root.join(name).exists()) {
         return Err(format!(
             "refusing to replace an existing {} in {}",
@@ -85,7 +148,7 @@ pub fn publish_staged(root: &Path, staging: &Path, files: &[(&str, String)]) -> 
             evidence.display()
         )
     })?;
-    match write_named(root, files) {
+    match write_measure_named(root, files) {
         Ok(()) => Ok(()),
         Err(error) => {
             let _ = std::fs::remove_dir_all(&evidence);
