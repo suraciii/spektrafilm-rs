@@ -10,9 +10,13 @@ The presentation layer in `crates/spektrafilm-gui` owns the token set, the contr
 - A parameter row presents a label, a value, and one editor for that value.
 - A row presents its label before its value, on one line.
 - A label must not contain a unit, a state marker, or any other value-dependent text.
+- A label that names an enable flag names the effect the flag turns on, not the flag's state.
+- A label that two different parameters share must distinguish them. A qualifier that names the owning concept satisfies this rule. A section title alone does not, because rows share one label column across a whole page.
 - A value presents the parameter's declared decimals with tabular figures. [Numeric editor ranges](../gui-workflow/spec.md#numeric-editor-ranges) owns those decimals.
 - Every row on a page aligns to one label column and one value column.
 - A numeric parameter row presents a slider in addition to its value. The value remains the row's editor.
+- A slider is logarithmic when its declared range spans more than three decades, or when its declared minimum is zero and its declared maximum reaches one thousand or more. Every other slider is linear.
+- A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its positive floor matches the editor's own granularity.
 - A tuple parameter row presents one editor per component, each with its component identifier.
 - A choice parameter row presents a selector as its editor. The row label is the selector's only label.
 - A boolean parameter row presents a switch as its editor. A checkbox belongs to list selection only.
@@ -20,7 +24,7 @@ The presentation layer in `crates/spektrafilm-gui` owns the token set, the contr
 ## Section headers
 
 - A section header presents a disclosure control and the section title.
-- A section presents its reset action on its header, and nowhere else.
+- A section presents its reset action on its header, and nowhere else. [GUI workflow](../gui-workflow/spec.md#section-reset) owns which sections carry a reset and what it restores.
 - A parameter row whose value differs from the value that its section reset restores is marked as modified.
 - A section header presents the modified state of its rows.
 

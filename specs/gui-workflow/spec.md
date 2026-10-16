@@ -48,7 +48,7 @@ Preflash help must explain that, on negative-to-photographic-paper printing, it 
 
 FILM and PRINT must retain their existing chemistry and development controls. Developer exhaustion must keep its model-specific development meaning and capability conditions. It must not be renamed as a generic highlight or high-dynamic-range control. Profile and route feedback must identify unsupported or inactive controls without clearing stored values or fabricating model support. Film-development controls are inactive when converting a real captured negative; print-development controls remain available only on admitted printing routes. Finished RGB must mark material and Scanner controls inapplicable. Existing Scanner black and white points retain their medium-specific meaning; the GUI must not add duplicate generic levels.
 
-Material edits must use existing scanner calibration, inverse reconstruction, and automatic setup semantics. The GUI must not promise creative-reference isolation or add separate baseline and effective reference controls. Resets and section presets must retain existing ownership without new response resets or preset sections.
+Material edits must use existing scanner calibration, inverse reconstruction, and automatic setup semantics. The GUI must not promise creative-reference isolation or add separate baseline and effective reference controls. [Section reset](#section-reset) owns reset scope; this rule adds no response reset and no preset section.
 
 MAIN Output must expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix), with its existing section menu. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output must not expose standalone lightness compression, an Output response section or preset, or a new Finished RGB output-processing switch. A negative-capture source must state that zero Simulation blend returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
 
@@ -141,6 +141,16 @@ The GUI must not present a selector that offers one choice.
 
 A parameter that no control can change and that no pipeline stage reads must not own a GUI section under the [preset section rule](../presets/design.md).
 
+## Section reset
+
+Every parameter section presents a reset on its header, under [GUI presentation](../gui-presentation/spec.md#section-headers). A reset restores the factory value of every parameter that section presents, and changes nothing outside that section.
+
+The factory value of a parameter is the value the validated factory state projects. A parameter that only the runtime model carries — a grain engine and its engine-specific group among them — keeps a factory value and therefore a reset target, even though no persisted section holds it.
+
+One section-to-parameter table maps each section to the parameters it presents. That table is the only source of a section's reset scope. A section's parameter set is not derived from the numeric range table, which holds numeric parameters only.
+
+The existing Output section owns its mix reset to 1, and the Enlarger section follows its existing scope. This section adds no response reset and no preset section.
+
 ## Control search
 
 The GUI must expose a search box at the top of the control panel. The search filters the controls of the parameter sections on the current tab by label.
@@ -164,5 +174,5 @@ A control that changes a persisted value must be reachable from the GUI. A persi
 
 Two controls that edit the same persisted value must not both be editable. When two surfaces must show one value, one is read-only.
 
-Two different parameters that share a label must carry a qualifier that distinguishes them.
+Two different parameters that share a label must carry a qualifier that distinguishes them. A qualifier that names the owning concept satisfies this rule; a section title alone does not, because rows share one label column across a whole page.
 
