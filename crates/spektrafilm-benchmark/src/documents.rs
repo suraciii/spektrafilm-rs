@@ -452,8 +452,9 @@ fn config(v: &Value, doc: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Region role names accepted by case and region records. The suite schema
-/// stays the single authority for the closed set.
+/// Region role names accepted by case and region records. The regions schema
+/// is the single authority for the closed set, and the suite schema's case and
+/// reference regions carry the same enumeration.
 pub fn region_roles() -> Result<Vec<String>> {
     enum_names(
         &schema_for("regions")?["properties"]["regions"]["items"]["properties"]["role"]["enum"],
