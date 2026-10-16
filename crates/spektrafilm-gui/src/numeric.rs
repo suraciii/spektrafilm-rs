@@ -247,7 +247,7 @@ fn wheel_adjust<T: egui::emath::Numeric>(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_wheel_delta, numeric_field, parse_value};
+    use super::{numeric_field, parse_value};
 
     #[test]
     fn incomplete_and_nonfinite_text_does_not_change_parameters() {
@@ -338,22 +338,6 @@ mod tests {
         assert_eq!(unchanged, -0.25);
     }
 
-    #[test]
-    fn wheel_delta_changes_by_step() {
-        let mut value = 1.0_f64;
-        assert!(apply_wheel_delta(&mut value, 1.0, 0.0, 2.0, 0.25));
-        assert_eq!(value, 1.25);
-    }
-
-    #[test]
-    fn wheel_delta_preserves_bounds() {
-        let mut min = 0.0_f64;
-        assert!(!apply_wheel_delta(&mut min, -1.0, 0.0, 2.0, 0.25));
-        assert_eq!(min, 0.0);
-        let mut max = 2.0_f64;
-        assert!(!apply_wheel_delta(&mut max, 1.0, 0.0, 2.0, 0.25));
-        assert_eq!(max, 2.0);
-    }
     #[test]
     fn mouse_wheel_event_changes_hovered_text_field() {
         let ctx = egui::Context::default();

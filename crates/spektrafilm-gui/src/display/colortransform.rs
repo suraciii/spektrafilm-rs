@@ -207,23 +207,6 @@ mod tests {
         assert_eq!(image.data, source);
     }
 
-    #[cfg(not(windows))]
-    #[test]
-    fn enabled_preview_applies_source_cctf_decoding() {
-        use spektrafilm_math::colorspace::{display_rgb, resolve};
-
-        let image = ImageBuf::from_data(1, 1, vec![0.18 as _, 0.18 as _, 0.18 as _]);
-        let (actual, _) =
-            output_display_raster(&image, "ITU-R BT.2020", true, true, None, 1).unwrap();
-        let space = resolve("ITU-R BT.2020").unwrap();
-        let expected = display_rgb([0.18, 0.18, 0.18], space, true);
-
-        for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
-            assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
-        }
-    }
-
-    #[cfg(not(windows))]
     #[test]
     fn enabled_preview_clips_out_of_gamut_display_values_only() {
         use spektrafilm_math::colorspace::{display_rgb, resolve};

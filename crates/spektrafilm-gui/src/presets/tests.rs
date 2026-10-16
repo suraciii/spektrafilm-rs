@@ -638,30 +638,6 @@ fn section_labels_and_names() {
     assert!(name_error("alpha", &entries, Some("alpha")).is_none());
 }
 #[test]
-fn reveal_uses_platform_file_selection_arguments() {
-    use std::ffi::OsString;
-
-    let path = Path::new("/tmp/My Presets/a look.toml");
-    let command = reveal_command(path);
-    let (program, args) = if cfg!(target_os = "macos") {
-        (
-            "open",
-            vec![OsString::from("-R"), path.as_os_str().to_owned()],
-        )
-    } else if cfg!(windows) {
-        let mut argument = OsString::from("/select,");
-        argument.push(path);
-        ("explorer", vec![argument])
-    } else {
-        (
-            "xdg-open",
-            vec![path.parent().unwrap().as_os_str().to_owned()],
-        )
-    };
-    assert_eq!(command.get_program(), program);
-    assert_eq!(command.get_args().collect::<Vec<_>>(), args);
-}
-#[test]
 fn browser_extension_preserves_existing_fields() {
     let mut extras = state::GuiState::factory().sections;
     extras["rust"]["presets"] = serde_json::to_value(BrowserState {

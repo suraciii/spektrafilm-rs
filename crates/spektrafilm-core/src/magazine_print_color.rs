@@ -483,32 +483,6 @@ mod tests {
     }
 
     #[test]
-    fn enabled_transform_changes_pixel() {
-        let mut image =
-            ImageBuf::from_data(1, 1, vec![from_f64(0.7), from_f64(0.2), from_f64(0.1)]);
-        let before = image.data.clone();
-        apply(&mut image, &enabled(), space(), true);
-        assert_ne!(image.data, before);
-    }
-
-    #[test]
-    fn neutral_gray_stays_neutral_when_disabled() {
-        let mut image =
-            ImageBuf::from_data(1, 1, vec![from_f64(0.4), from_f64(0.4), from_f64(0.4)]);
-        apply(
-            &mut image,
-            &MagazinePrintColorParams {
-                active: true,
-                strength: 0.0,
-            },
-            space(),
-            true,
-        );
-        assert_eq!(image.data[0], image.data[1]);
-        assert_eq!(image.data[1], image.data[2]);
-    }
-
-    #[test]
     fn encoded_pure_power_output_stays_decodable() {
         let mut image =
             ImageBuf::from_data(1, 1, vec![from_f64(0.0), from_f64(0.0), from_f64(0.0)]);

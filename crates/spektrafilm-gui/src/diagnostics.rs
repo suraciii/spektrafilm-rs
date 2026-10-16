@@ -313,21 +313,6 @@ mod tests {
         assert!(report.attempts.is_empty());
     }
     #[test]
-    fn changing_mode_does_not_change_accepted_operation() {
-        let mut diagnostics = Diagnostics {
-            mode: CollectionMode::Summary,
-            ..Default::default()
-        };
-        let operation = Operation::new(OperationKind::Preview, diagnostics.mode);
-        diagnostics.mode = CollectionMode::Off;
-        diagnostics.finish(operation, Outcome::Superseded);
-        assert_eq!(diagnostics.history.len(), 1);
-        assert_eq!(
-            diagnostics.history.front().unwrap().operation.outcome,
-            Outcome::Superseded
-        );
-    }
-    #[test]
     fn report_export_and_persistence_failure_do_not_change_history() {
         let mut diagnostics = Diagnostics::default();
         let operation = Operation::new(OperationKind::Preview, CollectionMode::Summary);

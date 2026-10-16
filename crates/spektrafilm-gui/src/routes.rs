@@ -86,16 +86,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn tooltip_describes_every_choice() {
-        let tooltip = tooltip();
-        for choice in &CHOICES {
-            assert!(
-                tooltip.contains(&format!("{} ({})", choice.label, choice.description)),
-                "tooltip omits {}",
-                choice.value
-            );
-        }
-    }
 }

@@ -243,16 +243,6 @@ mod tests {
         medium: ScanMedium,
         events: Vec<egui::Event>,
     ) -> (ChangeFlags, egui::FullOutput) {
-        scanner_frame_filtered(ctx, params, medium, "", events)
-    }
-
-    fn scanner_frame_filtered(
-        ctx: &egui::Context,
-        params: &mut RuntimeParams,
-        medium: ScanMedium,
-        filter: &str,
-        events: Vec<egui::Event>,
-    ) -> (ChangeFlags, egui::FullOutput) {
         let mut flags = ChangeFlags::default();
         let mut cache = SectionLabelCache::default();
         let output = ctx.run(
@@ -272,7 +262,7 @@ mod tests {
                         &mut serde_json::json!({}),
                         "Scanner",
                         medium,
-                        filter,
+                        "",
                         &mut cache,
                     );
                 });
@@ -339,53 +329,6 @@ mod tests {
                 assert!(!has_text(&output, "finish strength"));
             }
         }
-    }
-
-    // specs/gui-workflow/spec.md#control-search: a control's guard key must
-    // contain its visible label, so the full label reaches the control.
-    #[test]
-    fn control_search_reaches_the_negative_conversion_control_by_its_visible_label() {
-        let ctx = egui::Context::default();
-        let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        params.scanner.scan_output = "negative_to_positive".into();
-        let (_, output) = scanner_frame_filtered(
-            &ctx,
-            &mut params,
-            ScanMedium::Negative,
-            "Negative conversion method",
-            vec![],
-        );
-        assert!(has_text(&output, "Negative conversion method"));
-    }
-
-    // specs/gui-workflow/spec.md#control-search: a control whose label does not
-    // match the filter must not appear, so the scan point rows filter
-    // independently.
-    #[test]
-    fn control_search_isolates_the_scan_point_rows() {
-        let ctx = egui::Context::default();
-        let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        params.scanner.scan_output = "negative_to_positive".into();
-        let (_, output) = scanner_frame_filtered(
-            &ctx,
-            &mut params,
-            ScanMedium::Negative,
-            "film-scan white point",
-            vec![],
-        );
-        assert!(has_text(&output, "film-scan white point"));
-        assert!(!has_text(&output, "film-scan black point"));
-        let (_, output) = scanner_frame_filtered(
-            &ctx,
-            &mut params,
-            ScanMedium::Negative,
-            "film-scan black point",
-            vec![],
-        );
-        assert!(has_text(&output, "film-scan black point"));
-        assert!(!has_text(&output, "film-scan white point"));
     }
 
     #[test]

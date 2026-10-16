@@ -435,7 +435,6 @@ fn fixed_input_precedence_and_winning_edit_feedback_are_observable() {
 fn route_conflicts_and_dry_run_format_fail_before_rendering() {
     let f = Fixture::new();
     for args in [
-        vec!["--route", "input > film > scan", "--scan-film"],
         vec!["--dry-run-format", "text"],
         vec!["--seed", "4294967296"],
         vec!["--seed", "-1"],

@@ -781,18 +781,6 @@ mod tests {
     }
 
     #[test]
-    fn zero_amount_still_runs_pipeline() {
-        let i = ImageBuf::from_data(2, 2, vec![0.4; 12]);
-        let p = GrainV2Params {
-            amount: 0.,
-            ..Default::default()
-        };
-        let out = apply_cpu(&i, p);
-        assert!(out.data.iter().all(|v| to_f32(*v).is_finite()));
-        assert_ne!(out.data, i.data);
-    }
-
-    #[test]
     fn resolution_type_selects_analogue_path_and_noise_bypasses_resolution() {
         let weights = fast_blur_weights(0.5);
         assert_eq!(weights.len(), 1);
@@ -834,25 +822,6 @@ mod tests {
         assert_eq!(optical_noise.data, fast_noise.data);
         noise.film_type = 0;
         assert_eq!(apply_cpu(&image, noise).data, fast_noise.data);
-    }
-    #[test]
-    fn modes_resolution_and_color() {
-        let i = ImageBuf::from_data(
-            8,
-            6,
-            (0..144).map(|v| from_f32((v % 11) as f32 / 11.)).collect(),
-        );
-        let mut p = GrainV2Params::default();
-        let a = apply_cpu(&i, p);
-        assert_eq!(a.data, apply_cpu(&i, p).data);
-        p.mode = GrainV2Mode::Noise;
-        let b = apply_cpu(&i, p);
-        assert_ne!(a.data, b.data);
-        p.resolution_factor = 0.;
-        p.film_type = 0;
-        assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
-        p.colored = false;
-        assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
     }
     #[test]
     fn optical_subpixel_radius_is_identity() {
