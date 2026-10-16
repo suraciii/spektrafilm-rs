@@ -4,7 +4,7 @@
 use spektrafilm_math::gaussian::gaussian_blur_channel;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::numpy_rng::GaussRng;
-use spektrafilm_math::precision::{Scalar, from_f32, from_f64};
+use spektrafilm_math::precision::{Scalar, from_f64};
 /// LogNormal parameters `(mu, sigma)` inverted from the linear-space mean
 /// `percent` and std `roughness * percent`. Shared by the CPU sampler and
 /// the GPU-resident glare pass so the derivation cannot drift:
@@ -90,31 +90,6 @@ pub fn add_glare_with_amount(
         px[1] += g * space_offset[1];
         px[2] += g * space_offset[2];
     }
-}
-
-/// Add viewing glare to an XYZ image.
-///
-/// Port of Python `add_glare`. Generates a random glare pattern
-/// using lognormal distribution, blurs it, and adds it as
-/// a fraction of the illuminant.
-pub fn add_glare(
-    xyz: &ImageBuf,
-    illuminant_xyz: [f32; 3],
-    percent: f32,
-    roughness: f32,
-    blur: f32,
-) -> ImageBuf {
-    if percent <= 0.0 {
-        return xyz.clone();
-    }
-
-    let glare_amount =
-        compute_random_glare_amount(xyz.width, xyz.height, percent, roughness, blur, 0);
-    let illum = illuminant_xyz.map(from_f32);
-    let mut result = xyz.clone();
-    add_glare_with_amount(&mut result, &glare_amount, illum);
-
-    result
 }
 
 #[cfg(test)]

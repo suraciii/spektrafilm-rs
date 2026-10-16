@@ -8,7 +8,6 @@
 /// density curve tables.
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::interp;
 use spektrafilm_math::precision::{ONE, Scalar, ZERO, from_f64};
 
 const SEPT_K: f64 = 5.8013;
@@ -211,24 +210,6 @@ fn validate_alphas(
         }
     }
     Ok(())
-}
-
-/// f64 variant — preserves precision through the interpolation.
-pub fn interpolate_exposure_to_density_f64(
-    log_raw: &ImageBuf,
-    density_curves: &[[f64; 3]],
-    log_exposure: &[f64],
-    gamma_factor: f64,
-) -> ImageBuf {
-    if (gamma_factor - 1.0).abs() < 1e-12 {
-        interp::fast_interp_image_f64(log_raw, log_exposure, density_curves)
-    } else {
-        let x_axes: Vec<[f64; 3]> = log_exposure
-            .iter()
-            .map(|&le| [le / gamma_factor, le / gamma_factor, le / gamma_factor])
-            .collect();
-        interp::fast_interp_image_perchannel_f64(log_raw, &x_axes, density_curves)
-    }
 }
 
 /// f64 variant — normalize density curves by subtracting the per-channel minimum.

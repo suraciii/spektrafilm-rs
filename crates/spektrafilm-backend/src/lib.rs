@@ -241,7 +241,7 @@ pub trait ComputeBackend: Send + Sync {
     ///
     /// Called twice per render (filming.develop + printing.develop). GPU
     /// backends override with `density_curve_interp.wgsl`; CPU falls back to
-    /// the f64 reference (`interpolate_exposure_to_density_f64`).
+    /// the f64 curve interpolation in `spektrafilm-model::density_curves`.
     fn density_curve_interp(
         &self,
         log_raw: &ImageBuf,

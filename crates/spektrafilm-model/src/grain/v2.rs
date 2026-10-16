@@ -7,8 +7,6 @@ use spektrafilm_math::{
     precision::{from_f32, to_f32},
 };
 
-pub const CANVAS_WIDTH: u32 = 5200;
-pub const CANVAS_HEIGHT: u32 = 3100;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GrainV2Mode {
     #[default]
