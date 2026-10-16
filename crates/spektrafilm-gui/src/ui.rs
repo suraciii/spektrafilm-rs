@@ -909,28 +909,22 @@ impl eframe::App for App {
                     .update(&self.output_image, output_id, ui.ctx());
                 self.histogram.render(ui);
                 ui.add_space(theme::SPACE_BLOCK);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     // One segmented control: every page shares a frame, so the
                     // current page reads as a position in a row rather than a
-                    // lone highlighted button. Each segment is allocated an
-                    // exact equal share, so a long label is clipped by its
-                    // segment instead of pushing the row past the panel.
-                    let segments = GuiTab::ALL.len();
-                    for (index, tab) in GuiTab::ALL.into_iter().enumerate() {
-                        let remaining = segments - index;
-                        let gap = ui.spacing().item_spacing.x;
-                        let usable = ui.available_width() - gap * (remaining - 1) as f32;
-                        let width = (usable / remaining as f32).max(0.0);
+                    // lone highlighted button. Segments take their natural
+                    // width, which fits the panel, so no label is clipped.
+                    for tab in GuiTab::ALL {
                         let selected = self.gui_tab == tab;
-                        let (rect, mut response) = ui.allocate_exact_size(
-                            egui::vec2(width, ui.spacing().interact_size.y),
-                            egui::Sense::click(),
-                        );
-                        let button = egui::Button::new(tab.label())
-                            .selected(selected)
-                            .corner_radius(theme::RADIUS_CARD);
-                        response |= ui.put(rect, button).on_hover_text(tab.description());
-                        if response.clicked() {
+                        if ui
+                            .add(
+                                egui::Button::new(tab.label())
+                                    .selected(selected)
+                                    .corner_radius(theme::RADIUS_CARD),
+                            )
+                            .on_hover_text(tab.description())
+                            .clicked()
+                        {
                             self.gui_tab = tab;
                         }
                     }
