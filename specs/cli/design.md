@@ -2,6 +2,10 @@
 
 This document is the unified CLI design. Parameter composition and workflow behavior remain distinct sections of one implementation boundary.
 
+## Design stance
+
+Use Unix-style design; dumb pipes, smart endpoints.
+
 ## Parameter boundary
 
 The [parameter contract](spec.md#parameter-contract) owns syntax, composition, validation, and inspection behavior. The CLI adapter must parse options and choose the execution contract. Core must own preset resolution and effective parameter preparation. The adapter must not implement another film pipeline or duplicate stock calibration rules.
