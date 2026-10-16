@@ -787,9 +787,9 @@ pub fn hanatos2025_rgb_to_raw_prepared(
         .par_chunks_exact_mut(3)
         .zip(image.data.par_chunks_exact(3))
         .for_each(|(out, px)| {
-            let r = px[0] as f64;
-            let g = px[1] as f64;
-            let b_in = px[2] as f64;
+            let r = crate::precision::to_f64(px[0]);
+            let g = crate::precision::to_f64(px[1]);
+            let b_in = crate::precision::to_f64(px[2]);
             let xyz_native = [
                 rgb_to_xyz[0][0] * r + rgb_to_xyz[0][1] * g + rgb_to_xyz[0][2] * b_in,
                 rgb_to_xyz[1][0] * r + rgb_to_xyz[1][1] * g + rgb_to_xyz[1][2] * b_in,

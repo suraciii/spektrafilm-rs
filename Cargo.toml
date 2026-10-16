@@ -66,6 +66,14 @@ opt-level = 2
 [workspace.lints.clippy]
 excessive_precision = "allow"
 
+# `Scalar` aliases f32 by default and f64 under `--features precision-f64`, so
+# `v as f64` is a real widening in one profile and a no-op in the other. Both
+# spellings are intentional and appear throughout the pipeline; the f64 build's
+# `unnecessary_cast` would otherwise demand 84 call-site edits that change no
+# behavior. Prefer `precision::to_f64(v)` for new code, which reads as the
+# widening it performs.
+unnecessary_cast = "allow"
+
 # WGPU 24 does not expose Metal floating-point compilation options. The local
 # HAL patch preserves CPU binary32 arithmetic only for the marked grain shader.
 [patch.crates-io]

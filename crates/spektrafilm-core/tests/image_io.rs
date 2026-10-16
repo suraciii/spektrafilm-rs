@@ -249,7 +249,7 @@ fn exr_half_rounds_directly_from_f64_and_float32_exports_keep_their_precision() 
         .unwrap();
         let decoded = image_io::load(&path).unwrap().image;
         assert_eq!((decoded.width, decoded.height), (cases.len() as u32, 1));
-        for (pixel, &(input, half_expected)) in decoded.data.chunks_exact(3).zip(&cases) {
+        for (pixel, &(input, half_expected)) in decoded.data.as_chunks::<3>().0.iter().zip(&cases) {
             let expected = if depth == BitDepth::Sixteen {
                 half_expected
             } else {
