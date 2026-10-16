@@ -196,14 +196,45 @@ fn empty_session() -> Session {
 }
 
 fn click(h: &mut Harness<'_, App>, label: &str) {
+    // A page's controls are taller than the viewport, so a controls-panel
+    // label can resolve to a node sitting below the fold; the click would then
+    // land on whatever the scroll area shows at that offset. Nodes elsewhere
+    // (viewer, footer) are not in the scroll area and need no scroll.
+    scroll_controls_into_view(h, label);
     h.get_by_label(label).simulate_click();
     h.run_steps(3);
+}
+
+/// Scroll the controls panel until every node carrying `label` that lives in
+/// that panel sits inside the visible band.
+///
+/// The panel reserves `theme::HEIGHT_ACTION_BAR_RESERVE` at its bottom so the
+/// action bar never sits under the screen edge, so the usable band ends that
+/// much above the screen bottom rather than at the screen edge.
+fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
+    let screen = h.ctx.screen_rect();
+    let band_top = 40.0_f64;
+    let band_bottom = screen.bottom() as f64 - theme::HEIGHT_ACTION_BAR_RESERVE as f64;
+    let panel_left = (screen.right() - 320.0) as f64;
+    for _ in 0..16 {
+        let needs_scroll = h
+            .query_all_by_label(label)
+            .filter_map(|node| node.node().raw_bounds())
+            // Only nodes inside the controls panel are scrollable.
+            .filter(|bounds| bounds.x0 >= panel_left)
+            .any(|bounds| bounds.y0 <= band_top || bounds.y1 >= band_bottom);
+        if !needs_scroll {
+            return;
+        }
+        scroll_controls_down(h);
+    }
 }
 
 /// Click an export action. The sidebar button that opens the modal and the
 /// modal's own submit share one label; the sidebar action is disabled while
 /// the modal is open, so the single enabled node is the actionable one.
 fn export_action(h: &mut Harness<'_, App>) {
+    scroll_controls_into_view(h, "Export…");
     let buttons: Vec<_> = h
         .query_all_by_label("Export…")
         .filter(|node| !node.node().is_disabled())
