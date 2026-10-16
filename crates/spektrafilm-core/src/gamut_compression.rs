@@ -6,7 +6,9 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::params::OutputGamutCompressParams;
 
-use spektrafilm_math::colorspace::{RgbColorSpace, SRGB, resolve};
+#[cfg(test)]
+use spektrafilm_math::colorspace::SRGB;
+use spektrafilm_math::colorspace::{RgbColorSpace, resolve};
 
 mod cam16;
 mod jzazbz;
@@ -185,6 +187,10 @@ pub struct OutputGamutCompress {
 
 impl OutputGamutCompress {
     /// No-op (identity) compressor.
+    ///
+    /// Test-only: production configuration is built through [`Self::build`],
+    /// which resolves the destination and algorithm together.
+    #[cfg(test)]
     pub fn identity() -> Self {
         Self {
             kind: Kind::Off,
