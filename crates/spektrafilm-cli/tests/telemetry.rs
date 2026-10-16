@@ -49,7 +49,14 @@ impl Fixture {
             .arg(self.path("params.json"))
             .arg("--data-dir")
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
-            .env("RUST_LOG", "off");
+            .env("RUST_LOG", "off")
+            .env("SPEKTRAFILM_CONFIG_DIR", self.directory.join("config"))
+            .env(
+                "SPEKTRAFILM_DATA_DIR",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            )
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+            .env_remove("SPEKTRAFILM_BACKEND");
         command
     }
     fn report(&self, name: &str) -> Value {
@@ -326,6 +333,12 @@ fn render_keeps_machine_result_and_hash_inside_terminal_boundary() {
             .arg("--data-dir")
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
             .env("SPEKTRAFILM_BACKEND", "cpu")
+            .env("SPEKTRAFILM_CONFIG_DIR", fixture.directory.join("config"))
+            .env(
+                "SPEKTRAFILM_DATA_DIR",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            )
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
             .env("RUST_LOG", "off");
         if diagnostics {
             command
