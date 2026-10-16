@@ -35,7 +35,10 @@ fn parse_value<T: egui::emath::Numeric>(text: &str, min: f64, max: f64) -> Optio
     if !parsed.is_finite() || (T::INTEGRAL && parsed.fract() != 0.0) {
         return None;
     }
-    Some(parsed.clamp(min, max))
+    if parsed < min || parsed > max {
+        return None;
+    }
+    Some(parsed)
 }
 
 // Numeric widgets keep their existing parameter interfaces.
@@ -260,9 +263,12 @@ mod tests {
             parse_value::<f64>("1\u{202f}000", 0.0, 10000.0),
             Some(1000.0)
         );
-        assert_eq!(parse_value::<f64>("25", -10.0, 10.0), Some(10.0));
+        // Out-of-range input is rejected, not clamped.
+        assert_eq!(parse_value::<f64>("25", -10.0, 10.0), None);
+        assert_eq!(parse_value::<f64>("5", -10.0, 10.0), Some(5.0));
         assert_eq!(parse_value::<u32>("2.5", 1.0, 10.0), None);
-        assert_eq!(parse_value::<u32>("0", 1.0, 10.0), Some(1.0));
+        assert_eq!(parse_value::<u32>("0", 1.0, 10.0), None);
+        assert_eq!(parse_value::<u32>("5", 1.0, 10.0), Some(5.0));
     }
 
     #[test]

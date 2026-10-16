@@ -652,6 +652,18 @@ impl Viewer {
                 Color32::WHITE,
             );
         }
+        if input_float.is_none() {
+            let painter = ui.painter_at(rect);
+            let message = "No image loaded\nDrop an image here, or use MAIN → Import";
+            let galley = painter.layout(
+                message.to_string(),
+                egui::FontId::proportional(16.0),
+                crate::theme::FG_SECONDARY,
+                rect.width(),
+            );
+            let pos = rect.center() - galley.size() * 0.5;
+            painter.galley(pos, galley, crate::theme::FG_SECONDARY);
+        }
         let source = match layer {
             ViewLayer::Input => input_float,
             ViewLayer::Output => output_float,
