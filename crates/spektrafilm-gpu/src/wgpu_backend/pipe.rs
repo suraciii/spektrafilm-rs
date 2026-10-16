@@ -1,5 +1,5 @@
 //! GPU pipe execution core — the internal carrier defined by
-//! `specs/gpu-execution/pipe-architecture.md` (slice S1).
+//! `specs/gpu-execution/design.md` (pipe assembly).
 //!
 //! The pipe owns buffer reuse and the host transfer points: input upload,
 //! fences, and the final readback. Per-stage trait methods dispatch through
@@ -429,7 +429,7 @@ impl GpuPipe {
 }
 
 type CpuFenceFn<'a> = Box<dyn FnOnce(&GpuPipe) -> Result<(), String> + 'a>;
-/// One node of an assembled compute chain (pipe-architecture slices S2/S3).
+/// One node of an assembled compute chain (`specs/gpu-execution/design.md`, pipe assembly and fence semantics).
 /// A `Gpu` node submits its passes without host transfer. Separate submissions
 /// prevent neighboring nodes from accumulating into one watchdog-sized job.
 /// A `Cpu` node materializes a device image, runs its host stage, and writes

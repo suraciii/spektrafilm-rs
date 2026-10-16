@@ -413,6 +413,30 @@ fn config(v: &Value, doc: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Region role names accepted by case and region records. The suite schema
+/// stays the single authority for the closed set.
+pub fn region_roles() -> Result<Vec<String>> {
+    enum_names(&schema_for("regions")?["items"]["properties"]["role"]["enum"])
+}
+
+/// Measurement family names accepted by case and region records.
+pub fn measurement_families() -> Result<Vec<String>> {
+    enum_names(&schema_for("regions")?["items"]["properties"]["measurements"]["items"]["enum"])
+}
+
+fn enum_names(value: &Value) -> Result<Vec<String>> {
+    value
+        .as_array()
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .ok_or_else(|| err("schema_asset", "enum schema is missing its names"))
+}
+
 pub fn schema_for(kind: &str) -> Result<Value> {
     if matches!(
         kind,
@@ -440,7 +464,7 @@ pub fn schema_for(kind: &str) -> Result<Value> {
         "policy" => include_str!("../assets/policy.schema.json"),
         "run" => include_str!("../assets/run.schema.json"),
         "comparison" => include_str!("../assets/comparison.schema.json"),
-        "chart-report" => include_str!("../assets/chart-report.schema.json"),
+        "review" => include_str!("../assets/review.schema.json"),
         _ => {
             return Err(err(
                 "unknown_document_kind",

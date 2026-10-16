@@ -234,7 +234,7 @@ fn cli_report_opens_unaligned_reference_as_side_views() {
     let report = temp.path().join("report");
     for (command, source_option, source, destination) in [
         ("compare", "--run", &run, &comparison),
-        ("report", "--comparison", &comparison, &report),
+        ("generate-report", "--comparison", &comparison, &report),
     ] {
         let mut cli = std::process::Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"));
         cli.arg(command)
@@ -352,7 +352,7 @@ fn single_input_comparison_uses_real_retained_source_offline() {
         pair["source_diagnostics"]
     );
     let report_root = temp.path().join("report");
-    report::build_report(&out, &report_root, report::Layout::Standard, &[]).unwrap();
+    report::build_report(&out, &report_root).unwrap();
     fs::remove_dir_all(&out).unwrap();
     let snapshot = documents::load_json_document(&report_root.join("comparison.json")).unwrap();
     let report_manifest = documents::load_json_document(&report_root.join("report.json")).unwrap();
@@ -444,13 +444,7 @@ fn visual_and_unavailable_reference_findings_publish_inspectable_evidence() {
             }
         }
         fs::remove_dir_all(&run).unwrap();
-        report::build_report(
-            &out,
-            &temp.path().join("report"),
-            report::Layout::Standard,
-            &[],
-        )
-        .unwrap();
+        report::build_report(&out, &temp.path().join("report")).unwrap();
     }
 }
 
@@ -484,7 +478,7 @@ fn tone_contaminated_reference_map_remains_unavailable_in_offline_report() {
     );
     fs::remove_dir_all(&run).unwrap();
     let report_root = temp.path().join("report");
-    report::build_report(&out, &report_root, report::Layout::Standard, &[]).unwrap();
+    report::build_report(&out, &report_root).unwrap();
     fs::remove_dir_all(&out).unwrap();
     let report_manifest = documents::load_json_document(&report_root.join("report.json")).unwrap();
     let retained = report_manifest["artifacts"]
@@ -580,8 +574,7 @@ fn report_rejects_reference_scope_and_alignment_contradictions() {
         }
         save_manifest(&out, "comparison.json", manifest);
         let report_root = temp.path().join(format!("rejected-report-{index}"));
-        let error =
-            report::build_report(&out, &report_root, report::Layout::Standard, &[]).unwrap_err();
+        let error = report::build_report(&out, &report_root).unwrap_err();
         assert_eq!(error.code, expected);
     }
 }

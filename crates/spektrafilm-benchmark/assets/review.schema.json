@@ -11,7 +11,7 @@
     "description": {
       "type": "string"
     },
-    "charts": {
+    "sets": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": false,
@@ -76,14 +76,98 @@
               "gap"
             ],
             "additionalProperties": false
+          },
+          "regions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "geometry": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "propertyNames": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+                  },
+                  "additionalProperties": {
+                    "type": "array",
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "uniqueItems": false,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "geometry"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "measurement": {
+            "type": "object",
+            "description": "How this grid set derives measurement regions. Only grid sets may declare it.",
+            "properties": {
+              "sample": {
+                "description": "Centered sample window [width, height] in decoded image pixels; must fit inside each patch window.",
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "uniqueItems": false,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "role": {
+                "description": "Role of each derived region; uses the existing region role names.",
+                "type": "string",
+                "minLength": 1
+              },
+              "measurements": {
+                "description": "Measurement families of each derived region; uses the existing family names.",
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [
           "id",
-          "label",
-          "grid"
+          "label"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "grid"
+            ]
+          },
+          {
+            "required": [
+              "regions"
+            ]
+          }
+        ]
       }
     },
     "images": {
@@ -97,7 +181,7 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
           },
-          "chart": {
+          "set": {
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
           },
@@ -122,7 +206,7 @@
         },
         "required": [
           "id",
-          "chart",
+          "set",
           "path",
           "label",
           "color_space",
@@ -153,11 +237,11 @@
   "required": [
     "schema_version",
     "title",
-    "charts",
+    "sets",
     "images",
     "default_pair"
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "SpektraFilm prepared chart report version 1"
+  "title": "SpektraFilm prepared image review version 1"
 }

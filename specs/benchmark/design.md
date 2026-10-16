@@ -4,9 +4,9 @@
 
 `SpektraFilm` remains the renderer. `spektrafilm-bench` is an external evaluation orchestrator and artifact producer. It consumes the renderer's public CLI, machine-readable dry-run output, floating image output, and diagnostics. It does not import renderer internals or duplicate runtime parameter resolution.
 
-The benchmark owns suite selection, target identity, dependency hashing, run isolation, comparison policy, metric execution, region selection, evidence indexing, and review artifact generation. A metric adapter owns one measurement implementation. A report builder owns presentation of an existing comparison.
+The benchmark owns suite selection, target identity, dependency hashing, run isolation, comparison policy, metric execution, region selection, evidence indexing, and review artifact generation. A metric adapter owns one measurement implementation. A report builder owns presentation of an existing comparison or a prepared image manifest.
 
-The benchmark must keep rendering and evaluation separate. A run produces immutable render evidence. A comparison reads runs and produces immutable measurements. A report reads comparisons and produces review artifacts. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
+The benchmark must keep rendering and evaluation separate. A run produces immutable render evidence. A comparison reads runs and produces immutable measurements. A report reads a retained comparison or a prepared image manifest and produces review artifacts; the source document kind selects the builder. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
 
 Preflight shares renderer configuration resolution with execution and publishes a separate validation record. It never enters the render-evidence lifecycle. Target construction owns executable pinning for both local commands and fixtures. The inspection view reads validated comparison records, projects existing measurements, and leaves metric computation and policy evaluation with their current owners.
 
@@ -25,11 +25,11 @@ flowchart LR
 
 ## Chosen boundary options
 
-A renderer-integrated benchmark would remove subprocess setup but would bind evaluation to the current simulation runtime. A standalone Rust CLI preserves comparisons across historical renderer executables and retained artifacts. The target design chooses the standalone CLI with the existing renderer process boundary. A pinned Python implementation supplies migration acceptance evidence outside the delivered runtime.
+A renderer-integrated benchmark would remove subprocess setup but would bind evaluation to the current simulation runtime. A standalone Rust CLI preserves comparisons across historical renderer executables and retained artifacts. The target design chooses the standalone CLI with the existing renderer process boundary.
 
 The benchmark must not add a second parameter DSL. Suite and target documents may reference the renderer's existing `--preset`, `--params`, and `--set` carriers. The benchmark validates their shape and passes them to the renderer in the renderer's defined precedence order. Benchmark-only settings use typed JSON fields and have no shell or expression evaluation.
 
-The delivered benchmark must use the Rust workspace implementation defined in [Rust delivery](rust-delivery/spec.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters. The executable must not require the Python benchmark at runtime.
+The delivered benchmark must use the Rust workspace implementation defined in [Rust delivery](rust-delivery/spec.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters.
 
 The single-image CLI adapter must build the existing suite and case representation and call the existing run orchestrator. It must resolve each authored dependency against its owning document before producing the retained suite. It must not add chart detection or a separate simulation-parameter vocabulary.
 
@@ -100,11 +100,13 @@ Case navigation must preserve request order. Pair selection must change the comp
 
 Report fragment navigation identifies case, seed, pair, and region by retained semantic identities. Internal DOM ordering must not define public location identity. Accessible disclosure controls and direct links belong to the review builder; neither navigation nor inspection may recalculate a measurement.
 
-The diagnostic layout is another presentation of the same comparison, not a second evaluation pipeline. Focus regions and complete regional costs must use retained measurements. A selected visual pair without measured evidence must remain visually inspectable with an explicit unavailable numeric state. Full-image JPEG copies must remain display-only derivatives; native detail and numerical artifacts retain their existing owners.
+Region inspection must not become a second evaluation pipeline; it must use retained measurements. A selected visual pair without measured evidence must remain visually inspectable with an explicit unavailable numeric state. Native detail and numerical artifacts retain their existing owners.
 
-### Prepared chart report builder
+### Prepared image review builder
 
-The prepared chart builder imports explicitly declared raster images instead of synthesizing benchmark runs or comparison records. Its authored manifest owns chart groups, window geometry, captions, and the initial pair. It does not own rendering, reference qualification, or measurement algorithms.
+The prepared review builder imports explicitly declared raster images instead of synthesizing benchmark runs or comparison records. Its authored manifest owns sets, patch or region geometry, captions, and the initial pair. A set declares either a shared grid or explicit per-image regions; the builder must not infer correspondence from dimensions, labels, or similar colors. It does not own rendering, reference qualification, or measurement algorithms.
+
+A photographic pair without a declared shared layout must use explicit regions rather than a synthetic grid. A declared grid must remain the single geometry source for its review windows and their derived measurement regions: derivation is a deterministic document transformation that shares the review window arithmetic and reads the set's declared measurement intent, and review geometry enters a measured protocol only through a case or reference document.
 
 The builder must reuse strict document loading, dependency path resolution, destination publication, and image display conversion. It must snapshot authored image dependencies before decoding so an undeclared neighboring sidecar cannot override the explicit color declaration. It must retain each image's source identity, observed dimensions, and generated display artifact. The terminal report manifest must be written after all assets succeed.
 
@@ -136,6 +138,6 @@ The pipeline must distinguish configuration failure, renderer failure, measureme
 
 A comparison can complete with `insufficient_evidence`, but a qualified pass requires all required measurements, compatible conditions, calibrated policy, and successful artifact validation. Human approval can add a review decision but cannot rewrite the measured result.
 
-## Migration and delivery
+## Delivery
 
-[Rust delivery](rust-delivery/spec.md) defines migration scope, numerical acceptance, resource measurements, supported-platform packaging, and cutover. The delivered implementation is the Rust workspace crate. The pinned Python reference and acceptance evidence remain outside the repository after cutover.
+[Rust delivery](rust-delivery/spec.md) defines the delivered implementation's scope, distribution, workspace and execution boundary, numerical implementation, and protocol identity. The delivered implementation is the Rust workspace crate.

@@ -59,8 +59,10 @@ _Avoid_: Scanner white and black correction, output levels
 **Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver the image.
 _Avoid_: Scanned medium, negative conversion
 
-**Prepared chart image**: A chart image with an explicitly established layout of its patch windows. Preparation does not establish measured color values or exposure equivalence.
+**Prepared image**: A raster image explicitly prepared outside the benchmark and declared in a review manifest. Its color interpretation is declared rather than inferred; preparation does not establish measured color values, exposure equivalence, or original framing.
+_Avoid_: Prepared chart image
 
-**Chart group**: Images declared to share the same ordered patch identities. A shared group does not establish the same spectral stimulus or pixel-level registration.
+**Set**: A declared group of prepared images inside one review manifest, with either a shared patch grid or explicit per-image regions. A shared set does not establish the same spectral stimulus or pixel-level registration.
+_Avoid_: Chart group
 
-**Patch window**: The declared rectangular area of one chart patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another chart group.
+**Patch window**: The declared rectangular area of one grid patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another set.

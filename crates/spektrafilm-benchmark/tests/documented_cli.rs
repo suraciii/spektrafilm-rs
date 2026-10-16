@@ -73,8 +73,8 @@ fn documented_benchmark_commands_use_supported_flags() {
         "run",
         "compare",
         "inspect",
-        "report",
-        "chart-report",
+        "generate-report",
+        "generate-regions",
     ] {
         assert!(checked.contains(&("spektrafilm-bench".into(), Some(subcommand.into()))));
     }

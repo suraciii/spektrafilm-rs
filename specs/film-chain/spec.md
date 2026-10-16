@@ -10,7 +10,7 @@
 - [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
-- Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). CPU f64 remains the numerical reference; GPU execution must cover the selected chain without replacing its model.
+- Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). GPU execution must cover the selected chain without replacing its model.
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
 
@@ -32,7 +32,7 @@ The [Digital Reference contract](digital-reference/spec.md) defines a common ref
 2. GUI controls must display `Preserve medium polarity` for `direct_scan`, `Negative to positive` for `negative_to_positive`, and `Negative conversion method` for `scanner.negative_conversion_method`.
 3. Replacing the removed value with `negative_to_positive` must preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls. Verify density, separable, coupled, direct-negative, reversal-film, and paper paths with the same executable precision.
 4. Removed-value rejection must occur before output publication. A failed GUI import must retain the accepted parameters and image.
-5. Conversion telemetry must identify stage `negative_to_positive` and its actual executor under [Telemetry](../telemetry/metrics.md#effective-configuration). Selecting this mode must not require a CPU reason or a resident decline.
+5. Conversion telemetry must identify stage `negative_to_positive` and its actual executor under [Telemetry](../telemetry/metrics/spec.md#effective-configuration). Selecting this mode must not require a CPU reason or a resident decline.
 
 ## Scan medium and scanner controls
 
