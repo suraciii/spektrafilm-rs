@@ -98,15 +98,26 @@ check-python-cache:
 check-python:
     python3 -c 'import pathlib, subprocess; paths = subprocess.check_output(["git", "ls-files", "-z", "--", "*.py"]).split(b"\0"); [compile(pathlib.Path(path.decode()).read_bytes(), path.decode(), "exec") for path in paths if path]'
 
+# Reject test code that builds a GPU device without holding the device lock.
+check-device-lock: check-device-lock-guard check-device-lock-tests
+
+# The guard itself. Its masker fails open when buggy, so the guard's own
+# regression tests run first: a silently disabled check is worse than none.
+check-device-lock-guard:
+    python3 scripts/check_device_lock.py
+
+check-device-lock-tests:
+    python3 scripts/test_check_device_lock.py
+
 # Pure math regressions need no native libraries, GPU, or renderer.
 test-pr:
     cargo test --locked -p spektrafilm-math --lib
     cargo test --locked -p spektrafilm-math --lib --features precision-f64
 # Required PR gate; workspace compilation and native suites run after merge.
-ci-pr: check-python-cache check-python fmt test-pr
+ci-pr: check-python-cache check-python check-device-lock fmt test-pr
 
 # Full local and main-branch gate, including slow rendering and GPU tests.
-ci: check-python-cache check-python fmt check check-f64 clippy test test-f64 benchmark-test parity-backend
+ci: check-python-cache check-python check-device-lock fmt check check-f64 clippy test test-f64 benchmark-test parity-backend
 
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:

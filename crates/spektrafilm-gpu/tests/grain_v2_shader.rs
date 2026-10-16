@@ -1,8 +1,14 @@
 #![cfg(feature = "wgpu-backend")]
 
 /// Validate the standalone shader with a WGPU device when one is available.
+///
+/// The device lock is held for the whole test: the software Vulkan driver
+/// (llvmpipe) is not safe under concurrent device use in one process, so a
+/// raw `wgpu::Instance` here would race every other device test in this
+/// binary and any sibling test binary the runner starts in parallel.
 #[test]
 fn grain_v2_shader_compiles() {
+    let _guard = spektrafilm_gpu::test_support::device_lock();
     let source = include_str!("../src/wgpu_backend/grain/grain_v2.wgsl");
     let instance = wgpu::Instance::default();
     let adapter =

@@ -878,8 +878,7 @@ mod tests {
         // G2: the device evaluates the same conditioning from the same tables.
         // Both sides read `Model::channel_tables`, so this compares two
         // evaluations of one derivation instead of two derivations.
-        let backend = spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
-            .expect("this test needs a usable device");
+        let backend = spektrafilm_gpu::test_support::adapter();
         let film = load("kodak_portra_800");
         let params = supported_params();
         let resolved = resolve(&film, &params).unwrap();
@@ -943,8 +942,7 @@ mod tests {
     #[test]
     fn device_field_matches_the_cpu_reference_in_expectation() {
         use spektrafilm_backend::ComputeBackend as _;
-        let backend = spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
-            .expect("this test needs a usable device");
+        let backend = spektrafilm_gpu::test_support::adapter();
         let film = load("kodak_portra_800");
         let params = supported_params();
         let mut resolved = resolve(&film, &params).unwrap();
@@ -970,7 +968,7 @@ mod tests {
             for grid in grids {
                 let device = device_params(&resolved, 2.0, grid).unwrap();
                 let gpu_out =
-                    spektrafilm_backend::ComputeBackend::dye_field(&backend, &source, &device)
+                    spektrafilm_backend::ComputeBackend::dye_field(&*backend, &source, &device)
                         .expect("the backend exposes a device field path")
                         .expect("the device field runs");
                 let cpu_out = v3::apply(&source, 2.0, grid, &resolved).unwrap();

@@ -790,5 +790,7 @@ mod tests;
 
 /// Serial lock shared by all wgpu-backend test modules: the software Vulkan
 /// driver (llvmpipe) is not safe under concurrent device use in one process.
+/// The one definition lives in [`crate::test_support::DEVICE_LOCK`] so this
+/// crate's tests and every downstream test binary serialize on the same lock.
 #[cfg(test)]
-pub(super) static TEST_DEVICE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) static TEST_DEVICE_LOCK: &std::sync::Mutex<()> = &crate::test_support::DEVICE_LOCK;

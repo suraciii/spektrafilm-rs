@@ -244,9 +244,6 @@ mod tests {
 
     #[test]
     fn saturation_retains_retired_layers_and_zero_weights_use_capacity() {
-        let _guard = crate::wgpu_backend::observation::TEST_DEVICE_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let backend = crate::test_support::adapter();
         eprintln!("G2 boundary sweep adapter: {}", backend.name());
         let knots = [0.0, 6.0];

@@ -759,9 +759,6 @@ mod tests {
     fn derived_explicit_request_reuses_the_device_and_pipeline_cache() {
         // The software Vulkan driver is not safe under concurrent device use
         // in one process; hold the shared lock for the whole test.
-        let device_guard = super::super::observation::TEST_DEVICE_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let base = crate::test_support::adapter();
         assert!(!base.explicit_gpu_request());
         let derived = base
@@ -794,6 +791,5 @@ mod tests {
             Some(1),
             "the derived backend did not reuse the base pipeline cache"
         );
-        drop(device_guard);
     }
 }
