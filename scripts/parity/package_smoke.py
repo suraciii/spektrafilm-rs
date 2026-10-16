@@ -116,7 +116,7 @@ def _benchmark_smoke(exporter, data, evidence, environment):
     assert all(row['value'] == 0 and row['metric'] == 'numeric.rmse'
                for row in inspected['measurements'])
     report = root / 'report'
-    invoke(bench, 'report', '--comparison', comparison, '--out', report)
+    invoke(bench, 'generate-report', '--comparison', comparison, '--out', report)
     assert (report / 'index.html').is_file()
     assert json.loads((report / 'report.json').read_text())['comparison_id'] == manifest['id']
     for license_name in ('nvlabs-flip-bsd-3-clause.txt', 'littlecms-mit.txt'):
