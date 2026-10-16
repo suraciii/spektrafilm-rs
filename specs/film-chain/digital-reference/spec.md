@@ -4,7 +4,7 @@
 
 Digital Reference must be an opt-in output treatment within the existing Scan capability. This contract covers a digital photograph processed through simulated negative film on `input > film > scan`, with `scanner.scan_output=negative_to_positive`.
 
-Reference Exposure is the supported placement. Graded Print and Auto Levels are outside this implementation.
+Reference Exposure is the supported placement. Graded Print, Auto Levels, custom receiver-band editing, paper grade, and reference-axis black and white points are outside this implementation.
 
 Real negative import, `convert-film`, Telecine, photographic-paper scanning, and reversal-film normalization are outside this addition. Their existing behavior must remain available.
 

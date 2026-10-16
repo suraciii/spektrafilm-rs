@@ -8,7 +8,7 @@ This is the final target scope for material-control simplification, Output light
 
 ## Product decisions
 
-The chosen design reuses existing material controls and adds only final output mixing. The rejected alternative adds symmetric Film/Print digital-response groups. That alternative offers independent tonal coordinates but introduces overlapping controls, new material-color definitions, calibration isolation, and persistence costs without an established user need. Reuse is a product scope decision, not a claim of mathematical or photographic equivalence.
+The chosen design reuses existing material controls and adds only final output mixing. The rejected alternative adds symmetric Film/Print digital-response groups; it offers independent tonal coordinates but introduces overlapping controls, new material-color definitions, calibration isolation, and persistence costs without an established user need. Reuse is a product scope decision, not a claim of mathematical or photographic equivalence.
 
 | User need | Final decision | Deliberate limit |
 |---|---|---|
