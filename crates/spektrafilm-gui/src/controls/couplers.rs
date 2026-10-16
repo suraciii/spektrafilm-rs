@@ -14,7 +14,7 @@ pub(crate) fn sections(
             ui.label(
                 egui::RichText::new("Key controls: inhibition samelayer (contrast) · inhibition interlayer (saturation) · amount (global)")
                     .small()
-                    .color(egui::Color32::GRAY),
+                    .color(theme::FG_MUTED),
             );
             if filter_matches(filter, "active") {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.dir_couplers.active, "Enable DIR coupler inhibition.");

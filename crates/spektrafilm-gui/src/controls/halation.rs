@@ -14,7 +14,7 @@ pub(crate) fn sections(
             ui.label(
                 egui::RichText::new("Key controls: halation amount (strength) · halation spatial scale (size) · scatter amount (highlight glow)")
                     .small()
-                    .color(egui::Color32::GRAY),
+                    .color(theme::FG_MUTED),
             );
             if filter_matches(filter, "active") {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.halation.active, "Enable halation and in-emulsion scatter.");

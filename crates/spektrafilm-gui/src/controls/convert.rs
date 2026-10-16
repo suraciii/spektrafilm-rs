@@ -15,7 +15,7 @@ pub(crate) fn sections(
             ui.label(
                 egui::RichText::new("Workflow: 1) Detect base → 2) Blind calibration (vibrant frame) → 3) Neutralize filters")
                     .small()
-                    .color(egui::Color32::GRAY),
+                    .color(theme::FG_MUTED),
             );
             if filter_matches(filter, "scan illuminant") {
                 flags.runtime_changed |= choice_tip(ui, "scan illuminant", &mut params.film_render.convert.scan_illuminant, &["D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Light source of the scanning / capture rig used to digitize the negative. Set it to match your rig (a physical input); the film Base is the creative lever. Only used by the 'convert-film' workflow routes.");

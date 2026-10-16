@@ -241,6 +241,10 @@ mod upsampling;
 mod widgets;
 pub(crate) use widgets::*;
 
+// Every control editor reads presentation tokens; re-export so a control file
+// does not each add its own import.
+pub(crate) use crate::theme;
+
 #[cfg(test)]
 #[path = "controls_acceptance.rs"]
 mod acceptance;

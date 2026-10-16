@@ -1,4 +1,5 @@
 use super::*;
+use crate::theme;
 
 pub struct Browser {
     pub state: BrowserState,
@@ -205,7 +206,7 @@ impl App {
                     ui.label(format!("{} • missing", applied.name));
                 }
                 if let Some(error) = &self.presets.scan_error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(theme::ERROR, error);
                 }
                 if self.presets.entries.iter().any(|e| e.fault.is_some()) {
                     egui::CollapsingHeader::new("Issues")
@@ -361,10 +362,10 @@ impl App {
                     };
                     let invalid = name_error(&dialog.name, &self.presets.entries, rename_from);
                     if let Some(e) = &invalid {
-                        ui.colored_label(egui::Color32::LIGHT_RED, e);
+                        ui.colored_label(theme::ERROR, e);
                     }
                     if let Some(e) = &dialog.error {
-                        ui.colored_label(egui::Color32::LIGHT_RED, e);
+                        ui.colored_label(theme::ERROR, e);
                     }
                     ui.horizontal(|ui| {
                         submit = ui
@@ -451,7 +452,7 @@ impl App {
 }
 fn show_fault(ui: &mut egui::Ui, entry: &LibraryEntry) {
     ui.colored_label(
-        egui::Color32::LIGHT_RED,
+        theme::ERROR,
         format!(
             "{}: {}",
             entry

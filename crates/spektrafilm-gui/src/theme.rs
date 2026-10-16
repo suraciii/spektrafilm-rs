@@ -42,6 +42,10 @@ pub const SERIES2: Color32 = Color32::from_rgb(0x6a, 0xbf, 0x69);
 /// Chart series blue, used by the tonal histogram's third band.
 pub const SERIES3: Color32 = Color32::from_rgb(0x6a, 0x9a, 0xd4);
 
+/// Alpha a histogram band keeps from its series colour, leaving the grid
+/// visible through the fill.
+pub const SERIES_FILL_ALPHA: f32 = 0.45;
+
 // ---------------------------------------------------------------------------
 // Spacing
 // ---------------------------------------------------------------------------

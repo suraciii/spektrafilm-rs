@@ -91,7 +91,7 @@ fn engine_group(
                     "Inactive until this engine is selected; stored values are retained.",
                 )
                 .small()
-                .color(egui::Color32::GRAY),
+                .color(theme::FG_MUTED),
             );
             ui.add_enabled_ui(false, |ui| add_contents(ui, filter));
             return;
@@ -125,7 +125,7 @@ pub(crate) fn sections(
             ui.label(
                 egui::RichText::new("Recommended: Spektra (material grain) · Procedural (post-scan, lightweight)")
                     .small()
-                    .color(egui::Color32::GRAY),
+                    .color(theme::FG_MUTED),
                 );
             let engine = grain.engine;
             engine_group(ui, filter, engine, GrainEngine::Spektra, |ui, filter| {

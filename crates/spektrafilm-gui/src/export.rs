@@ -2,6 +2,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::controls::enum_choice;
+use crate::theme;
 use eframe::egui;
 use serde_json::{Value, json};
 use spektrafilm_core::image_io::{
@@ -363,7 +364,7 @@ impl ExportDialog {
                     ui.label(
                         egui::RichText::new("sRGB for web · Adobe RGB for print · ACES2065-1 for archival")
                             .small()
-                            .color(egui::Color32::GRAY),
+                            .color(theme::FG_MUTED),
                     );
                     for &space in spaces {
                         ui.selectable_value(&mut draft.saving_color_space, space.to_owned(), space);
@@ -386,7 +387,7 @@ impl ExportDialog {
                     ExportFormat::Png => format!("{format_label} · 8 bit · {} · encoded", draft.saving_color_space),
                     ExportFormat::Tiff => format!("{format_label} · {depth_label} · {} · {} · {}", draft.saving_color_space, if draft.saving_cctf_encoding { "CCTF" } else { "linear" }, match draft.compression { ExportCompression::Zip => "ZIP", ExportCompression::None => "None" }),
                 };
-                ui.label(egui::RichText::new(format!("Summary: {summary}")).small().color(egui::Color32::GRAY));
+                ui.label(egui::RichText::new(format!("Summary: {summary}")).small().color(theme::FG_MUTED));
                 let compressed = container_compresses(draft);
                 let estimate = format_size(estimated_output_bytes(draft, dimensions));
                 let row = if compressed {
@@ -394,7 +395,7 @@ impl ExportDialog {
                 } else {
                     format!("Estimated output size: ≈ {estimate}")
                 };
-                ui.label(egui::RichText::new(row).small().color(egui::Color32::GRAY))
+                ui.label(egui::RichText::new(row).small().color(theme::FG_MUTED))
                     .on_hover_text(if compressed {
                         "Pixel payload at the input's full resolution. This container compresses the samples, so the file is smaller; the exact size depends on image content."
                     } else {

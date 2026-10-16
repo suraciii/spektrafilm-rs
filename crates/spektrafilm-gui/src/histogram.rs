@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
+use crate::theme;
 use egui::{Color32, Context, Pos2, Rect, Ui};
 use spektrafilm_math::colorspace::srgb_encode_f64;
 use spektrafilm_math::image::ImageBuf;
@@ -100,21 +101,21 @@ impl HistogramData {
         let h = rect.height();
 
         // Background
-        painter.rect_filled(rect, 2.0, Color32::from_rgb(0x1a, 0x1a, 0x1d));
+        painter.rect_filled(rect, theme::RADIUS_CARD, theme::SURFACE2);
 
         // Draw each channel as a filled area
         for (bins, color) in [
             (
                 &self.r,
-                Color32::from_rgba_premultiplied(0xe0, 0x55, 0x55, 150),
+                theme::SERIES1.gamma_multiply(theme::SERIES_FILL_ALPHA),
             ),
             (
                 &self.g,
-                Color32::from_rgba_premultiplied(0x6a, 0xbf, 0x69, 150),
+                theme::SERIES2.gamma_multiply(theme::SERIES_FILL_ALPHA),
             ),
             (
                 &self.b,
-                Color32::from_rgba_premultiplied(0x6a, 0x9a, 0xd4, 150),
+                theme::SERIES3.gamma_multiply(theme::SERIES_FILL_ALPHA),
             ),
         ] {
             let mut points = Vec::with_capacity(BINS + 2);
@@ -315,31 +316,31 @@ impl HistogramStrip {
                     data.render(ui, rect);
                 } else {
                     let painter = ui.painter_at(rect);
-                    painter.rect_filled(rect, 2.0, Color32::from_rgb(0x1a, 0x1a, 0x1d));
+                    painter.rect_filled(rect, theme::RADIUS_CARD, theme::SURFACE2);
                     painter.text(
                         rect.center(),
                         egui::Align2::CENTER_CENTER,
                         "No output",
-                        egui::FontId::proportional(10.0),
-                        Color32::from_rgb(0x6a, 0x6a, 0x72),
+                        theme::text(theme::TEXT_READOUT, theme::SIZE_CHART_AXIS),
+                        theme::FG_MUTED,
                     );
                 }
                 // Legend
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("R")
-                            .color(Color32::from_rgb(0xe0, 0x55, 0x55))
-                            .size(9.0),
+                            .color(theme::SERIES1)
+                            .size(theme::SIZE_HINT),
                     );
                     ui.label(
                         egui::RichText::new("G")
-                            .color(Color32::from_rgb(0x6a, 0xbf, 0x69))
-                            .size(9.0),
+                            .color(theme::SERIES2)
+                            .size(theme::SIZE_HINT),
                     );
                     ui.label(
                         egui::RichText::new("B")
-                            .color(Color32::from_rgb(0x6a, 0x9a, 0xd4))
-                            .size(9.0),
+                            .color(theme::SERIES3)
+                            .size(theme::SIZE_HINT),
                     );
                 });
             });

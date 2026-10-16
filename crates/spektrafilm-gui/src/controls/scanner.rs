@@ -92,7 +92,7 @@ pub(crate) fn sections(
             ui.label(
                 egui::RichText::new(format!("Scanning: {medium_label}"))
                     .small()
-                    .color(egui::Color32::GRAY),
+                    .color(theme::FG_MUTED),
             );
             if medium == ScanMedium::None {
                 return;

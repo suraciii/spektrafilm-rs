@@ -723,6 +723,7 @@ mod tests {
                             0.05,
                             3,
                             "tip",
+                            None,
                             |next| next < other.get(),
                         );
                         rect.set(ctx.read_response(id).unwrap().rect);
