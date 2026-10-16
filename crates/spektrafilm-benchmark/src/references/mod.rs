@@ -111,6 +111,12 @@ pub fn compare_scope(
         c.limitation(
             "Visual reference only; no numerical fidelity or exact scene correspondence claim.",
         );
+        for region in optional_array(reference, "regions") {
+            c.readouts(crate::color_readouts::unavailable_pair(
+                text(region, "id")?,
+                "visual_only_reference",
+            ));
+        }
         if c.single {
             c.distances(
                 "full_image",
@@ -176,8 +182,10 @@ pub fn compare_scope(
         "regional" => regional(
             c,
             &clipped_lab(&encoded),
+            &encoded,
             source.dimensions(),
             &labs,
+            &rendered,
             images[0].dimensions(),
             case,
             base,
@@ -338,6 +346,21 @@ pub fn compare_reference_population(
             .iter()
             .map(|m| m.shared.region_id.clone())
             .collect();
+        // Every declared region keeps a readout row with the same explicit
+        // reason the scalar diagnostics report, so no comparison silently
+        // loses a region it used to measure.
+        let readout_regions = optional_array(case, "regions")
+            .iter()
+            .filter_map(|region| region["id"].as_str());
+        for id in readout_regions {
+            if !c
+                .readouts
+                .iter()
+                .any(|r| r["region_id"].as_str() == Some(id))
+            {
+                c.readouts(crate::color_readouts::unavailable_pair(id, &reason));
+            }
+        }
         match reference.get("scope").and_then(Value::as_str).unwrap_or("") {
             "aligned_scene" => {
                 for id in std::iter::once("full_image").chain(
@@ -574,7 +597,9 @@ mod tests {
         regional(
             &mut c,
             &[[10., 0., 0.], [20., 0., 0.], [30., 0., 0.]],
+            &[[10., 0., 0.], [20., 0., 0.], [30., 0., 0.]],
             [3, 1],
+            &[vec![[20., 0., 0.]; 2], vec![[20., 0., 0.]; 2]],
             &[vec![[20., 0., 0.]; 2], vec![[20., 0., 0.]; 2]],
             [2, 1],
             &case,
@@ -599,7 +624,9 @@ mod tests {
         regional(
             &mut c,
             &[[10., 0., 0.], [20., 0., 0.], [30., 0., 0.]],
+            &[[10., 0., 0.], [20., 0., 0.], [30., 0., 0.]],
             [3, 1],
+            &[vec![[35., 0., 0.]; 2]],
             &[vec![[35., 0., 0.]; 2]],
             [2, 1],
             &case,
@@ -640,7 +667,9 @@ mod tests {
         regional(
             &mut c,
             &[[20., 0., 0.]],
+            &[[20., 0., 0.]],
             [1, 1],
+            &[vec![[35., 0., 0.]]],
             &[vec![[35., 0., 0.]]],
             [1, 1],
             &case,
@@ -708,9 +737,9 @@ mod tests {
             &json!({"status":"approved","reviewer":"test","excluded_regions":[],"limitations":[]}),
         )
         .unwrap();
-        let case = json!({"id":"c","seeds":[0],"regions":[],"reference":{"id":"r","path":path,"scope":"aligned_scene","color":{"color_space":"sRGB","cctf_decoding":true},"processing":{"grading":"none","histogram_matching":"none","compression":"none","sharpening":"none","noise_reduction":"none","resampling":"none"},"aligned_derivative":{"path":path},"correspondence_review":{"path":"review.json"},"common_area_mask":[0,0,1,2]}});
+        let case = json!({"id":"c","seeds":[0],"regions":[{"id":"patch","geometry":[0,0,2,2],"measurements":["color"]}],"reference":{"id":"r","path":path,"scope":"aligned_scene","color":{"color_space":"sRGB","cctf_decoding":true},"processing":{"grading":"none","histogram_matching":"none","compression":"none","sharpening":"none","noise_reduction":"none","resampling":"none"},"aligned_derivative":{"path":path},"correspondence_review":{"path":"review.json"},"common_area_mask":[0,0,1,2]}});
         let result = compare_reference_single(
-            &image(vec![[0.8; 3]; 4], 2, 2),
+            &image(vec![[0.8; 3], [0.0; 3], [0.8; 3], [0.0; 3]], 2, 2),
             &case,
             &json!({"id":"p","pixels_per_degree":60,"hotspots":{"count":1,"min_area_px":1}}),
             &temp.path().join("out"),
@@ -743,6 +772,18 @@ mod tests {
                 .iter()
                 .all(|m| !m["metric"].as_str().unwrap().contains("baseline"))
         );
+        for readout in result["region_readouts"].as_array().unwrap() {
+            assert_eq!(readout["sides"]["simulation"]["sample_count"], 2);
+            // Excluded black pixels must not dilute either center estimator.
+            assert!(
+                (readout["sides"]["simulation"]["lab"][0].as_f64().unwrap() - 82.04578).abs()
+                    < 0.001
+            );
+            assert_eq!(
+                readout["common_area_artifact_id"],
+                result["reference_review"]["common_area_artifact_id"]
+            );
+        }
     }
 
     #[test]
@@ -792,7 +833,9 @@ mod tests {
         regional(
             &mut c,
             &[[50., 0., 0.], [50., 10., 0.]],
+            &[[50., 0., 0.], [50., 10., 0.]],
             [2, 1],
+            &[vec![[50., 1., 0.], [50., 12., 2.]]],
             &[vec![[50., 1., 0.], [50., 12., 2.]]],
             [2, 1],
             &case,
@@ -858,7 +901,9 @@ mod tests {
         regional(
             &mut c,
             &[at(179.5), at(10.)],
+            &[at(179.5), at(10.)],
             [2, 1],
+            &[vec![at(-179.5), at(9.)]],
             &[vec![at(-179.5), at(9.)]],
             [2, 1],
             &case,
@@ -893,7 +938,9 @@ mod tests {
         regional(
             &mut c,
             &[[50., 5., 5.], [50., 5., 5.]],
+            &[[50., 5., 5.], [50., 5., 5.]],
             [2, 1],
+            &[vec![[70., 5., 5.], [70., 15., 5.]]],
             &[vec![[70., 5., 5.], [70., 15., 5.]]],
             [2, 1],
             &case,
@@ -944,7 +991,9 @@ mod tests {
         regional(
             &mut c,
             &[[50., 10., 5.], [50., -10., -5.]],
+            &[[50., 10., 5.], [50., -10., -5.]],
             [2, 1],
+            &[vec![[50., -10., -5.], [50., 10., 5.]]],
             &[vec![[50., -10., -5.], [50., 10., 5.]]],
             [2, 1],
             &case,
@@ -1058,7 +1107,12 @@ mod tests {
         regional(
             &mut c,
             &reference_lab,
+            &reference_lab,
             [3, 1],
+            &[
+                reference_lab.to_vec(),
+                vec![[40., 30., 25.], reference_lab[1], reference_lab[2]],
+            ],
             &[
                 reference_lab.to_vec(),
                 vec![[40., 30., 25.], reference_lab[1], reference_lab[2]],
@@ -1126,7 +1180,9 @@ mod tests {
         regional(
             &mut c,
             &[[50., 10., 5.]],
+            &[[50., 10., 5.]],
             [1, 1],
+            &[vec![[52., 11., 6.]]],
             &[vec![[52., 11., 6.]]],
             [1, 1],
             &case,
@@ -1143,5 +1199,94 @@ mod tests {
             .unwrap();
         assert_eq!(row["reason"], "hue_diagnostics_not_selected");
         assert!(row.get("value").is_none());
+    }
+    /// A visual reference must never acquire coordinates through the new mean
+    /// estimator: it reports the same reason the scalar distance reports.
+    #[test]
+    fn visual_reference_readouts_report_the_same_reason_without_coordinates() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("reference.png");
+        image_data::write_png16(&path, &[[0.2; 3]; 6], 3, 2).unwrap();
+        let case = json!({"id":"c","seeds":[0],"regions":[{"id":"patch","geometry":[0,0,1,2]}],"reference":{"id":"r","path":path,"sha256":common::sha256_file(&path).unwrap(),"scope":"visual","color":{"color_space":"sRGB","cctf_decoding":true},"regions":[{"id":"patch","geometry":[2,0,1,2]}]}});
+        let result = compare_reference_single(
+            &image(vec![[0.8; 3]; 4], 2, 2),
+            &case,
+            &json!({"id":"p"}),
+            &temp.path().join("out"),
+            temp.path(),
+        )
+        .unwrap();
+        let readouts = result["region_readouts"].as_array().unwrap();
+        assert_eq!(readouts.len(), 2);
+        assert!(readouts.iter().all(|r| r["availability"] == "unavailable"
+            && r["reason"] == "visual_only_reference"
+            && r.get("sides").is_none()
+            && r.get("displacements").is_none()));
+    }
+    #[test]
+    fn regional_color_centers_preserve_processing_eligibility() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("reference.png");
+        image_data::write_png16(&path, &[[0.2; 3]; 2], 2, 1).unwrap();
+        let mut case = json!({"id":"c","seeds":[0],"regions":[{"id":"patch","geometry":[0,0,2,1],"measurements":["color"]}],
+            "reference":{"id":"r","path":path,"scope":"regional","color":{"color_space":"sRGB","cctf_decoding":true},
+            "regions":[{"id":"patch","geometry":[0,0,2,1]}],"processing":{"grading":"none","histogram_matching":"none"}}});
+        let model = image(vec![[0.6; 3]; 2], 2, 1);
+        for (history, tone, chroma) in [
+            ("none", true, true),
+            ("brightness_only", false, true),
+            ("unknown", false, false),
+        ] {
+            case["reference"]["processing"]["histogram_matching"] = json!(history);
+            let out = compare_reference_single(
+                &model,
+                &case,
+                &json!({"id":"p","color":{"hue_chroma_floor":5.}}),
+                &temp.path().join(history),
+                temp.path(),
+            )
+            .unwrap();
+            let readouts = out["region_readouts"].as_array().unwrap();
+            assert_eq!(readouts.len(), 2);
+            for readout in readouts {
+                assert!(
+                    (readout["sides"]["reference"]["lab"][0].as_f64().unwrap() - 21.24673).abs()
+                        < 0.001
+                );
+                assert!(
+                    (readout["sides"]["simulation"]["lab"][0].as_f64().unwrap() - 63.22259).abs()
+                        < 0.001
+                );
+                let displacement = &readout["displacements"][0];
+                assert_eq!(displacement["from_role"], "reference");
+                assert_eq!(displacement["to_role"], "simulation");
+                if tone {
+                    assert!(
+                        (displacement["delta_l_star"]["value"].as_f64().unwrap() - 41.97586).abs()
+                            < 0.002
+                    );
+                } else {
+                    for key in ["delta_lab", "delta_l_star", "delta_e76", "delta_e00"] {
+                        assert_eq!(displacement[key]["reason"], "tone_contaminated_reference");
+                        assert!(displacement[key].get("value").is_none());
+                    }
+                }
+                if chroma {
+                    assert!(displacement["equal_l_delta_e00"]["value"].as_f64().unwrap() < 0.01);
+                    assert_eq!(
+                        displacement["delta_h_degrees"]["reason"],
+                        "below_chroma_floor"
+                    );
+                } else {
+                    for key in ["delta_c_star", "equal_l_delta_e00", "delta_h_degrees"] {
+                        assert_eq!(
+                            displacement[key]["reason"],
+                            "unknown_or_graded_color_reference"
+                        );
+                        assert!(displacement[key].get("value").is_none());
+                    }
+                }
+            }
+        }
     }
 }

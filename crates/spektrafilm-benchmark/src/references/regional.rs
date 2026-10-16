@@ -145,8 +145,10 @@ struct RegionRecord {
 pub fn regional(
     c: &mut Comparison,
     ref_lab: &[[f64; 3]],
+    ref_encoded: &[[f64; 3]],
     reference_dims: [usize; 2],
     labs: &[Vec<[f64; 3]>],
+    encoded: &[Vec<[f64; 3]>],
     dims: [usize; 2],
     case: &Value,
     base: &Path,
@@ -205,8 +207,10 @@ pub fn regional(
                     "Reference region has no matching render region",
                 )
             })?;
-        let render_pop = population(&mask(field(render, "geometry")?, dims, base)?);
-        let ref_pop = population(&mask(field(region, "geometry")?, reference_dims, base)?);
+        let render_mask = mask(field(render, "geometry")?, dims, base)?;
+        let render_pop = population(&render_mask);
+        let ref_mask = mask(field(region, "geometry")?, reference_dims, base)?;
+        let ref_pop = population(&ref_mask);
         if render_pop.is_empty() || ref_pop.is_empty() {
             return Err(err(
                 "empty_reference_population",
@@ -329,6 +333,50 @@ pub fn regional(
             .and_then(Value::as_str)
             .unwrap_or(id)
             .to_owned();
+        let render_geometry = field(render, "geometry")?;
+        let reference_geometry = field(region, "geometry")?;
+        let readouts = if optional_array(render, "measurements")
+            .iter()
+            .any(|family| family == "color")
+        {
+            // The readouts reuse the regional centres and populations directly, so
+            // no second sort of the same samples happens here. The reference is
+            // the displacement source: every model side yields one
+            // reference-to-model displacement.
+            let mut readout_sides: Vec<crate::color_readouts::Side<'_>> =
+                vec![crate::color_readouts::Side {
+                    role: "reference",
+                    geometry: reference_geometry,
+                    lab: ref_lab,
+                    encoded: ref_encoded,
+                    linear: None,
+                    population: &ref_pop,
+                    median: Some(centers[reference_index]),
+                }];
+            readout_sides.extend((0..labs.len()).map(|s| crate::color_readouts::Side {
+                role: captures[s],
+                geometry: render_geometry,
+                lab: &labs[s],
+                encoded: &encoded[s],
+                linear: None,
+                population: &render_pop,
+                median: Some(centers[s]),
+            }));
+            crate::color_readouts::region_readouts(
+                id,
+                "native_image_pixels",
+                &readout_sides,
+                &crate::color_readouts::Gating {
+                    tone,
+                    chroma,
+                    hue_floor: floor,
+                },
+                Some((tone, chroma)),
+            )?
+        } else {
+            crate::color_readouts::unavailable_pair(id, "color_family_not_selected")
+        };
+        c.readouts(readouts);
         let mut payload = json!({"region_id":id,"label":label,"role":role,"population":catalog::population_label(&role),"render_geometry":render["geometry"],"reference_geometry":region["geometry"],"render_sample_count":render_pop.len(),"reference_sample_count":ref_pop.len(),"lab_median":{"reference":centers[reference_index]},"lightness_quantile_probabilities":(0..=100).map(|q|q as f64/100.).collect::<Vec<_>>(),"lightness_quantiles":{"reference":quantiles[reference_index]},"domain":DOMAIN,"units":"L*,a*,b*"});
         for s in 0..labs.len() {
             payload["lab_median"][captures[s]] = json!(centers[s]);

@@ -3,7 +3,7 @@ use crate::{
     common::{self, Evidence, Progress, array, text},
     documents,
     image_data::{self, ImageData},
-    metrics, references, runner,
+    metrics, references, runner, stage_readouts,
 };
 use serde_json::{Value, json};
 use std::{
@@ -69,6 +69,82 @@ fn review_image(
     let fit_record=evidence.add(&fit_path,"fit_preview","image/png",json!({"width":w,"height":h,"dimensions":[w,h],"source_dimensions":image.dimensions(),"bit_depth":16,"resampling":"Lanczos in encoded sRGB before quantization","quantization":"16-bit rounded; no dither","color":{"color_space":"sRGB","transfer":"srgb"},"case_id":case_id,"seed":seed}))?;
     evidence.add(destination,role,"image/png",json!({"width":image.width,"height":image.height,"dimensions":image.dimensions(),"source_dimensions":image.dimensions(),"bit_depth":16,"resampling":"none","quantization":"16-bit rounded; no dither","color":{"color_space":"sRGB","transfer":"srgb"},"fit_preview":fit_record["path"],"case_id":case_id,"seed":seed}))
 }
+// All generated readouts refer to immutable artifacts inside the comparison.
+fn relative_paths(value: &mut Value, root: &Path) {
+    match value {
+        Value::Object(map) => {
+            if let Some(path) = map
+                .get("path")
+                .and_then(Value::as_str)
+                .and_then(|p| Path::new(p).strip_prefix(root).ok())
+            {
+                map.insert(
+                    "path".into(),
+                    json!(path.to_string_lossy().replace('\\', "/")),
+                );
+            }
+            for child in map.values_mut() {
+                relative_paths(child, root);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                relative_paths(child, root);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn retain_color_readouts(
+    measured: &Value,
+    pair_id: &str,
+    sources: &[&Value],
+    root: &Path,
+) -> Vec<Value> {
+    let mut readouts = measured["region_readouts"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for readout in &mut readouts {
+        readout["pair_id"] = json!(pair_id);
+        if pair_id == "input" {
+            if let Some(sides) = readout.get_mut("sides").and_then(Value::as_object_mut) {
+                for (old, new) in [("baseline", "input"), ("candidate", "simulation")] {
+                    if let Some(side) = sides.remove(old) {
+                        sides.insert(new.into(), side);
+                    }
+                }
+            }
+            for displacement in readout
+                .get_mut("displacements")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                displacement["from_role"] = json!("input");
+                displacement["to_role"] = json!("simulation");
+            }
+        }
+        let mut refs = sources
+            .iter()
+            .filter_map(|source| source["path"].as_str())
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        refs.extend(
+            readout["artifact_refs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned),
+        );
+        readout["artifact_refs"] = json!(refs);
+        relative_paths(readout, root);
+    }
+    readouts
+}
+
 fn retain_metrics(
     mut measured: Value,
     folder: &Path,
@@ -143,6 +219,17 @@ fn retain_metrics(
     if let Some(regions) = measured["automatic_regions"].as_array_mut() {
         for region in regions {
             rewrite_list(&mut region["artifact_refs"], &refs);
+        }
+    }
+    if let Some(readouts) = measured["region_readouts"].as_array_mut() {
+        for readout in readouts {
+            rewrite_list(&mut readout["artifact_refs"], &refs);
+            if let Some(path) = readout["common_area_artifact_id"]
+                .as_str()
+                .and_then(|id| refs.get(id))
+            {
+                readout["common_area_artifact_id"] = json!(path);
+            }
         }
     }
     if let Some(review) = measured["reference_review"].as_object_mut() {
@@ -813,6 +900,23 @@ fn compare_impl(
                 &format!("{role}_master"),
                 json!({"color":row["master"]["color"]}),
             )?;
+            let captured_output = record["run_evidence"][role]["stage_evidence"]["buffers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|buffer| {
+                    buffer["stage_id"] == "rgb_out" && buffer["sha256"] == row["raw"]["sha256"]
+                });
+            record[format!("{role}_raw")] = if let Some(buffer) = captured_output {
+                buffer.clone()
+            } else {
+                evidence.copy(
+                    &documents::safe_artifact_path(run_root, text(&row["raw"], "path")?)?,
+                    &format!("cases/{case_id}/seed-{seed}/{role}-master.bin"),
+                    "native_master",
+                    json!({"color":row["raw"]["color"],"layout":row["raw"]["layout"]}),
+                )?
+            };
             record[format!("{role}_resolved")] =
                 record["run_evidence"][role]["resolved_configuration"].clone();
             record[format!("{role}_diagnostics")] =
@@ -820,6 +924,12 @@ fn compare_impl(
             record[format!("{role}_execution")] = json!({"execution":row["execution"],"precision":row["precision"],"dimensions":row["dimensions"]});
         }
         let case = retained_case(definition, &baseline, &left_root, &root, &mut evidence)?;
+        record["stage_readouts"] = json!(stage_readouts::measure(
+            &root,
+            &record["run_evidence"],
+            array(&case, "regions")?
+        )?);
+        relative_paths(&mut record["stage_readouts"], &root);
         record["regions"] = case["regions"].clone();
         if let Some(regions) = record["regions"].as_array_mut() {
             for region in regions {
@@ -867,6 +977,12 @@ fn compare_impl(
                 .ok_or_else(|| Error::new("computation_failure", "Measurements must be object"))?
                 .clone(),
         );
+        record["region_readouts"] = json!(retain_color_readouts(
+            &measured,
+            "baseline/candidate",
+            &[&record["baseline_raw"], &record["candidate_raw"]],
+            &root,
+        ));
         if case.get("reference").is_some() {
             let ref_folder = folder.join("reference");
             let reference = retain_metrics(
@@ -892,6 +1008,22 @@ fn compare_impl(
                     .extend(reference[key].as_array().cloned().unwrap_or_default());
             }
             record["reference"] = reference["reference_review"].clone();
+            let reference_source =
+                json!({"path":reference["reference_review"]["master_artifact_id"]});
+            let readouts = retain_color_readouts(
+                &reference,
+                "reference",
+                &[
+                    &reference_source,
+                    &record["baseline_raw"],
+                    &record["candidate_raw"],
+                ],
+                &root,
+            );
+            record["region_readouts"]
+                .as_array_mut()
+                .unwrap()
+                .extend(readouts);
             if reference["execution_status"] == "failed" {
                 record["execution_status"] = json!("failed");
             }
@@ -913,7 +1045,7 @@ fn compare_impl(
         let path = folder.join("measurements.json");
         common::dump(
             &path,
-            &json!({"measurements":record["measurements"],"findings":record["findings"]}),
+            &json!({"measurements":record["measurements"],"findings":record["findings"],"region_readouts":record["region_readouts"],"stage_readouts":record["stage_readouts"]}),
         )?;
         let measurement_evidence =
             evidence.add(&path, "measurements", "application/json", json!({}))?;
@@ -1153,6 +1285,12 @@ fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Va
             definition,
             "simulation",
         )?});
+        record["stage_readouts"] = json!(stage_readouts::measure(
+            &root,
+            &record["run_evidence"],
+            array(&case, "regions")?
+        )?);
+        relative_paths(&mut record["stage_readouts"], &root);
         let simulation = raw_image(&run_root, row)?;
         let simulation_review = review_image(
             &simulation,
@@ -1354,6 +1492,19 @@ fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Va
                         }
                     }
                     pair["measurements"] = measured["measurements"].clone();
+                    let reference_source =
+                        json!({"path":measured["reference_review"]["master_artifact_id"]});
+                    let left_source = if *pair_id == "input" {
+                        &pair["left_master"]
+                    } else {
+                        &reference_source
+                    };
+                    pair["region_readouts"] = json!(retain_color_readouts(
+                        &measured,
+                        pair_id,
+                        &[left_source, &simulation_master],
+                        &root,
+                    ));
                     if *pair_id == "input" {
                         pair["automatic_regions"] = measured["automatic_regions"].clone();
                         if let Some(artifact) =
@@ -1374,32 +1525,6 @@ fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Va
                 Err(error) => {
                     pair["reason"] = json!(error.code);
                     pair["errors"] = json!([{"code":error.code,"boundary":"measurement","message":error.message}]);
-                }
-            }
-            // Published geometry paths must stay local to the comparison.
-            fn relative_paths(value: &mut Value, root: &Path) {
-                match value {
-                    Value::Object(map) => {
-                        if let Some(path) = map
-                            .get("path")
-                            .and_then(Value::as_str)
-                            .and_then(|p| Path::new(p).strip_prefix(root).ok())
-                        {
-                            map.insert(
-                                "path".into(),
-                                json!(path.to_string_lossy().replace('\\', "/")),
-                            );
-                        }
-                        for child in map.values_mut() {
-                            relative_paths(child, root);
-                        }
-                    }
-                    Value::Array(values) => {
-                        for child in values {
-                            relative_paths(child, root);
-                        }
-                    }
-                    _ => {}
                 }
             }
             relative_paths(&mut pair["regions"], &root);

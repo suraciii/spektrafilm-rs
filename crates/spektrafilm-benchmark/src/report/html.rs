@@ -423,6 +423,9 @@ pub(crate) fn pair_case(case: &Value, pair: &Value) -> Value {
     ] {
         view[key] = case[key].clone();
     }
+    if let Some(stages) = case.get("stage_readouts") {
+        view["stage_readouts"] = stages.clone();
+    }
     view["pair_id"] = pair["id"].clone();
     view
 }

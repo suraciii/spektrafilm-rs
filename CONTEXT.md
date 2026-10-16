@@ -59,6 +59,11 @@ _Avoid_: Scanner white and black correction, output levels
 **Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver the image.
 _Avoid_: Scanned medium, negative conversion
 
+**CIELAB**: A three-coordinate color representation under a declared reference white and observer. L* describes lightness; a* and b* describe opponent color directions. These coordinates describe color appearance, not film or photographic-paper record exposures or densities.
+_Avoid_: Lab Scan, film record channels
+
+**Color center**: A representative color of a declared sample population, calculated with a named estimator. A median of Lab channels and Lab converted from mean linear RGB are different color centers. Neither establishes that a reference is suitable for fitting or acceptance.
+
 **Prepared image**: A raster image explicitly prepared outside the benchmark and declared in a review manifest. Its color interpretation is declared rather than inferred; preparation does not establish measured color values, exposure equivalence, or original framing.
 _Avoid_: Prepared chart image
 

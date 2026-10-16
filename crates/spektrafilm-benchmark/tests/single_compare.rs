@@ -365,6 +365,95 @@ fn single_input_comparison_uses_real_retained_source_offline() {
         assert_local_artifact(&report_root, &report_manifest, artifact);
     }
 }
+
+#[test]
+fn regional_readouts_keep_direction_and_reject_corrupt_evidence_offline() {
+    let temp = tempfile::tempdir().unwrap();
+    let run = temp.path().join("run");
+    retained_run(&run, 0.4, true);
+    let mut suite = documents::load_json_document(&run.join("suite.json")).unwrap();
+    suite["cases"][0]["regions"][0]["measurements"] = json!(["color"]);
+    write(&run.join("suite.json"), &suite);
+    let mut manifest = documents::load_json_document(&run.join("run.json")).unwrap();
+    let hash = json!(common::sha256_file(&run.join("suite.json")).unwrap());
+    manifest["suite"]["sha256"] = hash.clone();
+    manifest["suite"]["digest"] = json!(common::digest(&suite).unwrap());
+    for artifact in manifest["artifacts"].as_array_mut().unwrap() {
+        if artifact["path"] == "suite.json" {
+            artifact["sha256"] = hash.clone();
+        }
+    }
+    save_manifest(&run, "run.json", manifest);
+    let out = temp.path().join("comparison");
+    assert_eq!(compare::compare_single(&run, "input", &out).unwrap().1, 0);
+    fs::remove_dir_all(&run).unwrap();
+    let inspected =
+        spektrafilm_benchmark::inspect::inspect(&out, &[], &["patch".into()], &[]).unwrap();
+    for row in inspected["region_readouts"].as_array().unwrap() {
+        assert_eq!(row["sides"]["input"]["sample_count"], 8);
+        let displacement = &row["displacements"][0];
+        assert_eq!(displacement["from_role"], "input");
+        assert_eq!(displacement["to_role"], "simulation");
+        // Neutral CIE lightness is 116 * cbrt(Y / Yn) - 16 above the toe.
+        let expected = 116.0 * (0.4_f64.cbrt() - 0.1_f64.cbrt());
+        assert!((displacement["delta_lab"]["value"][0].as_f64().unwrap() - expected).abs() < 0.01);
+        assert!(
+            displacement["delta_lab"]["value"][1]
+                .as_f64()
+                .unwrap()
+                .abs()
+                < 0.01
+        );
+        assert!(
+            displacement["delta_lab"]["value"][2]
+                .as_f64()
+                .unwrap()
+                .abs()
+                < 0.01
+        );
+        assert_eq!(
+            displacement["delta_h_degrees"]["availability"],
+            "unavailable"
+        );
+    }
+    assert_eq!(inspected["region_readouts"].as_array().unwrap().len(), 2);
+    let original = documents::load_json_document(&out.join("comparison.json")).unwrap();
+    let mut unindexed = original.clone();
+    unindexed["cases"][0]["pairs"][0]["region_readouts"][0]["artifact_refs"] =
+        json!(["absent.bin"]);
+    let mut wrong_direction = original.clone();
+    wrong_direction["cases"][0]["pairs"][0]["region_readouts"][0]["displacements"][0]["from_role"] =
+        json!("simulation");
+    let mut unavailable_value = original.clone();
+    unavailable_value["cases"][0]["pairs"][0]["region_readouts"][0]["displacements"][0]["delta_h_degrees"]
+        ["value"] = json!(0.0);
+    for (invalid, expected) in [
+        (unindexed, "unindexed_artifact"),
+        (wrong_direction, "readout_identity"),
+        (unavailable_value, "schema_validation"),
+    ] {
+        save_manifest(&out, "comparison.json", invalid);
+        let error = spektrafilm_benchmark::inspect::inspect(&out, &[], &[], &[]).unwrap_err();
+        assert_eq!(error.code, expected);
+    }
+    let mut legacy = original;
+    legacy["cases"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("stage_readouts");
+    legacy["cases"][0]["pairs"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("region_readouts");
+    save_manifest(&out, "comparison.json", legacy);
+    let inspected =
+        spektrafilm_benchmark::inspect::inspect(&out, &[], &["patch".into()], &[]).unwrap();
+    assert_eq!(
+        inspected["readout_status"][0]["region_readouts"],
+        "not_retained"
+    );
+    assert_eq!(inspected["region_readouts"], json!([]));
+}
 #[test]
 fn missing_reference_fails_before_publication() {
     let temp = tempfile::tempdir().unwrap();

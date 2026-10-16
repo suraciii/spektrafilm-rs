@@ -14,6 +14,7 @@ use std::{
 mod assets;
 mod escape;
 mod html;
+mod readouts;
 
 pub(crate) use assets::*;
 pub(crate) use escape::*;
@@ -457,6 +458,7 @@ fn standard_html(
                         crop_aligned,
                     ),
                 );
+                html.push_str(&readouts::region(case, &region_id));
                 let findings: Vec<_> = rows(&comparison["findings"])
                     .iter()
                     .filter(|f| {
