@@ -419,6 +419,10 @@ struct WorkflowOptions {
 }
 
 pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
+    // Per-stage timings are read from stage functions that may run on rayon
+    // workers, so install the switch here instead of mutating the process
+    // environment after the pool exists.
+    spektrafilm_backend::timing::set_stage_timings(args.timings);
     let data_dir = std::mem::take(&mut args.data_dir);
     // Protect every bundle file, including publication temporaries, from
     // invocation inputs, output/raw-out and optional diagnostics.
