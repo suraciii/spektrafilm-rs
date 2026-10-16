@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
-use std::time::Instant;
 
 use eframe::egui;
 use parking_lot::{Condvar, Mutex};
@@ -58,7 +57,6 @@ impl RenderJob {
 pub(super) struct RenderRequest {
     pub(super) job: RenderJob,
     pub(super) image: Arc<ImageBuf>,
-    pub(super) input_clone_ms: f32,
     pub(super) snapshot: RenderSnapshot,
     pub(super) backend: Arc<dyn ComputeBackend>,
     pub(super) source_metadata: Option<ImageMetadata>,
@@ -87,12 +85,6 @@ pub(super) struct RenderResult {
     pub(super) output_color_space: String,
     pub(super) output_cctf_encoding: bool,
     pub(super) source_metadata: Option<ImageMetadata>,
-    pub(super) input_clone_ms: f32,
-    pub(super) scale_ms: f32,
-    pub(super) pipeline_build_ms: f32,
-    pub(super) render_ms: f32,
-    pub(super) preview_ms: f32,
-    pub(super) worker_total_ms: f32,
 }
 
 impl RenderWorker {
@@ -133,8 +125,6 @@ impl RenderWorker {
                         Some((job.request_id, job.kind, job.collection_mode));
                     let ctx = request.ctx.clone();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let t_total = Instant::now();
-                        let t_pipeline = Instant::now();
                         let pipeline_template = runtime_cache.prepare_observed(
                             &request.snapshot,
                             job.kind == RenderKind::Preview,
@@ -149,9 +139,7 @@ impl RenderWorker {
                                 pipeline_template.telemetry_configuration(),
                             );
                         }
-                        let pipeline_build_ms = t_pipeline.elapsed().as_secs_f32() * 1000.0;
                         let runtime_params = pipeline_template.params();
-                        let t_scale = Instant::now();
                         let input_prepare = observation.scope(
                             "input_prepare",
                             ObservationKind::Phase,
@@ -165,9 +153,7 @@ impl RenderWorker {
                         } else {
                             (*request.image).clone()
                         };
-                        let scale_ms = t_scale.elapsed().as_secs_f32() * 1000.0;
                         drop(input_prepare);
-                        let t = Instant::now();
                         let simulation =
                             observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
                         let processed = pipeline_template.process_observed(
@@ -181,8 +167,6 @@ impl RenderWorker {
                             IssueCategory::Simulation,
                             IssueBoundary::Simulation,
                         )?;
-                        let render_ms = t.elapsed().as_secs_f32() * 1000.0;
-                        let t_preview = Instant::now();
                         let display_prepare = observation.scope(
                             "display_prepare",
                             ObservationKind::Phase,
@@ -202,7 +186,6 @@ impl RenderWorker {
                             IssueCategory::Backend,
                             IssueBoundary::DisplayPrepare,
                         )?;
-                        let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
                         Ok(RenderResult {
                             source_metadata: request.source_metadata,
                             output_color_space: runtime_params.io.output_color_space.clone(),
@@ -212,12 +195,6 @@ impl RenderWorker {
                             display_status,
                             display_enabled: request.display_enabled,
                             display_max_size: runtime_params.settings.preview_max_size,
-                            input_clone_ms: request.input_clone_ms,
-                            scale_ms,
-                            pipeline_build_ms,
-                            render_ms,
-                            preview_ms,
-                            worker_total_ms: t_total.elapsed().as_secs_f32() * 1000.0,
                         })
                     }))
                     .unwrap_or_else(|panic| Err(panic_message(&panic)));
