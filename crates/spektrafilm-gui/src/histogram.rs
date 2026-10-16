@@ -134,10 +134,19 @@ impl HistogramData {
     }
 }
 
+/// Identity of one accepted output image.
+///
+/// The generation is the caller's handle for the image it retained — the
+/// address of the `Arc` that owns it — and the sequence advances each time the
+/// readout accepts a different image. A later output can be allocated at an
+/// address an earlier one freed, so the pair, not the address alone, says which
+/// image a finished computation belongs to.
+type SourceId = (u64, u64);
+
 /// One binning request: the output image to bin and the identity its result
 /// carries back to the readout.
 struct HistogramRequest {
-    generation: u64,
+    source: SourceId,
     image: Arc<ImageBuf>,
     ctx: Context,
 }
@@ -149,7 +158,7 @@ struct HistogramRequest {
 /// build a backlog of distributions nobody will look at.
 struct HistogramWorker {
     requests: Option<Sender<HistogramRequest>>,
-    results: Receiver<(u64, HistogramData)>,
+    results: Receiver<(SourceId, HistogramData)>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -166,7 +175,7 @@ impl HistogramWorker {
                         latest = newer;
                     }
                     let data = HistogramData::compute(&latest.image);
-                    if result_tx.send((latest.generation, data)).is_err() {
+                    if result_tx.send((latest.source, data)).is_err() {
                         return; // the readout that asked for it is gone
                     }
                     // The result lands outside any frame, so wake the UI.
@@ -181,10 +190,10 @@ impl HistogramWorker {
         }
     }
 
-    fn submit(&mut self, generation: u64, image: Arc<ImageBuf>, ctx: &Context) {
+    fn submit(&mut self, source: SourceId, image: Arc<ImageBuf>, ctx: &Context) {
         if let Some(requests) = &self.requests {
             let _ = requests.send(HistogramRequest {
-                generation,
+                source,
                 image,
                 ctx: ctx.clone(),
             });
@@ -192,7 +201,7 @@ impl HistogramWorker {
     }
 
     /// The next finished computation, if the worker has reported one.
-    fn next_result(&self) -> Option<(u64, HistogramData)> {
+    fn next_result(&self) -> Option<(SourceId, HistogramData)> {
         self.results.try_recv().ok()
     }
 }
@@ -216,7 +225,9 @@ pub struct HistogramStrip {
     /// Cached histogram data for the output the strip shows or is waiting for.
     data: Option<HistogramData>,
     /// Identity of the output image the cached data belongs to.
-    source_id: Option<u64>,
+    source_id: Option<SourceId>,
+    /// Sequence handed to the next accepted image.
+    sequence: u64,
     /// Worker that bins new output images off the UI thread.
     worker: HistogramWorker,
 }
@@ -227,6 +238,7 @@ impl Default for HistogramStrip {
             visible: true,
             data: None,
             source_id: None,
+            sequence: 0,
             worker: HistogramWorker::new(),
         }
     }
@@ -258,7 +270,8 @@ impl HistogramStrip {
     /// hands a newly accepted output to the worker. The cached data stays on
     /// screen until its replacement arrives, so a new render never blanks the
     /// readout. A result for an output the strip has already moved past is
-    /// dropped.
+    /// dropped, including one whose image shared an address with the output
+    /// that replaced it.
     pub fn update(&mut self, output_image: &Option<Arc<ImageBuf>>, generation: u64, ctx: &Context) {
         while let Some((finished, data)) = self.worker.next_result() {
             if self.source_id == Some(finished) {
@@ -267,9 +280,11 @@ impl HistogramStrip {
         }
         match output_image {
             Some(image) => {
-                if self.source_id != Some(generation) {
-                    self.source_id = Some(generation);
-                    self.worker.submit(generation, Arc::clone(image), ctx);
+                if self.source_id.map(|source| source.0) != Some(generation) {
+                    let accepted = (generation, self.sequence);
+                    self.source_id = Some(accepted);
+                    self.sequence += 1;
+                    self.worker.submit(accepted, Arc::clone(image), ctx);
                 }
             }
             None => {
@@ -458,6 +473,61 @@ mod tests {
             .cached_data()
             .expect("the readout keeps the previous distribution while binning");
         assert_eq!(peak_bin(&data.r), 46);
+    }
+
+    #[test]
+    fn a_recycled_generation_cannot_adopt_a_superseded_distribution() {
+        // Loading an image clears the retained output, which frees the `Arc`
+        // the readout asked about; a later output can be allocated at that
+        // same address. The identity of the accepted image must therefore
+        // survive the address being reused, or a result for the image that
+        // went away is adopted as the image that took its place.
+        let ctx = egui::Context::default();
+        let first = flat_image(0.5);
+        let second = flat_image(0.25);
+        let (requests, request_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let mut strip = HistogramStrip {
+            visible: true,
+            data: None,
+            source_id: None,
+            sequence: 0,
+            worker: HistogramWorker {
+                requests: Some(requests),
+                results: result_rx,
+                handle: None,
+            },
+        };
+
+        strip.update(&first, 7, &ctx);
+        let superseded = request_rx.try_recv().expect("the worker is asked to bin");
+        // The output goes away and a later one is accepted at the same
+        // generation before the worker answers the request it was given.
+        strip.update(&None, 7, &ctx);
+        strip.update(&second, 7, &ctx);
+        let accepted = request_rx.try_recv().expect("the replacement is binned");
+        result_tx
+            .send((superseded.source, HistogramData::compute(&superseded.image)))
+            .unwrap();
+
+        // The superseded result lands while the readout shows the image that
+        // took its place, so it must be dropped rather than adopted.
+        strip.update(&second, 7, &ctx);
+        assert!(
+            strip.cached_data().is_none(),
+            "a result for an output the readout moved past is not adopted"
+        );
+
+        result_tx
+            .send((accepted.source, HistogramData::compute(&accepted.image)))
+            .unwrap();
+        strip.update(&second, 7, &ctx);
+        let data = strip.cached_data().expect("worker reported a result");
+        assert_eq!(
+            peak_bin(&data.r),
+            34,
+            "the readout shows the image it is showing, not the one it replaced"
+        );
     }
 
     #[test]
