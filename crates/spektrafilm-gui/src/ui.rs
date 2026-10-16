@@ -218,22 +218,6 @@ impl App {
                 self.save_dialog();
             }
         });
-        ui.horizontal(|ui| {
-            if ui
-                .button("Save state")
-                .on_hover_text("Save current GUI state to a JSON file")
-                .clicked()
-            {
-                self.save_state_with_dialog();
-            }
-            if ui
-                .button("Load state")
-                .on_hover_text("Load GUI state from a JSON file")
-                .clicked()
-            {
-                self.load_state_with_dialog();
-            }
-        });
         if let Some(error) = self.last_export_error.clone() {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(error).color(theme::ERROR).small());
@@ -777,9 +761,6 @@ impl App {
                         self.refresh_viewing_artifacts();
                     }
                 });
-                ui.collapsing("napari layers", |ui| {
-                    self.viewer.layer_controls(ui);
-                });
             }
         }
         ui.label(egui::RichText::new(&self.status).small());
@@ -794,58 +775,6 @@ impl App {
         }
     }
 
-    fn render_feedback_panel(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            egui::RichText::new("Film Profile")
-                .color(theme::ACCENT)
-                .size(12.0),
-        );
-        ui.separator();
-        ui.label(format!("Film: {}", self.film_name));
-        ui.label(format!("Print: {}", self.print_name));
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("Pipeline")
-                .color(theme::ACCENT)
-                .size(12.0),
-        );
-        ui.separator();
-        ui.label(format!("Route: {}", self.params.workflow.route));
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("Render Stats")
-                .color(theme::ACCENT)
-                .size(12.0),
-        );
-        ui.separator();
-        ui.label(format!("Render: {:.0} ms", self.last_render_ms));
-        ui.label(format!("Pipeline: {:.0} ms", self.last_pipeline_build_ms));
-        ui.label(format!("Preview: {:.0} ms", self.last_preview_ms));
-    }
-
-    fn render_library_panel(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            egui::RichText::new("Film Library")
-                .color(theme::ACCENT)
-                .size(12.0),
-        );
-        ui.separator();
-        let films = self.films.clone();
-        let mut selected = None;
-        for entry in &films {
-            let active = self.film_name == entry.stock;
-            if ui
-                .selectable_label(active, &entry.display)
-                .on_hover_text(&entry.stock)
-                .clicked()
-            {
-                selected = Some(entry.stock.clone());
-            }
-        }
-        if let Some(stock) = selected {
-            self.select_film_profile(stock);
-        }
-    }
 }
 
 impl eframe::App for App {
@@ -894,44 +823,6 @@ impl eframe::App for App {
             self.start_export(ctx, options);
         }
         self.preset_panel(ctx);
-        // Left nav: icon buttons for tab switching
-        egui::SidePanel::left("nav")
-            .resizable(false)
-            .exact_width(52.0)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                let tabs = GuiTab::ALL;
-                for (i, tab) in tabs.iter().enumerate() {
-                    let icons = ["⚡", "🎞", "🖨", "🔧", "⚙"];
-                    let active = self.gui_tab == *tab;
-                    if ui
-                        .selectable_label(active, icons[i])
-                        .on_hover_text(tab.label())
-                        .clicked()
-                    {
-                        self.gui_tab = *tab;
-                    }
-                    ui.add_space(2.0);
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(4.0);
-                // Right panel toggles: feedback / film library
-                for (mode, icon, tip) in [
-                    ("feedback", "📊", "Histogram & feedback"),
-                    ("library", "🎞", "Film library"),
-                ] {
-                    let active = self.right_panel_mode.as_deref() == Some(mode);
-                    if ui
-                        .selectable_label(active, icon)
-                        .on_hover_text(tip)
-                        .clicked()
-                    {
-                        self.right_panel_mode = if active { None } else { Some(mode.to_owned()) };
-                    }
-                    ui.add_space(2.0);
-                }
-            });
         // Left control panel: histogram at top, tabs, scrollable controls, action bar
         egui::SidePanel::left("controls")
             .resizable(false)
@@ -1035,7 +926,7 @@ impl eframe::App for App {
                         || format!("{:.0}% fit", self.viewer.zoom * 100.0),
                         |percent| format!("{percent:.0}%"),
                     );
-                    ui.label(format!("{} · zoom {zoom}", self.status));
+                    ui.label(format!("zoom {zoom}"));
                 });
             });
             self.viewer.layer_controls(ui);
@@ -1075,24 +966,6 @@ impl eframe::App for App {
                 );
             }
         });
-        // Right panel: feedback / film library
-        if self.right_panel_mode.is_some() {
-            egui::SidePanel::right("feedback")
-                .resizable(false)
-                .exact_width(280.0)
-                .show(ctx, |ui| {
-                    ui.heading(self.right_panel_mode.as_deref().unwrap_or(""));
-                    ui.separator();
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        if self.right_panel_mode.as_deref() == Some("feedback") {
-                            self.render_feedback_panel(ui);
-                        } else if self.right_panel_mode.as_deref() == Some("library") {
-                            self.render_library_panel(ui);
-                        }
-                    });
-                });
-        }
-
         // Accept drag-and-dropped image files.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw

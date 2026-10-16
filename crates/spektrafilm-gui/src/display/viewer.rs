@@ -359,7 +359,7 @@ impl Viewer {
             })
             .response
             .on_hover_text(
-                "Napari interpolation mode used to display the output layer in the viewer.",
+                "Interpolation used to display the output layer in the viewer.",
             );
     }
     fn display_source(&self, layer: ViewLayer) -> DisplaySource {

@@ -90,7 +90,6 @@ pub(crate) struct App {
     pub(crate) calibration_epoch: u64,
     pub(crate) parameter_revision: u64,
     pub(crate) histogram: histogram::HistogramStrip,
-    pub(crate) right_panel_mode: Option<String>,
     pub(crate) compare_active: bool,
     pub(crate) compare_split: f32,
 }
@@ -240,7 +239,6 @@ impl App {
             calibration_epoch: 0,
             parameter_revision: 0,
             histogram: histogram::HistogramStrip::new(),
-            right_panel_mode: None,
             compare_active: false,
             compare_split: 0.5,
             filter: String::new(),
