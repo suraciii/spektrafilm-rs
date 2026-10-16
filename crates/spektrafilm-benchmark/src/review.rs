@@ -16,11 +16,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const BODY: &str = include_str!("../assets/chart-report.html");
-const CSS: &str = include_str!("../assets/chart-report.css");
-const JS: &str = include_str!("../assets/chart-report.js");
+const BODY: &str = include_str!("../assets/review.html");
+const CSS: &str = include_str!("../assets/review.css");
+const JS: &str = include_str!("../assets/review.js");
 const CSP: &str = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'";
-const WORK_DIR: &str = ".chart-report-work";
+const WORK_DIR: &str = ".review-work";
 
 fn err(code: &str, message: impl Into<String>) -> Error {
     Error::new(code, message.into())
@@ -134,24 +134,20 @@ fn source_path(image: &Map<String, Value>, manifest: &Path) -> Result<PathBuf> {
     ) {
         return Err(err(
             "source_declaration",
-            "chart-report sources must be self-describing rasters (TIFF, PNG, NPY, JPEG, WebP); raw sidecar carriers are not supported",
+            "review sources must be self-describing rasters (TIFF, PNG, NPY, JPEG, WebP); raw sidecar carriers are not supported",
         )
         .at(shown));
     }
     let metadata =
         fs::metadata(&path).map_err(|e| err("dependency_read", e.to_string()).at(shown.clone()))?;
     if !metadata.is_file() {
-        return Err(err(
-            "dependency_read",
-            "chart-report source must be a regular file",
-        )
-        .at(shown));
+        return Err(err("dependency_read", "review source must be a regular file").at(shown));
     }
     Ok(path)
 }
 
 fn validate_manifest_value(value: &Value, manifest: &Path) -> Result<()> {
-    documents::validate_shape("chart-report", value)?;
+    documents::validate_shape("review", value)?;
     let charts = value["charts"].as_array().unwrap();
     let images = value["images"].as_array().unwrap();
     unique_ids(charts, "chart")?;
@@ -275,7 +271,7 @@ fn build_report_impl(
     if sha256_file(&manifest_path)? != manifest_sha256 {
         return Err(err(
             "hash_mismatch",
-            "chart manifest changed while being read",
+            "review manifest changed while being read",
         ));
     }
     let (left, right) = effective_pair(&authored, left, right)?;
@@ -390,19 +386,19 @@ fn build_report_impl(
         .map_err(|e| err("document_read", e.to_string()))?;
     let embedded = data.replace('<', "\\u003c");
     let html = format!(
-        "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><title>SpektraFilm 色卡视觉报告</title><style>{CSS}</style>{BODY}<script type=\"application/json\" id=\"chart-report-data\">{embedded}</script><script src=\"viewer.js\"></script></body></html>",
+        "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><title>SpektraFilm 色卡视觉报告</title><style>{CSS}</style>{BODY}<script type=\"application/json\" id=\"review-data\">{embedded}</script><script src=\"viewer.js\"></script></body></html>",
     );
     fs::write(out.join("index.html"), html)?;
     if sha256_file(&manifest_path)? != manifest_sha256 {
         return Err(err(
             "hash_mismatch",
-            "chart manifest changed during publication",
+            "review manifest changed during publication",
         ));
     }
     dump(&out.join("report.json"), &payload)?;
     Ok(json!({
         "schema_version": 1,
-        "command": "chart-report",
+        "command": "review",
         "execution_status": "completed",
         "artifact": root.join("index.html"),
         "manifest": root.join("report.json"),

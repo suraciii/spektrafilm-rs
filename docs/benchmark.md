@@ -8,7 +8,7 @@ Choose the path for the task:
 
 - Compare versions: generate one bundle, run baseline and candidate targets with that bundle, then use `compare`, `inspect`, and `report`.
 - Review one image: use `run --input`, then `compare --run --against input` and `report`. Add a declared reference to review against it.
-- Review prepared chart images without a simulation run: use `chart-report` with a chart manifest. It accepts Chinese captions and a default pair, then lets the reviewer select other images and patch windows offline.
+- Review prepared chart images without a simulation run: use `review` with a chart manifest. It accepts Chinese captions and a default pair, then lets the reviewer select other images and patch windows offline.
 - Check a new configuration: use `run --dry-run` before rendering. Read its grouped errors and retained renderer logs before changing the configuration.
 
 The agent prepares the evidence and reads the measurements. The reviewer opens `index.html` to inspect full images and native crops. Baseline selection and calibrated policy budgets remain explicit decisions.
@@ -212,15 +212,15 @@ Case, pair, and region links preserve exact identities in the report fragment, f
 
 ## Compare prepared chart images
 
-Use `chart-report` for a collection of standardized chart rasters. It does not need a renderer, run directory, or comparison record. It does not calculate color differences or acceptance scores. Keep measured findings in the existing comparison workflow; this command provides reusable visual inspection.
+Use `review` for a collection of standardized chart rasters. It does not need a renderer, run directory, or comparison record. It does not calculate color differences or acceptance scores. Keep measured findings in the existing comparison workflow; this command provides reusable visual inspection.
 
-A newly generated fixture bundle contains `chart-report.json`. Its two synthetic probes demonstrate independent chart groups, not matching patch colors:
+A newly generated fixture bundle contains `review.json`. Its two synthetic probes demonstrate independent chart groups, not matching patch colors:
 
 ```bash
-./target/release/spektrafilm-bench validate --kind chart-report \
-    --file /tmp/spektrafilm-benchmark-fixtures/chart-report.json
-./target/release/spektrafilm-bench chart-report \
-    --manifest /tmp/spektrafilm-benchmark-fixtures/chart-report.json \
+./target/release/spektrafilm-bench validate --kind review \
+    --file /tmp/spektrafilm-benchmark-fixtures/review.json
+./target/release/spektrafilm-bench review \
+    --manifest /tmp/spektrafilm-benchmark-fixtures/review.json \
     --out /tmp/spektrafilm-chart-review
 ```
 
@@ -270,8 +270,8 @@ Camera RAW must first use the [native decoder](raw.md), then an explicitly estab
 You can override the default pair without editing the manifest:
 
 ```bash
-./target/release/spektrafilm-bench chart-report \
-    --manifest /tmp/my-chart-inputs/report.json \
+./target/release/spektrafilm-bench review \
+    --manifest /tmp/my-chart-inputs/review.json \
     --left native --right synthetic --out /tmp/my-chart-review
 ```
 
@@ -279,7 +279,7 @@ Open the output `index.html` directly. Select any left and right image, swap the
 
 Click a contact-sheet cell to open that window, or use the arrow keys while a shared-chart image viewport has focus. The page URL fragment retains the image IDs, viewing mode, zoom, and selected windows. Copy the URL to share that exact view; invalid identities produce a visible error rather than silently changing the requested pair.
 
-Use `schema --kind chart-report` for the complete authored schema. Validation reports checks that still require decoding. The generated `report.json` identifies the actual images, geometry, selected default pair, and output artifacts.
+Use `schema --kind review` for the complete authored schema. Validation reports checks that still require decoding. The generated `report.json` identifies the actual images, geometry, selected default pair, and output artifacts.
 
 Share the complete output directory, including `viewer.js` and `images/`, rather than only `index.html`. The same directory supports direct file opening and static hosting with a same-origin script policy; no network library or report server is required.
 

@@ -440,7 +440,7 @@ pub fn schema_for(kind: &str) -> Result<Value> {
         "policy" => include_str!("../assets/policy.schema.json"),
         "run" => include_str!("../assets/run.schema.json"),
         "comparison" => include_str!("../assets/comparison.schema.json"),
-        "chart-report" => include_str!("../assets/chart-report.schema.json"),
+        "review" => include_str!("../assets/review.schema.json"),
         _ => {
             return Err(err(
                 "unknown_document_kind",

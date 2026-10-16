@@ -1,4 +1,3 @@
-pub mod chart_report;
 pub mod common;
 pub mod compare;
 pub mod documents;
@@ -10,6 +9,7 @@ pub mod local_input;
 pub mod metrics;
 pub mod references;
 pub mod report;
+pub mod review;
 pub mod runner;
 pub mod target;
 

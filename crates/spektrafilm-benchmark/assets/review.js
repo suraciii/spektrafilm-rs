@@ -2,14 +2,14 @@
   'use strict';
 
   // ---------- 报告数据（内嵌 JSON，禁止网络请求） ----------
-  const dataElement = document.getElementById('chart-report-data');
+  const dataElement = document.getElementById('review-data');
   const hashError = document.getElementById('chart-hash-error');
   function fatal(message) {
     hashError.hidden = false;
     hashError.textContent = `报告数据不可用：${message}。本页面无法展示图像对照。`;
   }
   if (!dataElement) {
-    fatal('未找到内嵌数据节点 chart-report-data');
+    fatal('未找到内嵌数据节点 review-data');
     return;
   }
   let data = null;
@@ -120,8 +120,8 @@
   }
 
   // ---------- DOM 锚点 ----------
-  const titleNode = document.getElementById('chart-report-title');
-  const descriptionNode = document.getElementById('chart-report-description');
+  const titleNode = document.getElementById('review-title');
+  const descriptionNode = document.getElementById('review-description');
   const viewer = document.querySelector('[data-viewer]');
   const leftSelect = document.querySelector('[data-left-select]');
   const rightSelect = document.querySelector('[data-right-select]');
