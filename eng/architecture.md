@@ -11,7 +11,7 @@ crates/
   spektrafilm-core/       runtime facade, pipeline orchestration, profiles, stages
   spektrafilm-gpu/        ComputeBackend trait with CPU (rayon + BLAS) and WGPU backends
   spektrafilm-shaders/    spectral WGSL shaders and standalone Metal sources
-  spektrafilm-cli/        `spektrafilm`, `spektrafilm-f64`, `decode_raw_gui`, `fit` and `lut`
+  spektrafilm-cli/        `spektrafilm`, `spektrafilm-f64`, `spektrafilm-lab`, `decode_raw_gui` and `lut`
   spektrafilm-gui/        egui/eframe preview window
   spektrafilm-raw/        LibRaw white balance and Lensfun correction
   spektrafilm-benchmark/  benchmark CLI, fixture generator, metrics and offline review

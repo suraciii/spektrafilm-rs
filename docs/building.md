@@ -26,6 +26,9 @@ cargo build --release -p spektrafilm-cli
 # f64 CLI — reference precision (CPU only; WGSL has no f64)
 cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-f64
 
+# lab CLI — development commands at f64 reference precision (never packaged)
+cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-lab
+
 # Optional RAW decoding helper using the shared native decoder
 cargo build --release -p spektrafilm-cli --bin decode_raw_gui
 ```
@@ -35,6 +38,7 @@ This produces:
 - `target/release/spektrafilm-gui` — desktop GUI.
 - `target/release/spektrafilm` — fast f32 CLI.
 - `target/release/spektrafilm-f64` — CPU reference exporter.
+- `target/release/spektrafilm-lab` — development command surface (f64 reference precision; not shipped).
 - `target/release/decode_raw_gui` — standalone RAW decoding helper.
 
 The `just` command surface also covers packaging and per-user installation:

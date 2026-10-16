@@ -1,12 +1,99 @@
-/// Minimal NumPy `.npy` file loader.
+/// Minimal NumPy `.npy` file loaders.
 ///
-/// Supports float16 (`<f2`) and float64 (`<f8`) arrays in C order.
+/// Supports float16 (`<f2`), float32 (`<f4`) and float64 (`<f8`) arrays in
+/// C order. [`load_npy_f32`] converts to f32 for the calibrated pipeline;
+/// [`load_npy_f64`] promotes exactly and preserves `<f8` bit-for-bit for lab
+/// diagnostics.
 use std::io::Read;
 
 use half::f16;
 
 /// Load a `.npy` file and return the shape + f32 data (converting from original dtype).
-pub fn load_npy_f32<R: Read>(mut reader: R) -> Result<(Vec<usize>, Vec<f32>), NpyError> {
+pub fn load_npy_f32<R: Read>(reader: R) -> Result<(Vec<usize>, Vec<f32>), NpyError> {
+    let (descr, shape, mut reader) = read_header(reader)?;
+    let total_elements: usize = shape.iter().product();
+
+    let data = match descr.trim_matches('\'') {
+        "<f2" => {
+            // float16, little-endian
+            let mut raw = vec![0u8; total_elements * 2];
+            reader.read_exact(&mut raw)?;
+            raw.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| f16::from_le_bytes(*chunk).to_f32())
+                .collect()
+        }
+        "<f4" => {
+            // float32, little-endian
+            let mut raw = vec![0u8; total_elements * 4];
+            reader.read_exact(&mut raw)?;
+            raw.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|chunk| f32::from_le_bytes(*chunk))
+                .collect()
+        }
+        "<f8" => {
+            // float64, little-endian
+            let mut raw = vec![0u8; total_elements * 8];
+            reader.read_exact(&mut raw)?;
+            raw.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|chunk| f64::from_le_bytes(*chunk) as f32)
+                .collect()
+        }
+        other => return Err(NpyError::Parse(format!("unsupported dtype: {other}"))),
+    };
+
+    Ok((shape, data))
+}
+
+/// Load a `.npy` file and return the shape + f64 data.
+///
+/// `<f2` and `<f4` inputs are promoted exactly; `<f8` is preserved bit-exact.
+pub fn load_npy_f64<R: Read>(reader: R) -> Result<(Vec<usize>, Vec<f64>), NpyError> {
+    let (descr, shape, mut reader) = read_header(reader)?;
+    let total_elements: usize = shape.iter().product();
+
+    let data = match descr.trim_matches('\'') {
+        "<f2" => {
+            let mut raw = vec![0u8; total_elements * 2];
+            reader.read_exact(&mut raw)?;
+            raw.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| f16::from_le_bytes(*chunk).to_f64())
+                .collect()
+        }
+        "<f4" => {
+            let mut raw = vec![0u8; total_elements * 4];
+            reader.read_exact(&mut raw)?;
+            raw.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|chunk| f32::from_le_bytes(*chunk) as f64)
+                .collect()
+        }
+        "<f8" => {
+            let mut raw = vec![0u8; total_elements * 8];
+            reader.read_exact(&mut raw)?;
+            raw.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|chunk| f64::from_le_bytes(*chunk))
+                .collect()
+        }
+        other => return Err(NpyError::Parse(format!("unsupported dtype: {other}"))),
+    };
+
+    Ok((shape, data))
+}
+
+/// Read the NumPy header, returning the descriptor, shape and the reader
+/// positioned at the raw array data.
+fn read_header<R: Read>(mut reader: R) -> Result<(String, Vec<usize>, R), NpyError> {
     // Magic: \x93NUMPY
     let mut magic = [0u8; 6];
     reader.read_exact(&mut magic)?;
@@ -56,44 +143,7 @@ pub fn load_npy_f32<R: Read>(mut reader: R) -> Result<(Vec<usize>, Vec<f32>), Np
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| NpyError::Parse(format!("bad shape: {e}")))?;
 
-    let total_elements: usize = shape.iter().product();
-
-    // Read data based on dtype
-    let data = match descr.trim_matches('\'') {
-        "<f2" => {
-            // float16, little-endian
-            let mut raw = vec![0u8; total_elements * 2];
-            reader.read_exact(&mut raw)?;
-            raw.as_chunks::<2>()
-                .0
-                .iter()
-                .map(|chunk| f16::from_le_bytes(*chunk).to_f32())
-                .collect()
-        }
-        "<f4" => {
-            // float32, little-endian
-            let mut raw = vec![0u8; total_elements * 4];
-            reader.read_exact(&mut raw)?;
-            raw.as_chunks::<4>()
-                .0
-                .iter()
-                .map(|chunk| f32::from_le_bytes(*chunk))
-                .collect()
-        }
-        "<f8" => {
-            // float64, little-endian
-            let mut raw = vec![0u8; total_elements * 8];
-            reader.read_exact(&mut raw)?;
-            raw.as_chunks::<8>()
-                .0
-                .iter()
-                .map(|chunk| f64::from_le_bytes(*chunk) as f32)
-                .collect()
-        }
-        other => return Err(NpyError::Parse(format!("unsupported dtype: {other}"))),
-    };
-
-    Ok((shape, data))
+    Ok((descr, shape, reader))
 }
 
 /// Extract a field value from a Python dict-like header string.

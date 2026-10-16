@@ -1,20 +1,11 @@
-mod contract;
-#[cfg(feature = "precision-f64")]
-mod fit;
-mod lut;
-mod preset;
-mod process;
-mod process_report;
-mod runner;
-mod telemetry;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use spektrafilm_cli::{DiscoveryFormat, contract, lut, preset, process, runner, select_data_dir};
 use spektrafilm_core::image_io;
 use spektrafilm_core::profile;
 
@@ -35,9 +26,6 @@ enum Commands {
         after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true --set camera.exposure_compensation_ev=0.5 --seed 42\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true --dry-run --dry-run-format text\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nRaster source color and transfer state must be declared explicitly; RAW uses linear ACES2065-1 from its decoder. Scanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --saving-cctf-encoding controls writer encoding. Output bit depth does not select computation precision. Dry run does not decode pixels or prove device availability."
     )]
     Process(process::ProcessArgs),
-    /// Fit profile and look parameters against reference patch data.
-    #[cfg(feature = "precision-f64")]
-    Fit(fit::FitArgs),
     /// List available film and paper profiles.
     ListProfiles {
         /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
@@ -116,18 +104,6 @@ enum Commands {
     },
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum Backend {
-    Cpu,
-    Gpu,
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum DiscoveryFormat {
-    Json,
-    Text,
-}
-
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -180,10 +156,6 @@ fn main() -> Result<()> {
         Commands::ListProfiles { data_dir } => {
             let data = select_data_dir(data_dir, command_matches)?;
             cmd_list_profiles(&data.path)?;
-        }
-        #[cfg(feature = "precision-f64")]
-        Commands::Fit(args) => {
-            fit::cmd_fit(&args, command_matches)?;
         }
         Commands::Lut { command } => lut::run(command, command_matches)?,
         Commands::ExportLut {
@@ -310,71 +282,6 @@ fn cmd_list_profiles(data_dir: &Path) -> Result<()> {
         println!("{name:<40} {display_name:<30} ({film_type}, {support})");
     }
     Ok(())
-}
-
-pub(crate) struct DataSelection {
-    path: PathBuf,
-    source: &'static str,
-}
-
-pub(crate) fn explicit_data_selection(matches: &ArgMatches) -> bool {
-    matches.value_source("data_dir") == Some(clap::parser::ValueSource::CommandLine)
-        || std::env::var_os("SPEKTRAFILM_DATA_DIR").is_some()
-}
-
-pub(crate) fn select_data_dir(argument: PathBuf, matches: &ArgMatches) -> Result<DataSelection> {
-    let selection = if matches.value_source("data_dir")
-        == Some(clap::parser::ValueSource::CommandLine)
-    {
-        Some((argument, "argument", "--data-dir"))
-    } else if let Some(value) = std::env::var_os("SPEKTRAFILM_DATA_DIR") {
-        if value.is_empty() {
-            bail!("SPEKTRAFILM_DATA_DIR is empty; set it to a data directory or supply --data-dir");
-        }
-        Some((PathBuf::from(value), "environment", "SPEKTRAFILM_DATA_DIR"))
-    } else {
-        None
-    };
-    if let Some((path, source, option)) = selection {
-        if !path.is_dir() {
-            bail!(
-                "{option} selected {} which is not an existing directory; supply a valid data directory",
-                path.display()
-            );
-        }
-        return Ok(DataSelection {
-            path: fs::canonicalize(&path)
-                .with_context(|| format!("resolving data directory: {}", path.display()))?,
-            source,
-        });
-    }
-    let executable = std::env::current_exe().context("locating executable for data discovery")?;
-    let directory = executable
-        .parent()
-        .context("executable has no parent directory")?;
-    let candidates = [
-        directory.join("data"),
-        directory.join("../share/data"),
-        directory.join("../Resources/data"),
-        std::env::current_dir()?.join("data"),
-    ];
-    for path in &candidates {
-        if path.is_dir() {
-            return Ok(DataSelection {
-                path: fs::canonicalize(path)
-                    .with_context(|| format!("resolving data directory: {}", path.display()))?,
-                source: "automatic",
-            });
-        }
-    }
-    bail!(
-        "no data directory found; tried {}; set --data-dir or SPEKTRAFILM_DATA_DIR",
-        candidates
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
 }
 
 fn cmd_describe(format: DiscoveryFormat, module: Option<&str>, field: Option<&str>) -> Result<()> {

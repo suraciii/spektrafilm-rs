@@ -12,7 +12,7 @@ use spektrafilm_core::{lut_transport, profile};
 // Clap subcommands are built once at startup, outside hot paths.
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
-pub(crate) enum LutCommand {
+pub enum LutCommand {
     /// Bake a deterministic LUT bundle. CLI flags override a flat TOML BundleSpec.
     Build(BuildArgs),
     /// List sorted stock names or canonical color spaces and their short tags.
@@ -27,7 +27,7 @@ pub(crate) enum LutCommand {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
-pub(crate) enum ListKind {
+pub enum ListKind {
     Film,
     Print,
     Input,
@@ -39,7 +39,7 @@ pub(crate) enum ListKind {
 #[command(
     after_long_help = "Examples:\n  spektrafilm lut build build/lut_bundles --film kodak_portra_400 --print kodak_portra_endura --input vlog --output srgb\n  spektrafilm lut list film\n  spektrafilm lut list input\n  spektrafilm lut list target"
 )]
-pub(crate) struct BuildArgs {
+pub struct BuildArgs {
     /// Load flat BundleSpec fields, including gamut-compression tables, from TOML.
     #[arg(
         long = "from",
@@ -117,7 +117,7 @@ pub(crate) struct BuildArgs {
     data_dir: PathBuf,
 }
 
-pub(crate) fn run(command: LutCommand, matches: &ArgMatches) -> Result<()> {
+pub fn run(command: LutCommand, matches: &ArgMatches) -> Result<()> {
     let (_, matches) = matches.subcommand().expect("required lut subcommand");
     match command {
         LutCommand::Build(mut args) => {
@@ -345,7 +345,7 @@ fn list(kind: ListKind, data_dir: &Path) -> Result<()> {
 
 /// Compatibility export uses the canonical one-stage baker with encoded
 /// ProPhoto RGB input, encoded sRGB output, and the input's native linear scale.
-pub(crate) fn export_lut(
+pub fn export_lut(
     film_name: &str,
     paper_name: Option<&str>,
     resolution: u32,

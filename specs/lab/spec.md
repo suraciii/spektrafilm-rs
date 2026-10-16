@@ -25,7 +25,7 @@ The `spectral` group carries spectral diagnostics. `evaluate` is its first comma
 ### Results
 
 - The truth value integrates the measured spectrum, the illuminant, and the film sensitivity. It is normalized at the declared mid-gray anchor (0.184).
-- The reconstruction runs the product path over the same spectrum: XYZ, RGB, the reference-illuminant adaptation (CAT16), the hanatos2025 upsampling, the window, the surface, and the sensitivity integrals. It is normalized at the same anchor.
+- The reconstruction runs the product path over the same spectrum and stops at the film raw exposure: XYZ, RGB, the reference-illuminant adaptation (CAT16), the hanatos2025 upsampling with the chain's resolved window, surface, and input-gamut settings, and the sensitivity integrals. It is normalized at the same anchor.
 - Each sample reports its reflectance ρ, `max_abs_ev`, `common_ev`, `balance_rms_ev`, `ΔEV_R/G/B`, `rb_ev`, `gb_ev`, and a validity flag.
 - A non-positive response is invalid. Samples outside the valid band are invalid. The evaluator must not clip, extrapolate, or repair them.
 - The report carries both anchor roles, raw and relative. It must not judge which one is correct.
@@ -40,5 +40,5 @@ The `spectral` group carries spectral diagnostics. `evaluate` is its first comma
 ### Acceptance
 
 - On a frozen measured-spectra set, the values must agree with the frozen Python evaluation of the calibration method within a relative tolerance of 1e-9.
-- On a synthetic chart, the log-exposure values must cross-check against `process --stage-evidence` `log_e_film` output.
+- On a synthetic chart, the film raw log-exposure values must cross-check against the `log_e_film` buffer of `process --stage-evidence` with the optical scatter stages off.
 - Repeated runs on identical inputs must produce identical values.

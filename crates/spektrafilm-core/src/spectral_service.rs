@@ -8,6 +8,11 @@ mod illuminant;
 mod registry;
 mod upsampling;
 
+use crate::params::RuntimeParams;
+use crate::profile::Profile;
+use spektrafilm_math::spectral::{self, TcLut};
+use std::path::Path;
+
 pub use filters::{
     NO_COLOR_FILTER, available_color_filters, is_supported_color_filter,
     load_color_filter_transmittance,
@@ -31,7 +36,7 @@ pub use upsampling::{
 };
 
 #[cfg(test)]
-use spektrafilm_math::spectral::{self, N_WAVELENGTHS, TcLut};
+use spektrafilm_math::spectral::N_WAVELENGTHS;
 
 pub const fn default_spectral_shape() -> [f64; 3] {
     [380.0, 780.0, 5.0]
@@ -66,6 +71,155 @@ impl SpectralShape {
     pub fn wavelength(self, index: usize) -> f64 {
         self.bounds[0] + self.bounds[2] * index as f64
     }
+}
+
+/// The film front end of a resolved chain: the (optionally filtered) film
+/// sensitivity, the RGB → film-raw upsampler built for it, and the illuminant
+/// that upsampler projects through.
+pub struct FilmingUpsampler {
+    /// The resolved `settings.rgb_to_raw_method` identifier.
+    pub method: String,
+    /// The film sensitivity after the camera UV/IR and colour filters.
+    pub sensitivity: Vec<[f64; 3]>,
+    /// Hanatos2025 spectral TC LUT; `Some` whenever the method uses a LUT.
+    pub tc_lut: Option<TcLut>,
+    /// Mallett2019 reflectance-basis matrix; `Some` for `mallett2019`.
+    pub mallett_core: Option<[[f64; 3]; 3]>,
+    /// Illuminant the front pass projects through: the film reference, or
+    /// D65 for the other LUT methods.
+    pub front_illuminant: String,
+}
+
+/// Build the filming front end for a resolved chain.
+///
+/// The film sensitivity is expanded and filtered (`sensitivity_f64` +
+/// camera UV/IR and colour filters), then the `settings.rgb_to_raw_method`
+/// upsampler is built: a windowed Hanatos2025 TC LUT, another registered
+/// LUT, or the Mallett2019 matrix. The pipeline calibration and the lab
+/// spectral evaluation share this one builder so both see the same chain.
+pub fn build_filming_upsampler(
+    film: &Profile,
+    params: &RuntimeParams,
+    data_dir: &Path,
+) -> Result<FilmingUpsampler, String> {
+    // Film sensitivity: Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)`.
+    let mut sensitivity: Vec<[f64; 3]> = film.sensitivity_f64();
+
+    let ref_illuminant = select_illuminant(&film.info.reference_illuminant);
+    let ref_illuminant_f64 = select_illuminant_f64(&film.info.reference_illuminant);
+    let mut front_illuminant = film.info.reference_illuminant.clone();
+
+    // Camera UV/IR filter — Python `FilmingStage._rgb_to_film_raw` filters
+    // the film sensitivity through the UV/IR band-pass (with
+    // reference-illuminant normalization preserving white balance) before
+    // BOTH upsampler branches and before the midgray calibration below.
+    // Off at default amplitudes (0, 0), matching Python's guard
+    // `filter_uv[0] > 0 or filter_ir[0] > 0`.
+    if params.camera.filter_uv[0] > 0.0 || params.camera.filter_ir[0] > 0.0 {
+        apply_camera_uv_ir_band_pass(
+            &mut sensitivity,
+            [
+                params.camera.filter_uv[0] as f64,
+                params.camera.filter_uv[1] as f64,
+                params.camera.filter_uv[2] as f64,
+            ],
+            [
+                params.camera.filter_ir[0] as f64,
+                params.camera.filter_ir[1] as f64,
+                params.camera.filter_ir[2] as f64,
+            ],
+            &ref_illuminant_f64,
+        );
+    }
+    if params.camera.color_filter != NO_COLOR_FILTER {
+        let transmittance = load_color_filter_transmittance(data_dir, &params.camera.color_filter)?
+            .expect("named camera color filters always have transmission");
+        for (row, transmission) in sensitivity.iter_mut().zip(transmittance) {
+            for channel in row {
+                *channel *= transmission;
+            }
+        }
+    }
+    // RGB → film raw upsampler. Default `hanatos2025` builds the spectral tc
+    // LUT; `mallett2019` builds a 3×3 reflectance-basis matrix instead (no
+    // LUT). Dispatch mirrors Python `_rgb_to_film_raw`.
+    let method_name = params.settings.rgb_to_raw_method.as_str();
+    let method = crate::params::validation::RgbToRawMethod::parse(method_name)?;
+    let (tc_lut, mallett_core): (Option<TcLut>, Option<[[f64; 3]; 3]>) = match method {
+        crate::params::validation::RgbToRawMethod::Hanatos2025 => {
+            let window_params: Vec<f64> = film.data.hanatos2025_adaptation_window_params.clone();
+            let adaptation = Hanatos2025Adaptation {
+                window_params: &window_params,
+                surface_params: &film.data.hanatos2025_adaptation_surface_params,
+                spectral_gaussian_blur: params.settings.spectral_gaussian_blur as f64,
+                reference_illuminant: &ref_illuminant_f64,
+                reference_illuminant_xy: spectral::illuminant_to_xy(&ref_illuminant),
+                apply_window: params.settings.apply_hanatos2025_adaptation_window,
+                apply_surface: params.settings.apply_hanatos2025_adaptation_surface,
+            };
+            let tc_lut = compute_registered_tc_lut(
+                data_dir,
+                "hanatos2025",
+                &sensitivity,
+                &ref_illuminant_f64,
+                Some(&adaptation),
+            )?;
+
+            (Some(tc_lut), None)
+        }
+        crate::params::validation::RgbToRawMethod::Arctic2026Alpha02
+        | crate::params::validation::RgbToRawMethod::Arctic2026Beta04
+        | crate::params::validation::RgbToRawMethod::GaussLasers
+        | crate::params::validation::RgbToRawMethod::Jakob2019
+        | crate::params::validation::RgbToRawMethod::Otsu2018 => {
+            front_illuminant = "D65".into();
+            let tc_lut = compute_registered_tc_lut(
+                data_dir,
+                method_name,
+                &sensitivity,
+                &ref_illuminant_f64,
+                None,
+            )?;
+            (Some(tc_lut), None)
+        }
+        crate::params::validation::RgbToRawMethod::Mallett2019 => (
+            None,
+            Some(crate::mallett::compute_core_matrix(
+                &sensitivity,
+                &ref_illuminant_f64,
+            )),
+        ),
+    };
+    let tc_lut = if let Some(tc_lut) = tc_lut {
+        let input_gamut =
+            crate::input_gamut::InputGamutCompress::build(&params.io.input_gamut_compress)?;
+        Some(if input_gamut.is_active() {
+            // Hanatos remaps around fixed D65, independently of film adaptation.
+            // Other LUT methods set their front illuminant before this boundary.
+            let remap_illuminant = if matches!(
+                method,
+                crate::params::validation::RgbToRawMethod::Hanatos2025
+            ) {
+                "D65"
+            } else {
+                &front_illuminant
+            };
+            let (rx, ry) = spectral::illuminant_to_xy(&select_illuminant(remap_illuminant));
+            input_gamut.remap(&tc_lut, [rx, ry])
+        } else {
+            tc_lut
+        })
+    } else {
+        None
+    };
+
+    Ok(FilmingUpsampler {
+        method: method_name.to_owned(),
+        sensitivity,
+        tc_lut,
+        mallett_core,
+        front_illuminant,
+    })
 }
 
 #[cfg(test)]
