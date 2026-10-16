@@ -63,6 +63,11 @@ jobs:
     env:
       OPENBLAS_NUM_THREADS: '1'
       RAYON_NUM_THREADS: '2'
+      # Test binaries shrink ~14x without debug info (336 MB to 24 MB for the
+      # core suite locally): compile, link, and cache transfer time drop while
+      # test execution is unchanged; failure backtraces lose file:line. The PR
+      # gate already builds its tests this way.
+      CARGO_PROFILE_TEST_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@v4
