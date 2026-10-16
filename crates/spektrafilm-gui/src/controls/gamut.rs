@@ -19,10 +19,10 @@ pub(crate) fn sections(
                     "Compress input chromaticities toward the visible spectral locus before spectral upsampling. Off passes input through unchanged.",
                 );
             }
-            if filter_matches(filter, "algorithm (experimental)") {
-                flags.runtime_changed |= choice_tip(
+            if filter_matches(filter, "algorithm") {
+                flags.runtime_changed |= choice_tip_experimental(
                     ui,
-                    "algorithm (experimental)",
+                    "algorithm",
                     &mut params.io.input_gamut_compress.algorithm,
                     &["xy", "oklch", "off"],
                     "xy: radial compression in CIE 1931 chromaticity toward the spectral locus / inscribed hull (ACES RGC family, preserves dominant wavelength). oklch: perceptual chroma reduction in OkLab. off: disable input gamut compression.",

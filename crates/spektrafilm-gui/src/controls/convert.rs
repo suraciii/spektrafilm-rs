@@ -53,21 +53,21 @@ pub(crate) fn sections(
                     }
                 });
             }
-            if filter_matches(filter, "film_channel_swap (experimental)") {
+            if filter_matches(filter, "film_channel_swap") {
                 flags.runtime_changed |= extra_channels(
                     ui,
                     extras,
                     "film_channel_swap",
-                    "film_channel_swap (experimental)",
+                    "film_channel_swap",
                     "extras.special.film_channel_swap",
                 );
             }
-            if filter_matches(filter, "print_channel_swap (experimental)") {
+            if filter_matches(filter, "print_channel_swap") {
                 flags.runtime_changed |= extra_channels(
                     ui,
                     extras,
                     "print_channel_swap",
-                    "print_channel_swap (experimental)",
+                    "print_channel_swap",
                     "extras.special.print_channel_swap",
                 );
             }

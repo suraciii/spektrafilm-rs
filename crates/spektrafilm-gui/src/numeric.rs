@@ -124,12 +124,12 @@ pub(crate) fn numeric<T: egui::emath::Numeric>(
     decimals: usize,
     tooltip: &str,
     unit: Option<&str>,
+    experimental: bool,
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        let label_response = ui
-            .add(egui::Label::new(egui::RichText::new(label)).sense(egui::Sense::click()))
-            .on_hover_text(tooltip);
+        let label_response =
+            crate::controls::row_label(ui, label, experimental).on_hover_text(tooltip);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             changed |= numeric_field(
                 ui,

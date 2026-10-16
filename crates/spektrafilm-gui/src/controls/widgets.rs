@@ -31,6 +31,30 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
         decimals,
         tooltip,
         crate::numeric::unit_suffix(path),
+        false,
+    )
+}
+
+/// `param_numeric` on a row marked experimental.
+pub(crate) fn param_numeric_experimental<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    path: &str,
+    tooltip: &str,
+) -> bool {
+    let (min, max, step, decimals) = editor_range_for(path);
+    numeric(
+        ui,
+        label,
+        value,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        crate::numeric::unit_suffix(path),
+        true,
     )
 }
 
@@ -55,6 +79,7 @@ pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
         decimals,
         tooltip,
         crate::numeric::unit_suffix(path),
+        false,
     )
 }
 
@@ -82,6 +107,30 @@ pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
         decimals,
         tooltip,
         POSITION_IDENTIFIERS,
+        false,
+    )
+}
+
+/// `param_tuple` on a row marked experimental.
+pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
+    ui: &mut Ui,
+    label: &str,
+    values: &mut [T; N],
+    path: &str,
+    tooltip: &str,
+) -> bool {
+    let (min, max, step, decimals) = editor_range_for(path);
+    tuple(
+        ui,
+        label,
+        values,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        POSITION_IDENTIFIERS,
+        true,
     )
 }
 
@@ -106,6 +155,7 @@ pub(crate) fn param_tuple_named<T: egui::emath::Numeric, const N: usize>(
         decimals,
         tooltip,
         identifiers,
+        false,
     )
 }
 
@@ -317,9 +367,10 @@ pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
     decimals: usize,
     tooltip: &str,
     identifiers: &[&str],
+    experimental: bool,
 ) -> bool {
     ui.push_id(label, |ui| {
-        ui.label(label).on_hover_text(tooltip);
+        row_label(ui, label, experimental).on_hover_text(tooltip);
         ui.horizontal_wrapped(|ui| {
             values
                 .iter_mut()
@@ -543,6 +594,31 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
     changed
 }
 
+/// Mark a row's label as experimental.
+///
+/// The marker is a chip beside the label rather than a suffix in the label
+/// text, so the row's accessible name and its search match stay the bare
+/// parameter name.
+pub(crate) fn experimental_badge(ui: &mut Ui) {
+    ui.label(
+        egui::RichText::new("experimental")
+            .color(theme::WARNING)
+            .size(theme::SIZE_HINT),
+    );
+}
+
+/// A row label with the experimental marker when the parameter is marked.
+///
+/// The badge sits beside the label, so the row's accessible name and its
+/// search match stay the bare parameter name.
+pub(crate) fn row_label(ui: &mut Ui, label: &str, experimental: bool) -> egui::Response {
+    let response = ui.add(egui::Label::new(egui::RichText::new(label)).sense(egui::Sense::click()));
+    if experimental {
+        experimental_badge(ui);
+    }
+    response
+}
+
 pub fn choice_tip(
     ui: &mut Ui,
     label: &str,
@@ -556,6 +632,25 @@ pub fn choice_tip(
         value,
         choices.iter().map(|&option| (option, option)),
         tooltip,
+        false,
+    )
+}
+
+/// `choice_tip` on a row marked experimental.
+pub fn choice_tip_experimental(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: &[&str],
+    tooltip: &str,
+) -> bool {
+    choice_tip_options(
+        ui,
+        label,
+        value,
+        choices.iter().map(|&option| (option, option)),
+        tooltip,
+        true,
     )
 }
 
@@ -568,7 +663,7 @@ pub fn choice_tip_entries<'a>(
     choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
     tooltip: &str,
 ) -> bool {
-    choice_tip_options(ui, label, value, choices, tooltip)
+    choice_tip_options(ui, label, value, choices, tooltip, false)
 }
 
 pub(crate) fn choice_tip_options<'a>(
@@ -577,6 +672,7 @@ pub(crate) fn choice_tip_options<'a>(
     value: &mut String,
     choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
     tooltip: &str,
+    experimental: bool,
 ) -> bool {
     let selected_label = choices
         .clone()
@@ -588,7 +684,7 @@ pub(crate) fn choice_tip_options<'a>(
     // parameter row. `from_id_salt` paints the box where it is placed instead
     // of appending its own label after it. The width is capped so a selector
     // sharing a row with another control leaves room for it.
-    ui.label(label).on_hover_text(tooltip);
+    row_label(ui, label, experimental).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(label)
         .selected_text(selected_label)
         .width(theme::WIDTH_COMBO_MAX)
@@ -637,7 +733,7 @@ pub(crate) fn extra_choice(
 ) -> bool {
     let current = extras[section][key].as_str().unwrap_or(default);
     let mut selected = None;
-    ui.label(label).on_hover_text(tooltip);
+    row_label(ui, label, false).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(label)
         .selected_text(current)
         .show_ui(ui, |ui| {
@@ -717,7 +813,7 @@ pub(crate) fn extra_channels(
             }
         }
     }
-    if param_tuple(ui, label, &mut values, path, "") {
+    if param_tuple_experimental(ui, label, &mut values, path, "") {
         set_extra(extras, "special", key, Value::from(values.to_vec()));
         true
     } else {

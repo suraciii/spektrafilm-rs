@@ -730,17 +730,11 @@ fn an_unselected_grain_engine_group_is_read_only() {
     click(h, "FILM");
     // The selected engine's group is the only open one, so the shared field
     // appears once until another engine's group is expanded.
-    assert_eq!(
-        h.query_all_by_label("rms granularity (experimental) 0")
-            .count(),
-        1
-    );
+    assert_eq!(h.query_all_by_label("rms granularity 0").count(), 1);
 
     click(h, "Dye");
     h.run_steps(10);
-    let fields: Vec<_> = h
-        .query_all_by_label("rms granularity (experimental) 0")
-        .collect();
+    let fields: Vec<_> = h.query_all_by_label("rms granularity 0").collect();
     assert_eq!(fields.len(), 2, "both engine groups show the shared field");
     assert_eq!(
         fields
