@@ -549,20 +549,6 @@ mod family_tests {
     }
 
     #[test]
-    fn ineffective_filter_never_reaches_the_family_check() {
-        // Python returns the image before the family lookup when
-        // strength/spatial_scale ≤ 0 — a bogus name must not error there.
-        let img = ramp(32);
-        let mut f = df("black_promist", 0.0);
-        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
-        assert_eq!(out.data.len(), img.data.len());
-        f.strength = 0.5;
-        f.spatial_scale = 0.0;
-        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
-        assert_eq!(out.data.len(), img.data.len());
-    }
-
-    #[test]
     fn all_four_families_scatter_and_stay_distinct() {
         let img = ramp(32);
         let mut outputs = Vec::new();

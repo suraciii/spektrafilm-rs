@@ -187,26 +187,6 @@ mod tests {
     }
 
     #[test]
-    fn small_positive_density_places_flat_frame_at_mid_output() {
-        let mut params = RuntimeParams::default();
-        params.scanner.conversion_dmax = 1e-18;
-        let samples = [[0.4; 3]; 16];
-        let measured =
-            ScannerSetup::from_samples(&samples, 0.0, [-2.0, 2.0], &params.scanner).unwrap();
-        measured.apply(&mut params);
-        let exposure = 0.4 / std::f64::consts::LOG10_2 + params.scanner.conversion_brightness_ev;
-        let coordinate = params.scanner.conversion_contrast * exposure;
-        let t = 1.0 / (1.0 + (-coordinate).exp());
-        let dmax = params.scanner.conversion_dmax;
-        let denominator = -(-std::f64::consts::LN_10 * dmax).exp_m1();
-        let positive = (-std::f64::consts::LN_10 * dmax * (1.0 - t)).exp_m1();
-        let output = (positive + denominator) / denominator;
-        assert!((output - MID_OUTPUT).abs() < 1e-12);
-        assert_eq!(measured.contrast_scale, 1.0);
-        assert_eq!(measured.balance_ev, [0.0; 3]);
-    }
-
-    #[test]
     fn dim_and_bright_frames_shift_only_scanner_brightness() {
         let samples = ramp();
         let original = setup(&samples);

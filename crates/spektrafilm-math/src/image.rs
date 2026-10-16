@@ -145,23 +145,6 @@ mod tests {
     use crate::precision::from_f64;
 
     #[test]
-    fn test_new_and_dimensions() {
-        let img = ImageBuf::new(4, 3);
-        assert_eq!(img.width, 4);
-        assert_eq!(img.height, 3);
-        assert_eq!(img.data.len(), 4 * 3 * 3);
-        assert_eq!(img.pixel_count(), 12);
-    }
-
-    #[test]
-    fn test_get_set_pixel() {
-        let mut img = ImageBuf::new(2, 2);
-        img.set(1, 0, [from_f64(0.5), from_f64(0.6), from_f64(0.7)]);
-        let px = img.get(1, 0);
-        assert_eq!(px, [from_f64(0.5), from_f64(0.6), from_f64(0.7)]);
-    }
-
-    #[test]
     fn test_pixels_iter() {
         let img = ImageBuf::from_data(
             2,

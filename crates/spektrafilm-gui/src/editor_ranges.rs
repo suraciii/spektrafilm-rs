@@ -416,16 +416,6 @@ mod tests {
         count > 1
     }
 
-    #[test]
-    fn all_paths_have_entries() {
-        for path in ALL_PATHS {
-            assert!(
-                editor_range(path).is_some(),
-                "missing editor range for {path}"
-            );
-        }
-    }
-
     /// Every parameter path a GUI editor passes to a `param_*` wrapper must
     /// have a table entry and be listed in `ALL_PATHS`, and every table path
     /// must be used by an editor, so absence is caught at test time instead

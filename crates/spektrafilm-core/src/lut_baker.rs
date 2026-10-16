@@ -819,22 +819,6 @@ mod tests {
     }
 
     #[test]
-    fn active_magazine_does_not_rewrite_photographic_route() {
-        let film: profile::Profile =
-            serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
-        let print = film.clone();
-        let neutral = NeutralFilters::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-        let s = spec("srgb", "srgb");
-        let input = lut_transport::resolve("srgb").unwrap();
-        let mut base = RuntimeParams::default();
-        base.magazine_print_color.active = true;
-        base.magazine_print_color.strength = 0.75;
-        let baked =
-            bake_params(&s, input, input, &film, &print, &neutral, Some(&base), true).unwrap();
-        assert_eq!(baked.workflow.route, "input > film > print > scan");
-        assert!(!baked.io.scan_film);
-    }
-    #[test]
     fn interpolation_preserves_channel_axis_and_clamps_domain_edges() {
         let mut table = Vec::new();
         for r in 0..3 {

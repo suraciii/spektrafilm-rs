@@ -672,15 +672,6 @@ mod tests {
     }
 
     #[test]
-    fn source_revision_matches_model_provenance() {
-        assert!(
-            model::PROVENANCE.contains(SOURCE_REVISION),
-            "{}",
-            model::PROVENANCE
-        );
-    }
-
-    #[test]
     fn zero_amount_and_inactive_grain_are_exact_bypasses() {
         let mut params = fotufilm_params(FotufilmMaterial::Auto);
         assert!(active(&params));

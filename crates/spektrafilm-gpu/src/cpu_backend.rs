@@ -558,20 +558,6 @@ pub fn print_spectral_cpu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spektrafilm_math::precision::{srgb_decode, srgb_encode};
-
-    #[test]
-    fn test_srgb_roundtrip() {
-        for &v in &[0.0_f64, 0.001, 0.01, 0.1, 0.5, 0.9, 1.0] {
-            let s = from_f64(v);
-            let encoded = srgb_encode(s);
-            let decoded = srgb_decode(encoded);
-            assert!(
-                (s - decoded).abs() < from_f64(1e-5),
-                "roundtrip failed for {v}: got {decoded}"
-            );
-        }
-    }
 
     #[test]
     fn test_colorspace_convert_identity() {

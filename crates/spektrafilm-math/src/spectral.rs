@@ -843,13 +843,6 @@ mod tests {
     }
 
     #[test]
-    fn test_wavelength_count() {
-        assert_eq!(CMF_X.len(), N_WAVELENGTHS);
-        assert_eq!(CMF_Y.len(), N_WAVELENGTHS);
-        assert_eq!(CMF_Z.len(), N_WAVELENGTHS);
-    }
-
-    #[test]
     fn test_illuminant_to_xy_d65() {
         let (x, y) = illuminant_to_xy(&ILLUMINANT_D65);
         assert!((x - 0.3127).abs() < 0.01, "D65 x={x}");

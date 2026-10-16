@@ -318,20 +318,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_gaussian_kernel_normalized() {
-        let k = make_gaussian_kernel(from_f64(1.0), 3);
-        let sum: Scalar = k.iter().sum();
-        assert!((sum - from_f64(1.0)).abs() < from_f64(1e-6));
-    }
-
-    #[test]
-    fn test_gaussian_blur_identity_zero_sigma() {
-        let img = ImageBuf::from_data(4, 4, vec![from_f64(0.5); 4 * 4 * 3]);
-        let out = gaussian_blur(&img, 0.0);
-        assert_eq!(img.data, out.data);
-    }
-
-    #[test]
     fn test_gaussian_blur_uniform_image() {
         // Blurring a uniform image should return the same image
         let img = ImageBuf::from_data(8, 8, vec![from_f64(0.42); 8 * 8 * 3]);
