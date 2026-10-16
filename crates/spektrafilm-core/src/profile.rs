@@ -139,6 +139,24 @@ mod tests {
         }
     }
 
+    /// The accessor narrows the wider sensor-channel layout to the engine's
+    /// three channels, so a 5-channel profile must not index out of bounds or
+    /// silently carry a fourth channel into the render tensor.
+    #[test]
+    fn density_curves_layers_f64_truncates_to_three_channels() {
+        let p = data_profile("kodak_doublex");
+        assert_eq!(p.data.density_curves_layers[0][0].len(), 5);
+        let layers = p.density_curves_layers_f64();
+        assert_eq!(layers.len(), p.data.density_curves_layers.len());
+        for k in [0usize, 100, 255] {
+            for sl in 0..3 {
+                for ch in 0..3 {
+                    assert_eq!(layers[k][sl][ch], p.data.density_curves_layers[k][sl][ch]);
+                }
+            }
+        }
+    }
+
     /// Colour profiles pass through `resolve_for_render` untouched.
     #[test]
     fn resolve_is_identity_for_colour() {
