@@ -9,8 +9,9 @@ The lab binary must run at f64 reference precision. It is built locally like the
 - `spektrafilm-lab fit` — calibration of a film profile from reference patch data. The [profile authoring contract](../profile-authoring/spec.md) owns the command.
 - `spektrafilm-lab spectral evaluate` — roundtrip evaluation of the product path on measured spectra. Its contract is below.
 - `spektrafilm-lab measure run|sample|compare|verify` — measurement of the executed chain, of rendered charts, and of retained readings. Its contract is below.
+- `spektrafilm-lab experiment run` and `spektrafilm-lab experiment export` — publish and convert a native stage-evidence bundle for a declared experiment. Their contract is [experiment.md](experiment.md).
 
-The `spectral` group carries spectral diagnostics. `evaluate` is its first command.
+The `spectral` group carries spectral diagnostics. `evaluate` is its first command. The `experiment` group carries the development loop for a profile. `run` is its first command.
 
 The `measure` group carries development measurement. It reads declared sources and writes readings.
 

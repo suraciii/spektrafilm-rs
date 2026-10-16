@@ -20,16 +20,16 @@ use super::{
 pub struct ProcessArgs {
     /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
     #[arg(long, value_enum, help_heading = "Execution and diagnostics")]
-    backend: Option<Backend>,
+    pub(crate) backend: Option<Backend>,
     /// Input TIFF, EXR, PNG, JPEG, or camera RAW image.
     #[arg(help_heading = "Input and RAW loading")]
-    input: PathBuf,
+    pub(crate) input: PathBuf,
     /// Raster color space; discover with describe --field io.input_color_space.
     #[arg(long, help_heading = "Input and RAW loading")]
-    input_color_space: Option<String>,
+    pub(crate) input_color_space: Option<String>,
     /// Whether raster samples require transfer decoding (true or false).
     #[arg(long, action = clap::ArgAction::Set, help_heading = "Input and RAW loading")]
-    input_cctf_decoding: Option<bool>,
+    pub(crate) input_cctf_decoding: Option<bool>,
     /// Destination TIFF, EXR, PNG, or JPEG image; optional only with --dry-run.
     #[arg(
         short,
@@ -37,63 +37,63 @@ pub struct ProcessArgs {
         required_unless_present = "dry_run",
         help_heading = "Output"
     )]
-    output: Option<PathBuf>,
+    pub(crate) output: Option<PathBuf>,
     /// Output container; otherwise inferred from the destination extension.
     #[arg(long, value_enum, help_heading = "Output")]
-    format: Option<OutputFormat>,
+    pub(crate) format: Option<OutputFormat>,
     /// Output sample depth: 8, 16, or 32 bits (JPEG/PNG require 8).
     #[arg(long, help_heading = "Output")]
-    bit_depth: Option<u8>,
+    pub(crate) bit_depth: Option<u8>,
     /// JPEG quality from 1 to 100; applies only to JPEG.
     #[arg(long, help_heading = "Output")]
-    jpeg_quality: Option<u8>,
+    pub(crate) jpeg_quality: Option<u8>,
     /// JPEG chroma subsampling; applies only to JPEG.
     #[arg(long, value_enum, help_heading = "Output")]
-    jpeg_subsampling: Option<JpegSubsamplingArg>,
+    pub(crate) jpeg_subsampling: Option<JpegSubsamplingArg>,
     /// TIFF/EXR compression (EXR requires zip).
     #[arg(long, value_enum, help_heading = "Output")]
-    compression: Option<CompressionArg>,
+    pub(crate) compression: Option<CompressionArg>,
     #[command(flatten)]
-    workflow: WorkflowOptions,
+    pub(crate) workflow: WorkflowOptions,
     /// Film stock ID; discover with list-profiles. Required without --preset.
     #[arg(
         long,
         required_unless_present = "preset",
         help_heading = "Look and workflow"
     )]
-    film: Option<String>,
+    pub(crate) film: Option<String>,
     /// Print stock ID; otherwise uses film for direct scans or its target_print.
     #[arg(long, help_heading = "Look and workflow")]
-    paper: Option<String>,
+    pub(crate) paper: Option<String>,
     /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
     #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
-    preset: Vec<String>,
+    pub(crate) preset: Vec<String>,
     /// Scan film directly, skipping printing; conflicts with --route.
     #[arg(long, conflicts_with = "route", help_heading = "Look and workflow")]
-    scan_film: bool,
+    pub(crate) scan_film: bool,
     /// Print per-stage timing information to stderr.
     #[arg(long, help_heading = "Execution and diagnostics")]
-    timings: bool,
+    pub(crate) timings: bool,
     /// Save a local JSON diagnostics report without replacing an existing file.
     #[arg(long, help_heading = "Execution and diagnostics")]
-    diagnostics: Option<PathBuf>,
+    pub(crate) diagnostics: Option<PathBuf>,
     /// Collect available GPU pass timings; requires --diagnostics.
     #[arg(
         long,
         requires = "diagnostics",
         help_heading = "Execution and diagnostics"
     )]
-    gpu_timings: bool,
+    pub(crate) gpu_timings: bool,
     /// Legacy RuntimeParams JSON snapshot used as the parameter baseline.
     #[arg(long, help_heading = "Look and workflow")]
-    params: Option<PathBuf>,
+    pub(crate) params: Option<PathBuf>,
     /// Apply PATH=VALUE assignments or a sparse .toml/.json file in order.
     /// Strings need no JSON quotes; arrays use [1,2,3]; null clears optional values.
     #[arg(long = "set", value_name = "PATH=VALUE|FILE", action = clap::ArgAction::Append, help_heading = "Look and workflow")]
-    sources: Vec<String>,
+    pub(crate) sources: Vec<String>,
     /// Validate and print effective configuration without decoding or rendering.
     #[arg(long, help_heading = "Execution and diagnostics")]
-    dry_run: bool,
+    pub(crate) dry_run: bool,
     /// Dry-run presentation: json or text; requires --dry-run.
     #[arg(
         long,
@@ -101,13 +101,13 @@ pub struct ProcessArgs {
         requires = "dry_run",
         help_heading = "Execution and diagnostics"
     )]
-    dry_run_format: Option<DiscoveryFormat>,
+    pub(crate) dry_run_format: Option<DiscoveryFormat>,
     /// Deterministic stochastic seed, from 0 through 4294967295 (default: 0).
     #[arg(long, help_heading = "Execution and diagnostics")]
-    seed: Option<u32>,
+    pub(crate) seed: Option<u32>,
     /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
     #[arg(long, help_heading = "Output")]
-    raw_out: Option<PathBuf>,
+    pub(crate) raw_out: Option<PathBuf>,
     /// Write a native stage-evidence bundle (terminal manifest and f64 stage
     /// buffers) into DIRECTORY; CPU reference execution only.
     #[arg(
@@ -115,27 +115,26 @@ pub struct ProcessArgs {
         value_name = "DIRECTORY",
         help_heading = "Execution and diagnostics"
     )]
-    stage_evidence: Option<PathBuf>,
+    pub(crate) stage_evidence: Option<PathBuf>,
     /// Run the pipeline this many times in one process (at least 1).
     #[arg(long, default_value = "1", help_heading = "Execution and diagnostics")]
-    iters: usize,
+    pub(crate) iters: usize,
     /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
     #[arg(
         long,
         default_value = "data",
         help_heading = "Execution and diagnostics"
     )]
-    data_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-enum OutputFormat {
+pub(crate) enum OutputFormat {
     Jpeg,
     Png,
     Tiff,
     Exr,
 }
-
 impl OutputFormat {
     fn image_format(self) -> image_io::ImageFormat {
         match self {
@@ -146,13 +145,66 @@ impl OutputFormat {
         }
     }
 
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         self.image_format().name()
     }
 }
 
+impl Default for ProcessArgs {
+    /// The process surface's own defaults, so a caller that fills in only its
+    /// own fields cannot drift from the documented baseline.
+    fn default() -> Self {
+        Self {
+            backend: None,
+            input: PathBuf::new(),
+            input_color_space: None,
+            input_cctf_decoding: None,
+            output: None,
+            format: None,
+            bit_depth: None,
+            jpeg_quality: None,
+            jpeg_subsampling: None,
+            compression: None,
+            workflow: WorkflowOptions::default(),
+            film: None,
+            paper: None,
+            preset: Vec::new(),
+            scan_film: false,
+            timings: false,
+            diagnostics: None,
+            gpu_timings: false,
+            params: None,
+            sources: Vec::new(),
+            dry_run: false,
+            dry_run_format: None,
+            seed: None,
+            raw_out: None,
+            stage_evidence: None,
+            iters: 1,
+            data_dir: PathBuf::from("data"),
+        }
+    }
+}
+
+impl Default for WorkflowOptions {
+    fn default() -> Self {
+        Self {
+            saving_color_space: None,
+            saving_cctf_encoding: None,
+            raw_white_balance: "as-shot".to_owned(),
+            raw_temperature: None,
+            raw_tint: None,
+            lens_correction: false,
+            route: None,
+            scan_output: None,
+            film_channel_swap: "none".to_owned(),
+            print_channel_swap: "none".to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
-enum JpegSubsamplingArg {
+pub(crate) enum JpegSubsamplingArg {
     #[value(name = "444")]
     Yuv444,
     #[value(name = "420")]
@@ -169,7 +221,7 @@ impl JpegSubsamplingArg {
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
-enum CompressionArg {
+pub(crate) enum CompressionArg {
     Zip,
     None,
 }
@@ -374,25 +426,25 @@ impl OutputPlan {
     }
 }
 #[derive(clap::Args)]
-struct WorkflowOptions {
+pub(crate) struct WorkflowOptions {
     /// Writer-stage color conversion; defaults to the scanner color space and
     /// ACES2065-1 for EXR. Names are shared with the scanner registry: discover
     /// them with `describe --field io.output_color_space`.
     #[arg(long, help_heading = "Output")]
-    saving_color_space: Option<String>,
+    pub(crate) saving_color_space: Option<String>,
     /// Writer-stage transfer-function encoding; EXR requires false, JPEG/PNG true.
     #[arg(long, action = clap::ArgAction::Set, help_heading = "Output")]
-    saving_cctf_encoding: Option<bool>,
+    pub(crate) saving_cctf_encoding: Option<bool>,
     /// RAW loading white balance; custom requires --raw-temperature.
     #[arg(long, default_value = "as-shot", value_parser = ["as-shot", "daylight", "tungsten", "custom"], help_heading = "Input and RAW loading")]
-    raw_white_balance: String,
+    pub(crate) raw_white_balance: String,
     /// Custom RAW white-balance temperature in Kelvin.
     #[arg(
         long,
         allow_negative_numbers = true,
         help_heading = "Input and RAW loading"
     )]
-    raw_temperature: Option<f64>,
+    pub(crate) raw_temperature: Option<f64>,
     /// Green-channel tint multiplier for custom RAW white balance; 1 is neutral.
     /// Requires --raw-white-balance custom.
     #[arg(
@@ -400,22 +452,22 @@ struct WorkflowOptions {
         allow_negative_numbers = true,
         help_heading = "Input and RAW loading"
     )]
-    raw_tint: Option<f64>,
+    pub(crate) raw_tint: Option<f64>,
     /// Apply lens correction while loading RAW input.
     #[arg(long, help_heading = "Input and RAW loading")]
-    lens_correction: bool,
+    pub(crate) lens_correction: bool,
     /// Workflow route; this help lists the supported values.
     #[arg(long, help_heading = "Look and workflow")]
-    route: Option<String>,
+    pub(crate) route: Option<String>,
     /// Film scanner output mode; applied after parameter sources.
     #[arg(long, value_parser = ["direct_scan", "negative_to_positive"], help_heading = "Look and workflow")]
-    scan_output: Option<String>,
+    pub(crate) scan_output: Option<String>,
     /// Film density channel order: none or three comma-separated indices in 0..2.
     #[arg(long, default_value = "none", help_heading = "Look and workflow")]
-    film_channel_swap: String,
+    pub(crate) film_channel_swap: String,
     /// Print density channel order: none or three comma-separated indices in 0..2.
     #[arg(long, default_value = "none", help_heading = "Look and workflow")]
-    print_channel_swap: String,
+    pub(crate) print_channel_swap: String,
 }
 
 pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
@@ -424,6 +476,13 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
     // environment after the pool exists.
     spektrafilm_backend::timing::set_stage_timings(args.timings);
     let data_dir = std::mem::take(&mut args.data_dir);
+    let data = select_data_dir(data_dir, command_matches)?;
+    run_with_data_dir(args, data)
+}
+
+/// Run the process pipeline with an already-resolved data directory.
+/// Shared with the lab module, which cannot construct `ArgMatches`.
+pub(crate) fn run_with_data_dir(args: ProcessArgs, data: DataSelection) -> Result<()> {
     // Protect every bundle file, including publication temporaries, from
     // invocation inputs, output/raw-out and optional diagnostics.
     let evidence_paths = args
@@ -468,7 +527,6 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
         &protected,
         telemetry::requested_backend(args.backend),
         |invocation| {
-            let data = select_data_dir(data_dir, command_matches)?;
             cmd_process(
                 &args,
                 &data,

@@ -5,6 +5,8 @@
 /// [`load_npy_f64`] promotes exactly and preserves `<f8` bit-for-bit for lab
 /// diagnostics.
 use std::io::Read;
+use std::io::Write;
+use std::path::Path;
 
 use half::f16;
 
@@ -89,6 +91,44 @@ pub fn load_npy_f64<R: Read>(reader: R) -> Result<(Vec<usize>, Vec<f64>), NpyErr
     };
 
     Ok((shape, data))
+}
+
+/// Write a C-order little-endian `f64` array as a `.npy` file.
+///
+/// The header carries `'<f8'` and the shape only; the axis meaning is the
+/// caller's to state. Values are written byte-exactly — no scaling, no
+/// reordering.
+pub fn save_npy_f64(path: &Path, values: &[f64], shape: &[usize]) -> Result<(), NpyError> {
+    let expected: usize = shape.iter().product();
+    if values.len() != expected {
+        return Err(NpyError::Parse(format!(
+            "value count {} does not match shape {:?}",
+            values.len(),
+            shape
+        )));
+    }
+    let tuple = shape
+        .iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let tuple = if shape.len() == 1 {
+        format!("{tuple},")
+    } else {
+        tuple
+    };
+    let raw = format!("{{'descr': '<f8', 'fortran_order': False, 'shape': ({tuple}), }}");
+    let pad = (16 - (10 + raw.len() + 1) % 16) % 16;
+    let header = format!("{}{}\n", raw, " ".repeat(pad));
+    let mut f = std::io::BufWriter::with_capacity(65536, std::fs::File::create(path)?);
+    f.write_all(b"\x93NUMPY\x01\x00")?;
+    f.write_all(&(header.len() as u16).to_le_bytes())?;
+    f.write_all(header.as_bytes())?;
+    for v in values {
+        f.write_all(&v.to_le_bytes())?;
+    }
+    f.flush()?;
+    Ok(())
 }
 
 /// Read the NumPy header, returning the descriptor, shape and the reader

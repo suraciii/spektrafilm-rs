@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use spektrafilm_cli::fit;
 use spektrafilm_cli::lab::cli::{MeasureCommand, SpectralCommand};
+use spektrafilm_cli::lab::cli::{ExperimentCommand, SpectralCommand};
 
 #[derive(Parser)]
 #[command(
@@ -31,6 +32,10 @@ enum LabCommands {
     Measure {
         #[command(subcommand)]
         command: MeasureCommand,
+    /// The development loop for a film profile.
+    Experiment {
+        #[command(subcommand)]
+        command: ExperimentCommand,
     },
 }
 
@@ -77,6 +82,11 @@ fn main() -> Result<()> {
                 }
             }
         }
+        LabCommands::Experiment { command } => match command {
+            ExperimentCommand::Run(_) | ExperimentCommand::Export(_) => {
+                spektrafilm_cli::lab::experiment::dispatch(&command)?;
+            }
+        },
     }
     Ok(())
 }

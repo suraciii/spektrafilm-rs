@@ -48,9 +48,14 @@ pub(crate) fn explicit_data_selection(matches: &clap::ArgMatches) -> bool {
 }
 
 pub fn select_data_dir(argument: PathBuf, matches: &clap::ArgMatches) -> Result<DataSelection> {
-    let selection = if matches.value_source("data_dir")
-        == Some(clap::parser::ValueSource::CommandLine)
-    {
+    let explicit = matches.value_source("data_dir") == Some(clap::parser::ValueSource::CommandLine);
+    select_data_dir_impl(argument, explicit)
+}
+
+/// Resolve the data directory without requiring `ArgMatches`.
+/// Shared with the lab module, which cannot construct `ArgMatches`.
+pub(crate) fn select_data_dir_impl(argument: PathBuf, explicit: bool) -> Result<DataSelection> {
+    let selection = if explicit {
         Some((argument, "argument", "--data-dir"))
     } else if let Some(value) = std::env::var_os("SPEKTRAFILM_DATA_DIR") {
         if value.is_empty() {
