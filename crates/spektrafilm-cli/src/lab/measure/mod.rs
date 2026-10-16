@@ -587,8 +587,9 @@ pub struct StageReading {
     pub channel_order: String,
     /// The declared color space of the values, when the stage declares one.
     pub color_space: Option<String>,
-    /// `encoded` or `linear`, when the stage declares a color space.
-    pub transfer: Option<String>,
+    /// Whether the stored values are transfer-decoded, when the stage
+    /// declares a color space.
+    pub cctf_decoding: Option<bool>,
     pub width: u32,
     pub height: u32,
     pub sha256: String,
@@ -734,11 +735,10 @@ fn read_stage(directory: &Path, record: &Value, id: String) -> Result<StageReadi
             .and_then(|color| color.get("color_space"))
             .and_then(Value::as_str)
             .map(str::to_owned),
-        transfer: record
+        cctf_decoding: record
             .get("color")
-            .and_then(|color| color.get("transfer"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+            .and_then(|color| color.get("cctf_decoding"))
+            .and_then(Value::as_bool),
         width,
         height,
         sha256: record

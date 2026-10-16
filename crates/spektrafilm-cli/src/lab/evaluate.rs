@@ -39,9 +39,19 @@ struct ResolvedChain {
 }
 
 pub fn run(args: &EvaluateArgs, matches: &ArgMatches) -> Result<()> {
+    run_with_result(args, matches).map(|_| ())
+}
+
+/// Evaluate the roundtrip error and return the command result object.
+pub fn run_with_result(args: &EvaluateArgs, matches: &ArgMatches) -> Result<(Value, i32)> {
     let data_dir = select_data_dir(args.data_dir.clone(), matches)?.path;
-    let condition = parse_condition(&args.condition)?;
     let set = super::spectra::load(&args.spectra).map_err(anyhow::Error::msg)?;
+    // The illuminant pair is a property of the measured set, not of the
+    // invocation: the manifest is its single authority.
+    let condition = Condition {
+        reference: set.condition_reference.clone().unwrap_or_default(),
+        target: set.condition_target.clone().unwrap_or_default(),
+    };
     let ResolvedChain {
         film: film_profile,
         params,
@@ -245,21 +255,15 @@ pub fn run(args: &EvaluateArgs, matches: &ArgMatches) -> Result<()> {
     super::report::write(&args.out, &report_text, &samples_csv).map_err(anyhow::Error::msg)?;
     eprintln!("Report: {}", args.out.join("report.json").display());
     eprintln!("Samples: {}", args.out.join("samples.csv").display());
-    Ok(())
-}
-
-fn parse_condition(text: &str) -> Result<Condition> {
-    let (reference, target) = text
-        .split_once('=')
-        .ok_or_else(|| anyhow!("--condition must be REFERENCE=TARGET, got {text:?}"))?;
-    let (reference, target) = (reference.trim(), target.trim());
-    if reference.is_empty() || target.is_empty() {
-        bail!("--condition must name both illuminants, got {text:?}");
-    }
-    Ok(Condition {
-        reference: reference.to_owned(),
-        target: target.to_owned(),
-    })
+    Ok((
+        json!({
+            "schema_version": 1,
+            "command": "spectral evaluate",
+            "execution_status": "completed",
+            "artifact": args.out.display().to_string(),
+        }),
+        0,
+    ))
 }
 
 fn resolve_chain(args: &EvaluateArgs, data_dir: &Path) -> Result<ResolvedChain> {

@@ -43,6 +43,23 @@ pub fn dispatch(command: &ExperimentCommand) -> Result<()> {
     }
 }
 
+/// Run an experimental command and return its command result object.
+pub fn dispatch_with_result(command: &ExperimentCommand) -> Result<(serde_json::Value, i32)> {
+    match command {
+        ExperimentCommand::Run(_) | ExperimentCommand::Export(_) => {
+            dispatch(command)?;
+            Ok((
+                serde_json::json!({
+                    "schema_version": 1,
+                    "command": "experiment",
+                    "execution_status": "completed",
+                }),
+                0,
+            ))
+        }
+    }
+}
+
 /// Run one declared experiment and publish its boundary values.
 fn run(args: &ExperimentRunArgs) -> Result<()> {
     let document_path = absolute(&args.experiment)?;

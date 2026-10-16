@@ -1,5 +1,8 @@
-//! Command-line surface of the lab binary's spectral group and measurement group.
-//! Command-line surface of the lab binary's groups.
+//! Command-line surface of the instrument binary (`spektrafilm-lab`).
+//!
+//! One grammar covers the whole instrument: schema discovery, document
+//! validation, appearance evaluation, chain measurement, region derivation,
+//! fixture generation, and the experimental commands.
 
 use std::path::PathBuf;
 
@@ -13,7 +16,7 @@ pub enum SpectralCommand {
     Evaluate(EvaluateArgs),
 }
 
-/// Development measurement of the executed chain.
+/// Chain measurement and reading commands.
 #[derive(Subcommand)]
 pub enum MeasureCommand {
     /// Measure the real chain on a declared stimulus set.
@@ -24,6 +27,314 @@ pub enum MeasureCommand {
     Compare(MeasureCompareArgs),
     /// Re-resolve a recorded measurement's chain and report identity differences.
     Verify(MeasureVerifyArgs),
+}
+
+/// Appearance evaluation: document discovery, evidence rendering, comparison,
+/// and offline reporting.
+#[derive(Args)]
+#[command(group(
+    clap::ArgGroup::new("run_source").required(true).multiple(false)
+        .args(["suite", "input", "stimuli"])
+))]
+// The suite-only options must not combine with the single-input form; the
+// single-input options must not combine with the suite form.
+#[command(group(
+    clap::ArgGroup::new("suite_only").multiple(true).args(["case_ids"]).conflicts_with("input")
+))]
+#[command(group(
+    clap::ArgGroup::new("input_only").multiple(true)
+        .args(["configuration", "input_kind", "input_color_space", "input_cctf_decoding",
+               "seeds", "regions", "reference", "reference_info", "preparation"])
+        .conflicts_with("suite")
+))]
+pub struct EvaluationRunArgs {
+    /// Suite document.
+    #[arg(long, value_name = "FILE", help_heading = "Image-domain run")]
+    pub suite: Option<PathBuf>,
+    /// Prepared local image.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "configuration",
+        help_heading = "Image-domain run"
+    )]
+    pub input: Option<PathBuf>,
+    /// Existing case configuration object.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "input",
+        help_heading = "Image-domain run"
+    )]
+    pub configuration: Option<PathBuf>,
+    /// Explicit source kind (default raster).
+    #[arg(long, value_name = "KIND", value_parser = ["raster", "raw"], requires = "input", help_heading = "Image-domain run")]
+    pub input_kind: Option<String>,
+    /// Raster source color space.
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "input",
+        help_heading = "Image-domain run"
+    )]
+    pub input_color_space: Option<String>,
+    /// Whether to decode the raster transfer function.
+    #[arg(long, value_name = "true|false", value_parser = clap::value_parser!(bool), requires = "input", help_heading = "Image-domain run")]
+    pub input_cctf_decoding: Option<bool>,
+    /// Distinct UINT32 seed; repeat to choose a population (default 0).
+    #[arg(
+        long = "seed",
+        value_name = "UINT32",
+        requires = "input",
+        help_heading = "Image-domain run"
+    )]
+    pub seeds: Vec<u32>,
+    /// Existing fixed region array in render coordinates.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "input",
+        help_heading = "Image-domain run"
+    )]
+    pub regions: Option<PathBuf>,
+    /// Reference image.
+    #[arg(long, value_name = "FILE", requires_all = ["input", "reference_info"], help_heading = "Image-domain run")]
+    pub reference: Option<PathBuf>,
+    /// Existing reference object without path and sha256.
+    #[arg(long, value_name = "FILE", requires_all = ["input", "reference"], help_heading = "Image-domain run")]
+    pub reference_info: Option<PathBuf>,
+    /// Passive preparation provenance object.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "input",
+        help_heading = "Image-domain run"
+    )]
+    pub preparation: Option<PathBuf>,
+    /// Renderer target document.
+    #[arg(long, value_name = "FILE", required_unless_present = "stimuli")]
+    pub target: Option<PathBuf>,
+    /// New run directory; must not exist.
+    #[arg(long, value_name = "DIR")]
+    pub out: PathBuf,
+    /// Exact suite case identity; repeat in suite mode.
+    #[arg(
+        long = "case",
+        value_name = "ID",
+        requires = "suite",
+        help_heading = "Image-domain run"
+    )]
+    pub case_ids: Vec<String>,
+    /// Resolve all selected configurations without decoding or rendering; retain preflight.json.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Retain native CPU stage buffers, applied exposure, and prepared print normalization.
+    #[arg(long)]
+    pub stage_evidence: bool,
+
+    // ---- Chain run: one declared stimulus set executed through the chain ----
+    /// Stimulus document: a measured-spectra manifest for `spectra`, a points
+    /// manifest otherwise. Arrays live beside the manifest as .npy/.npz.
+    #[arg(long, value_name = "PATH", help_heading = "Chain run")]
+    pub stimuli: Option<PathBuf>,
+    /// Chain entry boundary; it declares how the stimulus values are read.
+    #[arg(long, value_enum, requires = "stimuli", help_heading = "Chain run")]
+    pub enter: Option<MeasureEntry>,
+    /// Stages to read; omit to read every available stage.
+    #[arg(long, value_enum, value_delimiter = ',', action = clap::ArgAction::Append, requires = "stimuli", help_heading = "Chain run")]
+    pub read: Vec<MeasureStage>,
+    /// Exact preset name or .toml/.json file; supplies the film and print profiles.
+    #[arg(long, action = clap::ArgAction::Append, requires = "stimuli", help_heading = "Chain")]
+    pub preset: Vec<String>,
+    /// Film profile name in the data directory, without a preset.
+    #[arg(
+        long,
+        value_name = "STOCK",
+        requires = "stimuli",
+        help_heading = "Chain"
+    )]
+    pub film: Option<String>,
+    /// Print profile name; defaults as in the process surface.
+    #[arg(
+        long,
+        value_name = "STOCK",
+        requires = "stimuli",
+        help_heading = "Chain"
+    )]
+    pub paper: Option<String>,
+    /// Apply PATH=VALUE assignments or a sparse .toml/.json file in order.
+    #[arg(long = "set", value_name = "PATH=VALUE|FILE", action = clap::ArgAction::Append, requires = "stimuli", help_heading = "Chain")]
+    pub sources: Vec<String>,
+    /// Workflow route; the resolved route bounds the executed stages.
+    #[arg(
+        long,
+        value_name = "ROUTE",
+        requires = "stimuli",
+        help_heading = "Chain"
+    )]
+    pub route: Option<String>,
+    /// Film scanner output mode.
+    #[arg(long, value_parser = ["direct_scan", "negative_to_positive"], requires = "stimuli", help_heading = "Chain")]
+    pub scan_output: Option<String>,
+    /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+    #[arg(
+        long,
+        default_value = "data",
+        value_name = "DIR",
+        help_heading = "Chain"
+    )]
+    pub data_dir: PathBuf,
+}
+
+#[derive(Args)]
+#[command(group(
+    clap::ArgGroup::new("compare_source").required(true).multiple(false)
+        .args(["baseline", "run", "reading_baseline"])
+))]
+pub struct EvaluationCompareArgs {
+    /// Baseline run directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "candidate",
+        conflicts_with = "run",
+        help_heading = "Image-domain comparison"
+    )]
+    pub baseline: Option<PathBuf>,
+    /// Candidate run directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "baseline",
+        conflicts_with = "run",
+        help_heading = "Image-domain comparison"
+    )]
+    pub candidate: Option<PathBuf>,
+    /// Single run directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "against",
+        conflicts_with = "baseline",
+        help_heading = "Image-domain comparison"
+    )]
+    pub run: Option<PathBuf>,
+    /// Evidence pairs to compare.
+    #[arg(long, value_name = "PAIR", value_parser = ["input", "reference", "both"], requires = "run", help_heading = "Image-domain comparison")]
+    pub against: Option<String>,
+    /// New comparison directory; must not exist.
+    #[arg(long, value_name = "DIR")]
+    pub out: PathBuf,
+    /// Version-comparison policy document.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with = "run",
+        help_heading = "Image-domain comparison"
+    )]
+    pub policy: Option<PathBuf>,
+    /// Fail command when policy does not pass.
+    #[arg(
+        long,
+        requires = "policy",
+        conflicts_with = "run",
+        help_heading = "Image-domain comparison"
+    )]
+    pub gate: bool,
+
+    // ---- Reading comparison: two retained readings, sample by sample ----
+    /// Baseline measurement directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "reading_candidate",
+        help_heading = "Reading comparison"
+    )]
+    pub reading_baseline: Option<PathBuf>,
+    /// Candidate measurement directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "reading_baseline",
+        help_heading = "Reading comparison"
+    )]
+    pub reading_candidate: Option<PathBuf>,
+    /// Reference measurement directory; per-sample distance needs one.
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "reading_baseline",
+        help_heading = "Reading comparison"
+    )]
+    pub reference_run: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub struct EvaluationInspectArgs {
+    /// Comparison directory.
+    #[arg(long, value_name = "DIR")]
+    pub comparison: PathBuf,
+    /// Exact case identity; repeat to select multiple.
+    #[arg(long = "case", value_name = "ID")]
+    pub case_ids: Vec<String>,
+    /// Exact region identity; repeat to select multiple.
+    #[arg(long = "region", value_name = "ID")]
+    pub region_ids: Vec<String>,
+    /// Exact metric identity; repeat to select multiple.
+    #[arg(long = "metric", value_name = "ID")]
+    pub metrics: Vec<String>,
+}
+
+#[derive(Args)]
+pub struct EvaluationTargetArgs {
+    /// Renderer executable.
+    #[arg(long, value_name = "FILE")]
+    pub renderer: PathBuf,
+    /// Explicit profile/data directory.
+    #[arg(long, value_name = "DIR")]
+    pub data_dir: PathBuf,
+    /// Requested compute backend; availability is checked during rendering.
+    #[arg(long, value_name = "BACKEND", value_parser = ["cpu", "gpu"])]
+    pub backend: String,
+    /// New target JSON file; must not exist.
+    #[arg(long, value_name = "FILE")]
+    pub out: PathBuf,
+}
+
+#[derive(Args)]
+pub struct EvaluationReportArgs {
+    /// Retained comparison directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        required_unless_present = "manifest",
+        conflicts_with = "manifest"
+    )]
+    pub comparison: Option<PathBuf>,
+    /// Prepared image review manifest.
+    #[arg(
+        long,
+        value_name = "FILE",
+        required_unless_present = "comparison",
+        conflicts_with = "comparison"
+    )]
+    pub manifest: Option<PathBuf>,
+    /// New report directory; must not exist.
+    #[arg(long, value_name = "DIR")]
+    pub out: PathBuf,
+}
+
+#[derive(Args)]
+pub struct EvaluationRegionsArgs {
+    /// Review manifest with the declared grid set.
+    #[arg(long, value_name = "FILE")]
+    pub manifest: PathBuf,
+    /// Grid set identity to derive.
+    #[arg(long, value_name = "ID")]
+    pub set: String,
+    /// New regions document JSON file; must not exist.
+    #[arg(long, value_name = "FILE")]
+    pub out: PathBuf,
 }
 
 /// The chain boundary a measurement enters at.
@@ -177,11 +488,18 @@ pub struct ChainArgs {
     /// Film scanner output mode.
     #[arg(long, value_parser = ["direct_scan", "negative_to_positive"], help_heading = "Chain")]
     pub scan_output: Option<String>,
-    /// Deterministic stochastic seed recorded with the measurement.
-    #[arg(long, default_value_t = 0, help_heading = "Chain")]
+    /// Deterministic stochastic seed recorded with the measurement. A chain
+    /// run resolves its own seed from the parameter surface, so the instrument
+    /// records this one in the measurement's identity instead of accepting it
+    /// as a command option.
     pub seed: u32,
     /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
-    #[arg(long, default_value = "data", help_heading = "Chain")]
+    #[arg(
+        long,
+        default_value = "data",
+        value_name = "DIR",
+        help_heading = "Chain"
+    )]
     pub data_dir: PathBuf,
 }
 
@@ -194,9 +512,6 @@ pub struct MeasureRunArgs {
     /// Chain entry boundary; it declares how the stimulus values are read.
     #[arg(long, value_enum, help_heading = "Stimulus")]
     pub enter: MeasureEntry,
-    /// Illuminant pair REFERENCE=TARGET for the `spectra` entry.
-    #[arg(long, value_name = "REFERENCE=TARGET", help_heading = "Stimulus")]
-    pub condition: Option<String>,
     /// Stages to read; omit to read every available stage.
     #[arg(long, value_enum, value_delimiter = ',', action = clap::ArgAction::Append, help_heading = "Measurement")]
     pub read: Vec<MeasureStage>,
@@ -227,9 +542,9 @@ pub struct MeasureSampleArgs {
     /// Whether the image's stored values are transfer-encoded.
     #[arg(long, value_name = "true|false", help_heading = "Source")]
     pub input_cctf_decoding: Option<bool>,
-    /// Sample plan: explicit windows with stable sample identities.
+    /// Regions document: explicit windows with stable sample identities.
     #[arg(long, value_name = "PATH", help_heading = "Measurement")]
-    pub plan: PathBuf,
+    pub regions: PathBuf,
     /// Record destination directory; existing artifacts are never replaced.
     #[arg(long, value_name = "DIR", help_heading = "Measurement")]
     pub out: PathBuf,
@@ -253,9 +568,9 @@ pub struct MeasureCompareArgs {
 
 #[derive(Args)]
 pub struct MeasureVerifyArgs {
-    /// Measurement directory to re-resolve.
+    /// Record directory to re-resolve.
     #[arg(long, value_name = "DIR", help_heading = "Verification")]
-    pub run: PathBuf,
+    pub record: PathBuf,
     /// Data directory to re-resolve against; defaults to the directory the run recorded.
     #[arg(long, default_value = "data", help_heading = "Verification")]
     pub data_dir: PathBuf,
@@ -279,10 +594,6 @@ pub struct EvaluateArgs {
     /// Measured-spectra set JSON manifest; arrays live beside it as .npz/.npy.
     #[arg(long, value_name = "PATH", help_heading = "Evaluation")]
     pub spectra: PathBuf,
-    /// Illuminant pair REFERENCE=TARGET: the film reference illuminant and
-    /// the scene illuminant that produced the input RGB.
-    #[arg(long, value_name = "REFERENCE=TARGET", help_heading = "Evaluation")]
-    pub condition: String,
     /// Report destination directory; an existing report is never replaced.
     #[arg(long, value_name = "DIR", help_heading = "Evaluation")]
     pub out: PathBuf,

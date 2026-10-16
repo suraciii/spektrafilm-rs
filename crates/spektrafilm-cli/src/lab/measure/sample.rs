@@ -54,30 +54,6 @@ impl Pixels {
     }
 }
 
-/// The transfer state of the values the source stores.
-#[derive(Clone, Copy)]
-enum Transfer {
-    /// The stored values already are the linear values the boundary carries.
-    Linear,
-    /// The stored values are transfer-encoded.
-    Encoded,
-}
-
-impl Transfer {
-    /// The bundle manifest's word for this state, or the declared one for an
-    /// image source.
-    fn record(self) -> &'static str {
-        match self {
-            Transfer::Linear => "linear",
-            Transfer::Encoded => "encoded",
-        }
-    }
-
-    fn is_encoded(&self) -> bool {
-        matches!(self, Transfer::Encoded)
-    }
-}
-
 /// The one declared source of a measurement, and the declaration that
 /// governs its reading.
 struct Source {
@@ -93,9 +69,9 @@ struct Source {
     color_space: Option<String>,
     /// The resolved declared space, when the source declares one.
     space: Option<&'static RgbColorSpace>,
-    /// The declared transfer state of the values; `None` when the source
-    /// declares none, so the record does not invent one.
-    transfer: Option<Transfer>,
+    /// Whether the stored values are transfer-encoded; `None` when the
+    /// source declares none, so the record does not invent one.
+    encoded: Option<bool>,
     /// The stage id, for an evidence source.
     stage: Option<String>,
     /// Whether the reading applies the declared transfer decoding, so the
@@ -117,7 +93,7 @@ impl Source {
     /// One stored pixel after the declared transfer decoding.
     fn value(&self, x: u32, y: u32) -> [f64; 3] {
         let stored = self.pixels.pixel(x, y);
-        let encoded = self.transfer.is_some_and(|transfer| transfer.is_encoded());
+        let encoded = self.encoded == Some(true);
         match (self.space, encoded) {
             (Some(space), true) => [
                 colorspace::cctf_decode(stored[0], space.cctf),
@@ -128,14 +104,14 @@ impl Source {
         }
     }
 
-    /// The transfer state of the values this reading stores: `linear` once the
-    /// declared decoding has been applied, otherwise the source's own declared
-    /// state, and `None` when the source declares none.
-    fn reading_transfer(&self) -> Option<&'static str> {
+    /// Whether the values this reading stores are transfer-decoded: `true`
+    /// once the declared decoding has been applied, otherwise the source's own
+    /// declared state, and `None` when the source declares none.
+    fn reading_cctf_decoding(&self) -> Option<bool> {
         if self.decoded {
-            return Some(Transfer::Linear.record());
+            return Some(true);
         }
-        self.transfer.map(Transfer::record)
+        self.encoded.map(|encoded| !encoded)
     }
 }
 
@@ -152,7 +128,12 @@ impl Reading {
 }
 
 pub fn sample(args: &MeasureSampleArgs) -> Result<()> {
-    let plan = plan::load(&args.plan).map_err(anyhow::Error::msg)?;
+    sample_with_result(args).map(|_| ())
+}
+
+/// Read the declared samples and return the command result object.
+pub fn sample_with_result(args: &MeasureSampleArgs) -> Result<(Value, i32)> {
+    let plan = plan::load(&args.regions).map_err(anyhow::Error::msg)?;
     let source = select_source(args)?;
     // Read every rectangle before writing anything: a measurement writes no
     // artifact unless it completes.
@@ -202,11 +183,7 @@ fn image_source(args: &MeasureSampleArgs, path: &Path) -> Result<Source> {
         pixels: Pixels::Image(loaded.image),
         color_space: Some(color_space.to_owned()),
         space: Some(space),
-        transfer: if cctf_decoding {
-            Some(Transfer::Encoded)
-        } else {
-            Some(Transfer::Linear)
-        },
+        encoded: Some(!cctf_decoding),
         stage: None,
         // A raster carries no stage vocabulary of its own; its reading lives
         // in the declared source raster's coordinate space.
@@ -265,15 +242,7 @@ fn evidence_source(args: &MeasureSampleArgs, directory: &Path) -> Result<Source>
             directory.display()
         ),
     };
-    let transfer = match reading.transfer.as_deref() {
-        Some("encoded") => Some(Transfer::Encoded),
-        Some("linear") => Some(Transfer::Linear),
-        None => None,
-        Some(other) => bail!(
-            "stage {id} of {} declares transfer {other:?}, which has no decoding",
-            directory.display()
-        ),
-    };
+    let encoded = reading.cctf_decoding.map(|decoding| !decoding);
     // The manifest's own color space governs the decoding; a stage that
     // declares neither has no decoding to apply.
     let space = match reading.color_space.as_deref() {
@@ -282,7 +251,7 @@ fn evidence_source(args: &MeasureSampleArgs, directory: &Path) -> Result<Source>
                 .map_err(|e| anyhow!("stage {id} color space {name:?}: {e}"))?,
         ),
         None => {
-            if transfer.is_some_and(|transfer| transfer.is_encoded()) {
+            if encoded == Some(true) {
                 bail!(
                     "stage {id} of {} declares encoded transfer without a color space",
                     directory.display()
@@ -304,9 +273,9 @@ fn evidence_source(args: &MeasureSampleArgs, directory: &Path) -> Result<Source>
         pixels: Pixels::Evidence(reading),
         color_space,
         space,
-        transfer,
+        encoded,
         stage: Some(stage_id),
-        decoded: transfer.is_some_and(|transfer| transfer.is_encoded()),
+        decoded: encoded == Some(true),
         domain,
         units,
         channel_order,
@@ -426,29 +395,37 @@ fn number_or_null(value: f64) -> Value {
 /// The plan record the measurement carries.
 fn plan_record(plan: &Plan) -> Value {
     json!({
+        "kind": "regions",
         "path": plan.manifest_path.display().to_string(),
         "sha256": plan.sha256,
+        "id": plan.id,
         "name": plan.name,
-        "samples": plan
+        "regions": plan
             .samples
             .iter()
             .map(|sample| json!({
                 "id": sample.id,
+                "label": sample.label,
                 "source": sample.source,
                 "partition": sample.partition,
-                "x": sample.x,
-                "y": sample.y,
-                "width": sample.width,
-                "height": sample.height,
+                "role": sample.role,
+                "measurements": sample.measurements,
+                "geometry": {
+                    "x": sample.x,
+                    "y": sample.y,
+                    "width": sample.width,
+                    "height": sample.height,
+                    "space": sample.space,
+                },
             }))
             .collect::<Vec<Value>>(),
     })
 }
 
 /// The single stage record of this measurement: the source's own vocabulary,
-/// recorded verbatim and never restated from another source. Its `transfer`
-/// describes the values the reading stores, so a decoded reading reports
-/// `linear` even when the source declared `encoded`.
+/// recorded verbatim and never restated from another source. Its
+/// `cctf_decoding` describes the values the reading stores, so a decoded
+/// reading reports `false` even when the source declared `true`.
 fn stage_record(source: &Source) -> Value {
     json!({
         "id": source.stage_id(),
@@ -456,7 +433,7 @@ fn stage_record(source: &Source) -> Value {
         "units": source.units,
         "channel_order": source.channel_order,
         "color_space": source.color_space,
-        "transfer": source.reading_transfer(),
+        "cctf_decoding": source.reading_cctf_decoding(),
         "sha256": source.sha256,
         "availability": "available",
         "reason": Value::Null,
@@ -494,7 +471,7 @@ fn write_report(
     plan: &Plan,
     source: &Source,
     readings: &[Reading],
-) -> Result<()> {
+) -> Result<(Value, i32)> {
     let measure_json = json!({
         "schema_version": 1,
         "kind": "sample",
@@ -507,10 +484,10 @@ fn write_report(
             "dimensions": source.pixels.dimensions(),
             "color_space": source.color_space,
             // The source block reports the source's own declaration verbatim.
-            "transfer": source.transfer.map(Transfer::record),
+            "cctf_decoding": source.encoded.map(|encoded| !encoded),
             "stage": source.stage,
         },
-        "plan": plan_record(plan),
+        "regions": plan_record(plan),
         "stages": [stage_record(source)],
         "groups": group_records(plan),
         "summaries": summary_records(plan, source, readings),
@@ -519,7 +496,7 @@ fn write_report(
     let points_text = build_points_csv(plan, source, readings);
     report::write_measure_named(
         &args.out,
-        &[("measure.json", measure_text), ("points.csv", points_text)],
+        &[("run.json", measure_text), ("readings.csv", points_text)],
     )
     .map_err(anyhow::Error::msg)?;
 
@@ -540,5 +517,13 @@ fn write_report(
     if !invalid.is_empty() {
         eprintln!("Invalid samples: {}", invalid.join(", "));
     }
-    Ok(())
+    Ok((
+        json!({
+            "schema_version": 1,
+            "command": "sample",
+            "execution_status": "completed",
+            "artifact": args.out.display().to_string(),
+        }),
+        0,
+    ))
 }

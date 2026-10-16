@@ -27,15 +27,15 @@ const SIDE_BASELINE_MINUS_REFERENCE: &str = "baseline_minus_reference";
 struct Side {
     /// The directory the record and the readings were read from.
     path: PathBuf,
-    /// `measure.json`'s content hash.
+    /// `run.json`'s content hash.
     measure_sha256: String,
-    /// The parsed `measure.json` document.
+    /// The parsed `run.json` document.
     document: Value,
     /// Readings keyed by `(sample_id, stage)`.
     rows: BTreeMap<(String, String), Row>,
 }
 
-/// One reading row of a retained `points.csv`.
+/// One reading row of a retained `readings.csv`.
 #[derive(Clone)]
 struct Row {
     source: String,
@@ -58,8 +58,9 @@ struct Pair {
     channel_order: String,
     /// The color space both sides declare, when they declare the same one.
     color_space: Option<String>,
-    /// The transfer state both sides declare, when they declare the same one.
-    transfer: Option<String>,
+    /// Whether both sides declare the stored values transfer-decoded, when
+    /// they declare the same state.
+    cctf_decoding: Option<bool>,
     /// The provenance labels of each side. A label that differs is reported
     /// with the other differences, and the left side's labels group the row.
     right_source: String,
@@ -102,10 +103,10 @@ impl Pair {
         }
     }
 
-    /// The transfer state the pair's values are stored in, when both sides
-    /// agree on it.
+    /// Whether the pair's values are stored transfer-encoded, when both sides
+    /// agree on that state.
     fn encoded(&self) -> bool {
-        self.transfer.as_deref() == Some("encoded")
+        self.cctf_decoding == Some(false)
     }
 
     /// The ΔE00 of the pair and whether the conversion had to bound a value,
@@ -162,16 +163,16 @@ impl Distance {
                 reason: "no declared color space".to_owned(),
             };
         };
-        let left_transfer = declared_transfer(&left.document, stage);
-        let right_transfer = declared_transfer(&right.document, stage);
-        if left_space != right_space || left_transfer != right_transfer {
+        let left_decoding = stage_transfer(&left.document, stage);
+        let right_decoding = stage_transfer(&right.document, stage);
+        if left_space != right_space || left_decoding != right_decoding {
             return Distance::Unavailable {
                 reason: interpretation_reason(
                     roles,
                     &left_space,
-                    &left_transfer,
+                    &transfer_word(left_decoding),
                     &right_space,
-                    &right_transfer,
+                    &transfer_word(right_decoding),
                 ),
             };
         }
@@ -182,12 +183,6 @@ impl Distance {
             },
         }
     }
-}
-
-/// The declared transfer state of one side's stage, or `none` when it declares
-/// none.
-fn declared_transfer(document: &Value, stage: &str) -> String {
-    stage_transfer(document, stage).unwrap_or_else(|| "none".to_owned())
 }
 
 /// Why two sides cannot be compared in one metric, naming both roles.
@@ -205,7 +200,22 @@ fn interpretation_reason(
     )
 }
 
+/// The word for one side's declared transfer state, so a disagreement names
+/// both states in the same vocabulary the records carry.
+fn transfer_word(decoding: Option<bool>) -> String {
+    match decoding {
+        Some(true) => "decoded".to_owned(),
+        Some(false) => "encoded".to_owned(),
+        None => "none".to_owned(),
+    }
+}
+
 pub fn compare(args: &MeasureCompareArgs) -> Result<()> {
+    compare_with_result(args).map(|_| ())
+}
+
+/// Compare two retained readings and return the command result object.
+pub fn compare_with_result(args: &MeasureCompareArgs) -> Result<(Value, i32)> {
     let baseline = load_side(&args.baseline, "baseline")?;
     let candidate = load_side(&args.candidate, "candidate")?;
     let reference = match &args.reference {
@@ -268,7 +278,7 @@ pub fn compare(args: &MeasureCompareArgs) -> Result<()> {
 
     let document = json!({
         "schema_version": 1,
-        "kind": "compare",
+        "kind": "comparison",
         "baseline": side_record(&baseline),
         "candidate": side_record(&candidate),
         "reference": match &reference {
@@ -287,12 +297,20 @@ pub fn compare(args: &MeasureCompareArgs) -> Result<()> {
     let compare_text = format!("{}\n", serde_json::to_string_pretty(&document)?);
     report::write_measure_named(
         &args.out,
-        &[("compare.json", compare_text), ("deltas.csv", deltas)],
+        &[("comparison.json", compare_text), ("deltas.csv", deltas)],
     )
     .map_err(anyhow::Error::msg)?;
 
     print_summary(&args.out, reported, &document);
-    Ok(())
+    Ok((
+        json!({
+            "schema_version": 1,
+            "command": "compare",
+            "execution_status": "completed",
+            "artifact": args.out.display().to_string(),
+        }),
+        0,
+    ))
 }
 
 /// One pairing of two sides, with the distance decisions it made for itself.
@@ -393,17 +411,14 @@ impl Pairing {
 /// Read one retained measurement directory. A missing record or reading file
 /// is an error naming the directory.
 fn load_side(directory: &Path, label: &str) -> Result<Side> {
-    let measure = directory.join("measure.json");
-    let points = directory.join("points.csv");
+    let measure = directory.join("run.json");
+    let points = directory.join("readings.csv");
     if !measure.is_file() {
-        bail!(
-            "{label} directory {} has no measure.json",
-            directory.display()
-        );
+        bail!("{label} directory {} has no run.json", directory.display());
     }
     if !points.is_file() {
         bail!(
-            "{label} directory {} has no points.csv",
+            "{label} directory {} has no readings.csv",
             directory.display()
         );
     }
@@ -516,7 +531,7 @@ fn parse_csv_records(text: &str) -> Result<Vec<(usize, Vec<String>)>, String> {
     Ok(records)
 }
 
-/// Parse a retained `points.csv` into rows keyed by `(sample_id, stage)`.
+/// Parse a retained `readings.csv` into rows keyed by `(sample_id, stage)`.
 /// An empty numeric field is a value that is not finite.
 fn read_points(path: &Path) -> Result<BTreeMap<(String, String), Row>, String> {
     let text =
@@ -648,24 +663,20 @@ fn join_sides(left: &Side, right: &Side, roles: &Roles) -> Result<Vec<Pair>> {
         // reports the raw values, and says which metric it could not compute.
         let left_space = stage_color_space(&left.document, &key.1);
         let right_space = stage_color_space(&right.document, &key.1);
-        let left_transfer = declared_transfer(&left.document, &key.1);
-        let right_transfer = declared_transfer(&right.document, &key.1);
-        let agrees = left_space == right_space && left_transfer == right_transfer;
+        let left_decoding = stage_transfer(&left.document, &key.1);
+        let right_decoding = stage_transfer(&right.document, &key.1);
+        let agrees = left_space == right_space && left_decoding == right_decoding;
         let color_space = if agrees { left_space.clone() } else { None };
-        let transfer = if agrees {
-            Some(left_transfer.clone())
-        } else {
-            None
-        };
+        let cctf_decoding = if agrees { left_decoding } else { None };
         let incomparable = if agrees {
             None
         } else {
             Some(interpretation_reason(
                 roles,
                 left_space.as_deref().unwrap_or("none"),
-                &left_transfer,
+                &transfer_word(left_decoding),
                 right_space.as_deref().unwrap_or("none"),
-                &right_transfer,
+                &transfer_word(right_decoding),
             ))
         };
         pairs.push(Pair {
@@ -677,7 +688,7 @@ fn join_sides(left: &Side, right: &Side, roles: &Roles) -> Result<Vec<Pair>> {
             units: left_row.units.clone(),
             channel_order: left_row.channel_order.clone(),
             color_space,
-            transfer,
+            cctf_decoding,
             right_source: right_row.source.clone(),
             right_partition: right_row.partition.clone(),
             incomparable,
@@ -762,14 +773,13 @@ fn stage_color_space(document: &Value, stage: &str) -> Option<String> {
 }
 
 /// The transfer state one side's stage record declares, when it declares one.
-fn stage_transfer(document: &Value, stage: &str) -> Option<String> {
+fn stage_transfer(document: &Value, stage: &str) -> Option<bool> {
     stage_record(document, stage)?
-        .get("transfer")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+        .get("cctf_decoding")
+        .and_then(Value::as_bool)
 }
 
-/// The stage record of one side's `measure.json`.
+/// The stage record of one side's `run.json`.
 fn stage_record<'a>(document: &'a Value, stage: &str) -> Option<&'a Value> {
     document
         .get("stages")
@@ -794,7 +804,7 @@ fn stage_records(pairing: &Pairing) -> Vec<Value> {
             "units": pair.units,
             "channel_order": pair.channel_order,
             "color_space": pair.color_space,
-            "transfer": pair.transfer,
+            "cctf_decoding": pair.cctf_decoding,
             "comparable": pair.incomparable.is_none(),
             "colorimetric": pairing.colorimetric(&pair.stage).is_some(),
         }));
@@ -1155,6 +1165,6 @@ fn print_summary(out: &Path, pairing: &Pairing, document: &Value) {
     if !colorimetric.is_empty() {
         eprintln!("Colorimetric stages: {}", colorimetric.join(", "));
     }
-    eprintln!("Report: {}", out.join("compare.json").display());
+    eprintln!("Report: {}", out.join("comparison.json").display());
     eprintln!("Deltas: {}", out.join("deltas.csv").display());
 }

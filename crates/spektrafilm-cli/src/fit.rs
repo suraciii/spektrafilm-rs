@@ -146,6 +146,11 @@ fn record_surface_provenance(datasource: &mut String, scene: &str, reference: &s
 }
 
 pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
+    cmd_fit_with_result(args, matches).map(|_| ())
+}
+
+/// Fit the declared groups and return the command result object.
+pub(crate) fn cmd_fit_with_result(args: &FitArgs, matches: &clap::ArgMatches) -> Result<(Value, i32)> {
     let data_dir = crate::select_data_dir(args.data_dir.clone(), matches)?.path;
     let data_dir = data_dir.as_path();
     let layout: ChartLayout = read_json(&args.layout, "chart layout")?;
@@ -298,7 +303,15 @@ pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> 
             format_de(fold.test_base_de_median),
         );
     }
-    Ok(())
+    Ok((
+        json!({
+            "schema_version": 1,
+            "command": "fit",
+            "execution_status": "completed",
+            "artifact": args.report.display().to_string(),
+        }),
+        0,
+    ))
 }
 
 fn format_de(value: f64) -> String {
