@@ -931,6 +931,14 @@ mod layout_snapshots {
                 pair[1].0
             );
         }
+        // The dialog must state what the chosen settings will write; the row
+        // is a read-only label, so it carries no widget of its own to query.
+        assert!(
+            modal
+                .query_by_label_contains("Estimated output size")
+                .is_some(),
+            "the export dialog must state the estimated output size"
+        );
         let colors: std::collections::HashSet<_> = image.pixels().map(|p| p.0).collect();
         assert!(
             colors.len() > 20,

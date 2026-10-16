@@ -604,7 +604,12 @@ impl App {
                         .on_hover_text("Choose settings and render the full image independently of Save.")
                         .clicked()
                     {
-                        self.export_dialog.open(&self.export_options);
+                        let dimensions = self
+                            .image
+                            .as_ref()
+                            .map(|image| [image.width, image.height])
+                            .unwrap_or([0, 0]);
+                        self.export_dialog.open(&self.export_options, dimensions);
                     }
                 }
             });
