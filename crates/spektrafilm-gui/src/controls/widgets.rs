@@ -35,29 +35,6 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
     )
 }
 
-/// `param_numeric` on a row marked experimental.
-pub(crate) fn param_numeric_experimental<T: egui::emath::Numeric>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut T,
-    path: &str,
-    tooltip: &str,
-) -> bool {
-    let (min, max, step, decimals) = editor_range_for(path);
-    numeric(
-        ui,
-        label,
-        value,
-        min,
-        max,
-        step,
-        decimals,
-        tooltip,
-        crate::numeric::unit_suffix(path),
-        true,
-    )
-}
-
 /// `param_numeric` whose effective maximum is additionally capped at
 /// `max_cap`; the sublayer-share editor keeps the authored total at one.
 pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
@@ -134,31 +111,7 @@ pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
     )
 }
 
-/// A tuple row whose components carry semantic identifiers.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn param_tuple_named<T: egui::emath::Numeric, const N: usize>(
-    ui: &mut Ui,
-    label: &str,
-    values: &mut [T; N],
-    path: &str,
-    tooltip: &str,
-    identifiers: &[&str],
-) -> bool {
-    let (min, max, step, decimals) = editor_range_for(path);
-    tuple(
-        ui,
-        label,
-        values,
-        min,
-        max,
-        step,
-        decimals,
-        tooltip,
-        identifiers,
-        false,
-    )
-}
-
 pub(crate) fn param_numeric_field_validated<T, Id>(
     ui: &mut Ui,
     label: &str,
@@ -387,7 +340,7 @@ pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
                                 .size(theme::SIZE_HINT),
                         )
                         .on_hover_text(tooltip);
-                    let changed = numeric_field(
+                    numeric_field(
                         ui,
                         // The visible identifier and the accessible name agree,
                         // so the component is named the same way for every
@@ -402,8 +355,7 @@ pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
                         tooltip,
                         None,
                         Some(identifier_response.id),
-                    );
-                    changed
+                    )
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
         })
@@ -510,7 +462,7 @@ pub(crate) fn point_tuple(
                                 .size(theme::SIZE_HINT),
                         )
                         .on_hover_text(tooltip);
-                    let changed = param_numeric_field_validated(
+                    param_numeric_field_validated(
                         ui,
                         // The visible identifier and the accessible name agree,
                         // so the component is named the same way for every
@@ -529,8 +481,7 @@ pub(crate) fn point_tuple(
                                 next > other[channel]
                             }
                         },
-                    );
-                    changed
+                    )
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
         })

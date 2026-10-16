@@ -50,25 +50,12 @@ pub const SERIES_FILL_ALPHA: f32 = 0.45;
 // Spacing
 // ---------------------------------------------------------------------------
 
-/// Gap between a section header and the section body.
-pub const SPACE_SECTION: f32 = 4.0;
 /// Gap between two parameter rows inside one section.
 pub const SPACE_ROW: f32 = 2.0;
 /// Gap between the page navigation and the search box.
 pub const SPACE_BLOCK: f32 = 4.0;
-/// Horizontal inset of a panel or a card.
-pub const INSET_PANEL: i8 = 8;
-/// Vertical inset of a panel or a card.
-pub const INSET_PANEL_V: i8 = 4;
 /// Gap between two action groups inside one region.
 pub const SPACE_GROUP: f32 = 8.0;
-/// Height reserved below the scrollable controls for the action bar.
-pub const HEIGHT_PANEL_RESERVE: f32 = 95.0;
-/// Height of the tonal histogram strip.
-pub const HEIGHT_CHART_STRIP: f32 = 80.0;
-/// Inset of the compare overlay's divider label.
-pub const SPACE_OVERLAY_LABEL: f32 = 8.0;
-
 // ---------------------------------------------------------------------------
 // Corner radius
 // ---------------------------------------------------------------------------
@@ -84,18 +71,12 @@ pub const RADIUS_MENU: u8 = 6;
 // Type roles
 // ---------------------------------------------------------------------------
 
-/// Row label: the parameter's name.
-pub const TEXT_LABEL: TextStyle = TextStyle::Button;
 /// Value shown in a row's editor, at the parameter's declared decimals.
 ///
 /// Monospace so equal-width digits align down the value column. egui 0.31
 /// bundles Hack, whose digits share one advance width, so fixed decimals in
 /// this style are tabular by construction.
 pub const TEXT_VALUE: TextStyle = TextStyle::Monospace;
-/// Hint or legend text beside a row or a section.
-pub const TEXT_HINT: TextStyle = TextStyle::Small;
-/// Section title in a section header.
-pub const TEXT_SECTION: TextStyle = TextStyle::Button;
 /// Metadata readout in the viewer footer and the histogram.
 pub const TEXT_READOUT: TextStyle = TextStyle::Small;
 
@@ -104,17 +85,8 @@ pub const SIZE_HINT: f32 = 9.0;
 /// Point size of a value in a parameter row, at the parameter's declared
 /// decimals. Monospace so the value column aligns.
 pub const SIZE_VALUE: f32 = 12.0;
-/// Point size of the preset-card name.
-pub const SIZE_CARD_TITLE: f32 = 11.0;
-/// Point size of the preset-card route metadata.
-pub const SIZE_CARD_META: f32 = 9.0;
 /// Point size of the histogram axis labels.
 pub const SIZE_CHART_AXIS: f32 = 10.0;
-/// Point size of the viewer's empty-state message.
-pub const SIZE_VIEWER_MESSAGE: f32 = 16.0;
-/// Point size of the viewer's pixel-inspection readout.
-pub const SIZE_VIEWER_READOUT: f32 = 12.0;
-
 /// Font id for a role's point size, keeping the role's family.
 pub fn text(role: TextStyle, size: f32) -> FontId {
     FontId::new(size, font_family(role))
@@ -129,28 +101,14 @@ fn font_family(role: TextStyle) -> egui::FontFamily {
 
 /// Width of the value column in a parameter row.
 pub const WIDTH_VALUE: f32 = 72.0;
-/// Fixed width of the label column, so every row on a page aligns to one
-/// label column and one value column.
-pub const WIDTH_LABEL: f32 = 150.0;
-/// Width of the right control panel.
-pub const WIDTH_PANEL: f32 = 320.0;
-/// Expanded width of the left preset browser.
-pub const WIDTH_PRESET_PANEL: f32 = 180.0;
-/// Collapsed width of the left preset browser.
-pub const WIDTH_PRESET_PANEL_COLLAPSED: f32 = 38.0;
 /// Widest a choice row's selector may be. Narrow enough that a selector
 /// sharing a row with another control leaves room for it inside the control
 /// panel.
 pub const WIDTH_COMBO_MAX: f32 = 120.0;
-/// Default size of the application window.
-pub const WINDOW_DEFAULT_SIZE: [f32; 2] = [1460.0, 980.0];
-
 /// Width of a default border stroke.
 pub const STROKE_DEFAULT: f32 = 1.0;
 /// Width of the invalid-state ring around a value field.
 pub const STROKE_INVALID: f32 = 1.5;
-/// Width of the compare divider.
-pub const STROKE_DIVIDER: f32 = 2.0;
 /// How far the invalid ring expands past the field it marks.
 pub const INVALID_RING_EXPAND: f32 = 1.5;
 

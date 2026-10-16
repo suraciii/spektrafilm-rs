@@ -301,7 +301,7 @@ mod roles {
 
     #[test]
     fn a_numeric_row_names_its_editor() {
-        let mut harness = Harness::new_ui_state(scanner, scanner_params());
+        let harness = Harness::new_ui_state(scanner, scanner_params());
         let node = harness.get_by_label("brightness");
         assert_eq!(node.role(), egui::accesskit::Role::TextInput);
     }
