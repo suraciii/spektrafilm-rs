@@ -281,7 +281,7 @@ fn active_v3_field_reports_its_device_stage() {
         .context()
         .scope("simulation", ObservationKind::Phase, Purpose::Image);
     let output = runtime
-        .process_observed(image, &gpu, simulation.context())
+        .process_observed(image, gpu.backend(), simulation.context())
         .unwrap();
     drop(simulation);
     attempt.finish(Outcome::Succeeded);
@@ -345,7 +345,7 @@ fn gpu_timing_collection_survives_a_host_fence() {
         .context()
         .scope("simulation", ObservationKind::Phase, Purpose::Image);
     let output = runtime
-        .process_observed(image, &gpu, simulation.context())
+        .process_observed(image, gpu.backend(), simulation.context())
         .unwrap();
     drop(simulation);
     attempt.finish(Outcome::Succeeded);
@@ -455,7 +455,7 @@ fn slide_reference_batches_are_calibration_not_image_work() {
     runtime
         .process_observed(
             ImageBuf::from_data(3, 2, vec![from_f64(0.18); 18]),
-            &backend,
+            backend.backend(),
             simulation.context(),
         )
         .unwrap();

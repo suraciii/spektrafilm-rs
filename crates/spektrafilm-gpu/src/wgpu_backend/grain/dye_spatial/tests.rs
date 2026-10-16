@@ -1,11 +1,5 @@
 use super::*;
 
-fn device_lock() -> std::sync::MutexGuard<'static, ()> {
-    crate::wgpu_backend::observation::TEST_DEVICE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 /// KNOWN-BAD G3: the remap pass compiled with un-normalized overlaps.
 const RAW_REMAP_SHADERS: SpatialShaders = SpatialShaders {
     remap: concat!(
@@ -413,7 +407,6 @@ fn max_error(a: &[f32], b: &[f32]) -> f64 {
 
 #[test]
 fn remap_matches_the_oracle_at_placed_boundaries() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     let mut maximum_error = 0.0_f64;
     let mut constant_error = 0.0_f64;
@@ -467,7 +460,6 @@ fn remap_matches_the_oracle_at_placed_boundaries() {
 
 #[test]
 fn readout_matches_the_oracle_at_placed_boundaries() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     let mut maximum_error = 0.0_f64;
     for exponent in [0, 1, 5, 10, 15, 20] {
@@ -507,7 +499,6 @@ fn readout_matches_the_oracle_at_placed_boundaries() {
 
 #[test]
 fn formation_uses_the_cell_integrated_tap_law() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     let g = Geometry {
         src_w: 3,
@@ -551,7 +542,6 @@ fn formation_uses_the_cell_integrated_tap_law() {
 
 #[test]
 fn edge_extension_keeps_the_film_boundary() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     let g = Geometry {
         src_w: 8,
@@ -589,7 +579,6 @@ fn edge_extension_keeps_the_film_boundary() {
 
 #[test]
 fn large_global_indices_match_the_oracle() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     let mut remap_error = 0.0_f64;
     let mut readout_error = 0.0_f64;
@@ -630,7 +619,6 @@ fn large_global_indices_match_the_oracle() {
 
 #[test]
 fn band_partitioning_preserves_every_value_bitwise() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     let g = Geometry {
         src_w: 23,
@@ -682,7 +670,6 @@ fn band_partitioning_preserves_every_value_bitwise() {
 
 #[test]
 fn crop_reads_keep_global_footprints() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     let g = Geometry {
         src_w: 23,
@@ -807,7 +794,6 @@ fn resource_bounds_reduce_the_band_and_refuse_impossible_rows() {
 
 #[test]
 fn oracle_rejects_wrong_overlap_normalization() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     let g = Geometry {
         src_w: 9,
@@ -854,7 +840,6 @@ fn oracle_rejects_wrong_overlap_normalization() {
 
 #[test]
 fn oracle_rejects_wrong_readout_width() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     let g = Geometry {
         src_w: 9,
@@ -898,7 +883,6 @@ fn oracle_rejects_wrong_readout_width() {
 
 #[test]
 fn oracle_rejects_wrong_tap_offset() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     // Asymmetric taps: a flipped tap offset is invisible for a symmetric
     // tap law, so the control case must not be symmetric.
@@ -945,7 +929,6 @@ fn oracle_rejects_wrong_tap_offset() {
 
 #[test]
 fn certify_dye_spatial_passes_on_this_device() {
-    let _guard = device_lock();
     let backend = crate::test_support::adapter();
     backend.certify_dye_spatial().expect("spatial self-check");
     eprintln!("G3+G5 runtime self-check passed on {}", backend.name);

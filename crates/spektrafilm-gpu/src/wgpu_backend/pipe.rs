@@ -492,20 +492,13 @@ impl GpuPipe {
 
 #[cfg(all(test, feature = "wgpu-backend"))]
 mod tests {
-    use super::super::observation::TEST_DEVICE_LOCK as DEVICE_IN_USE;
     use super::*;
 
-    // The software Vulkan driver (llvmpipe) is not safe under concurrent
-    // device use in one process; every test holds the shared serial lock
-    // for its whole body.
-    fn backend() -> Option<(
-        std::sync::MutexGuard<'static, ()>,
-        crate::wgpu_backend::WgpuBackend,
-    )> {
-        let guard = DEVICE_IN_USE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        Some((guard, crate::test_support::adapter()))
+    // The adapter owns the device-serialization guard for its whole lifetime:
+    // the software Vulkan driver (llvmpipe) is not safe under concurrent device
+    // use in one process.
+    fn backend() -> Option<crate::test_support::DeviceBackend> {
+        Some(crate::test_support::adapter())
     }
 
     const COLORSPACE_SHADER: &str =
@@ -549,7 +542,7 @@ mod tests {
 
     #[test]
     fn dispatch_device_matches_dispatch_host() {
-        let Some((_guard, b)) = backend() else {
+        let Some(b) = backend() else {
             return;
         };
         let img = sample_image();
@@ -583,7 +576,7 @@ mod tests {
 
     #[test]
     fn fence_roundtrip_preserves_samples() {
-        let Some((_guard, b)) = backend() else {
+        let Some(b) = backend() else {
             return;
         };
         let img = sample_image();
@@ -599,7 +592,7 @@ mod tests {
 
     #[test]
     fn readback_pool_reuses_buffers() {
-        let Some((_guard, b)) = backend() else {
+        let Some(b) = backend() else {
             return;
         };
         let img = sample_image();

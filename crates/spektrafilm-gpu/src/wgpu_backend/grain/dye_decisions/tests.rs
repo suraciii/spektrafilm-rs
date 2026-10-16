@@ -35,17 +35,12 @@ const RATES: [f64; 14] = [
     DYE_MAX_RATE,
 ];
 
-/// A device for one test, with the shared device lock held: the software
-/// Vulkan driver is not safe under concurrent device use in one process,
-/// which is the pattern every device test in this backend follows.
-fn locked_adapter() -> (
-    std::sync::MutexGuard<'static, ()>,
-    crate::wgpu_backend::WgpuBackend,
-) {
-    let guard = crate::wgpu_backend::observation::TEST_DEVICE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    (guard, crate::test_support::adapter())
+/// A device for one test. The adapter owns the device-serialization guard for
+/// its whole lifetime: the software Vulkan driver (llvmpipe) is not safe under
+/// concurrent device use in one process, which is the pattern every device
+/// test in this backend follows.
+fn locked_adapter() -> crate::test_support::DeviceBackend {
+    crate::test_support::adapter()
 }
 
 fn run_rate(
@@ -125,7 +120,7 @@ fn moments(counts: &[u32]) -> Moments {
 
 #[test]
 fn device_counts_follow_the_reference_law() {
-    let (_guard, backend) = locked_adapter();
+    let backend = locked_adapter();
     eprintln!("dye count law adapter: {}", backend.name());
     let mut broken = Vec::new();
     let mut pooled_counts: Vec<Vec<u32>> = RATES.iter().map(|_| Vec::new()).collect();
@@ -186,7 +181,7 @@ fn device_counts_follow_the_reference_law() {
 /// construction, so what fails is the shape and the empty-cell probability.
 #[test]
 fn the_control_build_fails_the_same_checks() {
-    let (_guard, backend) = locked_adapter();
+    let backend = locked_adapter();
     eprintln!("dye count law control adapter: {}", backend.name());
     let mut broken = Vec::new();
     for (index, rate) in RATES.iter().enumerate() {
@@ -224,7 +219,7 @@ fn the_control_build_fails_the_same_checks() {
 /// what keeps a crop or a tile from reseeding a cell.
 #[test]
 fn a_streams_count_does_not_depend_on_its_position_in_the_dispatch() {
-    let (_guard, backend) = locked_adapter();
+    let backend = locked_adapter();
     eprintln!("dye count address adapter: {}", backend.name());
     // Several streams, each of which has to survive the dispatch change on
     // its own: a single case would not show a stream that only moves when
@@ -268,7 +263,7 @@ fn a_streams_count_does_not_depend_on_its_position_in_the_dispatch() {
 #[test]
 fn the_branch_switch_falls_at_thirty() {
     const N: usize = 4096;
-    let (_guard, backend) = locked_adapter();
+    let backend = locked_adapter();
     eprintln!("dye count branch adapter: {}", backend.name());
     for rate in [29.0, 29.999, 30.0, 30.001, 31.0] {
         let cases = rate_cases(N, 0, rate);
@@ -309,7 +304,7 @@ fn the_branch_switch_falls_at_thirty() {
 /// and the non-finite and negative rates no conditioning can produce.
 #[test]
 fn unsupported_rates_fail_the_case_instead_of_rounding_a_count() {
-    let (_guard, backend) = locked_adapter();
+    let backend = locked_adapter();
     eprintln!("dye count guard adapter: {}", backend.name());
     let single = |rate: f64| {
         let (counts, words) = backend
@@ -581,7 +576,7 @@ const REJECTION_PLACEMENTS: &[(f32, f32, f32)] = &[
 /// arithmetic; the oracle is the reference's factorial form in f64.
 #[test]
 fn the_rejection_computation_matches_an_independent_f64_oracle() {
-    let (_guard, backend) = locked_adapter();
+    let backend = locked_adapter();
     eprintln!("dye rejection probe adapter: {}", backend.name());
     let places: Vec<DyeRejectionPlace> = REJECTION_PLACEMENTS
         .iter()
@@ -738,7 +733,7 @@ const CERTIFIED_CANCELLED_VARIANCE: f64 = 66100.5493;
 #[test]
 fn the_original_cancellation_is_exposed_at_the_top_rate() {
     const REPLICATES: usize = 10;
-    let (_guard, backend) = locked_adapter();
+    let backend = locked_adapter();
     eprintln!("dye count cancellation-control adapter: {}", backend.name());
     let top = RATES.iter().position(|&r| r == DYE_MAX_RATE).unwrap();
     let mut pooled = Vec::new();
@@ -805,7 +800,7 @@ fn the_original_cancellation_is_exposed_at_the_top_rate() {
 /// The runtime self-check a fresh backend runs before `prepare_dye`.
 #[test]
 fn the_runtime_self_check_accepts_this_device() {
-    let (_guard, backend) = locked_adapter();
+    let backend = locked_adapter();
     eprintln!("dye count self-check adapter: {}", backend.name());
     backend.certify_dye_counts().expect("device self-check");
 }

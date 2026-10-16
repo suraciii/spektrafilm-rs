@@ -627,7 +627,7 @@ mod parity_tests {
             .collect();
         let img = ImageBuf::from_data(w, h, data);
 
-        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
         let out_cpu = pipeline
             .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
             .unwrap();

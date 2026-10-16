@@ -551,9 +551,6 @@ mod tests {
 
     #[test]
     fn accumulation_uses_the_certified_streams_and_shared_layer_counts() {
-        let _guard = crate::wgpu_backend::observation::TEST_DEVICE_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let backend = crate::test_support::adapter();
         let knots = [0.0, 1.0];
         let inverse = [1.0];
@@ -776,9 +773,6 @@ mod range_tests {
 
     #[test]
     fn unrepresentable_mass_and_positive_rate_fail_instead_of_borrowing_shared_counts() {
-        let _guard = crate::wgpu_backend::observation::TEST_DEVICE_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let backend = crate::test_support::adapter();
         let knots = [0.0, 1.0];
         let inverse = [1.0];
