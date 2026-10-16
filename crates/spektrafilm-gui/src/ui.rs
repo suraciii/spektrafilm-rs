@@ -498,6 +498,33 @@ impl App {
                 label_clicked = ui
                     .add(egui::Label::new(label).sense(egui::Sense::click()))
                     .clicked();
+                if section_reset::is_modified(section, &self.params) {
+                    ui.label(
+                        egui::RichText::new("modified")
+                            .color(theme::WARNING)
+                            .size(theme::SIZE_HINT),
+                    );
+                }
+                if section_reset::sections().any(|name| name == section)
+                    && ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("reset")
+                                    .color(theme::FG_MUTED)
+                                    .size(theme::SIZE_HINT),
+                            )
+                            .corner_radius(theme::RADIUS_CARD),
+                        )
+                        .on_hover_text(format!("Restore {section} to the factory state"))
+                        .clicked()
+                {
+                    section_reset::reset(&mut self.gui_state, section);
+                    self.params = self
+                        .gui_state
+                        .runtime_params()
+                        .unwrap_or_else(|_| self.params.clone());
+                    self.mark_parameters_changed();
+                }
                 self.section_preset_menu(ui, kind);
             });
             if label_clicked {
