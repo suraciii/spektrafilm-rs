@@ -442,11 +442,7 @@ mod tests {
 
         fn portra() -> Profile {
             let path = data_dir().join("profiles/kodak_portra_400.json");
-            assert!(
-                path.exists(),
-                "test fixture required: {}",
-                path.display()
-            );
+            assert!(path.exists(), "test fixture required: {}", path.display());
             profile::load_profile(&path).unwrap()
         }
 
@@ -631,12 +627,8 @@ mod tests {
         #[test]
         fn layered_grain_positive_profile_runs_negated_axis() {
             let path = data_dir().join("profiles/fujifilm_provia_100f.json");
-        assert!(
-            path.exists(),
-            "test fixture required: {}",
-            path.display()
-        );
-        let film = profile::load_profile(&path).unwrap();
+            assert!(path.exists(), "test fixture required: {}", path.display());
+            let film = profile::load_profile(&path).unwrap();
             assert!(film.is_positive());
             let backend = CpuBackend;
             let params = base_params();
@@ -671,12 +663,8 @@ mod tests {
         #[test]
         fn layered_grain_monochrome_keeps_channels_equal() {
             let path = data_dir().join("profiles/kodak_doublex.json");
-        assert!(
-            path.exists(),
-            "test fixture required: {}",
-            path.display()
-        );
-        let film = profile::resolve_for_render(profile::load_profile(&path).unwrap(), None);
+            assert!(path.exists(), "test fixture required: {}", path.display());
+            let film = profile::resolve_for_render(profile::load_profile(&path).unwrap(), None);
             let backend = CpuBackend;
             let mut params = base_params();
             // Mirror `Pipeline::apply_film_specific_params`: monochrome

@@ -35,11 +35,7 @@ mod tests {
 
     fn data_profile(name: &str) -> Profile {
         let path = data_dir().join(format!("profiles/{name}.json"));
-        assert!(
-                path.exists(),
-                "test fixture required: {}",
-            path.display()
-        );
+        assert!(path.exists(), "test fixture required: {}", path.display());
         load_profile(&path).unwrap()
     }
     /// B&W profiles carry whole-field nulls, single-channel arrays, and a
