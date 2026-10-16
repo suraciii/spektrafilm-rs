@@ -757,6 +757,150 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
         }
         Ok(())
     };
+    let readouts = |owner: &Value, case: &Value| -> Result<()> {
+        for readout in owner["region_readouts"].as_array().into_iter().flatten() {
+            for artifact in readout["artifact_refs"].as_array().into_iter().flatten() {
+                reference(artifact)?;
+            }
+            if let Some(mask) = readout.get("common_area_artifact_id") {
+                reference(mask)?;
+            }
+            if owner.get("left_role").is_some() && readout["pair_id"] != owner["id"] {
+                return Err(err(
+                    "readout_identity",
+                    "Color readout differs from its comparison pair",
+                ));
+            }
+            let expected_domain = if readout["estimator"] == "bounded_lab_channel_median" {
+                "bounded_srgb_d65_lab"
+            } else {
+                "unclipped_linear_srgb_mean_lab"
+            };
+            if readout["domain"] != expected_domain {
+                return Err(err(
+                    "readout_domain",
+                    "Color readout domain differs from its estimator",
+                ));
+            }
+            if readout["availability"] != "available" {
+                continue;
+            }
+            let sides = readout["sides"].as_object().unwrap();
+            let reference_review = &owner["reference"];
+            let is_reference = readout["pair_id"] == "reference";
+            if is_reference
+                && (reference_review["scope"] == "visual"
+                    || reference_review["color_available"] == false
+                    || (reference_review["scope"] == "aligned_scene"
+                        && reference_review["geometry"] != "pixel_aligned"))
+            {
+                return Err(err(
+                    "readout_applicability",
+                    "Color readout conflicts with retained reference qualification",
+                ));
+            }
+            for displacement in readout["displacements"].as_array().unwrap() {
+                let from = displacement["from_role"].as_str().unwrap();
+                let to = displacement["to_role"].as_str().unwrap();
+                if from == to
+                    || !sides.contains_key(from)
+                    || !sides.contains_key(to)
+                    || (is_reference && from != "reference")
+                    || (readout["pair_id"] == "input" && (from != "input" || to != "simulation"))
+                    || (readout["pair_id"] == "baseline/candidate"
+                        && (from != "baseline" || to != "candidate"))
+                {
+                    return Err(err(
+                        "readout_identity",
+                        "Color displacement must name the retained comparison direction",
+                    ));
+                }
+                for (eligible, keys) in [
+                    (
+                        "tone_target_eligible",
+                        &["delta_lab", "delta_l_star", "delta_e76", "delta_e00"][..],
+                    ),
+                    (
+                        "color_diagnostic_eligible",
+                        &["delta_c_star", "delta_h_degrees", "equal_l_delta_e00"][..],
+                    ),
+                ] {
+                    if is_reference
+                        && reference_review[eligible] != true
+                        && keys
+                            .iter()
+                            .any(|key| displacement[*key]["availability"] == "available")
+                    {
+                        return Err(err(
+                            "readout_applicability",
+                            "Color displacement exceeds retained reference eligibility",
+                        ));
+                    }
+                }
+            }
+        }
+        for readout in owner["stage_readouts"].as_array().into_iter().flatten() {
+            for artifact in readout["artifact_refs"].as_array().into_iter().flatten() {
+                reference(artifact)?;
+            }
+            let role = readout["run_role"].as_str().unwrap();
+            let payload = &case["run_evidence"][role];
+            if !payload.is_object() {
+                return Err(err(
+                    "readout_identity",
+                    "Stage readout has no retained run role",
+                ));
+            }
+            if readout["availability"] != "available" {
+                continue;
+            }
+            let stage = payload["observed"]["stages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|stage| stage["id"] == readout["stage_id"]);
+            if stage.is_none_or(|stage| {
+                stage["availability"] != "available"
+                    || stage["domain"] != readout["domain"]
+                    || stage["units"] != readout["units"]
+                    || stage["layout"]["channel_order"] != readout["channel_order"]
+                    || stage["geometry"] != readout["stage_geometry"]
+            }) || payload["precision"]["host_precision"] != readout["host_precision"]
+            {
+                return Err(err(
+                    "readout_domain",
+                    "Stage readout differs from its producer's observed boundary",
+                ));
+            }
+            let buffer = payload["stage_evidence"]["buffers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|buffer| buffer["stage_id"] == readout["stage_id"]);
+            if buffer.is_none_or(|buffer| {
+                !readout["artifact_refs"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&buffer["path"])
+            }) {
+                return Err(err(
+                    "readout_evidence",
+                    "Available stage readout requires its retained native buffer",
+                ));
+            }
+            for channel in 0..3 {
+                let min = readout["channel_min"][channel].as_f64().unwrap();
+                let max = readout["channel_max"][channel].as_f64().unwrap();
+                if min > max {
+                    return Err(err(
+                        "readout_value",
+                        "Stage minimum must not exceed its maximum",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    };
     if kind == "run" {
         reference(&v["suite"])?;
         reference(&v["target"])?;
@@ -1126,6 +1270,7 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
         }
         for case in v["cases"].as_array().unwrap() {
             measurements(&case["measurements"])?;
+            readouts(case, case)?;
             // Per-role run evidence: identity consistency, indexed references,
             // and the copied stage bundle exactly as the producer wrote it.
             if let Some(run_evidence) = case.get("run_evidence") {
@@ -1270,6 +1415,7 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                         }
                     }
                     measurements(&pair["measurements"])?;
+                    readouts(pair, case)?;
                     for measurement in pair["measurements"].as_array().into_iter().flatten() {
                         if measurement["case_id"] != case["case_id"]
                             || measurement["pair_id"] != pair["id"]

@@ -7,6 +7,7 @@
 pub mod arrays;
 pub mod cli;
 pub mod evaluate;
+pub mod measure;
 pub mod metrics;
 pub mod report;
 pub mod spectra;

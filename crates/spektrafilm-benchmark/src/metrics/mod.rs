@@ -1,3 +1,4 @@
+use crate::color_readouts;
 use crate::common::{Error, Result};
 use crate::image_data::{self, ImageData};
 use serde_json::{Value, json};
@@ -144,7 +145,10 @@ fn compare_inner(
     } else {
         None
     };
-    drop(encoded);
+    // Regional color readouts reuse the same bounded Lab population and the
+    // same unclipped encoded raster the scalar families already built.
+    let mut color_readouts = Vec::new();
+    let hue_floor = crate::references::hue_floor(protocol)?;
     let refs: Vec<String> = maps.iter().map(|m| m.artifact.clone()).collect();
     let mut seen = HashSet::new();
     for population in populations {
@@ -165,6 +169,58 @@ fn compare_inner(
             let n = count(&mask);
             if n == 0 {
                 return Err(err("insufficient_samples", "Region has no selected pixels"));
+            }
+            let geometry = if region == "full_image" {
+                json!({"rectangle":[0,0,w,h]})
+            } else {
+                population["geometry"].clone()
+            };
+            if population["measurements"]
+                .as_array()
+                .is_some_and(|families| families.iter().any(|family| family == "color"))
+            {
+                if region != "full_image" {
+                    let indices: Vec<usize> = mask
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, selected)| selected.then_some(i))
+                        .collect();
+                    color_readouts.extend(color_readouts::region_readouts(
+                        region,
+                        "native_render_pixels",
+                        &[
+                            color_readouts::Side {
+                                role: "baseline",
+                                geometry: &geometry,
+                                lab: &labs[0],
+                                encoded: &encoded[0],
+                                linear: linear.as_ref().map(|images| images[0].as_slice()),
+                                population: &indices,
+                                median: None,
+                            },
+                            color_readouts::Side {
+                                role: "candidate",
+                                geometry: &geometry,
+                                lab: &labs[1],
+                                encoded: &encoded[1],
+                                linear: linear.as_ref().map(|images| images[1].as_slice()),
+                                population: &indices,
+                                median: None,
+                            },
+                        ],
+                        &color_readouts::Gating {
+                            tone: true,
+                            chroma: true,
+                            hue_floor,
+                        },
+                        None,
+                    )?);
+                }
+            } else if region != "full_image" {
+                color_readouts.extend(color_readouts::unavailable_pair(
+                    region,
+                    "color_family_not_selected",
+                ));
             }
             for family in population["measurements"].as_array().into_iter().flatten() {
                 active = family.as_str().unwrap_or("");
@@ -313,6 +369,7 @@ fn compare_inner(
             );
         }
     }
+    drop(encoded);
     let ranking = maps.last().filter(|m| m.name == "flip").unwrap_or(&maps[0]);
     e.extra.insert(
         "automatic_regions".into(),
@@ -325,6 +382,8 @@ fn compare_inner(
             std::slice::from_ref(&ranking.artifact)
         )),
     );
+    e.extra
+        .insert("region_readouts".into(), json!(color_readouts));
     Ok(())
 }
 pub fn compare_images(
@@ -338,6 +397,8 @@ pub fn compare_images(
     let populations = populations(regions, protocol);
     if let Err(error) = compare_inner(&mut evidence, a, b, &populations, protocol) {
         evidence.failure("full_image", "image", &error, &[], true);
+        let reason = error.code.clone();
+        let mut unavailable = Vec::new();
         for population in populations {
             for family in population["measurements"].as_array().into_iter().flatten() {
                 evidence.scalar(
@@ -349,10 +410,19 @@ pub fn compare_images(
                     "unavailable",
                     "selected family boundary failure",
                     &[],
-                    Some(&error.code),
+                    Some(&reason),
                 );
             }
         }
+        for region in regions {
+            unavailable.extend(color_readouts::unavailable_pair(
+                region["id"].as_str().unwrap_or(""),
+                &reason,
+            ));
+        }
+        evidence
+            .extra
+            .insert("region_readouts".into(), json!(unavailable));
     }
     Ok(evidence.finish())
 }
@@ -786,6 +856,7 @@ mod tests {
         .unwrap();
         assert_eq!(result["execution_status"], "failed");
         assert_eq!(result["measurements"][0]["reason"], "dimension_mismatch");
+        assert_eq!(result["region_readouts"], json!([]));
         let mut b = a.clone();
         b.samples[3][1] = f64::NAN;
         let result =
@@ -887,5 +958,87 @@ mod tests {
         );
         assert_eq!(mtf50(&[1.0, 0.75, 0.25], 8), Some(0.1875));
         assert_eq!(mtf50(&[1.0, 0.7], 8), None);
+    }
+    /// Declared regions only: an explicit `full_image` region is rejected by
+    /// the population builder, so the retained readouts must never include an
+    /// implicit full-image row.
+    #[test]
+    fn declared_regions_retain_two_estimator_readouts_with_signed_axes() {
+        let path = output();
+        // One of four selected pixels is brighter; the median stays fixed.
+        let mut samples = vec![[0.5; 3]; 16];
+        samples[1] = [0.9; 3];
+        let b = ImageData {
+            samples,
+            width: 4,
+            height: 4,
+            color_space: "sRGB".into(),
+            transfer: "encoded".into(),
+            metadata: json!({}),
+            path: None,
+        };
+        let result = compare_images(
+            &image(0.5, 4, 4),
+            &b,
+            &[json!({"id":"patch","geometry":{"rectangle":[0,0,2,2]},"measurements":["color"]})],
+            &json!({"measurements":["numeric","color"],"color":{"hue_chroma_floor":0.5}}),
+            &path,
+        )
+        .unwrap();
+        fs::remove_dir_all(path).unwrap();
+        let readouts = result["region_readouts"].as_array().unwrap();
+        assert_eq!(readouts.len(), 2, "one row per estimator");
+        let median = readouts
+            .iter()
+            .find(|r| r["estimator"] == "bounded_lab_channel_median")
+            .unwrap();
+        let mean = readouts
+            .iter()
+            .find(|r| r["estimator"] == "unclipped_linear_srgb_mean")
+            .unwrap();
+        assert_eq!(median["domain"], "bounded_srgb_d65_lab");
+        assert_eq!(mean["domain"], "unclipped_linear_srgb_mean_lab");
+        assert!(median["sides"]["baseline"]["lch"]["h_degrees"]["availability"] == "unavailable");
+        assert!(mean["sides"]["candidate"]["lch"]["h_degrees"]["availability"] == "unavailable");
+        let displacement = &median["displacements"][0];
+        assert_eq!(displacement["delta_lab"]["value"], json!([0., 0., 0.]));
+        assert!(
+            mean["displacements"][0]["delta_l_star"]["value"]
+                .as_f64()
+                .unwrap()
+                > 0.
+        );
+        // The two estimators are genuinely different populations.
+        let median_center = median["sides"]["candidate"]["lab"][0].as_f64().unwrap();
+        let mean_center = mean["sides"]["candidate"]["lab"][0].as_f64().unwrap();
+        assert!(
+            (median_center - mean_center).abs() > 1e-6,
+            "median {median_center} and linear mean {mean_center} must stay distinct"
+        );
+        assert!(mean["sides"]["candidate"]["mean_linear_srgb"].is_array());
+        assert!(
+            median["sides"]["candidate"]
+                .get("mean_linear_srgb")
+                .is_none()
+        );
+    }
+    #[test]
+    fn unselected_color_family_reports_reason_instead_of_coordinates() {
+        let path = output();
+        let result = compare_images(
+            &image(0.5, 4, 4),
+            &image(0.5, 4, 4),
+            &[json!({"id":"patch","geometry":{"rectangle":[0,0,2,2]},"measurements":["numeric"]})],
+            &json!({"measurements":["numeric", "color"],"color":{"hue_chroma_floor":0.5}}),
+            &path,
+        )
+        .unwrap();
+        fs::remove_dir_all(path).unwrap();
+        let readouts = result["region_readouts"].as_array().unwrap();
+        assert_eq!(readouts.len(), 2);
+        assert!(readouts.iter().all(|r| r["availability"] == "unavailable"
+            && r["reason"] == "color_family_not_selected"
+            && r.get("sides").is_none()
+            && r.get("displacements").is_none()));
     }
 }

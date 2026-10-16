@@ -202,6 +202,11 @@ mod tests {
         assert_eq!(image.data, source);
     }
 
+    // Windows discovers and applies the runner's display ICC profile whenever no
+    // profile is selected, so the preview is the profile-converted raster rather
+    // than the sRGB expectation below. The discovery path is Windows-only by
+    // design (`discover_display_profile`); keep this assertion off that platform.
+    #[cfg(not(windows))]
     #[test]
     fn enabled_preview_clips_out_of_gamut_display_values_only() {
         use spektrafilm_math::colorspace::{display_rgb, resolve};

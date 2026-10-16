@@ -57,7 +57,7 @@ The chain must be deterministic for a fixed candidate vector: halation and grain
 ## Failure handling
 
 - Input parsing and validation failures carry the file path and the failing field.
-- A missing `hanatos2025_adaptation_surface_params` field on the film profile fails the `surface` group before the first evaluation.
+- A film profile with no `hanatos2025_adaptation_surface_params` fails the `surface` group, because the group's fitted values have nowhere to be written. A profile that carries the field is fittable whether or not the look currently applies the surface.
 - A chain configuration whose output is not the converted negative image fails validation once, before the first evaluation, reusing the existing route and scan-output validation.
 - The command writes no output file unless the fit completes.
 

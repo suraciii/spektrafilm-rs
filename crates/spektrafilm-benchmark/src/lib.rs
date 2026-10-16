@@ -1,3 +1,4 @@
+pub(crate) mod color_readouts;
 pub mod common;
 pub mod compare;
 pub mod documents;
@@ -11,6 +12,7 @@ pub mod references;
 pub mod report;
 pub mod review;
 pub mod runner;
+pub(crate) mod stage_readouts;
 pub mod target;
 
 pub use common::{Error, Result};

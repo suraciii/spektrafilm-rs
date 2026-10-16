@@ -80,6 +80,8 @@ It must compute maps before summaries. Summary scalars must be derived from the 
 
 Single-run comparison must consume source and simulation masters from one run. It must reuse existing measurement adapters for input/simulation and existing reference evaluation for reference/simulation, without synthesizing a second simulation run or measuring a self-comparison as a substitute. Each pair owns its roles, measurement availability, maps, hotspots, and review artifacts. Reference processing and correspondence limits must apply before metric selection. The report builder must consume these pair records without assigning reference images baseline status.
 
+Comparison owns regional color coordinates and native-stage aggregates. It must reuse the existing color transforms, resolved region populations, and regional medians. Per-region aggregation must decode each captured stage buffer at most once per run role. Inspection and report consumers must project these retained records without recalculation. The report must keep the two color-center estimators and native-stage domains visibly separate.
+
 ### Metric adapters
 
 Each adapter must declare input domain, required metadata, output schema, availability reasons, deterministic implementation identity, and calibration dependencies. It must not inspect human log text. It must not silently transform an input to improve a score.

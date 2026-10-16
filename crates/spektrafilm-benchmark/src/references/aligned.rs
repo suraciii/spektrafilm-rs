@@ -297,6 +297,7 @@ pub fn aligned(
             );
         }
     }
+    let hue_floor = super::hue_floor(&c.protocol)?;
     let full = json!({"id":"full_image"});
     for region in std::iter::once(&full).chain(optional_array(case, "regions")) {
         let id = text(region, "id")?;
@@ -312,6 +313,64 @@ pub fn aligned(
         let pop = population(&region_mask);
         let count = pop.len();
         let missing = (count == 0).then_some("empty_reference_population");
+        if id != "full_image" {
+            let readouts =
+                if optional_array(region, "measurements")
+                    .iter()
+                    .any(|family| family == "color")
+                {
+                    let geometry = field(region, "geometry")?;
+                    let mut sides = vec![crate::color_readouts::Side {
+                        role: "reference",
+                        geometry,
+                        lab: &ref_lab,
+                        encoded: &encoded,
+                        linear: None,
+                        population: &pop,
+                        median: None,
+                    }];
+                    sides.extend(labs.iter().enumerate().map(|(s, lab)| {
+                        crate::color_readouts::Side {
+                            role: if c.single {
+                                "simulation"
+                            } else if s == 0 {
+                                "baseline"
+                            } else {
+                                "candidate"
+                            },
+                            geometry,
+                            lab,
+                            encoded: &rendered[s],
+                            linear: None,
+                            population: &pop,
+                            median: None,
+                        }
+                    }));
+                    crate::color_readouts::region_readouts(
+                        id,
+                        "aligned_output_pixels",
+                        &sides,
+                        &crate::color_readouts::Gating {
+                            tone,
+                            chroma,
+                            hue_floor,
+                        },
+                        Some((tone, chroma)),
+                    )?
+                } else {
+                    crate::color_readouts::unavailable_pair(id, "color_family_not_selected")
+                };
+            c.readouts(
+                readouts
+                    .into_iter()
+                    .map(|mut readout| {
+                        readout["artifact_refs"] = json!(&refs[..2]);
+                        readout["common_area_artifact_id"] = json!(refs[1]);
+                        readout
+                    })
+                    .collect(),
+            );
+        }
         for (name, q) in [("median", 0.5), ("p95", 0.95), ("p99", 0.99), ("max", 1.)] {
             let values = (count > 0 && tone).then(|| {
                 maps.iter()

@@ -61,6 +61,7 @@ pub struct Comparison<'a> {
     prefix: String,
     out: &'a Path,
     sequence: usize,
+    pub(super) readouts: Vec<Value>,
     pub(super) body: EvidenceBuilder<Measurement, Value, Value>,
     pub(super) review: Value,
     pub(super) single: bool,
@@ -89,6 +90,7 @@ impl<'a> Comparison<'a> {
             prefix,
             out,
             sequence: 0,
+            readouts: Vec::new(),
             body: EvidenceBuilder::default(),
             review,
             single: false,
@@ -393,10 +395,14 @@ impl<'a> Comparison<'a> {
         self.body.artifacts.push(row);
         Ok(id)
     }
+    pub(super) fn readouts(&mut self, rows: Vec<Value>) {
+        self.readouts.extend(rows);
+    }
     pub(super) fn finish(self) -> Value {
         let mut extra = BTreeMap::new();
         extra.insert("metric_version".into(), json!(METRIC_VERSION));
         extra.insert("reference_review".into(), self.review);
+        extra.insert("region_readouts".into(), json!(self.readouts));
         self.body.finish(extra)
     }
 }

@@ -860,6 +860,21 @@ impl Tap {
         }
     }
 
+    /// The boundary's position in the chain, counted from the input side. A
+    /// route that skips a stage removes it instead of renumbering the rest, so
+    /// positions stay comparable across topologies.
+    pub const fn position(self) -> u8 {
+        match self {
+            Self::RgbIn => 0,
+            Self::RgbPre => 1,
+            Self::LogEFilm => 2,
+            Self::CmyFilm => 3,
+            Self::LogEPrint => 4,
+            Self::CmyPrint => 5,
+            Self::RgbOut => 6,
+        }
+    }
+
     /// The wire name (upstream `Tap` attribute values).
     pub fn name(self) -> &'static str {
         match self {
