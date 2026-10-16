@@ -8,9 +8,11 @@ The error contract must not introduce a second error vocabulary. Exactly one typ
 
 [Compute backend boundary](compute-backend/design.md) owns where the backend abstraction lives. The typed error must move with the abstraction, because the trait's method signatures return it. It must not stay behind in a crate that domain code must not depend on.
 
+The coupling is deeper than the trait's return types. `CpuStageFn` is a type alias for a closure returning `Result<ImageBuf, String>`, and `FilmChainParams` holds five `Option<CpuStageFn>` fence fields. `spektrafilm-core` keeps its own copy of the alias. Changing the error type therefore changes the alias, the parameter record's field types, and every closure that fills them. A migration plan that only rewrites `-> Result<T, String>` signatures will not compile.
+
 ## Current shape
 
-The workspace reports failure as `Result<T, String>` at 336 sites: 255 in core, 35 in model, 22 in the device crate. `spektrafilm-core` already defines `SpektraError`, `SpektraErrorCode`, and `SpektraResult` in `error.rs`, and re-exports them from the crate root. No call site uses them yet.
+The workspace reports failure as `Result<T, String>` at 312 sites: 255 in core, 35 in model, 22 in the device crate. `spektrafilm-core` already defines `SpektraError`, `SpektraErrorCode`, and `SpektraResult` in `error.rs`, and re-exports them from the crate root. No call site uses them yet.
 
 A `String` failure carries one field: human text. A caller can print it and can substring-match it. A caller cannot branch on it without parsing prose.
 
@@ -49,7 +51,7 @@ The benchmark report is the one consumer with an established pattern: it already
 
 ## Risks
 
-336 sites is the largest single migration in the workspace history. The comparable completed refactor moved about 2200 lines with no signature change; this one changes a return type at 70 public function signatures in core.
+312 sites is the largest single migration in the workspace history. The comparable completed refactor moved about 2200 lines with no signature change; this one changes a return type at 70 public function signatures in core.
 
 The risk is not the mechanical edit. It is a message drift introduced by hand at one of 243 distinct message templates, which breaks one of 120 assertions that no compiler check covers.
 

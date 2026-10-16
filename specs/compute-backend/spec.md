@@ -12,7 +12,9 @@ The workspace must own exactly one definition of the `ComputeBackend` trait. Tha
 
 `spektrafilm-backend` must own the default CPU implementations of every trait method. The WGPU crate must override the methods it accelerates and must inherit the rest.
 
-A parameter record that a trait signature references must live with the trait, not with a device implementation. `DyeGpuParams`, `FilmChainParams`, `FrontPass`, and the `*GpuParams` records hold only plain data — scalars, arrays, and borrowed slices — so they must live in `spektrafilm-backend`. The `Gpu` in a name states which pass consumes the record, not what it contains. A device uniform layout, a bind group, and a pipeline stay with the device crate.
+A parameter record that a trait signature references must live with the trait, not with a device implementation. `DyeGpuParams`, `FilmChainParams`, `FrontPass`, the `*GpuParams` records, and the Dye table records hold only plain data — scalars, arrays, and borrowed slices — so they must live in `spektrafilm-backend`. The `Gpu` in a name states which pass consumes the record, not what it contains. A device uniform layout, a bind group, and a pipeline stay with the device crate.
+
+A domain crate must be able to build a device parameter record without naming the device crate. `spektrafilm-core` constructs `DyeGpuParams`, `DyeReadoutGrid`, and `DyeChannelParts` in production code, so those records must be reachable without a device import.
 
 `spektrafilm-backend` must own the shared observation vocabulary: observation context, observation kinds, CPU reasons, and the scope binding helpers. This vocabulary must remain available below `spektrafilm-core`, so model and backend code must not acquire a dependency on core to observe their work. This preserves the existing [telemetry boundary](../telemetry/design.md).
 

@@ -40,6 +40,7 @@ graph TD
     raw[spektrafilm-raw]
     cli[spektrafilm-cli]
     gui[spektrafilm-gui]
+    bench[spektrafilm-benchmark]
 
     backend --> math
     gpu --> backend
@@ -60,7 +61,10 @@ graph TD
     gui --> math
     gui --> model
     gui --> raw
+    bench --> math
 ```
+
+`spektrafilm-benchmark` depends on `spektrafilm-math` only, so it is unaffected by the boundary.
 
 `spektrafilm-cli` and `spektrafilm-gui` keep their direct `spektrafilm-gpu` dependency, because both select a device backend through `select_backend`.
 
@@ -79,13 +83,15 @@ These items move from `spektrafilm-gpu` to `spektrafilm-backend` without behavio
 - `observed_backend`, `bind_backend`, and `bind_cpu_fallback`
 - `FilmChainParams`, `FrontPass`, and the `*GpuParams` records
 - `GrainV2GpuParams`, `CpuStageFn`, and `Lut3D`
-- `DyeGpuParams` and its type chain: `DyeReadoutGrid`, `DyeChannelTablesGpu`, `DyeChannelTableGpu`
+- `DyeGpuParams` and its type chain: `DyeReadoutGrid`, `DyeChannelTablesGpu`, `DyeChannelTableGpu`, and `DyeChannelParts`
 
 `DyeGpuParams` currently lives under `wgpu_backend` but holds only plain data: channel tables, a cell size, taps, a readout grid, a seed, a correlation, and an expectation flag. No field is a device type. `spektrafilm-core` already constructs it directly. It is a misplaced device-independent parameter record, and the trait cannot move until it does.
 
 Its type chain is also device-free, but those types share a file with `LayerPass`, which encodes device passes. Moving them requires splitting `dye_layers.rs` so the plain records leave and the device passes stay. This split is the first concrete step of the migration, not a later cleanup.
 
-Every moving item must be free of device references before it moves. `CpuBackend` imports only `rayon`, `spektrafilm-math`, and `blas_src`. The telemetry vocabulary imports only `serde`, `tracing`, and `parking_lot`. `observed_backend` and `timing` import no device crate. An item that cannot be made device-free must stay with the device crate and the boundary must be re-evaluated rather than force-moved.
+`DyeChannelParts` and `DyeChannelTablesGpu::pack` must move with them. `spektrafilm-core` constructs `DyeChannelParts` in production code at `stages/grain_v3.rs` and passes it to `pack`, which converts f64 model tables to f32 device records without touching a device. Leaving either behind would keep a device import in the domain code that builds them.
+
+Every moving item must be free of device references before it moves. `CpuBackend` imports only `rayon`, `spektrafilm-math`, and `blas_src`. The telemetry vocabulary imports only `serde`, `tracing`, and `parking_lot`. `timing` imports no device crate. `observed_backend` names `DyeGpuParams` in its `dye_field` forwarder, and that reference disappears once the record moves. An item that cannot be made device-free must stay with the device crate and the boundary must be re-evaluated rather than force-moved.
 
 These items stay in `spektrafilm-gpu`:
 
@@ -97,7 +103,7 @@ These items stay in `spektrafilm-gpu`:
 
 `test_support` must split by device: adapter acquisition for a device backend stays with that backend, and any device-independent test helper moves to `spektrafilm-backend`.
 
-`select_backend` must stay in `spektrafilm-gpu`, because it constructs a device backend when an adapter is available. Its callers must not change.
+`select_backend` must stay in `spektrafilm-gpu`, because it constructs a device backend when an adapter is available. Its five call sites — four in the CLI, one in the GUI — keep their behavior, but their import path changes in step 4.
 
 ## Feature propagation
 
@@ -129,7 +135,7 @@ The dependency graph must be checked mechanically: no rule in this document may 
 
 The `ComputeBackend` trait is referenced at about 93 call sites across four crates. Each site changes only its import path. A mechanical rename risk is a missed site, which the compiler catches.
 
-`spektrafilm-core` keeps its `spektrafilm-gpu` dependency, because it constructs `FilmChainParams` for the device route and calls `select_backend`. This is correct: core owns route selection, and route selection requires knowledge of what the device can do.
+`spektrafilm-core` keeps its `spektrafilm-gpu` dependency for two reasons: it constructs `FilmChainParams` for the device route, and it names `WgpuBackend` directly in `stages/grain_v3.rs`. This is correct: core owns route selection, and route selection requires knowledge of what the device can do.
 
 The telemetry vocabulary moves, but its ownership rules do not. [Telemetry](../telemetry/design.md) keeps authority over observation semantics; this document only relocates the code.
 
