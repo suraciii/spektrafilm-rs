@@ -475,7 +475,10 @@ mod tests {
             ),
         )
     }
-    #[cfg(unix)]
+    // ETXTBSY is Linux-specific: macOS permits exec of a file that is open for
+    // writing, so neither the precondition nor the retry it exercises exists
+    // there. The production retry path is therefore only testable on Linux.
+    #[cfg(target_os = "linux")]
     #[test]
     fn renderer_spawn_retries_a_file_still_open_for_writing() {
         let temp = tempfile::tempdir().unwrap();
