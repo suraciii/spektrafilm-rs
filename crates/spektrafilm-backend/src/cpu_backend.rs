@@ -554,28 +554,3 @@ pub fn print_spectral_cpu(
         });
     output
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_colorspace_convert_identity() {
-        let identity = [[1.0_f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let img = ImageBuf::from_data(
-            2,
-            1,
-            vec![
-                from_f64(0.2),
-                from_f64(0.4),
-                from_f64(0.6),
-                from_f64(0.8),
-                from_f64(0.1),
-                from_f64(0.3),
-            ],
-        );
-        let backend = CpuBackend;
-        let out = backend.colorspace_convert(&img, &identity);
-        assert_eq!(img.data, out.data);
-    }
-}

@@ -462,13 +462,6 @@ pub fn display_rgb(image: &ImageData) -> Result<Vec<[f64; 3]>> {
     }
     Ok(o)
 }
-pub fn linear_rgb(image: &ImageData) -> Result<Vec<[f64; 3]>> {
-    display_rgb(image).map(|v| {
-        v.into_iter()
-            .map(|p| [srgb_decode(p[0]), srgb_decode(p[1]), srgb_decode(p[2])])
-            .collect()
-    })
-}
 pub fn rgb_to_lab(rgb: &[[f64; 3]]) -> Vec<[f64; 3]> {
     rgb.iter()
         .map(|p| spektrafilm_math::lab::srgb_encoded_to_lab(p.map(|v| v.clamp(0., 1.))))
