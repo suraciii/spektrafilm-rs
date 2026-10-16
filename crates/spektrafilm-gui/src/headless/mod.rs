@@ -655,6 +655,10 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     // Export must ignore the most recently retained preview's reduced resolution.
     render(h, "PREVIEW");
+    // The controls panel is taller than the viewport now that every numeric
+    // row carries a slider line, so bring the action bar into view before
+    // clicking it.
+    scroll_controls_down(h);
     click(h, "Export options");
     scroll_controls_down(h);
     click(h, "Export…");
