@@ -1128,9 +1128,9 @@ fn measure_compare_reports_deltas_and_identity_drift_beside_them() {
     let compare = f.root.join("compare");
     let result = f.lab(&[
         "compare",
-        "--reading-baseline",
+        "--baseline",
         lab.to_str().unwrap(),
-        "--reading-candidate",
+        "--candidate",
         repeat.to_str().unwrap(),
         "--out",
         compare.to_str().unwrap(),
@@ -1216,9 +1216,9 @@ fn measure_compare_reports_deltas_and_identity_drift_beside_them() {
     let mixed = f.root.join("mixed");
     let result = f.lab(&[
         "compare",
-        "--reading-baseline",
+        "--baseline",
         measured.to_str().unwrap(),
-        "--reading-candidate",
+        "--candidate",
         sample.to_str().unwrap(),
         "--out",
         mixed.to_str().unwrap(),
@@ -1302,9 +1302,9 @@ fn measure_compare_pairs_a_reference_under_its_own_role() {
     let out = f.root.join("reference-compare");
     let result = f.lab(&[
         "compare",
-        "--reading-baseline",
+        "--baseline",
         baseline.to_str().unwrap(),
-        "--reading-candidate",
+        "--candidate",
         candidate.to_str().unwrap(),
         "--reference-run",
         reference.to_str().unwrap(),
@@ -1439,9 +1439,9 @@ fn measure_reads_back_identities_that_carry_separators() {
     let out = f.root.join("compare-separators");
     let result = f.lab(&[
         "compare",
-        "--reading-baseline",
+        "--baseline",
         sample.to_str().unwrap(),
-        "--reading-candidate",
+        "--candidate",
         sample.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
@@ -1596,9 +1596,9 @@ fn measure_compare_keeps_incomparable_pairs_out_of_the_deltas() {
     let out = f.root.join("incomparable-compare");
     let result = f.lab(&[
         "compare",
-        "--reading-baseline",
+        "--baseline",
         sides[0].to_str().unwrap(),
-        "--reading-candidate",
+        "--candidate",
         sides[1].to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
@@ -1670,9 +1670,9 @@ fn measure_compare_refuses_an_incompatible_shared_key() {
     let out = f.root.join("clash-compare");
     let result = f.lab(&[
         "compare",
-        "--reading-baseline",
+        "--baseline",
         baseline.to_str().unwrap(),
-        "--reading-candidate",
+        "--candidate",
         candidate.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
@@ -1814,9 +1814,9 @@ fn measure_compare_names_a_stage_whose_readings_are_all_invalid() {
     let out = f.root.join("invalid-compare");
     let result = f.lab(&[
         "compare",
-        "--reading-baseline",
+        "--baseline",
         sample.to_str().unwrap(),
-        "--reading-candidate",
+        "--candidate",
         sample.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),

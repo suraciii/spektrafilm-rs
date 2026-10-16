@@ -264,7 +264,7 @@ fn rebuild_chain_args(declaration: &Value, data_dir: &Path) -> ChainArgs {
         route: string_field(declaration, "route"),
         scan_output: string_field(declaration, "scan_output"),
         seed: seed_of(declaration),
-        data_dir: data_dir.to_path_buf(),
+        data_dir: Some(data_dir.to_path_buf()),
     }
 }
 

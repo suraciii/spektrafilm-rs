@@ -39,7 +39,14 @@ pub fn run(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<()> {
 pub fn run_with_result(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<(Value, i32)> {
     // The data directory resolves exactly as it does on the user surface:
     // argument, then `SPEKTRAFILM_DATA_DIR`, then discovery.
-    let data_dir = select_data_dir(args.chain.data_dir.clone(), matches)?.path;
+    let data_dir = select_data_dir(
+        args.chain
+            .data_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("data")),
+        matches,
+    )?
+    .path;
 
     // Load the stimulus first: a measurement of nothing is an error, not an
     // empty run, and the stimulus is declared independently of the chain.

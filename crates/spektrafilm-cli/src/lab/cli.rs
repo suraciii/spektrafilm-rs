@@ -99,7 +99,13 @@ pub struct EvaluationRunArgs {
     )]
     pub preparation: Option<PathBuf>,
     /// Renderer target document.
-    #[arg(long, value_name = "FILE", required_unless_present = "stimuli")]
+    #[arg(
+        long,
+        value_name = "FILE",
+        required_unless_present = "stimuli",
+        conflicts_with = "stimuli",
+        help_heading = "Image-domain run"
+    )]
     pub target: Option<PathBuf>,
     /// New run directory; must not exist.
     #[arg(long, value_name = "DIR")]
@@ -116,7 +122,7 @@ pub struct EvaluationRunArgs {
     #[arg(long)]
     pub dry_run: bool,
     /// Retain native CPU stage buffers, applied exposure, and prepared print normalization.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "stimuli", help_heading = "Image-domain run")]
     pub stage_evidence: bool,
 
     // ---- Chain run: one declared stimulus set executed through the chain ----
@@ -164,19 +170,14 @@ pub struct EvaluationRunArgs {
     #[arg(long, value_parser = ["direct_scan", "negative_to_positive"], requires = "stimuli", help_heading = "Chain")]
     pub scan_output: Option<String>,
     /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
-    #[arg(
-        long,
-        default_value = "data",
-        value_name = "DIR",
-        help_heading = "Chain"
-    )]
-    pub data_dir: PathBuf,
+    #[arg(long, value_name = "DIR", help_heading = "Chain")]
+    pub data_dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
 #[command(group(
     clap::ArgGroup::new("compare_source").required(true).multiple(false)
-        .args(["baseline", "run", "reading_baseline"])
+        .args(["baseline", "run"])
 ))]
 pub struct EvaluationCompareArgs {
     /// Baseline run directory.
@@ -197,6 +198,15 @@ pub struct EvaluationCompareArgs {
         help_heading = "Image-domain comparison"
     )]
     pub candidate: Option<PathBuf>,
+    /// Reference run directory; a per-sample distance needs one.
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "baseline",
+        conflicts_with = "run",
+        help_heading = "Image-domain comparison"
+    )]
+    pub reference_run: Option<PathBuf>,
     /// Single run directory.
     #[arg(
         long,
@@ -228,32 +238,6 @@ pub struct EvaluationCompareArgs {
         help_heading = "Image-domain comparison"
     )]
     pub gate: bool,
-
-    // ---- Reading comparison: two retained readings, sample by sample ----
-    /// Baseline measurement directory.
-    #[arg(
-        long,
-        value_name = "DIR",
-        requires = "reading_candidate",
-        help_heading = "Reading comparison"
-    )]
-    pub reading_baseline: Option<PathBuf>,
-    /// Candidate measurement directory.
-    #[arg(
-        long,
-        value_name = "DIR",
-        requires = "reading_baseline",
-        help_heading = "Reading comparison"
-    )]
-    pub reading_candidate: Option<PathBuf>,
-    /// Reference measurement directory; per-sample distance needs one.
-    #[arg(
-        long,
-        value_name = "DIR",
-        requires = "reading_baseline",
-        help_heading = "Reading comparison"
-    )]
-    pub reference_run: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -478,16 +462,12 @@ pub struct ChainArgs {
     /// Deterministic stochastic seed recorded with the measurement. A chain
     /// run resolves its own seed from the parameter surface, so the instrument
     /// records this one in the measurement's identity instead of accepting it
-    /// as a command option.
+    /// as a command option. It is not a command-line argument.
+    #[arg(skip)]
     pub seed: u32,
     /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
-    #[arg(
-        long,
-        default_value = "data",
-        value_name = "DIR",
-        help_heading = "Chain"
-    )]
-    pub data_dir: PathBuf,
+    #[arg(long, value_name = "DIR", help_heading = "Chain")]
+    pub data_dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -513,21 +493,46 @@ pub struct MeasureRunArgs {
 }
 
 #[derive(Args)]
+#[command(group(
+    clap::ArgGroup::new("sample_source").required(true).multiple(false)
+        .args(["source", "from_evidence"])
+))]
 pub struct MeasureSampleArgs {
     /// Raster image to read; requires the input declaration below.
     #[arg(long, value_name = "PATH", help_heading = "Source")]
     pub source: Option<PathBuf>,
     /// Retained stage-capture bundle to read instead of an image.
-    #[arg(long, value_name = "DIR", help_heading = "Source")]
+    #[arg(
+        long,
+        value_name = "DIR",
+        conflicts_with = "source",
+        help_heading = "Source"
+    )]
     pub from_evidence: Option<PathBuf>,
     /// Stage to read from the bundle; its declaration governs the reading.
-    #[arg(long, value_enum, value_name = "STAGE", help_heading = "Source")]
+    #[arg(
+        long,
+        value_enum,
+        value_name = "STAGE",
+        requires = "from_evidence",
+        help_heading = "Source"
+    )]
     pub stage: Option<MeasureStage>,
     /// Source color space of the image, as `process` declares it.
-    #[arg(long, value_name = "NAME", help_heading = "Source")]
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "source",
+        help_heading = "Source"
+    )]
     pub input_color_space: Option<String>,
     /// Whether the image's stored values are transfer-encoded.
-    #[arg(long, value_name = "true|false", help_heading = "Source")]
+    #[arg(
+        long,
+        value_name = "true|false",
+        requires = "source",
+        help_heading = "Source"
+    )]
     pub input_cctf_decoding: Option<bool>,
     /// Regions document: explicit windows with stable sample identities.
     #[arg(long, value_name = "PATH", help_heading = "Measurement")]
@@ -606,15 +611,18 @@ pub struct ExperimentRunArgs {
     /// Report destination; an existing report is never replaced without --force.
     #[arg(long, value_name = "DIR", help_heading = "Experiment")]
     pub out: PathBuf,
-    /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
-    #[arg(long, value_name = "DIR", help_heading = "Experiment")]
-    pub data_dir: Option<PathBuf>,
     /// Image container written beside the bundle.
     #[arg(long, value_enum, default_value = "tiff", help_heading = "Experiment")]
     pub output_format: OutputFormatArg,
     /// Replace an existing report in the destination.
     #[arg(long, help_heading = "Experiment")]
     pub force: bool,
+    /// The `process` parameter surface. Each option overrides the
+    /// experiment document's own declaration of the same name, and a `--set`
+    /// source applies after the document's, so the command line is the last
+    /// word on the chain it executes.
+    #[command(flatten)]
+    pub chain: ChainArgs,
 }
 
 #[derive(Args)]

@@ -272,15 +272,32 @@ fn execute(
                         .map_err(|error| BenchError::with_message("operation_failed", error))?;
                 Ok((value, status))
             } else {
+                // The suite and single-input forms take no data directory:
+                // the target document owns it. An explicit flag on those forms
+                // is a declaration the command would silently drop.
+                if matches.value_source("data_dir") == Some(clap::parser::ValueSource::CommandLine)
+                {
+                    return Err(BenchError::new(
+                        "argument_syntax",
+                        "--data-dir applies to the --stimuli form; the target document owns the data directory",
+                    ));
+                }
                 execute_run(args)
             }
         }
         LabCommands::Compare { args } => {
-            if let Some(reading_baseline) = args.reading_baseline {
+            // A measurement record (`run` or `sample`) is a reading: the
+            // command joins the two sides by sample and stage identity and
+            // publishes per-sample deltas. A version comparison reads run
+            // records that carry suite cases. The record kind decides, so a
+            // reading comparison never needs a reference to be one.
+            if is_reading_comparison(args.baseline.as_deref(), args.candidate.as_deref()) {
                 let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
-                    baseline: reading_baseline,
-                    candidate: args.reading_candidate.ok_or_else(|| {
-                        BenchError::new("argument_syntax", "Missing candidate measurement")
+                    baseline: args.baseline.ok_or_else(|| {
+                        BenchError::new("argument_syntax", "Missing baseline run")
+                    })?,
+                    candidate: args.candidate.ok_or_else(|| {
+                        BenchError::new("argument_syntax", "Missing candidate run")
                     })?,
                     reference: args.reference_run,
                     out: args.out,
@@ -424,6 +441,29 @@ fn execute_run(args: EvaluationRunArgs) -> Result<(serde_json::Value, i32), Benc
             )
         }
     }
+}
+
+/// Whether the two named sides are measurement records, so the comparison
+/// joins them as readings. A measurement record carries `stages` and
+/// `summaries`; a version run record carries `cases` and `artifacts`. The
+/// shape decides, so a reading comparison never needs a reference to be one
+/// and a failed version run still reaches the validation that names it.
+fn is_reading_comparison(
+    baseline: Option<&std::path::Path>,
+    candidate: Option<&std::path::Path>,
+) -> bool {
+    let is_measurement = |directory: Option<&std::path::Path>| {
+        let directory = directory?;
+        let bytes = std::fs::read(directory.join("run.json")).ok()?;
+        let document: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        let object = document.as_object()?;
+        Some(
+            object.contains_key("stages")
+                && object.contains_key("summaries")
+                && !object.contains_key("cases"),
+        )
+    };
+    is_measurement(baseline) == Some(true) && is_measurement(candidate) == Some(true)
 }
 
 fn execute_compare(args: EvaluationCompareArgs) -> Result<(serde_json::Value, i32), BenchError> {

@@ -3,7 +3,7 @@
 `spektrafilm-lab` reads the executed chain and reports what it produced. Four commands carry
 the measurement surface: `run --stimuli` measures the chain on a declared stimulus set,
 `sample` reads declared regions from an image or a retained stage capture, `compare
---reading-baseline` matches two retained measurements, and `verify` re-resolves a recorded
+--baseline --candidate` matches two retained measurements, and `verify` re-resolves a recorded
 run. The commands exist only in the instrument binary and run at f64 reference precision. They
 compute values and write evidence; they do not fit parameters, render images, or judge a
 result. See the [measurement contract](../specs/instrument/spec.md#measurement) for the
@@ -219,11 +219,11 @@ source bounds fails with the region identity. The command does not clamp, pad, e
 repair a region, and it does not resize, re-encode, or convert the source beyond the declared
 input declaration.
 
-## `compare --reading-baseline`
+## `compare --baseline --candidate`
 
 ```bash
 ./target/release/spektrafilm-lab compare \
-    --reading-baseline run-1 --reading-candidate run-2 \
+    --baseline run-1 --candidate run-2 \
     --reference-run run-ref --out compare-1
 ```
 
@@ -281,7 +281,7 @@ command result, so a verification cannot overwrite the record it verifies.
 
 This is how a guard run stays useful. Retain a measurement of a frozen stimulus set, then
 verify it later to see whether the executable, the data, the profiles, or the parameters
-moved. A comparison against retained readings is `compare --reading-baseline`.
+moved. A comparison against retained readings is `compare --baseline --candidate`.
 
 ## Worked example
 

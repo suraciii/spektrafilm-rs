@@ -347,27 +347,7 @@
               "$ref": "#/$defs/layout"
             },
             "color": {
-              "type": "object",
-              "properties": {
-                "color_space": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "cctf_decoding": {
-                  "type": "boolean"
-                },
-                "icc": {
-                  "type": "object"
-                },
-                "profile": {
-                  "type": "object"
-                }
-              },
-              "required": [
-                "color_space",
-                "cctf_decoding"
-              ],
-              "additionalProperties": true
+              "$ref": "#/$defs/color_declaration"
             }
           },
           "required": [
@@ -389,7 +369,7 @@
               "$ref": "#/$defs/dimensions"
             },
             "color": {
-              "type": "object"
+              "$ref": "#/$defs/color_declaration"
             }
           },
           "required": [
@@ -510,6 +490,30 @@
             ]
           }
         }
+      ],
+      "additionalProperties": true
+    },
+    "color_declaration": {
+      "description": "The color interpretation of retained values: the declared space and the transfer state the chain reads them in.",
+      "type": "object",
+      "properties": {
+        "color_space": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cctf_decoding": {
+          "type": "boolean"
+        },
+        "icc": {
+          "type": "object"
+        },
+        "profile": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "color_space",
+        "cctf_decoding"
       ],
       "additionalProperties": true
     }
