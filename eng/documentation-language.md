@@ -25,4 +25,4 @@ These rules govern durable documentation in `specs/`, `docs/`, and `eng/`.
 - Commands and examples must run or parse as written. Keep only examples that remove ambiguity.
 - Draw a diagram only when a boundary, ownership relation, dependency, sequence, hierarchy, or state transition is clearer as a picture.
 - Store diagrams as rendered text. Keep the matching rules in prose so a diagram is never the only source of truth.
-- Do not use raw HTML or tables. Use Markdown, short prose, or one concrete example.
+- Do not use raw HTML. Use Markdown, short prose, or one concrete example.
