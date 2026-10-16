@@ -1984,7 +1984,7 @@ mod tests {
     #[test]
     fn builds_a_reproducible_command_vector() {
         let dir = scratch();
-        let document = dir.join("experiment.json");
+        let _document = dir.join("experiment.json");
         let set_source = dir.join("grain.toml");
         let mut args = ProcessArgs {
             input: dir.join("input.png"),
