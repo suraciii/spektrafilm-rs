@@ -813,7 +813,10 @@ mod tests {
         );
         let out = dir.path().join("out");
         let error = build_report(&authored, &out).unwrap_err();
-        assert_eq!(error.path.as_deref(), broken.to_str());
+        // `resolve_path` canonicalizes the source, so on macOS the temp dir
+        // arrives as `/private/var/...` rather than the `/var/...` symlink.
+        let expected = broken.canonicalize().unwrap();
+        assert_eq!(error.path.as_deref(), expected.to_str());
         assert!(error.message.contains("broken"));
         assert!(!out.join("report.json").exists());
     }
