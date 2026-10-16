@@ -768,7 +768,6 @@ impl App {
                 });
             }
         }
-        ui.label(egui::RichText::new(&self.status).small());
         if input_view_before
             != (
                 self.params.io.input_color_space.clone(),
@@ -778,6 +777,34 @@ impl App {
         {
             self.refresh_viewing_artifacts();
         }
+    }
+
+    /// The window header spans the full width above the three regions. It
+    /// shows the film profile, print profile, and workflow route as
+    /// read-only text, and it is the only surface that shows the
+    /// operation status.
+    fn window_header(&self, ctx: &egui::Context) {
+        let film = profiles::selected_display(&self.films, &self.film_name);
+        let paper = profiles::selected_display(&self.papers, &self.print_name);
+        egui::TopBottomPanel::top("window-header")
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::SURFACE2)
+                    .inner_margin(egui::Margin::symmetric(8, 4)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new("spektrafilm").strong());
+                    ui.separator();
+                    ui.label(format!("Film: {film}"));
+                    ui.separator();
+                    ui.label(format!("Print: {paper}"));
+                    ui.separator();
+                    ui.label(format!("Route: {}", self.params.workflow.route));
+                    ui.separator();
+                    ui.label(egui::RichText::new(&self.status).small());
+                });
+            });
     }
 }
 
@@ -826,13 +853,13 @@ impl eframe::App for App {
         if let Some(options) = self.export_dialog.show(ctx) {
             self.start_export(ctx, options);
         }
+        self.window_header(ctx);
         self.preset_panel(ctx);
         // Right control panel: histogram at top, tabs, scrollable controls, action bar
         egui::SidePanel::right("controls")
             .resizable(false)
             .exact_width(320.0)
             .show(ctx, |ui| {
-                ui.heading("spektrafilm");
                 let output_id = self
                     .output_image
                     .as_ref()

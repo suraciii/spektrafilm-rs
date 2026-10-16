@@ -76,7 +76,7 @@ The viewer shows a tonal-distribution readout of the retained output. It is view
 
 The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel.
 
-The operation status appears in the window header. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
+The window header shows the current film profile, print profile, and workflow route as read-only text. The operation status appears in the window header. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
 
 ### Display transform and ICC
 

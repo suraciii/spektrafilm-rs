@@ -127,6 +127,16 @@ pub(super) fn dev_time_combo(
     changed
 }
 
+/// The human-readable name of the selected stock: the matching entry's
+/// display label, or the raw stock id when no entry matches it.
+pub(super) fn selected_display(entries: &[ProfileEntry], selected_stock: &str) -> String {
+    entries
+        .iter()
+        .find(|e| e.stock == selected_stock)
+        .map(|e| e.display.clone())
+        .unwrap_or_else(|| selected_stock.to_owned())
+}
+
 /// Combo box that picks one of `entries` by its `stock` id (the
 /// underlying file stem) while showing `display` (the human-readable
 /// name) as the label. Falls back to showing the raw stock id if no
@@ -144,11 +154,7 @@ pub(super) fn profile_combo(
         "Print stock to simulate"
     };
     let label_response = ui.label(label).on_hover_text(tooltip);
-    let display = entries
-        .iter()
-        .find(|e| &e.stock == selected_stock)
-        .map(|e| e.display.clone())
-        .unwrap_or_else(|| selected_stock.clone());
+    let display = selected_display(entries, selected_stock);
     let prev = selected_stock.clone();
     egui::ComboBox::from_id_salt(salt)
         .selected_text(&display)

@@ -406,3 +406,120 @@ fn paper_back_composition_shows_watermark_pixels_in_the_documented_center_region
         "watermark pixels must differ from the glare-only paper back"
     );
 }
+
+/// The on-screen bounds of the label node reading exactly `text`.
+fn label_bounds(h: &Harness<'_, App>, text: &str) -> egui::accesskit::Rect {
+    h.query_by_role_and_label(egui::accesskit::Role::Label, text)
+        .and_then(|node| node.raw_bounds())
+        .unwrap_or_else(|| panic!("expected a label node reading {text:?}"))
+}
+
+/// The on-screen bounds of the topmost node of a region, found by its
+/// exact label whatever its role is.
+fn region_top_bounds(h: &Harness<'_, App>, text: &str) -> egui::accesskit::Rect {
+    h.query_by_label(text)
+        .and_then(|node| node.raw_bounds())
+        .unwrap_or_else(|| panic!("expected the {text:?} surface"))
+}
+
+/// specs/gui-workflow/spec.md#window-layout: the header spans the full
+/// width above the three regions, shows the film profile, print profile,
+/// and workflow route as read-only text, and is the only surface that
+/// shows the operation status.
+#[test]
+fn window_header_shows_the_film_print_route_and_the_only_status() {
+    let mut s = session();
+    let h = &mut s.harness;
+    // The fixture collapses the preset browser; expand it so its own heading
+    // anchors the left region.
+    click(h, "▶");
+    let status = h.state().status.clone();
+    let film = profiles::selected_display(&h.state().films, &h.state().film_name);
+    let paper = profiles::selected_display(&h.state().papers, &h.state().print_name);
+    let route = h.state().params.workflow.route.clone();
+
+    // One surface: the operation status appears exactly once in the window.
+    assert_eq!(
+        h.query_all_by_label(&status).count(),
+        1,
+        "the header is the only surface that shows the operation status"
+    );
+
+    let identity = label_bounds(h, "spektrafilm");
+    let film_bounds = label_bounds(h, &format!("Film: {film}"));
+    let print_bounds = label_bounds(h, &format!("Print: {paper}"));
+    let route_bounds = label_bounds(h, &format!("Route: {route}"));
+    let status_bounds = label_bounds(h, &status);
+
+    // Full width: the band starts at the window's left edge instead of
+    // inside one of the three regions.
+    assert!(
+        identity.x0 <= 12.0,
+        "the header band must start at the window edge, got {}",
+        identity.x0
+    );
+    // Above the three regions: the topmost surface of the preset browser
+    // and of the control panel both start below the band.
+    let band_bottom = [
+        identity,
+        film_bounds,
+        print_bounds,
+        route_bounds,
+        status_bounds,
+    ]
+    .iter()
+    .map(|bounds| bounds.y1)
+    .fold(f64::NEG_INFINITY, f64::max);
+    for region in ["Presets", "Tonal distribution"] {
+        assert!(
+            region_top_bounds(h, region).y0 >= band_bottom,
+            "{region} must start below the header band"
+        );
+    }
+
+    // Read-only text: no interactive widget lives inside the band.
+    for role in [
+        egui::accesskit::Role::Button,
+        egui::accesskit::Role::CheckBox,
+        egui::accesskit::Role::ComboBox,
+        egui::accesskit::Role::Slider,
+        egui::accesskit::Role::TextInput,
+    ] {
+        for node in h.query_all_by_role(role) {
+            if let Some(bounds) = node.raw_bounds() {
+                assert!(
+                    bounds.y1 > band_bottom,
+                    "an interactive widget sits inside the header band"
+                );
+            }
+        }
+    }
+}
+
+/// specs/gui-workflow/spec.md#window-layout: the header's read-only text
+/// follows the selection instead of a copy cached when the window opened.
+#[test]
+fn window_header_tracks_the_selected_film_stock() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let stock = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+    let stock_label = stock.info.name.as_deref().unwrap_or("kodak_portra_400");
+    assert!(
+        h.query_by_label(&format!("Film: {stock_label}")).is_none(),
+        "the fixture must start on another stock for the change to show"
+    );
+    click(h, "Profiles");
+    choose(h, "film profile", stock_label);
+    assert_eq!(h.state().film_name, "kodak_portra_400");
+    assert!(
+        h.query_by_label(&format!("Film: {stock_label}")).is_some(),
+        "the header tracks the selected film stock"
+    );
+    // Selecting a stock installs its default route, so the read-only route
+    // must follow it too.
+    let route = h.state().params.workflow.route.clone();
+    assert!(
+        h.query_by_label(&format!("Route: {route}")).is_some(),
+        "the header tracks the route the selection installed"
+    );
+}
