@@ -294,22 +294,28 @@ fn format_size(bytes: u64) -> String {
 #[derive(Default)]
 pub(crate) struct ExportDialog {
     draft: Option<ExportOptions>,
-    /// Dimensions of the retained input the export renders.
-    dimensions: [u32; 2],
 }
 impl ExportDialog {
-    pub(crate) fn open(&mut self, committed: &ExportOptions, dimensions: [u32; 2]) {
+    pub(crate) fn open(&mut self, committed: &ExportOptions) {
         let mut draft = committed.clone();
         draft.normalize();
         self.draft = Some(draft);
-        self.dimensions = dimensions;
     }
     pub(crate) fn is_open(&self) -> bool {
         self.draft.is_some()
     }
 
     /// Closing or cancelling drops the draft; only Export returns preferences.
-    pub(crate) fn show(&mut self, ctx: &egui::Context) -> Option<ExportOptions> {
+    ///
+    /// `dimensions` is the resolution of the input the export renders. The
+    /// dialog is modal but does not block drag-and-drop, so a new image can
+    /// arrive while it is open; the estimate reads the current input every
+    /// frame instead of the one the dialog was opened with.
+    pub(crate) fn show(
+        &mut self,
+        ctx: &egui::Context,
+        dimensions: [u32; 2],
+    ) -> Option<ExportOptions> {
         let draft = self.draft.as_mut()?;
         let mut open = true;
         let mut submit = false;
@@ -382,7 +388,7 @@ impl ExportDialog {
                 };
                 ui.label(egui::RichText::new(format!("Summary: {summary}")).small().color(egui::Color32::GRAY));
                 let compressed = container_compresses(draft);
-                let estimate = format_size(estimated_output_bytes(draft, self.dimensions));
+                let estimate = format_size(estimated_output_bytes(draft, dimensions));
                 let row = if compressed {
                     format!("Estimated output size: ≈ {estimate} before compression")
                 } else {

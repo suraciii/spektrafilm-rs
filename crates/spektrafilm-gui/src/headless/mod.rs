@@ -877,12 +877,18 @@ mod layout_snapshots {
         assert!(h.query_by_label("Apply saving CCTF encoding").is_some());
         // Attach the offscreen renderer only in this opt-in gate; render the
         // real dialog's TIFF-specific controls selected above.
+        let dimensions = h
+            .state()
+            .image
+            .as_ref()
+            .map(|image| [image.width, image.height])
+            .unwrap_or([0, 0]);
         let mut modal = Harness::builder()
             .with_size(egui::vec2(700.0, 650.0))
             .wgpu()
             .build_state(
                 |ctx, dialog: &mut ExportDialog| {
-                    dialog.show(ctx);
+                    dialog.show(ctx, dimensions);
                 },
                 std::mem::take(&mut h.state_mut().export_dialog),
             );

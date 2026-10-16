@@ -420,6 +420,57 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
     assert!(!close_path.exists());
 }
 
+// The export dialog is modal, but a modal window does not block drag-and-drop,
+// so the input the export renders can be replaced while the dialog is open. The
+// estimate reads the current input, not the one the dialog was opened with.
+#[test]
+fn the_export_estimate_follows_the_input_while_the_dialog_is_open() {
+    let mut s = session();
+    let h = &mut s.harness;
+    open_export_dialog(h);
+    let opened_with = estimated_output_size_row(h);
+
+    let path = s.directory.path().join("wider-input.png");
+    let mut image = ImageBuf::new(320, 240);
+    for value in image.data.iter_mut() {
+        *value = spektrafilm_math::precision::from_f64(0.25);
+    }
+    image_io::save(
+        &path,
+        &image,
+        SaveOptions {
+            depth: BitDepth::Eight,
+            color_space: "sRGB",
+            cctf_encoding: true,
+            jpeg_quality: None,
+            jpeg_subsampling: None,
+            compression: None,
+        },
+        None,
+    )
+    .unwrap();
+    h.state_mut().load_image_from_path(&path);
+    h.run_steps(3);
+
+    assert_eq!(h.state().image.as_ref().unwrap().width, 320);
+    assert!(h.state().export_dialog.is_open());
+    let replaced_with = estimated_output_size_row(h);
+    assert_ne!(
+        replaced_with, opened_with,
+        "the estimate must describe the input the export now renders"
+    );
+    assert!(
+        replaced_with.contains("225.0 KB"),
+        "320 x 240 x 3 samples is a 225.0 KB payload, got {replaced_with}"
+    );
+}
+
+fn estimated_output_size_row(h: &Harness<'_, App>) -> String {
+    h.query_by_label_contains("Estimated output size")
+        .and_then(|node| node.value())
+        .unwrap_or_else(|| panic!("the export dialog states an estimated output size"))
+}
+
 fn report_paths(directory: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<_> = std::fs::read_dir(directory)
         .unwrap()

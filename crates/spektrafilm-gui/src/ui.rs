@@ -604,12 +604,7 @@ impl App {
                         .on_hover_text("Choose settings and render the full image independently of Save.")
                         .clicked()
                     {
-                        let dimensions = self
-                            .image
-                            .as_ref()
-                            .map(|image| [image.width, image.height])
-                            .unwrap_or([0, 0]);
-                        self.export_dialog.open(&self.export_options, dimensions);
+                        self.export_dialog.open(&self.export_options);
                     }
                 }
             });
@@ -850,7 +845,14 @@ impl eframe::App for App {
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
         self.poll_export_job(ctx);
-        if let Some(options) = self.export_dialog.show(ctx) {
+        // The export renders the retained input, so the dialog's estimate
+        // reads that image's dimensions while the dialog is open.
+        let export_dimensions = self
+            .image
+            .as_ref()
+            .map(|image| [image.width, image.height])
+            .unwrap_or([0, 0]);
+        if let Some(options) = self.export_dialog.show(ctx, export_dimensions) {
             self.start_export(ctx, options);
         }
         self.window_header(ctx);
