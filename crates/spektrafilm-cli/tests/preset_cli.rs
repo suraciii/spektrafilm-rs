@@ -1075,8 +1075,12 @@ fn negative_to_positive_rejects_paper_without_sparse_parameter_edits() {
         let result = f.process(&args);
         assert!(!result.status.success());
         let error = String::from_utf8_lossy(&result.stderr);
+        // The support/stage check rejects a print material as a film before
+        // the negative-conversion check runs, so without sparse parameter
+        // edits the material is refused for what it is rather than for the
+        // route it was given.
         assert!(
-            error.contains("requires a negative filming-stage film profile"),
+            error.contains("incompatible support/stage; expected film/filming"),
             "{error}"
         );
         assert!(!f.root.join("output.tif").exists());

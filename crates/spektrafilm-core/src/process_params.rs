@@ -211,17 +211,21 @@ fn resolve_with_preview_mode(
         };
         let print = profile::load_profile_by_name(data_dir, &print_name)
             .map_err(|e| format!("loading print profile {print_name:?}: {e}"))?;
-        if added_sources {
-            if !film.is_film() || !film.is_filming() {
-                return Err(format!(
-                    "--film {name:?}: incompatible support/stage; expected film/filming"
-                ));
-            }
-            if !direct_scan && !print.is_print_stock() {
-                return Err(format!(
-                    "print profile {print_name:?}: incompatible support/stage; expected paper/printing or film/printing"
-                ));
-            }
+        // A print material is not a film: it converts no encoded input to a
+        // film exposure, so it carries no sensitivity-adaptation parameters
+        // (specs/film-chain/spec.md). Rejecting it here names the user's
+        // intent instead of failing later inside the spectral pipeline.
+        // This check is unconditional: the legacy parameter-declaration path
+        // reaches the same profile resolution and must not skip it.
+        if !film.is_film() || !film.is_filming() {
+            return Err(format!(
+                "--film {name:?}: incompatible support/stage; expected film/filming"
+            ));
+        }
+        if !direct_scan && !print.is_print_stock() {
+            return Err(format!(
+                "print profile {print_name:?}: incompatible support/stage; expected paper/printing or film/printing"
+            ));
         }
         if added_sources && request.digest_mode == DigestMode::ApplyStockSpecifics {
             apply_film_specifics(&mut params, &film);
