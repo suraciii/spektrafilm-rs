@@ -29,8 +29,25 @@ fn configuration(spatial: bool, stochastic: bool, overlay: &[&str]) -> Value {
     edits.extend(overlay.iter().map(|edit| (*edit).to_owned()));
     json!({"presets":["look.toml"],"route":"input > film > print > scan","set_files":[],"set":edits})
 }
+/// Run a renderer invocation, retrying the transient `ETXTBSY` that Linux
+/// reports while some process still holds the executable open for writing.
+/// Stub renderers are written immediately before they run, and the kernel
+/// clears the refusal once the writer closes; a persistent refusal still
+/// fails after the bounded retries.
+fn renderer_output(command: &mut Command) -> std::io::Result<std::process::Output> {
+    for _ in 1..20 {
+        match command.output() {
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            result => return result,
+        }
+    }
+    command.output()
+}
 fn export_look(renderer: &Path, data_dir: &Path, out: &Path) -> Result<()> {
-    let output = Command::new(renderer)
+    let mut command = Command::new(renderer);
+    command
         .args([
             "preset",
             "show",
@@ -39,13 +56,12 @@ fn export_look(renderer: &Path, data_dir: &Path, out: &Path) -> Result<()> {
             "toml",
             "--data-dir",
         ])
-        .arg(data_dir)
-        .output()
-        .map_err(|error| {
-            Error::new("preset_export", error.to_string())
-                .at(renderer.display().to_string())
-                .boundary("renderer")
-        })?;
+        .arg(data_dir);
+    let output = renderer_output(&mut command).map_err(|error| {
+        Error::new("preset_export", error.to_string())
+            .at(renderer.display().to_string())
+            .boundary("renderer")
+    })?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     let failure = if !output.status.success() {
         Some(format!("Preset export exited with {}", output.status))
@@ -108,8 +124,7 @@ fn resolve_configuration(
             .ok_or_else(|| invalid(format!("{name} assignment must be a string")))?;
         command.args(["--set", assignment]);
     }
-    let output = command
-        .output()
+    let output = renderer_output(&mut command)
         .map_err(|error| invalid(format!("{name} resolution failed to start: {error}")))?;
     if !output.status.success() {
         let bytes = &output.stderr;
@@ -454,6 +469,26 @@ mod tests {
                 root.display()
             ),
         )
+    }
+    #[cfg(unix)]
+    #[test]
+    fn renderer_spawn_retries_a_file_still_open_for_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let renderer = stub_renderer(temp.path(), "exit 0");
+        let writer = fs::File::options().write(true).open(&renderer).unwrap();
+        // The kernel refuses an exec while the writer is open; the helper must
+        // ride that out, and the writer closes while it retries.
+        assert_eq!(
+            Command::new(&renderer).output().unwrap_err().kind(),
+            std::io::ErrorKind::ExecutableFileBusy
+        );
+        let closer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            drop(writer);
+        });
+        let output = renderer_output(&mut Command::new(&renderer)).unwrap();
+        assert!(output.status.success());
+        closer.join().unwrap();
     }
     #[test]
     fn probes_use_numpy_ties_even_quantization() {
