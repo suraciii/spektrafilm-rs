@@ -1969,7 +1969,7 @@ fn measure_records_the_parameter_files_it_declared() {
     let path = files[0]["path"].as_str().unwrap();
     assert!(path.ends_with("edits.toml"), "{path}");
     assert!(
-        path.starts_with('/'),
+        Path::new(path).is_absolute(),
         "a declared file is recorded absolutely: {path}"
     );
     assert_eq!(
