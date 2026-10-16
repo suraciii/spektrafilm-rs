@@ -52,12 +52,6 @@ pub(crate) struct App {
     pub(crate) gui_tab: ui::GuiTab,
     pub(crate) output_color_space: String,
     pub(crate) output_cctf_encoding: bool,
-    pub(crate) last_render_ms: f32,
-    pub(crate) last_pipeline_build_ms: f32,
-    pub(crate) last_input_clone_ms: f32,
-    pub(crate) last_scale_ms: f32,
-    pub(crate) last_preview_ms: f32,
-    pub(crate) last_worker_total_ms: f32,
     pub(crate) status: String,
     pub(crate) last_export_error: Option<String>,
     /// Controls changed since the latest submitted render snapshot.
@@ -90,7 +84,6 @@ pub(crate) struct App {
     pub(crate) calibration_epoch: u64,
     pub(crate) parameter_revision: u64,
     pub(crate) histogram: histogram::HistogramStrip,
-    pub(crate) right_panel_mode: Option<String>,
     pub(crate) compare_active: bool,
     pub(crate) compare_split: f32,
 }
@@ -221,12 +214,6 @@ impl App {
             gui_tab: ui::GuiTab::default(),
             output_color_space: "sRGB".into(),
             output_cctf_encoding: true,
-            last_render_ms: 0.0,
-            last_pipeline_build_ms: 0.0,
-            last_input_clone_ms: 0.0,
-            last_scale_ms: 0.0,
-            last_preview_ms: 0.0,
-            last_worker_total_ms: 0.0,
             dirty_since: None,
             render_job: None,
             render_worker: RenderWorker::new(),
@@ -240,7 +227,6 @@ impl App {
             calibration_epoch: 0,
             parameter_revision: 0,
             histogram: histogram::HistogramStrip::new(),
-            right_panel_mode: None,
             compare_active: false,
             compare_split: 0.5,
             filter: String::new(),
@@ -259,6 +245,8 @@ impl App {
         }
         app.viewer
             .restore_state(&app.gui_state.sections["rust"]["viewer"]);
+        app.histogram
+            .restore_state(&app.gui_state.sections["rust"]["histogram"]);
         app
     }
 
@@ -277,6 +265,7 @@ impl App {
             extras["rust"] = serde_json::json!({"version":1});
         }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
+        extras["rust"]["histogram"] = self.histogram.persistent_state();
         self.export_options.write_state(&mut extras);
         extras["rust"]["presets"] = serde_json::to_value(&self.presets.state)?;
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
@@ -330,6 +319,8 @@ impl App {
         }
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);
+        self.histogram
+            .restore_state(&self.gui_state.sections["rust"]["histogram"]);
         Ok(())
     }
 

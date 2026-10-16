@@ -218,22 +218,6 @@ impl App {
                 self.save_dialog();
             }
         });
-        ui.horizontal(|ui| {
-            if ui
-                .button("Save state")
-                .on_hover_text("Save current GUI state to a JSON file")
-                .clicked()
-            {
-                self.save_state_with_dialog();
-            }
-            if ui
-                .button("Load state")
-                .on_hover_text("Load GUI state from a JSON file")
-                .clicked()
-            {
-                self.load_state_with_dialog();
-            }
-        });
         if let Some(error) = self.last_export_error.clone() {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(error).color(theme::ERROR).small());
@@ -777,12 +761,8 @@ impl App {
                         self.refresh_viewing_artifacts();
                     }
                 });
-                ui.collapsing("napari layers", |ui| {
-                    self.viewer.layer_controls(ui);
-                });
             }
         }
-        ui.label(egui::RichText::new(&self.status).small());
         if input_view_before
             != (
                 self.params.io.input_color_space.clone(),
@@ -794,57 +774,32 @@ impl App {
         }
     }
 
-    fn render_feedback_panel(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            egui::RichText::new("Film Profile")
-                .color(theme::ACCENT)
-                .size(12.0),
-        );
-        ui.separator();
-        ui.label(format!("Film: {}", self.film_name));
-        ui.label(format!("Print: {}", self.print_name));
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("Pipeline")
-                .color(theme::ACCENT)
-                .size(12.0),
-        );
-        ui.separator();
-        ui.label(format!("Route: {}", self.params.workflow.route));
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("Render Stats")
-                .color(theme::ACCENT)
-                .size(12.0),
-        );
-        ui.separator();
-        ui.label(format!("Render: {:.0} ms", self.last_render_ms));
-        ui.label(format!("Pipeline: {:.0} ms", self.last_pipeline_build_ms));
-        ui.label(format!("Preview: {:.0} ms", self.last_preview_ms));
-    }
-
-    fn render_library_panel(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            egui::RichText::new("Film Library")
-                .color(theme::ACCENT)
-                .size(12.0),
-        );
-        ui.separator();
-        let films = self.films.clone();
-        let mut selected = None;
-        for entry in &films {
-            let active = self.film_name == entry.stock;
-            if ui
-                .selectable_label(active, &entry.display)
-                .on_hover_text(&entry.stock)
-                .clicked()
-            {
-                selected = Some(entry.stock.clone());
-            }
-        }
-        if let Some(stock) = selected {
-            self.select_film_profile(stock);
-        }
+    /// The window header spans the full width above the three regions. It
+    /// shows the film profile, print profile, and workflow route as
+    /// read-only text, and it is the only surface that shows the
+    /// operation status.
+    fn window_header(&self, ctx: &egui::Context) {
+        let film = profiles::selected_display(&self.films, &self.film_name);
+        let paper = profiles::selected_display(&self.papers, &self.print_name);
+        egui::TopBottomPanel::top("window-header")
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::SURFACE2)
+                    .inner_margin(egui::Margin::symmetric(8, 4)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new("spektrafilm").strong());
+                    ui.separator();
+                    ui.label(format!("Film: {film}"));
+                    ui.separator();
+                    ui.label(format!("Print: {paper}"));
+                    ui.separator();
+                    ui.label(format!("Route: {}", self.params.workflow.route));
+                    ui.separator();
+                    ui.label(egui::RichText::new(&self.status).small());
+                });
+            });
     }
 }
 
@@ -890,60 +845,30 @@ impl eframe::App for App {
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
         self.poll_export_job(ctx);
-        if let Some(options) = self.export_dialog.show(ctx) {
+        // The export renders the retained input, so the dialog's estimate
+        // reads that image's dimensions while the dialog is open.
+        let export_dimensions = self
+            .image
+            .as_ref()
+            .map(|image| [image.width, image.height])
+            .unwrap_or([0, 0]);
+        if let Some(options) = self.export_dialog.show(ctx, export_dimensions) {
             self.start_export(ctx, options);
         }
+        self.window_header(ctx);
         self.preset_panel(ctx);
-        // Left nav: icon buttons for tab switching
-        egui::SidePanel::left("nav")
-            .resizable(false)
-            .exact_width(52.0)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                let tabs = GuiTab::ALL;
-                for (i, tab) in tabs.iter().enumerate() {
-                    let icons = ["⚡", "🎞", "🖨", "🔧", "⚙"];
-                    let active = self.gui_tab == *tab;
-                    if ui
-                        .selectable_label(active, icons[i])
-                        .on_hover_text(tab.label())
-                        .clicked()
-                    {
-                        self.gui_tab = *tab;
-                    }
-                    ui.add_space(2.0);
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(4.0);
-                // Right panel toggles: feedback / film library
-                for (mode, icon, tip) in [
-                    ("feedback", "📊", "Histogram & feedback"),
-                    ("library", "🎞", "Film library"),
-                ] {
-                    let active = self.right_panel_mode.as_deref() == Some(mode);
-                    if ui
-                        .selectable_label(active, icon)
-                        .on_hover_text(tip)
-                        .clicked()
-                    {
-                        self.right_panel_mode = if active { None } else { Some(mode.to_owned()) };
-                    }
-                    ui.add_space(2.0);
-                }
-            });
-        // Left control panel: histogram at top, tabs, scrollable controls, action bar
-        egui::SidePanel::left("controls")
+        // Right control panel: histogram at top, tabs, scrollable controls, action bar
+        egui::SidePanel::right("controls")
             .resizable(false)
             .exact_width(320.0)
             .show(ctx, |ui| {
-                ui.heading("spektrafilm");
                 let output_id = self
                     .output_image
                     .as_ref()
                     .map(|o| Arc::as_ptr(o) as usize as u64)
                     .unwrap_or(0);
-                self.histogram.update(&self.output_image, output_id);
+                self.histogram
+                    .update(&self.output_image, output_id, ui.ctx());
                 self.histogram.render(ui);
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
@@ -1035,7 +960,7 @@ impl eframe::App for App {
                         || format!("{:.0}% fit", self.viewer.zoom * 100.0),
                         |percent| format!("{percent:.0}%"),
                     );
-                    ui.label(format!("{} · zoom {zoom}", self.status));
+                    ui.label(format!("zoom {zoom}"));
                 });
             });
             self.viewer.layer_controls(ui);
@@ -1075,24 +1000,6 @@ impl eframe::App for App {
                 );
             }
         });
-        // Right panel: feedback / film library
-        if self.right_panel_mode.is_some() {
-            egui::SidePanel::right("feedback")
-                .resizable(false)
-                .exact_width(280.0)
-                .show(ctx, |ui| {
-                    ui.heading(self.right_panel_mode.as_deref().unwrap_or(""));
-                    ui.separator();
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        if self.right_panel_mode.as_deref() == Some("feedback") {
-                            self.render_feedback_panel(ui);
-                        } else if self.right_panel_mode.as_deref() == Some("library") {
-                            self.render_library_panel(ui);
-                        }
-                    });
-                });
-        }
-
         // Accept drag-and-dropped image files.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw

@@ -31,11 +31,9 @@ impl App {
 
     /// Submit the latest snapshot without waiting for active computation.
     pub(crate) fn dispatch_render(&mut self, ctx: &egui::Context) {
-        let t_clone = Instant::now();
         let Some(image) = self.image.as_ref().cloned() else {
             return;
         };
-        let input_clone_ms = t_clone.elapsed().as_secs_f32() * 1000.0;
         let kind = if self.full_scan_requested {
             RenderKind::Scan
         } else {
@@ -83,7 +81,6 @@ impl App {
                 collection_mode: operation.mode(),
             },
             image,
-            input_clone_ms,
             snapshot,
             backend: self.backend.clone(),
             source_metadata: self.source_metadata.clone(),
@@ -149,12 +146,6 @@ impl App {
                     let display_current = r.display_enabled
                         == self.viewer.settings.use_display_transform
                         && r.display_max_size == self.params.settings.preview_max_size;
-                    self.last_input_clone_ms = r.input_clone_ms;
-                    self.last_scale_ms = r.scale_ms;
-                    self.last_pipeline_build_ms = r.pipeline_build_ms;
-                    self.last_render_ms = r.render_ms;
-                    self.last_preview_ms = r.preview_ms;
-                    self.last_worker_total_ms = r.worker_total_ms;
                     self.output_color_space = r.output_color_space;
                     self.output_cctf_encoding = r.output_cctf_encoding;
                     self.output_metadata = r.source_metadata;

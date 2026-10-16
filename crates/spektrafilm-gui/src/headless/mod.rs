@@ -228,15 +228,44 @@ fn import_file(h: &mut Harness<'_, App>, raw: bool) {
     h.run_steps(3);
 }
 
+/// Scroll the controls panel down so elements below the fold come into view.
+///
+/// The harness's `simulate_click` doesn't scroll, and a section that expands
+/// below the fold reveals its controls outside the scroll viewport's clip
+/// rect, where pointer events no longer reach them. Real wheel input over the
+/// panel scrolls it through the same path a user takes.
+fn scroll_controls_down(h: &mut Harness<'_, App>) {
+    let screen = h.ctx.screen_rect();
+    let pointer = egui::pos2(screen.right() - 160.0, screen.center().y);
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(pointer));
+    h.input_mut().events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -600.0),
+        modifiers: Default::default(),
+    });
+    // egui smooths a large wheel delta over several frames; keep stepping so
+    // the scroll settles before the next interaction.
+    h.run_steps(10);
+}
+
+/// Pick `option` from the combo labeled `label`.
+///
+/// The option is looked up by button role: a grain engine group is a
+/// `CollapsingHeader` whose title carries the engine's label, so a plain
+/// label query would match both the header and the popup option.
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .simulate_click();
     h.run_steps(3);
     if h.state().export_dialog.is_open() {
-        h.get_by_label(option).simulate_click();
+        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+            .simulate_click();
         h.run_steps(3);
     } else {
-        h.get_by_label(option).click();
+        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+            .click();
         h.run_steps(3);
         h.press_key(egui::Key::Escape);
         h.run_steps(3);
@@ -627,6 +656,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // Export must ignore the most recently retained preview's reduced resolution.
     render(h, "PREVIEW");
     click(h, "Export options");
+    scroll_controls_down(h);
     click(h, "Export…");
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");
@@ -847,12 +877,18 @@ mod layout_snapshots {
         assert!(h.query_by_label("Apply saving CCTF encoding").is_some());
         // Attach the offscreen renderer only in this opt-in gate; render the
         // real dialog's TIFF-specific controls selected above.
+        let dimensions = h
+            .state()
+            .image
+            .as_ref()
+            .map(|image| [image.width, image.height])
+            .unwrap_or([0, 0]);
         let mut modal = Harness::builder()
             .with_size(egui::vec2(700.0, 650.0))
             .wgpu()
             .build_state(
                 |ctx, dialog: &mut ExportDialog| {
-                    dialog.show(ctx);
+                    dialog.show(ctx, dimensions);
                 },
                 std::mem::take(&mut h.state_mut().export_dialog),
             );
@@ -908,6 +944,14 @@ mod layout_snapshots {
                 pair[1].0
             );
         }
+        // The dialog must state what the chosen settings will write; the row
+        // is a read-only label, so it carries no widget of its own to query.
+        assert!(
+            modal
+                .query_by_label_contains("Estimated output size")
+                .is_some(),
+            "the export dialog must state the estimated output size"
+        );
         let colors: std::collections::HashSet<_> = image.pixels().map(|p| p.0).collect();
         assert!(
             colors.len() > 20,
@@ -928,6 +972,9 @@ mod layout_snapshots {
             click(h, label);
             render(h, "PREVIEW");
             settle_animation(h);
+            // The histogram is binned off the UI thread; the PNG is layout
+            // evidence for the readout, so wait for the distribution to land.
+            wait_until(h, |a| a.histogram.cached_data().is_some());
             h.run_steps(3);
             let image = h.render().expect("offscreen app render");
             assert_eq!((image.width(), image.height()), (1460, 980));

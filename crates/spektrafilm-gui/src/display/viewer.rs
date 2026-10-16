@@ -358,9 +358,7 @@ impl Viewer {
                 }
             })
             .response
-            .on_hover_text(
-                "Napari interpolation mode used to display the output layer in the viewer.",
-            );
+            .on_hover_text("Interpolation used to display the output layer in the viewer.");
     }
     fn display_source(&self, layer: ViewLayer) -> DisplaySource {
         if layer == ViewLayer::Input {
@@ -651,6 +649,18 @@ impl Viewer {
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 Color32::WHITE,
             );
+        }
+        if input_float.is_none() {
+            let painter = ui.painter_at(rect);
+            let message = "No image loaded\nDrop an image here, or use MAIN → Import";
+            let galley = painter.layout(
+                message.to_string(),
+                egui::FontId::proportional(16.0),
+                crate::theme::FG_SECONDARY,
+                rect.width(),
+            );
+            let pos = rect.center() - galley.size() * 0.5;
+            painter.galley(pos, galley, crate::theme::FG_SECONDARY);
         }
         let source = match layer {
             ViewLayer::Input => input_float,

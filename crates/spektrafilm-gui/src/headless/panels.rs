@@ -250,6 +250,9 @@ fn histogram_draws_retained_output_without_advancing_viewer_or_render_generation
     let h = &mut s.harness;
     let _ = render(h, "PREVIEW");
     settle_animation(h);
+    // Binning runs on the worker thread, so the strip adopts the finished
+    // distribution a frame or more after the output is retained.
+    wait_until(h, |a| a.histogram.cached_data().is_some());
     let observation = h.state().viewer.observation();
     let output = h.state().output_image.as_ref().unwrap().clone();
     let expected = histogram::HistogramData::compute(&output);
@@ -279,143 +282,6 @@ fn histogram_draws_retained_output_without_advancing_viewer_or_render_generation
     assert!(h.state().render_job.is_none());
     assert!(!h.state().dirty);
     assert_eq!(h.state().status, status);
-}
-
-fn feedback_stat_labels(h: &Harness<'_, App>) -> [String; 3] {
-    [
-        format!("Render: {:.0} ms", h.state().last_render_ms),
-        format!("Pipeline: {:.0} ms", h.state().last_pipeline_build_ms),
-        format!("Preview: {:.0} ms", h.state().last_preview_ms),
-    ]
-}
-
-fn feedback_stat_values(h: &Harness<'_, App>) -> [f32; 3] {
-    [
-        h.state().last_render_ms,
-        h.state().last_pipeline_build_ms,
-        h.state().last_preview_ms,
-    ]
-}
-
-fn assert_feedback_values_are_visible(h: &Harness<'_, App>) {
-    for label in ["Film Profile", "Pipeline", "Render Stats"] {
-        assert!(
-            h.query_by_label(label).is_some(),
-            "missing feedback heading {label}"
-        );
-    }
-    for label in [
-        format!("Film: {}", h.state().film_name),
-        format!("Print: {}", h.state().print_name),
-        format!("Route: {}", h.state().params.workflow.route),
-    ]
-    .into_iter()
-    .chain(feedback_stat_labels(h))
-    {
-        assert!(
-            h.query_by_label(&label).is_some(),
-            "missing feedback value {label}"
-        );
-    }
-}
-
-#[test]
-fn feedback_panel_surfaces_active_film_print_route_and_updated_scan_timing_values() {
-    let mut s = session();
-    let h = &mut s.harness;
-    click(h, "📊");
-    assert_eq!(h.state().right_panel_mode.as_deref(), Some("feedback"));
-    assert_feedback_values_are_visible(h);
-    let stats_before_scan = feedback_stat_values(h);
-
-    let _ = render(h, "SCAN");
-    assert_eq!(h.state().status.split(" · ").next(), Some("Scan"));
-    assert_feedback_values_are_visible(h);
-    assert_ne!(
-        feedback_stat_values(h),
-        stats_before_scan,
-        "render statistics should reflect the completed SCAN"
-    );
-    assert!(h.state().last_render_ms > 0.0);
-
-    click(h, "📊");
-    assert_eq!(h.state().right_panel_mode, None);
-}
-
-fn active_film_state(h: &Harness<'_, App>) -> (String, String, RuntimeParams) {
-    (
-        h.state().film_name.clone(),
-        h.state().print_name.clone(),
-        h.state().params.clone(),
-    )
-}
-
-fn profile_entry(h: &Harness<'_, App>, stock: &str) -> profiles::ProfileEntry {
-    h.state()
-        .films
-        .iter()
-        .find(|entry| entry.stock == stock)
-        .expect("target film is in the catalog")
-        .clone()
-}
-
-fn click_library_toggle(h: &mut Harness<'_, App>) {
-    let mut icons: Vec<_> = h.query_all_by_label("🎞").collect();
-    assert!(icons.len() >= 2, "expected tab and film-library icons");
-    icons.sort_by(|a, b| {
-        a.raw_bounds()
-            .unwrap()
-            .y0
-            .total_cmp(&b.raw_bounds().unwrap().y0)
-    });
-    icons.last().unwrap().simulate_click();
-    h.run_steps(3);
-}
-
-fn open_film_library(h: &mut Harness<'_, App>) {
-    click_library_toggle(h);
-    assert_eq!(h.state().right_panel_mode.as_deref(), Some("library"));
-}
-
-#[test]
-fn film_library_selection_matches_main_film_profile_state_without_editing_the_catalog() {
-    const TARGET_STOCK: &str = "kodak_ektachrome_100";
-    let mut main = session();
-    let main_h = &mut main.harness;
-    let target = profile_entry(main_h, TARGET_STOCK);
-    assert_ne!(main_h.state().film_name, target.stock);
-    click(main_h, "MAIN");
-    click(main_h, "Profiles");
-    choose(main_h, "film profile", &target.display);
-    assert_eq!(main_h.state().film_name, target.stock);
-    let selected_through_main = active_film_state(main_h);
-
-    let mut library = session();
-    let library_h = &mut library.harness;
-    let catalog_before: Vec<_> = library_h
-        .state()
-        .films
-        .iter()
-        .map(|entry| (entry.stock.clone(), entry.display.clone()))
-        .collect();
-    let library_target = profile_entry(library_h, TARGET_STOCK);
-    open_film_library(library_h);
-    assert!(library_h.query_by_label("Film Library").is_some());
-    library_h
-        .get_by_label(&library_target.display)
-        .simulate_click();
-    library_h.run_steps(3);
-    assert_eq!(library_h.state().film_name, library_target.stock);
-    assert_eq!(active_film_state(library_h), selected_through_main);
-    let catalog_after: Vec<_> = library_h
-        .state()
-        .films
-        .iter()
-        .map(|entry| (entry.stock.clone(), entry.display.clone()))
-        .collect();
-    assert_eq!(catalog_after, catalog_before);
-    click_library_toggle(library_h);
-    assert_eq!(library_h.state().right_panel_mode, None);
 }
 
 #[test]
@@ -538,5 +404,122 @@ fn paper_back_composition_shows_watermark_pixels_in_the_documented_center_region
     assert!(
         watermark_pixels > 0,
         "watermark pixels must differ from the glare-only paper back"
+    );
+}
+
+/// The on-screen bounds of the label node reading exactly `text`.
+fn label_bounds(h: &Harness<'_, App>, text: &str) -> egui::accesskit::Rect {
+    h.query_by_role_and_label(egui::accesskit::Role::Label, text)
+        .and_then(|node| node.raw_bounds())
+        .unwrap_or_else(|| panic!("expected a label node reading {text:?}"))
+}
+
+/// The on-screen bounds of the topmost node of a region, found by its
+/// exact label whatever its role is.
+fn region_top_bounds(h: &Harness<'_, App>, text: &str) -> egui::accesskit::Rect {
+    h.query_by_label(text)
+        .and_then(|node| node.raw_bounds())
+        .unwrap_or_else(|| panic!("expected the {text:?} surface"))
+}
+
+/// specs/gui-workflow/spec.md#window-layout: the header spans the full
+/// width above the three regions, shows the film profile, print profile,
+/// and workflow route as read-only text, and is the only surface that
+/// shows the operation status.
+#[test]
+fn window_header_shows_the_film_print_route_and_the_only_status() {
+    let mut s = session();
+    let h = &mut s.harness;
+    // The fixture collapses the preset browser; expand it so its own heading
+    // anchors the left region.
+    click(h, "▶");
+    let status = h.state().status.clone();
+    let film = profiles::selected_display(&h.state().films, &h.state().film_name);
+    let paper = profiles::selected_display(&h.state().papers, &h.state().print_name);
+    let route = h.state().params.workflow.route.clone();
+
+    // One surface: the operation status appears exactly once in the window.
+    assert_eq!(
+        h.query_all_by_label(&status).count(),
+        1,
+        "the header is the only surface that shows the operation status"
+    );
+
+    let identity = label_bounds(h, "spektrafilm");
+    let film_bounds = label_bounds(h, &format!("Film: {film}"));
+    let print_bounds = label_bounds(h, &format!("Print: {paper}"));
+    let route_bounds = label_bounds(h, &format!("Route: {route}"));
+    let status_bounds = label_bounds(h, &status);
+
+    // Full width: the band starts at the window's left edge instead of
+    // inside one of the three regions.
+    assert!(
+        identity.x0 <= 12.0,
+        "the header band must start at the window edge, got {}",
+        identity.x0
+    );
+    // Above the three regions: the topmost surface of the preset browser
+    // and of the control panel both start below the band.
+    let band_bottom = [
+        identity,
+        film_bounds,
+        print_bounds,
+        route_bounds,
+        status_bounds,
+    ]
+    .iter()
+    .map(|bounds| bounds.y1)
+    .fold(f64::NEG_INFINITY, f64::max);
+    for region in ["Presets", "Tonal distribution"] {
+        assert!(
+            region_top_bounds(h, region).y0 >= band_bottom,
+            "{region} must start below the header band"
+        );
+    }
+
+    // Read-only text: no interactive widget lives inside the band.
+    for role in [
+        egui::accesskit::Role::Button,
+        egui::accesskit::Role::CheckBox,
+        egui::accesskit::Role::ComboBox,
+        egui::accesskit::Role::Slider,
+        egui::accesskit::Role::TextInput,
+    ] {
+        for node in h.query_all_by_role(role) {
+            if let Some(bounds) = node.raw_bounds() {
+                assert!(
+                    bounds.y1 > band_bottom,
+                    "an interactive widget sits inside the header band"
+                );
+            }
+        }
+    }
+}
+
+/// specs/gui-workflow/spec.md#window-layout: the header's read-only text
+/// follows the selection instead of a copy cached when the window opened.
+#[test]
+fn window_header_tracks_the_selected_film_stock() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let stock = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+    let stock_label = stock.info.name.as_deref().unwrap_or("kodak_portra_400");
+    assert!(
+        h.query_by_label(&format!("Film: {stock_label}")).is_none(),
+        "the fixture must start on another stock for the change to show"
+    );
+    click(h, "Profiles");
+    choose(h, "film profile", stock_label);
+    assert_eq!(h.state().film_name, "kodak_portra_400");
+    assert!(
+        h.query_by_label(&format!("Film: {stock_label}")).is_some(),
+        "the header tracks the selected film stock"
+    );
+    // Selecting a stock installs its default route, so the read-only route
+    // must follow it too.
+    let route = h.state().params.workflow.route.clone();
+    assert!(
+        h.query_by_label(&format!("Route: {route}")).is_some(),
+        "the header tracks the route the selection installed"
     );
 }

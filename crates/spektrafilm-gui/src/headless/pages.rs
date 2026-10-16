@@ -719,6 +719,44 @@ fn control_search_reveals_controls_of_a_collapsed_subsection() {
     assert!(h.query_by_label("Softness").is_some());
 }
 
+// specs/gui-workflow/design.md: one persisted value keeps exactly one editable
+// entry. The grain engines share fields, so an engine group that is not
+// selected shows its set read-only instead of a second editable surface for
+// the same value.
+#[test]
+fn an_unselected_grain_engine_group_is_read_only() {
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "FILM");
+    // The selected engine's group is the only open one, so the shared field
+    // appears once until another engine's group is expanded.
+    assert_eq!(
+        h.query_all_by_label("rms granularity (experimental) 0")
+            .count(),
+        1
+    );
+
+    click(h, "Dye");
+    h.run_steps(10);
+    let fields: Vec<_> = h
+        .query_all_by_label("rms granularity (experimental) 0")
+        .collect();
+    assert_eq!(fields.len(), 2, "both engine groups show the shared field");
+    assert_eq!(
+        fields
+            .iter()
+            .filter(|node| !node.node().is_disabled())
+            .count(),
+        1,
+        "only the selected engine's copy is editable"
+    );
+    assert!(
+        h.query_by_label_contains("Inactive until this engine is selected")
+            .is_some(),
+        "the inactive group states why its controls are read-only"
+    );
+}
+
 // specs/gui-workflow/spec.md#control-search: a control whose visible label
 // extends the guard prefix stays reachable by the full label and keeps its
 // section visible, and the scan point rows filter as independent controls.

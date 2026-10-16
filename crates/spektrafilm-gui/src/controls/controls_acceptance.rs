@@ -118,15 +118,30 @@ mod headless {
         assert!((harness.state().scanner.conversion_brightness_ev - 0.05).abs() < 1e-6);
         wheel(&mut harness, "brightness", -120.0);
         assert!(harness.state().scanner.conversion_brightness_ev.abs() < 1e-6);
+        // Typing an out-of-range value is rejected, not silently clamped.
         replace(&mut harness, "brightness", "100");
         harness.get_by_label("brightness").key_press(Key::Enter);
         harness.run();
+        assert!(harness.state().scanner.conversion_brightness_ev.abs() < 1e-6);
+        // Typing an in-range value at the boundary is accepted.
+        replace(&mut harness, "brightness", "16");
+        harness.get_by_label("brightness").key_press(Key::Enter);
+        harness.run();
         assert_eq!(harness.state().scanner.conversion_brightness_ev, 16.0);
+        // The wheel preserves the maximum boundary.
         wheel(&mut harness, "brightness", 120.0);
         assert_eq!(harness.state().scanner.conversion_brightness_ev, 16.0);
+        // A negative out-of-range value is rejected too.
         replace(&mut harness, "brightness", "-100");
         harness.get_by_label("brightness").key_press(Key::Enter);
         harness.run();
+        assert_eq!(harness.state().scanner.conversion_brightness_ev, 16.0);
+        // Typing an in-range value at the minimum boundary is accepted.
+        replace(&mut harness, "brightness", "-16");
+        harness.get_by_label("brightness").key_press(Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().scanner.conversion_brightness_ev, -16.0);
+        // The wheel preserves the minimum boundary.
         wheel(&mut harness, "brightness", -120.0);
         assert_eq!(harness.state().scanner.conversion_brightness_ev, -16.0);
         wheel(&mut harness, "balance 2", 120.0);
