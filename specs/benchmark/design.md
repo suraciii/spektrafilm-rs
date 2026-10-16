@@ -102,9 +102,11 @@ Report fragment navigation identifies case, seed, pair, and region by retained s
 
 The diagnostic layout is another presentation of the same comparison, not a second evaluation pipeline. Focus regions and complete regional costs must use retained measurements. A selected visual pair without measured evidence must remain visually inspectable with an explicit unavailable numeric state. Full-image JPEG copies must remain display-only derivatives; native detail and numerical artifacts retain their existing owners.
 
-### Prepared chart report builder
+### Prepared image review builder
 
-The prepared chart builder imports explicitly declared raster images instead of synthesizing benchmark runs or comparison records. Its authored manifest owns chart groups, window geometry, captions, and the initial pair. It does not own rendering, reference qualification, or measurement algorithms.
+The prepared review builder imports explicitly declared raster images instead of synthesizing benchmark runs or comparison records. Its authored manifest owns sets, patch or region geometry, captions, and the initial pair. A set declares either a shared grid or explicit per-image regions; the builder must not infer correspondence from dimensions, labels, or similar colors. It does not own rendering, reference qualification, or measurement algorithms.
+
+A photographic pair without a declared shared layout must use explicit regions rather than a synthetic grid. A declared grid must remain the single geometry source for its review windows and their derived measurement regions: derivation is a deterministic document transformation that shares the review window arithmetic, and review geometry enters a measured protocol only through a case or reference document.
 
 The builder must reuse strict document loading, dependency path resolution, destination publication, and image display conversion. It must snapshot authored image dependencies before decoding so an undeclared neighboring sidecar cannot override the explicit color declaration. It must retain each image's source identity, observed dimensions, and generated display artifact. The terminal report manifest must be written after all assets succeed.
 

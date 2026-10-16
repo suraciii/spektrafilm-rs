@@ -1,8 +1,7 @@
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{
-    Error, Result, chart_report, common, compare, documents, inspect, local_input, report, runner,
-    target,
+    Error, Result, common, compare, documents, inspect, local_input, report, review, runner, target,
 };
 use std::path::{Path, PathBuf};
 
@@ -16,12 +15,12 @@ struct Cli {
 enum Command {
     /// Print the authoritative schema for an authored or retained document.
     Schema {
-        #[arg(long, help="Document kind", value_parser=["suite","target","policy","run","comparison","configuration","reference","regions","preparation","chart-report"])]
+        #[arg(long, help="Document kind", value_parser=["suite","target","policy","run","comparison","configuration","reference","regions","preparation","review"])]
         kind: String,
     },
     /// Validate document shape and available local dependencies without rendering.
     Validate {
-        #[arg(long, help="Document kind", value_parser=["suite","target","policy","run","comparison","configuration","reference","regions","preparation","chart-report"])]
+        #[arg(long, help="Document kind", value_parser=["suite","target","policy","run","comparison","configuration","reference","regions","preparation","review"])]
         kind: String,
         #[arg(long, help = "JSON document to validate")]
         file: PathBuf,
@@ -188,7 +187,7 @@ enum Command {
         focus_regions: Vec<String>,
     },
     /// Build an offline visual comparison of explicitly prepared chart images.
-    ChartReport {
+    Review {
         #[arg(
             long,
             help = "Chart manifest with image declarations, grids, and captions"
@@ -200,6 +199,24 @@ enum Command {
         left: Option<String>,
         #[arg(long, help = "Override the default right image ID", requires = "left")]
         right: Option<String>,
+    },
+    /// Derive measurement regions from one grid set of a review manifest.
+    Regions {
+        #[arg(long, help = "Review manifest with the declared grid set")]
+        review: PathBuf,
+        #[arg(long, help = "Grid set identity to derive")]
+        set: String,
+        #[arg(long, help = "New region array JSON file; must not exist")]
+        out: PathBuf,
+        #[arg(
+            long,
+            help = "Sample window WIDTHxHEIGHT centered inside each patch window"
+        )]
+        sample: Option<String>,
+        #[arg(long, help = "Region role", default_value = "other")]
+        role: String,
+        #[arg(long, help = "Measurement families, comma separated (default none)")]
+        measurements: Option<String>,
     },
 }
 fn emit(value: &Value) {
@@ -218,7 +235,7 @@ fn validate(kind: &str, file: &Path) -> Result<Value> {
             "suite" => documents::load_suite(file)?,
             "target" => documents::load_target(file)?,
             "policy" => documents::load_policy(file)?,
-            "chart-report" => chart_report::validate_manifest(file)?,
+            "review" => review::validate_manifest(file)?,
             "configuration" | "reference" | "regions" | "preparation" => {
                 local_input::load(kind, file)?
             }
@@ -226,7 +243,7 @@ fn validate(kind: &str, file: &Path) -> Result<Value> {
         }
     };
     let unchecked = match kind {
-        "chart-report" => json!([
+        "review" => json!([
             "image_decoding",
             "observed_geometry",
             "display_color_conversion"
@@ -245,6 +262,23 @@ fn validate(kind: &str, file: &Path) -> Result<Value> {
         result["protocol_digest"] = json!(documents::protocol_digest(&value)?);
     }
     Ok(result)
+}
+fn measurement_selection(value: Option<&str>) -> Result<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let mut selected = Vec::new();
+    for part in value.split(',') {
+        let part = part.trim();
+        if part.is_empty() || selected.iter().any(|existing| existing == part) {
+            return Err(Error::new(
+                "invalid_measurements",
+                format!("measurement families must be distinct nonempty names: {value}"),
+            ));
+        }
+        selected.push(part.to_owned());
+    }
+    Ok(selected)
 }
 fn execute(command: Command) -> Result<(Value, i32)> {
     match command {
@@ -371,13 +405,31 @@ fn execute(command: Command) -> Result<(Value, i32)> {
                 0,
             ))
         }
-        Command::ChartReport {
+        Command::Review {
             manifest,
             out,
             left,
             right,
         } => Ok((
-            chart_report::build_report(&manifest, &out, left.as_deref(), right.as_deref())?,
+            review::build_report(&manifest, &out, left.as_deref(), right.as_deref())?,
+            0,
+        )),
+        Command::Regions {
+            review,
+            set,
+            out,
+            sample,
+            role,
+            measurements,
+        } => Ok((
+            review::derive_regions(
+                &review,
+                &set,
+                &out,
+                sample.as_deref(),
+                &role,
+                &measurement_selection(measurements.as_deref())?,
+            )?,
             0,
         )),
     }
@@ -390,7 +442,8 @@ fn run() -> i32 {
         Command::Run { .. } => "run",
         Command::Compare { .. } => "compare",
         Command::Report { .. } => "report",
-        Command::ChartReport { .. } => "chart-report",
+        Command::Review { .. } => "review",
+        Command::Regions { .. } => "regions",
         Command::Inspect { .. } => "inspect",
         Command::Target { .. } => "target",
     };

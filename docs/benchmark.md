@@ -8,7 +8,7 @@ Choose the path for the task:
 
 - Compare versions: generate one bundle, run baseline and candidate targets with that bundle, then use `compare`, `inspect`, and `report`.
 - Review one image: use `run --input`, then `compare --run --against input` and `report`. Add a declared reference to review against it.
-- Review prepared chart images without a simulation run: use `chart-report` with a chart manifest. It accepts Chinese captions and a default pair, then lets the reviewer select other images and patch windows offline.
+- Review prepared images without a simulation run: use `review` with a set manifest. It accepts Chinese captions and a default pair; a shared grid supports linked patch inspection while explicit regions select independently per side. Use `regions` to reuse a grid set's windows for measurement.
 - Check a new configuration: use `run --dry-run` before rendering. Read its grouped errors and retained renderer logs before changing the configuration.
 
 The agent prepares the evidence and reads the measurements. The reviewer opens `index.html` to inspect full images and native crops. Baseline selection and calibrated policy budgets remain explicit decisions.
@@ -210,28 +210,30 @@ The standard layout opens in split mode: drag the divider on the image, use the 
 
 Case, pair, and region links preserve exact identities in the report fragment, for example `#case=color_chart&seed=0&pair=baseline%2Fcandidate&region=skin`. Opening or reloading a link selects the evidence and expands its requested detail offline. Detail buttons expose their names and expanded state to keyboard and browser agents. Invalid locations display an error instead of unrelated imagery.
 
-## Compare prepared chart images
+## Review prepared images
 
-Use `chart-report` for a collection of standardized chart rasters. It does not need a renderer, run directory, or comparison record. It does not calculate color differences or acceptance scores. Keep measured findings in the existing comparison workflow; this command provides reusable visual inspection.
+Use `review` for prepared images grouped into sets. It does not need a renderer, run directory, or comparison record, and it does not calculate color differences or acceptance scores. Keep measured findings in the existing comparison workflow; this command provides reusable visual inspection.
 
-A newly generated fixture bundle contains `chart-report.json`. Its two synthetic probes demonstrate independent chart groups, not matching patch colors:
+Each set declares exactly one form. A `grid` set gives every image the same row-major patch windows derived from `origin`, `patch_size`, and `gap`. A `regions` set declares explicit half-open `[x, y, width, height]` rectangles per image in `geometry`. Region identities are scoped to their set, and different sets never acquire correspondence from equal sizes, labels, or patch names.
+
+A newly generated fixture bundle contains `review.json`. Its synthetic probes demonstrate a shared grid, a scaled grid copy, and explicit per-image regions without any cross-set correspondence:
 
 ```bash
-./target/release/spektrafilm-bench validate --kind chart-report \
-    --file /tmp/spektrafilm-benchmark-fixtures/chart-report.json
-./target/release/spektrafilm-bench chart-report \
-    --manifest /tmp/spektrafilm-benchmark-fixtures/chart-report.json \
-    --out /tmp/spektrafilm-chart-review
+./target/release/spektrafilm-bench validate --kind review \
+    --file /tmp/spektrafilm-benchmark-fixtures/review.json
+./target/release/spektrafilm-bench review \
+    --manifest /tmp/spektrafilm-benchmark-fixtures/review.json \
+    --out /tmp/spektrafilm-image-review
 ```
 
-For your own images, save this manifest beside the four named prepared files. Replace the names and descriptions with their actual provenance. Paths resolve relative to the manifest, not the command's working directory. The following grids describe 768 × 432 TE226 images and 768 × 288 printed charts; they do not detect or rectify a photographed chart.
+For your own images, save this manifest beside the named prepared files. Replace the names and descriptions with their actual provenance. Paths resolve relative to the manifest, not the command's working directory. The following grid describes 768 × 432 TE226 images; explicit regions declare one rectangle per named image and need no shared layout. Neither form detects or rectifies a photographed chart.
 
 ```json
 {
   "schema_version": 1,
-  "title": "800T 色卡检查",
+  "title": "800T 图像对照",
   "description": "输入来源分别标注；没有曝光对齐或颜色拟合。",
-  "charts": [
+  "sets": [
     {"id": "te226", "label": "TE226", "grid": {
       "rows": 5, "columns": 9, "origin": [12, 12],
       "patch_size": [72, 72], "gap": [12, 12]
@@ -243,49 +245,75 @@ For your own images, save this manifest beside the four named prepared files. Re
     {"id": "blue2", "label": "蓝光打印色卡2", "grid": {
       "rows": 3, "columns": 8, "origin": [12, 12],
       "patch_size": [72, 72], "gap": [24, 24]
-    }}
+    }},
+    {"id": "street", "label": "实景对照", "regions": [
+      {"id": "face", "label": "面部",
+       "geometry": {"scan-6170": [1832, 1044, 640, 800],
+                    "sim-800t": [1608, 978, 512, 640]}}
+    ]}
   ],
   "images": [
-    {"id": "synthetic", "chart": "te226", "path": "synthetic.tif",
+    {"id": "synthetic", "set": "te226", "path": "synthetic.tif",
      "label": "厂家示例合成图", "description": "不是被拍实体色卡的实测值。",
      "color_space": "ProPhoto RGB", "cctf_decoding": false},
-    {"id": "native", "chart": "te226", "path": "raw-chart.tif",
+    {"id": "native", "set": "te226", "path": "raw-chart.tif",
      "label": "原生 RAW 应用输入", "description": "as-shot 解码并按既存几何裁切，不是场景真值。",
      "color_space": "ACES2065-1", "cctf_decoding": false},
-    {"id": "blue1-input", "chart": "blue1", "path": "blue1.png",
+    {"id": "blue1-input", "set": "blue1", "path": "blue1.png",
      "label": "蓝光打印1", "description": "已准备的 sRGB 显示图。",
      "color_space": "sRGB", "cctf_decoding": true},
-    {"id": "blue2-input", "chart": "blue2", "path": "blue2.png",
+    {"id": "blue2-input", "set": "blue2", "path": "blue2.png",
      "label": "蓝光打印2", "description": "与第一组不同的色块序列。",
+     "color_space": "sRGB", "cctf_decoding": true},
+    {"id": "scan-6170", "set": "street", "path": "scan.png",
+     "label": "打印扫描", "description": "逐图声明的面部矩形，不与其它集合对应。",
+     "color_space": "sRGB", "cctf_decoding": true},
+    {"id": "sim-800t", "set": "street", "path": "sim.png",
+     "label": "模拟输出", "description": "同一标识按自己的几何声明解释。",
      "color_space": "sRGB", "cctf_decoding": true}
   ],
   "default_pair": {"left": "synthetic", "right": "native"}
 }
 ```
 
-Add simulations and scans as additional `images` records. Use the same chart ID only when they share the declared ordered patch identities. Equal grid sizes do not make the two blue-light sets corresponding charts. To inspect only central 30 × 30 windows, declare their actual origin, window size, and intervening gap instead of changing the source image.
+Add simulations and scans as additional `images` records. Use the same grid set only when they share the declared ordered patch identities. Equal grid sizes or equal region labels do not make different sets corresponding. A region may cover a subset of its set's images and must not overlap another region on the same image. To inspect only central 30 × 30 windows, declare their actual origin, window size, and intervening gap instead of changing the source image.
 
 Camera RAW must first use the [native decoder](raw.md), then an explicitly established chart preparation. Declare its prepared linear TIFF as `ACES2065-1` with `cctf_decoding: false`. Declare ordinary encoded sRGB PNGs as `sRGB` with `cctf_decoding: true`. Embedded profiles and neighboring sidecars do not replace the manifest declaration. Do not label ACES data as ProPhoto or use a camera preview as measured color truth.
 
 You can override the default pair without editing the manifest:
 
 ```bash
-./target/release/spektrafilm-bench chart-report \
-    --manifest /tmp/my-chart-inputs/report.json \
-    --left native --right synthetic --out /tmp/my-chart-review
+./target/release/spektrafilm-bench review \
+    --manifest /tmp/my-chart-inputs/review.json \
+    --left native --right synthetic --out /tmp/my-image-review
 ```
 
-Open the output `index.html` directly. Select any left and right image, swap them, or inspect individual patch windows. A common chart group provides linked selection and a complete paired contact sheet; whole-chart inspection also offers split view and manual A/B alternation. Different groups provide independent patch selectors and a visual-only warning. Use the zoom selector for fit, native-device-pixel, or enlarged inspection; fit scaling is not native 100% inspection. Captions, source declarations, original hashes, and display artifacts remain available offline. Source images are not edited, and an existing output directory is never replaced.
+Open the output `index.html` directly. Select any left and right image, swap them, or inspect individual windows. A shared grid set provides linked selection and a complete paired contact sheet; whole-image inspection also offers split view and manual A/B alternation there. Explicit-region images select independently per side with a label-only correspondence notice and per-side window dimensions. Different sets keep independent selectors and a visual-only warning. Use the zoom selector for fit, native-device-pixel, or enlarged inspection; fit scaling is not native 100% inspection. Captions, source declarations, original hashes, and display artifacts remain available offline. Source images are not edited, and an existing output directory is never replaced.
 
-Click a contact-sheet cell to open that window, or use the arrow keys while a shared-chart image viewport has focus. The page URL fragment retains the image IDs, viewing mode, zoom, and selected windows. Copy the URL to share that exact view; invalid identities produce a visible error rather than silently changing the requested pair.
+Click a contact-sheet cell to open that window, or use the arrow keys while a shared-grid image viewport has focus. The page URL fragment retains the image IDs, viewing mode, zoom, and selected windows. Copy the URL to share that exact view; invalid identities produce a visible error rather than silently changing the requested pair.
 
-Use `schema --kind chart-report` for the complete authored schema. Validation reports checks that still require decoding. The generated `report.json` identifies the actual images, geometry, selected default pair, and output artifacts.
+### Derive measurement regions
+
+Derive a case or reference region array from one grid set when the comparison should measure the same windows the review page shows:
+
+```bash
+./target/release/spektrafilm-bench regions \
+    --review /tmp/spektrafilm-benchmark-fixtures/review.json \
+    --set color-probe --sample 8x8 --role color --measurements color,tone \
+    --out /tmp/color-probe-regions.json
+```
+
+The command reads the manifest, reuses the review page's window arithmetic, and centers `--sample WIDTHxHEIGHT` inside each patch window. Generated records keep the review patch names (`A1`, `A2`, …) and default to role `other` with no measurements. They validate as the existing `regions` kind, so they fit a case `regions` array, a reference, or `run --regions`. A set without a grid, an unknown set identity, and windows or samples that leave a decoded image are rejected; an existing output file is never replaced.
+
+Use `schema --kind review` for the complete authored schema. Validation reports checks that still require decoding. The generated `report.json` identifies the actual images, set geometry, selected default pair, and output artifacts.
 
 Share the complete output directory, including `viewer.js` and `images/`, rather than only `index.html`. The same directory supports direct file opening and static hosting with a same-origin script policy; no network library or report server is required.
 
 ## Read command results and gates
 
 Each parsed command emits one JSON result on stdout. Diagnostic messages use stderr. Status `2` indicates argument syntax errors; status `1` indicates validation, execution, publication, or requested gate failure. Use `schema --kind suite|target|policy|run|comparison` to discover carriers. `compare --policy FILE --gate` publishes the comparison before returning failure for a non-pass evaluation. The supplied exploratory policy must not qualify acceptance. A calibrated policy must bind the digest emitted by suite validation and supply reviewed calibration evidence.
+
+Every result is complete JSON on stdout, and the retained artifact is its authoritative detail: read the fields you need from it, and use the `inspect` filters for exact case, region, and metric evidence; unknown selections report the available identities. Policy binding is mechanical: `validate --kind suite` prints the protocol digest that the policy must carry. A non-pass evaluation status can be read from the retained summary counts and the policy snapshot.
 
 `run` and `compare` write each case-seed start and completion to stderr. Completion includes its status and elapsed seconds; the final summary reports completed and failed items and total elapsed seconds. Keep stderr separate when reading JSON stdout.
 

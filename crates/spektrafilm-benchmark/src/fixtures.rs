@@ -226,6 +226,13 @@ pub fn create_fixtures(
                 colors[x as usize / 16]
             }
         })?;
+        save_probe(&out.join("chart_dim.png"), 128, 128, |x, y| {
+            if y < 32 {
+                [0.92 * x as f64 / 127.0; 3]
+            } else {
+                colors[x as usize / 16].map(|value| 0.92 * value)
+            }
+        })?;
         for (name, file) in [
             ("color-tone", "color-tone.json"),
             ("appearance", "appearance.json"),
@@ -431,16 +438,14 @@ pub fn create_fixtures(
             documents::load_suite(&out.join(suite))?;
         }
         documents::load_policy(&out.join("exploratory-policy.json"))?;
-        let chart_report: Value =
-            serde_json::from_str(include_str!("../assets/chart-report.example.json"))?;
-        let chart_report_path = out.join("chart-report.json");
-        dump(&chart_report_path, &chart_report)?;
-        crate::chart_report::validate_manifest(&chart_report_path)?;
-        provenance["chart_report"] =
-            json!({"path":"chart-report.json","sha256":sha256_file(&chart_report_path)?});
+        let review: Value = serde_json::from_str(include_str!("../assets/review.example.json"))?;
+        let review_path = out.join("review.json");
+        dump(&review_path, &review)?;
+        crate::review::validate_manifest(&review_path)?;
+        provenance["review"] = json!({"path":"review.json","sha256":sha256_file(&review_path)?});
         dump(&out.join("provenance.json"), &provenance)?;
         Ok(
-            json!({"schema_version":1,"command":"fixtures","execution_status":"completed","artifact":out,"suites":suites,"preset":"look.toml","configurations":{"color_tone":"color-tone.json","appearance":"appearance.json"},"chart_report":"chart-report.json"}),
+            json!({"schema_version":1,"command":"fixtures","execution_status":"completed","artifact":out,"suites":suites,"preset":"look.toml","configurations":{"color_tone":"color-tone.json","appearance":"appearance.json"},"review":"review.json"}),
         )
     })();
     result.map_err(|error| crate::common::incomplete_destination(error, out, "provenance.json"))

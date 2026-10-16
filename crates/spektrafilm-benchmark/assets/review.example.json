@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "title": "规范图像对照示例",
+  "description": "生成器内置的合成探针，不是实测胶片数据。两个集合演示两种声明形态：共享网格与逐图显式区域；集合之间没有色块或区域对应，相同编号不代表同一位置。",
+  "sets": [
+    {
+      "id": "color-probe",
+      "label": "八色探针",
+      "grid": {
+        "rows": 1,
+        "columns": 8,
+        "origin": [0, 32],
+        "patch_size": [16, 96],
+        "gap": [0, 0]
+      }
+    },
+    {
+      "id": "flat-probe",
+      "label": "四级平场探针",
+      "regions": [
+        {
+          "id": "level-1",
+          "label": "第一级",
+          "geometry": {"flat-fields": [0, 0, 32, 128]}
+        },
+        {
+          "id": "level-2",
+          "label": "第二级",
+          "geometry": {"flat-fields": [32, 0, 32, 128]}
+        },
+        {
+          "id": "level-3",
+          "label": "第三级",
+          "geometry": {"flat-fields": [64, 0, 32, 128]}
+        },
+        {
+          "id": "level-4",
+          "label": "第四级",
+          "geometry": {"flat-fields": [96, 0, 32, 128]}
+        }
+      ]
+    }
+  ],
+  "images": [
+    {
+      "id": "colors",
+      "set": "color-probe",
+      "path": "chart.png",
+      "label": "合成彩色探针",
+      "description": "顶部渐变不属于声明的色块窗口。",
+      "color_space": "sRGB",
+      "cctf_decoding": true
+    },
+    {
+      "id": "colors-dim",
+      "set": "color-probe",
+      "path": "chart_dim.png",
+      "label": "合成彩色探针（0.92 副本）",
+      "description": "同一合成探针按固定 0.92 系数缩放的副本，仅用于演示同网格集合的联动选块；不是独立来源。",
+      "color_space": "sRGB",
+      "cctf_decoding": true
+    },
+    {
+      "id": "flat-fields",
+      "set": "flat-probe",
+      "path": "flat_fields.png",
+      "label": "合成平场探针",
+      "description": "四个明度等级按列逐图声明为显式区域，不与其它图像逐块建立对应。",
+      "color_space": "sRGB",
+      "cctf_decoding": true
+    }
+  ],
+  "default_pair": {
+    "left": "colors",
+    "right": "flat-fields"
+  }
+}
