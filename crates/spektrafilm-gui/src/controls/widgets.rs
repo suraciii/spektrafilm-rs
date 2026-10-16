@@ -496,7 +496,7 @@ pub(crate) fn point_tuple(
 pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label(label).on_hover_text(tooltip);
+        let label_response = ui.label(label).on_hover_text(tooltip);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (fill, knob, text) = if *value {
                 (theme::ACCENT, theme::CONTRAST_ON_ACCENT, "on")
@@ -524,7 +524,11 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
                     label,
                 )
             });
-            ui.ctx().accesskit_node_builder(response.id, |node| {
+            // Name the switch and declare the visible label as its labelling
+            // node, so a label query resolves to the switch itself.
+            let id = response.id;
+            response.labelled_by(label_response.id);
+            ui.ctx().accesskit_node_builder(id, |node| {
                 node.set_role(egui::accesskit::Role::Switch);
                 node.set_toggled(if *value {
                     egui::accesskit::Toggled::True

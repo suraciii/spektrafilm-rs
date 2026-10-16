@@ -777,6 +777,6 @@ fn control_search_reaches_scanner_controls_by_their_visible_labels() {
     );
 
     search(h, "film-scan white point");
-    assert!(h.query_by_label("film-scan white point 0").is_some());
-    assert!(h.query_by_label("film-scan black point 0").is_none());
+    assert!(h.query_by_label("film-scan white point R").is_some());
+    assert!(h.query_by_label("film-scan black point R").is_none());
 }

@@ -534,8 +534,8 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         h.state().params.scanner.conversion_balance_ev,
         [0.25, -0.125, 0.5]
     );
-    edit(h, "film-scan white point 0", "0.95");
-    edit(h, "film-scan black point 0", "0.025");
+    edit(h, "film-scan white point R", "0.95");
+    edit(h, "film-scan black point R", "0.025");
     assert_eq!(h.state().params.scanner.white_point, [0.95, 1.0, 1.0]);
     assert_eq!(h.state().params.scanner.black_point, [0.025, 0.0, 0.0]);
     edit(h, "brightness", "not-a-number");
@@ -1005,7 +1005,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     choose(h, "scanner auto setup", "per_frame");
     edit(h, "brightness", "1");
     edit(h, "contrast", "1.5");
-    edit(h, "film-scan black point 0", "0.05");
+    edit(h, "film-scan black point R", "0.05");
     choose(
         h,
         "Negative conversion method",
@@ -1037,8 +1037,8 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         "balance 0",
         "contrast",
         "maximum density",
-        "film-scan black point 0",
-        "film-scan white point 0",
+        "film-scan black point R",
+        "film-scan white point R",
     ] {
         assert!(
             h.query_by_label(label).is_none(),
