@@ -574,8 +574,8 @@ fn scanner_finish_feedback_and_text_report_follow_effective_mode() {
 
 #[test]
 fn scanner_setup_uses_selected_seed_for_film_grain_measurement() {
-    use spektrafilm_core::{image_io, params::RuntimeParams, runtime::Runtime};
     use spektrafilm_backend::cpu_backend::CpuBackend;
+    use spektrafilm_core::{image_io, params::RuntimeParams, runtime::Runtime};
     use spektrafilm_math::precision::to_f64;
 
     let f = Fixture::new();

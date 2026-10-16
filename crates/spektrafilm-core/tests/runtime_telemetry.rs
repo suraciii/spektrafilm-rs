@@ -1,11 +1,11 @@
+use spektrafilm_backend::cpu_backend::CpuBackend;
+use spektrafilm_backend::telemetry::{
+    CollectionMode, CpuReason, ExecutionPath, ObservationKind, Outcome, Purpose,
+};
 use spektrafilm_core::{
     params::RuntimeParams,
     runtime::Runtime,
     telemetry::{Operation, OperationKind},
-};
-use spektrafilm_backend::cpu_backend::CpuBackend;
-use spektrafilm_backend::telemetry::{
-    CollectionMode, CpuReason, ExecutionPath, ObservationKind, Outcome, Purpose,
 };
 use spektrafilm_math::{image::ImageBuf, precision::from_f64};
 

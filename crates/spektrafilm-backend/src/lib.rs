@@ -45,14 +45,15 @@ pub struct GrainV2GpuParams {
     pub clustered: bool,
 }
 
-/// Compute backend abstraction. Each method corresponds to a GPU-friendly
-/// operation in the film simulation pipeline.
-///
 pub struct Lut3D {
     pub size: u32,
     pub data: Vec<f32>,
 }
 
+/// Compute backend abstraction. Each method corresponds to a GPU-friendly
+/// operation in the film simulation pipeline.
+///
+/// Default implementations fall back to CPU. GPU backends override the
 /// spectral methods for massive speedups.
 pub trait ComputeBackend: Send + Sync {
     fn observation_context(&self) -> Option<&telemetry::ObservationContext> {

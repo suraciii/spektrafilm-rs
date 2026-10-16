@@ -546,8 +546,8 @@ impl WgpuBackend {
 #[cfg(test)]
 mod tests {
     use super::super::dye_decisions::DyeDecisionCase;
-    use spektrafilm_backend::dye_params::DyeChannelParts;
     use super::*;
+    use spektrafilm_backend::dye_params::DyeChannelParts;
 
     #[test]
     fn accumulation_uses_the_certified_streams_and_shared_layer_counts() {
@@ -771,8 +771,8 @@ mod tests {
 
 #[cfg(test)]
 mod range_tests {
-    use spektrafilm_backend::dye_params::DyeChannelParts;
     use super::*;
+    use spektrafilm_backend::dye_params::DyeChannelParts;
 
     #[test]
     fn unrepresentable_mass_and_positive_rate_fail_instead_of_borrowing_shared_counts() {

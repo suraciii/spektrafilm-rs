@@ -1,12 +1,12 @@
 //! Differential CPU-vs-GPU parity over the color-space, control, fence and
 //! grain matrix. Run with `just parity-backend`; the recipe builds the f64
 //! binary and passes the data directory.
+use spektrafilm_backend::{ComputeBackend, cpu_backend::CpuBackend};
 use spektrafilm_core::{
     params::{RuntimeParams, Tap},
     pipeline::Pipeline,
     profile,
 };
-use spektrafilm_backend::{ComputeBackend, cpu_backend::CpuBackend};
 use spektrafilm_gpu::wgpu_backend::WgpuBackend;
 use spektrafilm_math::{
     image::ImageBuf,

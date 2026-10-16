@@ -3922,15 +3922,9 @@ dependencies = [
 name = "spektrafilm-gpu"
 version = "0.1.2"
 dependencies = [
- "accelerate-src",
- "blas-src",
  "bytemuck",
- "cblas",
- "openblas-src",
  "parking_lot",
  "pollster",
- "rayon",
- "serde",
  "spektrafilm-backend",
  "spektrafilm-math",
  "tracing",

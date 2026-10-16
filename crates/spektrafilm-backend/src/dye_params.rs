@@ -25,6 +25,9 @@ pub struct DyeChannelTableGpu {
     pub pad_b: u32,
 }
 
+/// All three channels: the fixed tables plus the packed knot and curve data.
+///
+/// `curves` holds each channel's block in the shader's order: `[knots K]
 /// [inv_dx K-1][layer 0 K][layer 1 K][layer 2 K]`. `K` comes from the film
 /// profile's curve resolution, so the offsets are data rather than a compiled
 /// maximum.
@@ -34,6 +37,10 @@ pub struct DyeChannelTablesGpu {
     pub curves: Vec<f32>,
 }
 
+/// One channel's tables as plain slices.
+///
+/// The device side has no model dependency, so the owner of the model hands
+/// its tables over in this shape and this crate decides where they land in the
 /// curve buffer.
 #[derive(Clone, Debug)]
 pub struct DyeChannelParts<'a> {

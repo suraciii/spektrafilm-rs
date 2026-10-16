@@ -7,8 +7,8 @@
 
 mod gpu_helpers;
 
-use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_backend::ComputeBackend;
+use spektrafilm_backend::cpu_backend::CpuBackend;
 
 /// GPU FIR kernels support a maximum 256-pixel half-width.
 pub(crate) fn gpu_blur_supported(sigma: f32) -> bool {
