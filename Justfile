@@ -4,8 +4,8 @@ set dotenv-load := false
 default:
     @just --list
 
-# Build the portable default (wgpu/WGSL) release binaries.
-build: build-gui build-cli build-f64 decode-raw build-benchmark
+# Build the portable default (wgpu/WGSL) release binaries plus the local lab binary.
+build: build-gui build-cli build-f64 build-lab decode-raw build-benchmark
 
 build-gui:
     cargo build --locked --release -p spektrafilm-gui
@@ -15,6 +15,10 @@ build-cli:
 
 build-f64:
     cargo build --locked --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
+
+# Build the lab (development) binary. f64 reference precision; never packaged.
+build-lab:
+    cargo build --locked --release -p spektrafilm-cli --bin spektrafilm-lab --features precision-f64
 
 decode-raw:
     cargo build --locked --release -p spektrafilm-cli --bin decode_raw_gui

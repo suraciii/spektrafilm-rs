@@ -49,6 +49,18 @@ impl Fixture {
             .output()
             .unwrap()
     }
+    #[cfg(feature = "precision-f64")]
+    fn run_lab(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+            .args(args)
+            .env("RUST_LOG", "off")
+            .env("SPEKTRAFILM_DATA_DIR", &self.data)
+            .env("SPEKTRAFILM_CONFIG_DIR", self.root.join("config"))
+            .env_remove("SPEKTRAFILM_BACKEND")
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+            .output()
+            .unwrap()
+    }
     fn process(&self, extra: &[&str]) -> Output {
         let output = self.root.join("output.tif");
         let mut args = vec![
@@ -1235,7 +1247,7 @@ fn removed_scan_output_rejects_all_carriers_before_publication() {
     {
         let fit_report = f.root.join("fit-report.json");
         std::fs::write(&fit_report, b"retained fit report").unwrap();
-        let result = f.run(&[
+        let result = f.run_lab(&[
             "fit",
             "--layout",
             "missing-layout.json",

@@ -17,7 +17,7 @@ use super::{
 
 #[derive(clap::Args)]
 #[group(id = "Process")]
-pub(super) struct ProcessArgs {
+pub struct ProcessArgs {
     /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
     #[arg(long, value_enum, help_heading = "Execution and diagnostics")]
     backend: Option<Backend>,
@@ -418,7 +418,7 @@ struct WorkflowOptions {
     print_channel_swap: String,
 }
 
-pub(super) fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
+pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
     let data_dir = std::mem::take(&mut args.data_dir);
     // Protect every bundle file, including publication temporaries, from
     // invocation inputs, output/raw-out and optional diagnostics.

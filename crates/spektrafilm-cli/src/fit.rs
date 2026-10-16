@@ -27,7 +27,7 @@ impl From<FitGroupArg> for FitGroup {
 }
 
 #[derive(Args)]
-pub(crate) struct FitArgs {
+pub struct FitArgs {
     /// Chart layout JSON: grid geometry and patch index ranges.
     #[arg(long, help_heading = "Fit data")]
     layout: PathBuf,
@@ -126,7 +126,7 @@ fn table_provenance(path: &Path, source: &str) -> Result<Value> {
     Ok(value)
 }
 
-const SURFACE_PROVENANCE: &str = "Hanatos2025 adaptation surface fitted by spektrafilm-f64 fit ";
+const SURFACE_PROVENANCE: &str = "Hanatos2025 adaptation surface fitted by spektrafilm-lab fit ";
 
 /// Append the fitted surface's provenance to a profile datasource. The fit
 /// replaces the whole surface, so this replaces an earlier fit's sentence,
@@ -145,7 +145,7 @@ fn record_surface_provenance(datasource: &mut String, scene: &str, reference: &s
     ));
 }
 
-pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
+pub fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
     let data_dir = crate::select_data_dir(args.data_dir.clone(), matches)?.path;
     let data_dir = data_dir.as_path();
     let layout: ChartLayout = read_json(&args.layout, "chart layout")?;
@@ -241,7 +241,7 @@ pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> 
     object.insert(
         "tool".into(),
         json!({
-            "name": "spektrafilm-f64",
+            "name": "spektrafilm-lab",
             "version": env!("CARGO_PKG_VERSION"),
         }),
     );

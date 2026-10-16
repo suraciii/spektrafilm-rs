@@ -13,7 +13,7 @@ use crate::contract;
 use crate::telemetry;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory, OperationKind};
 
-pub(super) fn cmd_render(
+pub fn cmd_render(
     input: &Path,
     recipe_path: &Path,
     output: &Path,

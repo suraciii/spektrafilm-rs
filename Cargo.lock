@@ -3885,6 +3885,7 @@ dependencies = [
  "tiff 0.10.3",
  "toml",
  "tracing-subscriber",
+ "zip",
 ]
 
 [[package]]
