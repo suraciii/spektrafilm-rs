@@ -59,7 +59,7 @@ pub fn layer_particle_model(
     let mut p_arr = Vec::with_capacity(n);
     let mut sat_arr = Vec::with_capacity(n);
     for &d in density.iter() {
-        let p = ((d as f64) / dmax).clamp(1e-6, 1.0 - 1e-6);
+        let p = (to_f64(d) / dmax).clamp(1e-6, 1.0 - 1e-6);
         let saturation = 1.0 - p * gu * (1.0 - 1e-6);
         p_arr.push(p);
         sat_arr.push(saturation);

@@ -104,6 +104,17 @@ pub fn apply(
     apply_with_budget(target, pitch_um, grid, params, MAX_BAND_CELLS)
 }
 
+/// Largest representable `Scalar`, widened to `f64`.
+///
+/// `Scalar::MAX as f64` is a no-op with `--features precision-f64` and a real
+/// widening with the default `Scalar = f32`, so the cast must survive both
+/// profiles; isolating it here keeps `clippy::unnecessary_cast` from firing on
+/// the f64 build, where the cast is genuinely redundant.
+#[allow(clippy::unnecessary_cast)]
+fn max_scalar_f64() -> f64 {
+    spektrafilm_math::precision::Scalar::MAX as f64
+}
+
 /// Experimental optical readout of the same formed field. The route owner
 /// converts each bounded CMY band (base offset already subtracted) into a
 /// linear response. Exact cell overlaps average that response, before any
@@ -876,6 +887,7 @@ impl Channel {
             let mass_product = self.cap[l] * self.area[l];
             let max_mass = mass_product / self.frac[l];
             let max_density = max_mass * ((1u64 << 53) as f64) / cell_area;
+            let max_scalar = max_scalar_f64();
             if !self.cap[l].is_finite()
                 || self.frac[l] <= 0.0
                 || !numerator.is_finite()
@@ -890,7 +902,7 @@ impl Channel {
                 || !max_mass.is_finite()
                 || mass_product * s_min <= 0.0
                 || !max_density.is_finite()
-                || max_density > spektrafilm_math::precision::Scalar::MAX as f64 / 3.0
+                || max_density > max_scalar / 3.0
             {
                 return Err(format!(
                     "film grain Dye: channel {c} layer {l} event area, capacity and field pitch produce an unrepresentable rate or dye mass (maximum rate {max_rate}, mass {max_mass}); adjust event area or field pitch; maximum supported rate is {}",

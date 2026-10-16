@@ -43,12 +43,29 @@ check-f64:
 clippy:
     cargo clippy --locked --workspace --all-targets -- -D warnings
 
+# Lint the f64 reference configuration. A separate recipe rather than a feature
+# flag on `clippy`, because `--features` changes which code compiles: lints that
+# fire only under `precision-f64` are invisible to the f32 pass, and vice versa.
+clippy-f64:
+    cargo clippy --locked --workspace --all-targets --features precision-f64 -- -D warnings
+
 # Run the workspace test suite with the default f32 configuration.
 test:
     cargo test --locked --workspace
 
 # Run the workspace test suite in the f64 reference configuration.
 test-f64:
+    cargo test --locked --workspace --features precision-f64
+
+# Both suites under the thread and codegen limits the main CI gate sets. Local
+# `test`/`test-f64` use every core and debug info, so their wall time says
+# nothing about the 45-minute CI budget; run this to predict it.
+test-ci:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export OPENBLAS_NUM_THREADS=1 RAYON_NUM_THREADS=2
+    export CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
+    cargo test --locked --workspace
     cargo test --locked --workspace --features precision-f64
 
 # Run measured deterministic logic and isolated file tests in both precisions.
@@ -117,7 +134,7 @@ test-pr:
 ci-pr: check-python-cache check-python check-device-lock fmt test-pr
 
 # Full local and main-branch gate, including slow rendering and GPU tests.
-ci: check-python-cache check-python check-device-lock fmt check check-f64 clippy test test-f64 benchmark-test parity-backend
+ci: check-python-cache check-python check-device-lock fmt check check-f64 clippy clippy-f64 test test-f64 benchmark-test parity-backend
 
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:

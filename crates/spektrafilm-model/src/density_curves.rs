@@ -434,7 +434,7 @@ mod tests {
         let pos = interp_density_cmy_layers(&img, &composite, &layers, true);
         for (i, px) in img.pixels().enumerate() {
             for ch in 0..3 {
-                let x = -(px[ch] as f64);
+                let x = -spektrafilm_math::precision::to_f64(px[ch]);
                 let xa: Vec<f64> = composite.iter().map(|r| -r[ch]).collect();
                 let expect = if x <= xa[0] {
                     layers[0][0][ch]

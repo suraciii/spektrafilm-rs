@@ -2,7 +2,7 @@
 
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::from_f64;
+use spektrafilm_math::precision::{from_f64, to_f64};
 /// Apply Python's unsharp mask with the faithful CPU Gaussian filter.
 /// Keep sigma and amount in f64 before conversion to the image scalar type.
 pub fn apply_unsharp_mask(
@@ -64,7 +64,7 @@ pub fn boost_highlights(
     let max_raw = image
         .data
         .iter()
-        .map(|&v| v as f64)
+        .map(|&v| to_f64(v))
         .fold(f64::NEG_INFINITY, f64::max);
     if max_raw == 0.0 {
         return ImageBuf::new(image.width, image.height);
@@ -85,7 +85,7 @@ pub fn boost_highlights(
 
     let mut out = image.clone();
     out.data.par_iter_mut().for_each(|v| {
-        let xv = *v as f64;
+        let xv = to_f64(*v);
         let nv = if xv <= raw_x0 {
             xv
         } else {
