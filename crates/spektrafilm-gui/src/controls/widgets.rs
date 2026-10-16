@@ -2,6 +2,7 @@
 use super::{ControlFilter, filter_matches};
 use crate::editor_ranges;
 use crate::numeric::{numeric, numeric_field, numeric_field_validated};
+use crate::theme;
 use egui::Ui;
 use serde_json::{Map, Value};
 use spektrafilm_core::params::diffusion::DiffusionFilterParams;
@@ -20,20 +21,17 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
     tooltip: &str,
 ) -> bool {
     let (min, max, step, decimals) = editor_range_for(path);
-    numeric(ui, label, value, min, max, step, decimals, tooltip)
-}
-
-pub(crate) fn param_slider<T>(ui: &mut Ui, value: &mut T, path: &str, tooltip: &str) -> bool
-where
-    T: egui::emath::Numeric,
-{
-    let (min, max, _step, _decimals) = editor_range_for(path);
-    ui.add(egui::Slider::new(
+    numeric(
+        ui,
+        label,
         value,
-        T::from_f64(min)..=T::from_f64(max),
-    ))
-    .on_hover_text(tooltip)
-    .changed()
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        crate::numeric::unit_suffix(path),
+    )
 }
 
 /// `param_numeric` whose effective maximum is additionally capped at
@@ -56,8 +54,15 @@ pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
         step,
         decimals,
         tooltip,
+        crate::numeric::unit_suffix(path),
     )
 }
+
+/// Per-component identifiers for a tuple row. Empty means the components are
+/// numbered by position, which is what the accessible names already carry.
+pub(crate) const POSITION_IDENTIFIERS: &[&str] = &[];
+/// Component identifiers for a film-scan point tuple.
+pub(crate) const CHANNEL_IDENTIFIERS: &[&str] = &["R", "G", "B"];
 
 pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
     ui: &mut Ui,
@@ -67,7 +72,41 @@ pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
     tooltip: &str,
 ) -> bool {
     let (min, max, step, decimals) = editor_range_for(path);
-    tuple(ui, label, values, min, max, step, decimals, tooltip)
+    tuple(
+        ui,
+        label,
+        values,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        POSITION_IDENTIFIERS,
+    )
+}
+
+/// A tuple row whose components carry semantic identifiers.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn param_tuple_named<T: egui::emath::Numeric, const N: usize>(
+    ui: &mut Ui,
+    label: &str,
+    values: &mut [T; N],
+    path: &str,
+    tooltip: &str,
+    identifiers: &[&str],
+) -> bool {
+    let (min, max, step, decimals) = editor_range_for(path);
+    tuple(
+        ui,
+        label,
+        values,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        identifiers,
+    )
 }
 
 pub(crate) fn param_numeric_field_validated<T, Id>(
@@ -76,6 +115,7 @@ pub(crate) fn param_numeric_field_validated<T, Id>(
     value: &mut T,
     path: &str,
     tooltip: &str,
+    unit: Option<&str>,
     valid: impl Fn(T) -> bool,
 ) -> bool
 where
@@ -83,7 +123,9 @@ where
     Id: std::hash::Hash,
 {
     let (min, max, step, decimals) = editor_range_for(path);
-    numeric_field_validated(ui, id_salt, value, min, max, step, decimals, tooltip, valid)
+    numeric_field_validated(
+        ui, id_salt, value, min, max, step, decimals, tooltip, unit, valid,
+    )
 }
 
 /// Per-path table keys for the shared diffusion-filter editor. Camera and
@@ -260,21 +302,41 @@ pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
     step: f64,
     decimals: usize,
     tooltip: &str,
+    identifiers: &[&str],
 ) -> bool {
     ui.push_id(label, |ui| {
         ui.label(label).on_hover_text(tooltip);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             values
                 .iter_mut()
                 .enumerate()
                 .map(|(index, value)| {
-                    let changed =
-                        numeric_field(ui, (label, index), value, min, max, step, decimals, tooltip);
+                    let identifier = identifiers
+                        .get(index)
+                        .copied()
+                        .unwrap_or_else(|| index_identifier(index));
+                    ui.label(
+                        egui::RichText::new(identifier)
+                            .color(theme::FG_MUTED)
+                            .size(theme::SIZE_HINT),
+                    )
+                    .on_hover_text(tooltip);
+                    let changed = numeric_field(
+                        ui,
+                        (label, index),
+                        value,
+                        min,
+                        max,
+                        step,
+                        decimals,
+                        tooltip,
+                        None,
+                    );
                     let id = ui.make_persistent_id(("numeric-field", (label, index)));
-                    // Build the indexed name only when accessibility is requested, not in
-                    // the ordinary per-frame widget path. The visible group stays unchanged.
+                    // The visible identifier and the accessible name agree, so
+                    // the component is named the same way for every reader.
                     ui.ctx().accesskit_node_builder(id, |node| {
-                        node.set_label(format!("{label} {index}"));
+                        node.set_label(format!("{label} {identifier}"));
                     });
                     changed
                 })
@@ -283,6 +345,12 @@ pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
         .inner
     })
     .inner
+}
+
+/// Fallback component identifier: the 0-based position, which matches the
+/// accessible names the harness already queries.
+fn index_identifier(index: usize) -> &'static str {
+    ["0", "1", "2", "3", "4", "5"][index]
 }
 
 pub(crate) fn fotufilm_sublayer_shares(
@@ -365,17 +433,24 @@ pub(crate) fn point_tuple(
     let tooltip = "Red, green, and blue positions in the film scan range. Each black point must be below its white point; values outside the points are not clipped.";
     ui.push_id(label, |ui| {
         ui.label(label).on_hover_text(tooltip);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             values
                 .iter_mut()
                 .enumerate()
                 .map(|(channel, value)| {
+                    ui.label(
+                        egui::RichText::new(CHANNEL_IDENTIFIERS[channel])
+                            .color(theme::FG_MUTED)
+                            .size(theme::SIZE_HINT),
+                    )
+                    .on_hover_text(tooltip);
                     let changed = param_numeric_field_validated(
                         ui,
                         (label, channel),
                         value,
                         path,
                         tooltip,
+                        None,
                         |next| {
                             if is_black {
                                 next < other[channel]
@@ -386,7 +461,7 @@ pub(crate) fn point_tuple(
                     );
                     let id = ui.make_persistent_id(("numeric-field", (label, channel)));
                     ui.ctx().accesskit_node_builder(id, |node| {
-                        node.set_label(format!("{label} {channel}"));
+                        node.set_label(format!("{label} {}", CHANNEL_IDENTIFIERS[channel]));
                     });
                     changed
                 })
@@ -397,8 +472,55 @@ pub(crate) fn point_tuple(
     .inner
 }
 
+/// A boolean parameter row's editor: a switch.
+///
+/// Built on a focusable button so pointer and keyboard operability come from
+/// the toolkit, then named as a switch for assistive technology. The role is
+/// set after the widget is added, because egui rewrites the node's role from
+/// its own widget info on every frame.
 pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) -> bool {
-    ui.checkbox(value, label).on_hover_text(tooltip).changed()
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label).on_hover_text(tooltip);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (fill, knob, text) = if *value {
+                (theme::ACCENT, theme::CONTRAST_ON_ACCENT, "on")
+            } else {
+                (theme::SURFACE3, theme::FG_MUTED, "off")
+            };
+            let response = ui
+                .add(
+                    egui::Button::new(egui::RichText::new(text).color(knob).size(theme::SIZE_HINT))
+                        .fill(fill)
+                        .corner_radius(theme::RADIUS_CARD)
+                        .min_size(egui::vec2(44.0, 18.0))
+                        .selected(*value),
+                )
+                .on_hover_text(tooltip);
+            if response.clicked() {
+                *value = !*value;
+                changed = true;
+            }
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    *value,
+                    label,
+                )
+            });
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_role(egui::accesskit::Role::Switch);
+                node.set_toggled(if *value {
+                    egui::accesskit::Toggled::True
+                } else {
+                    egui::accesskit::Toggled::False
+                });
+                node.set_label(label);
+            });
+        });
+    });
+    changed
 }
 
 pub fn choice_tip(
@@ -441,9 +563,14 @@ pub(crate) fn choice_tip_options<'a>(
         .find(|&(option, _)| option == value.as_str())
         .map(|(_, display_label)| display_label)
         .unwrap_or(value.as_str());
-    let mut changed = false;
-    egui::ComboBox::from_label(label)
+    let prev = value.clone();
+    // Label first, selector second, so a choice row reads like every other
+    // parameter row. `from_id_salt` paints the box where it is placed instead
+    // of appending its own label after it.
+    let label_response = ui.label(label).on_hover_text(tooltip);
+    egui::ComboBox::from_id_salt(label)
         .selected_text(selected_label)
+        .width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
         .show_ui(ui, |ui| {
             for (option, display_label) in choices {
                 // Allocate only when a selection changes, not for every option each frame.
@@ -454,13 +581,29 @@ pub(crate) fn choice_tip_options<'a>(
                     && value.as_str() != option
                 {
                     *value = option.to_owned();
-                    changed = true;
                 }
             }
         })
         .response
         .on_hover_text(tooltip);
-    changed
+    link_choice_label(ui, label, label_response.id);
+    prev != *value
+}
+
+/// Associate a selector's visible label with the selector's own node.
+///
+/// The selector's own widget info carries an empty label, which would leave an
+/// accessible node named nothing beside the visible label node.
+fn link_choice_label(ui: &Ui, salt: &str, label_id: egui::Id) {
+    if let Some(response) = ui
+        .ctx()
+        .read_response(ui.make_persistent_id(egui::Id::new(salt)))
+    {
+        let id = response.id;
+        response.labelled_by(label_id);
+        ui.ctx()
+            .accesskit_node_builder(id, |node| node.clear_label());
+    }
 }
 
 // UI helpers keep their existing parameter interfaces.
@@ -477,7 +620,8 @@ pub(crate) fn extra_choice(
 ) -> bool {
     let current = extras[section][key].as_str().unwrap_or(default);
     let mut selected = None;
-    egui::ComboBox::from_label(label)
+    let label_response = ui.label(label).on_hover_text(tooltip);
+    egui::ComboBox::from_id_salt(label)
         .selected_text(current)
         .show_ui(ui, |ui| {
             for &option in choices {
@@ -493,6 +637,7 @@ pub(crate) fn extra_choice(
         })
         .response
         .on_hover_text(tooltip);
+    link_choice_label(ui, label, label_response.id);
     if let Some(selected) = selected {
         set_extra(extras, section, key, Value::from(selected));
         true

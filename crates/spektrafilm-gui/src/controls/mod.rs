@@ -123,17 +123,29 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
         .find(|(option, _)| *option == *value)
         .map(|(_, label)| *label)
         .unwrap_or("");
-    let mut changed = false;
-    egui::ComboBox::from_label(label)
+    let prev = *value;
+    // Label first, selector second, so a choice row reads like every other
+    // parameter row.
+    let label_response = ui.label(label).on_hover_text(tooltip);
+    egui::ComboBox::from_id_salt(label)
         .selected_text(selected)
         .show_ui(ui, |ui| {
             for &(option, label) in choices {
-                changed |= ui.selectable_value(value, option, label).changed();
+                ui.selectable_value(value, option, label);
             }
         })
         .response
         .on_hover_text(tooltip);
-    changed
+    if let Some(response) = ui
+        .ctx()
+        .read_response(ui.make_persistent_id(egui::Id::new(label)))
+    {
+        let id = response.id;
+        response.labelled_by(label_response.id);
+        ui.ctx()
+            .accesskit_node_builder(id, |node| node.clear_label());
+    }
+    prev != *value
 }
 
 /// A section or sub-section header. During a control search the body is
