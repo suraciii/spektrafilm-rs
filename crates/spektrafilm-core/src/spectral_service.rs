@@ -148,14 +148,43 @@ pub fn build_filming_upsampler(
     let (tc_lut, mallett_core): (Option<TcLut>, Option<[[f64; 3]; 3]>) = match method {
         crate::params::validation::RgbToRawMethod::Hanatos2025 => {
             let window_params: Vec<f64> = film.data.hanatos2025_adaptation_window_params.clone();
+            // A filming-stage material without a fitted window runs the
+            // RGB-to-exposure conversion without the sensitivity-adaptation
+            // window: white balance is preserved but no ultraviolet or
+            // infrared cutoff is modeled. The downgrade is reported, never
+            // silent (specs/film-chain/spec.md).
+            let apply_window =
+                params.settings.apply_hanatos2025_adaptation_window && window_params.len() == 4;
+            let apply_surface = params.settings.apply_hanatos2025_adaptation_surface
+                && film
+                    .data
+                    .hanatos2025_adaptation_surface_params
+                    .iter()
+                    .all(|row| row.len() == 15)
+                && film.data.hanatos2025_adaptation_surface_params.len() == 3;
+            if params.settings.apply_hanatos2025_adaptation_window && !apply_window {
+                tracing::warn!(
+                    film = %film.info.stock.as_deref().unwrap_or("<unnamed>"),
+                    "hanatos2025 adaptation window requested but the profile carries no fitted \
+                     window parameters; running without the window, which models no ultraviolet \
+                     or infrared cutoff"
+                );
+            }
+            if params.settings.apply_hanatos2025_adaptation_surface && !apply_surface {
+                tracing::warn!(
+                    film = %film.info.stock.as_deref().unwrap_or("<unnamed>"),
+                    "hanatos2025 adaptation surface requested but the profile carries no fitted \
+                     surface parameters; running without the surface"
+                );
+            }
             let adaptation = Hanatos2025Adaptation {
                 window_params: &window_params,
                 surface_params: &film.data.hanatos2025_adaptation_surface_params,
                 spectral_gaussian_blur: params.settings.spectral_gaussian_blur as f64,
                 reference_illuminant: &ref_illuminant_f64,
                 reference_illuminant_xy: spectral::illuminant_to_xy(&ref_illuminant),
-                apply_window: params.settings.apply_hanatos2025_adaptation_window,
-                apply_surface: params.settings.apply_hanatos2025_adaptation_surface,
+                apply_window,
+                apply_surface,
             };
             let tc_lut = compute_registered_tc_lut(
                 data_dir,
