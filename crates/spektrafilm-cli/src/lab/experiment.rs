@@ -149,11 +149,7 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
         iters: 1,
         data_dir: data.path.clone(),
     };
-    let command_vector = command_vector(
-        args.output_format,
-        &process_args,
-        &set_sources,
-    );
+    let command_vector = command_vector(args.output_format, &process_args, &set_sources);
     process::run_with_data_dir(process_args, data)?;
 
     let manifest_path = bundle_dir.join("stage-evidence.json");

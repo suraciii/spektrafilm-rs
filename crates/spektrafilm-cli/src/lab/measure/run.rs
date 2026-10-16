@@ -674,7 +674,8 @@ fn write_dry_run(
         "summaries": [],
     });
     let measure_text = format!("{}\n", serde_json::to_string_pretty(&measure_json)?);
-    report::write_named(&out, &[("measure.json", measure_text)]).map_err(anyhow::Error::msg)?;
+    report::write_measure_named(&out, &[("measure.json", measure_text)])
+        .map_err(anyhow::Error::msg)?;
     eprintln!("Measurement (dry run): {}", out.display());
     eprintln!("Samples: {}", stimulus.sample_count());
     eprintln!("Entry: {}", args.enter.name());

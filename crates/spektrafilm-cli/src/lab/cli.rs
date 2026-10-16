@@ -259,6 +259,8 @@ pub struct MeasureVerifyArgs {
     /// Data directory to re-resolve against; defaults to the directory the run recorded.
     #[arg(long, default_value = "data", help_heading = "Verification")]
     pub data_dir: PathBuf,
+}
+
 /// The development loop for a film profile: render one declared experiment,
 /// then convert its boundary values for a measurement tool.
 #[derive(Subcommand)]
