@@ -1,4 +1,4 @@
-# Profile fitting
+# Profile authoring
 
 ## Contract
 
@@ -6,7 +6,7 @@
 
 Profile fitting is a calibration mechanism for profile authors. It is not a GUI feature. It must not modify a preset library, a profile file, or any other input in place; every result is written to the paths the caller names.
 
-The CLI exposes fitting as `spektrafilm-f64 fit`. The command must exist in the f64 reference binary and must not exist in the f32 preview binary.
+The instrument exposes fitting as `spektrafilm-lab fit`; see the [instrument specification](../instrument/spec.md). The command must exist in the instrument binary and must not exist in `spektrafilm` or `spektrafilm-f64`.
 
 ## Inputs
 
@@ -67,6 +67,8 @@ The fitted target is deterministic: identical inputs, preset, and options must p
 - `--out-overlay <PATH>`: a sparse parameter file with the fitted tone leaves. Required when the fit includes the `tone` group.
 
 The report must carry the fitted values, the metrics below, every input path with its SHA-256, the source of both patch tables, the resolved preset and route, the forced settings, and the tool version.
+
+A fit publishes its outputs only when the fitted values reduce both metrics against the unfitted configuration on the same data. Otherwise it fails with both values and writes no output. A failed write must not leave a partial set of outputs from the run.
 
 ## Metrics
 

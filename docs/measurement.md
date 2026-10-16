@@ -6,7 +6,7 @@ declared points from an image or a retained stage capture, `compare` matches two
 measurements, and `verify` re-resolves a recorded run. The commands exist only in the lab
 binary and run at f64 reference precision. They compute values and write evidence; they do
 not fit parameters, render images, or judge a result. See the [measurement
-contract](../specs/lab/spec.md#measurement) for the requirements.
+contract](../specs/instrument/spec.md#measurement) for the requirements.
 
 ## The point-wise requirement
 
@@ -303,8 +303,8 @@ stages before it, which the route never executed for this measurement, report
 
 ## See also
 
-- [Measurement contract](../specs/lab/spec.md#measurement)
-- [Lab CLI design](../specs/lab/design.md)
+- [Measurement contract](../specs/instrument/spec.md#measurement)
+- [Lab CLI design](../specs/instrument/design.md)
 - [CLI processing](cli.md)
 - [Stage evidence](cli.md#stage-evidence)
 - [Profile fitting](profile-fitting.md)

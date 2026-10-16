@@ -8,9 +8,9 @@ The benchmark must distinguish change magnitude, closeness to a named reference,
 
 The benchmark must expose measurements and their evidence before an interpretation. An agent must be able to locate a reported change without reading logs or opening every image. A person must be able to inspect the same change in the full image and at native detail resolution.
 
-This capability owns appearance comparison, evaluation decisions, and review artifacts. [CLI parameters](../cli-parameters/spec.md) owns rendering parameter resolution. [Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations. The benchmark must not redefine these contracts.
+This capability owns appearance comparison, evaluation decisions, and review artifacts. [CLI parameters](../cli/spec.md) owns rendering parameter resolution. [Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations. The benchmark must not redefine these contracts.
 
-The delivered benchmark must run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery/spec.md) defines distribution and migration acceptance. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
+The delivered benchmark must run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery/spec.md) defines distribution, workspace boundaries, and numerical implementation. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
 
 ## Terms
 
@@ -99,7 +99,7 @@ Missing assets and unsupported cases must remain visible. The report must state 
 
 ## Reproducible rendering
 
-Raster cases must provide the [source declaration](../cli-parameters/spec.md#input-declaration). Embedded ICC data must remain recorded as provenance and must not silently override the renderer's explicit declaration. An external reference's color interpretation must be resolved separately before comparison.
+Raster cases must provide the [source declaration](../cli/spec.md#input-declaration). Embedded ICC data must remain recorded as provenance and must not silently override the renderer's explicit declaration. An external reference's color interpretation must be resolved separately before comparison.
 
 The run must retain the source configuration, resolved settings, selected seed, actual dimensions, renderer identity, dependency identities, and observed execution conditions. Dry run must not be presented as proof of decoding, device availability, or completed rendering.
 
@@ -111,9 +111,11 @@ The benchmark must preserve floating output for numerical analysis. Lossy previe
 
 A detail region must be extracted from the completed full-image render. Rendering an input crop separately must not substitute for that region unless the case explicitly evaluates crop behavior.
 
+The benchmark must support explicitly requested native CPU stage evidence from the real renderer. This evidence must identify observed source exposure, prepared print normalization, each captured numerical boundary, and its geometry. A successful dry run must not imply those values were observed. A source-only decoded image and an exposed simulation input must remain distinct roles. Application metering must not be described as measured physical capture exposure.
+
 ## Measurements and decisions
 
-The [measurement protocol](metrics.md) owns domains, algorithms, aggregation, and availability rules. The [machine interface](interface.md) owns serialized inputs, results, and command status.
+The [measurement protocol](metrics/spec.md) owns domains, algorithms, aggregation, and availability rules. The [machine interface](../instrument/spec.md) owns serialized inputs, results, and command status.
 
 Every finding must identify its measurement population and applicable region. Signed color and tone changes must use candidate minus baseline. A reference-distance improvement must use candidate distance minus baseline distance and must identify that a negative value means closer.
 
@@ -126,6 +128,20 @@ A required measurement that is unavailable must prevent a qualified pass. Missin
 A budget must identify its calibration population and protocol. A universal color-difference, pixel-error, or perceptual threshold must not be assumed. Budgets must be calibrated with repeat runs, stochastic variation where applicable, controlled perturbations, and independently reviewed cases. Calibration must distinguish visibility, acceptability, and reference suitability.
 
 The benchmark must not change policy budgets, source declarations, targets, or baselines to make a candidate pass. The agent may select an existing policy and explain evidence. Updating a baseline or budget must remain a separate explicit action with recorded approval and identity.
+
+## Prepared image review
+
+The benchmark must accept a collection of [prepared images](../../CONTEXT.md#language), grouped into sets, for visual review without a renderer, run, or comparison record. This review page is separate from a measured review report. It must not simulate film, decode camera RAW, find chart corners, fit geometry, normalize exposure, match color, recompute metrics, or claim acceptance.
+
+Each image must declare its color interpretation, set, label, and optional description. Labels and descriptions must support Unicode, including Chinese. Each set must declare either a regular grid of shared patch windows in image pixels or explicit region rectangles per image; a declared grid must be derivable into measurement regions without re-authoring geometry. A grid set may declare its measurement sampling, region role, and measurement families; omitted fields must default, and derivation must read them from the manifest rather than from command options. Different sets must not acquire region correspondence from equal dimensions, grid sizes, labels, or similar colors.
+
+The report must open on the declared default image pair. The user must be able to select any image for either side and swap the sides. Whole-image side-by-side viewing must remain available across sets. Images in one grid set must support linked patch selection and a complete paired patch contact sheet. Cross-set pairs must support independent patch selection with an explicit visual-only warning. A regions set must present independent selections with a visible label-only correspondence notice and per-side window dimensions. Neither shared patch identity nor a split view establishes pixel-level registration or a measured spectral stimulus.
+
+Every patch window and declared region must lie within its decoded image. Images in one grid set must have equal dimensions, and region rectangles must not overlap on one image. A declared measurement sample must fit inside its patch windows. The generator must reject inconsistent geometry rather than resize, reorder, or silently truncate. Full-image locations and the selected window coordinates must remain visible during patch and region inspection.
+
+The report must work from a local file without a server, network-hosted assets, or the original source directory. It must retain source identities and declarations. It must produce native-size 16-bit sRGB display copies through the existing display conversion boundary without dither. Browser fit scaling must remain separate from native-pixel inspection and must not produce measurements. Display clipping must not be described as an input correction.
+
+The report must preserve image and set order, safe plain-text captions, and the selected comparison state. Malformed locations must show an error instead of unrelated imagery. Keyboard controls and narrow layouts must preserve access to every image, patch, and region without horizontal page overflow.
 
 ## Human review
 
@@ -140,9 +156,11 @@ Detail sections must include fixed semantic regions and automatically selected d
 Native detail must map one source image pixel to one device pixel at 100%. The viewer must account for device pixel ratio. The report must also offer 200% and 400% nearest-neighbor views. A fit-to-container view must not be labeled 100%.
 A generated human review report must open with the selected case and seed's image-first main view in request order, followed by accessible navigation for every other case and seed, including failures. A single-run report must open input/simulation when no reference pair is selected and reference/simulation when that pair is selected. Reports with multiple pairs must provide a pair selector. Version reports must open baseline/candidate. Labels, measurements, difference maps, and detail crops must belong to the selected pair. The initial view must show the selected imagery before supporting evidence. It SHOULD include a short retained-condition summary and at most four rounded full-image metrics with their units, domains, and direction. Supporting evidence SHOULD remain folded.
 
+Inspecting a region must not remove other regions, failed cases, or worst regressions. Unknown reference processing must keep numerical reference distances unavailable; region inspection must not reinterpret that reference as a qualified appearance target.
+
 Detail crops must use lossless files. Reduced full-image previews may use lossy files if their role is explicit. Previews must not replace the numerical masters or lossless detail evidence.
 
-Display copies must use 16-bit RGB sRGB PNG without quantization dither. Fit previews must be derived from floating display samples with Lanczos resampling in encoded sRGB to a maximum edge of 1600 pixels before 16-bit quantization. Artifacts must record bit depth, source dimensions, resampling, quantization, and display role. Native zoom must use the full-size image; lossless detail crops must preserve its 16-bit channel values. Browser and display precision must not be presented as guaranteed 16-bit output. Measurements must continue to use floating masters.
+Display copies must use 16-bit RGB sRGB PNG without quantization dither. Fit previews must be derived from floating display samples with Lanczos resampling in encoded sRGB to a maximum edge of 1600 pixels before 16-bit quantization. The report must retain lossless full-size images and detail crops. Artifacts must record bit depth, source dimensions, resampling, quantization, encoding, and display role. Native zoom must use the lossless full-size image; lossless detail crops must preserve its 16-bit channel values. Browser and display precision must not be presented as guaranteed 16-bit output. Measurements must continue to use floating masters.
 
 Comparisons with different source resolutions must separate a declared common observation scale from native-pixel inspection. Every resampling operation must be identified. Registered color-comparison copies must remain separate from unwarped grain and sharpness inspection copies.
 
@@ -171,6 +189,10 @@ Source attribution and redistribution restrictions must accompany external refer
 15. Run an externally prepared crop and a renderer crop as distinct cases. Preserve their input identities and renderer-resolved geometry; keep full-render detail crops separate.
 16. Build and inspect a multi-pair offline report with original input files and renderer unavailable. Preserve request order and switch pairs on desktop and narrow layouts.
 17. Preflight a valid suite and an invalid renderer parameter across multiple seeds. Preserve resolved configurations and grouped failures without decoding, rendering, or publishing a completed run. Execute the valid configuration and compare its resolved parameters with preflight.
-18. Inspect a retained version or single-run comparison after original runs are unavailable. Filter exact case, region, and metric identities; preserve unavailable reasons and separate per-seed observations from seed aggregates.
-19. Generate and validate a pinned target independently of fixtures. Reject existing output and changed executable identity; use the target with a local input.
+18. Inspect a retained version or single-run comparison after original runs are unavailable. Filter exact case, region, and metric identities; expose the same flat measurement rows in both modes; preserve unavailable reasons and separate per-seed observations from seed aggregates.
+19. Generate and validate a pinned target independently of fixtures. Reject existing output with the instruction to remove it or choose another destination, and reject changed executable identity; use the target with a local input.
 20. Open a report location for a case, seed, pair, and region offline. Reload and use browser history on desktop and narrow layouts; activate detail controls by keyboard and expose invalid locations clearly.
+21. Run a multi-seed suite and compare it while capturing stderr. Identify every started and completed case-seed item with its elapsed seconds and end with the completed and failed item counts and the total elapsed time.
+22. Generate a prepared review page with Chinese captions, a declared default pair, multiple images per set, and distinct sets including a grid set and an explicit-region set. Open the same output directly and through static hosting with a same-origin script policy. Select arbitrary pairs, all declared patch windows, independent cross-set patches, and declared regions with the label-only correspondence notice and native zoom on desktop and narrow layouts. Preserve source hashes and reject invalid geometry, identities, or existing destinations without replacing evidence.
+23. Derive measurement regions from a grid set whose manifest declares its measurement sampling, role, and families. Verify that the derived windows match the review page's patch windows and are accepted as case, reference, and single-input regions. Reject a set without a grid, an unknown identity, a measurement declaration on an explicit-regions set, and a sample window that does not fit.
+24. Render an offline report from a retained comparison and from a prepared image manifest through one command. Reject a request with both sources and with neither, and record the source document kind in the command result.

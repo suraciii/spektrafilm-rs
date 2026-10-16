@@ -2,6 +2,8 @@
 
 `experiment run` publishes one native stage-evidence bundle for a declared experiment, and `experiment export` converts an existing bundle's raw f64 buffers into `.npy` arrays. Together they are the development loop for a film profile: declare what to run, run it reproducibly, and hand its boundary values to a measurement tool.
 
+Both commands are experimental: they carry no compatibility promise. See [command tiers](spec.md#command-tiers).
+
 ## Command surface
 
 - `spektrafilm-lab experiment run` — render one declared experiment and retain its boundary values.
@@ -9,7 +11,7 @@
 
 ## Experiment document
 
-`experiment run` reads one experiment document. It is a lab-owned document: it names a case, declares a chart grid, and carries parameter values. It is not a benchmark suite and not a process job file.
+`experiment run` reads one experiment document. It is an instrument-owned document: it names a case, declares a chart grid, and carries parameter values. It is not a benchmark suite and not a process job file.
 
 - `schema_version` — `1`.
 - `id` — a nonempty identifier matching `^[A-Za-z0-9][A-Za-z0-9_.-]*$`.
@@ -48,7 +50,7 @@ spektrafilm-lab experiment run --experiment EXPERIMENT.json --out DIR \
 `experiment export` validates a bundle against the [stage-evidence contract](../cli/spec.md#stage-evidence) and rejects one it cannot consume:
 
 - `schema_version` is `1` and `execution_status` is `completed`.
-- `host_precision` is `f64`. The lab is f64-only; an `f32` bundle is not convertible to the `.npy` the caller expects.
+- `host_precision` is `f64`. The instrument is f64-only; an `f32` bundle is not convertible to the `.npy` the caller expects.
 - Every `available` stage record names a buffer that exists, whose SHA-256 matches the record, and whose byte length equals `width * height * channels * 8`.
 - Every sample is finite. A non-finite sample is a command failure, not a value to pass through.
 
@@ -78,7 +80,7 @@ A bundle's buffers are the render's own values. `export` does not re-render, doe
 
 ## Boundaries
 
-`experiment` does not measure, score, fit, or render a new image. Region means, color differences, and tail statistics belong to [benchmark](../benchmark/spec.md). Review pages belong to the benchmark report and prepared-image review. Profile fitting belongs to [`fit`](spec.md#command-surface).
+`experiment` does not measure, score, fit, or render a new image. Region means, color differences, and tail statistics belong to [benchmark](../benchmark/spec.md). Review pages belong to the benchmark report and prepared-image review. Profile fitting belongs to [`fit`](spec.md#commands).
 
 `experiment` reads the one case it references and the grid it declares. It does not restate the region list, the roles, or the measurement families, and it does not read the rest of the suite.
 

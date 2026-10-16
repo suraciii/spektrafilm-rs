@@ -6,7 +6,7 @@ An agent must be able to generate reusable rendering configurations and run a lo
 
 A standard configuration is a rendering setup, not a new film profile or preset kind. It must use the existing preset and case-configuration contracts. A baseline remains an explicitly selected completed run.
 
-The [machine interface](../interface.md#standard-configuration-generation) owns command syntax, output filenames, and generation results. The [system design](../design.md#standard-configuration-ownership) owns construction and reuse boundaries.
+The [machine interface](../../instrument/spec.md#standard-configuration-generation) owns command syntax, output filenames, and generation results. The [system design](../../instrument/design.md#standard-configuration-ownership) owns construction and reuse boundaries.
 
 ## User workflow
 
@@ -84,9 +84,3 @@ No generated configuration may supply universal acceptance thresholds. The exist
 8. Modify or remove a referenced preset file before execution. Reject missing dependencies and preserve changed dependency identity under the existing run rules. Reject an existing generation destination without altering its contents.
 9. Fail preset export or configuration validation. Return a structured failure and publish no successful generation manifest. Do not leave a partial bundle identified as ready to run.
 10. Generate a comparison and offline report from the new appearance cases and a local photograph. Inspect full-image and native crop evidence. Verify that uncalibrated or absent policy does not produce qualified acceptance.
-
-## Delivery status
-
-Implemented. `spektrafilm-bench-fixtures` generates the bundle with `--configuration`, exports the look through the selected renderer's `preset show --toml`, and reports the same `suites` list as before; the README carries the packaged command examples. The ten items above were exercised against the real renderer with recorded evidence: generation and validation, user-library conflict isolation, moved-directory resolution with the photograph's dimensions and declared film scale preserved, isolated repeatability, the declared seed populations, quick and complete suite selection with the optional natural-scene branch, two renderer targets over one frozen bundle, missing-dependency and existing-destination rejection, export failure without a successful manifest, and full-image plus native crop review from a local photograph.
-
-Evidence limits: repeatability was measured on one host, backend, and renderer pair and is not a cross-platform identity claim. The natural-scene branch uses this repository's pinned scene, and the photographic review used that scene rather than a new photograph. The exported look is a preset document of the generating renderer generation; a renderer that predates a preset-schema field rejects it with `unknown field`, so a bundle is regenerated for such a comparison. No threshold is calibrated, and a comparison without an explicit policy remains `not_evaluated`.
