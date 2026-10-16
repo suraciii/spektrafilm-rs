@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 
 /// UI compositor backend. Metal-backed CAMetalLayer is required on macOS so
 /// the window colorspace can be tagged sRGB; Windows and Linux keep the UI
@@ -31,7 +31,7 @@ pub(super) fn gui_backend() -> Arc<dyn ComputeBackend> {
     match std::env::var("SPEKTRAFILM_BACKEND").ok().as_deref() {
         None => spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
             .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
-            .unwrap_or_else(|| Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend)),
+            .unwrap_or_else(|| Arc::new(spektrafilm_backend::cpu_backend::CpuBackend)),
         Some(_) => Arc::from(spektrafilm_gpu::select_backend()),
     }
 }

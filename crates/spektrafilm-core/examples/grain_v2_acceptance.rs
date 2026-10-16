@@ -1,3 +1,4 @@
+use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_core::{
     image_io::{self, BitDepth, SaveOptions},
     params::{
@@ -7,7 +8,6 @@ use spektrafilm_core::{
     pipeline::Pipeline,
     profile,
 };
-use spektrafilm_gpu::cpu_backend::CpuBackend;
 use spektrafilm_math::{image::ImageBuf, precision::from_f64};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

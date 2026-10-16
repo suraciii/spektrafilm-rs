@@ -186,13 +186,17 @@ impl ComputeBackend for WgpuBackend {
         );
         ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
-    fn grain_v2(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> Option<ImageBuf> {
+    fn grain_v2(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::GrainV2GpuParams,
+    ) -> Option<ImageBuf> {
         Some(self.grain_v2_gpu(img, params))
     }
     fn dye_field(
         &self,
         img: &ImageBuf,
-        params: &crate::wgpu_backend::DyeGpuParams,
+        params: &spektrafilm_backend::dye_params::DyeGpuParams,
     ) -> Option<Result<ImageBuf, String>> {
         // The device entry point is the inherent `WgpuBackend::dye_field`;
         // this hook only marks the attempt so a backend without a device
@@ -693,7 +697,7 @@ impl ComputeBackend for WgpuBackend {
 
     fn try_run_film_chain(
         &self,
-        params: &crate::FilmChainParams<'_>,
+        params: &spektrafilm_backend::FilmChainParams<'_>,
     ) -> Result<Option<ImageBuf>, String> {
         // Bounded-execution preflight: compare the arithmetically required
         // buffer sizes with the device limits before any allocation, so an

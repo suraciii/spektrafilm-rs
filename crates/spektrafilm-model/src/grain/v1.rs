@@ -2,14 +2,14 @@
 // Poisson-binomial particle model with dye cloud blur and lognormal micro-structure.
 
 use rayon::prelude::*;
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::gaussian;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{Scalar, ZERO, from_f64, to_f64};
 use spektrafilm_math::stats::{self, FastStatsRng};
 use std::time::Instant;
 
-use spektrafilm_gpu::timing::{print_stage_timing, stage_timings_enabled};
+use spektrafilm_backend::timing::{print_stage_timing, stage_timings_enabled};
 
 /// Seed of the micro-structure clumping field. Python draws it from numba's
 /// unseeded thread-global RNG (`add_micro_structure` never reseeds), so the
@@ -131,19 +131,19 @@ fn finish_grain(
 
 fn observe_sampler(
     backend: &dyn ComputeBackend,
-) -> Option<spektrafilm_gpu::telemetry::ObservationScope> {
+) -> Option<spektrafilm_backend::telemetry::ObservationScope> {
     backend
         .observation_context()
         .filter(|context| context.enabled())
         .map(|context| {
             let scope = context.scope(
                 "grain_v1_sampler",
-                spektrafilm_gpu::telemetry::ObservationKind::Stage,
+                spektrafilm_backend::telemetry::ObservationKind::Stage,
                 context.purpose(),
             );
             scope.context().record_executor(
-                spektrafilm_gpu::telemetry::Executor::Cpu,
-                Some(spektrafilm_gpu::telemetry::CpuReason::GrainV1Sampler),
+                spektrafilm_backend::telemetry::Executor::Cpu,
+                Some(spektrafilm_backend::telemetry::CpuReason::GrainV1Sampler),
             );
             scope
         })
@@ -531,7 +531,7 @@ pub fn apply_grain_to_density_layers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spektrafilm_gpu::cpu_backend::CpuBackend;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
     use spektrafilm_math::precision::to_f64;
 
     const DENSITY_MIN: [f64; 3] = [0.03, 0.03, 0.03];

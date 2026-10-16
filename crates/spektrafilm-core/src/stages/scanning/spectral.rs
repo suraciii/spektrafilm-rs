@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::pchip3d::{pchip_interp, prepare_pchip_3d};
 use spektrafilm_math::precision::{from_f64, to_f64};
@@ -65,7 +65,7 @@ fn prepare_scanner_lut(
 ) -> PreparedScannerLut {
     let grid = build_lut_grid(steps, minimum, maximum);
     // log_xyz LUT — same function Python LUTs.
-    let log_xyz = spektrafilm_gpu::cpu_backend::scan_log_xyz_cpu(
+    let log_xyz = spektrafilm_backend::cpu_backend::scan_log_xyz_cpu(
         &grid,
         channel_density,
         base_density,
@@ -107,7 +107,7 @@ fn scan_spectral_via_lut(
     let _lut = super::super::StageObservation::cpu(
         _backend,
         "scanner_lut",
-        spektrafilm_gpu::telemetry::CpuReason::SpectralLut,
+        spektrafilm_backend::telemetry::CpuReason::SpectralLut,
     );
     let prepared = prepare_scanner_lut(
         channel_density,

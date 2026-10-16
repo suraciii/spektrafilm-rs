@@ -582,7 +582,7 @@ mod parity_tests {
         let g = from_f64(0.184);
         let img = ImageBuf::from_data(2, 2, vec![g; 12]);
         let out = pipeline
-            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
             .unwrap();
         assert_eq!((out.width, out.height), (2, 2));
         assert!(
@@ -629,7 +629,7 @@ mod parity_tests {
 
         let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
         let out_cpu = pipeline
-            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
             .unwrap();
 
         let mut max_diff = 0.0f64;

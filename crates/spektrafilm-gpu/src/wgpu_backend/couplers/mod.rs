@@ -56,7 +56,7 @@ fn langmuir_uniforms(k: Option<[f32; 3]>) -> ([f32; 4], [f32; 4]) {
 
 pub(super) fn build_dir_state(
     device: &ObservedDevice,
-    dp: &crate::DirCouplersGpuParams<'_>,
+    dp: &spektrafilm_backend::DirCouplersGpuParams<'_>,
     width: u32,
     height: u32,
     buf_a: &wgpu::Buffer,

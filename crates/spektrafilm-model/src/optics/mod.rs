@@ -1,6 +1,6 @@
 //! Shared optical image operations used by camera and scanner stages.
 
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::from_f64;
 /// Apply Python's unsharp mask with the faithful CPU Gaussian filter.

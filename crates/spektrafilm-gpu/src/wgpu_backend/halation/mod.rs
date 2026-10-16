@@ -26,7 +26,7 @@ pub(super) struct HalationState {
 
 pub(super) fn build_halation_state(
     device: &ObservedDevice,
-    hp: &crate::HalationGpuParams,
+    hp: &spektrafilm_backend::HalationGpuParams,
     width: u32,
     height: u32,
     buf_a: &wgpu::Buffer,

@@ -2,7 +2,7 @@
 // Handles same-layer and inter-layer inhibition with spatial diffusion.
 
 use rayon::prelude::*;
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
 

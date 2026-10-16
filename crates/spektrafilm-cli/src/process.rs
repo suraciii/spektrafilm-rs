@@ -804,8 +804,8 @@ fn cmd_process(
         IssueBoundary::BackendInit,
         &context,
         |backend_context| {
-            let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
-                Some(Backend::Cpu) => Box::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+            let backend: Box<dyn spektrafilm_backend::ComputeBackend> = match backend_choice {
+                Some(Backend::Cpu) => Box::new(spektrafilm_backend::cpu_backend::CpuBackend),
                 Some(Backend::Gpu) => Box::new(
                     spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().ok_or_else(
                         || anyhow::anyhow!("GPU backend unavailable; use --backend cpu"),

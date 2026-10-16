@@ -12,14 +12,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use eframe::egui;
+use spektrafilm_backend::ComputeBackend;
+use spektrafilm_backend::telemetry::{CollectionMode, ObservationKind, Purpose};
 use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
 use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
 use spektrafilm_core::presets::{Section, workflow_default};
 use spektrafilm_core::profile;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome, SourceRender};
-use spektrafilm_gpu::ComputeBackend;
-use spektrafilm_gpu::telemetry::{CollectionMode, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 mod app;
 mod backend;
@@ -173,11 +173,11 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod telemetry_lifecycle_tests {
     use super::*;
-    use spektrafilm_gpu::telemetry::ObservationContext;
+    use spektrafilm_backend::telemetry::ObservationContext;
 
     fn scanner_app() -> App {
         let mut app = App::new_with_browser_path(
-            Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+            Arc::new(spektrafilm_backend::cpu_backend::CpuBackend),
             None,
             None,
             None,

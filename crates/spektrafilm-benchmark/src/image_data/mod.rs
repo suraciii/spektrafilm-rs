@@ -480,12 +480,6 @@ pub use spektrafilm_math::lab::delta_e_2000;
 mod tests {
     use super::*;
     #[test]
-    fn cie_reference_pair() {
-        assert!(
-            (delta_e_2000([50., 2.6772, -79.7751], [50., 0., -82.7485]) - 2.0425).abs() < 0.0001
-        )
-    }
-    #[test]
     fn srgb_extended_range_roundtrip() {
         for x in [-0.125, 0., 0.03125, 0.18, 1., 1.5, 2.] {
             assert!((srgb_decode(srgb_encode(x)) - x).abs() < 1e-12)

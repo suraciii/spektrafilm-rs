@@ -4,7 +4,7 @@
 //! route. They are pure code motion out of `try_gpu_resident`: the bodies are
 //! unchanged, only the enclosing locals become explicit parameters.
 use super::chain::CpuStageFn;
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 
 /// Observed CPU backend for a fence stage, carrying the published reason.
@@ -16,12 +16,12 @@ use spektrafilm_math::image::ImageBuf;
 /// the stage's own stage markers stay live.
 pub(crate) fn fence_cpu_backend(
     backend: &dyn ComputeBackend,
-    reason: spektrafilm_gpu::telemetry::CpuReason,
+    reason: spektrafilm_backend::telemetry::CpuReason,
 ) -> Option<Box<dyn ComputeBackend>> {
     backend
         .observation_context()
         .filter(|context| context.enabled())
-        .map(|context| spektrafilm_gpu::bind_cpu_fallback(context.clone(), reason))
+        .map(|context| spektrafilm_backend::bind_cpu_fallback(context.clone(), reason))
 }
 
 impl super::super::Pipeline {
@@ -139,17 +139,17 @@ impl super::super::Pipeline {
             let reference = self.digital_reference.as_deref();
             let defer_correction = !n2p_requested;
             let fence_reason = if reference_mode || density_reading {
-                spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput
+                spektrafilm_backend::telemetry::CpuReason::NegativeToPositiveOutput
             } else if scan_context.receiver.is_some() {
-                spektrafilm_gpu::telemetry::CpuReason::ScannerReceiver
+                spektrafilm_backend::telemetry::CpuReason::ScannerReceiver
             } else {
-                spektrafilm_gpu::telemetry::CpuReason::SpectralLut
+                spektrafilm_backend::telemetry::CpuReason::SpectralLut
             };
             let observed = fence_cpu_backend(backend, fence_reason);
             let closure: CpuStageFn<'_> = Box::new(move |density: &ImageBuf| {
-                static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
-                    spektrafilm_gpu::cpu_backend::CpuBackend;
-                let backend: &dyn spektrafilm_gpu::ComputeBackend =
+                static CPU_BACKEND: spektrafilm_backend::cpu_backend::CpuBackend =
+                    spektrafilm_backend::cpu_backend::CpuBackend;
+                let backend: &dyn spektrafilm_backend::ComputeBackend =
                     observed.as_deref().unwrap_or(&CPU_BACKEND);
                 if reference_mode {
                     // `stages::scanning` validates the prepared assets
@@ -200,7 +200,7 @@ impl super::super::Pipeline {
                     let _diffusion = crate::stages::StageObservation::cpu(
                         seed_backend,
                         "optical_diffusion",
-                        spektrafilm_gpu::telemetry::CpuReason::OpticalDiffusion,
+                        spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion,
                     );
                     Ok(spektrafilm_model::diffusion::apply_diffusion_filter_um(
                         raw,
@@ -232,15 +232,15 @@ impl super::super::Pipeline {
             let preflash = self.preflash_raw;
             let bw = color_ref.printing_exposure_correction;
             let fence_reason = if self.params.settings.use_enlarger_lut {
-                spektrafilm_gpu::telemetry::CpuReason::SpectralLut
+                spektrafilm_backend::telemetry::CpuReason::SpectralLut
             } else {
-                spektrafilm_gpu::telemetry::CpuReason::OpticalDiffusion
+                spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion
             };
             let observed = fence_cpu_backend(backend, fence_reason);
             let closure: CpuStageFn<'_> = Box::new(move |density: &ImageBuf| {
-                static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
-                    spektrafilm_gpu::cpu_backend::CpuBackend;
-                let backend: &dyn spektrafilm_gpu::ComputeBackend =
+                static CPU_BACKEND: spektrafilm_backend::cpu_backend::CpuBackend =
+                    spektrafilm_backend::cpu_backend::CpuBackend;
+                let backend: &dyn spektrafilm_backend::ComputeBackend =
                     observed.as_deref().unwrap_or(&CPU_BACKEND);
                 Ok(crate::stages::printing::expose_calibrated(
                     density,
@@ -296,7 +296,7 @@ impl super::super::Pipeline {
             // keeps the stage's own executor reasons published.
             let n2p_backend = fence_cpu_backend(
                 backend,
-                spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
+                spektrafilm_backend::telemetry::CpuReason::NegativeToPositiveOutput,
             );
             let closure: CpuStageFn<'_> = Box::new(move |rgb: &ImageBuf| {
                 let observation =
@@ -306,9 +306,9 @@ impl super::super::Pipeline {
                         // the per-stage route's scan stage.
                         crate::stages::StageObservation::new(seed_backend, "scanning");
                 let observed = observation.backend(seed_backend);
-                static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
-                    spektrafilm_gpu::cpu_backend::CpuBackend;
-                let interp_backend: &dyn spektrafilm_gpu::ComputeBackend = if n2p {
+                static CPU_BACKEND: spektrafilm_backend::cpu_backend::CpuBackend =
+                    spektrafilm_backend::cpu_backend::CpuBackend;
+                let interp_backend: &dyn spektrafilm_backend::ComputeBackend = if n2p {
                     n2p_backend.as_deref().unwrap_or(&CPU_BACKEND)
                 } else {
                     observed
@@ -321,7 +321,7 @@ impl super::super::Pipeline {
                     crate::stages::StageObservation::cpu(
                         seed_backend,
                         "scanner_film_points",
-                        spektrafilm_gpu::telemetry::CpuReason::ScannerFilmPoints,
+                        spektrafilm_backend::telemetry::CpuReason::ScannerFilmPoints,
                     )
                 });
                 let mut image = rgb.clone();

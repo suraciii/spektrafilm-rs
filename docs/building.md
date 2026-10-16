@@ -71,7 +71,7 @@ Extract the entire archive and launch the wrappers in `bin/`. They locate bundle
 
 ## Verification gates
 
-The default and integration branch is `main-0.3.4`; pull requests require the `PR lightweight` check, which runs `just ci-pr` through `just verify-pr`. Pushes to `main-0.3.4` and manual dispatch run `Main full verification` through `just verify`; pushes also run the three-platform release workflow, which runs on version tags and manual release dispatch.
+The default and integration branch is `main-0.3.4`; pull requests require the `PR lightweight` check, which runs `just ci-pr` through `just verify-pr`. Pushes to `main-0.3.4` and manual dispatch run the `Main CI` workflow: the `Main full verification` job runs the full gate through `just verify`, and the three-platform `Build packages` job then produces nightly packages as workflow artifacts. Version tags and manual dispatch run the `Release` workflow: a gate job verifies that the tag sits on `main-0.3.4` and matches the workspace version, and the shared three-platform build attaches the packages to the GitHub Release.
 
 ## Package and GUI verification
 

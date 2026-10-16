@@ -10,13 +10,13 @@ use spektrafilm_math::precision::from_f64;
 
 /// Keep a stage's backend view and observation lifetime together.
 pub(crate) struct StageObservation<'a> {
-    bound: Option<Box<dyn spektrafilm_gpu::ComputeBackend + 'a>>,
-    scope: spektrafilm_gpu::telemetry::ObservationScope,
+    bound: Option<Box<dyn spektrafilm_backend::ComputeBackend + 'a>>,
+    scope: spektrafilm_backend::telemetry::ObservationScope,
 }
 
 impl<'a> StageObservation<'a> {
     pub(crate) fn new(
-        backend: &'a dyn spektrafilm_gpu::ComputeBackend,
+        backend: &'a dyn spektrafilm_backend::ComputeBackend,
         name: &'static str,
     ) -> Self {
         let Some(context) = backend
@@ -30,10 +30,10 @@ impl<'a> StageObservation<'a> {
         };
         let scope = context.scope(
             name,
-            spektrafilm_gpu::telemetry::ObservationKind::Stage,
+            spektrafilm_backend::telemetry::ObservationKind::Stage,
             context.purpose(),
         );
-        let bound = Some(spektrafilm_gpu::bind_backend(
+        let bound = Some(spektrafilm_backend::bind_backend(
             backend,
             scope.context().clone(),
         ));
@@ -41,24 +41,24 @@ impl<'a> StageObservation<'a> {
     }
 
     pub(crate) fn cpu(
-        backend: &'a dyn spektrafilm_gpu::ComputeBackend,
+        backend: &'a dyn spektrafilm_backend::ComputeBackend,
         name: &'static str,
-        reason: spektrafilm_gpu::telemetry::CpuReason,
+        reason: spektrafilm_backend::telemetry::CpuReason,
     ) -> Self {
         let stage = Self::new(backend, name);
         if stage.scope.context().enabled() {
             stage
                 .scope
                 .context()
-                .record_executor(spektrafilm_gpu::telemetry::Executor::Cpu, Some(reason));
+                .record_executor(spektrafilm_backend::telemetry::Executor::Cpu, Some(reason));
         }
         stage
     }
 
     pub(crate) fn backend(
         &self,
-        original: &'a dyn spektrafilm_gpu::ComputeBackend,
-    ) -> &dyn spektrafilm_gpu::ComputeBackend {
+        original: &'a dyn spektrafilm_backend::ComputeBackend,
+    ) -> &dyn spektrafilm_backend::ComputeBackend {
         self.bound.as_deref().unwrap_or(original)
     }
 
@@ -154,7 +154,7 @@ mod integration_tests {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let paper = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let image = ImageBuf::from_data(
             8,
             6,
@@ -229,7 +229,7 @@ mod integration_tests {
         params.film_render.halation.active = false;
         params.film_render.dir_couplers.active = false;
         params.settings.use_scanner_lut = false;
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
         let mut updated_params = pipeline.params.clone();
         updated_params.io.scan_film = false;
@@ -266,7 +266,7 @@ mod integration_tests {
         params.camera.auto_exposure = false;
         let params = crate::params_builder::digest_params(params, &film, &print, None, true);
 
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let mut data = Vec::with_capacity(64 * 64 * 3);
         for y in 0..64 {
             for x in 0..64 {
@@ -329,7 +329,7 @@ mod scan_semantics_tests {
     use crate::pipeline::Pipeline;
     use crate::profile;
     use crate::test_support::data_dir;
-    use spektrafilm_gpu::cpu_backend::CpuBackend;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
     use spektrafilm_math::image::ImageBuf;
     use spektrafilm_math::precision::{from_f64, to_f64};
 

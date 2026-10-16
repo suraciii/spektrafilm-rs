@@ -1,6 +1,6 @@
 //! In-emulsion scatter and back-reflection halation in physical units.
 
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{Scalar, ZERO, from_f64};
 /// Apply in-emulsion scatter and back-reflection halation.

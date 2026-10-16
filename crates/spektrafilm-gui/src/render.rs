@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
+use spektrafilm_backend::telemetry::{ObservationContext, ObservationKind, Purpose};
 use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, Runtime, ScannerSetup};
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
-use spektrafilm_gpu::telemetry::{ObservationContext, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 
 use super::observed_result;
@@ -290,9 +290,9 @@ pub(super) fn build_runtime_observed(
 #[cfg(test)]
 mod tests {
     use super::{RenderSnapshot, RuntimeCache};
+    use spektrafilm_backend::cpu_backend::CpuBackend;
+    use spektrafilm_backend::telemetry::ObservationContext;
     use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
-    use spektrafilm_gpu::cpu_backend::CpuBackend;
-    use spektrafilm_gpu::telemetry::ObservationContext;
     use spektrafilm_math::image::ImageBuf;
     use std::sync::{Arc, OnceLock};
 
