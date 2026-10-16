@@ -16,19 +16,6 @@ pub enum SpectralCommand {
     Evaluate(EvaluateArgs),
 }
 
-/// Chain measurement and reading commands.
-#[derive(Subcommand)]
-pub enum MeasureCommand {
-    /// Measure the real chain on a declared stimulus set.
-    Run(MeasureRunArgs),
-    /// Read declared sample points from an image or a retained stage capture.
-    Sample(MeasureSampleArgs),
-    /// Compare two retained measurements, sample by sample.
-    Compare(MeasureCompareArgs),
-    /// Re-resolve a recorded measurement's chain and report identity differences.
-    Verify(MeasureVerifyArgs),
-}
-
 /// Appearance evaluation: document discovery, evidence rendering, comparison,
 /// and offline reporting.
 #[derive(Args)]
