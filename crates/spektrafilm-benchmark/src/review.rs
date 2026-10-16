@@ -16,6 +16,7 @@ use crate::{documents, image_data};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const BODY: &str = include_str!("../assets/review.html");
@@ -101,6 +102,19 @@ fn overlap(a: [u64; 4], b: [u64; 4]) -> bool {
         && b[1] < a[1].saturating_add(a[3])
 }
 
+/// Spreadsheet-style column labels: `A` through `Z`, then `AA` and subsequent
+/// names, matching the review page's patch labels.
+fn column_label(column: u64) -> String {
+    let mut label = String::new();
+    let mut n = column;
+    while n > 0 {
+        let rest = (n - 1) % 26;
+        label.insert(0, char::from(b'A' + rest as u8));
+        n = (n - 1) / 26;
+    }
+    label
+}
+
 /// Declared patch window geometry. Windows are laid out row-major from the
 /// origin with the declared cell size and gap; all arithmetic stays checked
 /// because oversized declarations must fail instead of wrapping.
@@ -129,6 +143,37 @@ impl Grid {
         count
             .checked_mul(patch)?
             .checked_add(count.checked_sub(1)?.checked_mul(gap)?)
+    }
+    fn position(origin: u64, index: u64, size: u64, gap: u64) -> Option<u64> {
+        index
+            .checked_mul(size.checked_add(gap)?)?
+            .checked_add(origin)
+    }
+    /// Row-major patch windows with spreadsheet-style labels and checked
+    /// arithmetic; the review page derives the same windows from the same
+    /// declaration.
+    fn windows(&self) -> Result<Vec<(String, [u64; 4])>> {
+        self.extent()?;
+        let overflow = || {
+            err(
+                "invalid_bounds",
+                "declared grid windows overflow 64-bit geometry",
+            )
+        };
+        let mut windows = Vec::new();
+        for row in 1..=self.rows {
+            for column in 1..=self.columns {
+                let x = Self::position(self.origin[0], column - 1, self.patch_size[0], self.gap[0])
+                    .ok_or_else(overflow)?;
+                let y = Self::position(self.origin[1], row - 1, self.patch_size[1], self.gap[1])
+                    .ok_or_else(overflow)?;
+                windows.push((
+                    format!("{}{row}", column_label(column)),
+                    [x, y, self.patch_size[0], self.patch_size[1]],
+                ));
+            }
+        }
+        Ok(windows)
     }
     /// `[width, height]` spanned by every declared patch window including the
     /// origin offset; `None` means the declared grid overflows 64-bit geometry.
@@ -511,6 +556,203 @@ fn build_report_impl(
         "manifest": root.join("report.json"),
         "image_count": image_count,
         "set_count": set_count,
+    }))
+}
+
+/// Parse `WIDTHxHEIGHT`; both values must be positive integers.
+fn sample_window(value: &str) -> Result<[u64; 2]> {
+    let invalid = || {
+        err(
+            "invalid_sample",
+            "sample must be WIDTHxHEIGHT with positive integers",
+        )
+    };
+    let (width, height) = value.split_once('x').ok_or_else(invalid)?;
+    let width = width.parse::<u64>().map_err(|_| invalid())?;
+    let height = height.parse::<u64>().map_err(|_| invalid())?;
+    if width == 0 || height == 0 {
+        return Err(invalid());
+    }
+    Ok([width, height])
+}
+
+/// Decoded dimensions of every image in one set. Each source is loaded from an
+/// isolated snapshot so sidecars next to it can never be consumed here.
+fn set_dimensions(
+    authored: &Value,
+    set_id: &str,
+    manifest: &Path,
+) -> Result<Vec<(String, [usize; 2])>> {
+    let images = authored["images"].as_array().unwrap();
+    let work =
+        std::env::temp_dir().join(format!("spektrafilm-review-regions-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&work);
+    fs::create_dir_all(&work)?;
+    let result = (|| -> Result<Vec<(String, [usize; 2])>> {
+        let mut dimensions = Vec::new();
+        for (index, value) in images.iter().enumerate() {
+            let o = obj(value)?;
+            if text(o, "set")? != set_id {
+                continue;
+            }
+            let id = text(o, "id")?.to_owned();
+            let source = source_path(o, manifest)?;
+            let snapshot = snapshot_path(&work, index, &source);
+            fs::copy(&source, &snapshot)?;
+            let image = image_data::load_image(&json!({
+                "path": snapshot.display().to_string(),
+                "color_space": text(o, "color_space")?,
+                "cctf_decoding": o["cctf_decoding"].clone(),
+            }))
+            .map_err(|mut error: Error| {
+                error.message = format!("image {id}: {}", error.message);
+                error.at(source.display().to_string())
+            })?;
+            dimensions.push((id, [image.width, image.height]));
+        }
+        Ok(dimensions)
+    })();
+    let _ = fs::remove_dir_all(&work);
+    result
+}
+
+/// Derive a measurement region array from one grid set of a review manifest.
+///
+/// The command reads the manifest and the set's decoded image dimensions; it
+/// never renders and never computes measurements. Windows reuse the review
+/// page's declared arithmetic, keep the patch names, and are validated as the
+/// existing `regions` kind before the destination is created.
+pub fn derive_regions(
+    review: &Path,
+    set_id: &str,
+    out: &Path,
+    sample: Option<&str>,
+    role: &str,
+    measurements: &[String],
+) -> Result<Value> {
+    let root = documents::normalize_path(out)?;
+    if fs::symlink_metadata(out).is_ok() {
+        return Err(common::destination_exists(out));
+    }
+    let roles = documents::region_roles()?;
+    if !roles.iter().any(|name| name == role) {
+        return Err(err(
+            "invalid_role",
+            format!(
+                "unknown region role: {role}; available: {}",
+                roles.join(", ")
+            ),
+        ));
+    }
+    let families = documents::measurement_families()?;
+    for choice in measurements {
+        if !families.iter().any(|name| name == choice) {
+            return Err(err(
+                "invalid_measurements",
+                format!(
+                    "unknown measurement family: {choice}; available: {}",
+                    families.join(", ")
+                ),
+            ));
+        }
+    }
+    let manifest_path = documents::normalize_path(review)?;
+    let authored = validate_manifest(&manifest_path)?;
+    let sets = authored["sets"].as_array().unwrap();
+    let set = sets
+        .iter()
+        .find(|set| set["id"].as_str() == Some(set_id))
+        .ok_or_else(|| {
+            let available: Vec<&str> = sets.iter().filter_map(|set| set["id"].as_str()).collect();
+            err(
+                "unknown_set",
+                format!("unknown set: {set_id}; available: {}", available.join(", ")),
+            )
+        })?;
+    let Some(grid) = set.get("grid") else {
+        return Err(err(
+            "missing_grid",
+            format!("set {set_id} declares no grid; regions are derived from grid sets only"),
+        ));
+    };
+    let windows = Grid::parse(grid)?.windows()?;
+    let sample = sample.map(sample_window).transpose()?;
+    let dimensions = set_dimensions(&authored, set_id, &manifest_path)?;
+    let mut regions = Vec::new();
+    for (label, patch) in windows {
+        let window = match sample {
+            None => patch,
+            Some([width, height]) => {
+                if width > patch[2] || height > patch[3] {
+                    return Err(err(
+                        "invalid_sample",
+                        format!(
+                            "sample window {width}×{height} does not fit patch window {label} ({}×{})",
+                            patch[2], patch[3]
+                        ),
+                    ));
+                }
+                [
+                    patch[0] + (patch[2] - width) / 2,
+                    patch[1] + (patch[3] - height) / 2,
+                    width,
+                    height,
+                ]
+            }
+        };
+        for (image_id, [width, height]) in &dimensions {
+            if window[0].saturating_add(window[2]) > *width as u64
+                || window[1].saturating_add(window[3]) > *height as u64
+            {
+                return Err(err(
+                    "invalid_bounds",
+                    format!("window {label} leaves the decoded image {image_id}"),
+                ));
+            }
+        }
+        regions.push(json!({
+            "id": label,
+            "label": label,
+            "role": role,
+            "geometry": window,
+            "measurements": measurements,
+        }));
+    }
+    let value = Value::Array(regions);
+    documents::validate_shape("regions", &value)?;
+    documents::validate_local_dependencies("regions", &value, &root)?;
+    let bytes = serde_json::to_vec_pretty(&value)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(out)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                common::destination_exists(out)
+            } else {
+                error.into()
+            }
+        })?;
+    let persisted = (|| -> Result<()> {
+        file.write_all(&bytes)?;
+        file.write_all(b"\n")?;
+        let stored = documents::load_json_value(out)?;
+        documents::validate_shape("regions", &stored)?;
+        Ok(())
+    })();
+    if let Err(error) = persisted {
+        drop(file);
+        fs::remove_file(out)?;
+        return Err(error);
+    }
+    let region_count = value.as_array().map(Vec::len).unwrap_or(0);
+    Ok(json!({
+        "schema_version": 1,
+        "command": "regions",
+        "execution_status": "completed",
+        "artifact": root,
+        "set": set_id,
+        "region_count": region_count,
     }))
 }
 

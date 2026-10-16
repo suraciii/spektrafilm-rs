@@ -200,6 +200,24 @@ enum Command {
         #[arg(long, help = "Override the default right image ID", requires = "left")]
         right: Option<String>,
     },
+    /// Derive measurement regions from one grid set of a review manifest.
+    Regions {
+        #[arg(long, help = "Review manifest with the declared grid set")]
+        review: PathBuf,
+        #[arg(long, help = "Grid set identity to derive")]
+        set: String,
+        #[arg(long, help = "New region array JSON file; must not exist")]
+        out: PathBuf,
+        #[arg(
+            long,
+            help = "Sample window WIDTHxHEIGHT centered inside each patch window"
+        )]
+        sample: Option<String>,
+        #[arg(long, help = "Region role", default_value = "other")]
+        role: String,
+        #[arg(long, help = "Measurement families, comma separated (default none)")]
+        measurements: Option<String>,
+    },
 }
 fn emit(value: &Value) {
     println!("{}", serde_json::to_string_pretty(value).unwrap());
@@ -244,6 +262,23 @@ fn validate(kind: &str, file: &Path) -> Result<Value> {
         result["protocol_digest"] = json!(documents::protocol_digest(&value)?);
     }
     Ok(result)
+}
+fn measurement_selection(value: Option<&str>) -> Result<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let mut selected = Vec::new();
+    for part in value.split(',') {
+        let part = part.trim();
+        if part.is_empty() || selected.iter().any(|existing| existing == part) {
+            return Err(Error::new(
+                "invalid_measurements",
+                format!("measurement families must be distinct nonempty names: {value}"),
+            ));
+        }
+        selected.push(part.to_owned());
+    }
+    Ok(selected)
 }
 fn execute(command: Command) -> Result<(Value, i32)> {
     match command {
@@ -379,6 +414,24 @@ fn execute(command: Command) -> Result<(Value, i32)> {
             review::build_report(&manifest, &out, left.as_deref(), right.as_deref())?,
             0,
         )),
+        Command::Regions {
+            review,
+            set,
+            out,
+            sample,
+            role,
+            measurements,
+        } => Ok((
+            review::derive_regions(
+                &review,
+                &set,
+                &out,
+                sample.as_deref(),
+                &role,
+                &measurement_selection(measurements.as_deref())?,
+            )?,
+            0,
+        )),
     }
 }
 fn run() -> i32 {
@@ -390,6 +443,7 @@ fn run() -> i32 {
         Command::Compare { .. } => "compare",
         Command::Report { .. } => "report",
         Command::Review { .. } => "review",
+        Command::Regions { .. } => "regions",
         Command::Inspect { .. } => "inspect",
         Command::Target { .. } => "target",
     };
