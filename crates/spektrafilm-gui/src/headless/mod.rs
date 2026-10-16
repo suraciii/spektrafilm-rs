@@ -213,10 +213,17 @@ fn click(h: &mut Harness<'_, App>, label: &str) {
 /// much above the screen bottom rather than at the screen edge.
 fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
     let screen = h.ctx.screen_rect();
+    // The band starts below the panel's own top padding, and ends above the
+    // reserve the panel keeps clear for its action bar. The bounds kittest
+    // reports are f64, so the whole band is compared in f64.
     let band_top = 40.0_f64;
-    let band_bottom = screen.bottom() as f64 - theme::HEIGHT_ACTION_BAR_RESERVE as f64;
-    let panel_left = (screen.right() - 320.0) as f64;
-    for _ in 0..16 {
+    let band_bottom = f64::from(screen.bottom()) - f64::from(theme::HEIGHT_ACTION_BAR_RESERVE);
+    let panel_left = f64::from(screen.right()) - f64::from(theme::WIDTH_CONTROL_PANEL);
+    /// How many scrolls a target may need before the helper gives up. A page's
+    /// controls are taller than the viewport by a bounded amount, so a handful
+    /// of full-height scrolls always reaches the bottom.
+    const SCROLL_ATTEMPTS: usize = 16;
+    for _ in 0..SCROLL_ATTEMPTS {
         let needs_scroll = h
             .query_all_by_label(label)
             .filter_map(|node| node.node().raw_bounds())

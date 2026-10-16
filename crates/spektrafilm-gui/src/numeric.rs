@@ -163,14 +163,18 @@ fn row_slider<T: egui::emath::Numeric>(
     max: f64,
     step: f64,
 ) -> bool {
-    let mut slider = egui::Slider::new(value, T::from_f64(min)..=T::from_f64(max))
+    let logarithmic = slider_scale(min, max) == SliderScale::Logarithmic;
+    // A logarithmic track anchors its positive floor at the declared step, so
+    // the granularity the value field offers is the granularity the track
+    // spans. egui honours `smallest_positive` only when the range minimum is
+    // zero, so a positive minimum moves the floor onto the track itself.
+    let track_min = if logarithmic { min.max(step) } else { min };
+    let mut slider = egui::Slider::new(value, T::from_f64(track_min)..=T::from_f64(max))
         .show_value(false)
         .clamping(egui::SliderClamping::Never);
-    if slider_scale(min, max) == SliderScale::Logarithmic {
+    if logarithmic {
         slider = slider
             .logarithmic(true)
-            // The positive floor is the editor's own step, so the track's
-            // granularity matches the value field's.
             .smallest_positive(step.max(f64::MIN_POSITIVE));
     }
     let response = ui.add(slider).on_hover_text(tooltip_for(label));

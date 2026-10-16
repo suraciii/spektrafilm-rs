@@ -190,7 +190,15 @@ pub(crate) fn diffusion(
     filter: &mut ControlFilter<'_>,
 ) -> bool {
     let mut changed = false;
-    if filter_matches(filter, "active") {
+    // The row's label is the section's own name, so a search for that name
+    // finds the toggle; `filter_matches` needs a stable key, and the section
+    // names are stable.
+    let key: &'static str = if label == "Camera diffusion" {
+        "Camera diffusion"
+    } else {
+        "Enlarger diffusion"
+    };
+    if filter_matches(filter, key) {
         changed |= toggle(
             ui,
             label,
@@ -629,41 +637,48 @@ pub(crate) fn choice_tip_options<'a>(
         .clone()
         .find(|&(option, _)| option == value.as_str())
         .map(|(_, display_label)| display_label)
-        .unwrap_or(value.as_str());
+        .unwrap_or_else(|| value.as_str())
+        .to_owned();
     let prev = value.clone();
     // Label first, selector second, so a choice row reads like every other
-    // parameter row. `from_id_salt` paints the box where it is placed instead
-    // of appending its own label after it. The width is capped so a selector
-    // sharing a row with another control leaves room for it.
-    row_label(ui, label, experimental).on_hover_text(tooltip);
-    // The selector takes the width still unclaimed in its row, capped, so a
-    // selector sharing a row with another control leaves room for it and never
-    // pushes the row past its container.
-    let width = ui
-        .available_width()
-        .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
-    egui::ComboBox::from_id_salt(label)
-        .selected_text(selected_label)
-        .width(width)
-        // Truncate rather than extend: an extending selector takes its text's
-        // full width and pushes whatever shares the row past the container.
-        .wrap_mode(egui::TextWrapMode::Truncate)
-        .show_ui(ui, |ui| {
-            for (option, display_label) in choices {
-                // Allocate only when a selection changes, not for every option each frame.
-                if ui
-                    .selectable_label(value.as_str() == option, display_label)
-                    .on_hover_text(tooltip)
-                    .clicked()
-                    && value.as_str() != option
-                {
-                    *value = option.to_owned();
+    // parameter row. The selector paints in its own horizontal row inside a
+    // vertical section body, so both share one explicit row here. `from_id_salt`
+    // paints the box where it is placed instead of appending its own label
+    // after it. The width is capped so a selector sharing a row with another
+    // control leaves room for it.
+    ui.horizontal(|ui| {
+        row_label(ui, label, experimental).on_hover_text(tooltip);
+        // The selector takes the width still unclaimed in its row, capped, so a
+        // selector sharing a row with another control leaves room for it and
+        // never pushes the row past its container.
+        let width = ui
+            .available_width()
+            .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
+        egui::ComboBox::from_id_salt(label)
+            .selected_text(&selected_label)
+            .width(width)
+            // Truncate rather than extend: an extending selector takes its
+            // text's full width and pushes whatever shares the row past the
+            // container.
+            .wrap_mode(egui::TextWrapMode::Truncate)
+            .show_ui(ui, |ui| {
+                for (option, display_label) in choices {
+                    // Allocate only when a selection changes, not for every
+                    // option each frame.
+                    if ui
+                        .selectable_label(value.as_str() == option, display_label)
+                        .on_hover_text(tooltip)
+                        .clicked()
+                        && value.as_str() != option
+                    {
+                        *value = option.to_owned();
+                    }
                 }
-            }
-        })
-        .response
-        .on_hover_text(tooltip);
-    name_choice(ui, label);
+            })
+            .response
+            .on_hover_text(tooltip);
+        name_choice(ui, label);
+    });
     prev != *value
 }
 
@@ -672,7 +687,7 @@ pub(crate) fn choice_tip_options<'a>(
 /// The selector's own widget info carries an empty label, and a `labelled_by`
 /// link to the visible label would make that label node the one a label query
 /// returns, so the selector is named directly instead.
-fn name_choice(ui: &Ui, label: &str) {
+pub(crate) fn name_choice(ui: &Ui, label: &str) {
     let id = ui.make_persistent_id(egui::Id::new(label));
     ui.ctx().accesskit_node_builder(id, |node| {
         node.set_label(label);
@@ -693,24 +708,29 @@ pub(crate) fn extra_choice(
 ) -> bool {
     let current = extras[section][key].as_str().unwrap_or(default);
     let mut selected = None;
-    row_label(ui, label, false).on_hover_text(tooltip);
-    egui::ComboBox::from_id_salt(label)
-        .selected_text(current)
-        .show_ui(ui, |ui| {
-            for &option in choices {
-                if ui
-                    .selectable_label(current == option, option)
-                    .on_hover_text(tooltip)
-                    .clicked()
-                    && current != option
-                {
-                    selected = Some(option);
+    // Label first, selector second, so a choice row reads like every other
+    // parameter row. The selector paints in its own horizontal row inside a
+    // vertical section body, so both share one explicit row here.
+    ui.horizontal(|ui| {
+        row_label(ui, label, false).on_hover_text(tooltip);
+        egui::ComboBox::from_id_salt(label)
+            .selected_text(current)
+            .show_ui(ui, |ui| {
+                for &option in choices {
+                    if ui
+                        .selectable_label(current == option, option)
+                        .on_hover_text(tooltip)
+                        .clicked()
+                        && current != option
+                    {
+                        selected = Some(option);
+                    }
                 }
-            }
-        })
-        .response
-        .on_hover_text(tooltip);
-    name_choice(ui, label);
+            })
+            .response
+            .on_hover_text(tooltip);
+        name_choice(ui, label);
+    });
     if let Some(selected) = selected {
         set_extra(extras, section, key, Value::from(selected));
         true

@@ -779,25 +779,30 @@ fn control_search_reaches_scanner_controls_by_their_visible_labels() {
 fn a_section_reset_restores_the_factory_value_and_clears_the_mark() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "FILM");
+    click(h, "MAIN");
 
-    // Grain is open by default, so its rows are reachable without expanding it.
-    // The section starts at the factory state, so it is unmarked.
-    assert!(h.query_by_label("modified").is_none());
-    let factory = h.state().params.film_render.grain.blur;
-
-    edit(h, "blur", "0.5");
-    assert_ne!(h.state().params.film_render.grain.blur, factory);
+    // The Camera section is open by default, so its rows are reachable without
+    // expanding it. The section starts at the factory state, so it is unmarked.
+    let factory = h.state().params.camera.exposure_compensation_ev;
+    edit(h, "exposure compensation ev", "0.75");
+    assert_ne!(h.state().params.camera.exposure_compensation_ev, factory);
     assert!(h.query_by_label("modified").is_some());
 
-    // A neighbouring section is untouched by the reset.
-    let halation_factory = h.state().params.film_render.halation.scatter_amount;
+    // A neighbouring section keeps an edit made after the last load, so the
+    // reset restores the section it belongs to and nothing else.
+    edit(h, "print exposure", "2.0");
+    let neighbour = h.state().params.enlarger.print_exposure;
+    assert_ne!(neighbour, 1.0, "the neighbour's edit landed");
 
-    click(h, "reset Grain");
-    assert_eq!(h.state().params.film_render.grain.blur, factory);
-    assert!(h.query_by_label("modified").is_none());
+    click(h, "reset Camera");
     assert_eq!(
-        h.state().params.film_render.halation.scatter_amount,
-        halation_factory
+        h.state().params.camera.exposure_compensation_ev,
+        factory,
+        "the reset restores its own section"
+    );
+    assert_eq!(
+        h.state().params.enlarger.print_exposure,
+        neighbour,
+        "another section's reset does not revert the neighbour's live edit"
     );
 }

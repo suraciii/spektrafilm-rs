@@ -11,13 +11,13 @@ pub(crate) fn sections(
 ) {
     if section == "Film base" {
         ui.scope(|ui| {
-            if filter_matches(filter, "active") {
+            if filter_matches(filter, "enable film base") {
                 flags.runtime_changed |= toggle(
-                ui,
-                "Enable film base",
-                &mut params.film_render.base.active,
-                "Enable film base-density (film base + fog / orange mask) tuning.",
-            );
+                    ui,
+                    "Enable film base",
+                    &mut params.film_render.base.active,
+                    "Enable film base-density (film base + fog / orange mask) tuning.",
+                );
             }
             if filter_matches(filter, "scale") {
                 flags.runtime_changed |= param_numeric(ui, "scale", &mut params.film_render.base.scale, "film_render.base.scale", "Overall multiplier on the film base density.");
@@ -38,7 +38,7 @@ pub(crate) fn sections(
     }
     if section == "Print base" {
         section_header(ui, filter, "Base", |ui, filter| {
-            if filter_matches(filter, "active") {
+            if filter_matches(filter, "enable print base") {
                 flags.runtime_changed |= toggle(
                     ui,
                     "Enable print base",

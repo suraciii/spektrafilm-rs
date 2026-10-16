@@ -16,13 +16,13 @@ pub(crate) fn sections(
                     .small()
                     .color(theme::FG_MUTED),
             );
-            if filter_matches(filter, "active") {
+            if filter_matches(filter, "enable halation") {
                 flags.runtime_changed |= toggle(
-                ui,
-                "Enable halation",
-                &mut params.film_render.halation.active,
-                "Enable halation and in-emulsion scatter.",
-            );
+                    ui,
+                    "Enable halation",
+                    &mut params.film_render.halation.active,
+                    "Enable halation and in-emulsion scatter.",
+                );
             }
             if filter_matches(filter, "scatter amount") {
                 flags.runtime_changed |= param_numeric(ui, "scatter amount", &mut params.film_render.halation.scatter_amount, "film_render.halation.scatter_amount", "High-level scatter strength. 1.0 = full physical scatter, 0.0 = no scatter. Scales the fraction of light that undergoes in-emulsion scattering.");

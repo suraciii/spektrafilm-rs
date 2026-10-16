@@ -11,7 +11,7 @@ pub(crate) fn sections(
 ) {
     if section == "Input gamut compress" {
         section_header(ui, filter, "Input gamut compress", |ui, filter| {
-            if filter_matches(filter, "active") {
+            if filter_matches(filter, "enable input gamut compress") {
                 flags.runtime_changed |= toggle(
                     ui,
                     "Enable input gamut compress",

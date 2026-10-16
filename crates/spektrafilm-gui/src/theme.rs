@@ -103,6 +103,9 @@ fn font_family(role: TextStyle) -> egui::FontFamily {
 
 /// Width of the value column in a parameter row.
 pub const WIDTH_VALUE: f32 = 72.0;
+/// Width of the right-hand control panel. The panel is fixed-width, so its
+/// geometry is a layout token rather than a literal at each use.
+pub const WIDTH_CONTROL_PANEL: f32 = 320.0;
 /// Narrowest a choice row's selector may be, so a long label still leaves a
 /// usable selector.
 pub const WIDTH_COMBO_MIN: f32 = 60.0;

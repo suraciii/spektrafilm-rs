@@ -111,7 +111,7 @@ pub(crate) fn sections(
     if section == "Grain" {
         ui.scope(|ui| {
             let grain = &mut params.film_render.grain;
-            if filter_matches(filter, "active") {
+            if filter_matches(filter, "enable grain") {
                 flags.runtime_changed |= toggle(ui, "Enable grain", &mut grain.active, "Add grain to the negative");
             }
             if filter_matches(filter, "engine") {

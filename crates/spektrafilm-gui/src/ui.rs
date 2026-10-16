@@ -502,38 +502,7 @@ impl App {
                 label_clicked = ui
                     .add(egui::Label::new(label).sense(egui::Sense::click()))
                     .clicked();
-                if section_reset::is_modified(section, &self.params) {
-                    ui.label(
-                        egui::RichText::new("modified")
-                            .color(theme::WARNING)
-                            .size(theme::SIZE_HINT),
-                    );
-                }
-                if section_reset::sections().any(|name| name == section) {
-                    let response = ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new("reset")
-                                    .color(theme::FG_MUTED)
-                                    .size(theme::SIZE_HINT),
-                            )
-                            .corner_radius(theme::RADIUS_CARD),
-                        )
-                        .on_hover_text(format!("Restore {section} to the factory state"));
-                    // Name the action after its section, so one reset is
-                    // addressable among the sections on a page.
-                    ui.ctx().accesskit_node_builder(response.id, |node| {
-                        node.set_label(format!("reset {section}"));
-                    });
-                    if response.clicked() {
-                        section_reset::reset(&mut self.gui_state, section);
-                        self.params = self
-                            .gui_state
-                            .runtime_params()
-                            .unwrap_or_else(|_| self.params.clone());
-                        self.mark_parameters_changed();
-                    }
-                }
+                self.section_reset_controls(ui, section);
                 self.section_preset_menu(ui, kind);
             });
             if label_clicked {
@@ -541,8 +510,54 @@ impl App {
             }
             header.body(|ui| self.parameter_section_controls(ui, section));
         } else {
+            // A section without a preset menu renders its own header inside
+            // the controls, so its reset scope rides on a row above them.
+            if section_reset::sections().any(|name| name == section) {
+                ui.horizontal(|ui| {
+                    self.section_reset_controls(ui, section);
+                });
+            }
             self.parameter_section_controls(ui, section);
         }
+    }
+
+    /// The `modified` chip and the reset action of one section header.
+    ///
+    /// Every resettable section presents these on its header, whether or not
+    /// it also carries a preset menu, so the reset scope the section table
+    /// declares is reachable from the surface that renders the section.
+    fn section_reset_controls(&mut self, ui: &mut egui::Ui, section: &str) -> bool {
+        let mut changed = false;
+        if section_reset::is_modified(section, &self.params, &self.gui_state.sections) {
+            ui.label(
+                egui::RichText::new("modified")
+                    .color(theme::WARNING)
+                    .size(theme::SIZE_HINT),
+            );
+        }
+        if section_reset::sections().any(|name| name == section) {
+            let response = ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("reset")
+                            .color(theme::FG_MUTED)
+                            .size(theme::SIZE_HINT),
+                    )
+                    .corner_radius(theme::RADIUS_CARD),
+                )
+                .on_hover_text(format!("Restore {section} to the factory state"));
+            // Name the action after its section, so one reset is
+            // addressable among the sections on a page.
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_label(format!("reset {section}"));
+            });
+            if response.clicked() {
+                section_reset::reset(&mut self.params, &mut self.gui_state.sections, section);
+                self.mark_parameters_changed_invalidating_calibration();
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Whether `section` rendered a control whose label matches the search
@@ -907,7 +922,7 @@ impl eframe::App for App {
         // Right control panel: histogram at top, tabs, scrollable controls, action bar
         egui::SidePanel::right("controls")
             .resizable(false)
-            .exact_width(320.0)
+            .exact_width(theme::WIDTH_CONTROL_PANEL)
             .show(ctx, |ui| {
                 let output_id = self
                     .output_image

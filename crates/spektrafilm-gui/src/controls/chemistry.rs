@@ -68,7 +68,7 @@ fn render_chemistry(
         &PRINT_CHEMISTRY_PATHS
     };
     let what = if film { "film" } else { "print" };
-    if filter_matches(filter, "active") {
+    if filter_matches(filter, "enable density curves") {
         flags.runtime_changed |= toggle(
             ui,
             &format!("Enable {what} density curves"),
