@@ -228,22 +228,29 @@ fn import_file(h: &mut Harness<'_, App>, raw: bool) {
     h.run_steps(3);
 }
 
-/// Scroll the controls panel to the bottom so clipped elements become visible.
+/// Scroll the controls panel down so elements below the fold come into view.
 ///
-/// The window header compresses the controls panel's scroll area, which can
-/// clip elements near the bottom. The harness's `simulate_click` doesn't scroll,
-/// so we explicitly set the scroll offset to the bottom before interacting.
-fn scroll_to_bottom(h: &mut Harness<'_, App>) {
-    let scroll_id = egui::Id::new("controls").with("controls-scroll");
-    if let Some(mut state) = egui::containers::scroll_area::State::load(&h.ctx, scroll_id) {
-        state.offset.y = f32::MAX;
-        state.store(&h.ctx, scroll_id);
-    }
-    h.run_steps(1);
+/// The harness's `simulate_click` doesn't scroll, and a section that expands
+/// below the fold reveals its controls outside the scroll viewport's clip
+/// rect, where pointer events no longer reach them. Real wheel input over the
+/// panel scrolls it through the same path a user takes.
+fn scroll_controls_down(h: &mut Harness<'_, App>) {
+    let screen = h.ctx.screen_rect();
+    let pointer = egui::pos2(screen.right() - 160.0, screen.center().y);
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(pointer));
+    h.input_mut().events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -600.0),
+        modifiers: Default::default(),
+    });
+    // egui smooths a large wheel delta over several frames; keep stepping so
+    // the scroll settles before the next interaction.
+    h.run_steps(10);
 }
 
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
-    scroll_to_bottom(h);
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .simulate_click();
     h.run_steps(3);
@@ -642,6 +649,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // Export must ignore the most recently retained preview's reduced resolution.
     render(h, "PREVIEW");
     click(h, "Export options");
+    scroll_controls_down(h);
     click(h, "Export…");
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");

@@ -257,6 +257,8 @@ impl App {
         }
         app.viewer
             .restore_state(&app.gui_state.sections["rust"]["viewer"]);
+        app.histogram
+            .restore_state(&app.gui_state.sections["rust"]["histogram"]);
         app
     }
 
@@ -275,6 +277,7 @@ impl App {
             extras["rust"] = serde_json::json!({"version":1});
         }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
+        extras["rust"]["histogram"] = self.histogram.persistent_state();
         self.export_options.write_state(&mut extras);
         extras["rust"]["presets"] = serde_json::to_value(&self.presets.state)?;
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
@@ -328,6 +331,8 @@ impl App {
         }
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);
+        self.histogram
+            .restore_state(&self.gui_state.sections["rust"]["histogram"]);
         Ok(())
     }
 

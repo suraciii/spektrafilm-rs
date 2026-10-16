@@ -129,7 +129,8 @@ impl HistogramData {
 /// State for the histogram strip in the control panel.
 #[derive(Clone, Debug)]
 pub struct HistogramStrip {
-    /// Whether the strip is visible.
+    /// Whether the strip is expanded. Default-on; the collapse state is
+    /// persisted as the readout's visibility state.
     pub visible: bool,
     /// Cached histogram data.
     data: Option<HistogramData>,
@@ -153,6 +154,19 @@ impl HistogramStrip {
         Self::default()
     }
 
+    /// Serialize the persisted visibility state.
+    pub fn persistent_state(&self) -> serde_json::Value {
+        serde_json::json!({"visible": self.visible})
+    }
+
+    /// Restore the persisted visibility state; a missing or malformed value
+    /// keeps the default-on state.
+    pub fn restore_state(&mut self, value: &serde_json::Value) {
+        if let Some(visible) = value.get("visible").and_then(|v| v.as_bool()) {
+            self.visible = visible;
+        }
+    }
+
     /// Update the histogram from the current output image.
     pub fn update(&mut self, output_image: &Option<Arc<ImageBuf>>, generation: u64) {
         if let Some(img) = output_image {
@@ -172,47 +186,54 @@ impl HistogramStrip {
         self.data.as_ref()
     }
 
-    /// Render the histogram strip. Returns the height consumed.
-    pub fn render(&mut self, ui: &mut Ui) -> f32 {
-        if !self.visible {
-            return 0.0;
+    /// Render the histogram strip. The header row stays visible when the strip
+    /// is collapsed so the readout can be re-expanded.
+    pub fn render(&mut self, ui: &mut Ui) {
+        let response = egui::CollapsingHeader::new("Tonal distribution")
+            .open(Some(self.visible))
+            .show(ui, |ui| {
+                let available_width = ui.available_width();
+                let height = 80.0;
+                let rect =
+                    Rect::from_min_size(ui.cursor().min, egui::vec2(available_width, height));
+                ui.allocate_rect(rect, egui::Sense::hover());
+                if let Some(data) = &self.data {
+                    data.render(ui, rect);
+                } else {
+                    let painter = ui.painter_at(rect);
+                    painter.rect_filled(rect, 2.0, Color32::from_rgb(0x1a, 0x1a, 0x1d));
+                    painter.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "No output",
+                        egui::FontId::proportional(10.0),
+                        Color32::from_rgb(0x6a, 0x6a, 0x72),
+                    );
+                }
+                // Legend
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("R")
+                            .color(Color32::from_rgb(0xe0, 0x55, 0x55))
+                            .size(9.0),
+                    );
+                    ui.label(
+                        egui::RichText::new("G")
+                            .color(Color32::from_rgb(0x6a, 0xbf, 0x69))
+                            .size(9.0),
+                    );
+                    ui.label(
+                        egui::RichText::new("B")
+                            .color(Color32::from_rgb(0x6a, 0x9a, 0xd4))
+                            .size(9.0),
+                    );
+                });
+            });
+        // `.open(Some(..))` makes egui mirror our state instead of owning it,
+        // so the strip is the single source of truth for the collapse state.
+        if response.header_response.clicked() {
+            self.visible = !self.visible;
         }
-        let available_width = ui.available_width();
-        let height = 80.0;
-        let rect = Rect::from_min_size(ui.cursor().min, egui::vec2(available_width, height));
-        ui.allocate_rect(rect, egui::Sense::hover());
-        if let Some(data) = &self.data {
-            data.render(ui, rect);
-        } else {
-            let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, 2.0, Color32::from_rgb(0x1a, 0x1a, 0x1d));
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "No output",
-                egui::FontId::proportional(10.0),
-                Color32::from_rgb(0x6a, 0x6a, 0x72),
-            );
-        }
-        // Legend
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("R")
-                    .color(Color32::from_rgb(0xe0, 0x55, 0x55))
-                    .size(9.0),
-            );
-            ui.label(
-                egui::RichText::new("G")
-                    .color(Color32::from_rgb(0x6a, 0xbf, 0x69))
-                    .size(9.0),
-            );
-            ui.label(
-                egui::RichText::new("B")
-                    .color(Color32::from_rgb(0x6a, 0x9a, 0xd4))
-                    .size(9.0),
-            );
-        });
-        height + 14.0
     }
 }
 
@@ -256,5 +277,31 @@ mod tests {
         assert!(data.r[0] > 0.0);
         assert!(data.r[BINS - 1] > 0.0);
         assert!(data.r[1..BINS - 1].iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn visibility_state_persists_across_restore() {
+        let mut strip = HistogramStrip::new();
+        assert!(strip.visible, "the strip is default-on");
+        strip.visible = false;
+        let state = strip.persistent_state();
+        let mut restored = HistogramStrip::new();
+        restored.restore_state(&state);
+        assert!(!restored.visible, "a collapsed strip restores collapsed");
+        restored.visible = true;
+        restored.restore_state(&strip.persistent_state());
+        assert!(!restored.visible, "re-expansion also round-trips");
+    }
+
+    #[test]
+    fn restore_state_keeps_default_on_for_malformed_values() {
+        let mut strip = HistogramStrip::new();
+        strip.restore_state(&serde_json::json!({}));
+        assert!(strip.visible);
+        strip.restore_state(&serde_json::json!({"visible": "yes"}));
+        assert!(
+            strip.visible,
+            "a non-boolean value does not collapse the strip"
+        );
     }
 }
