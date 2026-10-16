@@ -1,13 +1,15 @@
-//! Offline visual report for explicitly prepared standardized chart images.
+//! Offline visual review for explicitly prepared image sets.
 //!
-//! The authored manifest declares every raster path together with an explicit
-//! color source (`color_space` + `cctf_decoding`). This module validates the
-//! declaration and its local dependencies, converts each source exactly once
-//! into a passive 16-bit sRGB display PNG, and publishes a self-contained
-//! `index.html` with a terminal `report.json` manifest. Display conversion is
-//! visualization only: there is no simulation, normalization, remeasurement or
-//! scoring, and the original rasters are never modified, so out-of-range
-//! samples and source metadata survive untouched in the declared sources.
+//! The authored manifest declares sets of prepared images — a shared patch
+//! grid or explicit per-image region rectangles — together with every raster
+//! path and an explicit color source (`color_space` + `cctf_decoding`). This
+//! module validates the declaration and its local dependencies, converts each
+//! source exactly once into a passive 16-bit sRGB display PNG, and publishes a
+//! self-contained `index.html` with a terminal `report.json` manifest.
+//! Display conversion is visualization only: there is no simulation,
+//! normalization, remeasurement or scoring, and the original rasters are never
+//! modified, so out-of-range samples and source metadata survive untouched in
+//! the declared sources.
 
 use crate::common::{self, Error, Result, create_destination, dump, sha256_file};
 use crate::{documents, image_data};
@@ -60,6 +62,43 @@ fn pair(o: &Map<String, Value>, k: &str) -> Result<[u64; 2]> {
             .ok_or_else(|| err("invalid_bounds", format!("{k} must hold 64-bit integers")))?;
     }
     Ok(out)
+}
+/// Parse one declared region rectangle `[x, y, width, height]`. Width and
+/// height must be positive so every window is a nonempty half-open rectangle.
+fn rect(v: &Value) -> Result<[u64; 4]> {
+    let a = v
+        .as_array()
+        .ok_or_else(|| err("invalid_bounds", "region rectangle must be an array"))?;
+    if a.len() != 4 {
+        return Err(err(
+            "invalid_bounds",
+            "region rectangle must hold four integers",
+        ));
+    }
+    let mut out = [0; 4];
+    for (slot, value) in out.iter_mut().zip(a) {
+        *slot = value.as_u64().ok_or_else(|| {
+            err(
+                "invalid_bounds",
+                "region rectangle must hold 64-bit integers",
+            )
+        })?;
+    }
+    if out[2] == 0 || out[3] == 0 {
+        return Err(err(
+            "invalid_bounds",
+            "region width and height must be positive",
+        ));
+    }
+    Ok(out)
+}
+/// Half-open rectangle intersection; saturated ends keep hostile declarations
+/// from wrapping.
+fn overlap(a: [u64; 4], b: [u64; 4]) -> bool {
+    a[0] < b[0].saturating_add(b[2])
+        && b[0] < a[0].saturating_add(a[2])
+        && a[1] < b[1].saturating_add(b[3])
+        && b[1] < a[1].saturating_add(a[3])
 }
 
 /// Declared patch window geometry. Windows are laid out row-major from the
@@ -148,36 +187,71 @@ fn source_path(image: &Map<String, Value>, manifest: &Path) -> Result<PathBuf> {
 
 fn validate_manifest_value(value: &Value, manifest: &Path) -> Result<()> {
     documents::validate_shape("review", value)?;
-    let charts = value["charts"].as_array().unwrap();
+    let sets = value["sets"].as_array().unwrap();
     let images = value["images"].as_array().unwrap();
-    unique_ids(charts, "chart")?;
+    unique_ids(sets, "set")?;
     unique_ids(images, "image")?;
-    let chart_ids: BTreeSet<&str> = charts
-        .iter()
-        .map(|chart| chart["id"].as_str().unwrap())
-        .collect();
-    let image_ids: BTreeSet<&str> = images
-        .iter()
-        .map(|image| image["id"].as_str().unwrap())
-        .collect();
-    for chart in charts {
-        Grid::parse(&chart["grid"])?;
-    }
+    let set_ids: BTreeSet<&str> = sets.iter().map(|set| set["id"].as_str().unwrap()).collect();
+    let mut set_of_image: BTreeMap<&str, &str> = BTreeMap::new();
     for image in images {
         let o = obj(image)?;
-        let chart = text(o, "chart")?;
-        if !chart_ids.contains(chart) {
+        let set = text(o, "set")?;
+        if !set_ids.contains(set) {
             return Err(err(
-                "unknown_chart",
-                format!("image references unknown chart: {chart}"),
+                "unknown_set",
+                format!("image references unknown set: {set}"),
             ));
         }
+        set_of_image.insert(text(o, "id")?, set);
         source_path(o, manifest)?;
+    }
+    for set in sets {
+        let o = obj(set)?;
+        let set_id = text(o, "id")?;
+        if let Some(grid) = o.get("grid") {
+            Grid::parse(grid)?;
+        }
+        let Some(regions) = o.get("regions").and_then(Value::as_array) else {
+            continue;
+        };
+        unique_ids(regions, "region")?;
+        let mut by_image: BTreeMap<&str, Vec<(&str, [u64; 4])>> = BTreeMap::new();
+        for region in regions {
+            let region = obj(region)?;
+            let region_id = text(region, "id")?;
+            let geometry = obj(req(region, "geometry")?)?;
+            for (image_id, rectangle) in geometry {
+                if set_of_image.get(image_id.as_str()) != Some(&set_id) {
+                    return Err(err(
+                        "unresolved_region_key",
+                        format!(
+                            "region {region_id} references an image outside set {set_id}: {image_id}"
+                        ),
+                    ));
+                }
+                by_image
+                    .entry(image_id)
+                    .or_default()
+                    .push((region_id, rect(rectangle)?));
+            }
+        }
+        for (image_id, rectangles) in &by_image {
+            for (index, (left_id, left)) in rectangles.iter().enumerate() {
+                for (right_id, right) in &rectangles[index + 1..] {
+                    if overlap(*left, *right) {
+                        return Err(err(
+                            "overlapping_regions",
+                            format!("regions {left_id} and {right_id} overlap on image {image_id}"),
+                        ));
+                    }
+                }
+            }
+        }
     }
     let default_pair = obj(&value["default_pair"])?;
     for side in ["left", "right"] {
         let id = text(default_pair, side)?;
-        if !image_ids.contains(id) {
+        if !set_of_image.contains_key(id) {
             return Err(err(
                 "unknown_image",
                 format!("default_pair.{side} references unknown image: {id}"),
@@ -187,7 +261,7 @@ fn validate_manifest_value(value: &Value, manifest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Validate an authored chart manifest and its local dependencies without
+/// Validate an authored review manifest and its local dependencies without
 /// decoding any image. The returned value is the authored document.
 pub fn validate_manifest(path: &Path) -> Result<Value> {
     let value = documents::load_json_document(path)?;
@@ -239,7 +313,7 @@ fn snapshot_path(work: &Path, index: usize, source: &Path) -> PathBuf {
     }
 }
 
-/// Build the offline visual report and return the standard command result.
+/// Build the offline visual review and return the standard command result.
 ///
 /// Manifest and dependency validation precede destination creation; decoding
 /// and observed geometry are checked during generation. Later failures retain
@@ -280,22 +354,41 @@ fn build_report_impl(
     fs::create_dir_all(&work)?;
     fs::create_dir_all(out.join("images"))?;
 
-    let charts = authored["charts"].as_array().unwrap();
+    let sets = authored["sets"].as_array().unwrap();
     let images = authored["images"].as_array().unwrap();
     let mut grids = BTreeMap::new();
-    for chart in charts {
-        let o = obj(chart)?;
-        grids.insert(text(o, "id")?, Grid::parse(&chart["grid"])?);
+    let mut region_bounds: BTreeMap<(&str, &str), Vec<(&str, [u64; 4])>> = BTreeMap::new();
+    for set in sets {
+        let o = obj(set)?;
+        let set_id = text(o, "id")?;
+        if let Some(grid) = o.get("grid") {
+            grids.insert(set_id, Grid::parse(grid)?);
+        }
+        for region in o
+            .get("regions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let region = obj(region)?;
+            let region_id = text(region, "id")?;
+            let geometry = obj(req(region, "geometry")?)?;
+            for (image_id, rectangle) in geometry {
+                region_bounds
+                    .entry((set_id, image_id.as_str()))
+                    .or_default()
+                    .push((region_id, rect(rectangle)?));
+            }
+        }
     }
 
-    let mut chart_layouts: BTreeMap<&str, [usize; 2]> = BTreeMap::new();
+    let mut grid_layouts: BTreeMap<&str, [usize; 2]> = BTreeMap::new();
     let mut artifacts = Vec::new();
     let mut rendered = Vec::new();
     for (index, value) in images.iter().enumerate() {
         let o = obj(value)?;
         let id = text(o, "id")?;
-        let chart = text(o, "chart")?;
-        let grid = grids.get(chart).unwrap();
+        let set = text(o, "set")?;
         let source = source_path(o, &manifest_path)?;
         let source_error = |mut error: Error| {
             error.message = format!("image {id}: {}", error.message);
@@ -312,25 +405,39 @@ fn build_report_impl(
             "cctf_decoding": o["cctf_decoding"].clone(),
         }))
         .map_err(source_error)?;
-        let layout = [image.width, image.height];
-        if let Some(expected) = chart_layouts.get(chart) {
-            if *expected != layout {
+        if let Some(grid) = grids.get(set) {
+            let layout = [image.width, image.height];
+            if let Some(expected) = grid_layouts.get(set) {
+                if *expected != layout {
+                    return Err(err(
+                        "invalid_image_layout",
+                        format!("images sharing grid set {set} must have identical dimensions"),
+                    )
+                    .at(id));
+                }
+            } else {
+                grid_layouts.insert(set, layout);
+            }
+            let extent = grid.extent()?;
+            if extent[0] > image.width as u64 || extent[1] > image.height as u64 {
                 return Err(err(
-                    "invalid_image_layout",
-                    format!("images sharing chart {chart} must have identical dimensions"),
+                    "invalid_bounds",
+                    format!("grid windows for set {set} leave the decoded image"),
                 )
                 .at(id));
             }
-        } else {
-            chart_layouts.insert(chart, layout);
-        }
-        let extent = grid.extent()?;
-        if extent[0] > image.width as u64 || extent[1] > image.height as u64 {
-            return Err(err(
-                "invalid_bounds",
-                format!("grid windows for chart {chart} leave the decoded image"),
-            )
-            .at(id));
+        } else if let Some(regions) = region_bounds.get(&(set, id)) {
+            for (region_id, rectangle) in regions {
+                if rectangle[0].saturating_add(rectangle[2]) > image.width as u64
+                    || rectangle[1].saturating_add(rectangle[3]) > image.height as u64
+                {
+                    return Err(err(
+                        "invalid_bounds",
+                        format!("region {region_id} of set {set} leaves the decoded image"),
+                    )
+                    .at(id));
+                }
+            }
         }
         let display = image_data::display_rgb(&image).map_err(source_error)?;
         let relative = format!("images/{index:04}.png");
@@ -345,7 +452,7 @@ fn build_report_impl(
         }));
         rendered.push(json!({
             "id": id,
-            "chart": chart,
+            "set": set,
             "label": text(o, "label")?,
             "description": o.get("description").and_then(Value::as_str).unwrap_or(""),
             "color_space": text(o, "color_space")?,
@@ -368,12 +475,12 @@ fn build_report_impl(
     }));
 
     let image_count = rendered.len();
-    let chart_count = charts.len();
+    let set_count = sets.len();
     let payload = json!({
         "schema_version": 1,
         "title": text(obj(&authored)?, "title")?,
         "description": authored["description"].as_str().unwrap_or(""),
-        "charts": charts,
+        "sets": sets,
         "images": rendered,
         "default_pair": {"left": left, "right": right},
         "source_manifest": {
@@ -386,7 +493,7 @@ fn build_report_impl(
         .map_err(|e| err("document_read", e.to_string()))?;
     let embedded = data.replace('<', "\\u003c");
     let html = format!(
-        "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><title>SpektraFilm 色卡视觉报告</title><style>{CSS}</style>{BODY}<script type=\"application/json\" id=\"review-data\">{embedded}</script><script src=\"viewer.js\"></script></body></html>",
+        "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><title>SpektraFilm 图像对照检查报告</title><style>{CSS}</style>{BODY}<script type=\"application/json\" id=\"review-data\">{embedded}</script><script src=\"viewer.js\"></script></body></html>",
     );
     fs::write(out.join("index.html"), html)?;
     if sha256_file(&manifest_path)? != manifest_sha256 {
@@ -403,7 +510,7 @@ fn build_report_impl(
         "artifact": root.join("index.html"),
         "manifest": root.join("report.json"),
         "image_count": image_count,
-        "chart_count": chart_count,
+        "set_count": set_count,
     }))
 }
 
@@ -417,23 +524,34 @@ mod tests {
         path
     }
 
-    fn chart(id: &str, rows: u64, columns: u64, patch: [u64; 2], gap: [u64; 2]) -> String {
+    fn grid_set(id: &str, rows: u64, columns: u64, patch: [u64; 2], gap: [u64; 2]) -> String {
         format!(
-            r#"{{"id":"{id}","label":"图 {id}","grid":{{"rows":{rows},"columns":{columns},"origin":[0,0],"patch_size":[{},{}],"gap":[{},{}]}}}}"#,
+            r#"{{"id":"{id}","label":"集合 {id}","grid":{{"rows":{rows},"columns":{columns},"origin":[0,0],"patch_size":[{},{}],"gap":[{},{}]}}}}"#,
             patch[0], patch[1], gap[0], gap[1]
         )
     }
 
-    fn image(id: &str, chart: &str, path: &str, space: &str) -> String {
+    fn region_set(id: &str, regions: &str) -> String {
+        format!(r#"{{"id":"{id}","label":"集合 {id}","regions":[{regions}]}}"#)
+    }
+
+    fn region(id: &str, image: &str, rectangle: [u64; 4]) -> String {
         format!(
-            r#"{{"id":"{id}","chart":"{chart}","path":"{path}","label":"输入 {id}","color_space":"{space}","cctf_decoding":false}}"#
+            r#"{{"id":"{id}","label":"区域 {id}","geometry":{{"{image}":[{},{},{},{}]}}}}"#,
+            rectangle[0], rectangle[1], rectangle[2], rectangle[3]
         )
     }
 
-    fn document(charts: &[String], images: &[String], left: &str, right: &str) -> String {
+    fn image(id: &str, set: &str, path: &str, space: &str) -> String {
         format!(
-            r#"{{"schema_version":1,"title":"色卡检查","charts":[{}],"images":[{}],"default_pair":{{"left":"{left}","right":"{right}"}}}}"#,
-            charts.join(","),
+            r#"{{"id":"{id}","set":"{set}","path":"{path}","label":"输入 {id}","color_space":"{space}","cctf_decoding":false}}"#
+        )
+    }
+
+    fn document(sets: &[String], images: &[String], left: &str, right: &str) -> String {
+        format!(
+            r#"{{"schema_version":1,"title":"图像对照","sets":[{}],"images":[{}],"default_pair":{{"left":"{left}","right":"{right}"}}}}"#,
+            sets.join(","),
             images.join(",")
         )
     }
@@ -452,7 +570,7 @@ mod tests {
         let authored = manifest(
             dir.path(),
             &document(
-                &[chart("c", 1, 1, [8, 8], [0, 0])],
+                &[grid_set("c", 1, 1, [8, 8], [0, 0])],
                 &[
                     image("valid", "c", "valid.png", "sRGB"),
                     image("broken", "c", "broken.png", "sRGB"),
@@ -475,7 +593,7 @@ mod tests {
         let overflowing = manifest(
             dir.path(),
             &document(
-                &[chart("c", 4294967296, 1, [8, 4294967296], [0, 0])],
+                &[grid_set("c", 4294967296, 1, [8, 4294967296], [0, 0])],
                 &[
                     image("a", "c", "a.png", "sRGB"),
                     image("b", "c", "a.png", "sRGB"),
@@ -490,7 +608,7 @@ mod tests {
         let escaping = manifest(
             dir.path(),
             &document(
-                &[chart("c", 1, 3, [8, 8], [0, 0])],
+                &[grid_set("c", 1, 3, [8, 8], [0, 0])],
                 &[
                     image("a", "c", "a.png", "sRGB"),
                     image("b", "c", "a.png", "sRGB"),
@@ -510,16 +628,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         png(&dir.path().join("a.png"), 8, 8);
         png(&dir.path().join("b.png"), 8, 8);
-        let charts = [chart("c", 1, 1, [8, 8], [0, 0])];
+        let sets = [grid_set("c", 1, 1, [8, 8], [0, 0])];
         let images = [
             image("a", "c", "a.png", "sRGB"),
             image("b", "c", "b.png", "sRGB"),
         ];
-        let unknown_default = manifest(dir.path(), &document(&charts, &images, "a", "missing"));
+        let unknown_default = manifest(dir.path(), &document(&sets, &images, "a", "missing"));
         let error = validate_manifest(&unknown_default).unwrap_err();
         assert_eq!(error.code, "unknown_image");
 
-        let valid = manifest(dir.path(), &document(&charts, &images, "a", "b"));
+        let valid = manifest(dir.path(), &document(&sets, &images, "a", "b"));
         let unpaired = dir.path().join("unpaired");
         let error = build_report(&valid, &unpaired, Some("b"), None).unwrap_err();
         assert_eq!(error.code, "invalid_selector");
@@ -533,14 +651,14 @@ mod tests {
     }
 
     #[test]
-    fn same_chart_requires_identical_layouts() {
+    fn grid_sets_require_identical_layouts_but_regions_sets_do_not() {
         let dir = tempfile::tempdir().unwrap();
         png(&dir.path().join("a.png"), 8, 8);
         png(&dir.path().join("b.png"), 4, 8);
         let shared = manifest(
             dir.path(),
             &document(
-                &[chart("c", 1, 1, [8, 8], [0, 0])],
+                &[grid_set("c", 1, 1, [8, 8], [0, 0])],
                 &[
                     image("a", "c", "a.png", "sRGB"),
                     image("b", "c", "b.png", "sRGB"),
@@ -558,8 +676,8 @@ mod tests {
             dir.path(),
             &document(
                 &[
-                    chart("c1", 1, 1, [8, 8], [0, 0]),
-                    chart("c2", 2, 1, [4, 4], [0, 0]),
+                    grid_set("c1", 1, 1, [8, 8], [0, 0]),
+                    grid_set("c2", 2, 1, [4, 4], [0, 0]),
                 ],
                 &[
                     image("a", "c1", "a.png", "sRGB"),
@@ -575,6 +693,186 @@ mod tests {
             serde_json::from_slice(&fs::read(out.join("report.json")).unwrap()).unwrap();
         assert_eq!(payload["images"][0]["width"], 8);
         assert_eq!(payload["images"][1]["width"], 4);
+        assert_eq!(payload["sets"][0]["id"], "c1");
+        assert_eq!(payload["images"][0]["set"], "c1");
+
+        let regions = manifest(
+            dir.path(),
+            &document(
+                &[region_set(
+                    "r",
+                    &format!(
+                        "{},{}",
+                        region("a", "a", [0, 0, 4, 4]),
+                        region("b", "b", [0, 0, 4, 4])
+                    ),
+                )],
+                &[
+                    image("a", "r", "a.png", "sRGB"),
+                    image("b", "r", "b.png", "sRGB"),
+                ],
+                "a",
+                "b",
+            ),
+        );
+        let out = dir.path().join("regions");
+        build_report(&regions, &out, None, None).unwrap();
+        let payload: Value =
+            serde_json::from_slice(&fs::read(out.join("report.json")).unwrap()).unwrap();
+        assert_eq!(payload["images"][0]["width"], 8);
+        assert_eq!(payload["images"][1]["width"], 4);
+    }
+
+    #[test]
+    fn regions_sets_validate_geometry_and_identities() {
+        let dir = tempfile::tempdir().unwrap();
+        png(&dir.path().join("a.png"), 8, 8);
+        png(&dir.path().join("b.png"), 8, 8);
+        let images = [
+            image("a", "r", "a.png", "sRGB"),
+            image("b", "r", "b.png", "sRGB"),
+        ];
+
+        // A region may cover a subset of its set's images, and region
+        // identities are scoped to their set.
+        let subset = manifest(
+            dir.path(),
+            &document(
+                &[
+                    region_set("r", &region("only-a", "a", [0, 0, 4, 4])),
+                    region_set("r2", &region("only-a", "b", [0, 0, 4, 4])),
+                ],
+                &[
+                    image("a", "r", "a.png", "sRGB"),
+                    image("b", "r2", "b.png", "sRGB"),
+                ],
+                "a",
+                "b",
+            ),
+        );
+        validate_manifest(&subset).unwrap();
+
+        let duplicate = manifest(
+            dir.path(),
+            &document(
+                &[region_set(
+                    "r",
+                    &format!(
+                        "{},{}",
+                        region("same", "a", [0, 0, 4, 4]),
+                        region("same", "b", [0, 0, 4, 4])
+                    ),
+                )],
+                &images,
+                "a",
+                "b",
+            ),
+        );
+        assert_eq!(
+            validate_manifest(&duplicate).unwrap_err().code,
+            "duplicate_id"
+        );
+
+        let unresolved = manifest(
+            dir.path(),
+            &document(
+                &[region_set("r", &region("a", "other", [0, 0, 4, 4]))],
+                &images,
+                "a",
+                "b",
+            ),
+        );
+        let error = validate_manifest(&unresolved).unwrap_err();
+        assert_eq!(error.code, "unresolved_region_key");
+        assert!(error.message.contains("other"));
+
+        let overlapping = manifest(
+            dir.path(),
+            &document(
+                &[region_set(
+                    "r",
+                    &format!(
+                        "{},{}",
+                        region("a", "a", [0, 0, 4, 4]),
+                        region("b", "a", [3, 3, 4, 4])
+                    ),
+                )],
+                &images,
+                "a",
+                "b",
+            ),
+        );
+        assert_eq!(
+            validate_manifest(&overlapping).unwrap_err().code,
+            "overlapping_regions"
+        );
+
+        let flat = manifest(
+            dir.path(),
+            &document(
+                &[region_set("r", &region("a", "a", [0, 0, 0, 4]))],
+                &images,
+                "a",
+                "b",
+            ),
+        );
+        assert_eq!(validate_manifest(&flat).unwrap_err().code, "invalid_bounds");
+
+        for set in [
+            format!(
+                r#"{{"id":"r","label":"两种形态","grid":{{"rows":1,"columns":1,"origin":[0,0],"patch_size":[4,4],"gap":[0,0]}},"regions":[{region}]}}"#,
+                region = region("a", "a", [0, 0, 4, 4])
+            ),
+            r#"{"id":"r","label":"没有形态"}"#.to_owned(),
+        ] {
+            let malformed = manifest(dir.path(), &document(&[set], &images, "a", "b"));
+            assert_eq!(
+                validate_manifest(&malformed).unwrap_err().code,
+                "schema_validation"
+            );
+        }
+    }
+
+    #[test]
+    fn regions_bounds_are_checked_during_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        png(&dir.path().join("a.png"), 8, 8);
+        png(&dir.path().join("b.png"), 8, 8);
+        let escaping = manifest(
+            dir.path(),
+            &document(
+                &[region_set("r", &region("a", "a", [4, 0, 5, 4]))],
+                &[
+                    image("a", "r", "a.png", "sRGB"),
+                    image("b", "r", "b.png", "sRGB"),
+                ],
+                "a",
+                "b",
+            ),
+        );
+        validate_manifest(&escaping).unwrap();
+        let out = dir.path().join("out");
+        let error = build_report(&escaping, &out, None, None).unwrap_err();
+        assert_eq!(error.code, "invalid_bounds");
+        assert!(error.message.contains("region a"));
+        assert!(!out.join("report.json").exists());
+    }
+
+    #[test]
+    fn chart_report_v1_manifests_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        png(&dir.path().join("a.png"), 8, 8);
+        let v1 = format!(
+            r#"{{"schema_version":1,"title":"旧清单","charts":[{}],"images":[{{"id":"a","chart":"c","path":"a.png","label":"输入 a","color_space":"sRGB","cctf_decoding":false}}],"default_pair":{{"left":"a","right":"a"}}}}"#,
+            grid_set("c", 1, 1, [8, 8], [0, 0]),
+        );
+        let authored = manifest(dir.path(), &v1);
+        let error = validate_manifest(&authored).unwrap_err();
+        assert!(
+            matches!(error.code.as_str(), "missing_field" | "unknown_field"),
+            "unexpected code: {}",
+            error.code
+        );
     }
 
     #[test]
@@ -588,8 +886,8 @@ mod tests {
             dir.path(),
             &document(
                 &[
-                    chart("c1", 1, 1, [1, 1], [0, 0]),
-                    chart("c2", 1, 1, [1, 1], [0, 0]),
+                    grid_set("c1", 1, 1, [1, 1], [0, 0]),
+                    grid_set("c2", 1, 1, [1, 1], [0, 0]),
                 ],
                 &[
                     image("a", "c1", "a.png", "sRGB"),
@@ -620,8 +918,8 @@ mod tests {
         png(&dir.path().join("a.png"), 8, 8);
         let hostile = "</script><img src=x onerror=alert(1)>";
         let body = format!(
-            r#"{{"schema_version":1,"title":"{hostile}","description":"a<b","charts":[{}],"images":[{{"id":"a","chart":"c","path":"a.png","label":"{hostile}","description":"x<y","color_space":"sRGB","cctf_decoding":false}},{{"id":"b","chart":"c","path":"a.png","label":"右","color_space":"sRGB","cctf_decoding":false}}],"default_pair":{{"left":"a","right":"b"}}}}"#,
-            chart("c", 1, 1, [8, 8], [0, 0]),
+            r#"{{"schema_version":1,"title":"{hostile}","description":"a<b","sets":[{}],"images":[{{"id":"a","set":"c","path":"a.png","label":"{hostile}","description":"x<y","color_space":"sRGB","cctf_decoding":false}},{{"id":"b","set":"c","path":"a.png","label":"右","color_space":"sRGB","cctf_decoding":false}}],"default_pair":{{"left":"a","right":"b"}}}}"#,
+            grid_set("c", 1, 1, [8, 8], [0, 0]),
         );
         let manifest = manifest(dir.path(), &body);
         let out = dir.path().join("out");
@@ -643,7 +941,7 @@ mod tests {
         let manifest = manifest(
             dir.path(),
             &document(
-                &[chart("c", 1, 1, [8, 8], [0, 0])],
+                &[grid_set("c", 1, 1, [8, 8], [0, 0])],
                 &[
                     image("a", "c", "a.png", "sRGB"),
                     image("b", "c", "a.png", "sRGB"),
@@ -674,7 +972,7 @@ mod tests {
         let manifest = manifest(
             dir.path(),
             &document(
-                &[chart("c", 1, 1, [8, 8], [0, 0])],
+                &[grid_set("c", 1, 1, [8, 8], [0, 0])],
                 &[
                     image("a", "c", "a.png", "sRGB"),
                     image("b", "c", "a.png", "sRGB"),

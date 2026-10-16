@@ -3,7 +3,7 @@
 
   // ---------- 报告数据（内嵌 JSON，禁止网络请求） ----------
   const dataElement = document.getElementById('review-data');
-  const hashError = document.getElementById('chart-hash-error');
+  const hashError = document.getElementById('review-error');
   function fatal(message) {
     hashError.hidden = false;
     hashError.textContent = `报告数据不可用：${message}。本页面无法展示图像对照。`;
@@ -19,17 +19,28 @@
     fatal(`内嵌 JSON 解析失败（${error.message}）`);
     return;
   }
-  if (!data || !Array.isArray(data.images) || data.images.length < 2 || !Array.isArray(data.charts)) {
-    fatal('内嵌数据缺少 charts 或 images（图像至少两个）');
+  if (!data || !Array.isArray(data.images) || data.images.length < 2 || !Array.isArray(data.sets)) {
+    fatal('内嵌数据缺少 sets 或 images（图像至少两个）');
     return;
   }
 
-  // ---------- 几何与语义工具 ----------
-  const charts = new Map(data.charts.map(chart => [chart.id, chart]));
+  // ---------- 集合、几何与语义工具 ----------
+  const sets = new Map(data.sets.map(set => [set.id, set]));
   const images = data.images;
   const imagesById = new Map(images.map(image => [image.id, image]));
-  const patchCache = new Map();
+  const gridWindowCache = new Map();
 
+  function setOf(image) {
+    return sets.get(image.set) || null;
+  }
+  function setForm(image) {
+    const set = setOf(image);
+    return set && set.grid ? 'grid' : 'regions';
+  }
+  // 网格窗口与显式区域共用同一种窗口形状：{id, label, x, y, w, h}。
+  function windowNoun(image) {
+    return setForm(image) === 'grid' ? '色块' : '区域';
+  }
   function columnLabel(column) {
     let label = '';
     let n = column;
@@ -41,18 +52,16 @@
     return label;
   }
   // 行优先遍历；标签 = Excel 风格列字母 + 从 1 开始的行号（如 A1…I5）。
-  function patchList(image) {
-    const chart = charts.get(image.chart);
-    if (!chart || !chart.grid) return [];
-    if (patchCache.has(image.chart)) return patchCache.get(image.chart);
-    const grid = chart.grid;
+  function gridWindows(set) {
+    if (gridWindowCache.has(set.id)) return gridWindowCache.get(set.id);
+    const grid = set.grid;
     const list = [];
     for (let row = 1; row <= grid.rows; row += 1) {
       for (let column = 1; column <= grid.columns; column += 1) {
+        const label = columnLabel(column) + row;
         list.push({
-          label: columnLabel(column) + row,
-          row,
-          column,
+          id: label,
+          label,
           x: grid.origin[0] + (column - 1) * (grid.patch_size[0] + grid.gap[0]),
           y: grid.origin[1] + (row - 1) * (grid.patch_size[1] + grid.gap[1]),
           w: grid.patch_size[0],
@@ -60,15 +69,36 @@
         });
       }
     }
-    patchCache.set(image.chart, list);
+    gridWindowCache.set(set.id, list);
     return list;
   }
-  function patchFor(image, label) {
-    return patchList(image).find(patch => patch.label === label) || null;
+  // 一张图像可选择的窗口：网格集合按声明网格派生，区域集合取该图被声明的区域。
+  function windowList(image) {
+    const set = setOf(image);
+    if (!set) return [];
+    if (set.grid) return gridWindows(set);
+    const list = [];
+    for (const region of (Array.isArray(set.regions) ? set.regions : [])) {
+      const rectangle = region.geometry ? region.geometry[image.id] : null;
+      if (!rectangle || rectangle.length !== 4) continue;
+      list.push({ id: region.id, label: region.label, x: rectangle[0], y: rectangle[1], w: rectangle[2], h: rectangle[3] });
+    }
+    return list;
   }
-  function chartLabel(image) {
-    const chart = charts.get(image.chart);
-    return chart && chart.label ? chart.label : image.chart;
+  function windowFor(image, id) {
+    if (!id) return null;
+    return windowList(image).find(entry => entry.id === id) || null;
+  }
+  function setLabel(image) {
+    const set = setOf(image);
+    return set && set.label ? set.label : image.set;
+  }
+  function formDescription(image) {
+    const set = setOf(image);
+    if (!set) return '未声明集合';
+    if (set.grid) return `网格 ${set.grid.rows}×${set.grid.columns}`;
+    const count = Array.isArray(set.regions) ? set.regions.length : 0;
+    return `显式区域 ${count} 个`;
   }
   function imageById(id) {
     return imagesById.get(id) || null;
@@ -91,30 +121,36 @@
     patchRight: null,
   };
 
-  function sameChart() {
-    return imageById(state.left).chart === imageById(state.right).chart;
+  // 同一网格集合才算共享布局：联动选块、对照表、分割与交替都按它启用。
+  function linkedPair(leftId, rightId) {
+    const left = imageById(leftId);
+    const right = imageById(rightId);
+    const set = left ? setOf(left) : null;
+    return Boolean(left && right && left.set === right.set && set && set.grid);
   }
-  // 分割/交替只按声明的共同色卡启用；同色卡图像尺寸由生成端保证一致，不在此比较尺寸。
+  function linked() {
+    return linkedPair(state.left, state.right);
+  }
   function sameLayout() {
-    return sameChart();
+    return linked();
   }
-  // 各色块参数只在自己的声明网格内有效；跨色卡不推断同名对应。
+  // 窗口参数只在各自声明的窗口列表内有效；跨集合与显式区域不推断同名对应。
   function normalizePatches() {
     const left = imageById(state.left);
     const right = imageById(state.right);
-    if (sameChart()) {
-      if (!patchFor(left, state.patch)) {
-        const list = patchList(left);
-        state.patch = list.length ? list[0].label : null;
+    if (linked()) {
+      if (!windowFor(left, state.patch)) {
+        const list = windowList(left);
+        state.patch = list.length ? list[0].id : null;
       }
     } else {
-      if (!patchFor(left, state.patchLeft)) {
-        const list = patchList(left);
-        state.patchLeft = list.length ? list[0].label : null;
+      if (!windowFor(left, state.patchLeft)) {
+        const list = windowList(left);
+        state.patchLeft = list.length ? list[0].id : null;
       }
-      if (!patchFor(right, state.patchRight)) {
-        const list = patchList(right);
-        state.patchRight = list.length ? list[0].label : null;
+      if (!windowFor(right, state.patchRight)) {
+        const list = windowList(right);
+        state.patchRight = list.length ? list[0].id : null;
       }
     }
   }
@@ -126,7 +162,8 @@
   const leftSelect = document.querySelector('[data-left-select]');
   const rightSelect = document.querySelector('[data-right-select]');
   const swapButton = document.querySelector('[data-swap]');
-  const chartWarning = document.querySelector('[data-chart-warning]');
+  const setWarning = document.querySelector('[data-set-warning]');
+  const regionNotice = document.querySelector('[data-region-notice]');
   const modeButtons = [...document.querySelectorAll('[data-view-mode]')];
   const zoomSelect = document.querySelector('[data-zoom]');
   const zoomLabelNode = document.querySelector('[data-zoom-label]');
@@ -153,7 +190,7 @@
   function sideNodes(side) {
     return {
       metaLabel: document.querySelector(`[data-meta-label="${side}"]`),
-      metaChart: document.querySelector(`[data-meta-chart="${side}"]`),
+      metaSet: document.querySelector(`[data-meta-set="${side}"]`),
       metaDescription: document.querySelector(`[data-meta-description="${side}"]`),
       metaColor: document.querySelector(`[data-meta-color="${side}"]`),
       caption: document.querySelector(`[data-caption="${side}"]`),
@@ -202,7 +239,7 @@
       push('layout', state.layout);
       if (state.layout === 'split') push('split', String(state.split));
       if (state.layout === 'blink') push('blink', state.blink);
-    } else if (sameChart()) {
+    } else if (linked()) {
       if (state.patch) push('patch', state.patch);
     } else {
       if (state.patchLeft) push('patch_left', state.patchLeft);
@@ -276,26 +313,25 @@
     const left = imageById(next.left);
     const right = imageById(next.right);
     if (left && right) {
-      const shared = left.chart === right.chart;
-      if (shared) {
+      if (linkedPair(next.left, next.right)) {
         if (values.has('patch_left') || values.has('patch_right')) {
-          errors.push('参数 patch_left/patch_right 仅适用于不同色卡的图像组合');
+          errors.push('参数 patch_left/patch_right 仅适用于独立选择的图像组合');
         }
-        if (values.has('patch') && !patchFor(left, next.patch)) {
-          errors.push(`色块“${next.patch}”不在色卡 ${left.chart} 的声明网格内`);
+        if (values.has('patch') && !windowFor(left, next.patch)) {
+          errors.push(`色块“${next.patch}”不在集合 ${left.set} 的声明网格内`);
         }
       } else {
         if (values.has('patch')) {
-          errors.push('参数 patch 仅适用于同一色卡的图像组合');
+          errors.push('参数 patch 仅适用于同一网格集合的图像组合');
         }
-        if (values.has('patch_left') && !patchFor(left, next.patchLeft)) {
-          errors.push(`左侧色块“${next.patchLeft}”不在色卡 ${left.chart} 的声明网格内`);
+        if (values.has('patch_left') && !windowFor(left, next.patchLeft)) {
+          errors.push(`左侧窗口“${next.patchLeft}”不在图像 ${left.id} 的声明窗口内`);
         }
-        if (values.has('patch_right') && !patchFor(right, next.patchRight)) {
-          errors.push(`右侧色块“${next.patchRight}”不在色卡 ${right.chart} 的声明网格内`);
+        if (values.has('patch_right') && !windowFor(right, next.patchRight)) {
+          errors.push(`右侧窗口“${next.patchRight}”不在图像 ${right.id} 的声明窗口内`);
         }
         if (next.layout === 'split' || next.layout === 'blink') {
-          errors.push('分割/交替仅适用于同一色卡的图像组合');
+          errors.push('分割/交替仅适用于同一网格集合的图像组合');
         }
       }
     }
@@ -303,7 +339,7 @@
   }
   function reportHashErrors(errors) {
     hashError.hidden = false;
-    hashError.textContent = `报告链接状态无效，未应用：${errors.join('；')}。请使用选择器重新选择图像与色块。`;
+    hashError.textContent = `报告链接状态无效，未应用：${errors.join('；')}。请使用选择器重新选择图像与窗口。`;
   }
   function applyHash() {
     const { errors, next } = parseHash(location.hash);
@@ -359,8 +395,8 @@
   }
 
   function renderHeader() {
-    const title = typeof data.title === 'string' && data.title ? data.title : '色卡视觉检查报告';
-    document.title = `${title} · 色卡视觉检查报告`;
+    const title = typeof data.title === 'string' && data.title ? data.title : '图像对照检查报告';
+    document.title = `${title} · 图像对照检查报告`;
     titleNode.textContent = title;
     const description = typeof data.description === 'string' ? data.description : '';
     descriptionNode.textContent = description;
@@ -369,7 +405,7 @@
 
   function renderSelectors() {
     for (const image of images) {
-      const text = `${image.label}（${image.id} · ${chartLabel(image)}）`;
+      const text = `${image.label}（${image.id} · ${setLabel(image)}）`;
       for (const select of [leftSelect, rightSelect]) {
         const option = document.createElement('option');
         option.value = image.id;
@@ -389,7 +425,7 @@
       const node = nodes[side];
       node.metaLabel.textContent = `${side === 'left' ? '左侧' : '右侧'}：${image.label}（${image.id}）`;
       node.caption.textContent = `${image.label}（${image.id}）`;
-      node.metaChart.textContent = `色卡：${chartLabel(image)}（${image.chart}）`;
+      node.metaSet.textContent = `集合：${setLabel(image)}（${image.set} · ${formDescription(image)}）`;
       node.metaDescription.textContent = image.description ? image.description : '';
       node.metaDescription.hidden = !image.description;
       const cctf = image.cctf_decoding ? 'CCTF 解码已启用' : '无需 CCTF 解码（已声明线性）';
@@ -405,13 +441,30 @@
     }
     const left = imageById(state.left);
     const right = imageById(state.right);
-    if (left.chart !== right.chart) {
-      chartWarning.hidden = false;
-      chartWarning.textContent = `当前左右图像分属不同色卡（${chartLabel(left)} / ${chartLabel(right)}），仅作并列视觉对照。色块窗口按各自声明网格独立裁切，相同编号不代表同一物理色块。`;
+    if (left.set !== right.set) {
+      setWarning.hidden = false;
+      setWarning.textContent = `当前左右图像分属不同集合（${setLabel(left)} / ${setLabel(right)}），仅作并列视觉对照。窗口按各自声明独立裁切，相同标识不代表同一物理位置。`;
     } else {
-      chartWarning.hidden = true;
-      chartWarning.textContent = '';
+      setWarning.hidden = true;
+      setWarning.textContent = '';
     }
+  }
+
+  // 显式区域集合的独立选择提示；窗口尺寸按当前选择逐侧显示。
+  function renderRegionNotice() {
+    const left = imageById(state.left);
+    const right = imageById(state.right);
+    const involved = setForm(left) === 'regions' || setForm(right) === 'regions';
+    if (!involved || state.mode !== 'patch') {
+      regionNotice.hidden = true;
+      regionNotice.textContent = '';
+      return;
+    }
+    const leftWindow = linked() ? windowFor(left, state.patch) : windowFor(left, state.patchLeft);
+    const rightWindow = linked() ? windowFor(right, state.patch) : windowFor(right, state.patchRight);
+    const dimensions = entry => (entry ? `${entry.w}×${entry.h}` : '未选择');
+    regionNotice.hidden = false;
+    regionNotice.textContent = `显式区域：区域由作者逐图声明，左右独立选择；相同区域标识不代表像素级对应。当前窗口：左侧 ${dimensions(leftWindow)}，右侧 ${dimensions(rightWindow)}（图像像素）。`;
   }
 
   function setSizedImage(img, image, factor) {
@@ -466,34 +519,34 @@
         lastZoomDescription = zoomDescription(factor);
       }
     } else {
-      const patches = {
-        left: sameChart() ? patchFor(left, state.patch) : patchFor(left, state.patchLeft),
-        right: sameChart() ? patchFor(right, state.patch) : patchFor(right, state.patchRight),
+      const entries = {
+        left: linked() ? windowFor(left, state.patch) : windowFor(left, state.patchLeft),
+        right: linked() ? windowFor(right, state.patch) : windowFor(right, state.patchRight),
       };
       for (const side of ['left', 'right']) {
         const image = imageById(state[side]);
-        const patch = patches[side];
+        const entry = entries[side];
         const node = nodes[side];
-        if (!patch) continue;
-        const factor = fitOrDeviceFactor(node.patchViewport, patch.w, patch.h);
+        if (!entry) continue;
+        const factor = fitOrDeviceFactor(node.patchViewport, entry.w, entry.h);
         if (factor === null) continue;
         if (node.patchImage.getAttribute('src') !== image.src) node.patchImage.src = image.src;
-        node.patchImage.alt = `${side === 'left' ? '左侧' : '右侧'}色块 ${patch.label}：${image.label}`;
+        node.patchImage.alt = `${side === 'left' ? '左侧' : '右侧'}${windowNoun(image)} ${entry.label}：${image.label}`;
         node.patchImage.style.width = `${image.width * factor}px`;
         node.patchImage.style.height = `${image.height * factor}px`;
-        node.patchImage.style.left = `${-patch.x * factor}px`;
-        node.patchImage.style.top = `${-patch.y * factor}px`;
-        node.patchCanvas.style.width = `${patch.w * factor}px`;
-        node.patchCanvas.style.height = `${patch.h * factor}px`;
-        node.patchLabel.textContent = `${side === 'left' ? '左侧' : '右侧'}色块 ${patch.label} · ${image.label}`;
-        node.patchRect.textContent = `窗口矩形 x=${patch.x}, y=${patch.y}, ${patch.w}×${patch.h} 像素 · 原图 ${image.width}×${image.height}`;
+        node.patchImage.style.left = `${-entry.x * factor}px`;
+        node.patchImage.style.top = `${-entry.y * factor}px`;
+        node.patchCanvas.style.width = `${entry.w * factor}px`;
+        node.patchCanvas.style.height = `${entry.h * factor}px`;
+        node.patchLabel.textContent = `${side === 'left' ? '左侧' : '右侧'}${windowNoun(image)} ${entry.label} · ${image.label}`;
+        node.patchRect.textContent = `窗口矩形 x=${entry.x}, y=${entry.y}, ${entry.w}×${entry.h} 像素 · 原图 ${image.width}×${image.height}`;
         if (node.locatorImage.getAttribute('src') !== image.src) node.locatorImage.src = image.src;
         node.locatorImage.alt = `${side === 'left' ? '左侧' : '右侧'}全图位置定位`;
-        node.locatorRect.style.left = `${100 * patch.x / image.width}%`;
-        node.locatorRect.style.top = `${100 * patch.y / image.height}%`;
-        node.locatorRect.style.width = `${100 * patch.w / image.width}%`;
-        node.locatorRect.style.height = `${100 * patch.h / image.height}%`;
-        node.locatorCaption.textContent = `${patch.label} 在全图中的位置（黄框）`;
+        node.locatorRect.style.left = `${100 * entry.x / image.width}%`;
+        node.locatorRect.style.top = `${100 * entry.y / image.height}%`;
+        node.locatorRect.style.width = `${100 * entry.w / image.width}%`;
+        node.locatorRect.style.height = `${100 * entry.h / image.height}%`;
+        node.locatorCaption.textContent = `${entry.label} 在全图中的位置（黄框）`;
         if (side === 'left') lastZoomDescription = zoomDescription(factor);
       }
     }
@@ -505,7 +558,7 @@
     splitRange.value = String(position);
     splitImages.right.style.clipPath = `inset(0 0 0 ${position}%)`;
     splitDivider.style.left = `${position}%`;
-    splitLabel.textContent = `分割位置 ${position}%：左侧 ${imageById(state.left).label} 显示 0–${position}%，右侧 ${imageById(state.right).label} 显示 ${position}–100%（同一声明色卡布局，仅视觉对照）`;
+    splitLabel.textContent = `分割位置 ${position}%：左侧 ${imageById(state.left).label} 显示 0–${position}%，右侧 ${imageById(state.right).label} 显示 ${position}–100%（同一网格集合布局，仅视觉对照）`;
   }
   function applyBlink() {
     const current = state.blink === 'left' ? imageById(state.left) : imageById(state.right);
@@ -513,7 +566,7 @@
     blinkImages.right.hidden = state.blink !== 'right';
     blinkButton.textContent = `交替显示：当前${state.blink === 'left' ? '左侧' : '右侧'}`;
     blinkButton.setAttribute('aria-label', `交替显示 A/B；当前显示${state.blink === 'left' ? '左侧' : '右侧'}图像 ${current.label}`);
-    blinkLabel.textContent = `当前显示：${state.blink === 'left' ? '左侧' : '右侧'} ${current.label}（${current.id}）；手动交替左右图像（同一声明色卡布局，仅视觉对照）`;
+    blinkLabel.textContent = `当前显示：${state.blink === 'left' ? '左侧' : '右侧'} ${current.label}（${current.id}）；手动交替左右图像（同一网格集合布局，仅视觉对照）`;
   }
 
   function renderWholePatchPanels() {
@@ -530,66 +583,68 @@
       const layout = button.dataset.layout;
       button.setAttribute('aria-pressed', String(state.layout === layout));
       button.disabled = !aligned && layout !== 'side';
-      button.title = button.disabled ? '分割/交替仅适用于同一声明色卡的图像' : '';
+      button.title = button.disabled ? '分割/交替仅适用于同一网格集合的图像' : '';
     }
     splitPanel.hidden = !(whole && state.layout === 'split' && aligned);
     blinkPanel.hidden = !(whole && state.layout === 'blink' && aligned);
     document.querySelector('[data-whole-panes]').hidden = !(whole && state.layout === 'side');
     if (whole) {
       wholeNote.textContent = aligned
-        ? '分割/交替按声明的共同色卡布局显示，仅为视觉对照，不代表物理或像素级对应。'
-        : '当前图像分属不同色卡，仅支持并排整图对照。';
+        ? '分割/交替按声明的共同网格布局显示，仅为视觉对照，不代表物理或像素级对应。'
+        : '当前图像分属不同集合或声明形态，仅支持并排整图对照。';
     }
-    patchSharedControls.hidden = !(patch && sameChart());
-    patchSplitControls.hidden = !(patch && !sameChart());
-    sheetHint.textContent = sameChart()
+    patchSharedControls.hidden = !(patch && linked());
+    patchSplitControls.hidden = !(patch && !linked());
+    sheetHint.textContent = linked()
       ? '点击任意色块可同步选择左右色块；每格包含左右两个固定窗口。'
-      : '左右色块独立选择；相同编号不代表同一物理色块。';
-    sheets.shared.hidden = !sameChart();
-    sheets.left.hidden = sameChart();
-    sheets.right.hidden = sameChart();
+      : '左右窗口独立选择；相同标识不代表同一物理位置。';
+    sheets.shared.hidden = !linked();
+    sheets.left.hidden = linked();
+    sheets.right.hidden = linked();
   }
 
   function fillPatchSelect(select, image, selected) {
     while (select.firstChild) select.removeChild(select.firstChild);
-    for (const patch of patchList(image)) {
+    for (const entry of windowList(image)) {
       const option = document.createElement('option');
-      option.value = patch.label;
-      option.textContent = `${patch.label}（x=${patch.x}, y=${patch.y}, ${patch.w}×${patch.h}）`;
+      option.value = entry.id;
+      option.textContent = entry.id === entry.label
+        ? `${entry.label}（x=${entry.x}, y=${entry.y}, ${entry.w}×${entry.h}）`
+        : `${entry.label}（${entry.id} · x=${entry.x}, y=${entry.y}, ${entry.w}×${entry.h}）`;
       select.appendChild(option);
     }
     if (selected) select.value = selected;
-    select.disabled = patchList(image).length === 0;
+    select.disabled = windowList(image).length === 0;
   }
   function renderPatchControls() {
     const left = imageById(state.left);
     const right = imageById(state.right);
-    if (sameChart()) {
+    if (linked()) {
       fillPatchSelect(patchSelect, left, state.patch);
       patchSelect.setAttribute('aria-label', '色块窗口选择（左右同步）');
     } else {
       fillPatchSelect(patchLeftSelect, left, state.patchLeft);
       fillPatchSelect(patchRightSelect, right, state.patchRight);
-      patchLeftSelect.setAttribute('aria-label', '左侧色块窗口选择');
-      patchRightSelect.setAttribute('aria-label', '右侧色块窗口选择');
+      patchLeftSelect.setAttribute('aria-label', '左侧窗口选择');
+      patchRightSelect.setAttribute('aria-label', '右侧窗口选择');
     }
   }
 
-  function makeThumb(image, patch, altText) {
+  function makeThumb(image, entry, altText) {
     const box = document.createElement('span');
     box.className = 'thumb';
     // 缩略窗口按较长边 64 像素定界，保证任意窗口在窄屏不溢出。
-    const scale = 64 / Math.max(patch.w, patch.h);
-    box.style.width = `${patch.w * scale}px`;
-    box.style.height = `${patch.h * scale}px`;
+    const scale = 64 / Math.max(entry.w, entry.h);
+    box.style.width = `${entry.w * scale}px`;
+    box.style.height = `${entry.h * scale}px`;
     const img = document.createElement('img');
     img.src = image.src;
     img.alt = altText;
     img.loading = 'lazy';
     img.style.width = `${image.width * scale}px`;
     img.style.height = `${image.height * scale}px`;
-    img.style.left = `${-patch.x * scale}px`;
-    img.style.top = `${-patch.y * scale}px`;
+    img.style.left = `${-entry.x * scale}px`;
+    img.style.top = `${-entry.y * scale}px`;
     box.appendChild(img);
     return box;
   }
@@ -613,35 +668,37 @@
     const paired = side === 'shared';
     const primary = paired ? imageById(state.left) : imageById(side === 'left' ? state.left : state.right);
     const partner = paired ? imageById(state.right) : null;
-    for (const patch of patchList(primary)) {
+    for (const entry of windowList(primary)) {
       const cell = document.createElement('button');
       cell.type = 'button';
       cell.className = 'sheet-cell';
-      cell.dataset.patch = patch.label;
+      cell.dataset.patch = entry.id;
       const label = document.createElement('strong');
       label.className = 'sheet-label';
-      label.textContent = `色块 ${patch.label}`;
+      label.textContent = `${windowNoun(primary)} ${entry.label}` + (entry.id === entry.label ? '' : `（${entry.id}）`);
       const rect = document.createElement('span');
       rect.className = 'sheet-rect';
-      rect.textContent = `x=${patch.x}, y=${patch.y}, ${patch.w}×${patch.h}`;
+      rect.textContent = `x=${entry.x}, y=${entry.y}, ${entry.w}×${entry.h}`;
       const thumbs = document.createElement('span');
       thumbs.className = 'sheet-thumbs';
-      const appendThumb = (tagText, image, altText) => {
+      const appendThumb = (tagText, image, windowEntry, altText) => {
+        if (!windowEntry) return;
         const wrap = document.createElement('span');
         wrap.className = 'sheet-thumb';
         const tag = document.createElement('span');
         tag.textContent = tagText;
         wrap.appendChild(tag);
-        wrap.appendChild(makeThumb(image, patch, altText));
+        wrap.appendChild(makeThumb(image, windowEntry, altText));
         thumbs.appendChild(wrap);
       };
       if (partner) {
-        appendThumb('左', primary, `左侧 ${primary.label} 色块 ${patch.label}`);
-        appendThumb('右', partner, `右侧 ${partner.label} 色块 ${patch.label}`);
-        cell.setAttribute('aria-label', `选择色块 ${patch.label}：左侧 ${primary.label} 与右侧 ${partner.label}`);
+        appendThumb('左', primary, entry, `左侧 ${primary.label} ${windowNoun(primary)} ${entry.label}`);
+        appendThumb('右', partner, windowFor(partner, entry.id), `右侧 ${partner.label} ${windowNoun(partner)} ${entry.label}`);
+        cell.setAttribute('aria-label', `选择${windowNoun(primary)} ${entry.label}：左侧 ${primary.label} 与右侧 ${partner.label}`);
       } else {
-        appendThumb(side === 'left' ? '左侧' : '右侧', primary, `${side === 'left' ? '左侧' : '右侧'} ${primary.label} 色块 ${patch.label}`);
-        cell.setAttribute('aria-label', `选择${side === 'left' ? '左侧' : '右侧'}色块 ${patch.label}`);
+        const tag = side === 'left' ? '左侧' : '右侧';
+        appendThumb(tag, primary, entry, `${tag} ${primary.label} ${windowNoun(primary)} ${entry.label}`);
+        cell.setAttribute('aria-label', `选择${tag}${windowNoun(primary)} ${entry.label}`);
       }
       cell.appendChild(label);
       cell.appendChild(rect);
@@ -657,7 +714,7 @@
       return;
     }
     sheetsKey = key;
-    if (sameChart()) {
+    if (linked()) {
       buildSheet(sheets.shared, 'shared');
     } else {
       buildSheet(sheets.left, 'left');
@@ -673,7 +730,7 @@
       const source = image.source || {};
       const cells = [
         `${image.label}（${image.id}）`,
-        `${chartLabel(image)}（${image.chart}）`,
+        `${setLabel(image)}（${image.set}）`,
         `${image.color_space} · ${image.cctf_decoding ? 'CCTF 解码已启用' : '无需 CCTF 解码（已声明线性）'}`,
         `${image.width}×${image.height} 像素`,
         source.path ? source.path : '未提供',
@@ -693,6 +750,7 @@
     renderWholePatchPanels();
     renderPatchControls();
     renderSheets();
+    renderRegionNotice();
     layoutImages();
     leftSelect.value = state.left;
     rightSelect.value = state.right;
@@ -754,10 +812,10 @@
     applyBlink();
     syncHash();
   });
-  function selectPatch(field, label) {
+  function selectPatch(field, id) {
     const image = imageById(field === 'patchRight' ? state.right : state.left);
-    if (!patchFor(image, label)) return;
-    state[field] = label;
+    if (!windowFor(image, id)) return;
+    state[field] = id;
     renderAll();
   }
   patchSelect.addEventListener('change', () => selectPatch('patch', patchSelect.value));
@@ -767,23 +825,23 @@
     sheets[key].addEventListener('click', event => {
       const cell = event.target.closest('[data-patch]');
       if (!cell) return;
-      const label = cell.dataset.patch;
-      if (key === 'shared') selectPatch('patch', label);
-      else if (key === 'left') selectPatch('patchLeft', label);
-      else selectPatch('patchRight', label);
+      const id = cell.dataset.patch;
+      if (key === 'shared') selectPatch('patch', id);
+      else if (key === 'left') selectPatch('patchLeft', id);
+      else selectPatch('patchRight', id);
     });
   }
   document.addEventListener('keydown', event => {
-    if (state.mode !== 'patch' || !sameChart()) return;
+    if (state.mode !== 'patch' || !linked()) return;
     if (event.target.closest('button, input, select, textarea, a, [contenteditable]')) return;
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    const list = patchList(imageById(state.left));
-    const index = list.findIndex(patch => patch.label === state.patch);
+    const list = windowList(imageById(state.left));
+    const index = list.findIndex(entry => entry.id === state.patch);
     if (index < 0) return;
     const step = event.key === 'ArrowRight' ? 1 : -1;
     const next = list[(index + step + list.length) % list.length];
     event.preventDefault();
-    selectPatch('patch', next.label);
+    selectPatch('patch', next.id);
   });
   if (fullscreenButton) {
     fullscreenButton.setAttribute('aria-label', '切换图像查看全屏');

@@ -226,6 +226,13 @@ pub fn create_fixtures(
                 colors[x as usize / 16]
             }
         })?;
+        save_probe(&out.join("chart_dim.png"), 128, 128, |x, y| {
+            if y < 32 {
+                [0.92 * x as f64 / 127.0; 3]
+            } else {
+                colors[x as usize / 16].map(|value| 0.92 * value)
+            }
+        })?;
         for (name, file) in [
             ("color-tone", "color-tone.json"),
             ("appearance", "appearance.json"),

@@ -1,49 +1,49 @@
 <header class="report-header">
-  <h1 id="review-title">色卡视觉检查报告</h1>
+  <h1 id="review-title">图像对照检查报告</h1>
   <p class="report-description" id="review-description"></p>
-  <p class="small">离线目视对照：显示副本按输入声明转换为 sRGB；色块窗口按声明网格固定裁切，不做曝光对齐、颜色拟合、测量或验收判定。</p>
+  <p class="small">离线目视对照：显示副本按输入声明转换为 sRGB；窗口按声明的共享网格或显式区域固定裁切，不做曝光对齐、颜色拟合、测量或验收判定。</p>
 </header>
-<p class="hash-error" id="chart-hash-error" role="alert" hidden></p>
+<p class="hash-error" id="review-error" role="alert" hidden></p>
 <main>
-  <section class="card" aria-labelledby="chart-pair-heading">
-    <h2 id="chart-pair-heading">图像对照</h2>
+  <section class="card" aria-labelledby="review-pair-heading">
+    <h2 id="review-pair-heading">图像对照</h2>
     <div class="controls">
       <label class="field">左侧图像
-        <select id="chart-left-select" data-left-select></select>
+        <select id="review-left-select" data-left-select></select>
       </label>
-      <button type="button" class="swap" id="chart-swap" data-swap>交换左右</button>
+      <button type="button" class="swap" id="review-swap" data-swap>交换左右</button>
       <label class="field">右侧图像
-        <select id="chart-right-select" data-right-select></select>
+        <select id="review-right-select" data-right-select></select>
       </label>
     </div>
     <div class="meta-grid">
       <div class="meta-card">
         <h3>左侧</h3>
         <p><strong data-meta-label="left"></strong></p>
-        <p class="small" data-meta-chart="left"></p>
+        <p class="small" data-meta-set="left"></p>
         <p data-meta-description="left"></p>
         <p class="small" data-meta-color="left"></p>
       </div>
       <div class="meta-card">
         <h3>右侧</h3>
         <p><strong data-meta-label="right"></strong></p>
-        <p class="small" data-meta-chart="right"></p>
+        <p class="small" data-meta-set="right"></p>
         <p data-meta-description="right"></p>
         <p class="small" data-meta-color="right"></p>
       </div>
     </div>
-    <p class="warning" data-chart-warning hidden></p>
+    <p class="warning" data-set-warning hidden></p>
   </section>
 
-  <section class="card viewer" aria-labelledby="chart-view-heading" data-viewer>
-    <h2 id="chart-view-heading">查看</h2>
+  <section class="card viewer" aria-labelledby="review-view-heading" data-viewer>
+    <h2 id="review-view-heading">查看</h2>
     <div class="controls">
       <div class="button-group" role="group" aria-label="显示模式">
         <button type="button" data-view-mode="whole" aria-pressed="true">整图对照</button>
-        <button type="button" data-view-mode="patch" aria-pressed="false">色块对照</button>
+        <button type="button" data-view-mode="patch" aria-pressed="false">窗口对照</button>
       </div>
       <label class="field">缩放
-        <select id="chart-zoom" data-zoom>
+        <select id="review-zoom" data-zoom>
           <option value="fit">适应窗口</option>
           <option value="native">原始像素</option>
           <option value="x2">2 倍</option>
@@ -88,7 +88,7 @@
         </div>
         <div class="controls">
           <label class="field">分割位置
-            <input type="range" id="chart-split-range" data-split-range min="0" max="100" step="1" value="50">
+            <input type="range" id="review-split-range" data-split-range min="0" max="100" step="1" value="50">
           </label>
           <span class="small" data-split-label></span>
         </div>
@@ -109,18 +109,19 @@
     </div>
 
     <div data-patch-panel hidden>
+      <p class="warning" data-region-notice hidden></p>
       <div class="controls" data-patch-shared-controls>
         <label class="field">色块窗口
-          <select id="chart-patch-select" data-patch-select></select>
+          <select id="review-patch-select" data-patch-select></select>
         </label>
-        <span class="small">同一色卡：左右同步选择，可用 ←/→ 切换色块。</span>
+        <span class="small">同一网格集合：左右同步选择，可用 ←/→ 切换色块。</span>
       </div>
       <div class="controls" data-patch-split-controls hidden>
-        <label class="field">左侧色块
-          <select id="chart-patch-left-select" data-patch-left-select></select>
+        <label class="field">左侧窗口
+          <select id="review-patch-left-select" data-patch-left-select></select>
         </label>
-        <label class="field">右侧色块
-          <select id="chart-patch-right-select" data-patch-right-select></select>
+        <label class="field">右侧窗口
+          <select id="review-patch-right-select" data-patch-right-select></select>
         </label>
       </div>
       <div class="panes">
@@ -129,7 +130,7 @@
             <strong data-patch-label="left"></strong>
             <span class="small" data-patch-rect="left"></span>
           </figcaption>
-          <div class="viewport patch-viewport" data-patch-viewport="left" tabindex="0" aria-label="左侧色块视口；可拖动或滚动查看">
+          <div class="viewport patch-viewport" data-patch-viewport="left" tabindex="0" aria-label="左侧窗口视口；可拖动或滚动查看">
             <div class="canvas crop" data-patch-canvas="left"><img data-patch-image="left" alt=""></div>
           </div>
           <figure class="locator">
@@ -145,7 +146,7 @@
             <strong data-patch-label="right"></strong>
             <span class="small" data-patch-rect="right"></span>
           </figcaption>
-          <div class="viewport patch-viewport" data-patch-viewport="right" tabindex="0" aria-label="右侧色块视口；可拖动或滚动查看">
+          <div class="viewport patch-viewport" data-patch-viewport="right" tabindex="0" aria-label="右侧窗口视口；可拖动或滚动查看">
             <div class="canvas crop" data-patch-canvas="right"><img data-patch-image="right" alt=""></div>
           </div>
           <figure class="locator">
@@ -157,7 +158,7 @@
           </figure>
         </figure>
       </div>
-      <h3>色块对照表</h3>
+      <h3>窗口对照表</h3>
       <p class="small" data-sheet-hint></p>
       <div class="contact-sheet" data-contact-sheet="shared"></div>
       <div class="contact-sheet" data-contact-sheet="left" hidden></div>
@@ -165,7 +166,7 @@
     </div>
   </section>
 
-  <details class="card" id="chart-provenance">
+  <details class="card" id="review-provenance">
     <summary>来源与文件</summary>
     <p class="small">报告数据以 <a href="report.json">report.json</a> 为准；本页面图像均为发布目录内的显示副本，颜色与像素以源文件为准。</p>
     <div class="table-scroll">
@@ -173,7 +174,7 @@
         <thead>
           <tr>
             <th>图像</th>
-            <th>色卡</th>
+            <th>集合</th>
             <th>颜色声明</th>
             <th>尺寸</th>
             <th>源文件</th>
