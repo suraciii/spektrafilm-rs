@@ -1,10 +1,10 @@
 # Parity and backends
 
-This page describes the parity target, measurement budgets, and backend behavior.
+This page describes the migration reference, measurement budgets, and backend behavior.
 
 ## Reference evidence
 
-The current parity target is the pinned upstream Python **0.3.4**, commit `3bb2c2d`. See [baseline evidence](parity/baseline_evidence.md) for reference measurements and budgets. See the [parity matrix](parity/parity_matrix.md) for the field and asset inventory. The [differential harness](../scripts/parity/README.md) provides reproducible comparisons.
+The migration reference was the pinned upstream Python **0.3.4**, commit `3bb2c2d`; the record is frozen. See [baseline evidence](parity/baseline_evidence.md) for reference measurements and budgets. See the [parity matrix](parity/parity_matrix.md) for the field and asset inventory. The [differential harness](../scripts/parity/README.md) provides reproducible comparisons.
 
 With grain on, the rendered grain texture diverges per pixel by design, matching NumPy's behavior. It produces the same average tone with a different grain pattern.
 
