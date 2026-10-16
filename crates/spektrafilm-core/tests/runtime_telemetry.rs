@@ -257,7 +257,7 @@ fn active_v3_field_reports_its_device_stage() {
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
     params.camera.auto_exposure = false;
-    params.camera.film_format_mm = 36.0;
+    params.camera.film_format_mm = 8.0;
     params.workflow.route = "input > film > scan".to_owned();
     params.io.scan_film = true;
     params.io.output_gamut_compress.algorithm = "off".into();
