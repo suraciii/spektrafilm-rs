@@ -10,6 +10,7 @@ wgpu-backend = ["dep:wgpu"]
 precision-f64 = ["spektrafilm-math/precision-f64"]
 
 [dependencies]
+spektrafilm-backend.workspace = true
 spektrafilm-math.workspace = true
 rayon.workspace = true
 tracing.workspace = true

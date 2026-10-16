@@ -6,7 +6,8 @@ use spektrafilm_core::{
     pipeline::Pipeline,
     profile,
 };
-use spektrafilm_gpu::{ComputeBackend, cpu_backend::CpuBackend, wgpu_backend::WgpuBackend};
+use spektrafilm_backend::{ComputeBackend, cpu_backend::CpuBackend};
+use spektrafilm_gpu::wgpu_backend::WgpuBackend;
 use spektrafilm_math::{
     image::ImageBuf,
     precision::{from_f64, to_f64},

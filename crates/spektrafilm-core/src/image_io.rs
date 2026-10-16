@@ -1,6 +1,6 @@
 //! Shared prepared-image I/O. Loading and writing retain sample interpretation;
 //! saving-space conversion is an explicit operation separate from simulation.
-use spektrafilm_gpu::telemetry::{
+use spektrafilm_backend::telemetry::{
     IssueBoundary, IssueCategory, ObservationContext, ObservationKind, Purpose,
 };
 use spektrafilm_math::{

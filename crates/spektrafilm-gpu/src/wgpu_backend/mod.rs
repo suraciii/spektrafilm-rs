@@ -1,8 +1,8 @@
 //! wgpu compute backend — dispatches WGSL shaders on GPU via Metal/Vulkan/DX12.
 
 mod observation;
-use crate::telemetry::*;
 use observation::{ObservedDevice, ObservedEncoder, ObservedPass, ObservedQueue};
+use spektrafilm_backend::telemetry::*;
 
 #[cfg(feature = "wgpu-backend")]
 use spektrafilm_math::image::ImageBuf;
@@ -11,7 +11,8 @@ use crate::gpu_helpers::{
     f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
 };
 #[cfg(feature = "wgpu-backend")]
-use crate::{ComputeBackend, Lut3D, cpu_backend};
+use spektrafilm_backend::cpu_backend;
+use spektrafilm_backend::{ComputeBackend, Lut3D};
 
 #[cfg(feature = "wgpu-backend")]
 mod cache;
@@ -326,9 +327,10 @@ mod glare;
 #[cfg(feature = "wgpu-backend")]
 pub mod grain;
 
-pub use grain::dye::{DyeGpuParams, DyeReadoutGrid};
 pub use grain::dye_decisions::{DYE_DECISION_FAILED, DyeDecisionCase};
-pub use grain::dye_layers::{DyeChannelParts, DyeChannelTableGpu, DyeChannelTablesGpu};
+pub use spektrafilm_backend::dye_params::{
+    DyeChannelParts, DyeChannelTableGpu, DyeChannelTablesGpu, DyeGpuParams, DyeReadoutGrid,
+};
 #[cfg(feature = "wgpu-backend")]
 mod halation;
 #[cfg(feature = "wgpu-backend")]

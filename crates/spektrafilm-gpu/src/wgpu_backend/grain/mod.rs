@@ -14,7 +14,11 @@ struct ShaderParams {
     flags: [f32; 4],
 }
 
-fn shader_params(width: u32, height: u32, params: &crate::GrainV2GpuParams) -> ShaderParams {
+fn shader_params(
+    width: u32,
+    height: u32,
+    params: &spektrafilm_backend::GrainV2GpuParams,
+) -> ShaderParams {
     let timer = params
         .timer
         .unwrap_or_else(|| spektrafilm_math::grain::seeded_phase(params.seed));
@@ -42,7 +46,11 @@ fn shader_params(width: u32, height: u32, params: &crate::GrainV2GpuParams) -> S
 }
 
 impl WgpuBackend {
-    pub fn grain_v2_gpu(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> ImageBuf {
+    pub fn grain_v2_gpu(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::GrainV2GpuParams,
+    ) -> ImageBuf {
         if !self.device.context.enabled() || img.width == 0 || img.height == 0 {
             return self.grain_v2_gpu_inner(img, params);
         }
@@ -50,7 +58,11 @@ impl WgpuBackend {
         backend.grain_v2_gpu_inner(img, params)
     }
     /// Execute Grain Procedural on native encoded RGB with no transfer or primaries conversion.
-    fn grain_v2_gpu_inner(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> ImageBuf {
+    fn grain_v2_gpu_inner(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::GrainV2GpuParams,
+    ) -> ImageBuf {
         if img.width == 0 || img.height == 0 {
             return img.clone();
         }
@@ -100,7 +112,7 @@ pub(super) struct GrainV2State {
 
 pub(super) fn build_grain_v2_state(
     device: &ObservedDevice,
-    params: &crate::GrainV2GpuParams,
+    params: &spektrafilm_backend::GrainV2GpuParams,
     width: u32,
     height: u32,
     input: &wgpu::Buffer,

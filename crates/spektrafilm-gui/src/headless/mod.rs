@@ -2,7 +2,7 @@
 //! Only confirmed chooser paths cross the explicit Save/Export boundary here.
 use super::*;
 use egui_kittest::{Harness, kittest::Queryable};
-use spektrafilm_gpu::cpu_backend::CpuBackend;
+use spektrafilm_backend::cpu_backend::CpuBackend;
 use tempfile::TempDir;
 mod calibration;
 mod dialogs;

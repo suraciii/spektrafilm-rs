@@ -342,7 +342,7 @@ mod tests {
                 &image,
                 &film,
                 &params,
-                &spektrafilm_gpu::cpu_backend::CpuBackend,
+                &spektrafilm_backend::cpu_backend::CpuBackend,
                 &correction,
                 &crate::gamut_compression::OutputGamutCompress::identity(),
             )

@@ -14,7 +14,7 @@ pub(super) struct GamutState {
 
 pub(super) fn build_gamut_state(
     device: &ObservedDevice,
-    gp: &crate::GamutGpuParams<'_>,
+    gp: &spektrafilm_backend::GamutGpuParams<'_>,
     buf_b: &wgpu::Buffer,
     n_pixels: u32,
     backend: &WgpuBackend,

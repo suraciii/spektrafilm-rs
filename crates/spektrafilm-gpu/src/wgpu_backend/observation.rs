@@ -1,6 +1,6 @@
 use super::*;
-use crate::telemetry::*;
 use parking_lot::Mutex;
+use spektrafilm_backend::telemetry::*;
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,

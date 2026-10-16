@@ -1,31 +1,15 @@
 //! Bounded resident Dye execution. Only profile coefficients and scalar
 //! geometry cross from the host; every image-dependent stage stays on device.
+//!
+//! `DyeGpuParams` and `DyeReadoutGrid` live in `spektrafilm-backend`, because
+//! `ComputeBackend::dye_field` and `FilmChainParams::grain_dye` reference them
+//! across the crate boundary.
 
 use super::dye_decisions::DYE_MAX_RATE;
-use super::dye_layers::{self, DyeChannelTablesGpu, LayerPass};
+use super::dye_layers::{self, LayerPass};
 use super::dye_spatial::{self, BAND_BUFFERS, DyeBand, DyePlan, DyeSpatialState};
 use super::*;
-
-#[derive(Clone, Debug)]
-pub struct DyeReadoutGrid {
-    pub origin_um: [f64; 2],
-    pub pitch_um: [f64; 2],
-    pub width: u32,
-    pub height: u32,
-}
-
-/// Packed representation of the model owner's resolved field parameters.
-#[derive(Clone, Debug)]
-pub struct DyeGpuParams {
-    pub tables: DyeChannelTablesGpu,
-    pub cell_um: f64,
-    pub taps: Vec<f64>,
-    pub source_pitch_um: f64,
-    pub grid: DyeReadoutGrid,
-    pub seed: u64,
-    pub channel_correlation: f32,
-    pub expectation: bool,
-}
+use spektrafilm_backend::dye_params::{DyeGpuParams, DyeReadoutGrid};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -417,7 +401,7 @@ impl WgpuBackend {
 
     fn certify_dye_accumulation(&self) -> Result<(), String> {
         use super::dye_decisions::DyeDecisionCase;
-        use super::dye_layers::DyeChannelParts;
+        use spektrafilm_backend::dye_params::DyeChannelParts;
         let knots = [0.0, 1.0];
         let inverse = [1.0];
         let zero = [0.0; 2];
@@ -562,7 +546,7 @@ impl WgpuBackend {
 #[cfg(test)]
 mod tests {
     use super::super::dye_decisions::DyeDecisionCase;
-    use super::super::dye_layers::DyeChannelParts;
+    use spektrafilm_backend::dye_params::DyeChannelParts;
     use super::*;
 
     #[test]
@@ -787,7 +771,7 @@ mod tests {
 
 #[cfg(test)]
 mod range_tests {
-    use super::super::dye_layers::DyeChannelParts;
+    use spektrafilm_backend::dye_params::DyeChannelParts;
     use super::*;
 
     #[test]

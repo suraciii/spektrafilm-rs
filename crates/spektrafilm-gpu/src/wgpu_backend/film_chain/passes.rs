@@ -46,7 +46,10 @@ struct ChainSetup<'a> {
 impl WgpuBackend {
     /// Phase 1: validate dye resources, allocate buffers, pre-compile
     /// pipelines, build bind groups, and construct per-stage state.
-    fn setup_chain<'a>(&self, p: &'a crate::FilmChainParams<'a>) -> Result<ChainSetup<'a>, String> {
+    fn setup_chain<'a>(
+        &self,
+        p: &'a spektrafilm_backend::FilmChainParams<'a>,
+    ) -> Result<ChainSetup<'a>, String> {
         // doesn't need a rewrite — only the param sources change.
         let image = p.image;
         let film_log_exposure = p.film_log_exposure;
@@ -113,8 +116,10 @@ impl WgpuBackend {
                 .get_mapped_range_mut()
                 .copy_from_slice(bytemuck::cast_slice(&input_f32));
             buf.unmap();
-            self.device
-                .upload(img_bytes as u64, crate::telemetry::UploadCategory::Image);
+            self.device.upload(
+                img_bytes as u64,
+                spektrafilm_backend::telemetry::UploadCategory::Image,
+            );
             buf
         } else {
             let buf = make_img_buf("img_a");
@@ -243,7 +248,7 @@ impl WgpuBackend {
         // (params + rgb_in + raw_out). The tc_lut buffer rides along in the
         // tuple to outlive the encoder on the hanatos arm.
         let (front_pipe, bg_front, _front_tc_lut) = match &p.front {
-            crate::FrontPass::Hanatos2025 { tc_lut, .. } => {
+            spektrafilm_backend::FrontPass::Hanatos2025 { tc_lut, .. } => {
                 let tc_lut_f32: Vec<f32> = tc_lut.data.iter().map(|&v| v as f32).collect();
                 let tc_lut_buf = mk_storage("tc_lut", bytemuck::cast_slice(&tc_lut_f32));
                 let pipe = self.cached_pipeline(
@@ -281,7 +286,7 @@ impl WgpuBackend {
                 });
                 (pipe, bg, Some(tc_lut_buf))
             }
-            crate::FrontPass::Mallett2019 { .. } => {
+            spektrafilm_backend::FrontPass::Mallett2019 { .. } => {
                 let pipe = self.cached_pipeline(
                     include_str!(
                         "../../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"
@@ -694,7 +699,7 @@ impl WgpuBackend {
     /// remaining passes continue on the device.
     pub(super) fn run_film_chain_inner(
         &self,
-        p: &crate::FilmChainParams<'_>,
+        p: &spektrafilm_backend::FilmChainParams<'_>,
     ) -> Result<ImageBuf, String> {
         let t_start = std::time::Instant::now();
         let setup = self.setup_chain(p)?;
@@ -1286,7 +1291,7 @@ impl RequiredChainBuffers {
 /// one f32 on upload, so `n` f64 samples become `4n` bytes and an
 /// `[[f64; 3]]` table of `n` rows becomes `12n`.
 pub(in crate::wgpu_backend) fn required_chain_buffers(
-    p: &crate::FilmChainParams<'_>,
+    p: &spektrafilm_backend::FilmChainParams<'_>,
 ) -> RequiredChainBuffers {
     let f32s = |count: usize| (count as u64).saturating_mul(4);
     let table = |rows: usize| f32s(rows).saturating_mul(3);
@@ -1299,8 +1304,8 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         p.print_channel_density.len()
     };
     let tc_lut_bytes = match &p.front {
-        crate::FrontPass::Hanatos2025 { tc_lut, .. } => f32s(tc_lut.data.len()),
-        crate::FrontPass::Mallett2019 { .. } => 0,
+        spektrafilm_backend::FrontPass::Hanatos2025 { tc_lut, .. } => f32s(tc_lut.data.len()),
+        spektrafilm_backend::FrontPass::Mallett2019 { .. } => 0,
     };
     let dir_log_bytes = p.dir_couplers.map_or(0, |dp| f32s(dp.log_exposure.len()));
     let dir_curves_bytes = p
@@ -1371,7 +1376,7 @@ pub(in crate::wgpu_backend) fn explicit_resource_error(reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FilmChainParams, FrontPass};
+    use spektrafilm_backend::{FilmChainParams, FrontPass};
     use spektrafilm_math::image::ImageBuf;
 
     const MAT3: [[f64; 3]; 3] = [[0.0; 3]; 3];
@@ -1500,7 +1505,7 @@ mod tests {
     /// instead of an uncaptured wgpu-core validation error.
     #[test]
     fn oversized_geometry_declines_the_automatic_route_and_fails_an_explicit_request() {
-        use crate::ComputeBackend;
+        use spektrafilm_backend::ComputeBackend;
         let _lock = crate::wgpu_backend::observation::TEST_DEVICE_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());

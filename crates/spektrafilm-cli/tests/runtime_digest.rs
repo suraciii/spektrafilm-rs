@@ -2,7 +2,7 @@ use spektrafilm_core::{
     params::RuntimeParams,
     runtime::{self, DigestMode},
 };
-use spektrafilm_gpu::cpu_backend::CpuBackend;
+use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_math::precision::to_f64;
 use std::{
     path::{Path, PathBuf},

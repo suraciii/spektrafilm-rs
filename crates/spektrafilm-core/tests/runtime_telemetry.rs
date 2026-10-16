@@ -3,9 +3,9 @@ use spektrafilm_core::{
     runtime::Runtime,
     telemetry::{Operation, OperationKind},
 };
-use spektrafilm_gpu::{
-    cpu_backend::CpuBackend,
-    telemetry::{CollectionMode, CpuReason, ExecutionPath, ObservationKind, Outcome, Purpose},
+use spektrafilm_backend::cpu_backend::CpuBackend;
+use spektrafilm_backend::telemetry::{
+    CollectionMode, CpuReason, ExecutionPath, ObservationKind, Outcome, Purpose,
 };
 use spektrafilm_math::{image::ImageBuf, precision::from_f64};
 
@@ -123,7 +123,7 @@ fn concurrent_runtime_calls_preserve_pixels_and_operation_ownership() {
 
 #[test]
 fn negative_to_positive_cpu_override_preserves_stage_reports() {
-    use spektrafilm_gpu::telemetry::{BackendSelected, Executor, ResidentDeclineReason};
+    use spektrafilm_backend::telemetry::{BackendSelected, Executor, ResidentDeclineReason};
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();
@@ -143,7 +143,7 @@ fn negative_to_positive_cpu_override_preserves_stage_reports() {
     );
     let expected = runtime.process(image.clone(), &CpuBackend).unwrap();
     {
-        let backend = &CpuBackend as &dyn spektrafilm_gpu::ComputeBackend;
+        let backend = &CpuBackend as &dyn spektrafilm_backend::ComputeBackend;
         let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
         operation.set_render_configuration(runtime.telemetry_configuration());
         operation.set_input_dimensions(image.width, image.height);
@@ -247,7 +247,7 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
 
 #[test]
 fn active_v3_field_reports_its_device_stage() {
-    use spektrafilm_gpu::ComputeBackend as _;
+    use spektrafilm_backend::ComputeBackend as _;
     // The delivered raster (no crop, no upscale) resolves the Dye field as
     // the resident device pass: the render stays on the resident chain and
     // records no host field stage. The host field and its published reason

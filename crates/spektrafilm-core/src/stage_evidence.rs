@@ -520,7 +520,7 @@ fn host_precision() -> &'static str {
 /// instead of fabricating boundary buffers from a fused or non-reference
 /// route.
 pub fn ensure_supported_backend(
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<(), String> {
     if backend.is_gpu() {
         return Err(format!(

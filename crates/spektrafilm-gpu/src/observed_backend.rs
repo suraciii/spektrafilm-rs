@@ -1,4 +1,4 @@
-use crate::telemetry::*;
+use spektrafilm_backend::telemetry::*;
 use crate::*;
 /// Bind explicit attribution without replacing backend behavior or resources.
 pub fn bind_backend<'a>(

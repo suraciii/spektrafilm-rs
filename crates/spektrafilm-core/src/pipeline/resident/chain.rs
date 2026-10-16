@@ -1,7 +1,7 @@
 use super::super::Pipeline;
 use super::decision::{ResidentDecision, ResidentFallbackReason};
 use crate::stages::StageObservation;
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 
 pub(super) type CpuStageFn<'a> = Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>;
@@ -23,7 +23,7 @@ impl Pipeline {
             ResidentDecision::PerStage { reasons } => {
                 if let Some(context) = backend.observation_context() {
                     for reason in &reasons {
-                        use spektrafilm_gpu::telemetry::ResidentDeclineReason as R;
+                        use spektrafilm_backend::telemetry::ResidentDeclineReason as R;
                         let reason = match reason {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
                             ResidentFallbackReason::FilmGrainV3FieldCpu => R::GrainV3FieldCpu,
@@ -96,7 +96,7 @@ impl Pipeline {
             let _decode = StageObservation::cpu(
                 backend,
                 "input_transfer",
-                spektrafilm_gpu::telemetry::CpuReason::InputTransferDecoding,
+                spektrafilm_backend::telemetry::CpuReason::InputTransferDecoding,
             );
             let input_space =
                 spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)
@@ -184,7 +184,7 @@ impl Pipeline {
                 (h.halation_strength[1] * h.halation_amount) as f32,
                 (h.halation_strength[2] * h.halation_amount) as f32,
             ];
-            Some(spektrafilm_gpu::HalationGpuParams {
+            Some(spektrafilm_backend::HalationGpuParams {
                 scatter_amount: h.scatter_amount as f32,
                 scatter_core_px: (avg_f64(h.scatter_core_um) * h.scatter_spatial_scale
                     / pix_um as f64) as f32,
@@ -249,7 +249,7 @@ impl Pipeline {
             ];
             let dm = d.0.density_max;
             let narrow = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32];
-            spektrafilm_gpu::DirCouplersGpuParams {
+            spektrafilm_backend::DirCouplersGpuParams {
                 couplers_matrix_scaled: matrix_f32,
                 density_max: [dm[0] as f32, dm[1] as f32, dm[2] as f32],
                 is_positive: d.5,
@@ -286,7 +286,7 @@ impl Pipeline {
                     (glare_rgb_offset[1] / 100.0) as f32,
                     (glare_rgb_offset[2] / 100.0) as f32,
                 ];
-                spektrafilm_gpu::GlareGpuParams {
+                spektrafilm_backend::GlareGpuParams {
                     mu: mu as f32,
                     sigma: sigma as f32,
                     blur_px: g.blur,
@@ -298,7 +298,7 @@ impl Pipeline {
         // Unsharp mask: scanner.unsharp_mask = [sigma, amount].
         let [usm_sigma, usm_amount] = self.params.scanner.unsharp_mask;
         let unsharp = if usm_sigma > 0.0 && usm_amount > 0.0 {
-            Some(spektrafilm_gpu::UnsharpGpuParams {
+            Some(spektrafilm_backend::UnsharpGpuParams {
                 sigma_px: usm_sigma as f32,
                 amount: usm_amount as f32,
             })
@@ -337,7 +337,7 @@ impl Pipeline {
 
         let hboost = &self.params.film_render.halation;
         let highlight_boost = if hboost.boost_ev != 0.0 {
-            Some(spektrafilm_gpu::HighlightBoostGpuParams {
+            Some(spektrafilm_backend::HighlightBoostGpuParams {
                 boost_ev: hboost.boost_ev,
                 boost_range: hboost.boost_range,
                 protect_ev: hboost.protect_ev,
@@ -539,13 +539,13 @@ impl Pipeline {
             std::array::from_fn(|j| scan_output_space.rgb_to_rgb_identity()[i][j] as f32)
         });
         let output_transfer = if !grain_v2_active && self.params.io.output_cctf_encoding {
-            Some(spektrafilm_gpu::OutputTransferGpuParams {
+            Some(spektrafilm_backend::OutputTransferGpuParams {
                 decode: false,
                 cctf_kind,
                 matrix: identity_f32,
             })
         } else if grain_v2_active && !self.params.io.output_cctf_encoding {
-            Some(spektrafilm_gpu::OutputTransferGpuParams {
+            Some(spektrafilm_backend::OutputTransferGpuParams {
                 decode: true,
                 cctf_kind,
                 matrix: identity_f32,
@@ -568,7 +568,7 @@ impl Pipeline {
                 std::array::from_fn(|i| std::array::from_fn(|j| m[i][j] as f32))
             };
             let f32a = |a: &[f64; 10]| std::array::from_fn(|i| a[i] as f32);
-            Some(spektrafilm_gpu::MagazineGpuParams {
+            Some(spektrafilm_backend::MagazineGpuParams {
                 strength: self.params.magazine_print_color.strength.clamp(0.0, 1.0) as f32,
                 encoded: self.params.io.output_cctf_encoding,
                 cctf_kind,
@@ -582,7 +582,7 @@ impl Pipeline {
             None
         };
 
-        let params = spektrafilm_gpu::FilmChainParams {
+        let params = spektrafilm_backend::FilmChainParams {
             image,
             front,
             film_log_exposure: film_log_exp,
@@ -631,7 +631,7 @@ impl Pipeline {
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
-                    spektrafilm_gpu::telemetry::ResidentDeclineReason::BlurRadiusExceedsBackendSupport,
+                    spektrafilm_backend::telemetry::ResidentDeclineReason::BlurRadiusExceedsBackendSupport,
                 );
             }
             tracing::info!(
@@ -703,10 +703,10 @@ impl Pipeline {
         };
         if let Some(context) = backend.observation_context() {
             if result.is_some() {
-                context.set_path(spektrafilm_gpu::telemetry::ExecutionPath::GpuResident);
+                context.set_path(spektrafilm_backend::telemetry::ExecutionPath::GpuResident);
             } else {
                 context.decline_resident(
-                    spektrafilm_gpu::telemetry::ResidentDeclineReason::BackendNoResidentSupport,
+                    spektrafilm_backend::telemetry::ResidentDeclineReason::BackendNoResidentSupport,
                 );
             }
         }

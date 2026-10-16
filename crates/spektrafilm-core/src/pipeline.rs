@@ -15,7 +15,7 @@ use std::sync::{
 use std::time::Instant;
 
 use rayon::prelude::*;
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_math::spectral::TcLut;
@@ -57,7 +57,7 @@ pub(crate) fn dump_if_env(var: &str, image: &ImageBuf) {
 #[cfg(test)]
 use crate::enlarger;
 use crate::spectral_service::select_illuminant;
-use spektrafilm_gpu::timing::{print_stage_timing, stage_timings_enabled};
+use spektrafilm_backend::timing::{print_stage_timing, stage_timings_enabled};
 
 fn record_stage_timing(
     timings: &mut Option<&mut BTreeMap<String, f64>>,
@@ -137,7 +137,7 @@ impl Pipeline {
             return Ok(crate::stages::scanning::ScannerSetup::IDENTITY);
         }
         crate::stages::grain_v3::validate_cell_spectral(&self.params)?;
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let mut measurement = self.clone();
         measurement.params.io.crop = false;
         measurement.params.io.upscale_factor = 1.0;
@@ -421,7 +421,7 @@ impl Pipeline {
         let mut geometry = crate::stages::StageObservation::cpu(
             backend,
             "geometry",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         // Dye develops the full source; its field readout owns the crop and
         // output grid so that overlapping reads keep the same film coordinates.
@@ -458,7 +458,7 @@ impl Pipeline {
         let _observation = crate::stages::StageObservation::cpu(
             backend,
             "color_reference",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         crate::color_reference::ColorReference::compute(
             &self.film,

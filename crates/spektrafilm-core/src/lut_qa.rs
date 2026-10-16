@@ -12,7 +12,7 @@ use crate::{
 use nalgebra::Matrix3;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::{
     colorspace::chromatic_adaptation_matrix_cat16_f64,
     image::ImageBuf,
@@ -1733,7 +1733,7 @@ mod tests {
     #[test]
     fn early_figure_failure_preserves_later_measurements_and_reports() {
         let data = data_dir();
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let spec=serde_json::from_value(json!({"name":"scenario_isolation","film_profile":"kodak_portra_400","print_profiles":["kodak_portra_endura"],"input_color_space":"sRGB","output_color_space":"sRGB","resolution":3})).unwrap();
         let bundle = crate::lut_baker::BundleBuilder::new(spec)
             .build(&data, &backend)

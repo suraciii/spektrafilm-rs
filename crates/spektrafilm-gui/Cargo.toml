@@ -23,6 +23,7 @@ gui-raw = []
 [dependencies]
 spektrafilm-core.workspace = true
 spektrafilm-gpu.workspace = true
+spektrafilm-backend.workspace = true
 spektrafilm-math.workspace = true
 spektrafilm-model.workspace = true
 spektrafilm-raw = { path = "../spektrafilm-raw" }
