@@ -81,7 +81,7 @@ gui-raw:
     SPEKTRAFILM_GUI_RAW_FIXTURE="$fixture" \
         cargo test --locked -p spektrafilm-gui --features precision-f64,gui-raw headless::raw::
 
-# Render focused GUI layouts offscreen; requires a usable WGPU adapter.
+# Render focused GUI layouts and the full window offscreen; requires a usable WGPU adapter.
 gui-layout:
     cargo test --locked -p spektrafilm-gui --features precision-f64,gui-snapshots layout_snapshots::
 
