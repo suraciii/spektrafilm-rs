@@ -92,25 +92,12 @@ impl ImageBuf {
             .map(|p| p.as_mut_slice())
     }
 
-    pub fn par_pixels(&self) -> rayon::slice::ChunksExact<'_, Scalar> {
-        self.data.par_chunks_exact(3)
-    }
-
     pub fn par_pixels_mut(&mut self) -> rayon::slice::ChunksExactMut<'_, Scalar> {
         self.data.par_chunks_exact_mut(3)
     }
 
     pub fn rows(&self) -> impl Iterator<Item = &[Scalar]> {
         self.data.chunks_exact((self.width as usize) * 3)
-    }
-
-    pub fn par_rows(&self) -> rayon::slice::ChunksExact<'_, Scalar> {
-        self.data.par_chunks_exact((self.width as usize) * 3)
-    }
-
-    pub fn par_rows_mut(&mut self) -> rayon::slice::ChunksExactMut<'_, Scalar> {
-        let w = (self.width as usize) * 3;
-        self.data.par_chunks_exact_mut(w)
     }
 
     pub fn extract_channel(&self, c: usize) -> Vec<Scalar> {

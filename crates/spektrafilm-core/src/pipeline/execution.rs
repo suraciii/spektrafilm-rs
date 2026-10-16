@@ -25,16 +25,6 @@ impl Pipeline {
         self.process_with_taps_timed(image, backend, inject, collect, None, None)
     }
 
-    /// Process while collecting per-node wall-clock timings.
-    pub fn process_with_timings(
-        &self,
-        image: ImageBuf,
-        backend: &dyn ComputeBackend,
-        timings: &mut BTreeMap<String, f64>,
-    ) -> Result<ImageBuf, String> {
-        self.process_with_taps_timed(image, backend, None, None, Some(timings), None)
-    }
-
     pub fn process_with_taps_timed(
         &self,
         image: ImageBuf,

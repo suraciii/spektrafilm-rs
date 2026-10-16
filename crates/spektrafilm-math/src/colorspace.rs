@@ -92,13 +92,6 @@ const CAT02_INV_F64: [[f64; 3]; 3] = [
     [-0.009627608738429, -0.005698031216113, 1.015325639954543],
 ];
 
-/// Chromatic adaptation from source white to destination white using CAT02.
-/// Computes in f64 internally for precision, returns f32.
-pub fn chromatic_adaptation_matrix(src_white: [f32; 3], dst_white: [f32; 3]) -> [[f32; 3]; 3] {
-    chromatic_adaptation_matrix_f64(src_white.map(|v| v as f64), dst_white.map(|v| v as f64))
-        .map(|row| row.map(|v| v as f32))
-}
-
 /// Chromatic adaptation in full f64 precision, returning f64 matrix.
 pub fn chromatic_adaptation_matrix_f64(src_white: [f64; 3], dst_white: [f64; 3]) -> [[f64; 3]; 3] {
     von_kries(src_white, dst_white, &CAT02_FWD_F64, &CAT02_INV_F64)
@@ -183,34 +176,6 @@ fn von_kries(
         }
     }
     result
-}
-
-/// Build a full RGB→RGB conversion matrix:
-/// src_RGB → src_XYZ → adapted_XYZ → dst_XYZ → dst_RGB
-pub fn rgb_to_rgb_matrix(
-    src_to_xyz: &[[f32; 3]; 3],
-    src_white: [f32; 3],
-    xyz_to_dst: &[[f32; 3]; 3],
-    dst_white: [f32; 3],
-) -> [[f32; 3]; 3] {
-    let adapt = chromatic_adaptation_matrix(src_white, dst_white);
-
-    // Combined = xyz_to_dst * adapt * src_to_xyz
-    let mut tmp = [[0.0f32; 3]; 3];
-    mat3_mul3(&adapt, src_to_xyz, &mut tmp);
-
-    let mut result = [[0.0f32; 3]; 3];
-    mat3_mul3(xyz_to_dst, &tmp, &mut result);
-    result
-}
-
-/// Multiply two 3x3 matrices: out = a * b
-fn mat3_mul3(a: &[[f32; 3]; 3], b: &[[f32; 3]; 3], out: &mut [[f32; 3]; 3]) {
-    for i in 0..3 {
-        for j in 0..3 {
-            out[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
-        }
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -74,61 +74,6 @@ pub fn fast_interp_image_f64(img: &ImageBuf, x_axis: &[f64], y_vals: &[[f64; 3]]
     out
 }
 
-/// f64 variant with per-channel x-axes.
-pub fn fast_interp_image_perchannel_f64(
-    img: &ImageBuf,
-    x_axes: &[[f64; 3]],
-    y_vals: &[[f64; 3]],
-) -> ImageBuf {
-    let k = x_axes.len();
-    assert_eq!(y_vals.len(), k);
-
-    let xax: Vec<[Scalar; 3]> = x_axes
-        .iter()
-        .map(|r| [from_f64(r[0]), from_f64(r[1]), from_f64(r[2])])
-        .collect();
-    let ya: Vec<[Scalar; 3]> = y_vals
-        .iter()
-        .map(|r| [from_f64(r[0]), from_f64(r[1]), from_f64(r[2])])
-        .collect();
-    let per_chan_axes: [Vec<Scalar>; 3] = [
-        xax.iter().map(|r| r[0]).collect(),
-        xax.iter().map(|r| r[1]).collect(),
-        xax.iter().map(|r| r[2]).collect(),
-    ];
-    let inv_dx: Vec<[Scalar; 3]> = (0..k - 1)
-        .map(|i| {
-            let mut id = [Scalar::default(); 3];
-            for c in 0..3 {
-                let dx = xax[i + 1][c] - xax[i][c];
-                id[c] = if dx != 0.0 { 1.0 / dx } else { 0.0 };
-            }
-            id
-        })
-        .collect();
-
-    let mut out = img.clone();
-    out.par_pixels_mut().for_each(|px| {
-        for c in 0..3 {
-            let x = px[c];
-            let x0 = xax[0][c];
-            let xn = xax[k - 1][c];
-            if x <= x0 {
-                px[c] = ya[0][c];
-            } else if x >= xn {
-                px[c] = ya[k - 1][c];
-            } else {
-                let xa = &per_chan_axes[c];
-                let idx = xa.partition_point(|&v| v <= x);
-                let low = if idx > 0 { idx - 1 } else { 0 };
-                let t = (x - xax[low][c]) * inv_dx[low][c];
-                px[c] = ya[low][c] + t * (ya[low + 1][c] - ya[low][c]);
-            }
-        }
-    });
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
