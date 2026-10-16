@@ -9,11 +9,6 @@ requirements, packaging, and the full command list live in
 - Search [open issues](https://github.com/suraciii/spektrafilm-rs/issues) and
   [open pull requests](https://github.com/suraciii/spektrafilm-rs/pulls) for
   duplicates. Link the closest one, or write "none found".
-- For anything beyond a small fix, open an issue first and agree on the
-  direction before you build it.
-- Keep one logical change per pull request. Split unrelated cleanups, renames,
-  and drive-by refactors into their own pull requests.
-- Write issues and pull requests in English.
 
 ## Commits
 
@@ -47,17 +42,6 @@ in the pull request. The required evidence depends on the change:
 Numeric agreement is judged against per-scenario budgets, not universal bit
 identity. See [parity and backends](docs/parity.md) and
 [test architecture](eng/testing.md).
-
-## AI-assisted contributions
-
-AI agents are welcome as tools, not as unattended contributors:
-
-- keep the agent inside the agreed scope and reject unrelated changes;
-- review every changed file and understand the resulting behavior;
-- write at least one sentence yourself in the pull request description,
-  explaining what changed and why.
-
-You own the submitted code, regardless of who or what generated it.
 
 ## Standards
 
