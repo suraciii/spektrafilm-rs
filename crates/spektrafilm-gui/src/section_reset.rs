@@ -191,3 +191,39 @@ fn same_bits(a: &Value, b: &Value) -> bool {
         _ => a == b,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_restores_a_section_and_leaves_neighbours_untouched() {
+        let mut state = GuiState::factory();
+        state.sections["film_base"]["scale"] = serde_json::json!(1.5);
+        state.sections["print_base"]["scale"] = serde_json::json!(2.0);
+        assert!(reset(&mut state, "Film base"));
+        assert_eq!(state.sections["film_base"]["scale"], serde_json::json!(1.0));
+        assert_eq!(
+            state.sections["print_base"]["scale"],
+            serde_json::json!(2.0)
+        );
+    }
+
+    #[test]
+    fn reset_of_an_unknown_section_changes_nothing() {
+        let mut state = GuiState::factory();
+        state.sections["grain"]["active"] = serde_json::json!(false);
+        assert!(!reset(&mut state, "No such section"));
+        assert_eq!(state.sections["grain"]["active"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn a_section_is_unmodified_until_a_value_changes_and_clears_when_typed_back() {
+        let mut params = GuiState::factory().runtime_params().unwrap();
+        assert!(!is_modified("Grain", &params));
+        params.film_render.grain.active = !params.film_render.grain.active;
+        assert!(is_modified("Grain", &params));
+        params.film_render.grain.active = !params.film_render.grain.active;
+        assert!(!is_modified("Grain", &params));
+    }
+}

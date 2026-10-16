@@ -21,6 +21,18 @@ fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
+fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    super::show(
+        ui,
+        params,
+        &mut serde_json::Value::Null,
+        "Camera",
+        super::ScanMedium::Negative,
+        "",
+        &mut Default::default(),
+    );
+}
+
 #[cfg(test)]
 mod headless {
     use super::*;
@@ -263,5 +275,34 @@ mod layout_snapshots {
             }
             crate::headless::save_snapshot(&image, &format!("{name}.png"));
         }
+    }
+}
+
+#[cfg(test)]
+mod roles {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn a_parameter_row_boolean_is_a_switch() {
+        let mut params = scanner_params();
+        params.camera.auto_exposure = false;
+        let mut harness = Harness::new_ui_state(camera, params);
+        let node = harness.get_by_label("auto exposure");
+        assert_eq!(node.role(), egui::accesskit::Role::Switch);
+        assert_eq!(node.toggled(), Some(egui::accesskit::Toggled::False));
+        harness.get_by_label("auto exposure").simulate_click();
+        harness.run();
+        assert_eq!(
+            harness.get_by_label("auto exposure").toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+    }
+
+    #[test]
+    fn a_numeric_row_names_its_editor() {
+        let mut harness = Harness::new_ui_state(scanner, scanner_params());
+        let node = harness.get_by_label("brightness");
+        assert_eq!(node.role(), egui::accesskit::Role::TextInput);
     }
 }

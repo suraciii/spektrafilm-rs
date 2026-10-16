@@ -430,7 +430,23 @@ fn wheel_adjust<T: egui::emath::Numeric>(
 
 #[cfg(test)]
 mod tests {
-    use super::{numeric_field, parse_value};
+    use super::{SliderScale, numeric_field, parse_value, slider_scale};
+
+    #[test]
+    fn slider_scale_picks_logarithmic_only_for_wide_positive_ranges() {
+        // Signed ranges stay linear.
+        assert_eq!(slider_scale(-10.0, 10.0), SliderScale::Linear);
+        // A zero floor with a narrow span stays linear.
+        assert_eq!(slider_scale(0.0, 100.0), SliderScale::Linear);
+        // A zero floor at or past a thousand goes logarithmic.
+        assert_eq!(slider_scale(0.0, 1000.0), SliderScale::Logarithmic);
+        assert_eq!(slider_scale(0.0, 1000000.0), SliderScale::Logarithmic);
+        // A positive floor spans more than three decades.
+        assert_eq!(slider_scale(1.0, 100.0), SliderScale::Linear);
+        assert_eq!(slider_scale(1.0, 10000.0), SliderScale::Logarithmic);
+        // Exactly three decades is not more than three decades.
+        assert_eq!(slider_scale(1000.0, 1000000.0), SliderScale::Linear);
+    }
 
     #[test]
     fn incomplete_and_nonfinite_text_does_not_change_parameters() {
