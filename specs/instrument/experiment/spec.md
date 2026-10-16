@@ -2,7 +2,7 @@
 
 `experiment run` publishes one native stage-evidence bundle for a declared experiment, and `experiment export` converts an existing bundle's raw f64 buffers into `.npy` arrays. Together they are the development loop for a film profile: declare what to run, run it reproducibly, and hand its boundary values to a measurement tool.
 
-Both commands are experimental: they carry no compatibility promise. See [command tiers](spec.md#command-tiers).
+Both commands are experimental: they carry no compatibility promise. See [command tiers](../spec.md#command-tiers).
 
 ## Command surface
 
@@ -16,14 +16,14 @@ Both commands are experimental: they carry no compatibility promise. See [comman
 - `schema_version` — `1`.
 - `id` — a nonempty identifier matching `^[A-Za-z0-9][A-Za-z0-9_.-]*$`.
 - `input` — the source image. `path` is a file path relative to the document or an absolute path; `sha256` is the SHA-256 of the file's bytes. A missing or changed file is a command failure.
-- `chain` — the parameter chain. `--film`, `--paper`, `--preset`, `--params`, `--set`, `--route`, and `--scan-output` use the [process surface](../cli/spec.md) names and precedence. The document is a source of these values, not a new parameter language. An omitted field takes the process default.
+- `chain` — the parameter chain. `--film`, `--paper`, `--preset`, `--params`, `--set`, `--route`, and `--scan-output` use the [process surface](../../cli/spec.md) names and precedence. The document is a source of these values, not a new parameter language. An omitted field takes the process default.
 - `case` — the case whose regions the grid describes. `id` must name a case in the suite that `suite` names; `suite` is that suite's path, resolved relative to the document. The case must declare a nonempty `regions` array.
 - `grid` — the patch grid the case's regions must reproduce. `rows` and `cols` are positive integers; `patch_px` and `gap_px` are nonnegative integers; `origin` is `[x, y]`; `patch` maps a region `id` to its `[row, col]` position, zero-based. A region matches when its `geometry` equals `origin + [col * (patch_px + gap_px), row * (patch_px + gap_px), patch_px, patch_px]` for the `[row, col]` that `patch` names. Every case region must appear in `patch`, and `patch` must not name an id the case does not declare. `rows` and `cols` must equal the largest declared row and column plus one.
 - `seeds` — one or more unsigned 32-bit seeds. The default is `[0]`.
 
 The document must reject duplicate keys and unknown fields. A `--set` file path must resolve inside the document's directory tree; a path that escapes it is a command failure.
 
-The case reference keeps the region vocabulary in the [benchmark](../benchmark/spec.md) owner: the suite declares region ids, roles, and measurement families, and the grid check is what surfaces a disagreement between the document and the case.
+The case reference keeps the region vocabulary in the [benchmark](../../benchmark/spec.md) owner: the suite declares region ids, roles, and measurement families, and the grid check is what surfaces a disagreement between the document and the case.
 
 ## Invocation
 
@@ -34,8 +34,8 @@ spektrafilm-lab experiment run --experiment EXPERIMENT.json --out DIR \
 
 - `--experiment <PATH>` — the experiment document.
 - `--out <DIR>` — the report destination. `run` writes the bundle, `resolved.json`, `command.json`, and `report.json` into it. `run` refuses to replace an existing report unless `--force` is given.
-- `--data-dir` — otherwise `SPEKTRAFILM_DATA_DIR` or automatic discovery, as on the [process surface](../cli/spec.md#data-directory-selection).
-- `--output-format` — the image container written beside the bundle, as on the [process surface](../cli/spec.md#export-and-execution-options). The default is `tiff`. The command writes the image into `--out` under the same replacement rule as the report.
+- `--data-dir` — otherwise `SPEKTRAFILM_DATA_DIR` or automatic discovery, as on the [process surface](../../cli/spec.md#data-directory-selection).
+- `--output-format` — the image container written beside the bundle, as on the [process surface](../../cli/spec.md#export-and-execution-options). The default is `tiff`. The command writes the image into `--out` under the same replacement rule as the report.
 
 `run` resolves the chain with the shared `process_params::resolve`, renders through the shared `process` entry with the CPU f64 backend, and publishes the bundle.
 
@@ -43,11 +43,11 @@ spektrafilm-lab experiment run --experiment EXPERIMENT.json --out DIR \
 - `command.json` is the full `process` argument vector, including the `--stage-evidence` destination and every `--set` source, so a retained run is reproducible.
 - `report.json` records the experiment identity, the resolved chain's profile names and input declaration, the bundle manifest, the grid and case references, and the tool version.
 
-`run` must not accept `--dry-run`: a resolved report without a bundle is not evidence. It must not render on a GPU backend, in preview mode, or through a route the bundle cannot describe; those are configuration-level failures before rendering under the [stage-evidence contract](../cli/spec.md#stage-evidence).
+`run` must not accept `--dry-run`: a resolved report without a bundle is not evidence. It must not render on a GPU backend, in preview mode, or through a route the bundle cannot describe; those are configuration-level failures before rendering under the [stage-evidence contract](../../cli/spec.md#stage-evidence).
 
 ## Bundle validation
 
-`experiment export` validates a bundle against the [stage-evidence contract](../cli/spec.md#stage-evidence) and rejects one it cannot consume:
+`experiment export` validates a bundle against the [stage-evidence contract](../../cli/spec.md#stage-evidence) and rejects one it cannot consume:
 
 - `schema_version` is `1` and `execution_status` is `completed`.
 - `host_precision` is `f64`. The instrument is f64-only; an `f32` bundle is not convertible to the `.npy` the caller expects.
@@ -80,7 +80,7 @@ A bundle's buffers are the render's own values. `export` does not re-render, doe
 
 ## Boundaries
 
-`experiment` does not measure, score, fit, or render a new image. Region means, color differences, and tail statistics belong to [benchmark](../benchmark/spec.md). Review pages belong to the benchmark report and prepared-image review. Profile fitting belongs to [`fit`](spec.md#commands).
+`experiment` does not measure, score, fit, or render a new image. Region means, color differences, and tail statistics belong to [benchmark](../../benchmark/spec.md). Review pages belong to the benchmark report and prepared-image review. Profile fitting belongs to [`fit`](../spec.md#commands).
 
 `experiment` reads the one case it references and the grid it declares. It does not restate the region list, the roles, or the measurement families, and it does not read the rest of the suite.
 

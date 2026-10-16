@@ -10,7 +10,9 @@ The benchmark must not change film simulation algorithms, add measurement famili
 
 ## Installation and distribution
 
-The release must include `spektrafilm-lab` and its `fixtures` command. The `fixtures` command must retain its current options and source attribution behavior, and it must answer the [standard configuration generation](../../instrument/spec.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. Both entry points must run without Python, uv, pip, or Python packages.
+The release must include `spektrafilm-lab` and its `fixtures` command. The `fixtures` command must retain its current options and source attribution behavior, and it must answer the [standard configuration generation](../../instrument/spec.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. The instrument and its fixture generation must run without Python, uv, pip, or Python packages.
+
+The release ships the instrument's supported commands as the surface a release user gets. An experimental command ships with the binary and carries no compatibility promise.
 
 Release archives must provide binaries for the platforms supported by the application's packaging workflows. Every non-system runtime dependency must be bundled or linked into the delivered executable. The release must identify required system libraries and third-party licenses. A Rust executable with C or C++ dependencies satisfies this requirement; a pure-Rust dependency graph is not required.
 

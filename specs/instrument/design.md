@@ -27,7 +27,7 @@ flowchart LR
 
 ## Surfaces and stability
 
-The instrument merges the former benchmark CLI and the lab CLI. The command grammar, the document registry, and the machine-output contract live in the [specification](spec.md); this document states the boundaries behind them.
+The command grammar, the document registry, and the machine-output contract live in the [specification](spec.md); this document states the boundaries behind them.
 
 Stability is bound to a document kind and its schema version, never to a command name. A supported command keeps its meaning across revisions; an experimental command may change. A retained record stays readable: a reader ignores unknown fields inside a supported version and fails on an unsupported version rather than guessing a default.
 
@@ -35,9 +35,9 @@ Stability is bound to a document kind and its schema version, never to a command
 
 Instrument commands read declared inputs and write named outputs. They must not compare against budgets or emit pass/fail verdicts of their own; interpretation belongs to the caller or to a policy document. An execution must be a pure function of its inputs: identical inputs produce identical artifacts.
 
-The binary is built at f64 reference precision through the shared `precision-f64` gate, because a chain measurement must reproduce the reference path. Release packaging is defined by [Rust delivery](../benchmark/rust-delivery/spec.md).
+The binary is built at f64 reference precision through the shared `precision-f64` gate, because a chain measurement must reproduce the reference path. Chain computation runs through the shared core, so a measurement reproduces the user binaries' path. A research render remains `spektrafilm-f64 process`; `experiment run` reaches it through the shared `process` entry rather than a second render path.
 
-Release packages carry the instrument: its supported commands are the surface a release user gets, and an experimental command ships with the binary without a compatibility promise.
+Release packaging and its compatibility promise are defined by [Rust delivery](../benchmark/rust-delivery/spec.md).
 
 ## Measurement boundary
 
@@ -77,11 +77,11 @@ The delivered instrument must use the Rust workspace implementation defined in [
 
 The single-image CLI adapter must build the existing suite and case representation and call the existing run orchestrator. It must resolve each authored dependency against its owning document before producing the retained suite. It must not add chart detection or a separate simulation-parameter vocabulary.
 
-Externally preparing all images would keep the instrument smaller but would discard original metering and film-scale context for simulation crops. A instrument image editor would duplicate those rules. The chosen boundary accepts prepared local files, delegates simulation geometry to the renderer, and owns only completed-result measurement and detail regions. Preparation provenance remains passive evidence.
+Externally preparing all images would keep the instrument smaller but would discard original metering and film-scale context for simulation crops. An instrument image editor would duplicate those rules. The chosen boundary accepts prepared local files, delegates simulation geometry to the renderer, and owns only completed-result measurement and detail regions. Preparation provenance remains passive evidence.
 
 ### Standard configuration ownership
 
-The [standard configurations](../benchmark/standard-configurations/spec.md) extend fixture generation instead of adding a instrument preset kind. A special film profile would mix test conditions with material data. A look preset alone cannot own source interpretation, route, geometry, or seed populations. Existing configuration and suite documents own those settings.
+The [standard configurations](../benchmark/standard-configurations/spec.md) extend fixture generation instead of adding a new preset kind. A special film profile would mix test conditions with material data. A look preset alone cannot own source interpretation, route, geometry, or seed populations. Existing configuration and suite documents own those settings.
 
 The fixture generator must use one construction rule for each standard rendering purpose. It must write standalone configurations and embed equivalent values into suite cases from that rule. It must not maintain separate handwritten defaults for local-image and suite execution.
 
