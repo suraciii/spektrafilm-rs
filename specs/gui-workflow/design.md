@@ -26,3 +26,4 @@
 - Channel-swap validation follows the [experimental controls](spec.md#experimental-controls) permutation rule and rejects a non-permutation before rendering in both the GUI state loader and the CLI.
 - The viewer tonal-distribution readout is presentation state. It reads the retained output and must not allocate a second render, a retained source copy, or a pipeline stage.
 - A GUI surface has one owner. Duplicated rendering of one value from two surfaces is a defect, not a convenience.
+- The window has three regions and one header. The viewer is central, the control panel is on the right, the preset browser is on the left, and the header spans the full width. The control panel owns the page tabs, the control search, the tonal readout, and the primary actions. The header shows the film, paper, and route read-only and owns the operation status.
