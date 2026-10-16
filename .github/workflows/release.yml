@@ -1,10 +1,14 @@
 name: Release
 
+# Formal release from a version tag. The gate job proves the tag sits on
+# main-0.3.4 and matches the workspace version, then the shared three-platform
+# build attaches the packages to the GitHub Release. Manual dispatch packages
+# the current commit without attaching, for packaging smoke runs. Nightly
+# packages from verified main commits come from ci.yml.
+
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main-0.3.4
     tags:
       - "v*"
 
@@ -20,296 +24,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  windows-x64:
-    name: Windows x64
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-
-      - name: Install package smoke dependencies
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
-      - name: Install Python image bindings
-        run: python -m pip install numpy OpenImageIO exiv2 colour-science==0.4.7 opencolorio
-
-      - name: Install native toolchain and dependencies
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-binutils
-            mingw-w64-ucrt-x86_64-pkgconf
-            make
-            curl
-            tar
-            mingw-w64-ucrt-x86_64-libjpeg-turbo
-            mingw-w64-ucrt-x86_64-lcms2
-            mingw-w64-ucrt-x86_64-zlib
-            mingw-w64-ucrt-x86_64-lensfun
-            mingw-w64-ucrt-x86_64-exiv2
-            mingw-w64-ucrt-x86_64-glib2
-            mingw-w64-ucrt-x86_64-openimageio
-
-      - name: Build pinned LibRaw 0.22.0
-        shell: msys2 {0}
-        run: |
-          bash scripts/build_windows_libraw.sh "$RUNNER_TEMP/libraw-022"
-          printf 'SPEKTRAFILM_UCRT_PREFIX=%s\n' "$(cygpath -m /ucrt64)" >> "$GITHUB_ENV"
-
-      - name: Install matching Rust target
-        shell: pwsh
-        run: rustup target add x86_64-pc-windows-gnu
-
-      - name: Package native application
-        shell: pwsh
-        run: |
-          $nativePrefix = Join-Path $env:RUNNER_TEMP 'libraw-022'
-          $ucrtPrefix = $env:SPEKTRAFILM_UCRT_PREFIX
-          $env:PATH = "$nativePrefix\bin;$ucrtPrefix\bin;" + $env:PATH
-          $env:CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu"
-          $env:CC = "gcc"
-          $env:CXX = "g++"
-          $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "gcc"
-          $env:PKG_CONFIG_PATH = "$nativePrefix\lib\pkgconfig;$ucrtPrefix\lib\pkgconfig"
-          $env:PKG_CONFIG = Join-Path $ucrtPrefix 'bin\pkgconf.exe'
-          $env:PKG_CONFIG_ALLOW_CROSS = "1"
-          $env:SPEKTRAFILM_NATIVE_PREFIX = $nativePrefix
-          $env:SPEKTRAFILM_RELEASE_SUBDIR = "x86_64-pc-windows-gnu\release"
-          & $env:PKG_CONFIG --atleast-version=0.22.0 libraw
-          if ($LASTEXITCODE -ne 0) { throw "Release RAW decoder requires LibRaw >= 0.22.0" }
-          & $env:PKG_CONFIG --exists lcms2
-          $env:RUST_TEST_THREADS = "1"
-          cargo test --workspace --features precision-f64 --no-fail-fast
-          if ($LASTEXITCODE -ne 0) { throw "Workspace tests failed" }
-          ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
-          $benchmarkPackage = (Resolve-Path 'dist\spektrafilm-windows-x64').Path
-          Push-Location $env:RUNNER_TEMP
-          try {
-            & "$benchmarkPackage\spektrafilm-bench.exe" --help
-            if ($LASTEXITCODE -ne 0) { throw "Packaged benchmark help failed" }
-            & "$benchmarkPackage\spektrafilm-bench-fixtures.exe" --help
-            if ($LASTEXITCODE -ne 0) { throw "Packaged fixture help failed" }
-          } finally { Pop-Location }
-          if (-not (Test-Path -LiteralPath "dist\spektrafilm-windows-x64\licenses\nvlabs-flip-bsd-3-clause.txt")) { throw "FLIP license missing from package" }
-          if (-not (Test-Path -LiteralPath "dist\spektrafilm-windows-x64\licenses\littlecms-mit.txt")) { throw "LittleCMS license missing from package" }
-          & "$env:pythonLocation\python.exe" scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --exporter dist/spektrafilm-windows-x64/spektrafilm-f64.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --package-root dist/spektrafilm-windows-x64 --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
-          if ($LASTEXITCODE -ne 0) { throw "Package smoke failed" }
-
-      - name: Preserve package smoke evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-smoke-windows-x64
-          path: ${{ runner.temp }}/package-smoke
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: spektrafilm-windows-x64
-          path: dist/spektrafilm-windows-x64.zip
-
-      - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/spektrafilm-windows-x64.zip
-
-  linux-x64:
-    name: Linux x64
+  gate:
+    name: Release gate
     runs-on: ubuntu-24.04
-
+    timeout-minutes: 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Python reference interpreter
-        id: reference-python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
         with:
-          python-version: '3.13'
-
-      - name: Checkout pinned Python 0.3.4 reference
-        shell: bash
-        run: |
-          set -euo pipefail
-          reference="$RUNNER_TEMP/spektrafilm-python"
-          git init "$reference"
-          git -C "$reference" remote add origin https://github.com/andreavolpato/spektrafilm.git
-          git -C "$reference" fetch --depth 1 origin 3bb2c2d2801ff68b92019cf1dbcbb133d60832bc
-          git -C "$reference" checkout --detach FETCH_HEAD
-          experimental="$RUNNER_TEMP/spektrafilm-python-experimental"
-          git init "$experimental"
-          git -C "$experimental" remote add origin https://github.com/andreavolpato/spektrafilm.git
-          git -C "$experimental" fetch --depth 1 origin 28bf883e1672e884307edc75852549376e13644e
-          git -C "$experimental" checkout --detach FETCH_HEAD
-
-      - name: Install pinned reference runtime and LUT dependencies
-        id: reference-runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install \
-            'numpy~=2.4' 'scipy~=1.17' 'colour-science~=0.4.6' \
-            'scikit-image~=0.26' 'matplotlib~=3.10' 'opt-einsum~=3.4.0' \
-            'numba~=0.64' 'OpenImageIO~=3.1.11' 'pyfftw~=0.15.0' \
-            'rawpy~=0.26.1' 'exiv2~=0.18.1' 'lensfunpy~=1.18.0' \
-            'markdown~=3.7' 'opencolorio~=2.5'
-          python -m pip install --no-deps -e "$RUNNER_TEMP/spektrafilm-python"
-
-      - name: Install native build dependencies
-        shell: bash
-        run: |
-          sudo apt-get update
-          # libvulkan1 and mesa-vulkan-drivers provide the software Vulkan adapter
-          # that workspace GPU acceptance tests require on Linux.
-          sudo apt-get install -y --no-install-recommends \
-            build-essential patchelf pkg-config curl ca-certificates \
-            libgtk-3-dev libudev-dev libxkbcommon-dev libxkbcommon-x11-0 \
-            liblensfun-dev libexiv2-dev libglib2.0-dev libopenimageio-dev \
-            liblcms2-dev libjpeg-dev zlib1g-dev libopenblas-dev \
-            libvulkan1 mesa-vulkan-drivers
-
-      - name: Build pinned LibRaw 0.22.0
-        shell: bash
-        run: |
-          set -euo pipefail
-          prefix="$RUNNER_TEMP/libraw-022"
-          curl -fsSL --retry 3 -o LibRaw-0.22.0.tar.gz \
-            https://www.libraw.org/data/LibRaw-0.22.0.tar.gz
-          echo "1071e6e8011593c366ffdadc3d3513f57c90202d526e133174945ec1dd53f2a1  LibRaw-0.22.0.tar.gz" | sha256sum -c -
-          tar -xzf LibRaw-0.22.0.tar.gz
-          cd LibRaw-0.22.0
-          ./configure --prefix="$prefix" --disable-static
-          make -j"$(nproc)"
-          make install
-          mkdir -p "$prefix/share/doc/libraw"
-          cp COPYRIGHT LICENSE.CDDL LICENSE.LGPL "$prefix/share/doc/libraw/"
-
-      - name: Build release binaries
-        id: build-release
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          cargo build --release -p spektrafilm-gui
-          cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui
-          cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
-          cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures
-          LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test --workspace --features precision-f64 --no-fail-fast
-
-      - name: Run LUT artifact acceptance
-        if: ${{ !cancelled() && steps.build-release.outcome == 'success' && steps.reference-runtime.outcome == 'success' }}
-        shell: bash
-        env:
-          SPEKTRAFILM_PY_REPO: ${{ runner.temp }}/spektrafilm-python-experimental
-          SPEKTRAFILM_PY_HISTORICAL_REPO: ${{ runner.temp }}/spektrafilm-python
-          PYTHONPATH: ${{ runner.temp }}/spektrafilm-python-experimental/src
-          SPEKTRAFILM_PY: ${{ steps.reference-python.outputs.python-path }}
-          SPEKTRAFILM_RS_BIN: ${{ github.workspace }}/target/release/spektrafilm-f64
-        run: |
-          set -euo pipefail
-          export LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}"
-          python scripts/parity/lut_acceptance.py --cli target/release/spektrafilm-f64 --data-dir data --evidence-dir "$RUNNER_TEMP/lut-acceptance"
-
-      - name: Preserve LUT acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lut-acceptance-linux-x64
-          path: ${{ runner.temp }}/lut-acceptance
-
-      - name: Package portable directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          BUILD_TARGET_DIR=target RELEASE_SUBDIR=release \
-            bash scripts/package_linux_app.sh
-          python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --exporter dist/spektrafilm-linux-x64/bin/spektrafilm-f64 --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --package-root dist/spektrafilm-linux-x64 --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
-
-      - name: Preserve package smoke evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-smoke-linux-x64
-          path: ${{ runner.temp }}/package-smoke
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: spektrafilm-linux-x64
-          path: dist/spektrafilm-linux-x64.tar.gz
-
-      - name: Attach to GitHub Release
+          # Ancestry needs the full history: a depth-1 tag fetch cannot prove
+          # that the tag commit is contained in main-0.3.4.
+          fetch-depth: 0
+      - name: Verify the tag sits on main-0.3.4
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/spektrafilm-linux-x64.tar.gz
-
-  macos:
-    name: macOS
-    runs-on: macos-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install package smoke dependencies
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
-      - name: Install Python image bindings
-        run: python -m pip install numpy OpenImageIO exiv2 colour-science==0.4.7 opencolorio
-
-      - name: Install native dependencies
-        shell: bash
         run: |
-          brew install libraw lensfun exiv2 glib openimageio little-cms2 pkg-config
-          pkg-config --atleast-version=0.22.0 libraw
-          pkg-config --exists lcms2
-
-      - name: Package app bundle
-        shell: bash
-        run: |
-          cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures
-          cargo test --workspace --features precision-f64 --no-fail-fast
-          bash scripts/package_macos_app.sh
-          ./target/release/spektrafilm-bench --help
-          ./target/release/spektrafilm-bench-fixtures --help
-          python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --package-root dist/spektrafilm-macos --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
-
-      - name: Preserve package smoke evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-smoke-macos
-          path: ${{ runner.temp }}/package-smoke
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: spektrafilm-macos
-          path: dist/spektrafilm-macos.zip
-
-      - name: Attach to GitHub Release
+          set -euo pipefail
+          git fetch origin main-0.3.4
+          if ! git merge-base --is-ancestor HEAD origin/main-0.3.4; then
+            echo "::error::${GITHUB_REF_NAME} is not contained in main-0.3.4; release only from an integrated commit" >&2
+            exit 1
+          fi
+          echo "${GITHUB_REF_NAME} is contained in main-0.3.4"
+      - name: Verify the tag matches the workspace version
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/spektrafilm-macos.zip
+        run: |
+          set -euo pipefail
+          expected="${GITHUB_REF_NAME#v}"
+          # Every crate inherits version.workspace, so the metadata versions
+          # must be unique and equal to the tag; a disagreement is a
+          # release-blocking inconsistency.
+          actual=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '[.packages[].version] | unique | join(",")')
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match workspace version ${actual}" >&2
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches workspace version ${actual}"
+      - name: Report the manual dispatch path
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Manual dispatch: packaging ${GITHUB_REF_NAME} without release attachment."
+
+  packages:
+    name: Build packages
+    needs: gate
+    # A called workflow takes the GITHUB_TOKEN permissions from the calling
+    # job, not the workflow level; the release attachment needs write here.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build.yml
+    with:
+      attach_release: true
