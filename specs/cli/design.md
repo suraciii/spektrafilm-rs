@@ -112,7 +112,7 @@ Terminal LUT stage notices must be emitted at existing bake and QA boundaries. T
 
 ## Compatibility and verification
 
-Existing `--set` source ordering, sparse-file rules, legacy `--params` decoding, preset profile ownership, and numerical preparation must remain authoritative in the [parameter contract](spec.md#parameter-contract). This work must preserve GUI child-process, RenderRecipe, inspect, and parity contracts. Telemetry remains a separate report surface.
+Existing `--set` source ordering, sparse-file rules, legacy `--params` decoding, preset profile ownership, and numerical preparation must remain authoritative in the [parameter contract](spec.md#parameter-contract). This work must preserve GUI child-process, RenderRecipe, and inspect contracts. Telemetry remains a separate report surface.
 
 Changing explicit invalid data paths from fallback to failure and moving LUT notices from stdout to stderr are intentional observable changes. Their help and documentation must describe the resulting behavior. Existing JSON defaults must not be changed according to terminal detection.
 
