@@ -191,7 +191,7 @@ fn failed_render_remains_failed_through_compare_validation_and_report() {
 
     let report = temp.path().join("report");
     let reported = cli()
-        .args(["report", "--comparison"])
+        .args(["generate-report", "--comparison"])
         .arg(&comparison)
         .arg("--out")
         .arg(&report)

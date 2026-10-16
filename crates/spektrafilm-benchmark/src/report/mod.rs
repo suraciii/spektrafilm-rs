@@ -12,23 +12,12 @@ use std::{
 };
 
 mod assets;
-mod diagnostic;
-mod display;
 mod escape;
 mod html;
 
 pub(crate) use assets::*;
 pub(crate) use escape::*;
 pub(crate) use html::*;
-
-/// Review layout selection. The standard layout stays the default; the
-/// diagnostic layout is an explicit opt-in presentation of the same retained
-/// evidence. Layout selection never changes measurements or acceptance.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Layout {
-    Standard,
-    Diagnostic,
-}
 
 /// Publish a self-contained offline report from a validated comparison directory.
 ///
@@ -40,21 +29,12 @@ pub enum Layout {
 /// duplicate/unknown keys, empty values and malformed encoding show an alert and
 /// hide the case panels until a valid link or case selection is chosen.
 ///
-/// `focus_regions` selects exact region identities for the diagnostic layout.
-/// Request order is preserved; duplicates and unknown identities fail with an
-/// actionable error before any destination is created. A focus selection with
-/// the standard layout fails instead of being ignored. The returned value is
-/// the authoritative command result, including the published artifact and
-/// manifest identities.
-pub fn build_report(
-    comparison: &Path,
-    out: &Path,
-    layout: Layout,
-    focus_regions: &[String],
-) -> Result<Value> {
+/// The returned value is the authoritative command result, including the
+/// published artifact and manifest identities.
+pub fn build_report(comparison: &Path, out: &Path) -> Result<Value> {
     let root = crate::documents::normalize_path(out)?;
     let preexisting = fs::symlink_metadata(out).is_ok();
-    let result = build_report_impl(comparison, out, layout, focus_regions);
+    let result = build_report_impl(comparison, out);
     if preexisting {
         result
     } else {
@@ -62,12 +42,7 @@ pub fn build_report(
     }
 }
 
-fn build_report_impl(
-    comparison: &Path,
-    out: &Path,
-    layout: Layout,
-    focus_regions: &[String],
-) -> Result<Value> {
+fn build_report_impl(comparison: &Path, out: &Path) -> Result<Value> {
     if fs::symlink_metadata(out).is_ok() {
         return Err(destination_exists(out));
     }
@@ -82,7 +57,6 @@ fn build_report_impl(
         ));
     }
     validate_generated_document("comparison", &comparison, &root)?;
-    let focus = diagnostic::FocusSelection::new(layout, focus_regions, &comparison)?;
     let cases = comparison["cases"]
         .as_array()
         .ok_or_else(|| Error::new("invalid_document", "comparison must contain a cases array"))?;
@@ -102,11 +76,8 @@ fn build_report_impl(
             "case result must be an object",
         ));
     }
-    let body = match layout {
-        Layout::Standard => standard_html(&comparison, &ordered, &mut assets, out)?,
-        Layout::Diagnostic => diagnostic::page(&comparison, &ordered, &mut assets, out, &focus)?,
-    };
-    publish(out, &comparison, &assets, body, layout, focus_regions)
+    let body = standard_html(&comparison, &ordered, &mut assets, out)?;
+    publish(out, &comparison, &assets, body)
 }
 
 fn standard_html(
@@ -611,14 +582,7 @@ fn standard_html(
     Ok(html)
 }
 
-fn publish(
-    out: &Path,
-    comparison: &Value,
-    assets: &Assets,
-    body: String,
-    layout: Layout,
-    focus_regions: &[String],
-) -> Result<Value> {
+fn publish(out: &Path, comparison: &Value, assets: &Assets, body: String) -> Result<Value> {
     let mut html = body;
     let omissions: Vec<_> = assets
         .manifest
@@ -642,17 +606,16 @@ fn publish(
     manifest.push(json!({"path":"index.html","sha256":sha256_file(&out.join("index.html"))?,"role":"report","media_type":"text/html","availability":"available"}));
     dump(
         &out.join("report.json"),
-        &json!({"schema_version":1,"command":"report","execution_status":"completed","comparison_id":comparison.get("id"),"artifact":"index.html","artifacts":manifest}),
+        &json!({"schema_version":1,"command":"generate-report","source":"comparison","execution_status":"completed","comparison_id":comparison.get("id"),"artifact":"index.html","artifacts":manifest}),
     )?;
     Ok(json!({
         "schema_version":1,
-        "command":"report",
+        "command":"generate-report",
+        "source":"comparison",
         "execution_status":"completed",
         "artifact":crate::documents::normalize_path(out)?.join("index.html"),
         "manifest":crate::documents::normalize_path(out)?.join("report.json"),
         "comparison_id":comparison.get("id"),
-        "layout":if layout == Layout::Diagnostic { "diagnostic" } else { "standard" },
-        "focus_regions":focus_regions,
     }))
 }
 

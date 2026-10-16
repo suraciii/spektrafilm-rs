@@ -230,6 +230,63 @@ fn source_path(image: &Map<String, Value>, manifest: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Check the optional measurement intent of one set: only grid sets may declare
+/// it, its role and measurement families must be known names, and a declared
+/// sample window must fit inside the declared patch window.
+fn validate_measurement(o: &Map<String, Value>, grid: &Option<Grid>, set_id: &str) -> Result<()> {
+    let Some(measurement) = o.get("measurement") else {
+        return Ok(());
+    };
+    let Some(grid) = grid else {
+        return Err(err(
+            "measurement_requires_grid",
+            format!(
+                "set {set_id} declares explicit regions and a measurement object; measurement intent requires a grid set"
+            ),
+        ));
+    };
+    let measurement = obj(measurement)?;
+    if let Some(role) = measurement.get("role").and_then(Value::as_str) {
+        let roles = documents::region_roles()?;
+        if !roles.iter().any(|name| name == role) {
+            return Err(err(
+                "invalid_role",
+                format!(
+                    "unknown region role: {role}; available: {}",
+                    roles.join(", ")
+                ),
+            ));
+        }
+    }
+    if let Some(choices) = measurement.get("measurements").and_then(Value::as_array) {
+        let families = documents::measurement_families()?;
+        for choice in choices.iter().filter_map(Value::as_str) {
+            if !families.iter().any(|name| name == choice) {
+                return Err(err(
+                    "invalid_measurements",
+                    format!(
+                        "unknown measurement family: {choice}; available: {}",
+                        families.join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+    if measurement.get("sample").is_some() {
+        let sample = pair(measurement, "sample")?;
+        if sample[0] > grid.patch_size[0] || sample[1] > grid.patch_size[1] {
+            return Err(err(
+                "invalid_sample",
+                format!(
+                    "sample window {}×{} does not fit the declared patch window {}×{}",
+                    sample[0], sample[1], grid.patch_size[0], grid.patch_size[1]
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_manifest_value(value: &Value, manifest: &Path) -> Result<()> {
     documents::validate_shape("review", value)?;
     let sets = value["sets"].as_array().unwrap();
@@ -253,9 +310,8 @@ fn validate_manifest_value(value: &Value, manifest: &Path) -> Result<()> {
     for set in sets {
         let o = obj(set)?;
         let set_id = text(o, "id")?;
-        if let Some(grid) = o.get("grid") {
-            Grid::parse(grid)?;
-        }
+        let grid = o.get("grid").map(Grid::parse).transpose()?;
+        validate_measurement(o, &grid, set_id)?;
         let Some(regions) = o.get("regions").and_then(Value::as_array) else {
             continue;
         };
@@ -314,43 +370,6 @@ pub fn validate_manifest(path: &Path) -> Result<Value> {
     Ok(value)
 }
 
-fn effective_pair(
-    value: &Value,
-    left: Option<&str>,
-    right: Option<&str>,
-) -> Result<(String, String)> {
-    match (left, right) {
-        (None, None) => {
-            let default_pair = obj(&value["default_pair"])?;
-            Ok((
-                text(default_pair, "left")?.to_owned(),
-                text(default_pair, "right")?.to_owned(),
-            ))
-        }
-        (Some(left), Some(right)) => {
-            let image_ids: BTreeSet<&str> = value["images"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|image| image["id"].as_str().unwrap())
-                .collect();
-            for (side, id) in [("left", left), ("right", right)] {
-                if !image_ids.contains(id) {
-                    return Err(err(
-                        "unknown_image",
-                        format!("--{side} references unknown image: {id}"),
-                    ));
-                }
-            }
-            Ok((left.to_owned(), right.to_owned()))
-        }
-        _ => Err(err(
-            "invalid_selector",
-            "--left and --right must be provided together",
-        )),
-    }
-}
-
 fn snapshot_path(work: &Path, index: usize, source: &Path) -> PathBuf {
     match source.extension().and_then(|x| x.to_str()) {
         Some(ext) if !ext.is_empty() => work.join(format!("{index:04}.{ext}")),
@@ -363,30 +382,19 @@ fn snapshot_path(work: &Path, index: usize, source: &Path) -> PathBuf {
 /// Manifest and dependency validation precede destination creation; decoding
 /// and observed geometry are checked during generation. Later failures retain
 /// incomplete evidence. The manifest and its sources are never modified.
-pub fn build_report(
-    manifest: &Path,
-    out: &Path,
-    left: Option<&str>,
-    right: Option<&str>,
-) -> Result<Value> {
+pub fn build_report(manifest: &Path, out: &Path) -> Result<Value> {
     let root = documents::normalize_path(out)?;
     if fs::symlink_metadata(out).is_ok() {
         return Err(common::destination_exists(out));
     }
-    build_report_impl(manifest, out, left, right, &root)
+    build_report_impl(manifest, out, &root)
         .map_err(|error| common::incomplete_destination(error, &root, "report.json"))
 }
 
 /// Rectangles declared per (set, image), keyed by the set's region ids.
 type RegionBounds<'a> = BTreeMap<(&'a str, &'a str), Vec<(&'a str, [u64; 4])>>;
 
-fn build_report_impl(
-    manifest: &Path,
-    out: &Path,
-    left: Option<&str>,
-    right: Option<&str>,
-    root: &Path,
-) -> Result<Value> {
+fn build_report_impl(manifest: &Path, out: &Path, root: &Path) -> Result<Value> {
     let manifest_path = documents::normalize_path(manifest)?;
     let manifest_sha256 = sha256_file(&manifest_path)?;
     let authored = validate_manifest(manifest)?;
@@ -396,7 +404,11 @@ fn build_report_impl(
             "review manifest changed while being read",
         ));
     }
-    let (left, right) = effective_pair(&authored, left, right)?;
+    let default_pair = obj(&authored["default_pair"])?;
+    let (left, right) = (
+        text(default_pair, "left")?.to_owned(),
+        text(default_pair, "right")?.to_owned(),
+    );
     create_destination(out)?;
     let work = out.join(WORK_DIR);
     fs::create_dir_all(&work)?;
@@ -553,30 +565,14 @@ fn build_report_impl(
     dump(&out.join("report.json"), &payload)?;
     Ok(json!({
         "schema_version": 1,
-        "command": "review",
+        "command": "generate-report",
+        "source": "manifest",
         "execution_status": "completed",
         "artifact": root.join("index.html"),
         "manifest": root.join("report.json"),
         "image_count": image_count,
         "set_count": set_count,
     }))
-}
-
-/// Parse `WIDTHxHEIGHT`; both values must be positive integers.
-fn sample_window(value: &str) -> Result<[u64; 2]> {
-    let invalid = || {
-        err(
-            "invalid_sample",
-            "sample must be WIDTHxHEIGHT with positive integers",
-        )
-    };
-    let (width, height) = value.split_once('x').ok_or_else(invalid)?;
-    let width = width.parse::<u64>().map_err(|_| invalid())?;
-    let height = height.parse::<u64>().map_err(|_| invalid())?;
-    if width == 0 || height == 0 {
-        return Err(invalid());
-    }
-    Ok([width, height])
 }
 
 /// Decoded dimensions of every image in one set. Each source is loaded from an
@@ -619,47 +615,49 @@ fn set_dimensions(
     result
 }
 
+/// The set's declared measurement intent with its documented defaults: the
+/// whole patch window, role `other`, and no measurement families.
+fn measurement_intent(set: &Value) -> Result<(Option<[u64; 2]>, String, Vec<String>)> {
+    let Some(measurement) = set.get("measurement") else {
+        return Ok((None, "other".to_owned(), Vec::new()));
+    };
+    let measurement = obj(measurement)?;
+    let sample = match measurement.get("sample") {
+        Some(_) => Some(pair(measurement, "sample")?),
+        None => None,
+    };
+    let role = measurement
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("other")
+        .to_owned();
+    let measurements = measurement
+        .get("measurements")
+        .and_then(Value::as_array)
+        .map(|choices| {
+            choices
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((sample, role, measurements))
+}
+
 /// Derive a measurement region array from one grid set of a review manifest.
 ///
-/// The command reads the manifest and the set's decoded image dimensions; it
-/// never renders and never computes measurements. Windows reuse the review
-/// page's declared arithmetic, keep the patch names, and are validated as the
-/// existing `regions` kind before the destination is created.
-pub fn derive_regions(
-    review: &Path,
-    set_id: &str,
-    out: &Path,
-    sample: Option<&str>,
-    role: &str,
-    measurements: &[String],
-) -> Result<Value> {
+/// The command reads the manifest, the set's declared measurement intent, and
+/// the set's decoded image dimensions; it never renders and never computes
+/// measurements. Windows reuse the review page's declared arithmetic, keep the
+/// patch names, and are validated as the existing `regions` kind before the
+/// destination is created.
+pub fn derive_regions(manifest: &Path, set_id: &str, out: &Path) -> Result<Value> {
     let root = documents::normalize_path(out)?;
     if fs::symlink_metadata(out).is_ok() {
         return Err(common::destination_exists(out));
     }
-    let roles = documents::region_roles()?;
-    if !roles.iter().any(|name| name == role) {
-        return Err(err(
-            "invalid_role",
-            format!(
-                "unknown region role: {role}; available: {}",
-                roles.join(", ")
-            ),
-        ));
-    }
-    let families = documents::measurement_families()?;
-    for choice in measurements {
-        if !families.iter().any(|name| name == choice) {
-            return Err(err(
-                "invalid_measurements",
-                format!(
-                    "unknown measurement family: {choice}; available: {}",
-                    families.join(", ")
-                ),
-            ));
-        }
-    }
-    let manifest_path = documents::normalize_path(review)?;
+    let manifest_path = documents::normalize_path(manifest)?;
     let authored = validate_manifest(&manifest_path)?;
     let sets = authored["sets"].as_array().unwrap();
     let set = sets
@@ -679,29 +677,18 @@ pub fn derive_regions(
         ));
     };
     let windows = Grid::parse(grid)?.windows()?;
-    let sample = sample.map(sample_window).transpose()?;
+    let (sample, role, measurements) = measurement_intent(set)?;
     let dimensions = set_dimensions(&authored, set_id, &manifest_path)?;
     let mut regions = Vec::new();
     for (label, patch) in windows {
         let window = match sample {
             None => patch,
-            Some([width, height]) => {
-                if width > patch[2] || height > patch[3] {
-                    return Err(err(
-                        "invalid_sample",
-                        format!(
-                            "sample window {width}×{height} does not fit patch window {label} ({}×{})",
-                            patch[2], patch[3]
-                        ),
-                    ));
-                }
-                [
-                    patch[0] + (patch[2] - width) / 2,
-                    patch[1] + (patch[3] - height) / 2,
-                    width,
-                    height,
-                ]
-            }
+            Some([width, height]) => [
+                patch[0] + (patch[2] - width) / 2,
+                patch[1] + (patch[3] - height) / 2,
+                width,
+                height,
+            ],
         };
         for (image_id, [width, height]) in &dimensions {
             if window[0].saturating_add(window[2]) > *width as u64
@@ -716,9 +703,9 @@ pub fn derive_regions(
         regions.push(json!({
             "id": label,
             "label": label,
-            "role": role,
+            "role": &role,
             "geometry": window,
-            "measurements": measurements,
+            "measurements": &measurements,
         }));
     }
     let value = Value::Array(regions);
@@ -751,7 +738,7 @@ pub fn derive_regions(
     let region_count = value.as_array().map(Vec::len).unwrap_or(0);
     Ok(json!({
         "schema_version": 1,
-        "command": "regions",
+        "command": "generate-regions",
         "execution_status": "completed",
         "artifact": root,
         "set": set_id,
@@ -825,7 +812,7 @@ mod tests {
             ),
         );
         let out = dir.path().join("out");
-        let error = build_report(&authored, &out, None, None).unwrap_err();
+        let error = build_report(&authored, &out).unwrap_err();
         assert_eq!(error.path.as_deref(), broken.to_str());
         assert!(error.message.contains("broken"));
         assert!(!out.join("report.json").exists());
@@ -863,13 +850,59 @@ mod tests {
             ),
         );
         let out = dir.path().join("out");
-        let error = build_report(&escaping, &out, None, None).unwrap_err();
+        let error = build_report(&escaping, &out).unwrap_err();
         assert_eq!(error.code, "invalid_bounds");
         assert!(!out.join("report.json").exists());
     }
 
     #[test]
-    fn defaults_and_overrides_reference_images() {
+    fn measurement_intent_requires_a_grid_and_known_names() {
+        let dir = tempfile::tempdir().unwrap();
+        png(&dir.path().join("a.png"), 16, 8);
+        let images = [
+            image("a", "c", "a.png", "sRGB"),
+            image("b", "c", "a.png", "sRGB"),
+        ];
+        let grid = |measurement: &str| {
+            format!(
+                r#"{{"id":"c","label":"集合 c","grid":{{"rows":1,"columns":2,"origin":[0,0],"patch_size":[16,8],"gap":[0,0]}},"measurement":{measurement}}}"#
+            )
+        };
+        let declared = manifest(
+            dir.path(),
+            &document(
+                &[grid(
+                    r#"{"sample":[8,8],"role":"color","measurements":["color","tone"]}"#,
+                )],
+                &images,
+                "a",
+                "b",
+            ),
+        );
+        validate_manifest(&declared).unwrap();
+
+        for (measurement, expected) in [
+            (r#"{"sample":[32,8]}"#, "invalid_sample"),
+            (r#"{"sample":[8,0]}"#, "invalid_bounds"),
+            (r#"{"role":"bogus"}"#, "invalid_role"),
+            (r#"{"measurements":["bogus"]}"#, "invalid_measurements"),
+        ] {
+            let path = manifest(
+                dir.path(),
+                &document(&[grid(measurement)], &images, "a", "b"),
+            );
+            let error = validate_manifest(&path).unwrap_err();
+            assert_eq!(error.code, expected, "{measurement}");
+        }
+
+        let regions = r#"{"id":"c","label":"集合 c","regions":[{"id":"r1","label":"区域","geometry":{"a":[0,0,4,4]}}],"measurement":{"role":"other"}}"#.to_owned();
+        let path = manifest(dir.path(), &document(&[regions], &images, "a", "b"));
+        let error = validate_manifest(&path).unwrap_err();
+        assert_eq!(error.code, "measurement_requires_grid");
+    }
+
+    #[test]
+    fn default_pair_must_reference_declared_images() {
         let dir = tempfile::tempdir().unwrap();
         png(&dir.path().join("a.png"), 8, 8);
         png(&dir.path().join("b.png"), 8, 8);
@@ -883,16 +916,11 @@ mod tests {
         assert_eq!(error.code, "unknown_image");
 
         let valid = manifest(dir.path(), &document(&sets, &images, "a", "b"));
-        let unpaired = dir.path().join("unpaired");
-        let error = build_report(&valid, &unpaired, Some("b"), None).unwrap_err();
-        assert_eq!(error.code, "invalid_selector");
-        assert!(!unpaired.exists());
-
-        let unknown_override = dir.path().join("unknown-override");
-        let error =
-            build_report(&valid, &unknown_override, Some("a"), Some("missing")).unwrap_err();
-        assert_eq!(error.code, "unknown_image");
-        assert!(!unknown_override.exists());
+        let out = dir.path().join("out");
+        let result = build_report(&valid, &out).unwrap();
+        assert_eq!(result["command"], "generate-report");
+        assert_eq!(result["source"], "manifest");
+        assert!(out.join("index.html").is_file());
     }
 
     #[test]
@@ -913,7 +941,7 @@ mod tests {
             ),
         );
         let out = dir.path().join("out");
-        let error = build_report(&shared, &out, None, None).unwrap_err();
+        let error = build_report(&shared, &out).unwrap_err();
         assert_eq!(error.code, "invalid_image_layout");
         assert!(!out.join("report.json").exists());
 
@@ -933,7 +961,7 @@ mod tests {
             ),
         );
         let out = dir.path().join("distinct");
-        build_report(&distinct, &out, None, None).unwrap();
+        build_report(&distinct, &out).unwrap();
         let payload: Value =
             serde_json::from_slice(&fs::read(out.join("report.json")).unwrap()).unwrap();
         assert_eq!(payload["images"][0]["width"], 8);
@@ -961,7 +989,7 @@ mod tests {
             ),
         );
         let out = dir.path().join("regions");
-        build_report(&regions, &out, None, None).unwrap();
+        build_report(&regions, &out).unwrap();
         let payload: Value =
             serde_json::from_slice(&fs::read(out.join("report.json")).unwrap()).unwrap();
         assert_eq!(payload["images"][0]["width"], 8);
@@ -1097,7 +1125,7 @@ mod tests {
         );
         validate_manifest(&escaping).unwrap();
         let out = dir.path().join("out");
-        let error = build_report(&escaping, &out, None, None).unwrap_err();
+        let error = build_report(&escaping, &out).unwrap_err();
         assert_eq!(error.code, "invalid_bounds");
         assert!(error.message.contains("region a"));
         assert!(!out.join("report.json").exists());
@@ -1144,7 +1172,7 @@ mod tests {
         );
         let before = sha256_file(&out_of_range).unwrap();
         let out = dir.path().join("out");
-        build_report(&manifest, &out, None, None).unwrap();
+        build_report(&manifest, &out).unwrap();
         assert_eq!(before, sha256_file(&out_of_range).unwrap());
 
         let payload: Value =
@@ -1168,7 +1196,7 @@ mod tests {
         );
         let manifest = manifest(dir.path(), &body);
         let out = dir.path().join("out");
-        build_report(&manifest, &out, None, None).unwrap();
+        build_report(&manifest, &out).unwrap();
 
         let html = fs::read_to_string(out.join("index.html")).unwrap();
         assert!(!html.contains(hostile));
@@ -1196,14 +1224,14 @@ mod tests {
             ),
         );
         let clean = dir.path().join("clean");
-        build_report(&manifest, &clean, None, None).unwrap();
+        build_report(&manifest, &clean).unwrap();
         fs::write(
             dir.path().join("a.png.json"),
             r#"{"color_space":"Display P3","transfer":"srgb","icc":{"path":"missing.icc"}}"#,
         )
         .unwrap();
         let with_sidecar = dir.path().join("with-sidecar");
-        build_report(&manifest, &with_sidecar, None, None).unwrap();
+        build_report(&manifest, &with_sidecar).unwrap();
         assert_eq!(
             fs::read(clean.join("images/0000.png")).unwrap(),
             fs::read(with_sidecar.join("images/0000.png")).unwrap()
@@ -1229,7 +1257,7 @@ mod tests {
         let out = dir.path().join("out");
         fs::create_dir(&out).unwrap();
         fs::write(out.join("keep.txt"), "keep").unwrap();
-        let error = build_report(&manifest, &out, None, None).unwrap_err();
+        let error = build_report(&manifest, &out).unwrap_err();
         assert_eq!(error.code, "destination_exists");
         assert_eq!(fs::read_to_string(out.join("keep.txt")).unwrap(), "keep");
         assert!(!out.join("report.json").exists());
@@ -1240,7 +1268,7 @@ mod tests {
             fs::create_dir(&target).unwrap();
             let link = dir.path().join("link");
             std::os::unix::fs::symlink(&target, &link).unwrap();
-            let error = build_report(&manifest, &link, None, None).unwrap_err();
+            let error = build_report(&manifest, &link).unwrap_err();
             assert_eq!(error.code, "destination_exists");
             assert!(!target.join("report.json").exists());
         }

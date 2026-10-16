@@ -172,51 +172,33 @@ enum Command {
         #[arg(long, help = "New target JSON file; must not exist")]
         out: PathBuf,
     },
-    /// Publish an offline review of retained comparison evidence.
-    Report {
-        #[arg(long, help = "Comparison directory")]
-        comparison: PathBuf,
-        #[arg(long, help = "New report directory; must not exist")]
-        out: PathBuf,
-        #[arg(long, help = "Review layout", value_parser = ["standard", "diagnostic"], default_value = "standard")]
-        layout: String,
-        #[arg(
-            long = "focus-region",
-            help = "Exact region to feature in the diagnostic layout; repeat for multiple regions"
-        )]
-        focus_regions: Vec<String>,
-    },
-    /// Build an offline visual comparison of explicitly prepared chart images.
-    Review {
+    /// Render one offline report from a retained comparison or a prepared image manifest.
+    GenerateReport {
         #[arg(
             long,
-            help = "Chart manifest with image declarations, grids, and captions"
+            help = "Retained comparison directory",
+            required_unless_present = "manifest",
+            conflicts_with = "manifest"
         )]
-        manifest: PathBuf,
+        comparison: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Prepared image review manifest",
+            required_unless_present = "comparison",
+            conflicts_with = "comparison"
+        )]
+        manifest: Option<PathBuf>,
         #[arg(long, help = "New report directory; must not exist")]
         out: PathBuf,
-        #[arg(long, help = "Override the default left image ID", requires = "right")]
-        left: Option<String>,
-        #[arg(long, help = "Override the default right image ID", requires = "left")]
-        right: Option<String>,
     },
     /// Derive measurement regions from one grid set of a review manifest.
-    Regions {
+    GenerateRegions {
         #[arg(long, help = "Review manifest with the declared grid set")]
-        review: PathBuf,
+        manifest: PathBuf,
         #[arg(long, help = "Grid set identity to derive")]
         set: String,
         #[arg(long, help = "New region array JSON file; must not exist")]
         out: PathBuf,
-        #[arg(
-            long,
-            help = "Sample window WIDTHxHEIGHT centered inside each patch window"
-        )]
-        sample: Option<String>,
-        #[arg(long, help = "Region role", default_value = "other")]
-        role: String,
-        #[arg(long, help = "Measurement families, comma separated (default none)")]
-        measurements: Option<String>,
     },
 }
 fn emit(value: &Value) {
@@ -262,23 +244,6 @@ fn validate(kind: &str, file: &Path) -> Result<Value> {
         result["protocol_digest"] = json!(documents::protocol_digest(&value)?);
     }
     Ok(result)
-}
-fn measurement_selection(value: Option<&str>) -> Result<Vec<String>> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let mut selected = Vec::new();
-    for part in value.split(',') {
-        let part = part.trim();
-        if part.is_empty() || selected.iter().any(|existing| existing == part) {
-            return Err(Error::new(
-                "invalid_measurements",
-                format!("measurement families must be distinct nonempty names: {value}"),
-            ));
-        }
-        selected.push(part.to_owned());
-    }
-    Ok(selected)
 }
 fn execute(command: Command) -> Result<(Value, i32)> {
     match command {
@@ -388,50 +353,23 @@ fn execute(command: Command) -> Result<(Value, i32)> {
             backend,
             out,
         } => Ok((target::create(&renderer, &data_dir, &backend, &out)?, 0)),
-        Command::Report {
+        Command::GenerateReport {
             comparison,
-            out,
-            layout,
-            focus_regions,
-        } => {
-            let layout = if layout == "diagnostic" {
-                report::Layout::Diagnostic
-            } else {
-                report::Layout::Standard
-            };
-            let out = documents::normalize_path(&out)?;
-            Ok((
-                report::build_report(&comparison, &out, layout, &focus_regions)?,
-                0,
-            ))
-        }
-        Command::Review {
             manifest,
             out,
-            left,
-            right,
-        } => Ok((
-            review::build_report(&manifest, &out, left.as_deref(), right.as_deref())?,
-            0,
-        )),
-        Command::Regions {
-            review,
-            set,
-            out,
-            sample,
-            role,
-            measurements,
-        } => Ok((
-            review::derive_regions(
-                &review,
-                &set,
-                &out,
-                sample.as_deref(),
-                &role,
-                &measurement_selection(measurements.as_deref())?,
-            )?,
-            0,
-        )),
+        } => {
+            let out = documents::normalize_path(&out)?;
+            if let Some(comparison) = comparison {
+                Ok((report::build_report(&comparison, &out)?, 0))
+            } else {
+                let manifest = manifest
+                    .ok_or_else(|| Error::new("argument_syntax", "Missing report source"))?;
+                Ok((review::build_report(&manifest, &out)?, 0))
+            }
+        }
+        Command::GenerateRegions { manifest, set, out } => {
+            Ok((review::derive_regions(&manifest, &set, &out)?, 0))
+        }
     }
 }
 fn run() -> i32 {
@@ -441,9 +379,8 @@ fn run() -> i32 {
         Command::Validate { .. } => "validate",
         Command::Run { .. } => "run",
         Command::Compare { .. } => "compare",
-        Command::Report { .. } => "report",
-        Command::Review { .. } => "review",
-        Command::Regions { .. } => "regions",
+        Command::GenerateReport { .. } => "generate-report",
+        Command::GenerateRegions { .. } => "generate-regions",
         Command::Inspect { .. } => "inspect",
         Command::Target { .. } => "target",
     };
@@ -561,6 +498,23 @@ mod tests {
                 "candidate"
             ]))
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn report_sources_require_exactly_one_input() {
+        let prefix = ["bench", "generate-report", "--out", "report"];
+        for suffix in [
+            vec![],
+            vec!["--comparison", "comparison", "--manifest", "manifest.json"],
+        ] {
+            assert!(Cli::try_parse_from(prefix.into_iter().chain(suffix)).is_err());
+        }
+        assert!(
+            Cli::try_parse_from(prefix.into_iter().chain(["--comparison", "comparison"])).is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(prefix.into_iter().chain(["--manifest", "manifest.json"])).is_ok()
         );
     }
 }
