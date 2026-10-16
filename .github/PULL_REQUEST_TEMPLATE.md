@@ -1,6 +1,6 @@
 ## What
 
-Brief description of the change and why.
+Brief description of the change and why. A `specs/` change ships with the implementation that satisfies it.
 
 ## Related issue
 
