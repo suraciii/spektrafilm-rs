@@ -38,6 +38,29 @@ pub(crate) fn repository_root() -> PathBuf {
     data_dir().parent().unwrap().to_path_buf()
 }
 
+/// Write `image` under `SPEKTRAFILM_GUI_SNAPSHOT_DIR` when that absolute,
+/// repository-external directory is set. Returns without writing otherwise,
+/// so the default gate never depends on a snapshot directory.
+#[cfg(feature = "gui-snapshots")]
+pub(crate) fn save_snapshot(image: &image::RgbaImage, name: &str) {
+    let Some(directory) = std::env::var_os("SPEKTRAFILM_GUI_SNAPSHOT_DIR") else {
+        return;
+    };
+    let directory = PathBuf::from(directory);
+    assert!(
+        directory.is_absolute(),
+        "snapshot directory must be absolute"
+    );
+    let repository = repository_root().canonicalize().unwrap();
+    std::fs::create_dir_all(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
+    assert!(
+        !directory.starts_with(repository),
+        "snapshot artifacts must be outside the repository"
+    );
+    image.save(directory.join(name)).unwrap();
+}
+
 fn app(state_path: PathBuf, image_path: PathBuf, browser_path: PathBuf) -> App {
     App::new_with_browser_path(
         Arc::new(CpuBackend),
@@ -61,11 +84,36 @@ fn script(h: &mut Harness<'_, App>, result: chooser::ChooserResult) {
     h.state_mut().chooser.scripted(result);
 }
 
-/// The shared harness deactivates stochastic effects so preview and scan
-/// comparisons stay deterministic.
-fn session_fixture() -> Session {
-    let directory = tempfile::tempdir().unwrap();
-    let image_path = directory.path().join("asymmetric-ramp.png");
+/// Deterministic factory state shared by the headless fixtures: stochastic,
+/// spatial, and reveal effects disabled so preview and scan comparisons stay
+/// reproducible. Returns the saved state path.
+fn deterministic_state(directory: &Path) -> PathBuf {
+    let factory = state::GuiState::factory();
+    let mut params = factory.runtime_params().unwrap();
+    params.settings.preview_max_size = 128;
+    params.camera.auto_exposure = false;
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = true;
+    params.io.crop = false;
+    let mut initial =
+        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+            .unwrap();
+    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
+    // The viewer's 50-frame Polaroid reveal paints one full-canvas raster per
+    // frame. That costs about 0.7 s per frame at this harness size, so sessions
+    // start with the animation off. The animation keeps its coverage in
+    // `headless::viewer::explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not`,
+    // which turns it back on through `viewer.settings.reveal`.
+    initial.sections["rust"]["viewer"]["settings"]["reveal"] = serde_json::json!(false);
+    let state_path = directory.join("initial.json");
+    initial.save(&state_path).unwrap();
+    state_path
+}
+
+/// Deterministic synthetic input shared by the headless fixtures: a ramp image
+/// plus the deterministic state from [`deterministic_state`].
+fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
+    let image_path = directory.join("asymmetric-ramp.png");
     let mut image = ImageBuf::new(160, 80);
     for y in 0..image.height {
         for x in 0..image.width {
@@ -91,25 +139,15 @@ fn session_fixture() -> Session {
         None,
     )
     .unwrap();
-    let factory = state::GuiState::factory();
-    let mut params = factory.runtime_params().unwrap();
-    params.settings.preview_max_size = 128;
-    params.camera.auto_exposure = false;
-    params.debug.deactivate_spatial_effects = true;
-    params.debug.deactivate_stochastic_effects = true;
-    params.io.crop = false;
-    let mut initial =
-        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
-            .unwrap();
-    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
-    // The viewer's 50-frame Polaroid reveal paints one full-canvas raster per
-    // frame. That costs about 0.7 s per frame at this harness size, so sessions
-    // start with the animation off. The animation keeps its coverage in
-    // `headless::viewer::explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not`,
-    // which turns it back on through `viewer.settings.reveal`.
-    initial.sections["rust"]["viewer"]["settings"]["reveal"] = serde_json::json!(false);
-    let state_path = directory.path().join("initial.json");
-    initial.save(&state_path).unwrap();
+    let state_path = deterministic_state(directory);
+    (image_path, state_path)
+}
+
+/// The shared harness deactivates stochastic effects so preview and scan
+/// comparisons stay deterministic.
+fn session_fixture() -> Session {
+    let directory = tempfile::tempdir().unwrap();
+    let (image_path, state_path) = deterministic_inputs(directory.path());
     let browser_path = directory.path().join("browser.json");
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
@@ -119,25 +157,27 @@ fn session_fixture() -> Session {
     Session { harness, directory }
 }
 
+/// A session built for offscreen pixel capture: the production window size, the
+/// wgpu renderer, and the presets panel left in its default expanded state.
+#[cfg(feature = "gui-snapshots")]
+fn snapshot_session() -> Session {
+    let directory = tempfile::tempdir().unwrap();
+    let (image_path, state_path) = deterministic_inputs(directory.path());
+    let browser_path = directory.path().join("browser.json");
+    let harness = Harness::builder()
+        .with_size(egui::vec2(1460.0, 980.0))
+        .wgpu()
+        .build_eframe(move |_| app(state_path, image_path, browser_path));
+    assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
+    Session { harness, directory }
+}
+
 /// Build a session whose App starts without an image, so a test can drive its
-/// own import path. Shares the deterministic runtime settings with
-/// [`session_fixture`]; only the synthetic image and the initial click differ.
+/// own import path. Shares the deterministic state from [`deterministic_state`].
 #[cfg(feature = "gui-raw")]
 fn empty_session() -> Session {
     let directory = tempfile::tempdir().unwrap();
-    let factory = state::GuiState::factory();
-    let mut params = factory.runtime_params().unwrap();
-    params.settings.preview_max_size = 128;
-    params.camera.auto_exposure = false;
-    params.debug.deactivate_spatial_effects = true;
-    params.debug.deactivate_stochastic_effects = true;
-    params.io.crop = false;
-    let mut initial =
-        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
-            .unwrap();
-    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
-    let state_path = directory.path().join("initial.json");
-    initial.save(&state_path).unwrap();
+    let state_path = deterministic_state(directory.path());
     let browser_path = directory.path().join("browser.json");
     let harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
@@ -873,20 +913,33 @@ mod layout_snapshots {
             colors.len() > 20,
             "modal text and controls must render, not just a background"
         );
-        if let Some(directory) = std::env::var_os("SPEKTRAFILM_GUI_SNAPSHOT_DIR") {
-            let directory = PathBuf::from(directory);
-            assert!(
-                directory.is_absolute(),
-                "snapshot directory must be absolute"
-            );
-            let repository = repository_root().canonicalize().unwrap();
-            std::fs::create_dir_all(&directory).unwrap();
-            let directory = directory.canonicalize().unwrap();
-            assert!(
-                !directory.starts_with(repository),
-                "snapshot artifacts must be outside the repository"
-            );
-            image.save(directory.join("export-modal.png")).unwrap();
+        save_snapshot(&image, "export-modal.png");
+    }
+
+    /// Render the real App window for every page offscreen. The PNGs are layout
+    /// evidence; they are written outside the repository when
+    /// `SPEKTRAFILM_GUI_SNAPSHOT_DIR` is set.
+    #[test]
+    fn app_window_renders_every_page_offscreen() {
+        let mut previous: Option<image::RgbaImage> = None;
+        for label in ["MAIN", "FILM", "PRINT", "ADVANCED", "CONFIG"] {
+            let mut s = snapshot_session();
+            let h = &mut s.harness;
+            click(h, label);
+            render(h, "PREVIEW");
+            settle_animation(h);
+            h.run_steps(3);
+            let image = h.render().expect("offscreen app render");
+            assert_eq!((image.width(), image.height()), (1460, 980));
+            if let Some(previous) = &previous {
+                assert_ne!(
+                    previous.as_raw(),
+                    image.as_raw(),
+                    "page {label} rendered identically to the previous page"
+                );
+            }
+            save_snapshot(&image, &format!("app-{label}.png"));
+            previous = Some(image);
         }
     }
 }

@@ -246,21 +246,7 @@ mod layout_snapshots {
                 );
                 bounds.push((label, rect));
             }
-            if let Some(directory) = std::env::var_os("SPEKTRAFILM_GUI_SNAPSHOT_DIR") {
-                let directory = std::path::PathBuf::from(directory);
-                assert!(
-                    directory.is_absolute(),
-                    "snapshot directory must be absolute"
-                );
-                let repository = crate::headless::repository_root().canonicalize().unwrap();
-                std::fs::create_dir_all(&directory).unwrap();
-                let directory = directory.canonicalize().unwrap();
-                assert!(
-                    !directory.starts_with(repository),
-                    "snapshot artifacts must be outside the repository"
-                );
-                image.save(directory.join(format!("{name}.png"))).unwrap();
-            }
+            crate::headless::save_snapshot(&image, &format!("{name}.png"));
         }
     }
 }
