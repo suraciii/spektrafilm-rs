@@ -97,7 +97,7 @@ pub(crate) struct Side<'a> {
     pub median: Option<[f64; 3]>,
 }
 
-fn hue_gate(gating: &Gating, chroma: f64) -> Option<&'static str> {
+pub(crate) fn hue_gate(gating: &Gating, chroma: f64) -> Option<&'static str> {
     match gating.hue_floor {
         None => Some(NO_FLOOR_REASON),
         Some(_) if !gating.chroma => Some(CHROMA_REASON),

@@ -2,6 +2,7 @@ use super::DOMAIN;
 use super::artifacts::{ArtifactRole, Comparison};
 use super::catalog::{self, Metric};
 use super::io::{err, field, mask, mean, optional_array, percentile, population, text};
+use crate::color_readouts::{chroma_ab, shortest_hue_shift};
 use crate::common::Result;
 use crate::image_data;
 use serde_json::{Map, Value, json};
@@ -103,20 +104,8 @@ fn identifier(x: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
-fn chroma_ab(p: [f64; 3]) -> f64 {
-    p[1].hypot(p[2])
-}
-
 fn chroma_distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     (a[1] - b[1]).hypot(a[2] - b[2])
-}
-
-/// Shortest circular hue-angle difference, model minus reference, degrees in
-/// (-180, 180].
-fn shortest_hue_shift(model: [f64; 3], reference: [f64; 3]) -> f64 {
-    let raw = model[2].atan2(model[1]).to_degrees() - reference[2].atan2(reference[1]).to_degrees();
-    let wrapped = (raw + 180.).rem_euclid(360.) - 180.;
-    if wrapped == -180. { 180. } else { wrapped }
 }
 
 fn side_entry(value: Option<f64>, reason: Option<&str>) -> Value {
@@ -174,6 +163,11 @@ pub fn regional(
     }
     let pairs = validate_region_pairs(case)?;
     let floor = catalog::hue_floor(&c.protocol)?;
+    let gating = crate::color_readouts::Gating {
+        tone,
+        chroma,
+        hue_floor: floor,
+    };
     if let Some(f) = floor {
         c.review["hue_chroma_floor"] = json!(f);
     }
@@ -275,26 +269,20 @@ pub fn regional(
             .collect();
         let reference_chroma = chroma_ab(reference_center);
         let model_chroma: Vec<f64> = (0..labs.len()).map(|s| chroma_ab(centers[s])).collect();
-        let (hue_shift, hue_reason): (Vec<Option<f64>>, Option<&'static str>) = match floor {
-            None => (vec![None; labs.len()], Some("hue_diagnostics_not_selected")),
-            Some(_) if !chroma => (
-                vec![None; labs.len()],
-                Some("unknown_or_graded_color_reference"),
-            ),
-            Some(f) => {
-                let per_side: Vec<Option<f64>> = (0..labs.len())
-                    .map(|s| {
-                        (reference_chroma >= f && model_chroma[s] >= f)
-                            .then(|| shortest_hue_shift(centers[s], reference_center))
-                    })
-                    .collect();
-                let reason = per_side
-                    .iter()
-                    .any(Option::is_none)
-                    .then_some("below_chroma_floor");
-                (per_side, reason)
-            }
-        };
+        let reference_hue_reason = crate::color_readouts::hue_gate(&gating, reference_chroma);
+        let mut hue_reason = reference_hue_reason;
+        let hue_shift: Vec<Option<f64>> = model_chroma
+            .iter()
+            .enumerate()
+            .map(|(s, &model_chroma)| {
+                let reason = reference_hue_reason
+                    .or_else(|| crate::color_readouts::hue_gate(&gating, model_chroma));
+                hue_reason = hue_reason.or(reason);
+                reason
+                    .is_none()
+                    .then(|| shortest_hue_shift(centers[s], reference_center))
+            })
+            .collect();
         let hue_error: Vec<Option<f64>> = hue_shift.iter().map(|v| v.map(f64::abs)).collect();
         let tone_reason = (!tone).then_some("tone_contaminated_reference");
         let chroma_reason = (!chroma).then_some("unknown_or_graded_color_reference");
@@ -366,11 +354,7 @@ pub fn regional(
                 id,
                 "native_image_pixels",
                 &readout_sides,
-                &crate::color_readouts::Gating {
-                    tone,
-                    chroma,
-                    hue_floor: floor,
-                },
+                &gating,
                 Some((tone, chroma)),
             )?
         } else {

@@ -413,8 +413,10 @@ pub fn compare_images(
                     Some(&reason),
                 );
             }
+        }
+        for region in regions {
             unavailable.extend(color_readouts::unavailable_pair(
-                population["id"].as_str().unwrap_or(""),
+                region["id"].as_str().unwrap_or(""),
                 &reason,
             ));
         }
@@ -854,6 +856,7 @@ mod tests {
         .unwrap();
         assert_eq!(result["execution_status"], "failed");
         assert_eq!(result["measurements"][0]["reason"], "dimension_mismatch");
+        assert_eq!(result["region_readouts"], json!([]));
         let mut b = a.clone();
         b.samples[3][1] = f64::NAN;
         let result =

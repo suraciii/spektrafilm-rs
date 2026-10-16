@@ -58,7 +58,7 @@ Whole-chart evidence must retain all eligible regions and identify every summary
 
 ### Retained region coordinates
 
-Comparison must retain two separate color-center estimators for declared regions that select `color`. `bounded_lab_channel_median` must reuse the componentwise bounded-display Lab medians. `unclipped_linear_srgb_mean` must average the unclipped linear sRGB samples before one XYZ-to-Lab conversion. Both must identify D65, CIE 1931 2-degree observer, and readout version `color-region-v1`. Neither estimator may replace pixel-map aggregates or ordinary patch metrics.
+Comparison must retain two separate color-center estimators for declared regions that select `color`. The implicit full-image population used by scalar metrics must not create region readouts, including on measurement failure. `bounded_lab_channel_median` must reuse the componentwise bounded-display Lab medians. `unclipped_linear_srgb_mean` must average the unclipped linear sRGB samples before one XYZ-to-Lab conversion. Both must identify D65, CIE 1931 2-degree observer, and readout version `color-region-v1`. Neither estimator may replace pixel-map aggregates or ordinary patch metrics.
 
 Each side must retain Lab, C*, gated hue, geometry, coordinate space, and pixel count. The mean estimator must also retain its linear sRGB mean. Independent reference regions must use each image's own geometry. Aligned references must use the intersection of the declared region and the retained common-area mask, and must cite that mask.
 
