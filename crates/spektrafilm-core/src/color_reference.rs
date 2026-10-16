@@ -26,7 +26,7 @@
 //! negative film scans"), and a positive print paper because Python crashes
 //! there (unsupported upstream; all shipped papers are negative anyway).
 
-use spektrafilm_gpu::cpu_backend::scan_log_xyz_cpu;
+use spektrafilm_backend::cpu_backend::scan_log_xyz_cpu;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::interp::fast_interp_image_f64;
 use spektrafilm_math::precision::from_f64;

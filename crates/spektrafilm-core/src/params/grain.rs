@@ -337,13 +337,13 @@ impl GrainParams {
         &self,
         random_seed: u64,
         deactivate_spatial_effects: bool,
-    ) -> spektrafilm_gpu::GrainV2GpuParams {
+    ) -> spektrafilm_backend::GrainV2GpuParams {
         let mut grain = self.resolved_grain_v2();
         if deactivate_spatial_effects {
             grain.resolution_factor = 100.0;
         }
         grain.seed = random_seed as u32;
-        spektrafilm_gpu::GrainV2GpuParams {
+        spektrafilm_backend::GrainV2GpuParams {
             mode: grain.mode as u32,
             resolution_type: grain.resolution_type,
             amount: grain.amount,

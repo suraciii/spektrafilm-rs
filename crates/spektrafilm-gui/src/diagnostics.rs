@@ -1,10 +1,10 @@
 //! Session-only native diagnostics. No field belongs to persisted GUI state.
 use eframe::egui;
+use spektrafilm_backend::telemetry::CollectionMode;
 pub use spektrafilm_core::telemetry::BackendRequested;
 use spektrafilm_core::telemetry::{
     ColorSpaceRole, Operation, Outcome, Report, validate_report_destination,
 };
-use spektrafilm_gpu::telemetry::CollectionMode;
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
@@ -162,7 +162,7 @@ impl Diagnostics {
 /// otherwise (`grain_v3::effective_field_backend` is the authority), so the
 /// selected backend name alone would misreport where the grain runs.
 pub(crate) fn effective_backend_name(
-    backend: &dyn spektrafilm_gpu::ComputeBackend,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
     params: &RuntimeParams,
 ) -> String {
     if spektrafilm_core::stages::grain_v3::active(params) {

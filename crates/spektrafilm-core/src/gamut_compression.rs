@@ -243,7 +243,7 @@ impl OutputGamutCompress {
 
     /// GPU inputs for sRGB's existing modes. An active compressor returning
     /// `None` requires CPU execution, including bypassing fused GPU passes.
-    pub fn gpu_params(&self) -> Option<spektrafilm_gpu::GamutGpuParams<'_>> {
+    pub fn gpu_params(&self) -> Option<spektrafilm_backend::GamutGpuParams<'_>> {
         if self.destination.name != "sRGB" {
             return None;
         }
@@ -255,7 +255,7 @@ impl OutputGamutCompress {
             Kind::Perceptual(Space::Cam16ucs) => 3,
             Kind::Perceptual(Space::Jzazbz) => return None,
         };
-        Some(spektrafilm_gpu::GamutGpuParams {
+        Some(spektrafilm_backend::GamutGpuParams {
             mode,
             knee: [self.knee.0 as f32, self.knee.1 as f32, self.knee.2 as f32],
             l_min: self.l_min as f32,

@@ -3,7 +3,7 @@
 // Run with:
 //   cargo run --release -p spektrafilm-gpu --example blur_bench
 
-use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_gpu::wgpu_backend::WgpuBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::from_f32;

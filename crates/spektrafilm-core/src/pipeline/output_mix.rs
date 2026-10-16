@@ -63,7 +63,7 @@ impl Pipeline {
         let _mix = crate::stages::StageObservation::cpu(
             backend,
             "output_mix",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         let mut source = source.ok_or_else(|| {
             "output_mix.amount below 1 requires the prepared rgb_in source".to_owned()

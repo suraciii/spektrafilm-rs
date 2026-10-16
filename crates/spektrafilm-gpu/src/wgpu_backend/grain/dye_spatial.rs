@@ -22,9 +22,9 @@
 //! and every crop, so banding is bitwise stable and cropping cannot move a
 //! value beyond that final rounding.
 
-use super::dye::{DyeGpuParams, DyeReadoutGrid};
-use super::dye_layers::{DyeChannelTableGpu, DyeChannelTablesGpu};
 use super::*;
+use spektrafilm_backend::dye_params::{DyeChannelTableGpu, DyeChannelTablesGpu};
+use spektrafilm_backend::dye_params::{DyeGpuParams, DyeReadoutGrid};
 
 /// Output rows per band before the cell budget applies.
 const BAND_OUTPUT_ROWS: u32 = 128;

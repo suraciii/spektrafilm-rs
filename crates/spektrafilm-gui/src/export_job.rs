@@ -8,12 +8,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use eframe::egui;
 use parking_lot::Mutex;
+use spektrafilm_backend::ComputeBackend;
+use spektrafilm_backend::telemetry::{ObservationKind, Purpose};
 use spektrafilm_core::image_io::{self};
 use spektrafilm_core::telemetry::OperationKind;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, Outcome};
-use spektrafilm_gpu::ComputeBackend;
-use spektrafilm_gpu::telemetry::{ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 
 use super::App;
@@ -230,7 +230,7 @@ impl App {
                         );
                         let backend_result: Result<Arc<dyn ComputeBackend>> = match export_backend {
                             ExportBackend::Cpu => {
-                                Ok(Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend))
+                                Ok(Arc::new(spektrafilm_backend::cpu_backend::CpuBackend))
                             }
                             // The export "GPU" selection is an explicit request
                             // (spec gpu-execution §Backend selection): a

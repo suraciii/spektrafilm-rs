@@ -15,7 +15,7 @@ pub use report::{
     BackendRequested, BuildIdentity, Configuration, Execution, Measurements, OperationIdentity,
     OperationKind, Precision, Report, ReportSummary, SourceRender, UnavailableField,
 };
-pub use spektrafilm_gpu::telemetry::{
+pub use spektrafilm_backend::telemetry::{
     AdapterDescription, AdapterDeviceType, AvailabilityReason, BackendSelected, BatchMeasurements,
     CollectionMode, Coverage, CpuReason, DiagnosticIssue, ExecutionFacts, ExecutionPath, Executor,
     GpuTimingMeasurements, IssueBoundary, IssueCategory, Measurement, MeasurementStatus,

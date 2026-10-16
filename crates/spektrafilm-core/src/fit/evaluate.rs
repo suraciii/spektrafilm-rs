@@ -6,7 +6,7 @@ use super::color::{self, PatchDifferences};
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
 use crate::runtime::Runtime;
-use spektrafilm_gpu::cpu_backend::CpuBackend;
+use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_math::image::ImageBuf;
 use std::path::PathBuf;
 

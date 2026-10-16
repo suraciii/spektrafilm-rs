@@ -257,7 +257,7 @@ impl ObservationContext {
             }
         })
     }
-    pub(crate) fn record_omitted_details(&self, count: u64) {
+    pub fn record_omitted_details(&self, count: u64) {
         if count > 0 {
             self.mutate(|s| {
                 s.coverage.omitted_observations =

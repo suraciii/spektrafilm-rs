@@ -36,7 +36,7 @@ impl Pipeline {
         let metering = crate::stages::StageObservation::cpu(
             backend,
             "metering",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
         let ae_ev = self.meter_autoexposure(&image);
         if let Some(capture) = capture {

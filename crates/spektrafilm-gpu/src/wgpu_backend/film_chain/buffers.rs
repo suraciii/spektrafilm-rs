@@ -50,7 +50,7 @@ pub(super) fn upload(
     viewing_illuminant: &[f64],
     scan_normalization: f64,
     scan_xyz_to_rgb: &[[f64; 3]; 3],
-    params: &crate::FilmChainParams<'_>,
+    params: &spektrafilm_backend::FilmChainParams<'_>,
     mk_storage: &dyn Fn(&str, &[u8]) -> wgpu::Buffer,
     mk_uniform: &dyn Fn(&str, &[u8]) -> wgpu::Buffer,
 ) -> ChainBuffers {
@@ -126,11 +126,11 @@ pub(super) fn upload(
     // share this uniform layout; `lut_size` is hanatos-only (0 for
     // mallett, where the field is a pad).
     let (m, front_lut_size) = match &params.front {
-        crate::FrontPass::Hanatos2025 {
+        spektrafilm_backend::FrontPass::Hanatos2025 {
             tc_lut,
             rgb_to_adapted_xyz,
         } => (rgb_to_adapted_xyz, tc_lut.size as u32),
-        crate::FrontPass::Mallett2019 { matrix } => (matrix, 0u32),
+        spektrafilm_backend::FrontPass::Mallett2019 { matrix } => (matrix, 0u32),
     };
     let front_params = FrontParams {
         width: image.width,

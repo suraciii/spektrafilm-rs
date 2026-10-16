@@ -6,6 +6,7 @@ members = [
     "crates/spektrafilm-math",
     "crates/spektrafilm-model",
     "crates/spektrafilm-cli",
+    "crates/spektrafilm-backend",
     "crates/spektrafilm-benchmark",
     "crates/spektrafilm-gui",
     "crates/spektrafilm-raw",
@@ -19,6 +20,7 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 spektrafilm-core = { path = "crates/spektrafilm-core" }
+spektrafilm-backend = { path = "crates/spektrafilm-backend" }
 spektrafilm-gpu = { path = "crates/spektrafilm-gpu" }
 spektrafilm-math = { path = "crates/spektrafilm-math" }
 spektrafilm-model = { path = "crates/spektrafilm-model" }

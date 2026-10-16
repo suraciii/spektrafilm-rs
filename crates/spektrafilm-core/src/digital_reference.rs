@@ -241,7 +241,7 @@ impl DigitalReference {
         &self,
         density: &ImageBuf,
         params: &RuntimeParams,
-        backend: &dyn spektrafilm_gpu::ComputeBackend,
+        backend: &dyn spektrafilm_backend::ComputeBackend,
     ) -> Result<ImageBuf, String> {
         if density.data.iter().any(|v| !v.is_finite()) {
             return Err("Digital Reference requires finite developed densities".into());
@@ -353,7 +353,11 @@ mod tests {
     fn pixel(reference: &DigitalReference, params: &RuntimeParams, density: [f64; 3]) -> [f64; 3] {
         let image = ImageBuf::from_data(1, 1, density.into_iter().map(from_f64).collect());
         let result = reference
-            .convert(&image, params, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .convert(
+                &image,
+                params,
+                &spektrafilm_backend::cpu_backend::CpuBackend,
+            )
             .unwrap();
         std::array::from_fn(|c| to_f64(result.data[c]))
     }
@@ -393,7 +397,11 @@ mod tests {
         params.scanner.lens_blur = 1.0;
         let image = ImageBuf::from_data(2, 2, vec![from_f64(1000.0); 12]);
         let error = reference
-            .convert(&image, &params, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .convert(
+                &image,
+                &params,
+                &spektrafilm_backend::cpu_backend::CpuBackend,
+            )
             .unwrap_err();
         assert!(error.contains("positive and representable for lens blur"));
     }
@@ -450,7 +458,7 @@ mod tests {
                 .collect(),
             )
         };
-        let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let cpu = spektrafilm_backend::cpu_backend::CpuBackend;
         let a = reference.convert(&image(0.01), &params, &cpu).unwrap();
         let b = reference.convert(&image(3.0), &params, &cpu).unwrap();
         assert_eq!(&a.data[3..6], &b.data[3..6]);
@@ -483,7 +491,7 @@ mod tests {
         let bad = ImageBuf::from_data(1, 1, vec![from_f64(f64::NAN); 3]);
         assert!(
             reference
-                .convert(&bad, &params, &spektrafilm_gpu::cpu_backend::CpuBackend)
+                .convert(&bad, &params, &spektrafilm_backend::cpu_backend::CpuBackend)
                 .is_err()
         );
     }
