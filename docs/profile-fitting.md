@@ -58,6 +58,7 @@ All fitted density models refresh sampled curves on load, including `sept_norm_c
 
 - [Profile authoring contract](../specs/profile-authoring/spec.md).
 - [Cross-validation contract](../specs/profile-authoring/spec.md#cross-validation).
+- [Measurement](measurement.md).
 - [Building](building.md).
 - [Scanning](scanning.md).
 - [Presets](presets.md).

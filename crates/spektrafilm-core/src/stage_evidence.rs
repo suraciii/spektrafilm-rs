@@ -89,16 +89,21 @@ impl StageId {
         }
     }
 
-    /// Position along the tap topology (`rgb_pre` sits at 1), so range tests
-    /// speak the same numbering as [`Tap`].
+    /// Position along the tap topology, so range tests speak the same
+    /// numbering as [`Tap`], which owns it.
     const fn position(self) -> usize {
+        self.tap().position() as usize
+    }
+
+    /// The tap this stage records.
+    const fn tap(self) -> Tap {
         match self {
-            Self::RgbIn => 0,
-            Self::LogEFilm => 2,
-            Self::CmyFilm => 3,
-            Self::LogEPrint => 4,
-            Self::CmyPrint => 5,
-            Self::RgbOut => 6,
+            Self::RgbIn => Tap::RgbIn,
+            Self::LogEFilm => Tap::LogEFilm,
+            Self::CmyFilm => Tap::CmyFilm,
+            Self::LogEPrint => Tap::LogEPrint,
+            Self::CmyPrint => Tap::CmyPrint,
+            Self::RgbOut => Tap::RgbOut,
         }
     }
 
@@ -485,20 +490,8 @@ impl StageCapture {
     /// boundaries are inclusive tap positions. Route-skipped stages never
     /// reach this test; anything else inside the range must be captured.
     fn in_executed_range(&self, id: StageId) -> bool {
-        tap_position(self.inject) <= id.position() && id.position() <= tap_position(self.collect)
-    }
-}
-
-/// Position of a tap along the chain, `rgb_pre` included.
-const fn tap_position(tap: Tap) -> usize {
-    match tap {
-        Tap::RgbIn => 0,
-        Tap::RgbPre => 1,
-        Tap::LogEFilm => 2,
-        Tap::CmyFilm => 3,
-        Tap::LogEPrint => 4,
-        Tap::CmyPrint => 5,
-        Tap::RgbOut => 6,
+        (self.inject.position() as usize) <= id.position()
+            && id.position() <= (self.collect.position() as usize)
     }
 }
 
