@@ -20,6 +20,17 @@ impl GuiTab {
         Self::Config,
     ];
 
+    /// One-line description of what the page holds.
+    pub(super) fn description(self) -> &'static str {
+        match self {
+            Self::Main => "Import, workflow, and film stock",
+            Self::Film => "Film negative response and material controls",
+            Self::Print => "Print response and finishing controls",
+            Self::Advanced => "Scanner, gamut, and experimental controls",
+            Self::Config => "GUI and display settings",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Main => "MAIN",
@@ -870,10 +881,31 @@ impl eframe::App for App {
                 self.histogram
                     .update(&self.output_image, output_id, ui.ctx());
                 self.histogram.render(ui);
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    for tab in GuiTab::ALL {
-                        ui.selectable_value(&mut self.gui_tab, tab, tab.label());
+                ui.add_space(theme::SPACE_BLOCK);
+                ui.horizontal(|ui| {
+                    // One segmented control: every page shares a frame, so the
+                    // current page reads as a position in a row rather than a
+                    // lone highlighted button. Each segment is allocated an
+                    // exact equal share, so a long label is clipped by its
+                    // segment instead of pushing the row past the panel.
+                    let segments = GuiTab::ALL.len();
+                    for (index, tab) in GuiTab::ALL.into_iter().enumerate() {
+                        let remaining = segments - index;
+                        let gap = ui.spacing().item_spacing.x;
+                        let usable = ui.available_width() - gap * (remaining - 1) as f32;
+                        let width = (usable / remaining as f32).max(0.0);
+                        let selected = self.gui_tab == tab;
+                        let (rect, mut response) = ui.allocate_exact_size(
+                            egui::vec2(width, ui.spacing().interact_size.y),
+                            egui::Sense::click(),
+                        );
+                        let button = egui::Button::new(tab.label())
+                            .selected(selected)
+                            .corner_radius(theme::RADIUS_CARD);
+                        response |= ui.put(rect, button).on_hover_text(tab.description());
+                        if response.clicked() {
+                            self.gui_tab = tab;
+                        }
                     }
                 });
                 ui.separator();
