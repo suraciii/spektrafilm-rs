@@ -54,6 +54,17 @@ MAIN Output must expose Simulation blend as the full-result/prepared-source blen
 
 Loading retired settings must follow [Output boundary and retirement](../output-mix/spec.md#output-boundary-and-retirement). A rejected document must identify the exact offending path and leave the source document, active controls, accepted render identity, and retained output unchanged. The GUI must require explicit removal of a retired numeric lightness triplet without suggesting withdrawn response groups or automatically substituting preflash or chemistry. Withdrawn draft response groups and cyan-shift paths must fail normal unknown-field validation without aliases or migration.
 
+## Window layout
+
+The window has three regions and one header.
+
+- The viewer occupies the central region and is the primary surface. It presents the retained input, output, or paper back under [Viewer presentation](#viewer-presentation), and its footer owns the layer selector.
+- The control panel occupies the right region. It owns the page tabs, the control search, the tonal-distribution readout, and the primary actions. It is the only surface that edits parameter values.
+- The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser design](../presets/design.md).
+- The window header spans the full width above the three regions. It shows the current film profile, print profile, and workflow route as read-only text, and it is the only surface that shows the operation status.
+
+A region is a layout slot, not a page. A control belongs to exactly one region, and a persisted value keeps exactly one editable surface under [Labels and surfaces](#labels-and-surfaces).
+
 ## Optical and grain labels
 
 MAIN Scanner must distinguish Lens blur (readout optics) from Unsharp mask (digital sharpening). Identity point controls must not imply a different optical order. Tooltips must explain the [optical-order cutover](../film-chain/spec.md#optical-order-cutover) without offering a legacy late-blur mode.
@@ -100,6 +111,8 @@ The editor range is declared once per parameter path in a single table. The GUI 
 
 The viewer presents the retained input, the retained output, or the paper back. Its presentation state is viewer-only under the [GUI workflow design](design.md).
 
+The viewer presents an explicit empty state when no image is loaded. The empty state must name the import action and must not present a blank canvas. It is viewer-only and must not alter saved or exported pixels.
+
 The viewer footer owns the layer selector. It is the only surface that exposes it. CONFIG must not repeat it.
 
 The development animation is fixed viewer behaviour. It must not have an editor, and it must not be persisted as an editable control. An automatic parameter update skips it; an explicit Preview or Scan retains it.
@@ -107,7 +120,7 @@ The development animation is fixed viewer behaviour. It must not have an editor,
 The viewer must let the user select a display ICC profile. The selected profile applies to the disposable viewer raster only. Windows discovers the primary display profile when the user selects none. An explicitly selected profile applies on every platform that supports LittleCMS. Without a usable profile, the encoded sRGB preview is used directly.
 
 The viewer must expose a tonal-distribution readout of the retained output. It must be viewer-only: it must not alter saved or exported pixels.
-- The readout is a fixed strip at the top of the control panel, above the tab row. It is co-visible with the controls, does not occlude the image, and does not compete for width with the 420px panel. It is default-on, collapsible, and its visibility state is persisted. It is viewer-only and never affects saved or exported pixels.
+- The readout is a fixed strip at the top of the control panel, above the tab row. It is co-visible with the controls, does not occlude the image, and does not increase the control panel width. It is default-on, collapsible, and its visibility state is persisted. It is viewer-only and never affects saved or exported pixels.
 
 The readout must derive from the retained output. It must not require a second render.
 
@@ -145,7 +158,7 @@ The GUI must expose a search box at the top of the control panel. The search fil
 
 A label must name the current product concept. A label must not name a removed implementation, a development tool, or a file format of a former dependency.
 
-An operation status must appear on exactly one surface. It must be short and must describe the last accepted operation, under the [telemetry status rule](../telemetry/spec.md#local-surfaces).
+An operation status must appear on exactly one surface, the window header. It must be short and must describe the last accepted operation, under the [telemetry status rule](../telemetry/spec.md#local-surfaces).
 
 A control that changes a persisted value must be reachable from the GUI. A persisted value with no control, no pipeline consumer, and no owning specification must be removed from the document.
 
