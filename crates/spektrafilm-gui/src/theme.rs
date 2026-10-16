@@ -138,8 +138,10 @@ pub const WIDTH_PANEL: f32 = 320.0;
 pub const WIDTH_PRESET_PANEL: f32 = 180.0;
 /// Collapsed width of the left preset browser.
 pub const WIDTH_PRESET_PANEL_COLLAPSED: f32 = 38.0;
-/// Largest width a selector or a text field may take.
-pub const WIDTH_COMBO_MAX: f32 = 280.0;
+/// Widest a choice row's selector may be. Narrow enough that a selector
+/// sharing a row with another control leaves room for it inside the control
+/// panel.
+pub const WIDTH_COMBO_MAX: f32 = 120.0;
 /// Default size of the application window.
 pub const WINDOW_DEFAULT_SIZE: [f32; 2] = [1460.0, 980.0];
 

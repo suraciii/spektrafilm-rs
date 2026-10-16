@@ -181,6 +181,7 @@ pub(crate) const ENLARGER_DIFFUSION_PATHS: DiffusionPaths = DiffusionPaths {
 
 pub(crate) fn diffusion(
     ui: &mut Ui,
+    label: &str,
     value: &mut DiffusionFilterParams,
     paths: &DiffusionPaths,
     filter: &mut ControlFilter<'_>,
@@ -189,7 +190,7 @@ pub(crate) fn diffusion(
     if filter_matches(filter, "active") {
         changed |= toggle(
             ui,
-            "active",
+            label,
             &mut value.active,
             "Toggle the diffusion filter (Pro-Mist family).",
         );
@@ -585,11 +586,12 @@ pub(crate) fn choice_tip_options<'a>(
     let prev = value.clone();
     // Label first, selector second, so a choice row reads like every other
     // parameter row. `from_id_salt` paints the box where it is placed instead
-    // of appending its own label after it.
+    // of appending its own label after it. The width is capped so a selector
+    // sharing a row with another control leaves room for it.
     ui.label(label).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(label)
         .selected_text(selected_label)
-        .width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
+        .width(theme::WIDTH_COMBO_MAX)
         .show_ui(ui, |ui| {
             for (option, display_label) in choices {
                 // Allocate only when a selection changes, not for every option each frame.

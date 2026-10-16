@@ -71,7 +71,7 @@ fn render_chemistry(
     if filter_matches(filter, "active") {
         flags.runtime_changed |= toggle(
             ui,
-            "active",
+            &format!("Enable {what} density curves"),
             &mut params.active,
             &format!("Enable {what} density-curve morphing."),
         );

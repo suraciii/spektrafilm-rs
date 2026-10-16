@@ -778,7 +778,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
     choose(h, "workflow", "input > film > scan");
     click(h, "FILM");
     if !h.state().params.film_render.grain.active {
-        click(h, "active");
+        click(h, "Enable grain");
     }
     assert!(h.state().params.film_render.grain.active);
     assert_eq!(

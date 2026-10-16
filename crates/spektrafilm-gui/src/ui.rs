@@ -167,7 +167,7 @@ impl App {
                 }
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if controls::choice_tip_entries(
                 ui,
                 "workflow",

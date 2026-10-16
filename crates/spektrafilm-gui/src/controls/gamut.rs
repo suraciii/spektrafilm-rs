@@ -14,7 +14,7 @@ pub(crate) fn sections(
             if filter_matches(filter, "active") {
                 flags.runtime_changed |= toggle(
                     ui,
-                    "active",
+                    "Enable input gamut compress",
                     &mut params.io.input_gamut_compress.active,
                     "Compress input chromaticities toward the visible spectral locus before spectral upsampling. Off passes input through unchanged.",
                 );

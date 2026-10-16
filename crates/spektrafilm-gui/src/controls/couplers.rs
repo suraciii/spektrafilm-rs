@@ -17,7 +17,12 @@ pub(crate) fn sections(
                     .color(theme::FG_MUTED),
             );
             if filter_matches(filter, "active") {
-                flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.dir_couplers.active, "Enable DIR coupler inhibition.");
+                flags.runtime_changed |= toggle(
+                ui,
+                "Enable DIR couplers",
+                &mut params.film_render.dir_couplers.active,
+                "Enable DIR coupler inhibition.",
+            );
             }
             if filter_matches(filter, "amount") {
                 flags.runtime_changed |= param_numeric(ui, "amount", &mut params.film_render.dir_couplers.amount, "film_render.dir_couplers.amount", "Global multiplier on the DIR coupler inhibition matrix. 1.0 leaves the per-channel gammas as-is.");

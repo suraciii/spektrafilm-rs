@@ -292,7 +292,7 @@ pub(crate) fn sections(
                     &ENLARGER_DIFFUSION_PATHS,
                 )
             };
-            flags.runtime_changed |= diffusion(ui, diffusion_filter, paths, filter);
+            flags.runtime_changed |= diffusion(ui, section, diffusion_filter, paths, filter);
         });
     }
 }

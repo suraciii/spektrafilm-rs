@@ -107,7 +107,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
 
     click(h, "Base");
     let base_active = h.state().params.film_render.base.active;
-    click(h, "active");
+    click(h, "Enable film base");
     edit(h, "scale", "1.25");
     edit(h, "tilt", "0.75");
     assert_eq!(h.state().params.film_render.base.active, !base_active);
@@ -117,7 +117,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
 
     click(h, "Halation");
     let halation_active = h.state().params.film_render.halation.active;
-    click(h, "active");
+    click(h, "Enable halation");
     edit(h, "scatter amount", "0.25");
     edit(h, "boost ev", "1.5");
     assert_eq!(
@@ -130,7 +130,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
 
     click(h, "Couplers");
     let couplers_active = h.state().params.film_render.dir_couplers.active;
-    click(h, "active");
+    click(h, "Enable DIR couplers");
     edit(h, "amount", "1.5");
     edit(h, "inhibition samelayer", "0.75");
     assert_eq!(
@@ -150,7 +150,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
 
     click(h, "Diffusion");
     let diffusion_active = h.state().params.camera.diffusion_filter.active;
-    click(h, "active");
+    click(h, "Camera diffusion");
     choose(h, "filter family", "cinebloom");
     edit(h, "strength", "0.5");
     assert_eq!(
@@ -167,7 +167,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
     click(h, "Chemistry");
     choose(h, "development time", "9 min");
     let chemistry_active = h.state().params.film_render.chemistry.active;
-    click(h, "active");
+    click(h, "Enable film density curves");
     edit(h, "gamma factor", "1.25");
     edit(h, "developer exhaustion", "0.375");
     assert_eq!(h.state().params.film_render.development_time, Some(9.0));
@@ -225,7 +225,7 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
 
     click(h, "Chemistry");
     let chemistry_active = h.state().params.print_render.density_curves_morph.active;
-    click(h, "active");
+    click(h, "Enable print density curves");
     edit(h, "gamma factor", "1.5");
     edit(h, "developer exhaustion", "0.375");
     assert_eq!(
@@ -252,7 +252,7 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
 
     click(h, "Base");
     let base_active = h.state().params.print_render.base.active;
-    click(h, "active");
+    click(h, "Enable print base");
     edit(h, "scale", "1.25");
     edit(h, "cyan", "0.75");
     assert_eq!(h.state().params.print_render.base.active, !base_active);
@@ -262,7 +262,7 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
 
     click(h, "Print viewing glare");
     let glare_active = h.state().params.print_render.glare.active;
-    click(h, "active");
+    click(h, "Enable print glare");
     edit(h, "percent", "0.25");
     edit(h, "roughness", "0.5");
     assert_eq!(h.state().params.print_render.glare.active, !glare_active);
@@ -272,7 +272,7 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
 
     click(h, "Diffusion");
     let diffusion_active = h.state().params.enlarger.diffusion_filter.active;
-    click(h, "active");
+    click(h, "Enlarger diffusion");
     choose(h, "filter family", "black_pro_mist");
     edit(h, "strength", "0.375");
     edit(h, "halo warmth", "0.25");
@@ -334,7 +334,7 @@ fn advanced_and_print_page_spectral_magazine_and_gamut_controls_accept_edits_and
 
     click(h, "Input gamut compress");
     let compress_active = h.state().params.io.input_gamut_compress.active;
-    click(h, "active");
+    click(h, "Enable input gamut compress");
     edit(h, "knee 0", "0.75");
     edit(h, "knee 2", "1.5");
     edit(h, "hull detail", "12");
