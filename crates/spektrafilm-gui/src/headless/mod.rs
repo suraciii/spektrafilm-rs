@@ -228,7 +228,22 @@ fn import_file(h: &mut Harness<'_, App>, raw: bool) {
     h.run_steps(3);
 }
 
+/// Scroll the controls panel to the bottom so clipped elements become visible.
+///
+/// The window header compresses the controls panel's scroll area, which can
+/// clip elements near the bottom. The harness's `simulate_click` doesn't scroll,
+/// so we explicitly set the scroll offset to the bottom before interacting.
+fn scroll_to_bottom(h: &mut Harness<'_, App>) {
+    let scroll_id = egui::Id::new("controls").with("controls-scroll");
+    if let Some(mut state) = egui::containers::scroll_area::State::load(&h.ctx, scroll_id) {
+        state.offset.y = f32::MAX;
+        state.store(&h.ctx, scroll_id);
+    }
+    h.run_steps(1);
+}
+
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
+    scroll_to_bottom(h);
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .simulate_click();
     h.run_steps(3);
