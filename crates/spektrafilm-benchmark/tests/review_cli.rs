@@ -35,22 +35,40 @@ fn code(value: &Value) -> &str {
 fn png(path: &Path, width: usize, height: usize) {
     image_data::write_png16_codes(path, &vec![[0x8000; 3]; width * height], width, height).unwrap();
 }
-/// A grid set over two 32×8 images plus an explicit-region set, so every
+
+fn grid_set(measurement: Option<Value>) -> Value {
+    let mut set = json!({
+        "id": "grid", "label": "网格集合", "grid": {
+            "rows": 1, "columns": 2, "origin": [0, 0], "patch_size": [16, 8], "gap": [0, 0]
+        }
+    });
+    if let Some(measurement) = measurement {
+        set["measurement"] = measurement;
+    }
+    set
+}
+
+fn explicit_set(measurement: Option<Value>) -> Value {
+    let mut set = json!({
+        "id": "explicit", "label": "区域集合", "regions": [
+            {"id": "r1", "label": "区域一", "geometry": {"c": [0, 0, 8, 8]}}
+        ]
+    });
+    if let Some(measurement) = measurement {
+        set["measurement"] = measurement;
+    }
+    set
+}
+
+/// One manifest over two 32×8 images plus an explicit-region set, so every
 /// derivation failure has a declared alternative to report.
-fn manifest(dir: &Path) -> std::path::PathBuf {
+fn write_manifest(dir: &Path, sets: Value) -> std::path::PathBuf {
     png(&dir.join("a.png"), 32, 8);
     png(&dir.join("b.png"), 32, 8);
     let body = json!({
         "schema_version": 1,
         "title": "区域派生",
-        "sets": [
-            {"id": "grid", "label": "网格集合", "grid": {
-                "rows": 1, "columns": 2, "origin": [0, 0], "patch_size": [16, 8], "gap": [0, 0]
-            }},
-            {"id": "explicit", "label": "区域集合", "regions": [
-                {"id": "r1", "label": "区域一", "geometry": {"c": [0, 0, 8, 8]}}
-            ]}
-        ],
+        "sets": sets,
         "images": [
             {"id": "a", "set": "grid", "path": "a.png", "label": "输入 a",
              "color_space": "sRGB", "cctf_decoding": false},
@@ -66,32 +84,65 @@ fn manifest(dir: &Path) -> std::path::PathBuf {
     path
 }
 
+fn manifest(dir: &Path, measurement: Option<Value>) -> std::path::PathBuf {
+    write_manifest(dir, json!([grid_set(measurement), explicit_set(None)]))
+}
+
 #[test]
-fn regions_derive_review_patch_windows_and_validate_as_the_regions_kind() {
+fn generate_report_renders_one_source_and_requires_exactly_one() {
     let dir = TempDir::new().unwrap();
-    let review = manifest(dir.path());
-    let out = dir.path().join("regions.json");
+    let review = manifest(dir.path(), None);
+    let out = dir.path().join("report");
     let result = success(
         cli()
-            .args(["regions", "--review"])
+            .args(["generate-report", "--manifest"])
             .arg(&review)
-            .args([
-                "--set",
-                "grid",
-                "--sample",
-                "8x8",
-                "--role",
-                "color",
-                "--measurements",
-                "color,tone",
-                "--out",
-            ])
+            .args(["--out"])
             .arg(&out)
             .output()
             .unwrap(),
     );
-    assert_eq!(result["command"], "regions");
-    assert_eq!(result["execution_status"], "completed");
+    assert_eq!(result["command"], "generate-report");
+    assert_eq!(result["source"], "manifest");
+    assert_eq!(result["image_count"], 3);
+    assert!(out.join("index.html").is_file());
+    assert!(out.join("report.json").is_file());
+
+    for args in [
+        vec!["generate-report", "--out", "report"],
+        vec![
+            "generate-report",
+            "--comparison",
+            "comparison",
+            "--manifest",
+            "review.json",
+            "--out",
+            "report",
+        ],
+    ] {
+        let output = cli().args(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    }
+}
+
+#[test]
+fn generate_regions_use_the_declared_measurement_intent() {
+    let dir = TempDir::new().unwrap();
+    let review = manifest(
+        dir.path(),
+        Some(json!({"sample": [8, 8], "role": "color", "measurements": ["color", "tone"]})),
+    );
+    let out = dir.path().join("regions.json");
+    let result = success(
+        cli()
+            .args(["generate-regions", "--manifest"])
+            .arg(&review)
+            .args(["--set", "grid", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(result["command"], "generate-regions");
     assert_eq!(result["set"], "grid");
     assert_eq!(result["region_count"], 2);
     let regions: Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
@@ -113,13 +164,14 @@ fn regions_derive_review_patch_windows_and_validate_as_the_regions_kind() {
     );
     assert_eq!(validated["kind"], "regions");
 
-    // Without a sample each region keeps the full patch window, and the
-    // defaults stay role `other` with no measurements.
+    // Without a declared measurement the derivation keeps each full patch
+    // window and defaults to role `other` with no families.
+    let defaults = manifest(dir.path(), None);
     let full = dir.path().join("full.json");
     success(
         cli()
-            .args(["regions", "--review"])
-            .arg(&review)
+            .args(["generate-regions", "--manifest"])
+            .arg(&defaults)
             .args(["--set", "grid", "--out"])
             .arg(&full)
             .output()
@@ -133,23 +185,21 @@ fn regions_derive_review_patch_windows_and_validate_as_the_regions_kind() {
 }
 
 #[test]
-fn regions_reject_unknown_sets_regions_only_sets_samples_and_destinations() {
+fn generate_regions_reject_unknown_sets_regions_only_sets_and_destinations() {
     let dir = TempDir::new().unwrap();
-    let review = manifest(dir.path());
+    let review = manifest(dir.path(), None);
     let out = dir.path().join("regions.json");
-    let derive = |set: &str, extra: &[&str], out: &Path| {
+    let derive = |set: &str, out: &Path| {
         cli()
-            .args(["regions", "--review"])
+            .args(["generate-regions", "--manifest"])
             .arg(&review)
-            .args(["--set", set])
-            .args(extra)
-            .args(["--out"])
+            .args(["--set", set, "--out"])
             .arg(out)
             .output()
             .unwrap()
     };
 
-    let error = failure(derive("missing", &[], &out));
+    let error = failure(derive("missing", &out));
     assert_eq!(code(&error), "unknown_set");
     assert!(
         error["errors"][0]["message"]
@@ -157,25 +207,66 @@ fn regions_reject_unknown_sets_regions_only_sets_samples_and_destinations() {
             .unwrap()
             .contains("available: grid, explicit")
     );
-    let error = failure(derive("explicit", &[], &out));
+    let error = failure(derive("explicit", &out));
     assert_eq!(code(&error), "missing_grid");
-    let error = failure(derive("grid", &["--sample", "32x8"], &out));
-    assert_eq!(code(&error), "invalid_sample");
-    let error = failure(derive("grid", &["--sample", "8x0"], &out));
-    assert_eq!(code(&error), "invalid_sample");
-    let error = failure(derive("grid", &["--sample", "8"], &out));
-    assert_eq!(code(&error), "invalid_sample");
-    let error = failure(derive("grid", &["--role", "bogus"], &out));
-    assert_eq!(code(&error), "invalid_role");
-    let error = failure(derive("grid", &["--measurements", "color,bogus"], &out));
-    assert_eq!(code(&error), "invalid_measurements");
-    let error = failure(derive("grid", &["--measurements", "color,,tone"], &out));
-    assert_eq!(code(&error), "invalid_measurements");
     assert!(!out.exists());
 
-    success(derive("grid", &[], &out));
-    let error = failure(derive("grid", &[], &out));
+    success(derive("grid", &out));
+    let error = failure(derive("grid", &out));
     assert_eq!(code(&error), "destination_exists");
+}
+
+#[test]
+fn review_validation_checks_declared_measurement_intent() {
+    let dir = TempDir::new().unwrap();
+    let out = dir.path().join("regions.json");
+    for (measurement, expected) in [
+        (json!({"sample": [32, 8]}), "invalid_sample"),
+        (json!({"sample": [8, 0]}), "invalid_bounds"),
+        (json!({"role": "bogus"}), "invalid_role"),
+        (
+            json!({"measurements": ["color", "bogus"]}),
+            "invalid_measurements",
+        ),
+        (
+            json!({"measurements": ["color", "color"]}),
+            "duplicate_value",
+        ),
+    ] {
+        let review = manifest(dir.path(), Some(measurement.clone()));
+        let validated = failure(
+            cli()
+                .args(["validate", "--kind", "review", "--file"])
+                .arg(&review)
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(code(&validated), expected, "{measurement}");
+        let derived = failure(
+            cli()
+                .args(["generate-regions", "--manifest"])
+                .arg(&review)
+                .args(["--set", "grid", "--out"])
+                .arg(&out)
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(code(&derived), expected, "{measurement}");
+        assert!(!out.exists());
+    }
+
+    let explicit_measurement = write_manifest(
+        dir.path(),
+        json!([grid_set(None), explicit_set(Some(json!({"role": "other"})))]),
+    );
+    let validated = failure(
+        cli()
+            .args(["validate", "--kind", "review", "--file"])
+            .arg(&explicit_measurement)
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(code(&validated), "measurement_requires_grid");
 }
 
 #[test]

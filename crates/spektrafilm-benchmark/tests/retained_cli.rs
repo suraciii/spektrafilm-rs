@@ -233,7 +233,7 @@ fn cli_report_opens_images_and_exposes_real_manual_and_automatic_crops() {
     compare(&baseline, &candidate, &comparison, 0);
     let report = temp.path().join("report");
     invoke(
-        &["report"],
+        &["generate-report"],
         &[("--comparison", &comparison), ("--out", &report)],
         0,
     );
@@ -315,7 +315,7 @@ fn cli_report_without_regions_has_an_explicit_crop_empty_state() {
     compare(&baseline, &candidate, &comparison, 0);
     let report = temp.path().join("report");
     invoke(
-        &["report"],
+        &["generate-report"],
         &[("--comparison", &comparison), ("--out", &report)],
         0,
     );
@@ -341,7 +341,7 @@ fn offline_masked_comparison_preserves_native_linear_samples() {
     validate(&out, "comparison.json", 0);
     let report = temp.path().join("report");
     invoke(
-        &["report"],
+        &["generate-report"],
         &[("--comparison", &out), ("--out", &report)],
         0,
     );
@@ -565,7 +565,7 @@ fn measurement_availability_and_unindexed_references_are_rejected_by_validate_an
         );
         let report = temp.path().join(format!("report-{index}"));
         let result = invoke(
-            &["report"],
+            &["generate-report"],
             &[("--comparison", &out), ("--out", &report)],
             1,
         );
@@ -594,7 +594,7 @@ fn artifact_traversal_missing_and_tampered_bytes_never_publish_reports() {
         save_manifest(&out, "comparison.json", d);
         let report = temp.path().join(format!("report-{index}"));
         let result = invoke(
-            &["report"],
+            &["generate-report"],
             &[("--comparison", &out), ("--out", &report)],
             1,
         );
@@ -614,7 +614,7 @@ fn artifact_traversal_missing_and_tampered_bytes_never_publish_reports() {
     let report = temp.path().join("tampered-report");
     assert_eq!(
         invoke(
-            &["report"],
+            &["generate-report"],
             &[("--comparison", &out), ("--out", &report)],
             1
         )["errors"][0]["code"],
@@ -669,7 +669,7 @@ fn artifact_symlink_is_rejected_even_when_bytes_match() {
     let report = temp.path().join("report");
     assert_eq!(
         invoke(
-            &["report"],
+            &["generate-report"],
             &[("--comparison", &out), ("--out", &report)],
             1
         )["errors"][0]["code"],
@@ -956,7 +956,7 @@ fn offline_pair_report_preserves_unavailable_maps_and_redistribution_omissions()
     let snapshot = fs::read(comparison.join("comparison.json")).unwrap();
     let report = temp.path().join("report");
     invoke(
-        &["report"],
+        &["generate-report"],
         &[("--comparison", &comparison), ("--out", &report)],
         0,
     );

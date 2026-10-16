@@ -68,7 +68,13 @@ fn documented_benchmark_commands_use_supported_flags() {
     }
     // Protect the documented workflow, not just an empty extraction.
     for subcommand in [
-        "validate", "target", "run", "compare", "inspect", "report", "review", "regions",
+        "validate",
+        "target",
+        "run",
+        "compare",
+        "inspect",
+        "generate-report",
+        "generate-regions",
     ] {
         assert!(checked.contains(&("spektrafilm-bench".into(), Some(subcommand.into()))));
     }

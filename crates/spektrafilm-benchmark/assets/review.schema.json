@@ -117,6 +117,38 @@
               ],
               "additionalProperties": false
             }
+          },
+          "measurement": {
+            "type": "object",
+            "description": "How this grid set derives measurement regions. Only grid sets may declare it.",
+            "properties": {
+              "sample": {
+                "description": "Centered sample window [width, height] in decoded image pixels; must fit inside each patch window.",
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "uniqueItems": false,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "role": {
+                "description": "Role of each derived region; uses the existing region role names.",
+                "type": "string",
+                "minLength": 1
+              },
+              "measurements": {
+                "description": "Measurement families of each derived region; uses the existing family names.",
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [
