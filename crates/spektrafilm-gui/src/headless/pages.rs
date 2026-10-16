@@ -774,3 +774,30 @@ fn control_search_reaches_scanner_controls_by_their_visible_labels() {
     assert!(h.query_by_label("film-scan white point R").is_some());
     assert!(h.query_by_label("film-scan black point R").is_none());
 }
+
+#[test]
+fn a_section_reset_restores_the_factory_value_and_clears_the_mark() {
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "FILM");
+
+    // Grain is open by default, so its rows are reachable without expanding it.
+    // The section starts at the factory state, so it is unmarked.
+    assert!(h.query_by_label("modified").is_none());
+    let factory = h.state().params.film_render.grain.blur;
+
+    edit(h, "blur", "0.5");
+    assert_ne!(h.state().params.film_render.grain.blur, factory);
+    assert!(h.query_by_label("modified").is_some());
+
+    // A neighbouring section is untouched by the reset.
+    let halation_factory = h.state().params.film_render.halation.scatter_amount;
+
+    click(h, "reset Grain");
+    assert_eq!(h.state().params.film_render.grain.blur, factory);
+    assert!(h.query_by_label("modified").is_none());
+    assert_eq!(
+        h.state().params.film_render.halation.scatter_amount,
+        halation_factory
+    );
+}

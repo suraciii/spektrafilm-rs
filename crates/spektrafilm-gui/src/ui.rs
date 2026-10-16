@@ -505,8 +505,8 @@ impl App {
                             .size(theme::SIZE_HINT),
                     );
                 }
-                if section_reset::sections().any(|name| name == section)
-                    && ui
+                if section_reset::sections().any(|name| name == section) {
+                    let response = ui
                         .add(
                             egui::Button::new(
                                 egui::RichText::new("reset")
@@ -515,15 +515,20 @@ impl App {
                             )
                             .corner_radius(theme::RADIUS_CARD),
                         )
-                        .on_hover_text(format!("Restore {section} to the factory state"))
-                        .clicked()
-                {
-                    section_reset::reset(&mut self.gui_state, section);
-                    self.params = self
-                        .gui_state
-                        .runtime_params()
-                        .unwrap_or_else(|_| self.params.clone());
-                    self.mark_parameters_changed();
+                        .on_hover_text(format!("Restore {section} to the factory state"));
+                    // Name the action after its section, so one reset is
+                    // addressable among the sections on a page.
+                    ui.ctx().accesskit_node_builder(response.id, |node| {
+                        node.set_label(format!("reset {section}"));
+                    });
+                    if response.clicked() {
+                        section_reset::reset(&mut self.gui_state, section);
+                        self.params = self
+                            .gui_state
+                            .runtime_params()
+                            .unwrap_or_else(|_| self.params.clone());
+                        self.mark_parameters_changed();
+                    }
                 }
                 self.section_preset_menu(ui, kind);
             });
