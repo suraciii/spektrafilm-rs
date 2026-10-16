@@ -128,7 +128,7 @@ An empty or absent output must present an explicit empty state instead of a blan
 
 ## Experimental controls
 
-The following controls carry an `(experimental)` label suffix. The suffix is a UI hint; it does not change the parameter's behavior or validation.
+The following controls carry an experimental marker. The marker is a UI hint; it does not change the parameter's behavior or validation. [GUI presentation](../gui-presentation/spec.md#markers) owns the marker's presentation.
 
 - `print illuminant` selector — MAIN → Enlarger
 - Input gamut-compression algorithm selector — ADVANCED → Input gamut compress
