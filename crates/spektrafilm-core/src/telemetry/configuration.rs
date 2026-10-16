@@ -71,12 +71,6 @@ impl WorkflowRoute {
             Self::Custom => "",
         }
     }
-    pub fn scans_film(&self) -> bool {
-        matches!(
-            self,
-            Self::FilmScan | Self::ConvertFilmScan | Self::ConvertFilmScanMinusBase
-        )
-    }
 
     pub fn prints(&self) -> bool {
         matches!(self, Self::FilmPrintScan | Self::ConvertFilmPrintScan)

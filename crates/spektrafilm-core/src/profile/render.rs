@@ -23,41 +23,6 @@ impl Profile {
         self.data.log_exposure.clone()
     }
 
-    /// Get density curves as [N][3] f32 array for fast interpolation.
-    pub fn density_curves_f32(&self) -> Vec<[f32; 3]> {
-        self.data
-            .density_curves
-            .iter()
-            .map(|row| {
-                [
-                    row.first().copied().unwrap_or(0.0) as f32,
-                    row.get(1).copied().unwrap_or(0.0) as f32,
-                    row.get(2).copied().unwrap_or(0.0) as f32,
-                ]
-            })
-            .collect()
-    }
-
-    /// Get log_exposure as f32 slice.
-    pub fn log_exposure_f32(&self) -> Vec<f32> {
-        self.data.log_exposure.iter().map(|&v| v as f32).collect()
-    }
-
-    /// Get log_sensitivity as [81][3] f32 array.
-    pub fn log_sensitivity_f32(&self) -> Vec<[f32; 3]> {
-        self.data
-            .log_sensitivity
-            .iter()
-            .map(|row| {
-                [
-                    row.first().copied().unwrap_or(0.0) as f32,
-                    row.get(1).copied().unwrap_or(0.0) as f32,
-                    row.get(2).copied().unwrap_or(0.0) as f32,
-                ]
-            })
-            .collect()
-    }
-
     /// Get log_sensitivity as [81][3] f64 array (precision-preserving).
     pub fn log_sensitivity_f64(&self) -> Vec<[f64; 3]> {
         self.data

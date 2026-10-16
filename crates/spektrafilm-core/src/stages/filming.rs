@@ -4,6 +4,7 @@
 /// 2D LUT lookup (spectra × sensitivity) → per-channel film raw exposure.
 use rayon::prelude::*;
 use spektrafilm_backend::ComputeBackend;
+use spektrafilm_backend::timing::{print_stage_timing, stage_timings_enabled};
 use spektrafilm_math::colorspace;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f32, from_f64, to_f64};
@@ -15,16 +16,6 @@ use crate::profile::Profile;
 
 mod metering;
 pub use metering::{measure_autoexposure_ev, meter_autoexposure_ev};
-
-fn stage_timings_enabled() -> bool {
-    std::env::var_os("SPEKTRAFILM_STAGE_TIMINGS").is_some()
-}
-
-fn print_stage_timing(enabled: bool, stage: &str, start: Instant) {
-    if enabled {
-        eprintln!("stage {stage}: {} ms", start.elapsed().as_millis());
-    }
-}
 
 /// Per-pixel `raw = m · rgb` for the Mallett2019 path (f64 matmul, rayon-parallel).
 fn apply_mallett_matrix(image: &ImageBuf, m: &[[f64; 3]; 3]) -> ImageBuf {

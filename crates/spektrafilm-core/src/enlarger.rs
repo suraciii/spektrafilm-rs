@@ -178,28 +178,6 @@ pub const ILLUMINANT_TH_KG3_DEFAULT_FILTERS_F64: [f64; N_WAVELENGTHS] = [
     0.41455292589926274,
 ];
 
-/// Compute filtered enlarger illuminant with CMY dichroic filters.
-///
-/// Filter values are in Kodak CC units: 100 = 1.0 density = 90% reduction.
-/// For the default TH-KG3 + (C=0, M=65, Y=55) configuration, uses the exact
-/// baked values from the Python reference to ensure parity.
-pub fn enlarger_filtered_illuminant(
-    illuminant_name: &str,
-    c_filter: f32,
-    m_filter: f32,
-    y_filter: f32,
-) -> Vec<f32> {
-    enlarger_filtered_illuminant_f64(
-        illuminant_name,
-        c_filter as f64,
-        m_filter as f64,
-        y_filter as f64,
-    )
-    .into_iter()
-    .map(|v| v as f32)
-    .collect()
-}
-
 /// Compute filtered enlarger illuminant in f64 (Python parity).
 ///
 /// Filter values are f64 to avoid the f32 truncation drift — the
