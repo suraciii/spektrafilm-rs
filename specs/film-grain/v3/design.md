@@ -315,7 +315,6 @@ Cine profiles are available without a passed stock-specific optical gate. A CPU 
 - [Film grain architecture](../design.md)
 - [Spektra contract](../v1/spec.md)
 - [Procedural contract](../v2/spec.md)
-- [Dehancer investigation](../../../docs/dehancer-grain-reverse-engineering.md)
 - Kodak, [The Essential Reference Guide for Filmmakers](https://www.kodak.com/content/products-brochures/Film/kodak-essential-reference-guide-for-filmmakers.pdf), printed pages 31 and 56–57.
 - Kodak Alaris, [Portra 800 E-4040](https://kodakprofessional.com/sites/default/files/2025-07/e4040.pdf), printed page 3.
 - Kodak, [VISION3 500T 5219/7219 technical data H-1-5219t, July 2015](https://www.kodak.com/content/products-brochures/Film/VISION3-500T-Color-Negative-Film-7219-TECHNICAL-DATA.pdf), page 4.

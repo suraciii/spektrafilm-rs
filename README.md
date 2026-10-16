@@ -61,15 +61,7 @@ List the shipped films, papers and presets:
 
 ## Documentation
 
-[specs/](specs/README.md) holds the product contracts: what the program must do and the invariants it protects. [CONTEXT.md](CONTEXT.md) defines the film-simulation language. The guides below explain how to use the product.
-
-- [Building, packaging, and verification](docs/building.md) — dependencies, build commands, package scripts, install locations, and which gate runs when.
-- [Simulation pipeline and profiles](docs/pipeline.md) — the spectral chain, selectable upsampling methods, camera filters, and shipped profiles.
-- [GUI guide](docs/gui.md) — controls, Preview, Scan, Save, Export, states, and diagnostics.
-- [CLI guide](docs/cli.md) — commands, formats, parameter overrides, geometry, color management, and reports.
-- [Attribution](docs/attribution.md) — upstream sources, third-party components, and their license terms.
-
-[docs/README.md](docs/README.md) carries the complete guide list. [Crate architecture](eng/architecture.md), [testing](eng/testing.md), [documentation language](eng/documentation-language.md), and [coding standards](CODING_STANDARDS.md) cover engineering practices.
+[specs/](specs/) holds the product contracts: what the program must do and the invariants it protects. [CONTEXT.md](CONTEXT.md) defines the film-simulation language. [docs/README.md](docs/README.md) carries the complete guide list. [Crate architecture](eng/architecture.md), [testing](eng/testing.md), [documentation language](eng/documentation-language.md), and [coding standards](CODING_STANDARDS.md) cover engineering practices.
 
 ## Project status
 

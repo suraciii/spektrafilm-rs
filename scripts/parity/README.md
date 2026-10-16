@@ -66,7 +66,7 @@ Local verification on 2026-10-08: workspace tests passed (240 tests); native f32
 
 The subsequent V2 sky-stripe repair passed eight grain tests in both f32 and f64, the shader device check, profile inheritance checks, and all six render/export roundtrips. Final Noise host scale, half-effective Amount and Film Resolution behavior are included. A separate f64 CLI run exported and decoded a 768×512 synthetic sky TIFF with spatial grain residual RMS 0.00799 against grain disabled. These checks do not establish a fix for an unavailable original user photo or hardware-GPU performance.
 
-The public-control alignment passed nine grain tests in each precision, shader device validation, preset/Custom inheritance, and ten TIFF roundtrips per precision. Four GUI state tests passed separately. Native GUI scanning exercised Positive/Noise and preset-to-Custom inheritance with editable preset Amount. The isolated display did not open the Save state dialog; native state saving is not claimed for this run. Current CLI measurements and host dispatch provenance are recorded in [the public-control alignment evidence](../../docs/dehancer-grain-reverse-engineering.md#12-公开参数对齐2026-10-08).
+The public-control alignment passed nine grain tests in each precision, shader device validation, preset/Custom inheritance, and ten TIFF roundtrips per precision. Four GUI state tests passed separately. Native GUI scanning exercised Positive/Noise and preset-to-Custom inheritance with editable preset Amount. The isolated display did not open the Save state dialog; native state saving is not claimed for this run.
 
 Evidence, budgets and provenance live in
 [`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
