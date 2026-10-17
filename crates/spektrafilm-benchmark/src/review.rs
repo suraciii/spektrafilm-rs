@@ -274,6 +274,12 @@ fn validate_measurement(o: &Map<String, Value>, grid: &Option<Grid>, set_id: &st
     }
     if measurement.get("sample").is_some() {
         let sample = pair(measurement, "sample")?;
+        if sample[0] == 0 || sample[1] == 0 {
+            return Err(err(
+                "invalid_bounds",
+                "sample window dimensions must be positive",
+            ));
+        }
         if sample[0] > grid.patch_size[0] || sample[1] > grid.patch_size[1] {
             return Err(err(
                 "invalid_sample",
@@ -288,9 +294,40 @@ fn validate_measurement(o: &Map<String, Value>, grid: &Option<Grid>, set_id: &st
 }
 
 fn validate_manifest_value(value: &Value, manifest: &Path) -> Result<()> {
-    documents::validate_shape("review", value)?;
-    let sets = value["sets"].as_array().unwrap();
-    let images = value["images"].as_array().unwrap();
+    let object = obj(value)?;
+    if object.contains_key("charts") {
+        return Err(err(
+            "unknown_field",
+            "review manifest contains removed charts field",
+        ));
+    }
+    let sets = object
+        .get("sets")
+        .and_then(Value::as_array)
+        .ok_or_else(|| err("missing_field", "review manifest requires sets"))?;
+    let images = object
+        .get("images")
+        .and_then(Value::as_array)
+        .ok_or_else(|| err("missing_field", "review manifest requires images"))?;
+    if object
+        .get("default_pair")
+        .and_then(Value::as_object)
+        .is_none()
+    {
+        return Err(err(
+            "missing_field",
+            "review manifest requires default_pair",
+        ));
+    }
+    for set in sets {
+        let set = obj(set)?;
+        if set.contains_key("grid") == set.contains_key("regions") {
+            return Err(err(
+                "schema_validation",
+                "review set must contain exactly one of grid or regions",
+            ));
+        }
+    }
     unique_ids(sets, "set")?;
     unique_ids(images, "image")?;
     let set_ids: BTreeSet<&str> = sets.iter().map(|set| set["id"].as_str().unwrap()).collect();
@@ -349,7 +386,7 @@ fn validate_manifest_value(value: &Value, manifest: &Path) -> Result<()> {
             }
         }
     }
-    let default_pair = obj(&value["default_pair"])?;
+    let default_pair = obj(&object["default_pair"])?;
     for side in ["left", "right"] {
         let id = text(default_pair, side)?;
         if !set_of_image.contains_key(id) {
@@ -358,6 +395,17 @@ fn validate_manifest_value(value: &Value, manifest: &Path) -> Result<()> {
                 format!("default_pair.{side} references unknown image: {id}"),
             ));
         }
+    }
+    // Strict local schema validation runs after semantic validation so stable
+    // benchmark errors such as invalid sample and invalid role remain useful.
+    // The semantic validator above owns stable measurement and geometry error
+    // codes; the standalone benchmark schema is checked after it.
+    let schema: Value = serde_json::from_str(include_str!("../assets/review.schema.json"))
+        .map_err(|error| err("schema_asset", error.to_string()))?;
+    let validator = jsonschema::validator_for(&schema)
+        .map_err(|error| err("schema_asset", error.to_string()))?;
+    if let Some(error) = validator.iter_errors(value).next() {
+        return Err(err("schema_validation", error.to_string()));
     }
     Ok(())
 }

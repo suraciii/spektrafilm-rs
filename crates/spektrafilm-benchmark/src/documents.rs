@@ -312,14 +312,46 @@ fn file_record(v: &Value, doc: &Path) -> Result<()> {
 /// One geometry: a named half-open rectangle, or a hashed mask. Both declare
 /// their coordinate space, which is what makes a region's position readable
 /// without knowing which document carried it.
+pub const AUTHORING_COORDINATE_SPACES: &[&str] = &["source", "render"];
+pub const NATIVE_COORDINATE_SPACES: &[&str] = &[
+    "source_pixels",
+    "working_pixels",
+    "film_frame_pixels",
+    "grain_aperture_pixels",
+    "output_pixels",
+];
+
+fn consumer_geometry(geometry: &Value) -> Result<()> {
+    let space = geometry
+        .get("space")
+        .and_then(Value::as_str)
+        .unwrap_or("source");
+    if !AUTHORING_COORDINATE_SPACES.contains(&space) {
+        return Err(err(
+            "unsupported_coordinate_space",
+            format!("benchmark image consumers do not map geometry space {space:?}"),
+        ));
+    }
+    Ok(())
+}
+
 fn geometry(v: &Value, doc: &Path) -> Result<()> {
     let o = obj(v)?;
     if let Some(space) = o.get("space").and_then(Value::as_str)
-        && !matches!(space, "source" | "render")
+        && !matches!(
+            space,
+            "source"
+                | "render"
+                | "source_pixels"
+                | "working_pixels"
+                | "film_frame_pixels"
+                | "grain_aperture_pixels"
+                | "output_pixels"
+        )
     {
         return Err(err(
             "invalid_bounds",
-            "geometry space must be `source` or `render`",
+            "geometry space is not a supported coordinate space",
         ));
     }
     if let Some(a) = v.as_array() {
@@ -520,8 +552,6 @@ pub fn schema_for(kind: &str) -> Result<Value> {
         "policy" => include_str!("../assets/policy.schema.json"),
         "run" => include_str!("../assets/run.schema.json"),
         "comparison" => include_str!("../assets/comparison.schema.json"),
-        "review" => include_str!("../assets/review.schema.json"),
-        "regions" => include_str!("../assets/regions.schema.json"),
         "stimuli" => include_str!("../assets/stimuli.schema.json"),
         "experiment" => include_str!("../assets/experiment.schema.json"),
         "preflight" => include_str!("../assets/preflight.schema.json"),
@@ -632,6 +662,7 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
                 file_record(icc, document)?;
             }
             for region in value["regions"].as_array().into_iter().flatten() {
+                consumer_geometry(&region["geometry"])?;
                 geometry(&region["geometry"], document)?;
             }
             if value["scope"] == "aligned_scene"
@@ -766,7 +797,7 @@ fn validate_tone_probe(points: &Value) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_shape(kind: &str, value: &Value) -> Result<()> {
+pub fn validate_shape(kind: &str, value: &Value) -> Result<()> {
     validate_authored(kind, value)
 }
 
@@ -791,6 +822,7 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
         .into_iter()
         .flatten()
     {
+        consumer_geometry(&x["geometry"])?;
         geometry(&x["geometry"], path)?
     }
     // A tone probe whose exposure coordinates are not at least two strictly
@@ -837,10 +869,12 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
             if r.id == "full_image" {
                 return Err(err("reserved_region", "full_image is reserved"));
             }
+            consumer_geometry(&r.geometry)?;
             geometry(&r.geometry, path)?
         }
         crate::references::validate_region_pairs(c)?;
         for x in c["probe"]["tone_response"].as_array().into_iter().flatten() {
+            consumer_geometry(&x["geometry"])?;
             geometry(&x["geometry"], path)?
         }
         if let Some(r) = c.get("reference") {
@@ -904,6 +938,7 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
                 ));
             }
             for x in r["regions"].as_array().into_iter().flatten() {
+                consumer_geometry(&x["geometry"])?;
                 geometry(&x["geometry"], path)?
             }
         }

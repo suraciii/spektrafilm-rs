@@ -1,16 +1,14 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpektraFilm regions document",
   "type": "object",
   "properties": {
-    "schema_version": {
-      "const": 1
-    },
+    "schema_version": { "const": 1 },
     "id": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
     },
-    "name": {
-      "type": "string"
-    },
+    "name": { "type": "string" },
     "regions": {
       "type": "array",
       "minItems": 1,
@@ -22,42 +20,19 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
           },
-          "label": {
-            "type": "string",
-            "minLength": 1
-          },
-          "source": {
-            "type": "string"
-          },
-          "partition": {
-            "type": "string"
-          },
+          "label": { "type": "string" },
+          "source": { "type": "string" },
+          "partition": { "type": "string" },
           "role": {
             "enum": [
-              "skin",
-              "neutral",
-              "shadow",
-              "highlight",
-              "color",
-              "flat_field",
-              "edge",
-              "texture",
-              "other",
-              "full_image"
+              "skin", "neutral", "shadow", "highlight", "color",
+              "flat_field", "edge", "texture", "other", "full_image"
             ]
           },
           "measurements": {
             "type": "array",
             "items": {
-              "enum": [
-                "numeric",
-                "color",
-                "tone",
-                "flip",
-                "grain",
-                "halation",
-                "edge"
-              ]
+              "enum": ["numeric", "color", "tone", "flip", "grain", "halation", "edge"]
             },
             "minItems": 0,
             "uniqueItems": true
@@ -67,90 +42,45 @@
               {
                 "type": "object",
                 "properties": {
-                  "x": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "y": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "width": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "height": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
+                  "x": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+                  "y": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+                  "width": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+                  "height": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
                   "space": {
                     "enum": [
-                      "source",
-                      "render"
+                      "source", "render", "source_pixels", "working_pixels",
+                      "film_frame_pixels", "grain_aperture_pixels", "output_pixels"
                     ]
                   }
                 },
-                "required": [
-                  "x",
-                  "y",
-                  "width",
-                  "height",
-                  "space"
-                ],
+                "required": ["x", "y", "width", "height", "space"],
                 "additionalProperties": false
               },
               {
                 "type": "object",
                 "properties": {
-                  "path": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "sha256": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{64}$"
-                  },
-                  "width": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "height": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
+                  "path": { "type": "string", "minLength": 1 },
+                  "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                  "width": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+                  "height": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
                   "space": {
                     "enum": [
-                      "source",
-                      "render"
+                      "source", "render", "source_pixels", "working_pixels",
+                      "film_frame_pixels", "grain_aperture_pixels", "output_pixels"
                     ]
                   }
                 },
-                "required": [
-                  "path",
-                  "sha256",
-                  "width",
-                  "height",
-                  "space"
-                ],
+                "required": ["path", "sha256", "width", "height", "space"],
                 "additionalProperties": false
               }
             ]
           }
         },
-        "required": [
-          "id",
-          "role",
-          "geometry",
-          "measurements"
-        ],
+        "required": ["id", "role", "geometry", "measurements"],
         "additionalProperties": false
       }
     }
   },
-  "required": [
-    "schema_version",
-    "id",
-    "regions"
-  ],
+  "required": ["schema_version", "id", "regions"],
   "additionalProperties": false
 }

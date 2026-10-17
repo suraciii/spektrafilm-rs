@@ -4,12 +4,11 @@
 
 `SpektraFilm` remains the renderer. The instrument (`spektrafilm-lab`) is an external evaluation orchestrator, artifact producer, and in-process chain measurer. It consumes the renderer's public CLI, machine-readable dry-run output, floating image output, and diagnostics, and it shares the renderer's parameter surface and chain execution for readings. It does not import renderer internals or duplicate runtime parameter resolution.
 
-The instrument owns suite selection, target identity, dependency hashing, run isolation, comparison policy, metric execution, region selection, evidence indexing, review artifact generation, and the development measurement of an executed chain. A metric adapter owns one measurement implementation. A report builder owns presentation of an existing comparison or a prepared image manifest.
+The instrument owns suite selection, target identity, dependency hashing, run isolation, comparison policy, metric execution, region selection, evidence indexing, comparison report generation, and the development measurement of an executed chain. A metric adapter owns one measurement implementation. The report builder owns presentation of an existing comparison only. Prepared-image review is outside the instrument boundary; if the benchmark retains it, its image inventory and visual-report builder belong to a separate benchmark command.
 
 It is one binary over two libraries that stay separate: the evaluation library stays renderer-independent and depends only on the shared mathematics crate, and the command plumbing shared with the user binaries stays a library rather than forked code. A new development command lands in the instrument, not in `spektrafilm`, `spektrafilm-f64`, or the evaluation library.
 
-The instrument must keep rendering and evaluation separate. A run produces immutable render evidence. A comparison reads runs and produces immutable measurements. A report reads a retained comparison or a prepared image manifest and produces review artifacts; the source document kind selects the builder. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
-
+The instrument must keep rendering and evaluation separate. A run produces immutable render evidence. A comparison reads runs and produces immutable measurements. A report reads a retained comparison and produces review artifacts; the retained comparison selects the builder. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
 Preflight shares renderer configuration resolution with execution and publishes a separate validation record. It never enters the render-evidence lifecycle. Target construction owns executable pinning for both local commands and fixtures. The inspection view reads validated comparison records, projects existing measurements, and leaves metric computation and policy evaluation with their current owners.
 
 ```mermaid
@@ -119,7 +118,7 @@ Readings are defined only for a point-wise chain: an injected numeric sample has
 
 Eligibility is a measured property, not a reading of a flag name: each operation carries the first stage whose values it changes, and it is listed only when it executes inside the measured range. The instrument must not widen that table by guessing that a control is spatial because its name suggests so.
 
-A [regions document](spec.md#regions-document) is the only authority for a reading position. A command must not infer geometry from image dimensions, labels, or color similarity. A sample outside the declared source remains an error rather than a clamped value. A review grid is derived into that document by one command, so the review page's window arithmetic and the measurement windows cannot drift apart.
+A [regions document](spec.md#regions-document) is the only authority for a reading position. `regions grid` expands one finite grid into that document without reading images or producing a report. A command must not infer geometry from image dimensions, labels, color similarity, or a removed review manifest. A sample outside the declared source remains an error rather than a clamped value.
 
 A guard run is a frozen measurement artifact together with the stimuli that produced it. It carries no tolerance and no verdict; a tolerance belongs to the protocol document that declares it. Frozen readings make chain drift visible, so a comparison must report an identity difference beside the value difference instead of refusing the pair.
 
@@ -202,27 +201,15 @@ The evaluator applies exact selectors and fixed constraints to comparison measur
 
 It must not infer budgets, tune parameters, choose a more favorable reference, or rewrite an unavailable measurement. It may produce `insufficient_evidence`.
 
-### Review builder
+### Report builder
 
-The review builder creates an offline report from comparison artifacts. It must not render or recalculate metrics. It must preserve artifact hashes and relative paths referenced by the immutable comparison snapshot. Permitted indexed dependencies must remain locally resolvable after the original comparison is removed; redistribution restrictions and unavailable artifacts must remain explicit. It must emit accessible full-image, A/B, locator, detail, and difference views.
+The report builder creates an offline report from comparison artifacts. It must not render or recalculate metrics. It must preserve artifact hashes and relative paths referenced by the immutable comparison snapshot. Permitted indexed dependencies must remain locally resolvable after the original comparison is removed; redistribution restrictions and unavailable artifacts must remain explicit. It must emit accessible full-image, A/B, locator, detail, and difference views.
 
 Case navigation must preserve request order. Pair selection must change the complete evidence panel, including labels, scalar summary, difference artifacts, regions, and native detail. Pixel-aligned pairs use synchronized viewers; regional and visual pairs use separately identified native images and corresponding regions where supplied.
 
-Report fragment navigation identifies case, seed, pair, and region by retained semantic identities. Internal DOM ordering must not define public location identity. Accessible disclosure controls and direct links belong to the review builder; neither navigation nor inspection may recalculate a measurement.
+Report fragment navigation identifies case, seed, pair, and region by retained semantic identities. Internal DOM ordering must not define public location identity. Accessible disclosure controls and direct links belong to the report builder; neither navigation nor inspection may recalculate a measurement.
 
 Region inspection must not become a second evaluation pipeline; it must use retained measurements. A selected visual pair without measured evidence must remain visually inspectable with an explicit unavailable numeric state. Native detail and numerical artifacts retain their existing owners.
-
-### Prepared image review builder
-
-The prepared review builder imports explicitly declared raster images instead of synthesizing instrument runs or comparison records. Its authored manifest owns sets, patch or region geometry, captions, and the initial pair. A set declares either a shared grid or explicit per-image regions; the builder must not infer correspondence from dimensions, labels, or similar colors. It does not own rendering, reference qualification, or measurement algorithms.
-
-A photographic pair without a declared shared layout must use explicit regions rather than a synthetic grid. A declared grid must remain the single geometry source for its review windows and their derived measurement regions: derivation is a deterministic document transformation that shares the review window arithmetic and reads the set's declared measurement intent, and review geometry enters a measured protocol only through a case or reference document.
-
-The builder must reuse strict document loading, dependency path resolution, destination publication, and image display conversion. It must snapshot authored image dependencies before decoding so an undeclared neighboring sidecar cannot override the explicit color declaration. It must retain each image's source identity, observed dimensions, and generated display artifact. The terminal report manifest must be written after all assets succeed.
-
-The browser must select pairs from one ordered image inventory. Each input needs one display image, not a precomputed image for every possible pair. Patch inspection must use windows into those display images. The browser must not add another color conversion or encode canvas copies. Embedded data and local image paths must support direct offline opening without fetching a manifest.
-
-The builder must bundle its viewer script as a local asset and embed non-executable view data in the HTML. Direct file opening and static HTTP hosting must both work without permitting inline JavaScript; the viewer must not depend on network-hosted libraries.
 
 ## Identity and cache invariant
 

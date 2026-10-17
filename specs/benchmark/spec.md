@@ -8,7 +8,7 @@ The benchmark must distinguish change magnitude, closeness to a named reference,
 
 The benchmark must expose measurements and their evidence before an interpretation. An agent must be able to locate a reported change without reading logs or opening every image. A person must be able to inspect the same change in the full image and at native detail resolution.
 
-This capability owns appearance comparison, evaluation decisions, and review artifacts. [CLI parameters](../cli/spec.md) owns rendering parameter resolution. [Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations. The benchmark must not redefine these contracts.
+This capability owns appearance comparison, evaluation decisions, and benchmark review artifacts. Prepared-image visual review is a benchmark-only input path and is not part of the instrument or lab document registry. [CLI parameters](../cli/spec.md) owns rendering parameter resolution. [Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations. The benchmark must not redefine these contracts.
 
 The delivered benchmark must run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery/spec.md) defines distribution, workspace boundaries, and numerical implementation. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
 
@@ -131,18 +131,11 @@ The benchmark must not change policy budgets, source declarations, targets, or b
 
 ## Prepared image review
 
-The benchmark must accept a collection of [prepared images](../../CONTEXT.md#language), grouped into sets, for visual review without a renderer, run, or comparison record. This review page is separate from a measured review report. It must not simulate film, decode camera RAW, find chart corners, fit geometry, normalize exposure, match color, recompute metrics, or claim acceptance.
+The benchmark may accept a collection of prepared images, grouped into sets, for visual review without a renderer, run, or comparison record. This review page is separate from the instrument's measured comparison report. It must not simulate film, decode camera RAW, find chart corners, fit geometry, normalize exposure, match color, recompute metrics, or claim acceptance.
 
-Each image must declare its color interpretation, set, label, and optional description. Labels and descriptions must support Unicode, including Chinese. Each set must declare either a regular grid of shared patch windows in image pixels or explicit region rectangles per image; a declared grid must be derivable into measurement regions without re-authoring geometry. A grid set may declare its measurement sampling, region role, and measurement families; omitted fields must default, and derivation must read them from the manifest rather than from command options. Different sets must not acquire region correspondence from equal dimensions, grid sizes, labels, or similar colors.
+The prepared-image viewer may retain its own manifest format for image inventory, set membership, captions, default pair, and per-image visual geometry. That manifest is owned by the benchmark viewer. It is not an instrument document kind, is not accepted by `spektrafilm-lab`, and must not be passed to `sample`, `compare`, `inspect`, or `report comparison`. Geometry used for measurement must be authored or generated as a standalone `regions` document.
 
-The report must open on the declared default image pair. The user must be able to select any image for either side and swap the sides. Whole-image side-by-side viewing must remain available across sets. Images in one grid set must support linked patch selection and a complete paired patch contact sheet. Cross-set pairs must support independent patch selection with an explicit visual-only warning. A regions set must present independent selections with a visible label-only correspondence notice and per-side window dimensions. Neither shared patch identity nor a split view establishes pixel-level registration or a measured spectral stimulus.
-
-Every patch window and declared region must lie within its decoded image. Images in one grid set must have equal dimensions, and region rectangles must not overlap on one image. A declared measurement sample must fit inside its patch windows. The generator must reject inconsistent geometry rather than resize, reorder, or silently truncate. Full-image locations and the selected window coordinates must remain visible during patch and region inspection.
-
-The report must work from a local file without a server, network-hosted assets, or the original source directory. It must retain source identities and declarations. It must produce native-size 16-bit sRGB display copies through the existing display conversion boundary without dither. Browser fit scaling must remain separate from native-pixel inspection and must not produce measurements. Display clipping must not be described as an input correction.
-
-The report must preserve image and set order, safe plain-text captions, and the selected comparison state. Malformed locations must show an error instead of unrelated imagery. Keyboard controls and narrow layouts must preserve access to every image, patch, and region without horizontal page overflow.
-
+The viewer's image declarations, grid arithmetic, explicit-region rules, display conversion, offline packaging, and browser interaction remain benchmark concerns. They must not be duplicated in the lab command grammar. A benchmark command may preserve the legacy prepared-image manifest during migration, but it must use its own validator and report builder and must not rely on lab schema discovery or lab `regions grid`.
 ## Human review
 
 A review report must work offline with relative local artifact links. Report generation must not render images or recompute comparison measurements.
@@ -174,25 +167,25 @@ Source attribution and redistribution restrictions must accompany external refer
 
 1. Render the same deterministic case twice through the real renderer. Compare the outputs and distinguish repeatability from a cross-backend equality claim.
 2. Change exposure, color balance, and tone contrast separately. Report the affected direction, response region, and inspectable image detail.
-3. Change a grain seed without changing the grain model. Preserve the pixel difference and evaluate the multi-seed statistics separately.
+3. Change a grain seed without changing the grain model. Preserve the pixel difference and evaluate multi-seed statistics separately.
 4. Change grain amount or scale. Detect the corresponding flat-field strength or frequency change without treating scene texture as grain.
-5. Change halation around a small bright source. Retain a regional finding even when the full-image mean is small.
+5. Change halation around a small bright source. Retain a regional finding when the full-image mean is small.
 6. Supply an unaligned scene reference and a tone-matched reference. Enforce each reference's allowed measurement scope.
 7. Request GPU rendering and observe CPU execution. Retain the actual route and prevent an unqualified GPU result.
 8. Fail a required case or measurement. Preserve its evidence and prevent a qualified gate pass. Reject an empty suite.
-9. Generate a review from existing results with the renderer unavailable. Open directly on the selected images, activate user-selected and automatic crop thumbnails, inspect full-image location and synchronized native detail, toggle labeled difference maps and full-screen mode, and retain lossless crops on desktop and narrow layouts without horizontal page overflow.
-10. Reuse a run and then change a renderer or data dependency. Reject stale cached evidence. Refuse replacement of an existing completed result.
+9. Generate a comparison report with the renderer unavailable. Open retained imagery, detail, findings, and unavailable states without recalculating measurements.
+10. Reuse a run and then change a renderer or data dependency. Reject stale cached evidence and refuse replacement of an existing completed result.
 11. Evaluate a protected skin region and an expected highlight change. Keep the skin failure visible despite the expected change.
 12. Validate machine documents and execute CLI examples through the implemented interface. Reject unknown fields, invalid bounds, nonfinite values, unsafe artifact paths, and missing evidence references.
-13. Run an arbitrary local raster and RAW input without a suite document. Compare decoded input with simulation and inspect their observed matching geometry and lossless detail.
+13. Run an arbitrary local raster and RAW input without a suite document. Compare decoded input with simulation and inspect observed matching geometry and lossless detail.
 14. Supply a local reference and select input, reference, and both comparison pairs. Preserve pair-specific roles, measurements, maps, and crops. A visual-only or regional reference must not gain pixelwise correspondence from equal dimensions.
 15. Run an externally prepared crop and a renderer crop as distinct cases. Preserve their input identities and renderer-resolved geometry; keep full-render detail crops separate.
-16. Build and inspect a multi-pair offline report with original input files and renderer unavailable. Preserve request order and switch pairs on desktop and narrow layouts.
-17. Preflight a valid suite and an invalid renderer parameter across multiple seeds. Preserve resolved configurations and grouped failures without decoding, rendering, or publishing a completed run. Execute the valid configuration and compare its resolved parameters with preflight.
-18. Inspect a retained version or single-run comparison after original runs are unavailable. Filter exact case, region, and metric identities; expose the same flat measurement rows in both modes; preserve unavailable reasons and separate per-seed observations from seed aggregates.
-19. Generate and validate a pinned target independently of fixtures. Reject existing output with the instruction to remove it or choose another destination, and reject changed executable identity; use the target with a local input.
+16. Build and inspect a multi-pair offline comparison report with original input files and the renderer unavailable. Preserve request order and switch pairs on desktop and narrow layouts.
+17. Preflight a valid suite and an invalid renderer parameter across multiple seeds. Preserve resolved configurations and grouped failures without decoding, rendering, or publishing a completed run.
+18. Inspect a retained version or single-run comparison after original runs are unavailable. Filter exact case, region, and metric identities; preserve unavailable reasons and separate per-seed observations from seed aggregates.
+19. Generate and validate a pinned target independently of fixtures. Reject an existing output and a changed executable identity.
 20. Open a report location for a case, seed, pair, and region offline. Reload and use browser history on desktop and narrow layouts; activate detail controls by keyboard and expose invalid locations clearly.
-21. Run a multi-seed suite and compare it while capturing stderr. Identify every started and completed case-seed item with its elapsed seconds and end with the completed and failed item counts and the total elapsed time.
-22. Generate a prepared review page with Chinese captions, a declared default pair, multiple images per set, and distinct sets including a grid set and an explicit-region set. Open the same output directly and through static hosting with a same-origin script policy. Select arbitrary pairs, all declared patch windows, independent cross-set patches, and declared regions with the label-only correspondence notice and native zoom on desktop and narrow layouts. Preserve source hashes and reject invalid geometry, identities, or existing destinations without replacing evidence.
-23. Derive measurement regions from a grid set whose manifest declares its measurement sampling, role, and families. Verify that the derived windows match the review page's patch windows and are accepted as case, reference, and single-input regions. Reject a set without a grid, an unknown identity, a measurement declaration on an explicit-regions set, and a sample window that does not fit.
-24. Render an offline report from a retained comparison and from a prepared image manifest through one command. Reject a request with both sources and with neither, and record the source document kind in the command result.
+21. Run a multi-seed suite and compare it while capturing stderr. Identify every started and completed case-seed item and end with completed and failed counts and total elapsed time.
+22. Generate a prepared review page through the benchmark viewer's own command with Chinese captions, a declared default pair, multiple images per set, and distinct grid and explicit-region sets. This viewer contract is independent of `spektrafilm-lab`.
+23. Run `regions grid` with a finite declaration and validate the resulting standalone regions document. Reuse it as sampling geometry without a review manifest. Reject a sample that does not fit, a coordinate-space mismatch, and an unsafe destination.
+24. Render an offline report from a retained comparison through `spektrafilm-lab report comparison`. The lab report must not accept a prepared-image manifest or record a manifest source kind.

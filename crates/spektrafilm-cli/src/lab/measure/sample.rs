@@ -463,6 +463,22 @@ fn run_source(args: &MeasureSampleArgs, run: &Path) -> Result<Source> {
 /// bounds; it is never clamped, padded, extrapolated, or repaired.
 fn read_readings(plan: &Plan, source: &Source) -> Result<Vec<Reading>> {
     let [width, height] = source.pixels.dimensions();
+    let expected_space = source.coordinate_space.as_str();
+    for sample in &plan.samples {
+        let compatible = match sample.space.as_str() {
+            "source" => expected_space == "source_pixels",
+            "render" => expected_space == "output_pixels",
+            native => native == expected_space,
+        };
+        if !compatible {
+            bail!(
+                "region {:?} coordinate space {:?} is incompatible with source coordinate space {:?}",
+                sample.id,
+                sample.space,
+                expected_space
+            );
+        }
+    }
     let mut readings = Vec::with_capacity(plan.samples.len());
     for sample in &plan.samples {
         if u64::from(sample.x) + u64::from(sample.width) > u64::from(width)

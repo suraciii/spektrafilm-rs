@@ -39,7 +39,7 @@ The supported command families have distinct endpoint roles:
 | `run` | execute a declared image-domain job | authored suite, target, or local-input declaration | compare, score, or select |
 | `sample` | read declared windows from one source | image or retained stage evidence plus `regions` | render, resize, infer geometry, or score |
 | `compare` | compare two or more retained records | completed runs or retained readings | invoke a renderer or borrow another pair's availability |
-| `inspect` / `report` | project retained evidence | completed comparison or review manifest | recalculate metrics |
+| `inspect` / `report` | project retained evidence | completed comparison | recalculate metrics |
 | `verify` | re-hash retained identity | one retained record | render, rewrite, or judge |
 
 The current flat command forms remain the compatibility surface while their handlers are separated by these roles. A future grammar revision may expose explicit subfamilies such as `compare runs` and `compare readings`, but a new form must not be added to an existing command merely by guessing the input document's shape. The semantic input kind must be selected by the invocation or by an explicit retained kind.
@@ -72,9 +72,8 @@ spektrafilm-lab compare --baseline DIRECTORY --candidate DIRECTORY [--reference-
 spektrafilm-lab compare --run DIRECTORY --against input|reference|both --out DIRECTORY
 spektrafilm-lab inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
 spektrafilm-lab verify --record DIRECTORY [--data-dir DIRECTORY]
-spektrafilm-lab report --comparison DIRECTORY --out DIRECTORY
-spektrafilm-lab report --manifest FILE --out DIRECTORY
-spektrafilm-lab regions --manifest FILE --set ID --out FILE
+spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY
+spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space source|render|source_pixels|working_pixels|film_frame_pixels|grain_aperture_pixels|output_pixels] [--role ROLE] [--measurements FAMILY,...] --out FILE
 spektrafilm-lab fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [--natural-input FILE | --download-natural]
 spektrafilm-lab experiment run --experiment FILE --out DIRECTORY [CHAIN OPTIONS] [--output-format FORMAT] [--force]
 spektrafilm-lab experiment export --stage-evidence DIRECTORY --out DIRECTORY [--stage ID ...] [--force]
@@ -126,13 +125,15 @@ Single-run `compare` must require `--run` and `--against` together and conflict 
 
 `--gate` must require `--policy`. It must make a non-pass evaluation produce a failing command status after the comparison has been published. Without `--gate`, a successfully published comparison must not fail solely because its evaluation is non-pass.
 
-`report` must render exactly one offline inspection page from exactly one source: retained comparison evidence (`--comparison`) or a prepared image manifest (`--manifest`). The two source flags must conflict and exactly one must be provided. The command must not invoke a renderer or recompute measurements; presentation choices beyond the source document belong to the generated page. The command result must identify the page source as `comparison` or `manifest`.
+`report comparison` must render exactly one offline inspection page from exactly one retained comparison. It must not invoke a renderer or recompute measurements. The command result must identify the page source as `comparison`.
 
 The comparison source must derive its views from the comparison and cited artifacts. It must not recompute metrics. Its output must remain usable without the run directories by copying required review artifacts and retaining their provenance. An external original that cannot be redistributed must remain excluded from a distributable report; the report must identify the omission rather than substitute another image.
 
-The manifest source must read a review manifest without invoking a renderer or computing comparison metrics. The authored default pair must select the initially displayed pair, and invalid defaults must fail before publication; the page must allow selecting any declared image on either side and swapping the sides. `validate --kind review` must check authored structure, identities, grid arithmetic, region declarations, measurement intent, and local file dependencies; its `unchecked` list must name image decoding, observed geometry, and display color conversion.
+`regions grid` must expand one finite grid declaration into a normal `regions` document without reading an image, invoking a renderer, computing measurements, or generating HTML. It must validate positive dimensions, nonnegative origin and gap, checked arithmetic, sample-window containment, coordinate-space selection, role, and measurement families before publication. The generated document is the only input geometry consumed by later `sample` and run endpoints; downstream endpoints must not interpret a grid declaration.
 
-`regions` must derive a region array from one grid set of a review manifest without invoking a renderer or computing measurements; it may read image dimensions to check bounds. `--set` must identify a set that declares `grid`; unknown identities must be rejected with the available choices, and a set without derived geometry must fail. The set's declared measurement intent, with its defaults, must determine the sample window centered inside each patch window, the region role, and the measurement families. The command must reuse the review page's window arithmetic and reject windows or samples that leave the decoded image bounds. The written file must validate as the existing `regions` kind and must be usable as a case `regions` value, a reference `regions` value, and `run --regions` input; generated identities must follow the review patch names. The command must refuse an existing destination.
+Irregular geometry must be authored directly as a `regions` document. The instrument must not replace a removed review manifest with repeated `--image`, `--pair`, `--default-pair`, or `--region` options.
+
+Prepared-image visual review, if provided, belongs to the benchmark product's separate command and document contract. It is not an instrument endpoint, is not registered as an instrument document kind, and is not accepted by `report comparison` or `regions grid`.
 
 `inspect` must validate and read a retained comparison without invoking a renderer or computing measurements. It must emit the retained comparison identity, execution and evaluation states, conditions, summary, failures, findings, and compact measurements. The compact measurements must be one top-level `measurements` array in version and single-run comparisons. Rows in both modes must carry the same fields, except that a single-run row must add `pair_id` to identify its pair. Per-seed/pair observations and cross-seed `seed_measurements` must remain separate. Measurement identity, domain, units, estimator, sample count, availability, value or reason, seed population, and artifact references must remain intact. Exact repeatable case, region, and metric filters must reject unknown selections with available choices; they must not silently return an empty result. Referenced evidence must resolve relative to the emitted `artifact_base`. A valid read of a failed comparison must complete successfully while exposing its failed comparison state. Inspection must not modify evidence, rank unlike units, or infer acceptance.
 
@@ -144,10 +145,11 @@ Inspection must also project retained `region_readouts` and `stage_readouts` arr
 
 Report location links must use `#case=ENCODED_ID&seed=UINT32[&pair=ENCODED_ID[&region=ENCODED_ID]]`, with percent-encoded exact identities. Version pairs use `baseline/candidate`; single-run pairs use their retained IDs. A location must select the matching case/seed/pair, open the requested region, and scroll to it after layout. Navigation must update the fragment and support reload and browser history offline. Detail disclosures must expose keyboard-operable, accessible controls. Malformed or unknown locations must show an accessible error without displaying an unrelated selected result.
 
-## Machine output and command status
+Every command result must identify `schema_version`, `command`, `execution_status`, and the terminal artifact when one exists. `schema --kind` emits one schema object without a result wrapper. An execution failure identifies `execution_status: failed` and structured errors. A requested gate failure after successful computation retains `execution_status: completed` and exposes its non-pass `evaluation_status`.
 
-Help and version must emit their documented text. `schema` must emit one JSON Schema object without a command-result wrapper. Every other successfully parsed command must emit one UTF-8 JSON result object on stdout. Human messages, child-process output, progress, and errors must use stderr. The runner must capture renderer output separately. JSON numbers must be finite. Error output must identify a stable error code, the document or case when known, the failed boundary, the file the offending value lives in, and the JSON Pointer (RFC 6901) of that value. A pointer that cannot name the value exactly must be omitted rather than approximated. A private path syntax must not be invented. When a different invocation can succeed, the human-readable error must name the recovery action. An existing destination must be reported with the instruction to remove it or choose another destination. An incomplete destination must be reported as unusable as completed evidence.
+`schema --kind review` and `validate --kind review` must return a stable unsupported-kind error. A report command must accept only retained comparison evidence. The removed manifest source must not be represented as a compatibility alias or a second result kind.
 
+`sample` must validate coordinate-space compatibility before reading any region. Equal dimensions do not establish compatibility. A `source` region is compatible with a declared raster or `source_pixels`; a `render` region is compatible with `output_pixels`; a native stage region is compatible only with the same native stage name. The sampler must not resize, crop, pad, translate, or silently map a mismatch.
 `validate` must decide every condition that is decidable from the document, its declared dependencies, and the local filesystem, and must list in `unchecked` every check it did not perform, including checks that need another document, a renderer, a compute device, or a measurement. A check the validator did not perform must not be omitted from `unchecked`, and a condition it could have decided must not appear there. Passing `validate` must never be presented as proof that an execution will succeed.
 
 `run` and `compare` must report progress on stderr as line-oriented text. Every selected case and seed must produce a start line and a completion line. A completion line must identify the item and its elapsed seconds. The last progress output before the command result must state the completed and failed item counts and the total elapsed seconds. Progress must not require a terminal.
@@ -184,7 +186,6 @@ Every JSON document the instrument reads or writes has one kind and one owning s
 | `regions` | authored | [Regions document](#regions-document) |
 | `stimuli` | authored | [Measurement](#measurement) |
 | `policy` | authored | [Policy document](#policy-document) |
-| `review` | authored | [Review manifest](#review-manifest) |
 | `reference`, `preparation` | authored | [Suite document](#suite-document) |
 | `material_measurement`, `correspondence_review` | authored | [Suite document](#suite-document) |
 | `experiment` | authored | [Experiment runs](experiment/spec.md) |
@@ -316,11 +317,10 @@ A regions document declares reading positions. One kind serves both reading doma
 
 A regions document must contain `schema_version`, an `id`, and a nonempty `regions` array. A region must contain `id`, `geometry`, `role`, and `measurements`, and may contain `label`, `source`, and `partition`. `role` must identify `skin`, `neutral`, `shadow`, `highlight`, `color`, `flat_field`, `edge`, `texture`, or `other`. `measurements` must select applicable measurement families. `source` and `partition` are group labels for reporting. Identities must be unique within the document, must match `^[A-Za-z0-9][A-Za-z0-9_.-]*$`, and `full_image` stays reserved for the whole declared source.
 
-`geometry` must be either a half-open rectangle with the named fields `x`, `y`, `width`, `height`, or a lossless mask with its `path`, `sha256`, and declared `width` and `height`. Widths and heights must be positive integers. Every geometry must declare its coordinate space: `source` for the declared source image's pixels, `render` for the coordinates of a completed simulation. Mask paths must resolve relative to the document that contains them and enter the retained dependency inventory as immutable evidence.
+`geometry` must be either a half-open rectangle with the named fields `x`, `y`, `width`, `height`, or a lossless mask with its `path`, `sha256`, and declared `width` and `height`. Widths and heights must be positive integers. Every geometry must declare its coordinate space. `source` names the declared source image's pixels; `render` names a completed simulation's output pixels; native stage names are `source_pixels`, `working_pixels`, `film_frame_pixels`, `grain_aperture_pixels`, or `output_pixels`. Mask paths must resolve relative to the document that contains them and enter the retained dependency inventory as immutable evidence.
 
-Regions may overlap: a reading carries its own identity, and a narrower window inside a wider one is a declared intent, not a conflict. A review manifest's explicit-region set keeps its own no-overlap rule, because there a region pair is a comparison unit rather than a reading position.
-
-The fixed regions a suite case declares are the same kind: `run` must accept a case's regions and a standalone regions document through one validator, and the derivation from a review grid is the only place the instrument computes region geometry at all.
+Regions may overlap: a reading carries its own identity, and a narrower window inside a wider one is a declared intent, not a conflict. Correspondence is never inferred from equal dimensions, labels, or shared region identities.
+`regions grid` is the only instrument geometry generator. It writes a normal `regions` document and does not read images or produce a review page. Non-grid geometry is authored directly. A suite case, a sampling command, and a reference may consume the same regions shape through one validator.
 
 ## Suite document
 
@@ -355,22 +355,12 @@ An `aligned_scene` reference must provide a frozen transform or already aligned 
 A `visual` reference may provide explicit reference-region geometries for crop inspection. The comparison must retain these geometries without calculating reference distances. A report must not borrow input-to-simulation alignment to locate a region in an unaligned reference.
 
 Reference transforms, masks, review records, and derivatives must be hashed dependencies. Their geometry and purpose must be explicit. The evaluator must not fit a new transform during `compare`.
+## Prepared-image review boundary
 
-## Review manifest
+The instrument does not define or accept a prepared-image review manifest. `review` is not a document-registry kind, and `schema --kind review` and `validate --kind review` must return a stable unsupported-kind error. The instrument's report source is a retained comparison only.
 
-A review manifest must contain `schema_version: 1`, `title`, `sets`, `images`, and `default_pair`. The manifest and each image may contain a `description` string, omitted as empty. Unknown fields, duplicate JSON keys, and duplicate identities must fail. Authored image paths must resolve relative to this manifest. Set and image array order must be preserved.
+The benchmark product may retain a separate prepared-image viewer for local visual inspection. Its image inventory, per-image geometry, default pair, captions, display conversion, and report builder belong to the benchmark command and its own contract. The instrument must not import that manifest, derive regions from it, shape-dispatch on it, or expose aliases for it.
 
-A set must contain `id`, `label`, and exactly one of `grid` or `regions`. A `grid` must contain positive integer `rows` and `columns`, nonnegative integer `origin: [x, y]`, positive integer `patch_size: [width, height]`, and nonnegative integer `gap: [x, y]`. All geometry uses decoded image pixels. Patch windows are half-open rectangles. Column labels use `A` through `Z`, then `AA` and subsequent spreadsheet-style names; rows start at `1`. Windows must follow row-major order. Grid arithmetic must not overflow. Generation must check every window against actual image bounds and reject dimension differences within one grid set. A grid set may also declare a `measurement` object with positive integer `sample: [width, height]`, a `role`, and a `measurements` array. The object must declare the sample window centered inside each patch window, the derived region role, and the derived measurement families, using the existing region role and measurement family names. The sample must fit inside the declared patch window. Omitted fields must select the whole window, `other`, and no measurement families. A set with explicit `regions` must not declare `measurement`.
-
-A `regions` set must contain a nonempty array of region records with `id`, `label`, and a `geometry` object keyed by image identity. Each key must identify an image of the same set; each value must be a half-open `[x, y, width, height]` rectangle in that image's decoded pixels. A region may cover a subset of its set's images. Duplicate region identities, unresolved image keys, and overlapping rectangles on one image must fail validation; rectangle bounds must be checked against decoded image dimensions during generation. Region identities are scoped to their set: the same identity in another set must not pair. A review set's `regions` records are the manifest's own comparison units, not a [regions document](spec.md#regions-document); their geometry stays in decoded image pixels in the manifest's own form.
-
-Each image must contain `id`, `set`, `path`, `label`, `color_space`, and `cctf_decoding`. The `set` value must identify a declared set. The input must be a prepared RGB raster supported by the existing image reader. A camera RAW file must first use the existing RAW decoder and an explicitly established preparation; its name or extension must not imply a grid, a region, or a source declaration. Explicit declarations must remain authoritative over embedded metadata and undeclared adjacent sidecars. The report must retain the original path and SHA-256 and identify the display conversion separately.
-
-`images` must contain at least two records. `default_pair` must contain `left` and `right` image identities. Same-set and cross-set defaults are permitted. A cross-set pair must remain a visual comparison with independent selection. A `regions` set must remain independently selectable on each side; its shared region identities are explicit author declarations, not an inferred aligned pair.
-
-Successful generation must produce `index.html`, native display assets, and terminal `report.json`. The report must embed its view data for offline loading. Its command result must identify the HTML artifact, report manifest, and image and set counts. Metadata must not execute as HTML or JavaScript. The fixture generator must publish a schema-validated review manifest example that refers to its existing controlled images and exercises both set forms.
-
-A chart-report v1 manifest must not be accepted as a review manifest.
 
 ## Target document
 

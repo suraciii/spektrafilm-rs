@@ -272,40 +272,97 @@ pub struct EvaluationTargetArgs {
     pub out: PathBuf,
 }
 
+#[derive(Subcommand)]
+pub enum ReportCommand {
+    /// Build an offline report from one retained comparison.
+    Comparison(ReportComparisonArgs),
+}
+
 #[derive(Args)]
-pub struct EvaluationReportArgs {
+pub struct ReportComparisonArgs {
     /// Retained comparison directory.
-    #[arg(
-        long,
-        value_name = "DIR",
-        required_unless_present = "manifest",
-        conflicts_with = "manifest"
-    )]
-    pub comparison: Option<PathBuf>,
-    /// Prepared image review manifest.
-    #[arg(
-        long,
-        value_name = "FILE",
-        required_unless_present = "comparison",
-        conflicts_with = "comparison"
-    )]
-    pub manifest: Option<PathBuf>,
+    #[arg(long, value_name = "DIR")]
+    pub comparison: PathBuf,
     /// New report directory; must not exist.
     #[arg(long, value_name = "DIR")]
     pub out: PathBuf,
 }
 
+#[derive(Subcommand)]
+pub enum RegionsCommand {
+    /// Expand one finite grid into an ordinary regions document.
+    Grid(RegionsGridArgs),
+}
+
 #[derive(Args)]
-pub struct EvaluationRegionsArgs {
-    /// Review manifest with the declared grid set.
-    #[arg(long, value_name = "FILE")]
-    pub manifest: PathBuf,
-    /// Grid set identity to derive.
+pub struct RegionsGridArgs {
+    /// Regions document identity.
     #[arg(long, value_name = "ID")]
-    pub set: String,
+    pub id: String,
+    /// Number of grid rows.
+    #[arg(long, value_name = "N")]
+    pub rows: u64,
+    /// Number of grid columns.
+    #[arg(long, value_name = "N")]
+    pub columns: u64,
+    /// Top-left origin as X,Y.
+    #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
+    pub origin: [u64; 2],
+    /// Patch size as WIDTHxHEIGHT.
+    #[arg(long, value_name = "WIDTHxHEIGHT", value_parser = parse_size)]
+    pub patch_size: [u64; 2],
+    /// Gap as X,Y.
+    #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
+    pub gap: [u64; 2],
+    /// Centered sample size as WIDTHxHEIGHT.
+    #[arg(long, value_name = "WIDTHxHEIGHT", value_parser = parse_size)]
+    pub sample: Option<[u64; 2]>,
+    /// Coordinate space for generated rectangles.
+    #[arg(long, value_name = "SPACE", default_value = "source")]
+    pub space: String,
+    #[arg(long, value_name = "ROLE", default_value = "other")]
+    pub role: String,
+    /// Measurement families, separated by commas.
+    #[arg(long, value_name = "FAMILY,...", value_delimiter = ',', action = clap::ArgAction::Append)]
+    pub measurements: Vec<String>,
     /// New regions document JSON file; must not exist.
     #[arg(long, value_name = "FILE")]
     pub out: PathBuf,
+}
+fn parse_pair(value: &str) -> Result<[u64; 2], String> {
+    let mut parts = value.split(',');
+    let first = parts
+        .next()
+        .ok_or_else(|| "expected X,Y".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid pair {value:?}; expected X,Y"))?;
+    let second = parts
+        .next()
+        .ok_or_else(|| "expected X,Y".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid pair {value:?}; expected X,Y"))?;
+    if parts.next().is_some() {
+        return Err(format!("invalid pair {value:?}; expected X,Y"));
+    }
+    Ok([first, second])
+}
+
+fn parse_size(value: &str) -> Result<[u64; 2], String> {
+    let mut parts = value.split('x');
+    let first = parts
+        .next()
+        .ok_or_else(|| "expected WIDTHxHEIGHT".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid size {value:?}; expected WIDTHxHEIGHT"))?;
+    let second = parts
+        .next()
+        .ok_or_else(|| "expected WIDTHxHEIGHT".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid size {value:?}; expected WIDTHxHEIGHT"))?;
+    if parts.next().is_some() {
+        return Err(format!("invalid size {value:?}; expected WIDTHxHEIGHT"));
+    }
+    Ok([first, second])
 }
 
 /// The chain boundary a measurement enters at.

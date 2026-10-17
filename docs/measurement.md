@@ -210,11 +210,12 @@ image's pixels or `render` for the coordinates of a completed simulation, defaul
 `source`. Identities are unique within the document, and `full_image` stays reserved for the
 whole declared source. Regions may overlap: a reading carries its own identity.
 
-The same document serves a suite case, a reference, and this sampling command, and `regions
---manifest` derives one from a review manifest's grid set. A region window that leaves the
-source bounds fails with the region identity. The command does not clamp, pad, extrapolate, or
-repair a region, and it does not resize, re-encode, or convert the source beyond the declared
-input declaration.
+The same document serves a suite case, a reference, and this sampling command. To create
+ordinary rectangular geometry independently, use `spektrafilm-lab regions grid`; downstream
+commands consume the resulting explicit regions without interpreting a grid declaration. A
+region window that leaves the source bounds fails with the region identity. The command does not
+clamp, pad, extrapolate, or repair a region, and it does not resize, re-encode, or convert the
+source beyond the declared input declaration.
 
 ## `compare --baseline --candidate`
 

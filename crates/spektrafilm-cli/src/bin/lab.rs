@@ -3,11 +3,11 @@
 use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use spektrafilm_benchmark::{
-    common, compare, documents, inspect, local_input, report, review, runner, target,
+    common, compare, documents, inspect, local_input, regions, report, runner, target,
 };
 use spektrafilm_cli::lab::cli::{
-    EvaluationCompareArgs, EvaluationInspectArgs, EvaluationRegionsArgs, EvaluationReportArgs,
-    EvaluationRunArgs, ExperimentCommand, SpectralCommand,
+    EvaluationCompareArgs, EvaluationInspectArgs, EvaluationRunArgs, ExperimentCommand,
+    RegionsCommand, ReportCommand, SpectralCommand,
 };
 
 #[derive(Parser)]
@@ -37,9 +37,9 @@ enum LabCommands {
             value_name = "KIND",
             value_parser = [
                 "suite", "target", "policy", "run", "comparison", "configuration", "reference",
-                "regions", "preparation", "review", "stimuli", "material_measurement",
-                "correspondence_review", "experiment", "preflight", "provenance", "report",
-                "resolved", "command", "export", "evidence", "metrics"
+                "regions", "preparation", "stimuli", "material_measurement", "correspondence_review",
+                "experiment", "preflight", "provenance", "report", "resolved", "command", "export",
+                "evidence", "metrics", "review"
             ]
         )]
         kind: String,
@@ -52,8 +52,8 @@ enum LabCommands {
             value_name = "KIND",
             value_parser = [
                 "suite", "target", "policy", "configuration", "reference", "regions",
-                "preparation", "review", "stimuli", "material_measurement",
-                "correspondence_review", "experiment", "run", "comparison"
+                "preparation", "stimuli", "material_measurement", "correspondence_review",
+                "experiment", "run", "comparison", "review"
             ]
         )]
         kind: String,
@@ -91,15 +91,15 @@ enum LabCommands {
         #[command(flatten)]
         args: EvaluationInspectArgs,
     },
-    /// Render one offline report from a retained comparison or a prepared image manifest.
+    /// Build an offline report from one retained comparison.
     Report {
-        #[command(flatten)]
-        args: EvaluationReportArgs,
+        #[command(subcommand)]
+        command: ReportCommand,
     },
-    /// Derive measurement regions from one grid set of a review manifest.
+    /// Generate standalone measurement regions.
     Regions {
-        #[command(flatten)]
-        args: EvaluationRegionsArgs,
+        #[command(subcommand)]
+        command: RegionsCommand,
     },
     /// Generate the packaged examples: probe assets, suites, targets, and policy.
     ///
@@ -176,10 +176,6 @@ fn validate(
     kind: &str,
     file: &std::path::Path,
 ) -> spektrafilm_benchmark::Result<serde_json::Value> {
-    // Every failure below concerns one document, so every error names it. The
-    // deeper validators add a JSON Pointer where they can name the value
-    // exactly; where they cannot, the pointer is omitted rather than
-    // approximated, which is what the spec permits.
     let display = file.display().to_string();
     let value = if matches!(kind, "run" | "comparison") {
         let root = file.parent().ok_or_else(|| {
@@ -194,30 +190,20 @@ fn validate(
             "suite" => documents::load_suite(file),
             "target" => documents::load_target(file),
             "policy" => documents::load_policy(file),
-            "review" => review::validate_manifest(file),
             "configuration" | "reference" | "regions" | "preparation" => {
                 local_input::load(kind, file)
             }
-            // The authored kinds the instrument owns directly: shape, types,
-            // and the local dependencies each one names.
-            "stimuli" | "experiment" | "material_measurement" | "correspondence_review" => {
+            "stimuli" | "material_measurement" | "correspondence_review" | "experiment" => {
                 documents::validate_authored_document(kind, file)
             }
-            _ => {
-                return Err(spektrafilm_benchmark::Error::new(
-                    "argument_syntax",
-                    "Unknown document kind",
-                ));
-            }
+            _ => Err(spektrafilm_benchmark::Error::new(
+                "unknown_document_kind",
+                format!("unknown document kind: {kind}"),
+            )),
         }
     }
-    .map_err(|e| e.file(display.clone()))?;
+    .map_err(|e| e.file(display))?;
     let unchecked = match kind {
-        "review" => serde_json::json!([
-            "image_decoding",
-            "observed_geometry",
-            "display_color_conversion"
-        ]),
         "suite"
         | "target"
         | "configuration"
@@ -226,15 +212,13 @@ fn validate(
         | "stimuli"
         | "experiment"
         | "material_measurement"
-        | "correspondence_review" => serde_json::json!([
-            "rendering",
-            "compute_device",
-            "cross_document_applicability"
-        ]),
-        // A policy document binds no suite, so its selectors, measurement
-        // selection, and protocol binding are all unverified here. Declaring
-        // them is what keeps a passing policy validation from reading as proof
-        // that a suite agrees with it.
+        | "correspondence_review" => {
+            serde_json::json!([
+                "rendering",
+                "compute_device",
+                "cross_document_applicability"
+            ])
+        }
         "policy" => serde_json::json!([
             "selector_applicability",
             "measurement_selection",
@@ -242,20 +226,12 @@ fn validate(
             "rendering",
             "compute_device"
         ]),
-        // A preparation record carries the image a reference was derived
-        // from, but not the derivation itself: whether the derived reference
-        // still matches a suite's declared intent is decided against that
-        // suite, not against this record.
         "preparation" => serde_json::json!([
             "reference_derivation",
             "cross_document_applicability",
             "rendering",
             "compute_device"
         ]),
-        // A retained record was produced by execution. Validating its structure
-        // and identities decides nothing about whether its images decode, its
-        // buffers match the device that produced them, or its measurements hold
-        // on re-execution, so those checks are listed rather than implied.
         "run" => serde_json::json!([
             "image_decoding",
             "rendering",
@@ -271,7 +247,14 @@ fn validate(
         ]),
         _ => serde_json::json!([]),
     };
-    let mut result = serde_json::json!({"schema_version":1,"command":"validate","execution_status":"completed","kind":kind,"digest":common::digest(&value)?,"unchecked":unchecked});
+    let mut result = serde_json::json!({
+        "schema_version": 1,
+        "command": "validate",
+        "execution_status": "completed",
+        "kind": kind,
+        "digest": common::digest(&value)?,
+        "unchecked": unchecked
+    });
     if kind == "suite" {
         result["protocol_digest"] = serde_json::json!(documents::protocol_digest(&value)?);
     }
@@ -283,9 +266,25 @@ fn execute(
     matches: &clap::ArgMatches,
 ) -> Result<(serde_json::Value, i32), BenchError> {
     match command {
-        LabCommands::Schema { kind } => Ok((documents::schema_for(&kind)?, 0)),
+        LabCommands::Schema { kind } => {
+            if kind == "review" {
+                Err(BenchError::new(
+                    "unsupported_document_kind",
+                    "review documents are benchmark-owned and unsupported by spektrafilm-lab",
+                ))
+            } else {
+                Ok((documents::schema_for(&kind)?, 0))
+            }
+        }
         LabCommands::Validate { kind, file } => {
-            Ok((validate(&kind, &documents::normalize_path(&file)?)?, 0))
+            if kind == "review" {
+                Err(BenchError::new(
+                    "unsupported_document_kind",
+                    "review documents are benchmark-owned and unsupported by spektrafilm-lab",
+                ))
+            } else {
+                Ok((validate(&kind, &documents::normalize_path(&file)?)?, 0))
+            }
         }
         LabCommands::Target {
             renderer,
@@ -345,21 +344,30 @@ fn execute(
             )?,
             0,
         )),
-        LabCommands::Report { args } => {
-            let out = documents::normalize_path(&args.out)?;
-            if let Some(comparison) = args.comparison {
-                Ok((report::build_report(&comparison, &out)?, 0))
-            } else {
-                let manifest = args.manifest.ok_or_else(|| {
-                    spektrafilm_benchmark::Error::new("argument_syntax", "Missing report source")
-                })?;
-                Ok((review::build_report(&manifest, &out)?, 0))
+        LabCommands::Report { command } => match command {
+            ReportCommand::Comparison(args) => {
+                let out = documents::normalize_path(&args.out)?;
+                Ok((report::build_report(&args.comparison, &out)?, 0))
             }
-        }
-        LabCommands::Regions { args } => Ok((
-            review::derive_regions(&args.manifest, &args.set, &args.out)?,
-            0,
-        )),
+        },
+        LabCommands::Regions { command } => match command {
+            RegionsCommand::Grid(args) => Ok((
+                regions::generate_grid(
+                    &args.id,
+                    args.rows,
+                    args.columns,
+                    args.origin,
+                    args.patch_size,
+                    args.gap,
+                    args.sample,
+                    &args.space,
+                    &args.role,
+                    &args.measurements,
+                    &args.out,
+                )?,
+                0,
+            )),
+        },
         LabCommands::Fixtures {
             renderer,
             data_dir,
@@ -730,22 +738,22 @@ mod tests {
     }
 
     #[test]
-    fn report_sources_require_exactly_one_input() {
-        let prefix = ["lab", "report", "--out", "report"];
-        for suffix in [
-            vec![],
-            vec!["--comparison", "comparison", "--manifest", "manifest.json"],
-        ] {
-            assert!(LabCli::try_parse_from(prefix.into_iter().chain(suffix)).is_err());
-        }
+    fn report_sources_require_comparison_subcommand_and_reject_manifest() {
+        assert!(LabCli::try_parse_from(["lab", "report"]).is_err());
+        assert!(LabCli::try_parse_from(["lab", "report", "comparison"]).is_err());
         assert!(
-            LabCli::try_parse_from(prefix.into_iter().chain(["--comparison", "comparison"]))
-                .is_ok()
+            LabCli::try_parse_from([
+                "lab",
+                "report",
+                "comparison",
+                "--comparison",
+                "comparison",
+                "--out",
+                "report"
+            ])
+            .is_ok()
         );
-        assert!(
-            LabCli::try_parse_from(prefix.into_iter().chain(["--manifest", "manifest.json"]))
-                .is_ok()
-        );
+        assert!(LabCli::try_parse_from(["lab", "report", "--manifest", "manifest.json"]).is_err());
     }
 
     #[test]
