@@ -197,7 +197,7 @@ Every JSON document the instrument reads or writes has one kind and one owning s
 | `evidence` | retained | [Stage evidence](../cli/spec.md#stage-evidence) |
 | `metrics` | vocabulary | [Measurement protocol](../benchmark/metrics/spec.md) |
 
-A kind's state decides which commands accept it: an authored kind is written by a person or another tool and may be validated; a retained kind is published by the instrument, is immutable, and is consumed by `compare`, `inspect`, `verify`, `report`, and `sample --from-evidence`. `metrics` is not a document: it is the closed vocabulary of metric identities a policy may name, and the same vocabulary the measurement protocol owns.
+A kind's state decides which commands accept it: an authored kind is written by a person or another tool and may be validated; a retained kind is published by the instrument, is immutable, and is consumed by `compare`, `inspect`, `verify`, `report`, and the matching `sample` adapters (`--from-evidence` or `--from-run`). `metrics` is not a document: it is the closed vocabulary of metric identities a policy may name, and the same vocabulary the measurement protocol owns.
 
 ## Measurement
 
@@ -281,10 +281,12 @@ spektrafilm-lab run --stimuli PATH --enter BOUNDARY [--read STAGE ...] [--dry-ru
 ```text
 spektrafilm-lab sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
 spektrafilm-lab sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
+spektrafilm-lab sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
 ```
 
 - `--source` declares a raster image. It must require the same input declaration as `process`: a source color space and a transfer state.
 - `--from-evidence` reads one stage of a retained evidence bundle. The coordinate space, channel order, and units of that stage must come from the bundle manifest.
+- `--from-run` resolves exactly one completed `(case, seed)` row from a retained image-domain run, then reads its requested available stage from the indexed `stage-evidence.json`. The run record and stage bundle are authoritative; missing or failed rows, unrequested or unavailable capture, missing stages, malformed artifacts, unsafe paths, digest mismatches, and cross-seed references must fail without fallback.
 - `--regions` declares reading positions with stable sample identities: explicit windows with their labels and groups, in the coordinate space the document declares. A window that leaves the source bounds must fail with the sample identity. The command must not clamp, pad, extrapolate, or repair a sample.
 - The command must not resize, re-encode, or convert the source beyond the declared input declaration.
 - A reading describes the values it stores: applying the declared transfer decoding makes the reading linear, and its record must say so while the source block keeps the source's own declaration. A stage that declares no transfer state records none.

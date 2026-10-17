@@ -26,10 +26,11 @@ The experiment document is a typed declaration carrier, not a second parameter l
 The document must reject duplicate keys and unknown fields. A `--set` file path must resolve inside the document's directory tree; a path that escapes it is a command failure.
 
 The case reference keeps the region vocabulary in the [benchmark](../../benchmark/spec.md) owner: the suite declares region ids, roles, and measurement families, and the grid check is what surfaces a disagreement between the document and the case.
-`experiment run` is one endpoint invocation. Its current `seeds` declaration is a seed population only when the endpoint executes and retains one result for every declared seed. Until that multi-seed publication contract is implemented, the command must reject a document with more than one seed rather than execute only the first seed while reporting the whole population. A retained record must identify the seed that produced it; a report must not imply observations for a seed that was not executed.
+`experiment run` is one endpoint invocation and currently publishes one retained result. Its `seeds` declaration must therefore contain exactly one seed; a document with more than one seed is rejected before rendering rather than executing only the first seed while reporting the whole population. A retained record must identify the seed that produced it; a report must not imply observations for a seed that was not executed.
 
 The case and grid fields are validation inputs for this endpoint. They must not become a second region language. The suite case remains authoritative for region identity, role, measurement family, and coordinate-space semantics. `grid` only checks that a declared experiment arrangement agrees with the referenced case; it does not license geometry inference from image dimensions, labels, or colors. A future endpoint may derive a standalone `regions` document from an authored review grid, but `experiment` must not add another geometry expression or silently replace the case's regions.
-The first implementation slice for this document must therefore either publish one retained result per seed or reject a multi-seed declaration before rendering. It must not publish one result with a report that lists unexecuted seeds.
+
+The first implementation slice for this document must not publish one result with a report that lists unexecuted seeds.
 
 ## Invocation
 

@@ -509,10 +509,10 @@ pub struct MeasureSampleArgs {
         help_heading = "Source"
     )]
     pub from_evidence: Option<PathBuf>,
-    /// Retained image-domain run directory whose selected case owns the stage capture.
+    /// Retained image-domain run directory or RUN.JSON whose selected case owns the stage capture.
     #[arg(
         long,
-        value_name = "DIR",
+        value_name = "DIR|RUN.JSON",
         conflicts_with_all = ["source", "from_evidence"],
         help_heading = "Source"
     )]
@@ -521,14 +521,15 @@ pub struct MeasureSampleArgs {
     #[arg(
         long,
         value_name = "ID",
+        required_unless_present_any = ["source", "from_evidence"],
         requires = "from_run",
         help_heading = "Source"
     )]
     pub case: Option<String>,
-    /// Exact unsigned 32-bit seed in a retained image-domain run.
     #[arg(
         long,
         value_name = "UINT32",
+        required_unless_present_any = ["source", "from_evidence"],
         requires = "from_run",
         help_heading = "Source"
     )]

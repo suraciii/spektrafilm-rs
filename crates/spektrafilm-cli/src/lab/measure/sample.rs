@@ -399,9 +399,17 @@ fn run_source(args: &MeasureSampleArgs, run: &Path) -> Result<Source> {
     let bundle_manifest =
         spektrafilm_benchmark::documents::safe_artifact_path(&run_root, manifest_rel)
             .map_err(|error| anyhow!("retained stage manifest path: {error}"))?;
+    if bundle_manifest.file_name().and_then(|name| name.to_str()) != Some("stage-evidence.json") {
+        bail!(
+            "retained stage manifest {} is not the bundle's stage-evidence.json",
+            manifest_rel
+        );
+    }
     let bundle_dir = bundle_manifest
         .parent()
         .ok_or_else(|| anyhow!("retained stage manifest has no bundle directory"))?;
+    spektrafilm_benchmark::documents::validate_stage_bundle(bundle_dir)
+        .map_err(|error| anyhow!("validating retained stage evidence: {error}"))?;
     let stage_id = stage.id().to_owned();
     let (mut readings, availability) =
         read_stage_bundle(bundle_dir, std::slice::from_ref(&stage_id))

@@ -238,7 +238,7 @@ fn complete_run(root: &Path, capture: bool) {
         .unwrap();
     let mut row = json!({"case_id":"probe","seed":0,"status":"completed","environment":{},"command":["renderer","process","input.png","--output","master.tif","--raw-out","master.f64","--diagnostics","diagnostics.json","--seed","0"],"source_command":["renderer","process","input.png","--route","input","--output","source.tif","--raw-out","source.f64","--diagnostics","source-diagnostics.json","--seed","0"],"input":input,"resolved":resolved,"stdout":stdout,"stderr":stderr,"raw":raw,"raw_metadata":raw_metadata,"master":master,"diagnostics":diagnostics,"dimensions":[4,4],"source_raw":source_raw,"source_raw_metadata":source_raw_metadata,"source_resolved":source_resolved,"source_diagnostics":source_diagnostics,"source_master":source_master,"source_dimensions":[4,4],"source_geometry":{"published_dimensions":[4,4]},"simulation_geometry":{"published_dimensions":[4,4]},"source_pixel_aligned":true,"execution":{"backend_selected":"cpu","path":"cpu"},"precision":{"host_precision":"f64"}});
     if capture {
-        let document = stage_bundle(&root.join("stage-evidence"));
+        let document = stage_bundle(&root.join("cases/probe/seed-0/stage-evidence"));
         let mut context = json!({});
         for key in [
             "host_precision",
@@ -254,7 +254,7 @@ fn complete_run(root: &Path, capture: bool) {
         }
         let manifest = evidence
             .add(
-                &root.join("stage-evidence/stage-evidence.json"),
+                &root.join("cases/probe/seed-0/stage-evidence/stage-evidence.json"),
                 "stage_evidence_manifest",
                 "application/json",
                 json!({"context":context}),
@@ -270,7 +270,7 @@ fn complete_run(root: &Path, capture: bool) {
                 evidence
                     .add(
                         &root
-                            .join("stage-evidence")
+                            .join("cases/probe/seed-0/stage-evidence")
                             .join(stage["path"].as_str().unwrap()),
                         "stage_evidence_buffer",
                         "application/octet-stream",
@@ -296,6 +296,68 @@ fn complete_retained_run_with_and_without_capture_validates() {
         let (result, code) = validate_run(temp.path());
         assert_eq!(code, 0, "{result}");
         assert_eq!(result["execution_status"], "completed");
+    }
+}
+
+#[test]
+fn sample_reads_the_exact_stage_from_a_retained_run_directory_or_manifest() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    complete_run(root, true);
+    let regions = root.join("regions.json");
+    fs::write(
+        &regions,
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "id": "one-pixel",
+            "regions": [{
+                "id": "p00",
+                "role": "other",
+                "geometry": {"x": 0, "y": 0, "width": 1, "height": 1, "space": "source"}
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    for (run_argument, output_name) in [
+        (root.to_path_buf(), "sample-directory"),
+        (root.join("run.json"), "sample-manifest"),
+    ] {
+        let output = root.join(output_name);
+        let result = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
+            .args(["sample", "--from-run"])
+            .arg(&run_argument)
+            .args([
+                "--case",
+                "probe",
+                "--seed",
+                "0",
+                "--stage",
+                "rgb_in",
+                "--regions",
+            ])
+            .arg(&regions)
+            .args(["--out"])
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let sample: Value =
+            serde_json::from_slice(&fs::read(output.join("run.json")).unwrap()).unwrap();
+        assert_eq!(sample["source"]["kind"], "run");
+        assert_eq!(sample["source"]["stage"], "rgb_in");
+        assert_eq!(sample["source"]["coordinate_space"], "source_pixels");
+        assert_eq!(sample["stages"][0]["id"], "rgb_in");
+        assert_eq!(sample["stages"][0]["domain"], "input_rgb");
+        assert_eq!(sample["stages"][0]["units"], "relative");
+        assert_eq!(sample["stages"][0]["channel_order"], "RGB");
+        assert_eq!(sample["summaries"][0]["count"], 1);
     }
 }
 
@@ -368,7 +430,7 @@ fn missing_stage_bundle_manifest_cannot_pass_silently() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();
     complete_run(root, true);
-    fs::remove_file(root.join("stage-evidence/stage-evidence.json")).unwrap();
+    fs::remove_file(root.join("cases/probe/seed-0/stage-evidence/stage-evidence.json")).unwrap();
     let (result, code) = validate_run(root);
     assert_eq!(code, 1, "{result}");
     assert_eq!(result["errors"][0]["code"], "missing_artifact");
