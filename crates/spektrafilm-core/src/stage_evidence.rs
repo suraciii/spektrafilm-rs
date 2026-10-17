@@ -687,6 +687,26 @@ mod tests {
         params
     }
 
+    #[test]
+    fn capture_rejects_preview_mode_with_an_actionable_reason() {
+        // Preview bounding resizes the decoded source before metering, so the
+        // bundle would claim a geometry the contract cannot describe. The
+        // request must fail naming the setting and the way out, not silently
+        // render at the preview geometry.
+        let mut params = capture_params();
+        params.settings.preview_mode = true;
+        let error = ensure_supported_params(&params).unwrap_err();
+        assert!(
+            error.contains("preview mode") && error.contains("settings.preview_mode=false"),
+            "the rejection must name the setting and how to proceed: {error}"
+        );
+    }
+
+    #[test]
+    fn capture_accepts_the_full_resolution_cpu_configuration() {
+        assert!(ensure_supported_params(&capture_params()).is_ok());
+    }
+
     fn image(width: u32, height: u32) -> ImageBuf {
         ImageBuf::from_data(
             width,
