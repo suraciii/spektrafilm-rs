@@ -75,6 +75,9 @@ test-ci:
 # Run measured deterministic logic and isolated file tests in both precisions.
 test-fast: (test-fast-precision "") (test-fast-precision "--features precision-f64")
 
+# Run the selected precision-sensitive tests in the f64 reference configuration.
+test-fast-f64: (test-fast-precision "--features precision-f64")
+
 # Positive module selection keeps new rendering/device tests in main by default.
 [private]
 test-fast-precision precision_args:
@@ -137,8 +140,8 @@ test-pr:
 # Required PR gate; workspace compilation and native suites run after merge.
 ci-pr: check-python-cache check-python check-device-lock fmt test-pr
 
-# Full local and main-branch gate, including slow rendering and GPU tests.
-ci: check-python-cache check-python check-device-lock fmt check check-f64 clippy clippy-f64 test test-fast benchmark-test parity-backend
+# The full f32 workspace suite above already covers the selected f32 subset.
+ci: check-python-cache check-python check-device-lock fmt check check-f64 clippy clippy-f64 test test-fast-f64 benchmark-test parity-backend
 
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:

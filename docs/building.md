@@ -49,11 +49,14 @@ just check
 just test
 just test-f64
 just test-fast
+just test-fast-f64
 just ci-pr
 just ci
 just package
 just install
 ```
+
+`just ci` runs the full default-precision workspace suite and the selected precision-sensitive f64 subset through `just test-fast-f64`; `just test-fast` remains the local both-precision variant.
 
 ## Packaging and installation
 
