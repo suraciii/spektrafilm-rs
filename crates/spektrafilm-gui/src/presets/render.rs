@@ -1,4 +1,5 @@
 use super::*;
+use crate::theme;
 
 pub struct Browser {
     pub state: BrowserState,
@@ -165,26 +166,37 @@ impl App {
                             });
                             // Film → print route metadata
                             ui.horizontal(|ui| {
+                                // Resolve through the same profile entries the
+                                // header and the combo use, so one stock has
+                                // one visual identifier.
                                 let film_label = entry
                                     .film_profile
                                     .as_ref()
-                                    .map(|p| p.stock.as_str())
-                                    .unwrap_or("?");
+                                    .map(|p| {
+                                        crate::profiles::selected_display(&self.films, &p.stock)
+                                    })
+                                    .unwrap_or_else(|| "?".to_owned());
                                 let print_label = entry
                                     .print_profile
                                     .as_ref()
-                                    .map(|p| p.stock.as_str())
-                                    .unwrap_or("?");
+                                    .map(|p| {
+                                        crate::profiles::selected_display(&self.papers, &p.stock)
+                                    })
+                                    .unwrap_or_else(|| "?".to_owned());
                                 ui.label(
                                     egui::RichText::new(film_label)
                                         .color(theme::ACCENT_DIM)
-                                        .size(9.0),
+                                        .size(theme::SIZE_HINT),
                                 );
-                                ui.label(egui::RichText::new("→").color(theme::FG_MUTED).size(9.0));
+                                ui.label(
+                                    egui::RichText::new("→")
+                                        .color(theme::FG_MUTED)
+                                        .size(theme::SIZE_HINT),
+                                );
                                 ui.label(
                                     egui::RichText::new(print_label)
                                         .color(theme::ACCENT_DIM)
-                                        .size(9.0),
+                                        .size(theme::SIZE_HINT),
                                 );
                             });
                         });
@@ -205,7 +217,7 @@ impl App {
                     ui.label(format!("{} • missing", applied.name));
                 }
                 if let Some(error) = &self.presets.scan_error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(theme::ERROR, error);
                 }
                 if self.presets.entries.iter().any(|e| e.fault.is_some()) {
                     egui::CollapsingHeader::new("Issues")
@@ -361,10 +373,10 @@ impl App {
                     };
                     let invalid = name_error(&dialog.name, &self.presets.entries, rename_from);
                     if let Some(e) = &invalid {
-                        ui.colored_label(egui::Color32::LIGHT_RED, e);
+                        ui.colored_label(theme::ERROR, e);
                     }
                     if let Some(e) = &dialog.error {
-                        ui.colored_label(egui::Color32::LIGHT_RED, e);
+                        ui.colored_label(theme::ERROR, e);
                     }
                     ui.horizontal(|ui| {
                         submit = ui
@@ -451,7 +463,7 @@ impl App {
 }
 fn show_fault(ui: &mut egui::Ui, entry: &LibraryEntry) {
     ui.colored_label(
-        egui::Color32::LIGHT_RED,
+        theme::ERROR,
         format!(
             "{}: {}",
             entry

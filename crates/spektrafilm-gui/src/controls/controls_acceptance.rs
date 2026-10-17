@@ -21,6 +21,18 @@ fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
+fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    super::show(
+        ui,
+        params,
+        &mut serde_json::Value::Null,
+        "Camera",
+        super::ScanMedium::Negative,
+        "",
+        &mut Default::default(),
+    );
+}
+
 #[cfg(test)]
 mod headless {
     use super::*;
@@ -191,12 +203,12 @@ mod layout_snapshots {
                 "contrast",
                 "maximum density",
                 "Lens blur (readout optics)",
-                "film-scan black point 0",
-                "film-scan black point 1",
-                "film-scan black point 2",
-                "film-scan white point 0",
-                "film-scan white point 1",
-                "film-scan white point 2",
+                "film-scan black point R",
+                "film-scan black point G",
+                "film-scan black point B",
+                "film-scan white point R",
+                "film-scan white point G",
+                "film-scan white point B",
                 "Unsharp mask (digital sharpening) 0",
                 "Unsharp mask (digital sharpening) 1",
             ];
@@ -262,6 +274,85 @@ mod layout_snapshots {
                 bounds.push((label, rect));
             }
             crate::headless::save_snapshot(&image, &format!("{name}.png"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod roles {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn a_parameter_row_boolean_is_a_switch() {
+        let mut params = scanner_params();
+        params.camera.auto_exposure = false;
+        let mut harness = Harness::new_ui_state(camera, params);
+        let node = harness.get_by_label("auto exposure");
+        assert_eq!(node.role(), egui::accesskit::Role::Switch);
+        assert_eq!(node.toggled(), Some(egui::accesskit::Toggled::False));
+        harness.get_by_label("auto exposure").simulate_click();
+        harness.run();
+        assert_eq!(
+            harness.get_by_label("auto exposure").toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+    }
+
+    #[test]
+    fn a_numeric_row_names_its_editor() {
+        let harness = Harness::new_ui_state(scanner, scanner_params());
+        let node = harness.get_by_label("brightness");
+        assert_eq!(node.role(), egui::accesskit::Role::TextInput);
+    }
+}
+
+#[cfg(test)]
+mod row_layout {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+
+    /// A parameter row presents its label before its value, on one line, and
+    /// every row on a page aligns to one label column.
+    #[test]
+    fn a_row_presents_its_label_before_its_value_on_one_line() {
+        let params = scanner_params();
+        let harness = Harness::new_ui_state(camera, params);
+        // The label sits left of its editor and shares its vertical band, so
+        // the pair reads as one row rather than a stacked pair.
+        let rows = ["film format mm", "exposure compensation ev"];
+        let mut left_edges: Vec<f64> = Vec::new();
+        let mut value_lefts: Vec<f64> = Vec::new();
+        for label in rows {
+            let node = harness.get_by_label(label);
+            let rect = node.raw_bounds().expect("row editor has no bounds");
+            let mut labels = node.labelled_by();
+            let visible = labels.next().expect("row editor has no visible label");
+            let label_rect = visible.raw_bounds().expect("visible label has no bounds");
+            assert!(
+                label_rect.x1 <= rect.x0,
+                "{label}: label must sit before its value (label {:?}, value {:?})",
+                label_rect,
+                rect
+            );
+            let shared = label_rect.y0 < rect.y1 && rect.y0 < label_rect.y1;
+            assert!(shared, "{label}: label and value must share one line");
+            left_edges.push(label_rect.x0);
+            value_lefts.push(rect.x0);
+        }
+        // One label column per page: the labels share a left edge and the values
+        // share a left edge, so rows align rather than float independently.
+        let label_left = left_edges[0];
+        let value_left = value_lefts[0];
+        for (i, (l, v)) in left_edges.iter().zip(value_lefts.iter()).enumerate() {
+            assert!(
+                (l - label_left).abs() < 1.0,
+                "row {i} label column drifted: {l} vs {label_left}"
+            );
+            assert!(
+                (v - value_left).abs() < 1.0,
+                "row {i} value column drifted: {v} vs {value_left}"
+            );
         }
     }
 }

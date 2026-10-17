@@ -107,7 +107,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
 
     click(h, "Base");
     let base_active = h.state().params.film_render.base.active;
-    click(h, "active");
+    click(h, "Enable film base");
     edit(h, "scale", "1.25");
     edit(h, "tilt", "0.75");
     assert_eq!(h.state().params.film_render.base.active, !base_active);
@@ -117,7 +117,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
 
     click(h, "Halation");
     let halation_active = h.state().params.film_render.halation.active;
-    click(h, "active");
+    click(h, "Enable halation");
     edit(h, "scatter amount", "0.25");
     edit(h, "boost ev", "1.5");
     assert_eq!(
@@ -130,7 +130,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
 
     click(h, "Couplers");
     let couplers_active = h.state().params.film_render.dir_couplers.active;
-    click(h, "active");
+    click(h, "Enable DIR couplers");
     edit(h, "amount", "1.5");
     edit(h, "inhibition samelayer", "0.75");
     assert_eq!(
@@ -150,7 +150,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
 
     click(h, "Diffusion");
     let diffusion_active = h.state().params.camera.diffusion_filter.active;
-    click(h, "active");
+    click(h, "Camera diffusion");
     choose(h, "filter family", "cinebloom");
     edit(h, "strength", "0.5");
     assert_eq!(
@@ -167,7 +167,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
     click(h, "Chemistry");
     choose(h, "development time", "9 min");
     let chemistry_active = h.state().params.film_render.chemistry.active;
-    click(h, "active");
+    click(h, "Enable film density curves");
     edit(h, "gamma factor", "1.25");
     edit(h, "developer exhaustion", "0.375");
     assert_eq!(h.state().params.film_render.development_time, Some(9.0));
@@ -225,7 +225,7 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
 
     click(h, "Chemistry");
     let chemistry_active = h.state().params.print_render.density_curves_morph.active;
-    click(h, "active");
+    click(h, "Enable print density curves");
     edit(h, "gamma factor", "1.5");
     edit(h, "developer exhaustion", "0.375");
     assert_eq!(
@@ -252,7 +252,7 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
 
     click(h, "Base");
     let base_active = h.state().params.print_render.base.active;
-    click(h, "active");
+    click(h, "Enable print base");
     edit(h, "scale", "1.25");
     edit(h, "cyan", "0.75");
     assert_eq!(h.state().params.print_render.base.active, !base_active);
@@ -262,7 +262,7 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
 
     click(h, "Print viewing glare");
     let glare_active = h.state().params.print_render.glare.active;
-    click(h, "active");
+    click(h, "Enable print glare");
     edit(h, "percent", "0.25");
     edit(h, "roughness", "0.5");
     assert_eq!(h.state().params.print_render.glare.active, !glare_active);
@@ -272,7 +272,7 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
 
     click(h, "Diffusion");
     let diffusion_active = h.state().params.enlarger.diffusion_filter.active;
-    click(h, "active");
+    click(h, "Enlarger diffusion");
     choose(h, "filter family", "black_pro_mist");
     edit(h, "strength", "0.375");
     edit(h, "halo warmth", "0.25");
@@ -334,7 +334,7 @@ fn advanced_and_print_page_spectral_magazine_and_gamut_controls_accept_edits_and
 
     click(h, "Input gamut compress");
     let compress_active = h.state().params.io.input_gamut_compress.active;
-    click(h, "active");
+    click(h, "Enable input gamut compress");
     edit(h, "knee 0", "0.75");
     edit(h, "knee 2", "1.5");
     edit(h, "hull detail", "12");
@@ -730,17 +730,11 @@ fn an_unselected_grain_engine_group_is_read_only() {
     click(h, "FILM");
     // The selected engine's group is the only open one, so the shared field
     // appears once until another engine's group is expanded.
-    assert_eq!(
-        h.query_all_by_label("rms granularity (experimental) 0")
-            .count(),
-        1
-    );
+    assert_eq!(h.query_all_by_label("rms granularity 0").count(), 1);
 
     click(h, "Dye");
     h.run_steps(10);
-    let fields: Vec<_> = h
-        .query_all_by_label("rms granularity (experimental) 0")
-        .collect();
+    let fields: Vec<_> = h.query_all_by_label("rms granularity 0").collect();
     assert_eq!(fields.len(), 2, "both engine groups show the shared field");
     assert_eq!(
         fields
@@ -777,6 +771,121 @@ fn control_search_reaches_scanner_controls_by_their_visible_labels() {
     );
 
     search(h, "film-scan white point");
-    assert!(h.query_by_label("film-scan white point 0").is_some());
-    assert!(h.query_by_label("film-scan black point 0").is_none());
+    assert!(h.query_by_label("film-scan white point R").is_some());
+    assert!(h.query_by_label("film-scan black point R").is_none());
+}
+
+#[test]
+fn a_section_reset_restores_the_factory_value_and_clears_the_mark() {
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "MAIN");
+
+    // The Camera section is open by default, so its rows are reachable without
+    // expanding it. The section starts at the factory state, so it is unmarked.
+    let factory = h.state().params.camera.exposure_compensation_ev;
+    edit(h, "exposure compensation ev", "0.75");
+    assert_ne!(h.state().params.camera.exposure_compensation_ev, factory);
+    assert!(h.query_by_label("modified").is_some());
+
+    // A neighbouring section keeps an edit made after the last load, so the
+    // reset restores the section it belongs to and nothing else.
+    edit(h, "print exposure", "2.0");
+    let neighbour = h.state().params.enlarger.print_exposure;
+    assert_ne!(neighbour, 1.0, "the neighbour's edit landed");
+
+    click(h, "reset Camera");
+    assert_eq!(
+        h.state().params.camera.exposure_compensation_ev,
+        factory,
+        "the reset restores its own section"
+    );
+    assert_eq!(
+        h.state().params.enlarger.print_exposure,
+        neighbour,
+        "another section's reset does not revert the neighbour's live edit"
+    );
+}
+
+/// Every parameter section the pages render presents a reset, so a section
+/// added to the UI without a reset scope cannot go unnoticed.
+#[test]
+fn every_parameter_section_presents_a_reset() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let mut seen = std::collections::BTreeSet::new();
+    for page in ["MAIN", "FILM", "PRINT", "ADVANCED"] {
+        click(h, page);
+        for node in h.query_all_by_label_contains("reset") {
+            if let Some(label) = node.label()
+                && let Some(section) = label.strip_prefix("reset ")
+                && section != "view"
+            {
+                seen.insert(section.to_owned());
+            }
+        }
+    }
+    let expected: &[&str] = &[
+        "Camera",
+        "Camera diffusion",
+        "Convert",
+        "Couplers",
+        "Crop and upscale",
+        "Enlarger",
+        "Enlarger diffusion",
+        "Film base",
+        "Film chemistry",
+        "Glare",
+        "Grain",
+        "Halation",
+        "Input",
+        "Input gamut compress",
+        "Magazine finish color",
+        "Output",
+        "Output gamut compress",
+        "Print base",
+        "Print chemistry",
+        "Scanner",
+        "Spectral upsampling",
+    ];
+    for section in expected {
+        assert!(
+            seen.contains(*section),
+            "no reset presented for section {section}; found {seen:?}"
+        );
+    }
+}
+
+/// A toggle's guard must be the toggle's own visible label, so a search for that
+/// label reaches the control. The chemistry toggle is medium-specific and used a
+/// medium-agnostic guard, which made both toggles unreachable by search.
+#[test]
+fn the_chemistry_enable_toggle_is_reachable_by_its_own_label() {
+    let mut s = session();
+    let h = &mut s.harness;
+
+    click(h, "FILM");
+    search(h, "enable film density curves");
+    assert!(
+        h.query_by_label("Enable film density curves").is_some(),
+        "the film chemistry toggle is unreachable by its visible label"
+    );
+    search(h, "enable density curves");
+    assert!(
+        h.query_by_label("Enable film density curves").is_none(),
+        "the medium-agnostic label must not match the film toggle"
+    );
+    search(h, "");
+
+    click(h, "PRINT");
+    search(h, "enable print density curves");
+    assert!(
+        h.query_by_label("Enable print density curves").is_some(),
+        "the print chemistry toggle is unreachable by its visible label"
+    );
+    search(h, "enable density curves");
+    assert!(
+        h.query_by_label("Enable print density curves").is_none(),
+        "the medium-agnostic label must not match the print toggle"
+    );
 }

@@ -14,10 +14,15 @@ pub(crate) fn sections(
             ui.label(
                 egui::RichText::new("Key controls: halation amount (strength) · halation spatial scale (size) · scatter amount (highlight glow)")
                     .small()
-                    .color(egui::Color32::GRAY),
+                    .color(theme::FG_MUTED),
             );
-            if filter_matches(filter, "active") {
-                flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.halation.active, "Enable halation and in-emulsion scatter.");
+            if filter_matches(filter, "enable halation") {
+                flags.runtime_changed |= toggle(
+                    ui,
+                    "Enable halation",
+                    &mut params.film_render.halation.active,
+                    "Enable halation and in-emulsion scatter.",
+                );
             }
             if filter_matches(filter, "scatter amount") {
                 flags.runtime_changed |= param_numeric(ui, "scatter amount", &mut params.film_render.halation.scatter_amount, "film_render.halation.scatter_amount", "High-level scatter strength. 1.0 = full physical scatter, 0.0 = no scatter. Scales the fraction of light that undergoes in-emulsion scattering.");

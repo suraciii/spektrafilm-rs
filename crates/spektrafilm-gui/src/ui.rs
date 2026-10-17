@@ -20,6 +20,17 @@ impl GuiTab {
         Self::Config,
     ];
 
+    /// One-line description of what the page holds.
+    pub(super) fn description(self) -> &'static str {
+        match self {
+            Self::Main => "Import, workflow, and film stock",
+            Self::Film => "Film negative response and material controls",
+            Self::Print => "Print response and finishing controls",
+            Self::Advanced => "Scanner, gamut, and experimental controls",
+            Self::Config => "GUI and display settings",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Main => "MAIN",
@@ -167,6 +178,8 @@ impl App {
                 }
             }
         });
+        // The workflow selector's own row: its selected text is long, and a
+        // checkbox sharing the row would be pushed past the panel.
         ui.horizontal(|ui| {
             if controls::choice_tip_entries(
                 ui,
@@ -177,6 +190,8 @@ impl App {
             ) {
                 self.finish_route_change();
             }
+        });
+        ui.horizontal(|ui| {
             if ui
                 .checkbox(
                     &mut self.params.magazine_print_color.active,
@@ -487,6 +502,7 @@ impl App {
                 label_clicked = ui
                     .add(egui::Label::new(label).sense(egui::Sense::click()))
                     .clicked();
+                self.section_reset_controls(ui, section);
                 self.section_preset_menu(ui, kind);
             });
             if label_clicked {
@@ -494,8 +510,54 @@ impl App {
             }
             header.body(|ui| self.parameter_section_controls(ui, section));
         } else {
+            // A section without a preset menu renders its own header inside
+            // the controls, so its reset scope rides on a row above them.
+            if section_reset::sections().any(|name| name == section) {
+                ui.horizontal(|ui| {
+                    self.section_reset_controls(ui, section);
+                });
+            }
             self.parameter_section_controls(ui, section);
         }
+    }
+
+    /// The `modified` chip and the reset action of one section header.
+    ///
+    /// Every resettable section presents these on its header, whether or not
+    /// it also carries a preset menu, so the reset scope the section table
+    /// declares is reachable from the surface that renders the section.
+    fn section_reset_controls(&mut self, ui: &mut egui::Ui, section: &str) -> bool {
+        let mut changed = false;
+        if section_reset::is_modified(section, &self.params, &self.gui_state.sections) {
+            ui.label(
+                egui::RichText::new("modified")
+                    .color(theme::WARNING)
+                    .size(theme::SIZE_HINT),
+            );
+        }
+        if section_reset::sections().any(|name| name == section) {
+            let response = ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("reset")
+                            .color(theme::FG_MUTED)
+                            .size(theme::SIZE_HINT),
+                    )
+                    .corner_radius(theme::RADIUS_CARD),
+                )
+                .on_hover_text(format!("Restore {section} to the factory state"));
+            // Name the action after its section, so one reset is
+            // addressable among the sections on a page.
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_label(format!("reset {section}"));
+            });
+            if response.clicked() {
+                section_reset::reset(&mut self.params, &mut self.gui_state.sections, section);
+                self.mark_parameters_changed_invalidating_calibration();
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Whether `section` rendered a control whose label matches the search
@@ -641,6 +703,7 @@ impl App {
             label_clicked = ui
                 .add(egui::Label::new("Chemistry").sense(egui::Sense::click()))
                 .clicked();
+            self.section_reset_controls(ui, section);
             self.section_preset_menu(ui, if film { Section::Film } else { Section::Print });
         });
         if label_clicked {
@@ -860,7 +923,7 @@ impl eframe::App for App {
         // Right control panel: histogram at top, tabs, scrollable controls, action bar
         egui::SidePanel::right("controls")
             .resizable(false)
-            .exact_width(320.0)
+            .exact_width(theme::WIDTH_CONTROL_PANEL)
             .show(ctx, |ui| {
                 let output_id = self
                     .output_image
@@ -870,10 +933,25 @@ impl eframe::App for App {
                 self.histogram
                     .update(&self.output_image, output_id, ui.ctx());
                 self.histogram.render(ui);
-                ui.add_space(4.0);
+                ui.add_space(theme::SPACE_BLOCK);
                 ui.horizontal_wrapped(|ui| {
+                    // One segmented control: every page shares a frame, so the
+                    // current page reads as a position in a row rather than a
+                    // lone highlighted button. Segments take their natural
+                    // width, which fits the panel, so no label is clipped.
                     for tab in GuiTab::ALL {
-                        ui.selectable_value(&mut self.gui_tab, tab, tab.label());
+                        let selected = self.gui_tab == tab;
+                        if ui
+                            .add(
+                                egui::Button::new(tab.label())
+                                    .selected(selected)
+                                    .corner_radius(theme::RADIUS_CARD),
+                            )
+                            .on_hover_text(tab.description())
+                            .clicked()
+                        {
+                            self.gui_tab = tab;
+                        }
                     }
                 });
                 ui.separator();
@@ -883,7 +961,10 @@ impl eframe::App for App {
                         .labelled_by(label.id);
                 });
                 ui.add_space(2.0);
-                let scroll_height = (ui.available_height() - 95.0).max(1.0);
+                // Reserve the action bar's height below the scrollable
+                // controls, so the bar stays inside the panel.
+                let scroll_height =
+                    (ui.available_height() - theme::HEIGHT_ACTION_BAR_RESERVE).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("controls-scroll")
@@ -904,6 +985,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    // Orientation: rotate the input.
                     if ui.button("ccw rotate").clicked() {
                         self.rotate_input_image_counterclockwise();
                         ui.ctx().request_repaint();
@@ -912,6 +994,8 @@ impl eframe::App for App {
                         self.rotate_input_image_clockwise();
                         ui.ctx().request_repaint();
                     }
+                    ui.separator();
+                    // View: zoom presets and the fit reset.
                     for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
                         if ui.button(label).clicked() {
                             self.viewer.set_zoom_percent(percent);
@@ -922,7 +1006,8 @@ impl eframe::App for App {
                         self.viewer.reset_view();
                         ui.ctx().request_repaint();
                     }
-                    // Before/after compare slider
+                    ui.separator();
+                    // Comparison: the before/after toggle and its split.
                     let compare_label = if self.compare_active {
                         "compare ON"
                     } else {
@@ -937,7 +1022,7 @@ impl eframe::App for App {
                         ui.ctx().request_repaint();
                     }
                     if self.compare_active {
-                        ui.add_space(8.0);
+                        ui.add_space(theme::SPACE_GROUP);
                         let slider = ui.add(
                             egui::Slider::new(&mut self.compare_split, 0.0..=1.0)
                                 .fixed_decimals(2)
@@ -953,14 +1038,20 @@ impl eframe::App for App {
                                 (1.0 - self.compare_split) * 100.0
                             ))
                             .color(theme::FG_MUTED)
-                            .size(9.0),
+                            .size(theme::SIZE_HINT),
                         );
                     }
+                    ui.separator();
+                    // Read-only: the current zoom.
                     let zoom = self.viewer.zoom_percent().map_or_else(
                         || format!("{:.0}% fit", self.viewer.zoom * 100.0),
                         |percent| format!("{percent:.0}%"),
                     );
-                    ui.label(format!("zoom {zoom}"));
+                    ui.label(
+                        egui::RichText::new(format!("zoom {zoom}"))
+                            .color(theme::FG_MUTED)
+                            .size(theme::SIZE_HINT),
+                    );
                 });
             });
             self.viewer.layer_controls(ui);

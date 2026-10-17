@@ -24,7 +24,7 @@ pub(crate) fn sections(
         ui.label(
             egui::RichText::new("1.0 = full simulation · 0.0 = original")
                 .small()
-                .color(egui::Color32::GRAY),
+                .color(theme::FG_MUTED),
         );
         if filter_matches(filter, "output color space") {
             flags.runtime_changed |= choice_tip(

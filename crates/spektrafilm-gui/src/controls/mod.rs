@@ -123,17 +123,25 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
         .find(|(option, _)| *option == *value)
         .map(|(_, label)| *label)
         .unwrap_or("");
-    let mut changed = false;
-    egui::ComboBox::from_label(label)
-        .selected_text(selected)
-        .show_ui(ui, |ui| {
-            for &(option, label) in choices {
-                changed |= ui.selectable_value(value, option, label).changed();
-            }
-        })
-        .response
-        .on_hover_text(tooltip);
-    changed
+    let prev = *value;
+    // Label first, selector second, so a choice row reads like every other
+    // parameter row. The selector paints in its own horizontal row inside a
+    // vertical section body, so both share one explicit row here.
+    ui.horizontal(|ui| {
+        ui.label(label).on_hover_text(tooltip);
+        egui::ComboBox::from_id_salt(label)
+            .selected_text(selected)
+            .show_ui(ui, |ui| {
+                for &(option, label) in choices {
+                    ui.selectable_value(value, option, label);
+                }
+            })
+            .response
+            .on_hover_text(tooltip);
+        // The selector carries the parameter's own accessible name.
+        widgets::name_choice(ui, label);
+    });
+    prev != *value
 }
 
 /// A section or sub-section header. During a control search the body is
@@ -228,6 +236,10 @@ mod scanner;
 mod upsampling;
 mod widgets;
 pub(crate) use widgets::*;
+
+// Every control editor reads presentation tokens; re-export so a control file
+// does not each add its own import.
+pub(crate) use crate::theme;
 
 #[cfg(test)]
 #[path = "controls_acceptance.rs"]
