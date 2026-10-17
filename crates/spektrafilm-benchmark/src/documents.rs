@@ -190,7 +190,7 @@ pub fn load_json_document(path: &Path) -> Result<Value> {
 /// missing or unreadable fails validation instead of an execution.
 pub fn validate_authored_document(kind: &str, path: &Path) -> Result<Value> {
     let value = load_json_document(path)?;
-    validate_schema(kind, &value)?;
+    validate_schema(kind, &value).map_err(|e| e.file(path.display().to_string()))?;
     validate_local_dependencies(kind, &value, path)?;
     Ok(value)
 }
@@ -783,7 +783,7 @@ pub fn load_suite(path: &Path) -> Result<Value> {
 }
 
 pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
-    validate_authored("suite", v)?;
+    validate_authored("suite", v).map_err(|e| e.file(path.display().to_string()))?;
     let cases = v["cases"].as_array().unwrap();
     unique(cases, "id")?;
     for x in v["protocol"]["probe"]["tone_response"]

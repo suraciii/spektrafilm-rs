@@ -300,6 +300,30 @@ fn complete_retained_run_with_and_without_capture_validates() {
 }
 
 #[test]
+fn validating_a_retained_run_lists_the_checks_it_did_not_perform() {
+    let temp = TempDir::new().unwrap();
+    complete_run(temp.path(), false);
+    let (result, code) = validate_run(temp.path());
+    assert_eq!(code, 0, "{result}");
+    // The record was produced by execution. Validating its shape decides
+    // nothing about whether its images decode, its buffers match the device
+    // that produced them, or its measurements hold on re-execution, so every
+    // such check must be named rather than left to implication.
+    let unchecked = result["unchecked"].as_array().unwrap();
+    for check in [
+        "image_decoding",
+        "rendering",
+        "compute_device",
+        "measurement",
+    ] {
+        assert!(
+            unchecked.iter().any(|v| v == check),
+            "{check} must be listed as unchecked: {result}"
+        );
+    }
+}
+
+#[test]
 fn missing_source_evidence_fails_semantically_with_recomputed_identity() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();

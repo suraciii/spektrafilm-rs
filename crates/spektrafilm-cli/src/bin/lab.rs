@@ -245,6 +245,23 @@ fn validate(
             "rendering",
             "compute_device"
         ]),
+        // A retained record was produced by execution. Validating its structure
+        // and identities decides nothing about whether its images decode, its
+        // buffers match the device that produced them, or its measurements hold
+        // on re-execution, so those checks are listed rather than implied.
+        "run" => serde_json::json!([
+            "image_decoding",
+            "rendering",
+            "compute_device",
+            "measurement"
+        ]),
+        "comparison" => serde_json::json!([
+            "image_decoding",
+            "rendering",
+            "compute_device",
+            "measurement",
+            "rule_evaluation"
+        ]),
         _ => serde_json::json!([]),
     };
     let mut result = serde_json::json!({"schema_version":1,"command":"validate","execution_status":"completed","kind":kind,"digest":common::digest(&value)?,"unchecked":unchecked});
@@ -318,6 +335,16 @@ fn execute(
             // records that carry suite cases. The record kind decides, so a
             // reading comparison never needs a reference to be one.
             if is_reading_comparison(args.baseline.as_deref(), args.candidate.as_deref()) {
+                // A reading comparison publishes per-sample and per-stage
+                // deltas between two retained readings. It selects no rules and
+                // holds no policy, so a caller that asked for a gate on this
+                // form is told so rather than silently getting no evaluation.
+                if args.policy.is_some() || args.gate {
+                    return Err(BenchError::new(
+                        "argument_syntax",
+                        "--policy and --gate apply to a version comparison of run records; a reading comparison of measurement records evaluates no rules",
+                    ));
+                }
                 let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
                     baseline: args.baseline.ok_or_else(|| {
                         BenchError::new("argument_syntax", "Missing baseline run")
@@ -493,6 +520,15 @@ fn is_reading_comparison(
 }
 
 fn execute_compare(args: EvaluationCompareArgs) -> Result<(serde_json::Value, i32), BenchError> {
+    // The version form derives its reference pair from the retained run
+    // records' own pair sets; a caller cannot inject one from the command
+    // line. The single-run form selects among the pairs the run retained.
+    if args.run.is_none() && args.reference_run.is_some() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "--reference-run applies to a reading comparison of measurement records; a version comparison of run records derives its reference pair from the records",
+        ));
+    }
     if let Some(run) = args.run {
         compare::compare_single(
             &run,

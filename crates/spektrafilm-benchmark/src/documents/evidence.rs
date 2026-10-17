@@ -663,7 +663,8 @@ fn validate_retained_bundle(
 
 pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result<()> {
     finite(v)?;
-    validate_schema(kind, v)?;
+    validate_schema(kind, v)
+        .map_err(|e| e.file(root.join(format!("{kind}.json")).display().to_string()))?;
     let o = obj(v)?;
     let body = Value::Object(
         o.iter()

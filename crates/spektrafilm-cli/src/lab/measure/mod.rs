@@ -783,18 +783,10 @@ pub fn statistics(values: impl Iterator<Item = f64>) -> Statistics {
     } else {
         finite[middle]
     };
-    // The estimator is the benchmark's own (`metrics/math.rs::quantile`,
-    // linear interpolation between the two neighbouring order statistics),
-    // restated here because `spektrafilm-benchmark` is a research binary and is
-    // deliberately not a dependency of this CLI. A change there must land here.
-    let index = (count - 1) as f64 * 0.95;
-    let low = index.floor() as usize;
-    let high = index.ceil() as usize;
-    let fraction = index - low as f64;
-    let p95 = match fraction >= 0.5 {
-        true => finite[high] - (finite[high] - finite[low]) * (1.0 - fraction),
-        false => finite[low] + (finite[high] - finite[low]) * fraction,
-    };
+    // One estimator for the whole workspace: the benchmark's interpolating
+    // quantile (`spektrafilm_benchmark::metrics::quantile`), which this CLI
+    // already depends on under `precision-f64`.
+    let p95 = spektrafilm_benchmark::metrics::quantile(&finite, 0.95).unwrap_or(f64::NAN);
     Statistics {
         count,
         mean,
