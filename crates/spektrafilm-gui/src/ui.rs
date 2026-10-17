@@ -31,7 +31,7 @@ impl GuiTab {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Main => "MAIN",
             Self::Film => "FILM",
@@ -39,6 +39,24 @@ impl GuiTab {
             Self::Advanced => "ADVANCED",
             Self::Config => "CONFIG",
         }
+    }
+}
+fn section_summary(section: &str) -> Option<&'static str> {
+    match section {
+        "Film base" => Some("Base density: scale, tilt, and per-channel masks"),
+        "Halation" => Some("Highlight glow: halation, in-emulsion scatter, boost"),
+        "Couplers" => Some("DIR couplers: inhibition and interlayer response"),
+        "Convert" => Some("Convert-film calibration: base, matrix, controller actions"),
+        "Camera diffusion" => Some("Lens diffusion: core, tail, and warmth"),
+        "Print base" => Some("Base density: scale and per-channel masks"),
+        "Glare" => Some("Print viewing glare: percent, roughness, blur"),
+        "Enlarger diffusion" => Some("Enlarger diffusion: core, tail, and warmth"),
+        "Film chemistry" | "Print chemistry" => {
+            Some("Density curves: development time, gamma, developer exhaustion")
+        }
+        "Input gamut compress" => Some("Input gamut compression: algorithm, knee, hull detail"),
+        "Output gamut compress" => Some("Output gamut compression: algorithm, knee"),
+        _ => None,
     }
 }
 impl App {
@@ -522,7 +540,11 @@ impl App {
             if label_clicked {
                 header.toggle();
             }
+            let closed = !header.is_open();
             header.body(|ui| self.parameter_section_controls(ui, section));
+            if closed && let Some(summary) = section_summary(section) {
+                ui.label(egui::RichText::new(summary).color(theme::FG_MUTED).small());
+            }
         } else {
             // A section without its own header renders one inside the controls,
             // so its reset scope rides on a row above them.
@@ -578,6 +600,62 @@ impl App {
     /// filter.
     fn section_has_filter_match(&self, section: &str) -> bool {
         controls::cached_labels_match(&self.filter, self.section_labels.get(section))
+    }
+
+    fn search_results(&mut self, ui: &mut egui::Ui) {
+        if self.filter.is_empty() {
+            return;
+        }
+        let extras = self.gui_state.sections.clone();
+        let params = self.params.clone();
+        let results = self.search_index.results(
+            &self.filter,
+            &params,
+            &extras,
+            self.film_medium,
+            self.parameter_revision,
+        );
+        if results.is_empty() {
+            ui.label(
+                egui::RichText::new(format!("No control matches “{}”.", self.filter))
+                    .color(theme::FG_MUTED)
+                    .small(),
+            );
+            return;
+        }
+        if !results.iter().any(|result| result.page == self.gui_tab) {
+            ui.label(
+                egui::RichText::new(format!("No control on {} matches.", self.gui_tab.label()))
+                    .color(theme::FG_MUTED)
+                    .small(),
+            );
+        }
+        let mut destination = None;
+        for result in results {
+            if result.page == self.gui_tab {
+                continue;
+            }
+            let summary = result.summary();
+            let response = ui
+                .button(format!(
+                    "{} · {}: {}",
+                    result.page.label(),
+                    result.section,
+                    summary
+                ))
+                .on_hover_text(summary);
+            let result_label = format!("{} · {}", result.page.label(), result.section);
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_label(result_label);
+            });
+            if response.clicked() {
+                destination = Some((result.page, result.section));
+            }
+        }
+        if let Some((page, section)) = destination {
+            self.gui_tab = page;
+            self.pending_scroll = Some(section.to_owned());
+        }
     }
 
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
@@ -639,11 +717,19 @@ impl App {
 
     fn import_section(&mut self, ui: &mut egui::Ui, raw: bool) {
         ui.collapsing(if raw { "Import Raw" } else { "Import RGB" }, |ui| {
-            if ui.button("select file").on_hover_text(if raw {
-                "Load and process a raw file with the selected white balance and lens correction settings."
+            let label = if raw {
+                "Select RAW file…"
             } else {
-                "Select an input image"
-            }).clicked()
+                "Select RGB image…"
+            };
+            if ui
+                .button(label)
+                .on_hover_text(if raw {
+                    "Load and process a raw file with the selected white balance and lens correction settings."
+                } else {
+                    "Select an input image"
+                })
+                .clicked()
                 && let Some(path) = self.chooser.pick_file(
                     self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()),
                 )
@@ -655,10 +741,40 @@ impl App {
                 self.parameter_section(ui, "Import Raw");
             }
             if let Some(p) = &self.image_path {
-                ui.label(egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small());
+                ui.label(egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("" )).small());
             }
             ui.add_space(theme::SPACE_BLOCK);
         });
+    }
+
+    fn display_profile_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("select ICC profile…").clicked()
+                && let Some(path) = self.chooser.pick_file(
+                    self.file_dialog("display")
+                        .add_filter("ICC profile", &["icc", "icm"]),
+                )
+            {
+                self.gui_state.set_display_profile(path.to_str());
+                self.refresh_viewing_artifacts();
+                if lcms2::Profile::new_file(&path).is_err() {
+                    self.viewer.transform_status =
+                        "Display transform: ICC failed; using the sRGB preview; viewing sRGB preview".into();
+                }
+                self.status = format!("Display ICC profile: {}", path.display());
+            }
+            if self.gui_state.display_profile().is_some() && ui.button("clear").clicked() {
+                self.gui_state.set_display_profile(None);
+                self.refresh_viewing_artifacts();
+                self.status = "Display ICC profile cleared".into();
+            }
+        });
+        if let Some(profile) = self.gui_state.display_profile() {
+            ui.label(format!("Display ICC: {profile}"));
+        } else {
+            ui.label("Display ICC: platform profile or sRGB fallback");
+        }
+        ui.label(self.viewer.transform_status.clone());
     }
 
     fn export_actions(&mut self, ui: &mut egui::Ui) {
@@ -676,7 +792,7 @@ impl App {
                     let enabled = self.image.is_some()
                         && self.calibration_job.is_none()
                         && !self.export_dialog.is_open();
-                    if ui.add_enabled(enabled, egui::Button::new("Export…"))
+                    if ui.add_enabled(enabled, egui::Button::new("Open export settings…"))
                         .on_hover_text("Choose settings and render the full image independently of Save.")
                         .clicked()
                     {
@@ -727,10 +843,20 @@ impl App {
         if label_clicked {
             header.toggle();
         }
+        let closed = !header.is_open();
         header.body(|ui| {
             self.chemistry_dev_time(ui, film);
             self.parameter_section(ui, section);
         });
+        if closed {
+            ui.label(
+                egui::RichText::new(
+                    "Density curves: development time, gamma, developer exhaustion",
+                )
+                .color(theme::FG_MUTED)
+                .small(),
+            );
+        }
     }
 
     fn chemistry_dev_time(&mut self, ui: &mut egui::Ui, film: bool) {
@@ -835,6 +961,7 @@ impl App {
                 });
                 ui.collapsing("Display", |ui| {
                     let display_transform_before = self.viewer.settings.use_display_transform;
+                    self.display_profile_controls(ui);
                     self.viewer.controls(ui);
                     self.parameter_section(ui, "Display");
                     self.viewer.interpolation_control(ui);
@@ -976,6 +1103,7 @@ impl eframe::App for App {
                     ui.text_edit_singleline(&mut self.filter)
                         .labelled_by(label.id);
                 });
+                self.search_results(ui);
                 ui.add_space(theme::SPACE_ROW);
                 // Reserve the action bar's height below the scrollable
                 // controls, so the bar stays inside the panel.
@@ -1017,6 +1145,14 @@ impl eframe::App for App {
                             self.viewer.set_zoom_percent(percent);
                             ui.ctx().request_repaint();
                         }
+                    }
+                    if ui
+                        .button("fit")
+                        .on_hover_text("Fit the image to the viewer window")
+                        .clicked()
+                    {
+                        self.viewer.fit_view();
+                        ui.ctx().request_repaint();
                     }
                     if ui.button("reset view").clicked() {
                         self.viewer.reset_view();

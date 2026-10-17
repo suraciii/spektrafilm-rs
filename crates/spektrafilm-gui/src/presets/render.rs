@@ -56,17 +56,20 @@ impl App {
                 }
                 if expanded {
                     ui.heading("Presets");
-                    if ui
-                        .button("+")
-                        .on_hover_text("Save current look as a preset")
-                        .clicked()
-                    {
-                        self.save_preset_as();
-                    }
                 }
             });
             if !expanded {
                 return;
+            }
+            // The save action sits on its own row rather than beside the
+            // heading: a labeled button needs the panel's width, and the
+            // browser is collapsible down to a narrow strip.
+            if ui
+                .button("Save preset…")
+                .on_hover_text("Save current look as a preset")
+                .clicked()
+            {
+                self.save_preset_as();
             }
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for group in [PresetGroup::BuiltIn, PresetGroup::User] {
@@ -103,7 +106,7 @@ impl App {
                         .filter(|(_, e)| e.group == group && e.fault.is_none())
                         .peekable();
                     if entries.peek().is_none() && group == PresetGroup::User {
-                        ui.weak("Use + to save the current look.");
+                        ui.weak("Use Save preset to save the current look.");
                     }
                     for (index, entry) in entries {
                         let active = self

@@ -53,7 +53,7 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     .unwrap();
     click(h, "Import RGB");
     script(h, chooser::ChooserResult::Scripted(replacement.clone()));
-    click(h, "select file");
+    click(h, "Select RGB image…");
     assert_eq!(h.state().image_path.as_ref(), Some(&replacement));
     assert_eq!(
         (
@@ -65,15 +65,15 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     let before = h.state().image.as_ref().unwrap().clone();
     let status = h.state().status.clone();
     script(h, chooser::ChooserResult::Canceled);
-    click(h, "select file");
+    click(h, "Select RGB image…");
     assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &before));
     assert_eq!(h.state().status, status);
     let scan = render(h, "SCAN");
     click(h, "Export options");
-    export_action(h);
+    export_action(h, "Open export settings…");
     let exported = s.directory.path().join("button-export.png");
     script(h, chooser::ChooserResult::Scripted(exported.clone()));
-    export_action(h);
+    export_action(h, "Export file…");
     wait_until(h, |a| {
         a.export_job.is_none() && a.status.starts_with("Exported")
     });
@@ -312,7 +312,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     choose(h, "workflow", "Finished RGB");
     click(h, "Import RGB");
     script(h, chooser::ChooserResult::Scripted(path));
-    click(h, "select file");
+    click(h, "Select RGB image…");
     let original = h.state().image.as_ref().unwrap().clone();
     let baseline = render(h, "SCAN");
     click(h, "cw rotate");
@@ -355,12 +355,12 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     }
     assert_rotated_metadata(&save, (2, 4));
     click(h, "Export options");
-    export_action(h);
+    export_action(h, "Open export settings…");
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
     let exported = s.directory.path().join("rotated-export.tiff");
     script(h, chooser::ChooserResult::Scripted(exported.clone()));
-    export_action(h);
+    export_action(h, "Export file…");
     wait_until(h, |a| {
         a.export_job.is_none() && a.status.starts_with("Exported")
     });

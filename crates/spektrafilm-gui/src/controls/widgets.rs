@@ -1,7 +1,8 @@
 //! Editors for the pinned experimental GUI sections.
+use super::row_modified;
 use super::{ControlFilter, filter_matches};
 use crate::editor_ranges;
-use crate::numeric::{numeric, numeric_field, numeric_field_validated};
+use crate::numeric::{numeric, numeric_field, numeric_field_validated, numeric_marked};
 use crate::theme;
 use egui::Ui;
 use serde_json::{Map, Value};
@@ -21,7 +22,8 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
     tooltip: &str,
 ) -> bool {
     let (min, max, step, decimals) = editor_range_for(path);
-    numeric(
+    let mark = row_modified::RowMark::resolve(ui.ctx(), Some(path));
+    numeric_marked(
         ui,
         label,
         value,
@@ -32,6 +34,7 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
         tooltip,
         crate::numeric::unit_suffix(path),
         false,
+        mark,
     )
 }
 
@@ -65,6 +68,61 @@ pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
 pub(crate) const POSITION_IDENTIFIERS: &[&str] = &[];
 /// Component identifiers for a film-scan point tuple.
 pub(crate) const CHANNEL_IDENTIFIERS: &[&str] = &["R", "G", "B"];
+/// Component identifiers for a gamut knee: core declares the component
+/// domains, and the identifiers name them.
+pub(crate) const KNEE_IDENTIFIERS: &[&str] = &["threshold", "limit", "power"];
+/// Component identifiers for a crop rectangle: relative coordinates, ordered
+/// x then y, as the parameter's own description states.
+pub(crate) const XY_IDENTIFIERS: &[&str] = &["x", "y"];
+/// Component identifiers for the digital-sharpening pair: sigma then amount,
+/// as the parameter's unit states.
+pub(crate) const USM_IDENTIFIERS: &[&str] = &["sigma", "amount"];
+/// Component identifiers for the micro-structure pair: the clumping-field
+/// blur width, then its standard deviation.
+pub(crate) const MICRO_STRUCTURE_IDENTIFIERS: &[&str] = &["blur", "clump"];
+
+/// Per-component identifiers for the tuple row at `path`.
+///
+/// A tuple whose components are colour channels names them `R`/`G`/`B`, and a
+/// tuple whose components the parameter itself names keeps those names. A
+/// tuple whose components are only ordered positions stays positional:
+/// inventing a name the parameter does not carry would mislead, and the
+/// identifier becomes part of the row's accessible name.
+fn tuple_identifiers(path: &str) -> &'static [&'static str] {
+    match path {
+        // Colour-channel tuples: one component per emulsion channel.
+        "film_render.dir_couplers.gamma_samelayer_rgb"
+        | "film_render.dir_couplers.langmuir_donor_k_rgb"
+        | "film_render.dir_couplers.langmuir_receiver_k_rgb"
+        | "film_render.halation.scatter_core_um"
+        | "film_render.halation.scatter_tail_um"
+        | "film_render.halation.scatter_tail_weight"
+        | "film_render.halation.halation_strength"
+        | "film_render.halation.halation_first_sigma_um"
+        | "film_render.grain.rms_granularity"
+        | "film_render.grain.density_min"
+        | "film_render.grain.uniformity"
+        | "scanner.reference_balance_ev"
+        | "scanner.conversion_balance_ev" => CHANNEL_IDENTIFIERS,
+        // Gamut knee: core owns the component names.
+        "io.input_gamut_compress.knee" | "io.output_gamut_compress.knee" => KNEE_IDENTIFIERS,
+        // Crop rectangle in relative coordinates.
+        "io.crop_center" | "io.crop_size" => XY_IDENTIFIERS,
+        // Digital sharpening: sigma then amount.
+        "scanner.unsharp_mask" => USM_IDENTIFIERS,
+        // Micro-structure: scale then clump size.
+        "film_render.grain.micro_structure" => MICRO_STRUCTURE_IDENTIFIERS,
+        // Interlayer inhibition, ordered as the parameter's own description
+        // states: the receiving layer of each pair.
+        "film_render.dir_couplers.gamma_interlayer_r_to_gb" => &["G", "B"],
+        "film_render.dir_couplers.gamma_interlayer_g_to_rb" => &["R", "B"],
+        "film_render.dir_couplers.gamma_interlayer_b_to_rg" => &["R", "G"],
+        // Everything else is positional: the channel swaps write to a channel
+        // by index, and the emulsion-layer triplets have no documented
+        // ordering the identifiers could name.
+        _ => POSITION_IDENTIFIERS,
+    }
+}
 
 pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
     ui: &mut Ui,
@@ -74,7 +132,7 @@ pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
     tooltip: &str,
 ) -> bool {
     let (min, max, step, decimals) = editor_range_for(path);
-    tuple(
+    tuple_marked(
         ui,
         label,
         values,
@@ -83,8 +141,9 @@ pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
         step,
         decimals,
         tooltip,
-        POSITION_IDENTIFIERS,
+        tuple_identifiers(path),
         false,
+        row_modified::RowMark::resolve(ui.ctx(), Some(path)),
     )
 }
 
@@ -97,7 +156,7 @@ pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
     tooltip: &str,
 ) -> bool {
     let (min, max, step, decimals) = editor_range_for(path);
-    tuple(
+    tuple_marked(
         ui,
         label,
         values,
@@ -106,8 +165,9 @@ pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
         step,
         decimals,
         tooltip,
-        POSITION_IDENTIFIERS,
+        tuple_identifiers(path),
         true,
+        row_modified::RowMark::resolve(ui.ctx(), Some(path)),
     )
 }
 
@@ -316,62 +376,6 @@ pub(crate) fn optional_numeric(
     changed
 }
 
-// UI helpers keep their existing parameter interfaces.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
-    ui: &mut Ui,
-    label: &str,
-    values: &mut [T; N],
-    min: f64,
-    max: f64,
-    step: f64,
-    decimals: usize,
-    tooltip: &str,
-    identifiers: &[&str],
-    experimental: bool,
-) -> bool {
-    ui.push_id(label, |ui| {
-        row_label(ui, label, experimental).on_hover_text(tooltip);
-        ui.horizontal_wrapped(|ui| {
-            values
-                .iter_mut()
-                .enumerate()
-                .map(|(index, value)| {
-                    let identifier = identifiers
-                        .get(index)
-                        .copied()
-                        .unwrap_or_else(|| index_identifier(index));
-                    let identifier_response = ui
-                        .label(
-                            egui::RichText::new(identifier)
-                                .color(theme::FG_MUTED)
-                                .size(theme::SIZE_HINT),
-                        )
-                        .on_hover_text(tooltip);
-                    numeric_field(
-                        ui,
-                        // The visible identifier and the accessible name agree,
-                        // so the component is named the same way for every
-                        // reader.
-                        &format!("{label} {identifier}"),
-                        (label, index),
-                        value,
-                        min,
-                        max,
-                        step,
-                        decimals,
-                        tooltip,
-                        None,
-                        Some(identifier_response.id),
-                    )
-                })
-                .fold(false, |changed, field_changed| changed | field_changed)
-        })
-        .inner
-    })
-    .inner
-}
-
 /// Fallback component identifier: the 0-based position, which matches the
 /// accessible names the harness already queries.
 fn index_identifier(index: usize) -> &'static str {
@@ -508,7 +512,9 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
     let mut changed = false;
     ui.horizontal(|ui| {
         let label_response = ui.label(label).on_hover_text(tooltip);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let mark = row_modified::RowMark::resolve(ui.ctx(), Some(label));
+        mark.paint(ui, &label_response);
+        mark.gold(ui, |ui| {
             let (fill, knob, text) = if *value {
                 (theme::ACCENT, theme::CONTRAST_ON_ACCENT, "on")
             } else {
@@ -756,12 +762,67 @@ pub fn extra_bool_tip(
     tooltip: &str,
 ) -> bool {
     let mut value = extras[section][key].as_bool().unwrap_or(default);
-    if toggle(ui, label, &mut value, tooltip) {
+    let mark = row_modified::RowMark::resolve_extras(ui.ctx(), section, key);
+    if mark.gold(ui, |ui| toggle(ui, label, &mut value, tooltip)) {
         set_extra(extras, section, key, Value::from(value));
         true
     } else {
         false
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tuple_marked<T: egui::emath::Numeric, const N: usize>(
+    ui: &mut Ui,
+    label: &str,
+    values: &mut [T; N],
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    tooltip: &str,
+    identifiers: &[&str],
+    experimental: bool,
+    mark: row_modified::RowMark,
+) -> bool {
+    ui.push_id(label, |ui| {
+        let label_response = row_label(ui, label, experimental).on_hover_text(tooltip);
+        mark.paint(ui, &label_response);
+        mark.gold(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                values
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        let identifier = identifiers
+                            .get(index)
+                            .copied()
+                            .unwrap_or_else(|| index_identifier(index));
+                        let identifier_response = ui.label(
+                            egui::RichText::new(identifier)
+                                .color(theme::FG_MUTED)
+                                .size(theme::SIZE_HINT),
+                        );
+                        numeric_field(
+                            ui,
+                            &format!("{label} {identifier}"),
+                            (label, index),
+                            value,
+                            min,
+                            max,
+                            step,
+                            decimals,
+                            tooltip,
+                            None,
+                            Some(identifier_response.id),
+                        )
+                    })
+                    .fold(false, |changed, field_changed| changed | field_changed)
+            })
+            .inner
+        })
+    })
+    .inner
 }
 
 // UI helpers keep their existing parameter interfaces.

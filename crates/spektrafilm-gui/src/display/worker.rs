@@ -303,7 +303,8 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
         let cached = fit
             .as_ref()
             .is_some_and(|entry| entry.prepared.matches(source, &metadata, max_size));
-        if !cached
+        if metadata.profile.is_none()
+            && !cached
             && let Some(seed) = prepared.filter(|seed| seed.matches(source, &metadata, max_size))
         {
             *fit = Some(FitCacheEntry {

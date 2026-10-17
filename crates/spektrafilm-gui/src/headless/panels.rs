@@ -134,7 +134,7 @@ fn pixel_at_fraction(observation: &ViewerObservation, x: f32, y: f32) -> Color32
     image.pixels[y * image.size[0] + x]
 }
 
-fn assert_float_images_equal(before: &Path, after: &Path) {
+pub(crate) fn assert_float_images_equal(before: &Path, after: &Path) {
     let before = image_io::load(before).unwrap().image;
     let after = image_io::load(after).unwrap().image;
     assert_eq!((before.width, before.height), (after.width, after.height));
@@ -309,6 +309,111 @@ fn footer_reset_view_restores_fit_zoom_and_zero_pan_after_zoom_and_drag() {
     assert_eq!(h.state().viewer.pan, Vec2::ZERO);
     let reset = composed(h, 43.0);
     assert_eq!(reset.image_rect, baseline.image_rect);
+
+    // Fit is the zoom alone: it clears the exact zoom and leaves the pan, so a
+    // panned view stays where the user put it. Reset view recentres as well.
+    click(h, "200%");
+    pointer(h, center, true, 44.0);
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(center + Vec2::new(12.0, 6.0)));
+    frame(h, 44.1);
+    pointer(h, center + Vec2::new(12.0, 6.0), false, 44.2);
+    let panned = Vec2::new(12.0, 6.0);
+    assert!((h.state().viewer.pan - panned).length() < 0.01);
+    click(h, "fit");
+    assert_eq!(h.state().viewer.zoom_percent, None);
+    assert_eq!(h.state().viewer.zoom, 1.0);
+    assert!((h.state().viewer.pan - panned).length() < 0.01);
+    let fitted = composed(h, 45.0);
+    // The fitted zoom matches the baseline's, and the surviving pan offsets
+    // the image by exactly the pan the user applied.
+    assert_eq!(
+        fitted.image_rect.size(),
+        baseline.image_rect.size(),
+        "fit must restore the fitted zoom"
+    );
+    assert!((fitted.image_rect.center() - panned - baseline.image_rect.center()).length() < 0.01);
+    // Reset view then recentres the pan as well.
+    click(h, "reset view");
+    assert_eq!(h.state().viewer.pan, Vec2::ZERO);
+    assert_eq!(composed(h, 46.0).image_rect, baseline.image_rect);
+}
+
+/// specs/gui-workflow/spec.md#labels-and-surfaces: the two intake sections and
+/// the two export steps each name their own action, so a label resolves to one
+/// control. The viewer presents fit as its own action, distinct from reset
+/// view, and the preset save action carries a label rather than a bare glyph.
+#[test]
+fn workflow_actions_carry_distinct_visible_labels() {
+    let mut s = session();
+    let h = &mut s.harness;
+
+    // The shared fixture collapses the preset browser; expand it to reach the
+    // save action.
+    if h.query_by_label("▶").is_some() {
+        click(h, "▶");
+    }
+
+    // Preset save: one labeled action, not a bare `+`.
+    assert!(
+        h.query_by_label("Save preset…").is_some(),
+        "the preset save action has no visible label"
+    );
+    assert!(
+        h.query_by_label("+").is_none(),
+        "the bare `+` save action must not remain"
+    );
+
+    // Viewer: fit and reset view are separate actions.
+    assert!(
+        h.query_by_label("fit").is_some(),
+        "the viewer has no fit action"
+    );
+    assert!(
+        h.query_by_label("reset view").is_some(),
+        "the viewer has no reset view action"
+    );
+
+    // Intake: each import section names its own action, so the labels differ.
+    click(h, "MAIN");
+    click(h, "Import RGB");
+    assert_eq!(
+        h.query_all_by_label("Select RGB image…").count(),
+        1,
+        "the RGB intake action is not uniquely labeled"
+    );
+    click(h, "Import Raw");
+    assert_eq!(
+        h.query_all_by_label("Select RAW file…").count(),
+        1,
+        "the RAW intake action is not uniquely labeled"
+    );
+
+    // Export: the sidebar opener and the modal submit are distinct steps.
+    click(h, "Export options");
+    assert_eq!(
+        h.query_all_by_label("Open export settings…").count(),
+        1,
+        "the export settings opener is not uniquely labeled"
+    );
+    export_action(h, "Open export settings…");
+    assert!(h.state().export_dialog.is_open());
+    assert_eq!(
+        h.query_all_by_label("Export file…").count(),
+        1,
+        "the export modal submit is not uniquely labeled"
+    );
+    // The opener is disabled while the modal is open, so the one enabled
+    // action is the submit, not a second opener.
+    assert_eq!(
+        h.query_all_by_label("Open export settings…")
+            .filter(|node| !node.node().is_disabled())
+            .count(),
+        0,
+        "the opener must stay disabled while the modal is open"
+    );
+    click(h, "Cancel");
 }
 
 fn paper_pixel(raster: &DisplayRaster, position: Pos2, rect: Rect) -> Color32 {

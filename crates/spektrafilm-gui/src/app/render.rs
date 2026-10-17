@@ -176,7 +176,7 @@ impl App {
                         &self.output_color_space,
                         self.output_cctf_encoding,
                         r.display_enabled,
-                        None,
+                        self.gui_state.display_profile().map(Path::new),
                         r.display_max_size,
                     );
                     self.output_image = Some(output);

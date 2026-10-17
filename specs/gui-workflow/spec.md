@@ -105,7 +105,8 @@ An editor must reject input that the validator would reject, before the value en
 
 `camera.film_format_mm` is the model for this rule: its editor holds a 1-1000 mm editing range and clamps typed values to it, while recipes, presets, CLI parameters, and saved state carry any strictly positive value under [Film geometry](./film-grain/v3/design.md#film-geometry).
 
-The editor range is declared once per parameter path in a single table. The GUI editor reads that table; a missing entry is a defect, not a silent default to the machine range. The same table is the source for the CLI discovery `minimum`/`maximum` output. The editor range must be contained within the validator's accepted range and must be wide enough to reach the parameter's documented usable values. Where the validator bound is unbounded above, the editor must still declare a finite maximum derived from the parameter's typical operating range.
+
+Every numeric row must show a non-color modified cue when its value differs from the exact-bit factory value restored by its section reset. The cue may include a gold marker and gold value text, but it must not change the row's accessible label.
 
 ## Viewer presentation
 
@@ -117,7 +118,15 @@ The viewer footer owns the layer selector. It is the only surface that exposes i
 
 The development animation is fixed viewer behaviour. It must not have an editor, and it must not be persisted as an editable control. An automatic parameter update skips it; an explicit Preview or Scan retains it.
 
-The viewer must let the user select a display ICC profile. The selected profile applies to the disposable viewer raster only. Windows discovers the primary display profile when the user selects none. An explicitly selected profile applies on every platform that supports LittleCMS. Without a usable profile, the encoded sRGB preview is used directly.
+The viewer must let the user select a display ICC profile from CONFIG → Display and clear an explicit selection. The selected profile applies to the disposable viewer raster only. Windows discovers the primary display profile when the user selects none. An explicitly selected profile applies on every platform that supports LittleCMS. Without a usable profile, the encoded sRGB preview is used directly. Save and Export pixels must not change when the viewer profile changes.
+
+CONFIG → Display must expose `select ICC profile…` and `clear`. The selected profile is transient viewer composition input carried in `rust.display_profile`; it must not change retained, saved, or exported pixels. The UI must retain an unusable selection so the user can correct it, and must report the sRGB fallback when LittleCMS cannot use it.
+
+Every displayed parameter row must expose a non-color modified cue when its value differs by exact bits from the factory value restored by its section reset. The row cue must use the same scope table as section reset, including leaf-specific Camera and Enlarger scopes, and must not change the accessible label. Section reset must restore only its declared runtime and extras paths.
+
+The control search must index all five page layouts without changing ownership. A selected result must switch to the owning page and reveal its section; search state is transient and must not alter parameters or persisted state. Closed sections must provide a concise summary of their contained controls.
+
+Import actions must be labeled `Select RGB image…` and `Select RAW file…`; the MAIN export opener must be `Open export settings…`, its dialog submit must be `Export file…`, and preset creation must be `Save preset…`. The viewer must provide `fit` for fitted zoom without changing pan and retain `reset view` as the pan-centering action.
 
 The viewer must expose a tonal-distribution readout of the retained output. It must be viewer-only: it must not alter saved or exported pixels.
 - The readout is a fixed strip at the top of the control panel, above the tab row. It is co-visible with the controls, does not occlude the image, and does not increase the control panel width. It is default-on, collapsible, and its visibility state is persisted. It is viewer-only and never affects saved or exported pixels.
@@ -153,16 +162,17 @@ The existing Output section owns its mix reset to 1, and the Enlarger section fo
 
 ## Control search
 
-The GUI must expose a search box at the top of the control panel. The search filters the controls of the parameter sections on the current tab by label.
+The GUI must expose a search box at the top of the control panel. The search indexes controls on every page by label and reports the owning page and section.
 
 - The search box is a single-line text field, always visible above the tab content.
-- Filtering is case-insensitive substring match against the control label.
+- Filtering is a case-insensitive substring match against the control label.
 - A control whose label does not match the filter must not appear while the filter is not empty.
 - A section with a matching control shows the section title and its matching controls, also when the section or one of its sub-sections is collapsed.
 - A section without a matching control must not appear.
+- A selected result must switch to the owning page and reveal its section without changing parameter or persisted state.
 - Surfaces outside the parameter sections — import file selection, export options, profiles, the viewer, and GUI settings — keep their normal layout.
 - The filter is transient UI state. It is not persisted and does not affect parameter values.
-- An empty filter must restore the normal panel layout, so no control is hidden by the search.
+- An empty filter must restore the normal panel layout, so no control is hidden by the search. A non-matching filter must state that no control matches.
 
 ## Labels and surfaces
 

@@ -2,6 +2,8 @@
 use super::*;
 use crate::display::{Interpolation, ViewLayer, ViewerObservation};
 
+use super::panels::assert_float_images_equal;
+
 fn click(h: &mut Harness<'_, App>, label: &str) {
     h.ctx.style_mut(|style| style.animation_time = 0.0);
     // Settle egui collapsing-panel geometry before queuing pointer actions.
@@ -386,4 +388,183 @@ fn viewer_settings_do_not_change_saved_or_exported_pixels() {
             assert!((*a as f64 - *b as f64).abs() <= 1e-6);
         }
     }
+}
+
+/// specs/gui-workflow/spec.md#viewer-presentation: the viewer must let the
+/// user select a display ICC profile. The selection applies to the disposable
+/// viewer raster only; the retained output, Save, and Export keep their own
+/// pixels.
+#[test]
+fn config_display_profile_selection_clear_persistence_and_viewer_only_effect() {
+    let mut s = session();
+    let h = &mut s.harness;
+    develop(h, "PREVIEW", 60.0);
+    settle_animation(h);
+    display_controls(h);
+
+    // The chooser boundary: a scripted result runs the real selection path.
+    let profile = data_dir().join("icc/saucecontrol/DisplayP3-v4.icc");
+    assert!(profile.is_file());
+    script(h, chooser::Chooser::chooser_path(&profile));
+    click(h, "select ICC profile…");
+    assert_eq!(
+        h.state().gui_state.display_profile(),
+        Some(profile.to_str().unwrap()),
+        "the explicit selection reaches the state carrier"
+    );
+    assert_eq!(
+        h.state().viewer.output_display_profile(),
+        Some(profile.as_path()),
+        "the prepared viewing raster carries the profile"
+    );
+    assert!(
+        h.query_by_label_contains("Display ICC:").is_some(),
+        "the CONFIG Display surface presents the selected path"
+    );
+    assert_eq!(
+        h.state().status,
+        format!("Display ICC profile: {}", profile.display())
+    );
+
+    // The retained output is not re-rendered, and the profile reaches the
+    // composed viewer pixels through the display transform.
+    let before = h.state().output_image.clone().unwrap();
+    let without = composed(h, 60.0).pixels.unwrap();
+    let with_profile = composed(h, 61.0).pixels.unwrap();
+    assert_eq!(
+        with_profile.pixels, without.pixels,
+        "the composed raster is keyed on the accepted generation, not re-composed"
+    );
+    assert!(
+        h.state()
+            .output_image
+            .as_ref()
+            .is_some_and(|out| Arc::ptr_eq(out, &before)),
+        "the retained output is not re-rendered by a viewer-only selection"
+    );
+
+    // Persistence: save the state and reload it through the real paths.
+    let saved = s.directory.path().join("display-profile.json");
+    let accepted = h.state().current_state().unwrap();
+    accepted.save(&saved).unwrap();
+    let restored = state::GuiState::load(&saved).unwrap();
+    assert_eq!(restored.display_profile(), Some(profile.to_str().unwrap()));
+    h.state_mut().apply_state(restored).unwrap();
+    assert_eq!(
+        h.state().gui_state.display_profile(),
+        Some(profile.to_str().unwrap()),
+        "the reloaded state keeps the explicit selection"
+    );
+    // The reloaded state reloads the input, so the retained output is produced
+    // again; the selection then reaches the freshly seeded viewing raster.
+    develop(h, "PREVIEW", 62.0);
+    settle_animation(h);
+    assert_eq!(
+        h.state().viewer.output_display_profile(),
+        Some(profile.as_path()),
+        "the reloaded state seeds the viewing raster with the profile"
+    );
+
+    // Save and Export ignore the viewer-only selection.
+    let mut options = h.state().export_options.clone();
+    options.format = export::ExportFormat::Exr;
+    options.depth = BitDepth::ThirtyTwo;
+    options.saving_cctf_encoding = false;
+    let ctx = h.ctx.clone();
+    let save_profile = s.directory.path().join("profile-save.exr");
+    let export_profile = s.directory.path().join("profile-export.exr");
+    h.state_mut().save_to_path(&save_profile);
+    h.state_mut()
+        .start_export_to_path(&ctx, options, &export_profile);
+    wait_until(h, |a| a.export_job.is_none());
+
+    click(h, "clear");
+    assert_eq!(
+        h.state().gui_state.display_profile(),
+        None,
+        "the selection clears"
+    );
+    assert_eq!(
+        h.state().viewer.output_display_profile(),
+        None,
+        "the cleared viewing raster has no explicit profile"
+    );
+    let cleared = h.state().current_state().unwrap();
+    assert_eq!(cleared.display_profile(), None);
+    let save_cleared = s.directory.path().join("cleared-save.exr");
+    let export_cleared = s.directory.path().join("cleared-export.exr");
+    h.state_mut().save_to_path(&save_cleared);
+    let mut cleared_options = h.state().export_options.clone();
+    cleared_options.format = export::ExportFormat::Exr;
+    cleared_options.depth = BitDepth::ThirtyTwo;
+    cleared_options.saving_cctf_encoding = false;
+    h.state_mut()
+        .start_export_to_path(&ctx, cleared_options, &export_cleared);
+    wait_until(h, |a| a.export_job.is_none());
+    assert_float_images_equal(&save_profile, &save_cleared);
+    assert_float_images_equal(&export_profile, &export_cleared);
+}
+
+/// An unusable profile path must stay safe: the selection is retained, the
+/// existing transform fallback keeps the encoded sRGB preview, and the state
+/// document still loads.
+#[test]
+fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
+    let mut s = session();
+    let h = &mut s.harness;
+    develop(h, "PREVIEW", 70.0);
+    settle_animation(h);
+    display_controls(h);
+
+    let missing = s.directory.path().join("absent-profile.icc");
+    script(h, chooser::Chooser::chooser_path(&missing));
+    click(h, "select ICC profile…");
+    assert_eq!(
+        h.state().gui_state.display_profile(),
+        Some(missing.to_str().unwrap()),
+        "the selection is retained so the user can see and correct it"
+    );
+    assert!(
+        h.query_by_label_contains("using the sRGB preview")
+            .is_some(),
+        "the surface states the fallback"
+    );
+
+    let broken = s.directory.path().join("broken.icc");
+    std::fs::write(&broken, b"not an icc profile").unwrap();
+    script(h, chooser::Chooser::chooser_path(&broken));
+    click(h, "select ICC profile…");
+    assert_eq!(
+        h.state().gui_state.display_profile(),
+        Some(broken.to_str().unwrap())
+    );
+    assert!(
+        h.query_by_label_contains("using the sRGB preview")
+            .is_some(),
+        "an unusable profile reports the fallback"
+    );
+
+    let saved = s.directory.path().join("broken-state.json");
+    h.state_mut().current_state().unwrap().save(&saved).unwrap();
+    let restored = state::GuiState::load(&saved).unwrap();
+    assert_eq!(restored.display_profile(), Some(broken.to_str().unwrap()));
+    h.state_mut().apply_state(restored).unwrap();
+    assert_eq!(
+        h.state().gui_state.display_profile(),
+        Some(broken.to_str().unwrap()),
+        "state loading survives an unusable profile"
+    );
+    let composed = composed(h, 72.0);
+    assert!(
+        composed.pixels.is_some(),
+        "the viewer still composes with the fallback raster"
+    );
+    assert!(
+        h.state()
+            .viewer
+            .transform_status
+            .contains("viewing sRGB preview"),
+        "the transform falls back: {}",
+        h.state().viewer.transform_status
+    );
 }

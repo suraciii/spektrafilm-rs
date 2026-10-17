@@ -33,6 +33,18 @@ fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
+fn enlarger(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    super::show(
+        ui,
+        params,
+        &mut serde_json::Value::Null,
+        "Enlarger",
+        super::ScanMedium::Negative,
+        "",
+        &mut Default::default(),
+    );
+}
+
 #[cfg(test)]
 mod headless {
     use super::*;
@@ -108,14 +120,14 @@ mod headless {
             Some("-0.250")
         );
 
-        replace(&mut harness, "balance 1", "0.5");
-        harness.get_by_label("balance 1").key_press(Key::Enter);
+        replace(&mut harness, "balance G", "0.5");
+        harness.get_by_label("balance G").key_press(Key::Enter);
         harness.run();
         assert_eq!(
             harness.state().scanner.conversion_balance_ev,
             [0.0, 0.5, 0.0]
         );
-        for label in ["balance 0", "balance 1", "balance 2"] {
+        for label in ["balance R", "balance G", "balance B"] {
             assert_eq!(
                 harness.get_by_label(label).role(),
                 egui::accesskit::Role::TextInput
@@ -156,7 +168,7 @@ mod headless {
         // The wheel preserves the minimum boundary.
         wheel(&mut harness, "brightness", -120.0);
         assert_eq!(harness.state().scanner.conversion_brightness_ev, -16.0);
-        wheel(&mut harness, "balance 2", 120.0);
+        wheel(&mut harness, "balance B", 120.0);
         assert!((harness.state().scanner.conversion_balance_ev[2] - 0.05).abs() < 1e-6);
         assert_eq!(harness.state().scanner.conversion_balance_ev[0], 0.0);
         assert_eq!(harness.state().scanner.conversion_balance_ev[1], 0.0);
@@ -197,9 +209,9 @@ mod layout_snapshots {
             let labels = [
                 "scan output",
                 "brightness",
-                "balance 0",
-                "balance 1",
-                "balance 2",
+                "balance R",
+                "balance G",
+                "balance B",
                 "contrast",
                 "maximum density",
                 "Lens blur (readout optics)",
@@ -209,8 +221,8 @@ mod layout_snapshots {
                 "film-scan white point R",
                 "film-scan white point G",
                 "film-scan white point B",
-                "Unsharp mask (digital sharpening) 0",
-                "Unsharp mask (digital sharpening) 1",
+                "Unsharp mask (digital sharpening) sigma",
+                "Unsharp mask (digital sharpening) amount",
             ];
             let mut bounds = Vec::new();
             for label in labels {
@@ -354,5 +366,30 @@ mod row_layout {
                 "row {i} value column drifted: {v} vs {value_left}"
             );
         }
+    }
+
+    /// The preflash exposure row carries the longest unit in the vocabulary, so
+    /// its abbreviated display suffix is what keeps the row on one line inside
+    /// the fixed-width panel. A unit that wraps the label breaks the single-line
+    /// row rhythm the spec requires.
+    #[test]
+    fn the_longest_unit_row_stays_on_one_line() {
+        let mut params = scanner_params();
+        params.workflow.route = "input > film > print".into();
+        let harness = Harness::new_ui_state(enlarger, params);
+        let node = harness.get_by_label("preflash exposure");
+        let rect = node.raw_bounds().expect("row editor has no bounds");
+        let label_rect = node
+            .labelled_by()
+            .next()
+            .expect("row editor has no visible label")
+            .raw_bounds()
+            .expect("visible label has no bounds");
+        let shared = label_rect.y0 < rect.y1 && rect.y0 < label_rect.y1;
+        assert!(
+            shared,
+            "preflash exposure: label and value must share one line \
+             (label {label_rect:?}, value {rect:?})"
+        );
     }
 }

@@ -102,6 +102,13 @@ impl Viewer {
             transition: self.transition.as_ref().map(|t| (t.frame, t.polaroid)),
         }
     }
+    /// The explicit ICC profile the disposable output raster is built with.
+    /// Viewer-only: the profile never reaches retained, saved or exported
+    /// pixels.
+    #[cfg(test)]
+    pub(crate) fn output_display_profile(&self) -> Option<&Path> {
+        self.output_source_profile.as_deref()
+    }
     pub fn invalidate_display(&mut self) {
         // Display controls change viewing pixels without retaining development animation.
         self.transition = None;
@@ -203,6 +210,7 @@ impl Viewer {
         if enabled && self.output_source_profile.is_none() {
             self.output_source_profile = discover_display_profile().ok().flatten();
         }
+        self.prepared_output = None;
         self.revision = self.revision.wrapping_add(1);
     }
     pub fn seed_prepared_input(&mut self, source: Arc<ImageBuf>, max_size: u32) {
@@ -258,6 +266,16 @@ impl Viewer {
         self.zoom = 1.0;
         self.zoom_percent = None;
         self.pan = Vec2::ZERO;
+    }
+    /// Return to the fitted zoom, leaving the pan where it is.
+    ///
+    /// Fitting is the zoom alone: an exact zoom and the fit multiplier share
+    /// the same `zoom_percent`/`zoom` pair, so clearing both restores the
+    /// viewport-fitted scale without moving the view. `reset_view` is the
+    /// wider action that also recentres the pan.
+    pub fn fit_view(&mut self) {
+        self.zoom = 1.0;
+        self.zoom_percent = None;
     }
     /// Set an exact source-pixel zoom. 100% means one source pixel per device
     /// pixel, independent of viewport size and white padding.

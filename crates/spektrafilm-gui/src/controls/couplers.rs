@@ -12,7 +12,7 @@ pub(crate) fn sections(
     if section == "Couplers" {
         ui.scope(|ui| {
             ui.label(
-                egui::RichText::new("Key controls: inhibition samelayer (contrast) · inhibition interlayer (saturation) · amount (global)")
+                egui::RichText::new("Key controls: inhibition samelayer (contrast) · inhibition interlayer (saturation) · inhibition amount (global)")
                     .small()
                     .color(theme::FG_MUTED),
             );
@@ -24,8 +24,8 @@ pub(crate) fn sections(
                     "Enable DIR coupler inhibition.",
                 );
             }
-            if filter_matches(filter, "amount") {
-                flags.runtime_changed |= param_numeric(ui, "amount", &mut params.film_render.dir_couplers.amount, "film_render.dir_couplers.amount", "Global multiplier on the DIR coupler inhibition matrix. 1.0 leaves the per-channel gammas as-is.");
+            if filter_matches(filter, "inhibition amount") {
+                flags.runtime_changed |= param_numeric(ui, "inhibition amount", &mut params.film_render.dir_couplers.amount, "film_render.dir_couplers.amount", "Global multiplier on the DIR coupler inhibition matrix. 1.0 leaves the per-channel gammas as-is.");
             }
             if filter_matches(filter, "inhibition samelayer") {
                 flags.runtime_changed |= param_numeric(ui, "inhibition samelayer", &mut params.film_render.dir_couplers.inhibition_samelayer, "film_render.dir_couplers.inhibition_samelayer", "Multiplier on the same-layer (diagonal) inhibition. Controls overall contrast / gamma reduction within each RGB layer.");

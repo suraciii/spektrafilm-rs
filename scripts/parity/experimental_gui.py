@@ -386,7 +386,7 @@ def main():
         driver.state_action('Load from file', seed_path)
         driver.tab('MAIN')
         driver.section('Import RGB')
-        driver.click('Select file')
+        driver.click('Select RGB image')
         driver.dialog(source)
         driver.wait_text(r'Loaded|input\.tif', 'imported-rgb')
         driver.section('Import RGB')
@@ -457,7 +457,7 @@ def main():
         require(sha(args.raw) == '37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc', 'Unexpected RAW fixture')
         driver.tab('MAIN')
         driver.section('Import Raw')
-        driver.click('Select file')
+        driver.click('Select RAW file')
         driver.dialog(args.raw.resolve())
         raw_text = driver.wait_text(
             r'(?:Loaded[^\n]*768\s*[x×=*]\s*512|(?:Preview|Scan)[^\n]*(?:640\s*[x×=*]\s*426|768\s*[x×=*]\s*512))',
@@ -471,7 +471,7 @@ def main():
         driver.state_action('Load from file', seed_path)
         driver.tab('MAIN')
         driver.section('Import RGB')
-        driver.click('Select file')
+        driver.click('Select RGB image')
         driver.dialog(source)
         driver.wait_text(r'Loaded|input\.tif', 'export-input-reloaded')
         driver.section('Import RGB')

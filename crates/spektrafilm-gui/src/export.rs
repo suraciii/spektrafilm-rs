@@ -403,7 +403,9 @@ impl ExportDialog {
                     });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    submit = ui.button("Export…").clicked();
+                    // The sidebar opener and this submit are two steps of one
+                    // flow, so they carry distinct labels.
+                    submit = ui.button("Export file…").clicked();
                     cancel = ui.button("Cancel").clicked();
                 });
             });

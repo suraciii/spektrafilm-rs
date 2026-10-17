@@ -18,15 +18,17 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 ## Input and controls
 
-**Open…** loads standard images or camera RAW. RAW processing uses LibRaw. It exposes as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction. RAW enters the runtime as linear ACES2065-1. See [RAW input](raw.md) for white balance details.
+**Select RGB image…** loads a standard image. **Select RAW file…** loads and processes a camera RAW file with LibRaw. RAW processing uses as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction. RAW enters the runtime as linear ACES2065-1. See [RAW input](raw.md) for white balance details.
 
 **Input image / Profiles** selects the input/output color workflow, film stock, and print paper. Selecting a film keeps the current paper; applying a look preset selects the paper that the look resolves.
 
 **Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value. The text resets when focus leaves the field. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
 
-Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
+Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. A modified row shows a gold marker and value; the marker uses the same section-reset baseline as the section `modified` chip. Tuple, optional, extra, and boolean rows use the same marker rule. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
 
 A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name on the left and its selector on the right. A row marked experimental carries an `experimental` chip beside its name. A checkbox belongs to list selection only.
+
+The control filter searches every page. Results name the owning page and section and summarize matching controls; selecting a result changes the active page and reveals the matching section without changing parameters or persisted state. Clearing the filter restores the normal collapsed layout. Closed sections provide one-line summaries of the controls they contain.
 
 Pages and their section assignment follow [page ownership](../specs/gui-workflow/spec.md#page-ownership).
 
@@ -76,7 +78,7 @@ See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the acti
 
 **Viewer controls** include `ccw rotate` and `cw rotate`. These actions physically rotate the in-memory input used by Preview, Scan, and Export. Quarter-turn actions preserve source metadata. Save writes the retained output of the latest render.
 
-`100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. Reset view returns to fit. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
+`100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. `fit` returns to the fitted zoom and keeps the pan; `reset view` also recentres it. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
 
 The viewer footer groups its controls by target: rotation, view zoom, before/after comparison with its split position, and the current zoom as a read-only readout.
 
@@ -92,11 +94,13 @@ The window header shows the current film profile, print profile, and workflow ro
 
 When the display transform is enabled, every platform converts output-space pixels to encoded sRGB for the disposable viewer raster. Save and Export use their respective saving color and encoding settings. The profile selection rule and the no-profile fallback follow [viewer presentation](../specs/gui-workflow/spec.md#viewer-presentation).
 
+**CONFIG → Display** lets you choose an ICC profile with `select ICC profile…`, clear it again with `clear`, and shows the selected path or the reason it is unusable. The selection applies to the disposable viewer raster only: Save, Export, and the retained output keep their own pixels.
+
 On macOS, the Metal surface is tagged sRGB.
 
 ## Independent Export
 
-**Export…** opens its own independent output settings dialog, then a file chooser for the destination. It renders a snapshot of the full input and simulation parameters independently of retained preview output.
+**Open export settings…** opens its own independent output settings dialog, then a file chooser for the destination. It renders a snapshot of the full input and simulation parameters independently of retained preview output.
 
 Export uses the in-memory input pixels with the simulation parameters. It runs at the build's precision; see [parity and backends](parity.md#backend-selection). GUI Export does not launch `spektrafilm-f64`; use that CLI separately for CPU f64 reference output. Output metadata uses the current orientation and dimensions.
 

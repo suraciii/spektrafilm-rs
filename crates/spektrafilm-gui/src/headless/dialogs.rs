@@ -177,7 +177,7 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     let h = &mut s.harness;
     expand_preset_library(h);
 
-    click(h, "+");
+    click(h, "Save preset…");
     assert!(h.query_by_label("Name in My Presets").is_some());
     let invalid_name = "bad/name";
     edit_preset_name(h, invalid_name);
@@ -280,10 +280,10 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
 
 fn open_export_dialog(h: &mut Harness<'_, App>) {
     click(h, "MAIN");
-    if h.query_by_label("Export…").is_none() {
+    if h.query_by_label("Open export settings…").is_none() {
         click(h, "Export options");
     }
-    export_action(h);
+    export_action(h, "Open export settings…");
     assert!(h.state().export_dialog.is_open());
 }
 
