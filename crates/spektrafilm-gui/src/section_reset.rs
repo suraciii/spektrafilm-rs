@@ -30,7 +30,20 @@ use spektrafilm_core::params::RuntimeParams;
 /// Enlarger entries and `enlarger.diffusion_filter`.
 const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
     ("Film base", &["film_render.base"], &[]),
+    (
+        "Film chemistry",
+        &["film_render.chemistry", "film_render.development_time"],
+        &[],
+    ),
     ("Print base", &["print_render.base"], &[]),
+    (
+        "Print chemistry",
+        &[
+            "print_render.density_curves_morph",
+            "print_render.development_time",
+        ],
+        &[],
+    ),
     // The grain engine and its engine-specific groups are runtime-model
     // fields, so this one path carries them all.
     ("Grain", &["film_render.grain"], &[]),

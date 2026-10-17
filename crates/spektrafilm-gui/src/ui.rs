@@ -703,6 +703,7 @@ impl App {
             label_clicked = ui
                 .add(egui::Label::new("Chemistry").sense(egui::Sense::click()))
                 .clicked();
+            self.section_reset_controls(ui, section);
             self.section_preset_menu(ui, if film { Section::Film } else { Section::Print });
         });
         if label_clicked {

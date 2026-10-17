@@ -806,3 +806,52 @@ fn a_section_reset_restores_the_factory_value_and_clears_the_mark() {
         "another section's reset does not revert the neighbour's live edit"
     );
 }
+
+/// Every parameter section the pages render presents a reset, so a section
+/// added to the UI without a reset scope cannot go unnoticed.
+#[test]
+fn every_parameter_section_presents_a_reset() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let mut seen = std::collections::BTreeSet::new();
+    for page in ["MAIN", "FILM", "PRINT", "ADVANCED"] {
+        click(h, page);
+        for node in h.query_all_by_label_contains("reset") {
+            if let Some(label) = node.label()
+                && let Some(section) = label.strip_prefix("reset ")
+                && section != "view"
+            {
+                seen.insert(section.to_owned());
+            }
+        }
+    }
+    let expected: &[&str] = &[
+        "Camera",
+        "Camera diffusion",
+        "Convert",
+        "Couplers",
+        "Crop and upscale",
+        "Enlarger",
+        "Enlarger diffusion",
+        "Film base",
+        "Film chemistry",
+        "Glare",
+        "Grain",
+        "Halation",
+        "Input",
+        "Input gamut compress",
+        "Magazine finish color",
+        "Output",
+        "Output gamut compress",
+        "Print base",
+        "Print chemistry",
+        "Scanner",
+        "Spectral upsampling",
+    ];
+    for section in expected {
+        assert!(
+            seen.contains(*section),
+            "no reset presented for section {section}; found {seen:?}"
+        );
+    }
+}
