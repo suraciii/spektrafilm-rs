@@ -26,10 +26,10 @@ pub const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2a, 0x2e);
 pub const BORDER_ACTIVE: Color32 = Color32::from_rgb(0x3d, 0x3d, 0x44);
 /// Primary text colour.
 pub const FG: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xe8);
-/// Secondary text for labels and descriptions.
-pub const FG_SECONDARY: Color32 = Color32::from_rgb(0xa0, 0xa0, 0xa8);
-/// Muted text for hints and metadata.
-pub const FG_MUTED: Color32 = Color32::from_rgb(0x6a, 0x6a, 0x72);
+/// Secondary text for labels and descriptions. The prototype's `--ink-2`.
+pub const FG_SECONDARY: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa2);
+/// Muted text for hints, units, and metadata. The prototype's `--ink-3`.
+pub const FG_MUTED: Color32 = Color32::from_rgb(0x63, 0x63, 0x6b);
 /// Error red.
 pub const ERROR: Color32 = Color32::from_rgb(0xe0, 0x55, 0x55);
 /// Warning amber, for capability notices that are not errors.
@@ -50,14 +50,24 @@ pub const SERIES_FILL_ALPHA: f32 = 0.45;
 // Spacing
 // ---------------------------------------------------------------------------
 
-/// Gap between two parameter rows inside one section.
-pub const SPACE_ROW: f32 = 2.0;
+/// Spacing scale, in points. Every vertical gap in the panel is one of these
+/// values, so the panel's rhythm comes from one scale rather than from a
+/// literal at each use. Steps beyond the second are named when a use appears.
+pub const SPACE_1: f32 = 4.0;
+/// Second step of the spacing scale.
+pub const SPACE_2: f32 = 8.0;
+
+/// Vertical gap between two items in the control panel.
+///
+/// The panel is a dense list of parameter rows, so its rhythm is the scale's
+/// first step rather than egui's default.
+pub const SPACE_ROW: f32 = SPACE_1;
 /// Gap between the page navigation and the search box.
-pub const SPACE_BLOCK: f32 = 4.0;
+pub const SPACE_BLOCK: f32 = SPACE_1;
 /// Height reserved below the scrollable controls for the action bar.
 pub const HEIGHT_ACTION_BAR_RESERVE: f32 = 112.0;
 /// Gap between two action groups inside one region.
-pub const SPACE_GROUP: f32 = 8.0;
+pub const SPACE_GROUP: f32 = SPACE_2;
 // ---------------------------------------------------------------------------
 // Corner radius
 // ---------------------------------------------------------------------------
@@ -84,9 +94,16 @@ pub const TEXT_READOUT: TextStyle = TextStyle::Small;
 
 /// Point size of the hint and readout role.
 pub const SIZE_HINT: f32 = 9.0;
+/// Point size of a unit suffix and the experimental marker, which are the
+/// smallest text the panel renders. Matches the prototype's `--fs-unit`.
+pub const SIZE_UNIT: f32 = 11.0;
+/// Point size of a parameter row's label. Matches the prototype's `--fs-label`.
+pub const SIZE_LABEL: f32 = 12.0;
 /// Point size of a value in a parameter row, at the parameter's declared
 /// decimals. Monospace so the value column aligns.
-pub const SIZE_VALUE: f32 = 12.0;
+pub const SIZE_VALUE: f32 = 13.0;
+/// Point size of a section title. Matches the prototype's `--fs-title`.
+pub const SIZE_TITLE: f32 = 13.5;
 /// Point size of the histogram axis labels.
 pub const SIZE_CHART_AXIS: f32 = 10.0;
 /// Font id for a role's point size, keeping the role's family.
