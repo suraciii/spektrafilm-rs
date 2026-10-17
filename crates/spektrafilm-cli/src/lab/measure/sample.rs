@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use spektrafilm_core::image_io;
 use spektrafilm_math::colorspace::{self, RgbColorSpace};
@@ -57,9 +57,9 @@ impl Pixels {
 /// The one declared source of a measurement, and the declaration that
 /// governs its reading.
 struct Source {
-    /// `image` or `evidence`.
+    /// `image`, `evidence`, or a retained `run`.
     kind: &'static str,
-    /// The declared image path or bundle directory.
+    /// The declared image path or bundle/run directory.
     path: PathBuf,
     /// The image file's content hash, or the stage buffer's hash.
     sha256: String,
@@ -77,6 +77,8 @@ struct Source {
     /// Whether the reading applies the declared transfer decoding, so the
     /// values it stores are the linear boundary values.
     decoded: bool,
+    /// The producer-declared coordinate space of the source values.
+    coordinate_space: String,
     /// The reading's vocabulary, recorded verbatim from its own authority.
     domain: String,
     units: String,
@@ -144,17 +146,18 @@ pub fn sample_with_result(args: &MeasureSampleArgs) -> Result<(Value, i32)> {
 /// The one declared source of this measurement. Two authorities for one
 /// declaration is an error.
 fn select_source(args: &MeasureSampleArgs) -> Result<Source> {
-    match (&args.source, &args.from_evidence) {
-        (None, None) => bail!(
+    match (&args.source, &args.from_evidence, &args.from_run) {
+        (None, None, None) => bail!(
             "a source is required: pass --source IMAGE with --input-color-space and \
-             --input-cctf-decoding, or --from-evidence DIRECTORY with --stage STAGE"
+             --input-cctf-decoding, --from-evidence DIRECTORY with --stage STAGE, or \
+             --from-run DIRECTORY with --case CASE --seed SEED --stage STAGE"
         ),
-        (Some(_), Some(_)) => bail!(
-            "--source conflicts with --from-evidence: a measurement reads one source, \
-             either an image (--source IMAGE) or a stage bundle (--from-evidence DIRECTORY)"
+        (Some(_), Some(_), _) | (Some(_), _, Some(_)) | (None, Some(_), Some(_)) => bail!(
+            "--source, --from-evidence, and --from-run are mutually exclusive; a measurement reads one source"
         ),
-        (Some(path), None) => image_source(args, path),
-        (None, Some(directory)) => evidence_source(args, directory),
+        (Some(path), None, None) => image_source(args, path),
+        (None, Some(directory), None) => evidence_source(args, directory),
+        (None, None, Some(directory)) => run_source(args, directory),
     }
 }
 
@@ -189,10 +192,11 @@ fn image_source(args: &MeasureSampleArgs, path: &Path) -> Result<Source> {
         stage: None,
         // A raster carries no stage vocabulary of its own; its reading lives
         // in the declared source raster's coordinate space.
+        decoded: cctf_decoding,
+        coordinate_space: "source_pixels".to_owned(),
         domain: "source_rgb".to_owned(),
         units: "relative".to_owned(),
         channel_order: "RGB".to_owned(),
-        decoded: cctf_decoding,
     })
 }
 
@@ -265,6 +269,7 @@ fn evidence_source(args: &MeasureSampleArgs, directory: &Path) -> Result<Source>
     let sha256 = reading.sha256.clone();
     let color_space = reading.color_space.clone();
     let stage_id = reading.id.clone();
+    let coordinate_space = reading.coordinate_space.clone();
     let domain = reading.domain.clone();
     let units = reading.units.clone();
     let channel_order = reading.channel_order.clone();
@@ -278,6 +283,175 @@ fn evidence_source(args: &MeasureSampleArgs, directory: &Path) -> Result<Source>
         encoded,
         stage: Some(stage_id),
         decoded: encoded == Some(true),
+        coordinate_space,
+        domain,
+        units,
+        channel_order,
+    })
+}
+
+/// Resolve one exact case and seed from an image-domain retained run, then
+/// delegate stage decoding and digest checks to the shared bundle reader.
+fn run_source(args: &MeasureSampleArgs, run: &Path) -> Result<Source> {
+    if args.input_color_space.is_some() || args.input_cctf_decoding.is_some() {
+        bail!(
+            "--from-run declares the reading from the retained run; input color options would be a second authority"
+        );
+    }
+    let case_id = args
+        .case
+        .as_deref()
+        .ok_or_else(|| anyhow!("--from-run requires --case CASE"))?;
+    let seed = args
+        .seed
+        .ok_or_else(|| anyhow!("--from-run requires --seed SEED"))?;
+    let stage = args
+        .stage
+        .ok_or_else(|| anyhow!("--from-run requires --stage STAGE"))?;
+    let run_path = run
+        .canonicalize()
+        .with_context(|| format!("resolving retained run {}", run.display()))?;
+    let (run_root, manifest_path) = if run_path.is_file() {
+        let manifest_path = run_path.clone();
+        let root = run_path
+            .parent()
+            .ok_or_else(|| anyhow!("retained run manifest has no parent directory"))?
+            .to_path_buf();
+        (root, manifest_path)
+    } else {
+        let manifest_path = run_path.join("run.json");
+        (run_path, manifest_path)
+    };
+    let record = spektrafilm_benchmark::documents::load_json_document(&manifest_path)
+        .map_err(|error| anyhow!("reading retained run {}: {error}", manifest_path.display()))?;
+    spektrafilm_benchmark::documents::validate_generated_document("run", &record, &run_root)
+        .map_err(|error| {
+            anyhow!(
+                "validating retained run {}: {error}",
+                manifest_path.display()
+            )
+        })?;
+    let row = record
+        .get("cases")
+        .and_then(Value::as_array)
+        .and_then(|cases| {
+            cases.iter().find(|row| {
+                row.get("case_id").and_then(Value::as_str) == Some(case_id)
+                    && row.get("seed").and_then(Value::as_u64) == Some(u64::from(seed))
+            })
+        })
+        .ok_or_else(|| anyhow!("retained run has no case {case_id:?} with seed {seed}"))?;
+    if row.get("status").and_then(Value::as_str) != Some("completed") {
+        bail!("retained case {case_id:?} seed {seed} is not completed");
+    }
+    let capture = row
+        .get("stage_evidence")
+        .ok_or_else(|| anyhow!("retained case {case_id:?} seed {seed} has no stage evidence"))?;
+    if capture.get("requested").and_then(Value::as_bool) != Some(true) {
+        bail!(
+            "retained case {case_id:?} seed {seed} did not request stage evidence: {}",
+            capture
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("stage capture not requested")
+        );
+    }
+    if capture.get("availability").and_then(Value::as_str) != Some("available") {
+        bail!(
+            "retained case {case_id:?} seed {seed} has unavailable stage evidence: {}",
+            capture
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("stage capture unavailable")
+        );
+    }
+    let manifest_record = capture
+        .get("manifest")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("retained case stage evidence has no manifest artifact"))?;
+    let manifest_rel = manifest_record
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("retained case stage evidence manifest has no path"))?;
+    // The run record is the seed authority. Its artifact index is the second
+    // authority: a path copied from another case or seed must not be accepted.
+    let indexed = record
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .and_then(|artifacts| {
+            artifacts.iter().find(|artifact| {
+                artifact.get("path").and_then(Value::as_str) == Some(manifest_rel)
+                    && artifact.get("role").and_then(Value::as_str)
+                        == Some("stage_evidence_manifest")
+            })
+        })
+        .ok_or_else(|| anyhow!("retained stage manifest is not indexed by the selected run"))?;
+    if indexed.get("sha256") != manifest_record.get("sha256") {
+        bail!("retained stage manifest hash differs from the run artifact index");
+    }
+    let expected_prefix = format!("cases/{case_id}/seed-{seed}/");
+    if !manifest_rel.starts_with(&expected_prefix) {
+        bail!(
+            "retained stage manifest {} does not belong to case {case_id:?} seed {seed}",
+            manifest_rel
+        );
+    }
+    let bundle_manifest =
+        spektrafilm_benchmark::documents::safe_artifact_path(&run_root, manifest_rel)
+            .map_err(|error| anyhow!("retained stage manifest path: {error}"))?;
+    if bundle_manifest.file_name().and_then(|name| name.to_str()) != Some("stage-evidence.json") {
+        bail!(
+            "retained stage manifest {} is not the bundle's stage-evidence.json",
+            manifest_rel
+        );
+    }
+    let bundle_dir = bundle_manifest
+        .parent()
+        .ok_or_else(|| anyhow!("retained stage manifest has no bundle directory"))?;
+    spektrafilm_benchmark::documents::validate_stage_bundle(bundle_dir)
+        .map_err(|error| anyhow!("validating retained stage evidence: {error}"))?;
+    let stage_id = stage.id().to_owned();
+    let (mut readings, availability) =
+        read_stage_bundle(bundle_dir, std::slice::from_ref(&stage_id))
+            .map_err(|error| anyhow!("reading retained stage evidence: {error}"))?;
+    let reading = match readings.len() {
+        1 => readings.pop().expect("one retained stage reading"),
+        0 => {
+            let reason = availability
+                .iter()
+                .find(|entry| entry.id == stage_id)
+                .and_then(|entry| entry.reason.as_deref())
+                .unwrap_or("stage not present");
+            bail!("retained stage {stage_id} is unavailable: {reason}");
+        }
+        _ => bail!("retained stage {stage_id} has more than one available buffer"),
+    };
+    let encoded = reading.cctf_decoding.map(|decoding| !decoding);
+    let space =
+        match reading.color_space.as_deref() {
+            Some(name) => Some(colorspace::resolve(name).map_err(|error| {
+                anyhow!("retained stage {stage_id} color space {name:?}: {error}")
+            })?),
+            None => None,
+        };
+    let stage_id = reading.id.clone();
+    let coordinate_space = reading.coordinate_space.clone();
+    let sha256 = reading.sha256.clone();
+    let color_space = reading.color_space.clone();
+    let domain = reading.domain.clone();
+    let units = reading.units.clone();
+    let channel_order = reading.channel_order.clone();
+    Ok(Source {
+        kind: "run",
+        path: run_root,
+        sha256,
+        pixels: Pixels::Evidence(reading),
+        color_space,
+        space,
+        encoded,
+        stage: Some(stage_id),
+        decoded: encoded == Some(true),
+        coordinate_space,
         domain,
         units,
         channel_order,
@@ -424,16 +598,15 @@ fn plan_record(plan: &Plan) -> Value {
     })
 }
 
-/// The single stage record of this measurement: the source's own vocabulary,
-/// recorded verbatim and never restated from another source. Its
-/// `cctf_decoding` describes the values the reading stores, so a decoded
-/// reading reports `false` even when the source declared `true`.
+/// The single stage record of this measurement: the source's vocabulary,
+/// including its producer-declared coordinate space.
 fn stage_record(source: &Source) -> Value {
     json!({
         "id": source.stage_id(),
         "domain": source.domain,
         "units": source.units,
         "channel_order": source.channel_order,
+        "coordinate_space": source.coordinate_space,
         "color_space": source.color_space,
         "cctf_decoding": source.reading_cctf_decoding(),
         "sha256": source.sha256,
@@ -484,10 +657,11 @@ fn write_report(
             "path": source.path.display().to_string(),
             "sha256": source.sha256,
             "dimensions": source.pixels.dimensions(),
+            "coordinate_space": source.coordinate_space,
             "color_space": source.color_space,
+            "stage": source.stage,
             // The source block reports the source's own declaration verbatim.
             "cctf_decoding": source.encoded.map(|encoded| !encoded),
-            "stage": source.stage,
         },
         "regions": plan_record(plan),
         "stages": [stage_record(source)],

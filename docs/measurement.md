@@ -172,10 +172,7 @@ command prints its human text on stderr and a result object on stdout whose
     --regions regions.json --out sample-1
 ```
 
-`--source` declares a raster image and requires the same input declaration as `process`: a
-source color space and a transfer state. `--from-evidence DIRECTORY --stage STAGE` reads one
-stage of a retained render-evidence bundle instead, and the bundle manifest supplies that
-stage's coordinate space, channel order, units, color space, and transfer state.
+`--source` declares a raster image and requires the same input declaration as `process`: a source color space and a transfer state. `--from-evidence DIRECTORY --stage STAGE` reads one stage of a retained render-evidence bundle instead, and the bundle manifest supplies that stage's coordinate space, channel order, units, color space, and transfer state. `--from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE` resolves one exact completed case/seed row from a retained image-domain run and reads only its indexed available stage bundle. The run artifact index and the case manifest reference must agree on path and digest; unsafe paths, missing or failed rows, unavailable capture, missing stages, malformed buffers, and cross-seed references fail without fallback.
 
 An image source reports its readings under the stage name `source`, with the domain
 `source_rgb` and the declared color space. An evidence source reports the bundle's own stage

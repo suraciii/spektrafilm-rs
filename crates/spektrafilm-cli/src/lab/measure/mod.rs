@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use spektrafilm_benchmark::documents;
 use spektrafilm_core::WorkflowRoute;
 
 pub use crate::lab::report::{csv_field, number_field};
@@ -579,7 +580,6 @@ pub fn sha256_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-/// One stage read back from an executed run's stage capture.
 pub struct StageReading {
     pub id: String,
     pub domain: String,
@@ -590,6 +590,8 @@ pub struct StageReading {
     /// Whether the stored values are transfer-decoded, when the stage
     /// declares a color space.
     pub cctf_decoding: Option<bool>,
+    /// The producer-declared coordinate space of the captured buffer.
+    pub coordinate_space: String,
     pub width: u32,
     pub height: u32,
     pub sha256: String,
@@ -679,12 +681,14 @@ fn read_stage(directory: &Path, record: &Value, id: String) -> Result<StageReadi
     {
         return Err(format!("stage {id} has an unsupported buffer layout"));
     }
-    let path = record
+    let relative_path = record
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| format!("stage {id} has no buffer path"))?;
-    let path = directory.join(path);
-    let bytes = std::fs::read(&path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let path = documents::safe_artifact_path(directory, relative_path)
+        .map_err(|error| error.to_string())?;
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("reading stage {id} buffer {}: {error}", path.display()))?;
     let expected = width as usize * height as usize * 3;
     if bytes.len() != expected * 8 {
         return Err(format!(
@@ -715,6 +719,8 @@ fn read_stage(directory: &Path, record: &Value, id: String) -> Result<StageReadi
         .collect();
     Ok(StageReading {
         id,
+        width,
+        height,
         domain: record
             .get("domain")
             .and_then(Value::as_str)
@@ -739,8 +745,12 @@ fn read_stage(directory: &Path, record: &Value, id: String) -> Result<StageReadi
             .get("color")
             .and_then(|color| color.get("cctf_decoding"))
             .and_then(Value::as_bool),
-        width,
-        height,
+        coordinate_space: record
+            .get("geometry")
+            .and_then(|geometry| geometry.get("coordinate_space"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
         sha256: record
             .get("sha256")
             .and_then(Value::as_str)
