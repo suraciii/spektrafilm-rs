@@ -61,7 +61,7 @@ impl App {
                         .on_hover_text("Save current look as a preset")
                         .clicked()
                     {
-                        self.save_preset_as(None);
+                        self.save_preset_as();
                     }
                 }
             });
@@ -100,11 +100,7 @@ impl App {
                         .entries
                         .iter()
                         .enumerate()
-                        .filter(|(_, e)| {
-                            e.group == group
-                                && e.kind == Some(PresetKind::Look)
-                                && e.fault.is_none()
-                        })
+                        .filter(|(_, e)| e.group == group && e.fault.is_none())
                         .peekable();
                     if entries.peek().is_none() && group == PresetGroup::User {
                         ui.weak("Use + to save the current look.");
@@ -235,71 +231,6 @@ impl App {
         }
         self.preset_dialogs(ctx);
     }
-    pub(crate) fn section_preset_menu(&mut self, ui: &mut egui::Ui, section: Section) {
-        let label =
-            section_label(section, &self.presets.entries, &self.params).unwrap_or_else(|e| {
-                self.status = e;
-                "custom".into()
-            });
-        ui.menu_button(format!("Preset: {label}"), |ui| {
-            if section == Section::OutputMix && ui.button("Reset to full effect").clicked() {
-                self.params.output_mix.amount = 1.0;
-                self.mark_parameters_changed();
-                ui.close_menu();
-            }
-            if ui.button("Save as…").clicked() {
-                self.save_preset_as(Some(section));
-                ui.close_menu();
-            }
-            let mut action = None;
-            if !self
-                .presets
-                .entries
-                .iter()
-                .any(|e| e.kind == Some(PresetKind::Section(section)))
-            {
-                ui.weak("No presets. Save as, or place a preset file in the library.");
-            }
-            for group in [PresetGroup::BuiltIn, PresetGroup::User] {
-                ui.label(if group == PresetGroup::BuiltIn {
-                    "Built-in"
-                } else {
-                    "My Presets"
-                });
-                for (index, entry) in self.presets.entries.iter().enumerate().filter(|(_, e)| {
-                    e.group == group && e.kind == Some(PresetKind::Section(section))
-                }) {
-                    if entry.fault.is_some() {
-                        show_fault(ui, entry);
-                        continue;
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button(&entry.name).clicked() {
-                            action = Some((index, PresetAction::Load));
-                            ui.close_menu();
-                        }
-                        ui.menu_button("…", |ui| {
-                            if let Some(selected) = self.preset_actions(ui, entry, false) {
-                                action = Some((index, selected));
-                            }
-                        });
-                    });
-                }
-                if let Some((index, selected)) = action.take() {
-                    self.apply_preset_action(index, selected);
-                }
-            }
-            // Unclassified parse faults cannot be assigned a section; make them visible here too.
-            for entry in self
-                .presets
-                .entries
-                .iter()
-                .filter(|e| e.fault.is_some() && e.kind.is_none())
-            {
-                show_fault(ui, entry);
-            }
-        });
-    }
     fn preset_actions(
         &self,
         ui: &mut egui::Ui,
@@ -417,8 +348,7 @@ impl App {
                         {
                             active.name = dialog.name.clone();
                         }
-                        if matches!(&dialog.action, NameAction::Save(p) if p.kind() == Ok(PresetKind::Look))
-                        {
+                        if matches!(&dialog.action, NameAction::Save(_)) {
                             self.presets.state.applied = Some(AppliedPreset {
                                 group: PresetGroup::User,
                                 name: dialog.name.clone(),

@@ -168,22 +168,18 @@ fn resolve_with_preview_mode(
     if supplies_film {
         for preset in request.presets {
             preset.validate()?;
-            if preset.kind()? == presets::PresetKind::Look {
-                // The requested route is part of the workflow context a look resolves
-                // against: declaring a film-scan route here lets a document's scan
-                // mode survive resolution instead of being normalized away.
-                choose_workflow(&mut params, request.route, request.scan_film);
-                let resolved = preset.resolve(data_dir, &params)?;
-                params = resolved.params;
-                resolved_profiles = Some((
-                    resolved.film,
-                    resolved.print,
-                    resolved.film_name,
-                    resolved.print_name,
-                ));
-            } else {
-                params = preset.overlay_section(&params)?;
-            }
+            // The requested route is part of the workflow context a look resolves
+            // against: declaring a film-scan route here lets a document's scan
+            // mode survive resolution instead of being normalized away.
+            choose_workflow(&mut params, request.route, request.scan_film);
+            let resolved = preset.resolve(data_dir, &params)?;
+            params = resolved.params;
+            resolved_profiles = Some((
+                resolved.film,
+                resolved.print,
+                resolved.film_name,
+                resolved.print_name,
+            ));
         }
     }
     let (film, print, film_name, print_name) = if let Some(profiles) = resolved_profiles {
@@ -229,10 +225,6 @@ fn resolve_with_preview_mode(
         }
         if added_sources && request.digest_mode == DigestMode::ApplyStockSpecifics {
             apply_film_specifics(&mut params, &film);
-        }
-        for preset in request.presets {
-            preset.validate()?;
-            params = preset.overlay_section(&params)?;
         }
         (film, print, name.to_owned(), print_name)
     };

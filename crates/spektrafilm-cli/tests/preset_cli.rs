@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+use spektrafilm_core::presets::PRESET_SCHEMA_VERSION;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -1589,12 +1590,15 @@ fn signed_input_exposure_stops_accept_separate_arguments() {
     }
 }
 
-fn library_document(f: &Fixture, name: &str, parameters: Value) -> PathBuf {
+fn library_document(f: &Fixture, name: &str, grain_amount: f64) -> PathBuf {
     let library = f.root.join("config").join("presets");
     std::fs::create_dir_all(&library).unwrap();
     let path = library.join(format!("{name}.json"));
-    let document = json!({"schema_version": 2, "name": name,
-        "parameters": parameters,
+    // A look document: both profiles plus the full look, so the loader accepts it.
+    let document = json!({"schema_version": PRESET_SCHEMA_VERSION, "name": name,
+        "film_profile": {"stock": "kodak_gold_200"},
+        "print_profile": {"stock": "kodak_portra_endura"},
+        "parameters": {"film_render": {"grain": {"v2_amount": grain_amount}}},
         "provenance": {"implementation_version": "test", "model_version": "test"}});
     std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
     path
@@ -1603,16 +1607,8 @@ fn library_document(f: &Fixture, name: &str, parameters: Value) -> PathBuf {
 #[test]
 fn user_library_listing_keeps_valid_entries_and_reports_document_faults() {
     let f = Fixture::new();
-    let valid = library_document(
-        &f,
-        "Soft grain",
-        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
-    );
-    let fault = library_document(
-        &f,
-        "Wrong filename",
-        json!({"film_render":{"grain":{"v2_amount":5.0}}}),
-    );
+    let valid = library_document(&f, "Soft grain", 12.0);
+    let fault = library_document(&f, "Wrong filename", 5.0);
     let renamed = fault.with_file_name("Misnamed.json");
     std::fs::rename(&fault, &renamed).unwrap();
     for source in ["user", "all"] {
@@ -1626,8 +1622,7 @@ fn user_library_listing_keeps_valid_entries_and_reports_document_faults() {
         let rows = rows.as_array().unwrap();
         let grain = rows.iter().find(|row| row["name"] == "Soft grain").unwrap();
         assert_eq!(grain["group"], "My Presets");
-        assert_eq!(grain["kind"], "section");
-        assert_eq!(grain["section"], "grain");
+        assert_eq!(grain["kind"], "look");
         assert_eq!(grain["path"], valid.to_str().unwrap());
         assert!(String::from_utf8_lossy(&result.stderr).contains(renamed.to_str().unwrap()));
         assert_eq!(
@@ -1652,11 +1647,7 @@ fn user_library_listing_keeps_valid_entries_and_reports_document_faults() {
 #[test]
 fn names_resolve_user_first_and_explicit_groups_reach_shadowed_builtins() {
     let f = Fixture::new();
-    library_document(
-        &f,
-        "Kodak Portra 400",
-        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
-    );
+    library_document(&f, "Kodak Portra 400", 12.0);
     let selected = f.run(&["preset", "show", "Kodak Portra 400", "--format", "json"]);
     assert!(
         selected.status.success(),
@@ -1685,11 +1676,7 @@ fn names_resolve_user_first_and_explicit_groups_reach_shadowed_builtins() {
     let document: Value = serde_json::from_slice(&builtin.stdout).unwrap();
     assert_eq!(document["film_profile"]["stock"], "kodak_portra_400");
     assert!(!String::from_utf8_lossy(&builtin.stderr).contains("shadows"));
-    library_document(
-        &f,
-        "Soft grain",
-        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
-    );
+    library_document(&f, "Soft grain", 12.0);
     let unknown = f.run(&["preset", "show", "Soft grani"]);
     assert!(!unknown.status.success());
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("Soft grain"));
@@ -1698,208 +1685,6 @@ fn names_resolve_user_first_and_explicit_groups_reach_shadowed_builtins() {
     let stderr = String::from_utf8_lossy(&missing.stderr);
     assert!(stderr.contains("Soft grain.toml"));
     assert!(!stderr.contains("did you mean"));
-}
-
-#[test]
-fn repeated_presets_compose_look_then_section_and_keep_profile_workflow() {
-    let f = Fixture::new();
-    library_document(
-        &f,
-        "Soft grain",
-        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
-    );
-    let report = f.report(&[
-        "--preset",
-        "Kodak Portra 400",
-        "--preset",
-        "Soft grain",
-        "--dry-run",
-    ]);
-    assert_eq!(report["film_profile"], "kodak_portra_400");
-    assert_eq!(report["print_profile"], "kodak_portra_endura");
-    assert_eq!(
-        report["parameters"]["workflow"]["route"],
-        "input > film > print > scan"
-    );
-    assert_eq!(
-        report["parameters"]["film_render"]["grain"]["v2_amount"],
-        12.0
-    );
-    let section = f.report(&[
-        "--film",
-        "kodak_portra_400",
-        "--preset",
-        "Soft grain",
-        "--dry-run",
-    ]);
-    let baseline = f.report(&["--film", "kodak_portra_400", "--dry-run"]);
-    assert_eq!(
-        section["parameters"]["workflow"],
-        baseline["parameters"]["workflow"]
-    );
-    assert_eq!(section["film_profile"], baseline["film_profile"]);
-    assert_eq!(section["print_profile"], baseline["print_profile"]);
-    assert_eq!(
-        section["parameters"]["film_render"]["grain"]["v2_amount"],
-        12.0
-    );
-    let direct = f.report(&[
-        "--preset",
-        "Kodak Portra 400",
-        "--preset",
-        "Soft grain",
-        "--scan-film",
-        "--dry-run",
-    ]);
-    assert_eq!(direct["print_profile"], "kodak_portra_endura");
-    assert_eq!(direct["parameters"]["io"]["scan_film"], true);
-    assert!(
-        !f.process(&["--preset", "Soft grain", "--dry-run"])
-            .status
-            .success()
-    );
-    for extra in [
-        ["--film", "kodak_portra_400"],
-        ["--paper", "kodak_portra_endura"],
-    ] {
-        let result = f.process(&[
-            "--preset",
-            "Kodak Portra 400",
-            extra[0],
-            extra[1],
-            "--dry-run",
-        ]);
-        assert!(!result.status.success());
-        assert!(String::from_utf8_lossy(&result.stderr).contains("conflicts"));
-    }
-    let params = f.root.join("baseline.json");
-    std::fs::write(&params, "{}").unwrap();
-    assert!(
-        !f.process(&[
-            "--preset",
-            "Kodak Portra 400",
-            "--params",
-            params.to_str().unwrap(),
-            "--dry-run"
-        ])
-        .status
-        .success()
-    );
-    assert!(
-        f.process(&[
-            "--film",
-            "kodak_portra_400",
-            "--paper",
-            "kodak_portra_endura",
-            "--params",
-            params.to_str().unwrap(),
-            "--preset",
-            "Soft grain",
-            "--dry-run"
-        ])
-        .status
-        .success()
-    );
-}
-
-#[test]
-fn section_show_preserves_null_and_refuses_lossy_toml_export() {
-    let f = Fixture::new();
-    let path = library_document(
-        &f,
-        "Clear amount",
-        json!({"film_render":{"grain":{"v2_amount":null}}}),
-    );
-    let before = std::fs::read(&path).unwrap();
-    let json = f.run(&["preset", "show", "Clear amount", "--format", "json"]);
-    assert!(json.status.success());
-    let document: Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(document["name"], "Clear amount");
-    assert!(
-        document["parameters"]["film_render"]["grain"]
-            .as_object()
-            .unwrap()
-            .contains_key("v2_amount")
-    );
-    assert_eq!(
-        document["parameters"]["film_render"]["grain"]["v2_amount"],
-        Value::Null
-    );
-    let toml = f.run(&["preset", "show", "Clear amount"]);
-    assert!(!toml.status.success());
-    assert!(toml.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&toml.stderr).contains("film_render.grain.v2_amount"));
-    assert_eq!(std::fs::read(&path).unwrap(), before);
-}
-
-#[test]
-fn later_look_replaces_earlier_section_and_section_only_keeps_static_route() {
-    let f = Fixture::new();
-    library_document(
-        &f,
-        "Soft grain",
-        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
-    );
-    let baseline = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
-    let replaced = f.report(&[
-        "--preset",
-        "Soft grain",
-        "--preset",
-        "Kodak Portra 400",
-        "--dry-run",
-    ]);
-    assert_eq!(replaced, baseline);
-    let sections = f.report(&[
-        "--film",
-        "fujifilm_provia_100f",
-        "--paper",
-        "fujifilm_crystal_archive_typeii",
-        "--preset",
-        "Soft grain",
-        "--dry-run",
-    ]);
-    let baseline = f.report(&[
-        "--film",
-        "fujifilm_provia_100f",
-        "--paper",
-        "fujifilm_crystal_archive_typeii",
-        "--dry-run",
-    ]);
-    assert_eq!(
-        sections["parameters"]["workflow"],
-        baseline["parameters"]["workflow"]
-    );
-    let explicit = f.process(&[
-        "--preset",
-        "Kodak Portra 400",
-        "--scan-film",
-        "--route",
-        "input > film > print > scan",
-        "--dry-run",
-    ]);
-    assert!(!explicit.status.success());
-    let message = String::from_utf8_lossy(&explicit.stderr);
-    assert!(
-        message.contains("--route") && message.contains("--scan-film"),
-        "{message}"
-    );
-    assert!(!f.root.join("output.tif").exists());
-    let section = f.process(&[
-        "--film",
-        "kodak_portra_400",
-        "--preset",
-        "Soft grain",
-        "--scan-film",
-        "--route",
-        "input > film > print > scan",
-        "--dry-run",
-    ]);
-    assert!(!section.status.success());
-    let message = String::from_utf8_lossy(&section.stderr);
-    assert!(
-        message.contains("--route") && message.contains("--scan-film"),
-        "{message}"
-    );
 }
 
 #[test]
@@ -1921,146 +1706,6 @@ fn look_preset_normalizes_inapplicable_negative_to_positive_to_direct_scan() {
         report["parameters"]["scanner"]["scan_output"],
         "direct_scan"
     );
-}
-
-#[test]
-fn invalid_scanner_section_rejects_without_printing_effective_configuration() {
-    let f = Fixture::new();
-    library_document(
-        &f,
-        "Negative conversion scanner",
-        json!({"scanner":{"scan_output":"negative_to_positive"}}),
-    );
-    let baseline = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
-    let rejected = f.process(&[
-        "--preset",
-        "Kodak Portra 400",
-        "--preset",
-        "Negative conversion scanner",
-        "--dry-run",
-    ]);
-    assert!(!rejected.status.success());
-    let error = String::from_utf8_lossy(&rejected.stderr);
-    assert!(
-        error.contains("scanner.scan_output=negative_to_positive")
-            && error.contains("requires a direct film scan route"),
-        "{error}"
-    );
-    assert!(rejected.stdout.is_empty());
-    assert_eq!(
-        f.report(&["--preset", "Kodak Portra 400", "--dry-run"]),
-        baseline
-    );
-}
-
-#[test]
-fn json_section_export_reload_preserves_optional_grain_clearing_edit() {
-    let f = Fixture::new();
-    library_document(
-        &f,
-        "Clear amount",
-        json!({"film_render":{"grain":{"v2_amount":null}}}),
-    );
-    library_document(
-        &f,
-        "Amount twelve",
-        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
-    );
-    // `preset show` exports documents; selecting the exported path reloads them.
-    let exported = f.run(&["preset", "show", "Clear amount", "--format", "json"]);
-    assert!(exported.status.success());
-    let document: Value = serde_json::from_slice(&exported.stdout).unwrap();
-    assert_eq!(
-        document["parameters"]["film_render"]["grain"]
-            .as_object()
-            .unwrap()
-            .get("v2_amount"),
-        Some(&Value::Null)
-    );
-    let path = f.root.join("exported-clear-amount.json");
-    std::fs::write(&path, exported.stdout).unwrap();
-    let baseline = f.report(&[
-        "--preset",
-        "Kodak Portra 400",
-        "--preset",
-        "Amount twelve",
-        "--dry-run",
-    ]);
-    assert_eq!(
-        baseline["parameters"]["film_render"]["grain"]["v2_amount"],
-        12.0
-    );
-    let cleared = f.report(&[
-        "--preset",
-        "Kodak Portra 400",
-        "--preset",
-        "Amount twelve",
-        "--preset",
-        path.to_str().unwrap(),
-        "--dry-run",
-    ]);
-    assert_eq!(
-        cleared["parameters"]["film_render"]["grain"]["v2_amount"],
-        Value::Null
-    );
-}
-
-#[test]
-fn scanner_sections_validate_the_final_cli_workflow() {
-    let f = Fixture::new();
-    library_document(
-        &f,
-        "Negative conversion scanner",
-        json!({"scanner":{"scan_output":"negative_to_positive"}}),
-    );
-    for base in [
-        vec!["--preset", "Kodak Portra 400"],
-        vec!["--film", "kodak_portra_400"],
-    ] {
-        for workflow in [vec!["--scan-film"], vec!["--route", "input > film > scan"]] {
-            let mut args = base.clone();
-            args.extend_from_slice(&["--preset", "Negative conversion scanner"]);
-            args.extend_from_slice(&workflow);
-            args.push("--dry-run");
-            let report = f.report(&args);
-            assert_eq!(
-                report["parameters"]["workflow"]["route"],
-                "input > film > scan"
-            );
-            assert_eq!(report["parameters"]["io"]["scan_film"], true);
-            assert_eq!(
-                report["parameters"]["scanner"]["scan_output"],
-                "negative_to_positive"
-            );
-        }
-    }
-    let replaced = f.report(&[
-        "--preset",
-        "Kodak Portra 400",
-        "--preset",
-        "Negative conversion scanner",
-        "--set",
-        "scanner.scan_output=direct_scan",
-        "--dry-run",
-    ]);
-    assert_eq!(
-        replaced["parameters"]["scanner"]["scan_output"],
-        "direct_scan"
-    );
-    assert_eq!(
-        replaced["parameters"]["workflow"]["route"],
-        "input > film > print > scan"
-    );
-    let rejected = f.process(&[
-        "--preset",
-        "Fujifilm Provia 100F",
-        "--preset",
-        "Negative conversion scanner",
-        "--scan-film",
-        "--dry-run",
-    ]);
-    assert!(!rejected.status.success());
-    assert!(rejected.stdout.is_empty());
 }
 
 #[test]
@@ -2131,7 +1776,7 @@ fn active_chemistry_domains_fail_before_image_decode_in_dry_run_and_render() {
 }
 
 #[test]
-fn chemistry_sections_validate_after_later_sources_and_looks() {
+fn chemistry_validation_runs_after_later_sources_and_looks() {
     let f = Fixture::new();
     let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", "json"]);
     assert!(shown.status.success());
@@ -2141,17 +1786,8 @@ fn chemistry_sections_validate_after_later_sources_and_looks() {
     look["parameters"]["print_render"]["density_curves_morph"]["gamma_factor"] = json!(0.0);
     let path = f.root.join("inactive.json");
     std::fs::write(&path, serde_json::to_vec(&look).unwrap()).unwrap();
-    library_document(
-        &f,
-        "Enable chemistry",
-        json!({"print_render":{"density_curves_morph":{"active":true}}}),
-    );
-    let base = [
-        "--preset",
-        path.to_str().unwrap(),
-        "--preset",
-        "Enable chemistry",
-    ];
+    let base = ["--preset", path.to_str().unwrap()];
+    // A later source repairs the chemistry the look left inactive.
     let mut repaired = base.to_vec();
     repaired.extend_from_slice(&[
         "--set",
@@ -2167,12 +1803,14 @@ fn chemistry_sections_validate_after_later_sources_and_looks() {
         report["parameters"]["print_render"]["density_curves_morph"]["gamma_factor"],
         1.0
     );
-    let mut replaced = base.to_vec();
-    replaced.extend_from_slice(&["--preset", "Kodak Portra 400", "--dry-run"]);
+    // Applying the same look twice is idempotent.
+    let mut repeated = base.to_vec();
+    repeated.extend_from_slice(&["--preset", "Kodak Portra 400", "--dry-run"]);
     assert_eq!(
-        f.report(&replaced),
+        f.report(&repeated),
         f.report(&["--preset", "Kodak Portra 400", "--dry-run"])
     );
+    // The unrepaired chemistry still fails.
     let mut invalid = base.to_vec();
     invalid.push("--dry-run");
     let rejected = f.process(&invalid);

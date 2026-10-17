@@ -85,23 +85,6 @@ fn edit_preset_name(h: &mut Harness<'_, App>, text: &str) {
     assert_eq!(field.value().as_deref(), Some(text));
 }
 
-fn click_section_preset_menu(h: &mut Harness<'_, App>) {
-    let output_label = h
-        .get_by_role_and_label(egui::accesskit::Role::Label, "Output")
-        .raw_bounds()
-        .unwrap();
-    let nodes: Vec<_> = h
-        .query_all_by_label("Preset: custom")
-        .filter(|node| {
-            node.raw_bounds()
-                .is_some_and(|bounds| bounds.y0 < output_label.y1 && bounds.y1 > output_label.y0)
-        })
-        .collect();
-    assert_eq!(nodes.len(), 1, "Output section preset menu");
-    nodes[0].simulate_click();
-    h.run_steps(3);
-}
-
 fn preset_row(h: &Harness<'_, App>, name: &str) -> String {
     let nodes: Vec<_> = h
         .query_all_by_label_contains(name)
@@ -293,48 +276,6 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
         h.state().status,
         format!("Saved preset 'Imported Copy' to {}", imported.display())
     );
-}
-
-#[test]
-fn section_preset_save_as_apply_and_reset_to_full_effect_are_visible() {
-    let mut s = session();
-    let h = &mut s.harness;
-    edit(h, "Simulation blend", "0.25");
-    click_section_preset_menu(h);
-    assert!(h.query_by_label("Reset to full effect").is_some());
-    click(h, "Reset to full effect");
-    assert_eq!(h.state().params.output_mix.amount, 1.0);
-
-    edit(h, "Simulation blend", "0.35");
-    click_section_preset_menu(h);
-    click(h, "Save as…");
-    edit_preset_name(h, "Output controls");
-    click(h, "Save");
-    let library = PresetLibrary::new(h.state().config_directory.join("presets"));
-    let saved = library
-        .scan()
-        .unwrap()
-        .into_iter()
-        .find(|entry| entry.name == "Output controls")
-        .expect("section preset was added to My Presets");
-    let path = saved.path.unwrap();
-    assert!(path.is_file());
-    assert_eq!(
-        h.state().status,
-        format!("Saved preset 'Output controls' to {}", path.display())
-    );
-    assert!(h.query_by_label("Preset: Output controls").is_some());
-
-    edit(h, "Simulation blend", "0.8");
-    click_section_preset_menu(h);
-    let output_menu = h
-        .query_all_by_label("Output controls")
-        .find(|node| node.node().role() == egui::accesskit::Role::Button)
-        .expect("output section preset option");
-    output_menu.simulate_click();
-    h.run_steps(3);
-    assert!((h.state().params.output_mix.amount - 0.35).abs() < 1e-6);
-    assert_eq!(h.state().status, "Applied preset 'Output controls'");
 }
 
 fn open_export_dialog(h: &mut Harness<'_, App>) {

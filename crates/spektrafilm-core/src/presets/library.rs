@@ -13,7 +13,6 @@ pub enum PresetGroup {
 pub struct LibraryEntry {
     pub group: PresetGroup,
     pub name: String,
-    pub kind: Option<PresetKind>,
     pub film_profile: Option<ProfileRef>,
     pub print_profile: Option<ProfileRef>,
     pub path: Option<PathBuf>,
@@ -72,7 +71,6 @@ fn document_entry(group: PresetGroup, path: Option<PathBuf>, preset: Preset) -> 
     LibraryEntry {
         group,
         name: preset.name.clone(),
-        kind: preset.kind().ok(),
         film_profile: preset.film_profile.clone(),
         print_profile: preset.print_profile.clone(),
         path,
@@ -103,7 +101,6 @@ fn user_scope_fault(directory: &Path, error: std::io::Error) -> LibraryEntry {
     LibraryEntry {
         group: PresetGroup::User,
         name: "My Presets".into(),
-        kind: None,
         film_profile: None,
         print_profile: None,
         path: Some(directory.to_owned()),
@@ -175,7 +172,6 @@ impl PresetLibrary {
                 Err(e) => entries.push(LibraryEntry {
                     group: PresetGroup::User,
                     name: stem,
-                    kind: None,
                     film_profile: None,
                     print_profile: None,
                     path: Some(path),
@@ -290,9 +286,7 @@ impl PresetLibrary {
     }
     fn validate_write(preset: &Preset, data_dir: &Path) -> Result<(), String> {
         preset.validate()?;
-        if preset.kind()? == PresetKind::Look {
-            preset.resolve(data_dir, &RuntimeParams::default())?;
-        }
+        preset.resolve(data_dir, &RuntimeParams::default())?;
         Ok(())
     }
     fn user_path(&self, name: &str) -> Result<PathBuf, String> {
@@ -630,17 +624,38 @@ mod tests {
         }
     }
     use crate::test_support::data_dir as data;
+    /// A valid look carrying both profiles, so library mechanics are exercised
+    /// against a document the loader accepts. The `amount` varies the optional
+    /// grain value so two documents differ, which is what the rename and
+    /// duplicate cases need; `Value::Null` leaves it unset, which is what the
+    /// JSON-carrier case needs.
     fn grain(name: &str, amount: Value) -> Preset {
-        Preset::from_json_str(
-            &serde_json::json!({
-                "schema_version": 2,
-                "name": name,
-                "parameters": {"film_render": {"grain": {"v2_amount": amount}}},
-                "provenance": {"implementation_version": "test", "model_version": "test"}
-            })
-            .to_string(),
-        )
-        .unwrap()
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.v2_amount = amount.as_f64().map(|v| v as f32);
+        let mut preset = Preset::capture(
+            name,
+            "kodak_portra_400",
+            "kodak_supra_endura",
+            &params,
+            Provenance {
+                implementation_version: "test".into(),
+                model_version: "test".into(),
+                scanner: None,
+            },
+        );
+        if amount.is_null() {
+            // A captured `None` is omitted, so write the null explicitly to keep
+            // the carrier rule the test asserts.
+            preset.parameters.film_render.grain.v2_amount = None;
+            let object = serde_json::to_value(&preset).unwrap();
+            let mut map = object.as_object().unwrap().clone();
+            map["parameters"]["film_render"]["grain"]
+                .as_object_mut()
+                .unwrap()
+                .insert("v2_amount".into(), Value::Null);
+            return Preset::from_value(Value::Object(map)).unwrap();
+        }
+        preset
     }
 
     #[test]
@@ -833,35 +848,17 @@ mod tests {
     }
 
     #[test]
-    fn negative_to_positive_section_save_and_export_need_no_runtime_or_profiles() {
-        let temp = Temp::new();
-        let library = PresetLibrary::new(temp.0.join("library"));
-        let preset = Preset::from_json_str(
-            r#"{"schema_version":2,"name":"Negative conversion","parameters":{"scanner":{"scan_output":"negative_to_positive"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#,
-        )
-        .unwrap();
-        let missing_data = temp.0.join("no-profiles");
-        let saved = library.save_new(&preset, &missing_data).unwrap();
-        let exported = library
-            .export(&preset, &temp.0.join("export.json"), &missing_data)
-            .unwrap();
-        assert_eq!(load_file(&saved).unwrap(), preset);
-        assert_eq!(load_file(&exported).unwrap(), preset);
-    }
-
-    #[test]
     fn failed_update_and_rename_retain_existing_documents() {
         let temp = Temp::new();
         let library = PresetLibrary::new(temp.0.clone());
         let original = grain("Original", Value::from(0.5));
         let path = library.save_new(&original, &data()).unwrap();
         let old_bytes = std::fs::read(&path).unwrap();
-        // Null is valid JSON but cannot replace this TOML document.
-        assert!(
-            library
-                .update(&grain("Original", Value::Null), &data())
-                .is_err()
-        );
+        // A document that names a stock the data directory does not carry
+        // cannot replace the existing one.
+        let mut broken = grain("Original", Value::from(0.5));
+        broken.film_profile.as_mut().unwrap().stock = "not_a_stock".into();
+        assert!(library.update(&broken, &data()).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), old_bytes);
         std::fs::create_dir(temp.0.join("Blocked.toml")).unwrap();
         assert!(library.rename("Original", "Blocked", &data()).is_err());
@@ -906,9 +903,10 @@ mod tests {
                 &data(),
             )
             .unwrap();
-        let null = grain("Unpublished", Value::Null);
+        let mut unpublished = grain("Unpublished", Value::from(0.3));
+        unpublished.film_profile.as_mut().unwrap().stock = "not_a_stock".into();
         let failed = library.directory().join("Unpublished.toml");
-        assert!(library.export(&null, &failed, &data()).is_err());
+        assert!(library.export(&unpublished, &failed, &data()).is_err());
         assert!(!failed.exists());
         assert!(
             library
@@ -956,24 +954,6 @@ mod tests {
         expected.name = "Renamed".into();
         assert_eq!(load_file(&renamed).unwrap(), expected);
         assert!(!copy.exists());
-    }
-
-    #[test]
-    fn new_null_document_uses_json_and_json_source_keeps_carrier() {
-        let temp = Temp::new();
-        let library = PresetLibrary::new(temp.0.clone());
-        let null = grain("Null", Value::Null);
-        let saved = library.save_new(&null, &data()).unwrap();
-        assert_eq!(saved.extension().unwrap(), "json");
-        assert_eq!(load_file(&saved).unwrap(), null);
-        let finite = grain("Finite", Value::from(0.5));
-        library.save_new_format(&finite, &data(), false).unwrap();
-        let copied = library.duplicate(&finite, "Finite copy", &data()).unwrap();
-        assert_eq!(copied.extension().unwrap(), "json");
-        let default = library
-            .save_new(&grain("Default", Value::from(0.5)), &data())
-            .unwrap();
-        assert_eq!(default.extension().unwrap(), "toml");
     }
 
     #[test]

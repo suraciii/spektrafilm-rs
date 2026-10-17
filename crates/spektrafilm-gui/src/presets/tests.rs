@@ -20,23 +20,18 @@ fn test_app(label: &str) -> (App, PathBuf) {
 }
 
 #[test]
-fn failed_look_and_section_preserve_entire_application_transaction() {
+fn a_failed_preset_preserves_the_entire_application_transaction() {
     let (mut app, directory) = test_app("failed-transaction");
     app.params.output_mix.amount = 0.25;
     let mut look = builtin_presets().remove(0);
     look.name = "Missing profile".into();
     look.film_profile.as_mut().unwrap().stock = "missing_profile".into();
-    let section = Preset::from_json_str(r#"{"schema_version":2,"name":"Incompatible scan","parameters":{"scanner":{"scan_output":"negative_to_positive"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
     std::fs::create_dir_all(directory.join("presets")).unwrap();
-    for preset in [look, section] {
-        std::fs::write(
-            directory
-                .join("presets")
-                .join(format!("{}.json", preset.name)),
-            preset.to_json().unwrap(),
-        )
-        .unwrap();
-    }
+    std::fs::write(
+        directory.join("presets").join("Missing profile.json"),
+        look.to_json().unwrap(),
+    )
+    .unwrap();
     app.presets.refresh();
     app.presets.state.applied = Some(AppliedPreset {
         group: PresetGroup::BuiltIn,
@@ -47,7 +42,8 @@ fn failed_look_and_section_preserve_entire_application_transaction() {
     app.params.print_render.glare.active = true;
     app.toggle_scan_for_print();
     app.dirty_since = Some(std::time::Instant::now());
-    for name in ["Missing profile", "Incompatible scan"] {
+    {
+        let name = "Missing profile";
         let entry = app
             .presets
             .entries
@@ -325,155 +321,6 @@ fn slide_startup_rejects_positive_output_with_visible_error() {
 }
 
 #[test]
-fn scanner_points_survive_section_preset_and_restart() {
-    let (mut app, directory) = test_app("scanner-points");
-    app.params.workflow.route = "input > film > scan".into();
-    app.finish_route_change();
-    app.params.scanner.scan_output = "negative_to_positive".into();
-    app.params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-    app.params.scanner.negative_conversion_method =
-        spektrafilm_core::params::NegativeConversionMethod::Coupled;
-    app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
-    app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
-    app.params.scanner.finish_strength = 0.0;
-    app.params.scanner.black_point = [0.1, 0.2, 0.3];
-    app.params.scanner.white_point = [0.7, 0.8, 0.9];
-    let preset =
-        Preset::capture_section("Film points", Section::Scanner, &app.params, provenance())
-            .unwrap();
-    assert_eq!(
-        serde_json::to_value(&preset).unwrap()["parameters"]["scanner"]["scan_output"],
-        "negative_to_positive"
-    );
-    app.presets
-        .library
-        .save_new(&preset, &app.data_dir)
-        .unwrap();
-    app.presets.refresh();
-    let entry = app
-        .presets
-        .entries
-        .iter()
-        .find(|entry| entry.name == "Film points")
-        .unwrap()
-        .clone();
-    app.params.scanner.black_point = [0.0; 3];
-    app.params.scanner.white_point = [1.0; 3];
-    app.params.scanner.receiver_profile =
-        spektrafilm_core::params::ReceiverProfile::LegacyColorimetric;
-    app.params.scanner.negative_conversion_method =
-        spektrafilm_core::params::NegativeConversionMethod::Separable;
-    app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::Neutral;
-    app.params.scanner.finish_strength = 1.0;
-    app.params.scanner.scan_output = "direct_scan".into();
-    app.load_preset(entry.group, &entry.name);
-    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
-    assert_eq!(app.params.scanner.scan_output, "negative_to_positive");
-    assert_eq!(
-        app.params.scanner.receiver_profile,
-        spektrafilm_core::params::ReceiverProfile::LabScanApprox
-    );
-    assert_eq!(
-        app.params.scanner.negative_conversion_method,
-        spektrafilm_core::params::NegativeConversionMethod::Coupled
-    );
-    assert_eq!(
-        app.params.scanner.auto_setup,
-        spektrafilm_core::params::ScannerAutoSetup::PerFrame
-    );
-    assert_eq!(
-        app.params.scanner.finish,
-        spektrafilm_core::params::ScannerFinish::LabScan
-    );
-    assert_eq!(app.params.scanner.finish_strength, 0.0);
-    let path = directory.join("saved.json");
-    app.current_state().unwrap().save(&path).unwrap();
-    let mut restarted = App::new_with_browser_path(
-        std::sync::Arc::new(spektrafilm_backend::cpu_backend::CpuBackend),
-        None,
-        Some(path),
-        None,
-        directory.join("preset_browser_state.json"),
-        crate::headless::data_dir(),
-    );
-    assert_eq!(restarted.params.scanner.scan_output, "negative_to_positive");
-    assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
-    assert_eq!(restarted.params.scanner.white_point, [0.7, 0.8, 0.9]);
-    assert_eq!(
-        restarted.params.scanner.receiver_profile,
-        spektrafilm_core::params::ReceiverProfile::LabScanApprox
-    );
-    assert_eq!(
-        restarted.params.scanner.negative_conversion_method,
-        spektrafilm_core::params::NegativeConversionMethod::Coupled
-    );
-    assert_eq!(
-        restarted.params.scanner.auto_setup,
-        spektrafilm_core::params::ScannerAutoSetup::PerFrame
-    );
-    assert_eq!(
-        restarted.params.scanner.finish,
-        spektrafilm_core::params::ScannerFinish::LabScan
-    );
-    assert_eq!(restarted.params.scanner.finish_strength, 0.0);
-    restarted.params.scanner.black_point = [0.0; 3];
-    restarted.apply_state(app.current_state().unwrap()).unwrap();
-    assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
-    std::fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
-fn section_application_restores_transient_scan_controls() {
-    let (mut app, directory) = test_app("scan-section");
-    app.params.scanner.white_correction = false;
-    app.params.scanner.black_correction = false;
-    app.params.print_render.glare.active = true;
-    for section in [Section::Grain, Section::Base] {
-        let preset =
-            Preset::capture_section("Section", section, &app.params, provenance()).unwrap();
-        app.presets
-            .library
-            .save_new(&preset, &app.data_dir)
-            .unwrap();
-        app.presets.refresh();
-        let entry = app
-            .presets
-            .entries
-            .iter()
-            .find(|entry| entry.name == "Section")
-            .unwrap()
-            .clone();
-        app.toggle_scan_for_print();
-        assert_eq!(app.scan_for_print_snapshot, Some((false, false, true)));
-        let revision = app.parameter_revision;
-        let epoch = app.calibration_epoch;
-        app.load_preset(entry.group, &entry.name);
-        assert!(app.status.starts_with("Applied preset"), "{}", app.status);
-        assert!(app.scan_for_print_snapshot.is_none());
-        assert_eq!(app.parameter_revision, revision.wrapping_add(1));
-        assert_eq!(app.calibration_epoch, epoch.wrapping_add(1));
-        assert!(app.dirty);
-        let restored = app.current_state().unwrap().runtime_params().unwrap();
-        assert!(!restored.scanner.white_correction);
-        assert!(!restored.scanner.black_correction);
-        assert!(restored.print_render.glare.active);
-        app.presets.library.delete("Section").unwrap();
-    }
-    let entry = app
-        .presets
-        .entries
-        .iter()
-        .find(|entry| entry.group == PresetGroup::BuiltIn)
-        .unwrap()
-        .clone();
-    app.toggle_scan_for_print();
-    app.load_preset(entry.group, &entry.name);
-    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
-    assert!(app.scan_for_print_snapshot.is_none());
-    std::fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
 fn unusable_library_path_keeps_builtins_and_renders_fault() {
     let (mut app, directory) = test_app("library-fault");
     let path = directory.join("presets");
@@ -548,14 +395,13 @@ fn marker_transitions_and_capture_roundtrip() {
         provenance(),
     );
     let mut params = RuntimeParams::default();
-    let look = p.look_parameters().unwrap();
+    let look = p.look_parameters();
     look.apply_to(&mut params);
     let film = &p.film_profile.as_ref().unwrap().stock;
     let print = &p.print_profile.as_ref().unwrap().stock;
     let entries = vec![LibraryEntry {
         group: PresetGroup::BuiltIn,
         name: p.name.clone(),
-        kind: Some(PresetKind::Look),
         film_profile: p.film_profile.clone(),
         print_profile: p.print_profile.clone(),
         path: None,
@@ -609,35 +455,6 @@ fn marker_transitions_and_capture_roundtrip() {
     assert_eq!(marker(&applied, &[], &params, film, print), Marker::Missing);
 }
 #[test]
-fn section_labels_and_names() {
-    let params = RuntimeParams::default();
-    let mut entries = vec![];
-    for name in ["Zulu", "alpha"] {
-        let preset = Preset::capture_section(name, Section::Grain, &params, provenance()).unwrap();
-        entries.push(LibraryEntry {
-            group: PresetGroup::User,
-            name: name.into(),
-            kind: Some(PresetKind::Section(Section::Grain)),
-            film_profile: None,
-            print_profile: None,
-            path: None,
-            fault: None,
-            preset: Some(preset),
-        });
-    }
-    assert_eq!(
-        section_label(Section::Grain, &entries, &params).unwrap(),
-        "alpha"
-    );
-    assert_eq!(
-        section_label(Section::Base, &entries, &params).unwrap(),
-        "custom"
-    );
-    assert!(name_error("ALPHA", &entries, None).is_some());
-    assert!(name_error("bad/name", &entries, None).is_some());
-    assert!(name_error("alpha", &entries, Some("alpha")).is_none());
-}
-#[test]
 fn browser_extension_preserves_existing_fields() {
     let mut extras = state::GuiState::factory().sections;
     extras["rust"]["presets"] = serde_json::to_value(BrowserState {
@@ -670,40 +487,5 @@ fn browser_extension_preserves_existing_fields() {
         restored.sections["rust"]["presets"]
             .get("modified")
             .is_none()
-    );
-}
-#[test]
-fn section_explicitness_survives_state_roundtrip() {
-    let mut params = RuntimeParams::default();
-    params.enlarger.m_filter_neutral = 31.0;
-    let preset =
-        Preset::capture_section("Filters", Section::Enlarger, &params, provenance()).unwrap();
-    let film = spektrafilm_core::profile::load_profile_by_name(
-        &crate::headless::data_dir(),
-        "kodak_gold_200",
-    )
-    .unwrap();
-    let applied = preset
-        .apply_section(&RuntimeParams::default(), &film)
-        .unwrap();
-    let state = state::GuiState::from_runtime(
-        &applied,
-        "kodak_gold_200",
-        "kodak_portra_endura",
-        &state::GuiState::factory().sections,
-    )
-    .unwrap();
-    let restored = state::GuiState::from_value(state.sections)
-        .unwrap()
-        .runtime_params()
-        .unwrap();
-    assert_eq!(
-        restored.render_preparation_state(),
-        applied.render_preparation_state()
-    );
-    assert_eq!(restored.enlarger.m_filter_neutral, 31.0);
-    assert_eq!(
-        restored.settings.neutral_print_filters_from_database,
-        applied.settings.neutral_print_filters_from_database
     );
 }

@@ -2,10 +2,6 @@ use super::*;
 
 use crate::test_support::data_dir as data;
 
-fn test_film() -> Profile {
-    profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap()
-}
-
 fn provenance() -> Provenance {
     Provenance {
         implementation_version: "test".into(),
@@ -69,11 +65,11 @@ fn captured_exposure_roundtrips_and_restores_only_owned_camera_controls() {
         auto_exposure: source.camera.auto_exposure,
         auto_exposure_method: source.camera.auto_exposure_method.clone(),
     });
-    assert_eq!(preset.look_parameters().unwrap().camera, expected);
+    assert_eq!(preset.look_parameters().camera, expected);
 
     let current = current_params();
     for imported in carrier_roundtrips(&preset) {
-        let look = imported.look_parameters().unwrap();
+        let look = imported.look_parameters();
         assert_eq!(look.camera, expected);
         assert!(!look.matches(&current));
 
@@ -147,9 +143,9 @@ fn legacy_schema_versions_preserve_exposure_and_export_camera_absence() {
         }
         document["schema_version"] = version.into();
         let imported = Preset::from_json_str(&document.to_string()).unwrap();
-        assert_eq!(imported.look_parameters().unwrap().camera, None);
+        assert_eq!(imported.look_parameters().camera, None);
         for legacy in carrier_roundtrips(&imported) {
-            let look = legacy.look_parameters().unwrap();
+            let look = legacy.look_parameters();
             assert_eq!(look.camera, None);
             let exported: Value = serde_json::from_str(&legacy.to_json().unwrap()).unwrap();
             assert!(exported["parameters"].get("camera").is_none());
@@ -252,66 +248,5 @@ fn legacy_schema_versions_reject_the_schema_three_camera_group() {
             .unwrap()
             .remove("output_mix");
         assert!(Preset::from_toml_str(&toml::to_string(&toml).unwrap()).is_err());
-    }
-}
-
-#[test]
-fn camera_section_applies_only_its_leaves_and_records_explicit_paths() {
-    let source = exposure_params();
-    let preset =
-        Preset::capture_section("Camera section", Section::Camera, &source, provenance()).unwrap();
-    let expected_paths = [
-        "camera.exposure_compensation_ev",
-        "camera.auto_exposure",
-        "camera.auto_exposure_method",
-    ];
-    assert_eq!(Section::Camera.name(), "camera");
-    assert_eq!(Section::Camera.paths(), expected_paths);
-    let current = current_params();
-
-    for imported in carrier_roundtrips(&preset) {
-        assert_eq!(
-            imported.kind().unwrap(),
-            PresetKind::Section(Section::Camera)
-        );
-        assert!(!section_matches(&imported, &current).unwrap());
-        let applied = imported.apply_section(&current, &test_film()).unwrap();
-        let mut expected = current.clone();
-        expected.camera.exposure_compensation_ev = source.camera.exposure_compensation_ev;
-        expected.camera.auto_exposure = source.camera.auto_exposure;
-        expected.camera.auto_exposure_method = source.camera.auto_exposure_method.clone();
-        assert_eq!(
-            serde_json::to_value(&applied).unwrap(),
-            serde_json::to_value(&expected).unwrap()
-        );
-        assert_eq!(
-            applied.explicit_section_paths,
-            expected_paths.into_iter().map(str::to_owned).collect()
-        );
-        assert_eq!(
-            applied.neutral_print_filters_protected,
-            current.neutral_print_filters_protected
-        );
-        assert!(section_matches(&imported, &applied).unwrap());
-
-        let mut changed = applied.clone();
-        changed.camera.diffusion_filter.active = !changed.camera.diffusion_filter.active;
-        changed.camera.lens_blur_um += 1.0;
-        changed.io.crop = !changed.io.crop;
-        assert!(section_matches(&imported, &changed).unwrap());
-        for field in expected_paths {
-            let mut changed = applied.clone();
-            match field {
-                "camera.exposure_compensation_ev" => changed.camera.exposure_compensation_ev += 0.5,
-                "camera.auto_exposure" => {
-                    changed.camera.auto_exposure = !changed.camera.auto_exposure
-                }
-                "camera.auto_exposure_method" => {
-                    changed.camera.auto_exposure_method = "average".into()
-                }
-                _ => unreachable!(),
-            }
-            assert!(!section_matches(&imported, &changed).unwrap());
-        }
     }
 }
