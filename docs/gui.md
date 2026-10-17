@@ -32,7 +32,7 @@ Pages and their section assignment follow [page ownership](../specs/gui-workflow
 
 Page navigation is one segmented control above the control list; the current page is the selected segment.
 
-A resettable section presents a `modified` chip while any of its parameters differs from the factory state, and a `reset` action that restores the section to that state. The reset touches only the section's own parameters, so a neighbouring section keeps its values. A section that carries a preset menu presents both on its header; a section that draws its own header inside the controls presents them beside it. See [section reset](../specs/gui-workflow/spec.md#section-reset).
+A resettable section presents a `modified` chip while any of its parameters differs from the factory state, and a `reset` action that restores the section to that state. The reset touches only the section's own parameters, so a neighbouring section keeps its values. A section that draws its own header presents them on it; a section whose header is drawn inside the controls presents them beside it. See [section reset](../specs/gui-workflow/spec.md#section-reset).
 
 The GUI shows scanner controls for the scanned medium:
 
@@ -41,7 +41,7 @@ The GUI shows scanner controls for the scanned medium:
 - Negatives expose scan polarity; negative conversion controls appear on `input > film > scan` and `input > convert-film > scan`.
 - Slides and negative conversion outside Digital Reference expose film-scan points.
 
-Selecting the negative conversion method clears incompatible capture-correction flags. State files and scanner section presets retain point values. See [scanning](scanning.md) for scanner mode semantics.
+Selecting the negative conversion method clears incompatible capture-correction flags. State files retain scanner point values. See [scanning](scanning.md) for scanner mode semantics.
 
 **MAIN → Output → Simulation blend** blends the complete result with the decoded, geometrically aligned source in linear output RGB. Amount `1` keeps the complete result. Amount `0` returns the prepared source before virtual camera exposure. A negative capture stays negative at zero. Preview, Scan, Export, and complete source-to-output LUTs share this operation. Segmented LUTs require amount `1`. See [the output mix specification](../specs/output-mix/spec.md#output-mix) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
 

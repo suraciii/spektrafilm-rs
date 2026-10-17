@@ -9,30 +9,17 @@ impl App {
                 current.scanner.black_correction = black;
                 current.print_render.glare.active = glare;
             }
-            match selected.preset.kind()? {
-                PresetKind::Look => {
-                    let resolved = selected.preset.resolve(&self.data_dir, &current)?;
-                    self.film_medium = crate::scan_medium(&resolved.film);
-                    self.film_name = resolved.film_name;
-                    self.print_name = resolved.print_name;
-                    self.params = resolved.params;
-                    self.film_dev_times = resolved.film.data.development_time;
-                    self.print_dev_times = resolved.print.data.development_time;
-                    self.presets.state.applied = Some(AppliedPreset {
-                        group,
-                        name: name.to_owned(),
-                    });
-                }
-                PresetKind::Section(_) => {
-                    let film = spektrafilm_core::profile::load_profile_by_name(
-                        &self.data_dir,
-                        &self.film_name,
-                    )
-                    .map_err(|error| error.to_string())?;
-                    self.params = selected.preset.apply_section(&current, &film)?;
-                    self.film_medium = crate::scan_medium(&film);
-                }
-            }
+            let resolved = selected.preset.resolve(&self.data_dir, &current)?;
+            self.film_medium = crate::scan_medium(&resolved.film);
+            self.film_name = resolved.film_name;
+            self.print_name = resolved.print_name;
+            self.params = resolved.params;
+            self.film_dev_times = resolved.film.data.development_time;
+            self.print_dev_times = resolved.print.data.development_time;
+            self.presets.state.applied = Some(AppliedPreset {
+                group,
+                name: name.to_owned(),
+            });
             self.invalidate_look_render();
             Ok(())
         });
@@ -41,19 +28,14 @@ impl App {
             Err(e) => format!("Preset error: {e}"),
         };
     }
-    pub(crate) fn save_preset_as(&mut self, section: Option<Section>) {
-        let result = match section {
-            Some(section) => {
-                Preset::capture_section("New preset", section, &self.params, provenance())
-            }
-            None => Ok(Preset::capture(
-                "New preset",
-                &self.film_name,
-                &self.print_name,
-                &self.params,
-                provenance(),
-            )),
-        };
+    pub(crate) fn save_preset_as(&mut self) {
+        let result = Ok(Preset::capture(
+            "New preset",
+            &self.film_name,
+            &self.print_name,
+            &self.params,
+            provenance(),
+        ));
         match result {
             Ok(preset) => {
                 self.presets.name_dialog = Some(NameDialog {

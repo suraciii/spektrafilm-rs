@@ -4,17 +4,17 @@
 
 - The GUI exposes controls for input, film, print, scanner, output, advanced color, and configuration.
 - Preview renders a bounded disposable image. Scan renders the original working resolution. Both use the current runtime controls.
-- Save writes retained output. Export re-renders through the selected backend and exposes cancellation. Render, saving-conversion, and viewer execution follow [GPU execution](../gpu-execution/spec.md); selecting CPU does not imply a precision different from the actual build.
+- Save writes retained output. Export re-renders through the selected backend and exposes cancellation. Render, saving-conversion, and viewer execution follow [GPU execution](./gpu-execution/spec.md); selecting CPU does not imply a precision different from the actual build.
 - Startup controls may be saved and restored. Removing the startup default restores the factory profile.
 - Viewer-only state, such as zoom, interpolation, reveal, and canvas presentation, must not alter saved or exported pixels.
 
 - The Scanner controls show exactly the controls that
-  [Scan medium and scanner controls](../film-chain/spec.md#scan-medium-and-scanner-controls)
+  [Scan medium and scanner controls](./film-chain/spec.md#scan-medium-and-scanner-controls)
   assign to the scanned medium. For a negative film profile on the direct
   `input > film > scan` route or the real negative-capture `input > convert-film > scan` route, they offer `direct_scan` and
-  `negative_to_positive`. Labels must follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance). Exposure reconstruction additionally shows brightness,
+  `negative_to_positive`. Labels must follow the [scan output naming contract](./film-chain/spec.md#scan-output-naming-acceptance). Exposure reconstruction additionally shows brightness,
   three-channel balance, contrast, maximum density, and negative conversion
-  method. Conversion control display names must follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). A slide film scan and a reconstructed negative film scan show
+  method. Conversion control display names must follow the [conversion control naming contract](./film-chain/spec.md#conversion-control-naming-acceptance). A slide film scan and a reconstructed negative film scan show
   the per-channel black and white points. Film scans show receiver profile,
   scanner finish, finish strength, and the `off` or `per_frame` setup mode where eligible.
   The GUI identifies approximate receiver profiles as approximate. A route or
@@ -24,35 +24,35 @@
   Hidden capture-correction settings must not prevent this mode selection.
   State and preset validation still reject an explicitly supplied incompatible
   scan configuration.
-- Imported states and presets must reject the removed mode as defined by [Scanner language](../film-chain/spec.md#scanner-language). A rejected import must not replace accepted parameters or the retained image.
+- Imported states and presets must reject the removed mode as defined by [Scanner language](./film-chain/spec.md#scanner-language). A rejected import must not replace accepted parameters or the retained image.
 - Scanner setup controls must expose whether the current setup is disabled or
   derived for the current input revision. Preview, Scan, and Export must use
   the same accepted setup for one input and parameter revision.
-- Digital Reference selection, labels, control visibility, and compatible receiver pairing follow the [Digital Reference contract](../film-chain/digital-reference/spec.md#integration-and-control-ownership). Its fixed Reference Exposure placement exposes reference output gain and balance while hiding exposure-reconstruction controls and automatic setup.
+- Digital Reference selection, labels, control visibility, and compatible receiver pairing follow the [Digital Reference contract](./film-chain/digital-reference/spec.md#integration-and-control-ownership). Its fixed Reference Exposure placement exposes reference output gain and balance while hiding exposure-reconstruction controls and automatic setup.
 - Numeric parameter fields use text editing and the default text cursor. Each original wheel event over a field changes its value by the declared step. Smoothed scroll residue must not repeat that change in later frames. Invalid or incomplete text must not enter runtime parameters.
 - A numeric editor must offer a usable range and step, and must not accept a value the parameter validator rejects. [Numeric editor ranges](#numeric-editor-ranges) owns both rules.
 - Preview computation and viewer composition run outside the UI thread. Queued requests retain only the latest snapshot. Results from older requests, input images, or parameter revisions must not replace current output.
 - The viewer retains the last completed frame while new composition runs. The development animation is fixed viewer behaviour under [Viewer presentation](#viewer-presentation).
-- Base workflow selection and optional finishing controls must follow the [Magazine finishing enablement contract](../magazine-finishing/spec.md#enablement).
+- Base workflow selection and optional finishing controls must follow the [Magazine finishing enablement contract](./magazine-finishing/spec.md#enablement).
 - The workflow selector must offer exactly the routes the workflow validator supports.
 
 ## Material controls and output composition
 
-Control placement and process meaning must follow [Output mix and material controls](../output-mix/spec.md#user-operation). The GUI must retain the existing MAIN, FILM, PRINT, ADVANCED, and CONFIG pages and section menus. It must not add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
+Control placement and process meaning must follow [Output mix and material controls](./output-mix/spec.md#user-operation). The GUI must retain the existing MAIN, FILM, PRINT, ADVANCED, and CONFIG pages and their section headers. It must not add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
 
 Each page owns one stage of the workflow. [Page ownership](#page-ownership) assigns every section to exactly one page.
 
-MAIN Enlarger must expose print exposure mode, print exposure, Magenta and Yellow shifts, and preflash exposure with its independent Magenta and Yellow filter shifts. Print exposure mode must follow [Print exposure mode](../film-chain/spec.md#print-exposure-mode). Calibrated cyan remains part of the neutral filter pack without a new Cyan shift control. Preflash must retain its existing units, defaults, bounds, and section ownership under [Preflash](../output-mix/spec.md#preflash). Zero preflash exposure must disable flash without clearing its filters. A route without print exposure and development must identify these controls as inactive and retain their values.
+MAIN Enlarger must expose print exposure mode, print exposure, Magenta and Yellow shifts, and preflash exposure with its independent Magenta and Yellow filter shifts. Print exposure mode must follow [Print exposure mode](./film-chain/spec.md#print-exposure-mode). Calibrated cyan remains part of the neutral filter pack without a new Cyan shift control. Preflash must retain its existing units, defaults, bounds, and section ownership under [Preflash](./output-mix/spec.md#preflash). Zero preflash exposure must disable flash without clearing its filters. A route without print exposure and development must identify these controls as inactive and retain their values.
 
 Preflash help must explain that, on negative-to-photographic-paper printing, it can bring weak highlight exposure differences into a responsive part of the paper curve. It cannot recover detail absent from the negative. Excessive preflash can lower paper white, add fog, alter midtones, and change color. Help must not promise fixed white or midgray, improved detail at every setting, or equivalence to digital highlight compression. Printing-film routes must retain their own material polarity and must not inherit a paper-highlight promise.
 
 FILM and PRINT must retain their existing chemistry and development controls. Developer exhaustion must keep its model-specific development meaning and capability conditions. It must not be renamed as a generic highlight or high-dynamic-range control. Profile and route feedback must identify unsupported or inactive controls without clearing stored values or fabricating model support. Film-development controls are inactive when converting a real captured negative; print-development controls remain available only on admitted printing routes. Finished RGB must mark material and Scanner controls inapplicable. Existing Scanner black and white points retain their medium-specific meaning; the GUI must not add duplicate generic levels.
 
-Material edits must use existing scanner calibration, inverse reconstruction, and automatic setup semantics. The GUI must not promise creative-reference isolation or add separate baseline and effective reference controls. [Section reset](#section-reset) owns reset scope; this rule adds no response reset and no preset section.
+Material edits must use existing scanner calibration, inverse reconstruction, and automatic setup semantics. The GUI must not promise creative-reference isolation or add separate baseline and effective reference controls. [Section reset](#section-reset) owns reset scope; this rule adds no response reset.
 
-MAIN Output must expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix), with its existing section menu. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output must not expose standalone lightness compression, an Output response section or preset, or a new Finished RGB output-processing switch. A negative-capture source must state that zero Simulation blend returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
+MAIN Output must expose Simulation blend as the full-result/prepared-source blend under [Output mix](./output-mix/spec.md#output-mix), with its existing section header. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output must not expose standalone lightness compression, an Output response section or preset, or a new Finished RGB output-processing switch. A negative-capture source must state that zero Simulation blend returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
 
-Loading retired settings must follow [Output boundary and retirement](../output-mix/spec.md#output-boundary-and-retirement). A rejected document must identify the exact offending path and leave the source document, active controls, accepted render identity, and retained output unchanged. The GUI must require explicit removal of a retired numeric lightness triplet without suggesting withdrawn response groups or automatically substituting preflash or chemistry. Withdrawn draft response groups and cyan-shift paths must fail normal unknown-field validation without aliases or migration.
+Loading retired settings must follow [Output boundary and retirement](./output-mix/spec.md#output-boundary-and-retirement). A rejected document must identify the exact offending path and leave the source document, active controls, accepted render identity, and retained output unchanged. The GUI must require explicit removal of a retired numeric lightness triplet without suggesting withdrawn response groups or automatically substituting preflash or chemistry. Withdrawn draft response groups and cyan-shift paths must fail normal unknown-field validation without aliases or migration.
 
 ## Window layout
 
@@ -60,14 +60,14 @@ The window has three regions and one header.
 
 - The viewer occupies the central region and is the primary surface. It presents the retained input, output, or paper back under [Viewer presentation](#viewer-presentation), and its footer owns the layer selector.
 - The control panel occupies the right region. It owns the page tabs, the control search, the tonal-distribution readout, and the primary actions. It is the only surface that edits parameter values.
-- The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser design](../presets/design.md).
+- The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser design](./presets/design.md).
 - The window header spans the full width above the three regions. It shows the current film profile, print profile, and workflow route as read-only text, and it is the only surface that shows the operation status.
 
 A region is a layout slot, not a page. A control belongs to exactly one region, and a persisted value keeps exactly one editable surface under [Labels and surfaces](#labels-and-surfaces).
 
 ## Optical and grain labels
 
-MAIN Scanner must distinguish Lens blur (readout optics) from Unsharp mask (digital sharpening). Identity point controls must not imply a different optical order. Tooltips must explain the [optical-order cutover](../film-chain/spec.md#optical-order-cutover) without offering a legacy late-blur mode.
+MAIN Scanner must distinguish Lens blur (readout optics) from Unsharp mask (digital sharpening). Identity point controls must not imply a different optical order. Tooltips must explain the [optical-order cutover](./film-chain/spec.md#optical-order-cutover) without offering a legacy late-blur mode.
 
 PRINT may retain the `print_render.glare` controls in its existing preset section, but their visible group must be labeled Print viewing glare. Its description must identify readout stray light, not preflash or a change in material density. Preflash and Enlarger diffusion must remain separately labeled exposure and optical controls. Group location must not imply that all Print controls execute during development.
 
@@ -87,7 +87,7 @@ ADVANCED owns processing controls that most sessions never change. It holds Spec
 
 CONFIG owns session configuration. It holds Diagnostics, GUI parameters, and Display.
 
-The Enlarger and Scanner sections belong to MAIN even though the scanner reads a medium the print route produces. The section-preset menus are unaffected by page ownership: they follow the [preset section table](../presets/design.md).
+The Enlarger and Scanner sections belong to MAIN even though the scanner reads a medium the print route produces.
 
 A section that a route makes inactive must state that it is inactive and retain its stored values. An inactive section must not present a disabled control block as if it were editable.
 
@@ -103,7 +103,7 @@ The parameter validator owns the accepted document range. Recipes, presets, CLI 
 
 An editor must reject input that the validator would reject, before the value enters runtime parameters. The editor must not accept a value that fails at render time.
 
-`camera.film_format_mm` is the model for this rule: its editor holds a 1-1000 mm editing range and clamps typed values to it, while recipes, presets, CLI parameters, and saved state carry any strictly positive value under [Film geometry](../film-grain/v3/design.md#film-geometry).
+`camera.film_format_mm` is the model for this rule: its editor holds a 1-1000 mm editing range and clamps typed values to it, while recipes, presets, CLI parameters, and saved state carry any strictly positive value under [Film geometry](./film-grain/v3/design.md#film-geometry).
 
 The editor range is declared once per parameter path in a single table. The GUI editor reads that table; a missing entry is a defect, not a silent default to the machine range. The same table is the source for the CLI discovery `minimum`/`maximum` output. The editor range must be contained within the validator's accepted range and must be wide enough to reach the parameter's documented usable values. Where the validator bound is unbounded above, the editor must still declare a finite maximum derived from the parameter's typical operating range.
 
@@ -128,28 +128,28 @@ An empty or absent output must present an explicit empty state instead of a blan
 
 ## Experimental controls
 
-The following controls carry an experimental marker. The marker is a UI hint; it does not change the parameter's behavior or validation. [GUI presentation](../gui-presentation/spec.md#markers) owns the marker's presentation.
+The following controls carry an experimental marker. The marker is a UI hint; it does not change the parameter's behavior or validation. [GUI presentation](./gui-presentation/spec.md#markers) owns the marker's presentation.
 
 - `print illuminant` selector — MAIN → Enlarger
 - Input gamut-compression algorithm selector — ADVANCED → Input gamut compress
 - Spektra `rms granularity` — FILM → Grain
 - `film_channel_swap`, `print_channel_swap` — FILM → Convert
 
-The channel-swap validator must reject a non-permutation. A value such as `[0, 0, 0]` currently passes validation and silently duplicates one density channel while dropping the other two. The shared renderer applies the swap to `profile.data.channel_density`, so a non-permutation corrupts the profile at render time. The validator must require exactly three indices in `0..2` that form a permutation of `0, 1, 2`.
+The channel-swap validator must reject a non-permutation. A value such as `[0, 0, 0]` currently passes validation and silently duplicates one density channel while dropping the other two. The shared renderer applies the swap to `profile.data.channel_density`, so a non-permutation corrupts the profile at render time. The validator must require exactly three indices in `0.2` that form a permutation of `0, 1, 2`.
 
 The GUI must not present a selector that offers one choice.
 
-A parameter that no control can change and that no pipeline stage reads must not own a GUI section under the [preset section rule](../presets/design.md).
+A parameter that no control can change and that no pipeline stage reads must not own a GUI section.
 
 ## Section reset
 
-Every parameter section presents a reset on its header, under [GUI presentation](../gui-presentation/spec.md#section-headers). A reset restores the factory value of every parameter that section presents, and changes nothing outside that section.
+Every parameter section presents a reset on its header, under [GUI presentation](./gui-presentation/spec.md#section-headers). A reset restores the factory value of every parameter that section presents, and changes nothing outside that section.
 
 The factory value of a parameter is the value the validated factory state projects. A parameter that only the runtime model carries — a grain engine and its engine-specific group among them — keeps a factory value and therefore a reset target, even though no persisted section holds it.
 
 One section-to-parameter table maps each section to the parameters it presents. That table is the only source of a section's reset scope. A section's parameter set is not derived from the numeric range table, which holds numeric parameters only.
 
-The existing Output section owns its mix reset to 1, and the Enlarger section follows its existing scope. This section adds no response reset and no preset section.
+The existing Output section owns its mix reset to 1, and the Enlarger section follows its existing scope. This section adds no response reset.
 
 ## Control search
 
@@ -168,7 +168,7 @@ The GUI must expose a search box at the top of the control panel. The search fil
 
 A label must name the current product concept. A label must not name a removed implementation, a development tool, or a file format of a former dependency.
 
-An operation status must appear on exactly one surface, the window header. It must be short and must describe the last accepted operation, under the [telemetry status rule](../telemetry/spec.md#local-surfaces).
+An operation status must appear on exactly one surface, the window header. It must be short and must describe the last accepted operation, under the [telemetry status rule](./telemetry/spec.md#local-surfaces).
 
 A control that changes a persisted value must be reachable from the GUI. A persisted value with no control, no pipeline consumer, and no owning specification must be removed from the document.
 

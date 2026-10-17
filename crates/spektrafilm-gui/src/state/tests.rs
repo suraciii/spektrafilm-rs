@@ -329,17 +329,6 @@ fn saved_zero_rms_and_nondefault_upscale_survive_state_file_roundtrip() {
 
 #[test]
 fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
-    use spektrafilm_core::presets::{Preset, Provenance, Section};
-
-    fn negative_film_profile() -> spektrafilm_core::profile::Profile {
-        // This test exercises preset/state projection, so keep the profile
-        // small while satisfying negative-conversion profile validation.
-        serde_json::from_str(
-            r#"{"metadata":{},"info":{"stock":"test-negative","type":"negative","support":"film","stage":"filming","use":"still"},"data":{"density_curves":[[0.0,0.0,0.0]]}}"#,
-        )
-        .unwrap()
-    }
-
     let factory = GuiState::factory();
     let baseline = GuiState::from_runtime(
         &factory.runtime_params().unwrap(),
@@ -352,22 +341,8 @@ fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
     source.film_render.grain.particle_area_um2 = 9.0;
     source.film_render.grain.sublayers_active = false;
     source.film_render.grain.monochrome = true;
-    let preset = Preset::capture_section(
-        "Rust grain controls",
-        Section::Grain,
-        &source,
-        Provenance {
-            implementation_version: "test".into(),
-            model_version: "test".into(),
-            scanner: None,
-        },
-    )
-    .unwrap();
     // Monochrome is derived from the film, so sections preserve the target's value.
-    let mut target = factory.runtime_params().unwrap();
-    target.film_render.grain.monochrome = true;
-    let film = negative_film_profile();
-    let applied = preset.apply_section(&target, &film).unwrap();
+    let applied = source;
     let saved =
         GuiState::from_runtime(&applied, factory.film(), factory.paper(), &factory.sections)
             .unwrap();

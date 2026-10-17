@@ -13,7 +13,7 @@ Use this page to discover portable presets, compose them for a render, and manag
 
 ## Compose a render
 
-`process` accepts an exact preset name or a TOML/JSON preset file through `--preset`. Repeat `--preset` to apply documents in appearance order. A look selects profiles and replaces look controls. A section edits only its supplied controls.
+`process` accepts an exact preset name or a TOML/JSON preset file through `--preset`. Repeat `--preset` to apply documents in appearance order. A look selects profiles and replaces look controls.
 
 Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=VALUE` assignments after the presets. String and enum values need no JSON quotes. Use `--set film_render.grain.engine=procedural` or `--set 'io.output_color_space=ProPhoto RGB'`.
 
@@ -30,11 +30,9 @@ Built-in looks enable their film profile's adaptation surface by default. See th
 
 ## Portable identities and name resolution
 
-Preset names are their portable identities. Core reads schema v1 and v2 documents and exports schema v3. V1 drops its old `id`. Older complete looks acquire the full Simulation blend, while section documents stay sparse.
+Preset names are their portable identities. Core reads schema v1 and v2 documents and exports schema v3. V1 drops its old `id`. Older complete looks acquire the full Simulation blend.
 
 User documents live in `<config_dir>/presets` under the shared `SPEKTRAFILM_CONFIG_DIR` policy. A name resolves in My Presets first, then Built-in. `user:` and `built-in:` select one group.
-
-Section documents contain sparse editable leaves from exactly one look section. Application retains omitted controls. Explicit JSON null edits require JSON export. TOML cannot represent those edits.
 
 Choose **American Reminiscence** in the GUI preset browser. You can also pass `--preset 'American Reminiscence'` to `process`. It pairs Kodak Gold 200 with Kodak Portra Endura. Virtual film exposure is +0.5 EV. Auto metering is off. The stored method remains `center_weighted`. The enlarger uses Y shift −3 and M shift 0. Print exposure is 1. Automatic print exposure compensation is enabled. Print density-curve morph is active. Overall and blue gamma factors are 0.95. The other gamma factors are 1. Developer exhaustion is 0. Grain, halation, and print glare are off. The film adaptation surface is on.
 
@@ -44,7 +42,7 @@ Versioned states and recipes permit an absent or null `io.output_gamut_compress.
 
 ## Save, export, and update
 
-Section files can be saved and exported without an active workflow. Their application validates the current scan configuration. CLI composition validates after explicit workflow choices.
+A saved look can be exported without an active workflow. Application validates the current scan configuration. CLI composition validates after explicit workflow choices.
 
 Library writes reject names already owned by another document. This includes concurrent writes with different letter case or carriers. Export into My Presets creates a new name. Use Update to replace an existing document.
 

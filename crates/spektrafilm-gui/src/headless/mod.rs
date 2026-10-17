@@ -582,43 +582,11 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         h.get_by_label("brightness").value().as_deref(),
         Some("1.000")
     );
-    let preset = spektrafilm_core::presets::Preset::capture_section(
-        "Negative conversion",
-        spektrafilm_core::presets::Section::Scanner,
-        &h.state().params,
-        spektrafilm_core::presets::Provenance {
-            implementation_version: env!("CARGO_PKG_VERSION").into(),
-            model_version: "spektrafilm".into(),
-            scanner: None,
-        },
-    )
-    .unwrap();
-    spektrafilm_core::presets::PresetLibrary::new(s.directory.path().join("presets"))
-        .save_new(&preset, &data_dir())
-        .unwrap();
-    click(h, "▶");
-    click(h, "Refresh");
-    click(h, "◀");
     choose(h, "scan output", "Preserve medium polarity");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    let scanner_header = h.get_by_label("Scanner").raw_bounds().unwrap();
-    h.get(
-        egui_kittest::kittest::by()
-            .label("Preset: custom")
-            .predicate(|node| {
-                node.raw_bounds().is_some_and(|bounds| {
-                    bounds.y0 < scanner_header.y1 && bounds.y1 > scanner_header.y0
-                })
-            }),
-    )
-    .simulate_click();
-    h.run_steps(3);
-    click(h, "Negative conversion");
-    assert!(
-        h.state().status.starts_with("Applied preset"),
-        "{}",
-        h.state().status
-    );
+    // The rest of this test exercises the negative-capture scanner path, so
+    // select it through the real control rather than writing the parameter.
+    choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     let preview = render(h, "PREVIEW");
     let accepted = h.state().current_state().unwrap();

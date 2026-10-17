@@ -462,18 +462,20 @@ impl App {
         self.rotate_input_image(false);
     }
     fn parameter_section(&mut self, ui: &mut egui::Ui, section: &str) {
-        let preset_section = match section {
-            "Film base" => Some((Section::Base, "Base", false)),
-            "Grain" => Some((Section::Grain, "Grain", true)),
-            "Halation" => Some((Section::Halation, "Halation", false)),
-            "Couplers" => Some((Section::Couplers, "Couplers", false)),
-            "Convert" => Some((Section::Convert, "Convert", false)),
-            "Camera" => Some((Section::Camera, "Camera", true)),
-            "Camera diffusion" => Some((Section::CameraFilter, "Diffusion", false)),
-            "Enlarger diffusion" => Some((Section::EnlargerFilter, "Diffusion", false)),
-            "Enlarger" => Some((Section::Enlarger, "Enlarger", true)),
-            "Scanner" => Some((Section::Scanner, "Scanner", false)),
-            "Output" => Some((Section::OutputMix, "Output", true)),
+        // Sections that own their own header rather than rendering one inside
+        // the controls, with the state the header opens in.
+        let collapsible = match section {
+            "Film base" => Some(("Base", false)),
+            "Grain" => Some(("Grain", true)),
+            "Halation" => Some(("Halation", false)),
+            "Couplers" => Some(("Couplers", false)),
+            "Convert" => Some(("Convert", false)),
+            "Camera" => Some(("Camera", true)),
+            "Camera diffusion" => Some(("Diffusion", false)),
+            "Enlarger diffusion" => Some(("Diffusion", false)),
+            "Enlarger" => Some(("Enlarger", true)),
+            "Scanner" => Some(("Scanner", false)),
+            "Output" => Some(("Output", true)),
             _ => None,
         };
         if !self.filter.is_empty() {
@@ -482,36 +484,48 @@ impl App {
             if !self.section_has_filter_match(section) {
                 return;
             }
-            if let Some((kind, label, _)) = preset_section {
+            if let Some((label, _)) = collapsible {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(label).strong());
-                    self.section_preset_menu(ui, kind);
+                    ui.label(
+                        egui::RichText::new(label)
+                            .color(theme::FG)
+                            .size(theme::SIZE_TITLE)
+                            .strong(),
+                    );
+                    self.section_reset_controls(ui, section);
                 });
             }
             self.parameter_section_controls(ui, section);
             return;
         }
-        if let Some((kind, label, default_open)) = preset_section {
+        if let Some((label, default_open)) = collapsible {
             let mut label_clicked = false;
             let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
-                ui.make_persistent_id(("preset-section", section)),
+                ui.make_persistent_id(("section", section)),
                 default_open,
             )
             .show_header(ui, |ui| {
                 label_clicked = ui
-                    .add(egui::Label::new(label).sense(egui::Sense::click()))
+                    .add(
+                        egui::Label::new(
+                            egui::RichText::new(label)
+                                .color(theme::FG)
+                                .size(theme::SIZE_TITLE)
+                                .strong(),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
                     .clicked();
                 self.section_reset_controls(ui, section);
-                self.section_preset_menu(ui, kind);
             });
             if label_clicked {
                 header.toggle();
             }
             header.body(|ui| self.parameter_section_controls(ui, section));
         } else {
-            // A section without a preset menu renders its own header inside
-            // the controls, so its reset scope rides on a row above them.
+            // A section without its own header renders one inside the controls,
+            // so its reset scope rides on a row above them.
             if section_reset::sections().any(|name| name == section) {
                 ui.horizontal(|ui| {
                     self.section_reset_controls(ui, section);
@@ -684,8 +698,13 @@ impl App {
                 return;
             }
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Chemistry").strong());
-                self.section_preset_menu(ui, if film { Section::Film } else { Section::Print });
+                ui.label(
+                    egui::RichText::new("Chemistry")
+                        .color(theme::FG)
+                        .size(theme::SIZE_TITLE)
+                        .strong(),
+                );
+                self.section_reset_controls(ui, section);
             });
             if development_time {
                 self.chemistry_dev_time(ui, film);
@@ -704,7 +723,6 @@ impl App {
                 .add(egui::Label::new("Chemistry").sense(egui::Sense::click()))
                 .clicked();
             self.section_reset_controls(ui, section);
-            self.section_preset_menu(ui, if film { Section::Film } else { Section::Print });
         });
         if label_clicked {
             header.toggle();
