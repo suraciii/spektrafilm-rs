@@ -159,7 +159,7 @@ impl App {
                                 action = Some((index, PresetAction::Load));
                             }
                             response.context_menu(|ui| {
-                                if let Some(selected) = self.preset_actions(ui, entry, true) {
+                                if let Some(selected) = self.preset_actions(ui, entry) {
                                     action = Some((index, selected));
                                 }
                             });
@@ -198,6 +198,38 @@ impl App {
                                         .size(theme::SIZE_HINT),
                                 );
                             });
+                            // A visible action control beside the entry name. The
+                            // context menu stays as an additional route, but the
+                            // same actions are reachable here by pointer and by
+                            // keyboard: the button takes focus, and Space or
+                            // Enter opens its menu.
+                            let entry_id = ui.id().with(("preset actions", &entry.name));
+                            let actions = ui.push_id(entry_id, |ui| {
+                                let actions = ui.menu_button(
+                                    egui::RichText::new("preset actions")
+                                        .color(theme::FG_MUTED)
+                                        .size(theme::SIZE_HINT),
+                                    |ui| self.preset_actions(ui, entry),
+                                );
+                                // Name the control after its entry, so the
+                                // action menu of one card is addressable among
+                                // the cards.
+                                ui.ctx()
+                                    .accesskit_node_builder(actions.response.id, |node| {
+                                        node.set_label(format!(
+                                            "preset actions for {}",
+                                            entry.name
+                                        ));
+                                    });
+                                actions.response.on_hover_text(format!(
+                                    "Update, rename, duplicate, export, reveal or delete {}",
+                                    entry.name
+                                ));
+                                actions.inner.flatten()
+                            });
+                            if let Some(selected) = actions.inner {
+                                action = Some((index, selected));
+                            }
                         });
                     }
                     if let Some((index, action)) = action {
@@ -234,12 +266,7 @@ impl App {
         }
         self.preset_dialogs(ctx);
     }
-    fn preset_actions(
-        &self,
-        ui: &mut egui::Ui,
-        entry: &LibraryEntry,
-        look: bool,
-    ) -> Option<PresetAction> {
+    fn preset_actions(&self, ui: &mut egui::Ui, entry: &LibraryEntry) -> Option<PresetAction> {
         entry.preset.as_ref()?;
         let mut action = None;
         if entry.group == PresetGroup::User {
@@ -249,15 +276,14 @@ impl App {
                 .applied
                 .as_ref()
                 .is_some_and(|a| a.group == entry.group && a.name == entry.name);
-            if look
-                && ui
-                    .add_enabled(active, egui::Button::new("Update"))
-                    .clicked()
+            if ui
+                .add_enabled(active, egui::Button::new("Update"))
+                .clicked()
             {
                 action = Some(PresetAction::Update);
                 ui.close_menu();
             }
-            if look && ui.button("Revert").clicked() {
+            if ui.button("Revert").clicked() {
                 action = Some(PresetAction::Load);
                 ui.close_menu();
             }

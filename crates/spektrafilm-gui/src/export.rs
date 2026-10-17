@@ -369,11 +369,19 @@ impl ExportDialog {
                     for &space in spaces {
                         ui.selectable_value(&mut draft.saving_color_space, space.to_owned(), space);
                     }
-                });
+                })
+                .response
+                .on_hover_text("Color space and transfer encoding of the file Export writes. This is file conversion, distinct from the output color space of the runtime digital output and from the display transform, which is viewer-only.");
                 match draft.format {
                     ExportFormat::Exr => { ui.label("EXR uses linear color and ZIP compression."); }
                     ExportFormat::Jpeg | ExportFormat::Png => { ui.label("JPEG and PNG use encoded color."); }
-                    ExportFormat::Tiff => { ui.checkbox(&mut draft.saving_cctf_encoding, "Apply saving CCTF encoding"); }
+                    ExportFormat::Tiff => {
+                        ui.checkbox(&mut draft.saving_cctf_encoding, "Apply saving CCTF encoding")
+                            .on_hover_text(format!(
+                                "CCTF is the {}. Apply the saving transfer encoding to the samples Export writes; off writes linear samples. This file conversion is independent of the viewer-only display transform.",
+                                crate::routes::vocabulary::CCTF
+                            ));
+                    }
                 }
                 let depth_label = match draft.depth {
                     BitDepth::Eight => "8 bit",
@@ -387,7 +395,11 @@ impl ExportDialog {
                     ExportFormat::Png => format!("{format_label} · 8 bit · {} · encoded", draft.saving_color_space),
                     ExportFormat::Tiff => format!("{format_label} · {depth_label} · {} · {} · {}", draft.saving_color_space, if draft.saving_cctf_encoding { "CCTF" } else { "linear" }, match draft.compression { ExportCompression::Zip => "ZIP", ExportCompression::None => "None" }),
                 };
-                ui.label(egui::RichText::new(format!("Summary: {summary}")).small().color(theme::FG_MUTED));
+                ui.label(egui::RichText::new(format!("Summary: {summary}")).small().color(theme::FG_MUTED))
+                    .on_hover_text(format!(
+                        "What these settings will write: format, bit depth, saving color space, and the transfer encoding (CCTF, the {}, or linear) plus compression. Save writes the retained output with the current simulation saving settings instead, without rerendering.",
+                        crate::routes::vocabulary::CCTF
+                    ));
                 let compressed = container_compresses(draft);
                 let estimate = format_size(estimated_output_bytes(draft, dimensions));
                 let row = if compressed {
@@ -405,8 +417,14 @@ impl ExportDialog {
                 ui.horizontal(|ui| {
                     // The sidebar opener and this submit are two steps of one
                     // flow, so they carry distinct labels.
-                    submit = ui.button("Export file…").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    submit = ui
+                        .button("Export file…")
+                        .on_hover_text("Start an independent export: render the full-resolution input with the current runtime controls and these saving settings, then write the file. Export never reads or writes the retained output, so it is a different operation from Save.")
+                        .clicked();
+                    cancel = ui
+                        .button("Cancel")
+                        .on_hover_text("Discard these export settings. The retained output is unchanged.")
+                        .clicked();
                 });
             });
         if !open || cancel || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {

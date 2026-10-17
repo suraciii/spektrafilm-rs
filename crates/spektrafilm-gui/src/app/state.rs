@@ -73,6 +73,9 @@ pub(crate) struct App {
     pub(crate) export_job: Option<ExportJob>,
     /// Transient control-search filter. Not persisted.
     pub(crate) filter: String,
+    /// Restore-factory-default confirmation is open. Transient, never
+    /// persisted: it exists only between the trigger click and the choice.
+    pub(crate) factory_reset_confirm: bool,
     /// Labels the control sections rendered last, keyed by section name. The
     /// control search hides a section whose cache was recorded by a filtered
     /// render and does not match.
@@ -238,6 +241,7 @@ impl App {
             compare_active: false,
             compare_split: 0.5,
             filter: String::new(),
+            factory_reset_confirm: false,
             section_labels: std::collections::HashMap::new(),
             search_index: crate::controls::SearchIndex::default(),
             pending_scroll: None,

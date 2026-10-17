@@ -679,6 +679,45 @@ fn control_search_reveals_a_collapsed_section_and_restores_it_when_cleared() {
     assert!(h.query_by_label("halo warmth").is_none());
 }
 
+// specs/gui-product-design/spec.md#control-panel-product-surface: the clear
+// action makes clearing the transient filter discoverable without touching
+// parameters or persisted sections, and the no-match message reports the
+// entered text rather than implying the parameters changed.
+#[test]
+fn control_search_clear_action_and_no_match_state_report_the_entered_filter() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let params_before = h.state().params.clone();
+    let sections_before = h.state().gui_state.sections.clone();
+
+    // Without a filter there is nothing to clear, so the action stays absent.
+    assert!(h.query_by_label("clear filter").is_none());
+
+    search(h, "no-such-control-label");
+    assert!(
+        h.query_by_label_contains("No control matches “no-such-control-label”.")
+            .is_some(),
+        "the no-match message uses the entered text"
+    );
+
+    search(h, "upscale");
+    assert!(h.query_by_label("clear filter").is_some());
+    let clear = h.get_by_role_and_label(egui::accesskit::Role::Button, "clear filter");
+    clear.focus();
+    h.step();
+    h.press_key(egui::Key::Enter);
+    h.run_steps(5);
+    assert!(
+        h.state().filter.is_empty(),
+        "clear action must clear transient filter state"
+    );
+    assert!(h.query_by_label("clear filter").is_none());
+    assert!(h.query_by_label("exposure compensation ev").is_some());
+    assert!(h.query_by_label_contains("No control matches").is_none());
+    assert_eq!(h.state().params, params_before);
+    assert_eq!(h.state().gui_state.sections, sections_before);
+}
+
 // specs/gui-workflow/spec.md#control-search: a control inside a collapsed
 // sub-section of a revealed section is found by its own label and does not
 // require the sub-section to be opened first.

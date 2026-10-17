@@ -1,4 +1,5 @@
 use super::*;
+use crate::routes::vocabulary;
 use egui::Ui;
 use serde_json::Value;
 
@@ -28,7 +29,7 @@ pub(crate) fn sections(
                     ui,
                     "apply cctf decoding",
                     &mut params.io.input_cctf_decoding,
-                    "Apply the inverse cctf transfer function of the color space",
+                    "Apply the inverse color component transfer function (CCTF) of the input color space, so the declared encoded samples become linear before the pipeline reads them.",
                 );
             }
         });
@@ -94,30 +95,38 @@ pub(crate) fn sections(
                     .small()
                     .color(theme::FG_MUTED),
             );
+            // One explanatory line groups the scanner controls by acquisition,
+            // conversion, automatic scan setup, and finishing. It names the
+            // sequence only: it renames no runtime concept and adds no control.
+            ui.label(
+                egui::RichText::new(vocabulary::SCANNER_SEQUENCE)
+                    .small()
+                    .color(theme::FG_MUTED),
+            );
             if medium == ScanMedium::None {
                 return;
             }
             if matches!(medium, ScanMedium::Slide | ScanMedium::Negative)
                 && params.scanner.negative_conversion_method != NegativeConversionMethod::DigitalReference
-                && filter_matches(filter, "receiver profile")
+                && filter_matches(filter, vocabulary::RECEIVER_PROFILE)
             {
-                flags.runtime_changed |= enum_choice(ui, "receiver profile", &mut params.scanner.receiver_profile, &[
-                    (ReceiverProfile::LegacyColorimetric, "legacy colorimetric"),
-                    (ReceiverProfile::LabScanApprox, "lab scan (approximate)"),
-                ], "Receiver response for film acquisition. Lab scan uses an approximate, uncalibrated receiver.");
+                flags.runtime_changed |= enum_choice(ui, vocabulary::RECEIVER_PROFILE, &mut params.scanner.receiver_profile, &[
+                    (ReceiverProfile::LegacyColorimetric, vocabulary::LEGACY_COLORIMETRIC),
+                    (ReceiverProfile::LabScanApprox, vocabulary::LAB_SCAN_APPROX),
+                ], vocabulary::receiver_profile_help());
             }
             if positive_route
-                && filter_matches(filter, "scan output")
+                && filter_matches(filter, vocabulary::SCAN_OUTPUT)
                 && choice_tip_entries(
                     ui,
-                    "scan output",
+                    vocabulary::SCAN_OUTPUT,
                     &mut params.scanner.scan_output,
                     [
                         ("direct_scan", "Preserve medium polarity"),
                         ("negative_to_positive", "Negative to positive"),
                     ]
                     .into_iter(),
-                    "Preserve medium polarity retains the medium's native scan polarity. Negative to positive applies calibrated negative conversion and turns off white and black capture correction.",
+                    vocabulary::SCAN_OUTPUT_HELP,
                 )
             {
                 if params.scanner.scan_output == "negative_to_positive" {
@@ -132,12 +141,12 @@ pub(crate) fn sections(
                     (NegativeConversionMethod::Density, "density"),
                     (NegativeConversionMethod::Separable, "separable"),
                     (NegativeConversionMethod::Coupled, "coupled"),
-                    (NegativeConversionMethod::DigitalReference, "Digital Reference (modeled)"),
+                    (NegativeConversionMethod::DigitalReference, vocabulary::DIGITAL_REFERENCE),
                 ];
                 let methods = &methods[..if params.workflow.route == "input > film > scan" { 4 } else { 3 }];
-                if filter_matches(filter, "negative conversion method")
-                    && enum_choice(ui, "Negative conversion method", &mut params.scanner.negative_conversion_method, methods,
-                        "Density, separable and coupled reconstruct the selected film. Digital Reference uses a common modeled receiver and fixed positive response to preserve stock differences.")
+                if filter_matches(filter, vocabulary::NEGATIVE_CONVERSION_METHOD)
+                    && enum_choice(ui, vocabulary::NEGATIVE_CONVERSION_METHOD, &mut params.scanner.negative_conversion_method, methods,
+                        vocabulary::negative_conversion_help())
                 {
                     if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference {
                         let defaults = spektrafilm_core::params::ScannerParams::default();
@@ -157,23 +166,23 @@ pub(crate) fn sections(
                     ui.label("Reference Exposure: 18% neutral (fixed)")
                         .on_hover_text("Common Kodak Endura spectral receiver sensitivity and fixed Kodak Portra 400 dye basis. One reference exposure and clear-film reading normalize each stock; no frame histogram or selected-film inverse is used.");
                 } else {
-                    if filter_matches(filter, "scanner auto setup") {
-                        flags.runtime_changed |= enum_choice(ui, "scanner auto setup", &mut params.scanner.auto_setup, &[
+                    if filter_matches(filter, vocabulary::SCANNER_AUTO_SETUP) {
+                        flags.runtime_changed |= enum_choice(ui, vocabulary::SCANNER_AUTO_SETUP, &mut params.scanner.auto_setup, &[
                             (ScannerAutoSetup::Off, "off"),
                             (ScannerAutoSetup::PerFrame, "per_frame"),
-                        ], "Derive scanner exposure, balance, and contrast placement from the full input frame.");
+                        ], vocabulary::SCANNER_AUTO_SETUP_HELP);
                     }
                 }
-                if filter_matches(filter, "scanner finish") {
-                    flags.runtime_changed |= enum_choice(ui, "scanner finish", &mut params.scanner.finish, &[
+                if filter_matches(filter, vocabulary::SCANNER_FINISH) {
+                    flags.runtime_changed |= enum_choice(ui, vocabulary::SCANNER_FINISH, &mut params.scanner.finish, &[
                         (ScannerFinish::Neutral, "neutral"),
                         (ScannerFinish::LabScan, "lab_scan"),
-                    ], "Optional scanner finish after negative conversion.");
+                    ], vocabulary::SCANNER_FINISH_HELP);
                 }
                 if params.scanner.finish == ScannerFinish::LabScan
-                    && filter_matches(filter, "finish strength")
+                    && filter_matches(filter, vocabulary::FINISH_STRENGTH)
                 {
-                    flags.runtime_changed |= param_numeric(ui, "finish strength", &mut params.scanner.finish_strength, "scanner.finish_strength", "Scanner finish strength. Zero returns the calibrated scan before finishing.");
+                    flags.runtime_changed |= param_numeric(ui, vocabulary::FINISH_STRENGTH, &mut params.scanner.finish_strength, "scanner.finish_strength", vocabulary::FINISH_STRENGTH_HELP);
                 }
                 if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference {
                     if filter_matches(filter, "reference exposure ev") {

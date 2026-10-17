@@ -2,13 +2,14 @@ use super::*;
 
 impl App {
     pub(crate) fn load_preset(&mut self, group: PresetGroup, name: &str) {
+        let mut current = self.params.clone();
+        if let Some((white, black, glare)) = self.scan_for_print_snapshot {
+            current.scanner.white_correction = white;
+            current.scanner.black_correction = black;
+            current.print_render.glare.active = glare;
+        }
+        let before_scanner = current.scanner.clone();
         let result = self.presets.library.load(group, name).and_then(|selected| {
-            let mut current = self.params.clone();
-            if let Some((white, black, glare)) = self.scan_for_print_snapshot {
-                current.scanner.white_correction = white;
-                current.scanner.black_correction = black;
-                current.print_render.glare.active = glare;
-            }
             let resolved = selected.preset.resolve(&self.data_dir, &current)?;
             self.film_medium = crate::scan_medium(&resolved.film);
             self.film_name = resolved.film_name;
@@ -24,7 +25,16 @@ impl App {
             Ok(())
         });
         self.status = match result {
-            Ok(()) => format!("Applied preset '{name}'"),
+            Ok(()) => {
+                let cause = format!("Applied preset '{name}'");
+                App::normalization_status(
+                    &before_scanner,
+                    &self.params.scanner,
+                    self.film_medium,
+                    &self.params.workflow.route,
+                    &cause,
+                )
+            }
             Err(e) => format!("Preset error: {e}"),
         };
     }

@@ -20,6 +20,8 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 **Select RGB image…** loads a standard image. **Select RAW file…** loads and processes a camera RAW file with LibRaw. RAW processing uses as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction. RAW enters the runtime as linear ACES2065-1. See [RAW input](raw.md) for white balance details.
 
+The viewer also accepts a dropped image file. Dropping a supported RGB image or camera RAW file uses the same import path as the corresponding `Select …` action; an unsupported or unreadable drop leaves the accepted image and parameters unchanged. This affordance is documented here rather than adding a second editable input surface.
+
 **Input image / Profiles** selects the input/output color workflow, film stock, and print paper. Selecting a film keeps the current paper; applying a look preset selects the paper that the look resolves.
 
 **Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value. The text resets when focus leaves the field. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
@@ -28,7 +30,7 @@ Each numeric row shows the parameter's name on the left and its value on the rig
 
 A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name on the left and its selector on the right. A row marked experimental carries an `experimental` chip beside its name. A checkbox belongs to list selection only.
 
-The control filter searches every page. Results name the owning page and section and summarize matching controls; selecting a result changes the active page and reveals the matching section without changing parameters or persisted state. Clearing the filter restores the normal collapsed layout. Closed sections provide one-line summaries of the controls they contain.
+The control filter searches every page. Results name the owning page and section and summarize matching controls; selecting a result changes the active page and reveals the matching section without changing parameters or persisted state. Clearing the filter restores the normal collapsed layout. While a filter is active, a `clear filter` action beside the box clears it, and a filter that matches nothing reports the entered text. Closed sections provide one-line summaries of the controls they contain.
 
 Pages and their section assignment follow [page ownership](../specs/gui-workflow/spec.md#page-ownership).
 
@@ -62,7 +64,7 @@ The `Finished RGB` workflow color-manages an already rendered image to the outpu
 
 ## Preview and Scan
 
-**Preview** renders a reduced image using the configured preview long-edge limit and preview digestion. Explicitly update it when auto-preview is disabled. Crop, spectral adaptation/blur, UV/IR, layered grain, and both diffusion filters apply to the runtime.
+**Preview** renders a bounded image using the configured preview long-edge limit and current runtime controls. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active. Explicitly update it when auto-preview is disabled.
 
 New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates skip the development animation; explicit Preview and Scan retain it.
 
@@ -76,9 +78,11 @@ See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the acti
 
 ## Viewer
 
-**Viewer controls** include `ccw rotate` and `cw rotate`. These actions physically rotate the in-memory input used by Preview, Scan, and Export. Quarter-turn actions preserve source metadata. Save writes the retained output of the latest render.
+**Viewer controls** include `ccw rotate` and `cw rotate`. These actions physically rotate the in-memory input used by Preview, Scan, and Export, clear the retained output, and schedule a new preview. Save writes the retained output of the latest completed render without rerendering, so it cannot render a rotation that has not been previewed or scanned.
 
 `100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. `fit` returns to the fitted zoom and keeps the pan; `reset view` also recentres it. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
+
+The `Paper back` layer is a viewer-only virtual rendering generated from paper texture, watermark, and noise. It is not an editable material stage and does not alter retained, saved, or exported pixels.
 
 The viewer footer groups its controls by target: rotation, view zoom, before/after comparison with its split position, and the current zoom as a read-only readout.
 
@@ -88,7 +92,7 @@ The viewer shows a tonal-distribution readout of the retained output. It is view
 
 The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel.
 
-The window header shows the current film profile, print profile, and workflow route as read-only text. The operation status appears in the window header. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
+The window header shows the current film profile, print profile, and workflow route as read-only text, with a direct physical description of the same route beside the exact serialized value. The operation status appears in the window header. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
 
 ### Display transform and ICC
 
@@ -130,7 +134,7 @@ Save uses upstream OpenImageIO JPEG defaults rather than Export's quality/subsam
 
 **Save state… / Load state…** exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values. Legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections, or Rust extension versions appear in the status bar.
 
-**Save current as default** persists the current controls. **Restore factory default** restores Kodak Gold 200 + Kodak Supra Endura, RMS granularity `[5,5,5]`, and upscale factor `1.0`. Saved user values, including zero RMS, survive startup and state loading.
+**Save current as default** persists the current controls. **Restore factory default** confirms before it applies, then restores Kodak Gold 200 + Kodak Supra Endura, RMS granularity `[5,5,5]`, and upscale factor `1.0`. The confirmation states that the action replaces the current controls and session settings and removes the saved startup default; cancelling keeps both. Saved user values, including zero RMS, survive startup and state loading.
 
 Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust settings use `rust.version = 2`. File-dialog directories persist separately.
 
@@ -141,6 +145,8 @@ Legacy states without an explicit export format preserve 8-bit as PNG and 16/32-
 The GUI remembers the preset browser selection and layout independently of startup controls. An ordinary restart restores that metadata and recomputes the applied, modified, or missing marker. It does not apply the preset again. Loading an explicit GUI state uses that file's browser metadata. Use **Save current as default** to change startup controls.
 
 A failed preset application preserves the current controls and temporary white/black correction state. See [presets](presets.md) for library and composition rules. The [presets specification](../specs/presets/spec.md) owns the preset contract.
+
+Each preset card carries its own `preset actions` control beside the entry name. Opening it reaches the same actions as the card's context menu — update, revert, rename, duplicate, export, show file, and delete — by pointer or by keyboard, so the context menu is an additional route rather than the only one. Update applies only to the applied user preset; revert, rename, and delete apply to user presets only.
 
 ## Diagnostics
 

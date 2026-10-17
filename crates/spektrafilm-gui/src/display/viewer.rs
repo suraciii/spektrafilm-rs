@@ -321,11 +321,14 @@ impl Viewer {
     pub fn layer_controls(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.settings.layer;
         ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut self.settings.layer, ViewLayer::Input, "Input");
+            ui.selectable_value(&mut self.settings.layer, ViewLayer::Input, "Input")
+                .on_hover_text("Show the retained input, decoded from its input color space and transfer decoding. The viewer layer does not change the retained image itself.");
             ui.add_enabled_ui(self.output.is_some(), |ui| {
-                ui.selectable_value(&mut self.settings.layer, ViewLayer::Output, "Output");
+                ui.selectable_value(&mut self.settings.layer, ViewLayer::Output, "Output")
+                    .on_hover_text("Show the retained output of the latest Preview or Scan. The viewer layer does not change the retained image itself.");
             });
-            ui.selectable_value(&mut self.settings.layer, ViewLayer::PaperBack, "Paper back");
+            ui.selectable_value(&mut self.settings.layer, ViewLayer::PaperBack, "Paper back")
+                .on_hover_text("Viewer-only: show the virtual paper-back rendering generated from paper texture, watermark, and noise. It is not an editable material stage and changes no retained, saved or exported pixels.");
         });
         before != self.settings.layer
     }
@@ -338,16 +341,16 @@ impl Viewer {
             self.pan,
         );
         ui.checkbox(&mut self.settings.use_display_transform, "use display transform")
-            .on_hover_text("Apply the display transform to the viewer output only; saved and exported pixels are unchanged.");
+            .on_hover_text("Apply the display transform and the selected display ICC profile to the viewer output only. Turning it off views the values in the output color space. Saved and exported pixels are unchanged either way.");
         ui.checkbox(&mut self.settings.gray_18_canvas, "gray 18% canvas")
             .on_hover_text(
-                "Use neutral 18% gray as background to judge the exposure and neutral colors",
+                "Use neutral 18% gray as the canvas behind the image to judge exposure and neutral colors. Canvas decoration only; retained, saved and exported pixels are unchanged.",
             );
         ui.checkbox(&mut self.settings.reveal, "reveal transition")
-            .on_hover_text("Animate a wipe reveal when switching from input to output view.");
+            .on_hover_text("Animate a wipe reveal when switching from the input to the output view. Viewer presentation only; retained, saved and exported pixels are unchanged.");
         ui.checkbox(&mut self.settings.crossfade, "crossfade transition")
-            .on_hover_text("Animate a crossfade between the previous and current output frame.");
-        let tooltip = "Expand the white border layer around the normalized preview frame, expressed as a fraction of the image long edge.";
+            .on_hover_text("Animate a crossfade between the previous and current output frame. Viewer presentation only; retained, saved and exported pixels are unchanged.");
+        let tooltip = "Expand the white border layer around the normalized preview frame, expressed as a fraction of the image long edge. Viewer presentation only; retained, saved and exported pixels are unchanged.";
         crate::controls::param_numeric(
             ui,
             "white padding",
@@ -376,7 +379,7 @@ impl Viewer {
                 }
             })
             .response
-            .on_hover_text("Interpolation used to display the output layer in the viewer.");
+            .on_hover_text("Interpolation used to display the output layer in the viewer. It resamples viewer pixels only; retained, saved and exported pixels are unchanged. The input layer always uses nearest and the paper back always uses spline36.");
     }
     fn display_source(&self, layer: ViewLayer) -> DisplaySource {
         if layer == ViewLayer::Input {

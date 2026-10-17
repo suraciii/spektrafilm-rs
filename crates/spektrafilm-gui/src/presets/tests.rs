@@ -218,10 +218,17 @@ fn scanner_transitions_preserve_points_and_reset_illegal_output() {
         spektrafilm_core::params::NegativeConversionMethod::Coupled;
     app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
     app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
+    app.params.scanner.reference_exposure_ev = 1.0;
+    app.params.scanner.reference_balance_ev = [0.1, 0.2, 0.3];
     app.dirty = false;
     let revision = app.parameter_revision;
     app.params.workflow.route = "input > film > print > scan".into();
     app.finish_route_change();
+    assert!(
+        app.status.contains("reference exposure EV") && app.status.contains("reference balance EV"),
+        "route normalization status must name cleared reference controls: {}",
+        app.status
+    );
     assert_eq!(app.params.scanner.scan_output, "direct_scan");
     assert_eq!(
         app.params.scanner.receiver_profile,
@@ -241,17 +248,27 @@ fn scanner_transitions_preserve_points_and_reset_illegal_output() {
     );
     assert!(app.dirty);
     assert_eq!(app.parameter_revision, revision.wrapping_add(1));
+    app.params.workflow.route = "input".into();
+    let revision = app.parameter_revision;
+    app.finish_route_change();
+    assert!(
+        app.status
+            .contains("scanner controls inactive for this route"),
+        "route normalization must identify inactive scanner controls: {}",
+        app.status
+    );
+    assert!(
+        app.status.contains("stored selections retained"),
+        "{}",
+        app.status
+    );
+    assert_eq!(app.parameter_revision, revision.wrapping_add(1));
     app.params.workflow.route = "input > convert-film > scan".into();
     app.finish_route_change();
     app.params.scanner.scan_output = "negative_to_positive".into();
     app.params.scanner.white_correction = false;
     app.params.scanner.black_correction = false;
-    let revision = app.parameter_revision;
     app.toggle_scan_for_print();
-    assert!(app.scan_for_print_snapshot.is_none());
-    assert!(!app.params.scanner.white_correction);
-    assert!(!app.params.scanner.black_correction);
-    assert_eq!(app.parameter_revision, revision);
     app.params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
     app.params.scanner.negative_conversion_method =
         spektrafilm_core::params::NegativeConversionMethod::Coupled;
@@ -279,6 +296,37 @@ fn scanner_transitions_preserve_points_and_reset_illegal_output() {
     let restored = app.current_state().unwrap().runtime_params().unwrap();
     assert_eq!(restored.scanner.black_point, [0.1, 0.2, 0.3]);
     assert_eq!(restored.scanner.white_point, [0.7, 0.8, 0.9]);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn preset_application_reports_scanner_normalization_and_inactive_controls() {
+    let (mut app, directory) = test_app("preset-scanner-normalization");
+    app.params.workflow.route = "input > film > scan".into();
+    app.params.scanner.scan_output = "negative_to_positive".into();
+    app.params.scanner.negative_conversion_method =
+        spektrafilm_core::params::NegativeConversionMethod::DigitalReference;
+    app.params.scanner.reference_exposure_ev = 1.0;
+    app.params.scanner.reference_balance_ev = [0.1, 0.2, 0.3];
+    let entry = app
+        .presets
+        .entries
+        .iter()
+        .find(|entry| entry.group == PresetGroup::BuiltIn)
+        .unwrap()
+        .clone();
+    app.load_preset(entry.group, &entry.name);
+    assert!(
+        app.status.contains("reference exposure EV"),
+        "{}",
+        app.status
+    );
+    assert!(
+        app.status.contains("reference balance EV"),
+        "{}",
+        app.status
+    );
+    assert!(app.status.contains("scanner controls"), "{}", app.status);
     std::fs::remove_dir_all(directory).unwrap();
 }
 

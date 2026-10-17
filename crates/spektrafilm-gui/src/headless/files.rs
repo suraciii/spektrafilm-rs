@@ -121,6 +121,17 @@ fn startup_default_and_factory_restore_stay_in_session_directory() {
     assert_eq!(h.state().config_directory, directory);
     state_controls(h);
     click(h, "Restore factory default");
+    // The destructive action confirms before applying: it states what it
+    // replaces, and the session keeps its saved startup default when cancelled.
+    assert!(
+        h.query_by_label(
+            "Replaces the current controls and session settings with the factory state, and removes the saved startup default."
+        )
+        .is_some(),
+        "{}",
+        h.state().status
+    );
+    click(h, "Restore");
     assert!(
         h.state().status.starts_with("Restored factory default"),
         "{}",
@@ -132,6 +143,38 @@ fn startup_default_and_factory_restore_stay_in_session_directory() {
     assert_eq!(h.state().params, factory);
     assert_eq!(h.state().params.film_render.grain.rms_granularity, [5.0; 3]);
     assert_eq!(h.state().params.io.upscale_factor, 1.0);
+}
+
+// specs/gui-product-design/spec.md#save-export-and-default-state-actions: the
+// confirmation is the guard on a destructive restore. Cancelling leaves the
+// session controls and the saved startup default exactly as they were.
+#[test]
+fn cancelled_factory_restore_keeps_the_current_controls_and_the_saved_default() {
+    let mut s = session();
+    let h = &mut s.harness;
+    state_controls(h);
+    click(h, "Save current as default");
+    assert!(h.state().status.starts_with("Saved current GUI state"));
+    let directory = s.directory.path().to_path_buf();
+    assert!(directory.join("gui_default_state.json").is_file());
+    let expected = h.state().params.clone();
+
+    click(h, "Restore factory default");
+    assert!(
+        h.query_all_by_label_contains("removes the saved startup default")
+            .next()
+            .is_some(),
+        "the confirmation states the consequence of the restore"
+    );
+    click(h, "Cancel");
+    assert!(
+        h.query_all_by_label_contains("removes the saved startup default")
+            .next()
+            .is_none(),
+        "cancelling closes the confirmation"
+    );
+    assert!(directory.join("gui_default_state.json").is_file());
+    assert_eq!(h.state().params, expected);
 }
 
 // gui_acceptance.py roundtrip transaction; scanner rejection acceptance retained in harness.

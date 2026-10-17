@@ -32,7 +32,7 @@ pub(crate) fn sections(
                 "output color space",
                 &mut params.io.output_color_space,
                 COLOR_SPACES,
-                "Output color space of the simulation",
+                "Color space and transfer encoding of the runtime digital output. It describes what the simulation produces, which is distinct from the saving color space used for the file and from the display transform, which is viewer-only.",
             );
         }
         if filter_matches(filter, "saving color space") {
@@ -44,7 +44,7 @@ pub(crate) fn sections(
                 "saving color space",
                 "sRGB",
                 COLOR_SPACES,
-                "Color space of the saved image file",
+                "Color space of the file Save writes. Save writes the retained output in this space without rerendering; Export renders and writes independently with its own saving color space.",
             );
         }
         if filter_matches(filter, "saving cctf encoding") {
@@ -55,7 +55,10 @@ pub(crate) fn sections(
                 "saving_cctf_encoding",
                 "saving cctf encoding",
                 true,
-                "Add or not the CCTF to the saved image file",
+                &format!(
+                    "Add or not the CCTF — {} — encoding to the samples Save writes. Off writes linear samples. This file-conversion setting is independent of the output color space and of the viewer-only display transform.",
+                    crate::routes::vocabulary::CCTF
+                ),
             );
         }
     }
