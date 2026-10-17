@@ -176,26 +176,32 @@ fn validate(
     kind: &str,
     file: &std::path::Path,
 ) -> spektrafilm_benchmark::Result<serde_json::Value> {
+    // Every failure below concerns one document, so every error names it. The
+    // deeper validators add a JSON Pointer where they can name the value
+    // exactly; where they cannot, the pointer is omitted rather than
+    // approximated, which is what the spec permits.
+    let display = file.display().to_string();
     let value = if matches!(kind, "run" | "comparison") {
         let root = file.parent().ok_or_else(|| {
             spektrafilm_benchmark::Error::new("invalid_path", "Manifest has no parent")
         })?;
-        let value = documents::load_json_document(file)?;
-        documents::validate_generated_document(kind, &value, root)?;
-        value
+        documents::load_json_document(file).and_then(|value| {
+            documents::validate_generated_document(kind, &value, root)?;
+            Ok(value)
+        })
     } else {
         match kind {
-            "suite" => documents::load_suite(file)?,
-            "target" => documents::load_target(file)?,
-            "policy" => documents::load_policy(file)?,
-            "review" => review::validate_manifest(file)?,
+            "suite" => documents::load_suite(file),
+            "target" => documents::load_target(file),
+            "policy" => documents::load_policy(file),
+            "review" => review::validate_manifest(file),
             "configuration" | "reference" | "regions" | "preparation" => {
-                local_input::load(kind, file)?
+                local_input::load(kind, file)
             }
             // The authored kinds the instrument owns directly: shape, types,
             // and the local dependencies each one names.
             "stimuli" | "experiment" | "material_measurement" | "correspondence_review" => {
-                documents::validate_authored_document(kind, file)?
+                documents::validate_authored_document(kind, file)
             }
             _ => {
                 return Err(spektrafilm_benchmark::Error::new(
@@ -204,7 +210,8 @@ fn validate(
                 ));
             }
         }
-    };
+    }
+    .map_err(|e| e.file(display.clone()))?;
     let unchecked = match kind {
         "review" => serde_json::json!([
             "image_decoding",
