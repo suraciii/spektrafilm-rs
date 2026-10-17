@@ -335,41 +335,7 @@ fn execute(
                 execute_run(args)
             }
         }
-        LabCommands::Compare { args } => {
-            // A measurement record (`run` or `sample`) is a reading: the
-            // command joins the two sides by sample and stage identity and
-            // publishes per-sample deltas. A version comparison reads run
-            // records that carry suite cases. The record kind decides, so a
-            // reading comparison never needs a reference to be one.
-            if is_reading_comparison(args.baseline.as_deref(), args.candidate.as_deref()) {
-                // A reading comparison publishes per-sample and per-stage
-                // deltas between two retained readings. It selects no rules and
-                // holds no policy, so a caller that asked for a gate on this
-                // form is told so rather than silently getting no evaluation.
-                if args.policy.is_some() || args.gate {
-                    return Err(BenchError::new(
-                        "argument_syntax",
-                        "--policy and --gate apply to a version comparison of run records; a reading comparison of measurement records evaluates no rules",
-                    ));
-                }
-                let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
-                    baseline: args.baseline.ok_or_else(|| {
-                        BenchError::new("argument_syntax", "Missing baseline run")
-                    })?,
-                    candidate: args.candidate.ok_or_else(|| {
-                        BenchError::new("argument_syntax", "Missing candidate run")
-                    })?,
-                    reference: args.reference_run,
-                    out: args.out,
-                };
-                let (value, status) =
-                    spektrafilm_cli::lab::measure::compare::compare_with_result(&measurement)
-                        .map_err(|error| BenchError::with_message("operation_failed", error))?;
-                Ok((value, status))
-            } else {
-                execute_compare(args)
-            }
-        }
+        LabCommands::Compare { args } => execute_compare_command(args),
         LabCommands::Inspect { args } => Ok((
             inspect::inspect(
                 &args.comparison,
@@ -557,6 +523,35 @@ fn execute_compare(args: EvaluationCompareArgs) -> Result<(serde_json::Value, i3
             args.gate,
         )
     }
+}
+
+/// Internal semantic dispatch retained behind the flat compatibility grammar.
+/// The input grammar remains unchanged; only the endpoint choice is explicit
+/// here rather than spread through the top-level match arm.
+fn execute_compare_command(
+    args: EvaluationCompareArgs,
+) -> Result<(serde_json::Value, i32), BenchError> {
+    if is_reading_comparison(args.baseline.as_deref(), args.candidate.as_deref()) {
+        if args.policy.is_some() || args.gate {
+            return Err(BenchError::new(
+                "argument_syntax",
+                "--policy and --gate apply to a version comparison of run records; a reading comparison of measurement records evaluates no rules",
+            ));
+        }
+        let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
+            baseline: args
+                .baseline
+                .ok_or_else(|| BenchError::new("argument_syntax", "Missing baseline run"))?,
+            candidate: args
+                .candidate
+                .ok_or_else(|| BenchError::new("argument_syntax", "Missing candidate run"))?,
+            reference: args.reference_run,
+            out: args.out,
+        };
+        return spektrafilm_cli::lab::measure::compare::compare_with_result(&measurement)
+            .map_err(|error| BenchError::with_message("operation_failed", error));
+    }
+    execute_compare(args)
 }
 
 fn run() -> i32 {

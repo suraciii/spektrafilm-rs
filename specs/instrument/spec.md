@@ -12,7 +12,43 @@ This document owns the command grammar, the [document registry](#document-regist
 - Consumes: the renderer's public CLI and machine-readable output, the shared parameter resolver, the shared metric implementations, the shared document loader, the shared native-stage bundle format.
 - Must not own: rendering mathematics, a second parameter registry, a second metric implementation, a second record format, or a second chain-entry mechanism.
 
-## Command tiers
+## Unix endpoint model
+
+The instrument is a Unix-style set of smart endpoints connected by dumb file and process boundaries. Each endpoint has one semantic operation, reads declared inputs, and publishes one immutable record or artifact. It must not inspect human output, invoke a downstream endpoint, or decide the next research step.
+
+The boundary between endpoints is an authored document, a retained record directory, or a machine-readable command result. A binary stage buffer remains a referenced artifact rather than an implicit shell value. Paths are explicit whenever provenance, relative dependencies, hashes, or artifact identity matter; stdin is not an undeclared alternate document source.
+
+An endpoint may be used in a shell pipeline through its stdout result, stderr diagnostics, and named artifacts. stdout carries exactly one machine-readable result object, stderr carries human messages and progress, and neither stream is a hidden control channel. A future streaming form must define its carrier and identity explicitly instead of changing the meaning of an existing command.
+
+The instrument command surface is not a workflow language. It has no includes, environment interpolation, shell commands, expressions, conditionals, loops, parameter arithmetic, wildcard selectors, or optimizer instructions. A declaration selects and describes one endpoint invocation; it does not describe a graph of invocations.
+
+The renderer parameter language remains the only parameter DSL. `--preset`, `--params`, and `--set` retain the renderer's syntax and precedence. Instrument documents carry typed process options and research identities, but they do not reinterpret or extend renderer parameter paths. Region geometry, stage selection, seed identity, and artifact destinations are instrument declarations, not runtime parameters.
+
+The canonical research pipe is:
+
+```text
+declaration → run → retained evidence → sample → retained readings → compare → inspect/report
+```
+
+Each edge is replaceable by a file, a retained directory, or an external tool. The instrument must not collapse this pipe into a command that renders, samples, scores, selects a candidate, and publishes a report as one hidden operation.
+
+The supported command families have distinct endpoint roles:
+
+| Family | Endpoint role | May consume | Must not do |
+|---|---|---|---|
+| `run` | execute a declared image-domain job | authored suite, target, or local-input declaration | compare, score, or select |
+| `sample` | read declared windows from one source | image or retained stage evidence plus `regions` | render, resize, infer geometry, or score |
+| `compare` | compare two or more retained records | completed runs or retained readings | invoke a renderer or borrow another pair's availability |
+| `inspect` / `report` | project retained evidence | completed comparison or review manifest | recalculate metrics |
+| `verify` | re-hash retained identity | one retained record | render, rewrite, or judge |
+
+The current flat command forms remain the compatibility surface while their handlers are separated by these roles. A future grammar revision may expose explicit subfamilies such as `compare runs` and `compare readings`, but a new form must not be added to an existing command merely by guessing the input document's shape. The semantic input kind must be selected by the invocation or by an explicit retained kind.
+
+The current `run` forms are three endpoint contracts, not one extensible workflow mode: suite execution, local-image execution, and point-wise stimulus measurement. The implementation and future documentation must keep their validation, output, and failure boundaries separate. No fourth execution mode may be added without a separate product decision.
+
+The current `compare` forms are likewise separate contracts: version comparison, single-run pair comparison, and retained-reading comparison. A retained `kind` and explicit command form are authoritative; field presence heuristics are not a product contract.
+
+The first Unix-style implementation slice is `run → sample → compare` over retained stage evidence and declared regions. It must eliminate repeated stage-buffer reading, region averaging, CSV alignment, and standard color-distance calculation from external research scripts without adding an optimizer or a second metric implementation.
 
 - **Supported** commands carry the compatibility promise of this document and of [Rust delivery](../benchmark/rust-delivery/spec.md): `schema`, `validate`, `target`, `run`, `sample`, `compare`, `inspect`, `verify`, `report`, `regions`, `fixtures`.
 - **Experimental** commands compute through the same plumbing but carry no compatibility promise: `experiment run` and `experiment export` ([contract](experiment/spec.md)), `spectral evaluate` ([contract](spectral-evaluation/spec.md)), and `fit`. An experimental command may change or disappear between revisions; its results must still satisfy the document, artifact, and machine-output contracts below.
@@ -29,9 +65,9 @@ spektrafilm-lab validate --kind KIND --file FILE
 spektrafilm-lab target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --out FILE
 spektrafilm-lab run --suite FILE --target FILE --out DIRECTORY [--case ID ...] [--dry-run] [--stage-evidence]
 spektrafilm-lab run --input FILE --configuration FILE --target FILE --out DIRECTORY [--input-kind raster|raw] [--input-color-space NAME --input-cctf-decoding true|false] [--seed UINT32 ...] [--regions FILE] [--reference FILE --reference-info FILE] [--preparation FILE] [--dry-run] [--stage-evidence]
-spektrafilm-lab run --stimuli FILE --enter BOUNDARY [--read STAGE ...] [--dry-run] [CHAIN OPTIONS] --out DIRECTORY
 spektrafilm-lab sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
 spektrafilm-lab sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
+spektrafilm-lab sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
 spektrafilm-lab compare --baseline DIRECTORY --candidate DIRECTORY [--reference-run DIRECTORY] --out DIRECTORY [--policy FILE] [--gate]
 spektrafilm-lab compare --run DIRECTORY --against input|reference|both --out DIRECTORY
 spektrafilm-lab inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
@@ -45,6 +81,20 @@ spektrafilm-lab experiment export --stage-evidence DIRECTORY --out DIRECTORY [--
 spektrafilm-lab spectral evaluate --spectra FILE {--preset NAME ... | --profile FILE} [--set PATH=VALUE|FILE ...] [--data-dir DIRECTORY] --out DIRECTORY
 spektrafilm-lab fit [FIT OPTIONS]
 ```
+The target grammar for a future command revision is explicit about endpoint input kinds:
+
+```text
+spektrafilm-lab run suite --suite FILE --target FILE --out DIRECTORY [RUN OPTIONS]
+spektrafilm-lab run image --input FILE --configuration FILE --target FILE --out DIRECTORY [RUN OPTIONS]
+spektrafilm-lab measure run --stimuli FILE --enter BOUNDARY --out DIRECTORY [CHAIN OPTIONS]
+spektrafilm-lab compare runs --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [COMPARISON OPTIONS]
+spektrafilm-lab compare readings --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [--reference DIRECTORY]
+spektrafilm-lab compare pairs --run DIRECTORY --against input|reference|both --out DIRECTORY
+```
+
+The existing flat forms remain valid until a compatibility revision explicitly replaces them. New implementation work must use the explicit semantic handlers internally; it must not extend flat `run` or `compare` by adding another shape-dispatched mode. The migration must preserve the existing stdout, stderr, status, publication, and document-kind contracts.
+
+The command family names are semantic, not workflow steps. `measure run` still publishes one retained measurement; `compare readings` still reads only retained records; neither command invokes the next family. A shell pipeline may connect them by paths and result objects, but the instrument does not own that control flow.
 
 `KIND` is a [document registry](#document-registry) kind. `BOUNDARY` is `spectra`, `rgb_in`, `log_e_film`, or `cmy_film`. `STAGE` is `rgb_in`, `log_e_film`, `cmy_film`, `log_e_print`, `cmy_print`, or `rgb_out`. `CHAIN OPTIONS` is the parameter surface of `process`.
 
@@ -53,6 +103,8 @@ Every option of the instrument and of its `fixtures` command must have a nonempt
 `schema` must emit the authoritative JSON Schema for one document kind. For the `metrics` vocabulary it must emit the metric-identity vocabulary instead of a JSON Schema. It must describe the required nested records and explain fields whose units, coordinate space, or applicability are not evident from their type. `validate` must validate a document and resolve the local dependencies needed for that kind. It must not render images. Standalone policy validation must not imply that selectors, measurement selection, or protocol binding have been checked against a suite. A valid target document must not imply that a GPU is available.
 
 `run` must resolve the suite and target before rendering. Repeatable `--case` must select exact case identities in suite order. Duplicate selections and unknown identities must fail. Omitting `--case` must select all cases.
+
+`sample --from-run` reads exactly one completed case row selected by the pair `(case, seed)` from a retained image-domain `run` document. `RUN.JSON` may be the run document itself or its containing directory. The selected row must request and retain available stage evidence; the row's stage manifest reference and the run artifact index must agree on path and digest, and the retained path must remain under `cases/{case}/seed-{seed}/`. The stage bundle remains authoritative for stage layout, domain, units, color interpretation, transfer state, coordinate space, and buffer digest. Missing cases, failed rows, unrequested or unavailable capture, missing stages, malformed artifacts, traversal paths, and cross-seed artifact references are measurement failures; the command never falls back to another seed or stage.
 
 `run --dry-run` must use the same renderer configuration resolution, seed, environment isolation, selected profile containment, and case-owned geometry checks as execution. It must process all selected cases and seeds without decoding or rendering images. Identical seed failures must be grouped with their affected seed values and retained renderer logs. Unknown or duplicate case selections must identify the rejected identities and available choices. Renderer configuration errors must retain the actionable child error text and evidence paths.
 
@@ -186,6 +238,20 @@ Which stages execute follows the executed path, not the route alone. The whole c
 An operation the executed path skips is not listed; neither is a controller whose active condition the core does not read (`print_render.glare.percent` at zero) nor one with no reader at all (`enlarger.lens_blur` is applied by no stage, see the parity matrix). The measured table is evidence, not a style choice: on a 12x4 chart, halation moves `log_e_film` by 1.9e-02 and the DIR couplers move `cmy_film` by 8.5e-01 while leaving `log_e_film` exact.
 
 The command must resolve the chain before executing it. When one of these operations is active in the measured range, the command must fail before executing, and it must name the `--set` edits that disable it. The command must not disable an operation on the caller's behalf.
+### Unix-style endpoint acceptance
+
+The following scenarios are product acceptance, not help-text examples:
+
+1. A retained stage bundle can be passed to `sample`, and its declared stage domain, units, channel order, transfer state, buffer digest, and coordinate space are read from the bundle rather than repeated on the command line.
+2. A `regions` document can be reused unchanged to sample two retained runs and an explicitly declared image source. The three commands produce records with stable sample identities and no inferred geometry.
+3. `compare` reads the two retained reading records and writes per-sample deltas and group summaries without invoking a renderer. A shared key with different units or channel order fails; a missing key is reported as unmatched; an unavailable metric carries a reason and never serializes as zero.
+4. Capturing stdout separately from stderr yields one parseable result object on stdout while progress and human diagnostics remain on stderr. Redirecting stderr or piping stdout through a JSON consumer does not change command behavior.
+5. A command cannot make a downstream decision: `run` does not sample or compare, `sample` does not score, `compare` does not select a candidate, and `report` does not recalculate a metric.
+6. A declaration containing an include, environment substitution, expression, shell command, wildcard selector, or optimizer instruction is rejected as an unknown field or unsupported syntax before execution.
+7. An experiment declaring seeds `[0, 42]` either publishes two independently identified retained results or fails before rendering with a stable validation error; it must not publish one result while recording both seeds as observed.
+8. The future explicit forms `compare runs` and `compare readings` select their handlers from the command grammar, not from the presence or absence of fields in `run.json`.
+
+The acceptance fixture must use one ordinary 45-region declaration and one non-grid explicit regions declaration. Passing the fixture must prove that the endpoint contract is generic and does not encode a TE226-specific geometry or a universal appearance score.
 
 ### Stimulus document
 

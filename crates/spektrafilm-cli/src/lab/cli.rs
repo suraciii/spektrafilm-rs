@@ -495,7 +495,7 @@ pub struct MeasureRunArgs {
 #[derive(Args)]
 #[command(group(
     clap::ArgGroup::new("sample_source").required(true).multiple(false)
-        .args(["source", "from_evidence"])
+        .args(["source", "from_evidence", "from_run"])
 ))]
 pub struct MeasureSampleArgs {
     /// Raster image to read; requires the input declaration below.
@@ -505,17 +505,41 @@ pub struct MeasureSampleArgs {
     #[arg(
         long,
         value_name = "DIR",
-        conflicts_with = "source",
+        conflicts_with_all = ["source", "from_run"],
         help_heading = "Source"
     )]
     pub from_evidence: Option<PathBuf>,
-    /// Stage to read from the bundle; its declaration governs the reading.
+    /// Retained image-domain run directory whose selected case owns the stage capture.
+    #[arg(
+        long,
+        value_name = "DIR",
+        conflicts_with_all = ["source", "from_evidence"],
+        help_heading = "Source"
+    )]
+    pub from_run: Option<PathBuf>,
+    /// Exact case identity in a retained image-domain run.
+    #[arg(
+        long,
+        value_name = "ID",
+        requires = "from_run",
+        help_heading = "Source"
+    )]
+    pub case: Option<String>,
+    /// Exact unsigned 32-bit seed in a retained image-domain run.
+    #[arg(
+        long,
+        value_name = "UINT32",
+        requires = "from_run",
+        help_heading = "Source"
+    )]
+    pub seed: Option<u32>,
+    /// Stage to read from a retained source; its declaration governs the reading.
     #[arg(
         long,
         value_enum,
         value_name = "STAGE",
-        requires = "from_evidence",
         required_unless_present = "source",
+        conflicts_with = "source",
         help_heading = "Source"
     )]
     pub stage: Option<MeasureStage>,
@@ -524,7 +548,7 @@ pub struct MeasureSampleArgs {
         long,
         value_name = "NAME",
         requires = "source",
-        required_unless_present = "from_evidence",
+        required_unless_present_any = ["from_evidence", "from_run"],
         help_heading = "Source"
     )]
     pub input_color_space: Option<String>,
@@ -532,8 +556,9 @@ pub struct MeasureSampleArgs {
     #[arg(
         long,
         value_name = "true|false",
+        value_parser = clap::value_parser!(bool),
         requires = "source",
-        required_unless_present = "from_evidence",
+        required_unless_present_any = ["from_evidence", "from_run"],
         help_heading = "Source"
     )]
     pub input_cctf_decoding: Option<bool>,

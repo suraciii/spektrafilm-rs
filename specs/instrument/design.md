@@ -29,7 +29,71 @@ flowchart LR
 
 The command grammar, the document registry, and the machine-output contract live in the [specification](spec.md); this document states the boundaries behind them.
 
-Stability is bound to a document kind and its schema version, never to a command name. A supported command keeps its meaning across revisions; an experimental command may change. A retained record stays readable: a reader ignores unknown fields inside a supported version and fails on an unsupported version rather than guessing a default.
+Stability is bound to a document kind and its schema version, never to a command name. A supported command keeps its meaning across revisions; an experimental command may change, but its results must still satisfy the document, artifact, and machine-output contracts below. A retained record stays readable: a reader ignores unknown fields inside a supported version and fails on an unsupported version rather than guessing a default.
+
+## Unix-style boundary
+
+The instrument is a collection of smart endpoints, not a research workflow manager. Pipes, files, and retained directories carry bytes and identities without interpreting domain meaning. The endpoint at each boundary owns parsing, validation, metric semantics, and publication. An endpoint must not call a downstream endpoint or consume human-readable output from another process.
+
+The stable composition is:
+
+```text
+authored declaration → run → retained evidence → sample → retained readings → compare → inspect/report
+```
+
+The result of one endpoint is a valid input to the next, but no endpoint requires a particular caller. A Python script, shell command, or another implementation may replace any edge if it preserves the declared document or retained-record contract. This is the research extensibility boundary; it is not a reason to add a generic plugin or expression language.
+
+The instrument must keep stdout, stderr, and named artifacts independent. stdout is one machine-readable result object; stderr contains progress, human diagnostics, and child-process text; named files contain evidence. A command must not use terminal detection to change the machine contract, and it must not parse another command's stderr.
+
+## DSL boundary
+
+The renderer's `--preset`, `--params`, and `--set` language is the only parameter DSL. Instrument documents may carry the same typed process options and source ordering, but they do not add aliases, arithmetic, units, includes, environment interpolation, expressions, shell commands, conditionals, loops, wildcard selectors, or optimizer instructions. The loader produces a semantic declaration before execution; parser output is not the execution model.
+
+Instrument-only facts stay outside the renderer language: case and region identities, stage selection, seed identity, source declarations, artifact destinations, protocol selection, and retained-record roles. They are typed endpoint inputs, not runtime parameter paths.
+
+An experiment document is a durable declaration for one experiment endpoint. It is not a job graph, sweep language, optimizer program, or complete process job file. It may select one case, carry process sources, identify input bytes, and declare the evidence that one endpoint must publish. It must not acquire a second way to express renderer parameters.
+
+## Batch boundary
+
+Repeated research trials belong to an outer producer and the existing endpoints. A future batch endpoint may accept a finite list of already-authored experiment declarations and execute them independently, publishing one retained record per item plus an index. It must not generate parameter variants, evaluate objectives, choose a best item, branch on measurements, or invoke shell commands. Candidate generation and optimization remain outside the instrument.
+
+The first implementation slice must not add batch, parallelism, cache, or optimizer semantics. It must make the existing single-endpoint pipe usable from retained run records, then add a finite declaration-list carrier only after seed and record identity semantics are correct.
+
+## Endpoint options
+
+Two designs were considered for experiment research automation. A workflow DSL could express variants, dependencies, and selection in one document, but would duplicate shell orchestration, add a second parameter language, and make provenance depend on hidden control flow. A finite declaration-list endpoint keeps each experiment independently reproducible and leaves control flow to the caller. The latter is selected because it preserves dumb pipes and smart endpoints.
+
+## Record and failure boundaries
+
+Each endpoint publishes at most one terminal record for its destination. The record is the completion token; its presence means the referenced artifacts have been finalized, hashed, and validated for the supported schema. A failed operation must not publish a successful terminal record. A partial staging directory may remain only when it is explicitly marked incomplete and cannot be consumed as a completed input.
+
+The pipe distinguishes these boundaries:
+
+| Boundary | Meaning | Downstream behavior |
+|---|---|---|
+| argument syntax | the invocation cannot be parsed | no endpoint work; exit `2` |
+| declaration validation | authored input or local dependency is invalid | no renderer or metric execution; exit `1` |
+| execution failure | renderer, stage capture, or computation failed | failed result may retain structured partial evidence; never a completed record |
+| measurement unavailable | the record is valid but a metric has no eligible observation | comparison may complete with reason; never a zero value |
+| policy/gate failure | computed evidence does not satisfy a selected policy | completed comparison remains readable; gate changes status only |
+| publication failure | final artifact cannot be committed | no success result; source records remain unchanged |
+
+An endpoint must validate the input kind before reading a shape-specific payload. A retained `kind` and schema version are authoritative. Consumers may ignore unknown fields inside a supported version, but they must not infer a different kind from field presence. A record that names a downstream artifact must retain its relative path, digest, media/layout declaration, and producer identity so an external tool can replace the next endpoint without losing provenance.
+
+The command result and the retained record have different roles. stdout identifies the command outcome and terminal artifact; the retained record carries the full evidence. A command must not serialize a large buffer, progress stream, or human explanation into stdout as an undocumented side channel.
+
+## Delivery sequence
+
+The implementation is staged so each slice preserves the current endpoint contracts:
+
+1. **Semantic handlers.** Split the existing flat `run` and `compare` dispatch internally into explicit suite/image/stimulus and runs/readings/pairs handlers. Keep the current grammar and output unchanged. Remove field-presence dispatch as the source of semantic meaning.
+2. **Retained-run sampling.** Add a run-record adapter to `sample` that resolves one case, seed, stage, and buffer from a retained run, verifies the native manifest, and delegates to the existing evidence reader. It must not duplicate stage decoding or region statistics.
+3. **Experiment seed correctness.** Either publish one retained record per declared seed with an explicit index or reject multi-seed experiment documents before rendering. Do not add batch semantics before this identity is correct.
+4. **Fixture workflow.** Ship one executable 45-region fixture and one explicit non-grid regions fixture that exercise `run`, `sample`, `compare`, and `inspect` as separate endpoints. The fixture must not depend on an optimizer or a universal score.
+5. **Explicit grammar.** In a later compatibility revision, expose the semantic subcommands shown in the machine-interface specification. The flat forms may remain as aliases only while their behavior is identical and documented.
+6. **Finite declaration lists.** Only after the previous slices are stable, consider a simple batch carrier containing independently authored experiment declarations. It may execute and index them; it must not define variants, conditions, objective selection, caching, or parallel execution.
+
+The first implementation slice is therefore not a `sweep` command. It is the smallest complete pipe from retained evidence to retained comparison, with correct seed and record identity. External autoresearch code remains the caller that generates the next declaration.
 
 ## Determinism and build
 
