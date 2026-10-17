@@ -55,6 +55,18 @@ pub fn verify_with_result(
         return verify_comparison(run, &record);
     }
 
+    // An image-domain run record retains no chain declaration: its identity is
+    // the suite, target, case configurations, authored dependencies, and every
+    // artifact it published, each with the hash recorded at write time. That is
+    // what this form re-hashes.
+    if record
+        .get("declaration")
+        .and_then(Value::as_object)
+        .is_none()
+    {
+        return verify_image_run(run, &record);
+    }
+
     let declaration = recorded_declaration(&record, &record_path)?;
 
     let entry = declaration
@@ -194,6 +206,88 @@ fn verify_comparison(run: &Path, record: &Value) -> Result<(Value, i32)> {
     eprintln!(
         "verify: {} identity difference(s), 0 buffer difference(s)",
         differences.len()
+    );
+    Ok((result, 0))
+}
+
+/// Re-hash an image-domain run record's retained identity.
+///
+/// The record names what it read and what it wrote: the suite and target
+/// snapshots, the authored dependencies, and every published artifact, each
+/// with the hash taken when it was written. Verification re-hashes each one in
+/// place and reports the difference, so a record whose inputs or outputs moved
+/// says so instead of silently passing. The renderer executable is named by the
+/// environment the record retained and is re-hashed the same way when it is
+/// still where the record says it is.
+fn verify_image_run(run: &Path, record: &Value) -> Result<(Value, i32)> {
+    let mut differences = Vec::new();
+    let mut checked = 0_usize;
+    // A record that names a file relative to its own root resolves against that
+    // root; one that names an absolute path is used as recorded.
+    let resolve = |path: &str| -> PathBuf {
+        let candidate = Path::new(path);
+        if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            run.join(candidate)
+        }
+    };
+    let mut check = |path: &str, recorded: &str, label: &str| {
+        if path.is_empty() {
+            return;
+        }
+        checked += 1;
+        let actual = sha256_file(&resolve(path)).unwrap_or_default();
+        if actual != recorded {
+            differences.push(json!({
+                "field": label,
+                "path": path,
+                "recorded": recorded,
+                "current": actual,
+            }));
+        }
+    };
+    for key in ["suite", "target"] {
+        if let Some(entry) = record.get(key).filter(|entry| entry.is_object()) {
+            check(
+                entry["path"].as_str().unwrap_or_default(),
+                entry["sha256"].as_str().unwrap_or_default(),
+                key,
+            );
+        }
+    }
+    for entry in record["dependencies"].as_array().into_iter().flatten() {
+        check(
+            entry["path"].as_str().unwrap_or_default(),
+            entry["sha256"].as_str().unwrap_or_default(),
+            "dependency",
+        );
+    }
+    for entry in record["artifacts"].as_array().into_iter().flatten() {
+        check(
+            entry["path"].as_str().unwrap_or_default(),
+            entry["sha256"].as_str().unwrap_or_default(),
+            "artifact",
+        );
+    }
+    let result = json!({
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "command": "verify",
+        "execution_status": "completed",
+        "kind": "verify",
+        "artifact": run.display().to_string(),
+        "form": "image_run",
+        "checked": checked,
+        "identity_differences": differences,
+        "buffer_differences": [],
+    });
+    for difference in &differences {
+        eprintln!("identity: {}", difference_line(difference));
+    }
+    eprintln!(
+        "verify: {} identity difference(s) of {} retained hash(es), 0 buffer difference(s)",
+        differences.len(),
+        checked
     );
     Ok((result, 0))
 }

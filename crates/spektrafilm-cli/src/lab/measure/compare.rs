@@ -276,9 +276,43 @@ pub fn compare_with_result(args: &MeasureCompareArgs) -> Result<(Value, i32)> {
     });
     unavailable.dedup();
 
-    let document = json!({
+    // A reading comparison is still a `comparison` record: the registry has one
+    // comparison kind, and `inspect`, `report`, and `verify` read that kind. The
+    // required fields therefore carry what a reading comparison actually
+    // decided — the joined samples are its `cases`, the identity and
+    // availability reports are its `findings` — so the record validates and its
+    // consumers can read it. `protocol`, `selection`, and
+    // `condition_differences` describe a suite's declared conditions, which a
+    // chain measurement has none of, so they stay empty rather than inventing a
+    // suite the two sides never declared.
+    //
+    // The identity is the digest of everything the document says except its own
+    // `id`, which is the convention every generated document follows. A manifest
+    // never indexes itself, so `comparison.json` is absent from the artifact
+    // index: it is not final until this digest exists. `deltas.csv` is written
+    // first so its hash can be recorded.
+    let deltas = build_deltas_csv(&pairings);
+    report::write_measure_named(&args.out, &[("deltas.csv", deltas)])
+        .map_err(anyhow::Error::msg)?;
+    let body = json!({
         "schema_version": 1,
         "kind": "comparison",
+        "execution_status": "completed",
+        // No policy is selected for a reading comparison: it reports deltas and
+        // availability and applies no rule.
+        "evaluation_status": "not_evaluated",
+        "protocol": json!({}),
+        "selection": json!({}),
+        "condition_differences": [],
+        "cases": reading_cases(reported),
+        // A finding is a policy decision that needs inspectable evidence
+        // (`id`, `case_id`, `region_id`, `metric`, `decision`, `evidence`). A
+        // reading comparison selects no policy and decides nothing, so it
+        // raises no finding; the identity differences and unavailable
+        // measurements it does report are first-class fields below.
+        "findings": [],
+        "summary": reading_summary(reported, &pairings),
+        "artifacts": artifact_index(&args.out),
         "baseline": side_record(&baseline),
         "candidate": side_record(&candidate),
         "reference": match &reference {
@@ -292,14 +326,12 @@ pub fn compare_with_result(args: &MeasureCompareArgs) -> Result<(Value, i32)> {
         "delta_e00_summaries": delta_e00_groups,
         "unavailable": unavailable,
     });
+    let mut document = body;
+    document["id"] = json!(spektrafilm_benchmark::common::digest(&document)?);
 
-    let deltas = build_deltas_csv(&pairings);
     let compare_text = format!("{}\n", serde_json::to_string_pretty(&document)?);
-    report::write_measure_named(
-        &args.out,
-        &[("comparison.json", compare_text), ("deltas.csv", deltas)],
-    )
-    .map_err(anyhow::Error::msg)?;
+    report::write_measure_named(&args.out, &[("comparison.json", compare_text)])
+        .map_err(anyhow::Error::msg)?;
 
     print_summary(&args.out, reported, &document);
     Ok((
@@ -992,6 +1024,92 @@ fn build_deltas_csv(pairings: &[Pairing]) -> String {
 }
 
 /// One compared side: its directory, its record hash.
+/// The artifact index of the two files the comparison published, each with the
+/// hash of the bytes actually written, so a consumer can verify what it reads.
+fn artifact_index(out: &Path) -> Value {
+    let entries = [
+        ("comparison.json", "application/json", "comparison"),
+        ("deltas.csv", "text/csv", "deltas"),
+    ];
+    json!(
+        entries
+            .iter()
+            .filter_map(|(name, media_type, role)| {
+                let digest = sha256_file(&out.join(name)).ok()?;
+                Some(json!({
+                    "path": name,
+                    "sha256": digest,
+                    "media_type": media_type,
+                    "role": role,
+                }))
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
+/// The comparison's own name, from the destination directory, so a record
+/// cannot be read as another comparison.
+fn comparison_id(out: &Path) -> String {
+    out.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| out.display().to_string())
+}
+
+/// The joined samples of one pairing, as the comparison's `cases`.
+///
+/// A reading comparison has no suite cases, so its case population is the
+/// samples the pairing actually joined. Each entry names the sample and stage
+/// it covers and the comparison that measured it, which is what a consumer
+/// needs to locate the row in `deltas.csv`.
+fn reading_cases(pairing: &Pairing) -> Value {
+    let mut cases: Vec<Value> = pairing
+        .pairs
+        .iter()
+        .map(|pair| {
+            json!({
+                "case_id": pair.sample_id,
+                "stage": pair.stage,
+                "comparison": pairing.roles.comparison,
+                "domain": pair.domain,
+                "units": pair.units,
+                "valid": pair.valid,
+            })
+        })
+        .collect();
+    cases.sort_by(|a, b| {
+        (
+            a["case_id"].as_str().unwrap_or_default(),
+            a["stage"].as_str().unwrap_or_default(),
+        )
+            .cmp(&(
+                b["case_id"].as_str().unwrap_or_default(),
+                b["stage"].as_str().unwrap_or_default(),
+            ))
+    });
+    json!(cases)
+}
+
+/// The comparison's `summary`: what it measured, over how many samples, and
+/// what it could not measure. Every count is derived from the reported
+/// pairing's own rows, so a summary cannot claim a population the pairing
+/// did not join.
+fn reading_summary(reported: &Pairing, pairings: &[Pairing]) -> Value {
+    let total = reported.pairs.len();
+    let valid = reported.pairs.iter().filter(|pair| pair.valid).count();
+    let unavailable: usize = pairings
+        .iter()
+        .map(|pairing| pairing.unavailable_records().len())
+        .sum();
+    json!({
+        "comparison": reported.roles.comparison,
+        "samples": total,
+        "valid_samples": valid,
+        "invalid_samples": total - valid,
+        "unavailable_measurements": unavailable,
+        "stages": stage_records(reported).len(),
+    })
+}
+
 fn side_record(side: &Side) -> Value {
     json!({
         "path": side.path.display().to_string(),
