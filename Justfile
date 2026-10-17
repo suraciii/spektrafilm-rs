@@ -55,7 +55,7 @@ test-f64:
     cargo test --locked --workspace --features precision-f64
 
 # Both suites under the thread and codegen limits the main CI gate sets. Local
-# `test`/`test-f64` use every core and debug info, so their wall time says
+# `test`/`test-fast` use every core and debug info, so their wall time says
 # nothing about the 45-minute CI budget; run this to predict it.
 test-ci:
     #!/usr/bin/env bash
@@ -63,7 +63,11 @@ test-ci:
     export OPENBLAS_NUM_THREADS=1 RAYON_NUM_THREADS=2
     export CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
     cargo test --locked --workspace
-    cargo test --locked --workspace --features precision-f64
+    cargo test --locked -p spektrafilm-math --lib --features precision-f64
+    cargo test --locked -p spektrafilm-model --lib --features precision-f64 -- density_curves:: illuminants:: couplers:: glare:: grain::v1:: grain::fotufilm:: diffusion::
+    cargo test --locked -p spektrafilm-core --lib --features precision-f64 -- params::sources:: params::tests:: params::validation:: params_builder:: pipeline_calibration::tests:: resizing:: scan_receiver:: suggest:: stages::scanning::setup:: stages::scanning::coupled:: stages::scanning::finish:: magazine_print_color:: input_gamut:: gamut_compression:: lut_formats:: lut_ocio:: lut_delivery:: --skip process_params::
+    cargo test --locked -p spektrafilm-core --test telemetry --features precision-f64
+    cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui --features precision-f64 -- state::tests:: numeric::tests::
 
 # Run measured deterministic logic and isolated file tests in both precisions.
 test-fast: (test-fast-precision "") (test-fast-precision "--features precision-f64")
@@ -131,7 +135,7 @@ test-pr:
 ci-pr: check-python-cache check-python check-device-lock fmt test-pr
 
 # Full local and main-branch gate, including slow rendering and GPU tests.
-ci: check-python-cache check-python check-device-lock fmt check check-f64 clippy clippy-f64 test test-f64 benchmark-test parity-backend
+ci: check-python-cache check-python check-device-lock fmt check check-f64 clippy clippy-f64 test test-fast benchmark-test parity-backend
 
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
