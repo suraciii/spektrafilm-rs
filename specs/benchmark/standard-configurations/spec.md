@@ -6,7 +6,7 @@ An agent must be able to generate reusable rendering configurations and run a lo
 
 A standard configuration is a rendering setup, not a new film profile or preset kind. It must use the existing preset and case-configuration contracts. A baseline remains an explicitly selected completed run.
 
-The [machine interface](../interface/spec.md#standard-configuration-generation) owns command syntax, output filenames, and generation results. The [system design](../design.md#standard-configuration-ownership) owns construction and reuse boundaries.
+The [machine interface](../../instrument/spec.md#standard-configuration-generation) owns command syntax, output filenames, and generation results. The [system design](../../instrument/design.md#standard-configuration-ownership) owns construction and reuse boundaries.
 
 ## User workflow
 

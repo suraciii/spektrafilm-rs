@@ -1,3 +1,4 @@
+#![cfg(feature = "precision-f64")]
 use serde_json::{Value, json};
 use spektrafilm_benchmark::image_data;
 use std::{
@@ -8,7 +9,7 @@ use std::{
 use tempfile::TempDir;
 
 fn cli() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+    Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
 }
 fn success(output: Output) -> Value {
     assert!(
@@ -95,23 +96,23 @@ fn generate_report_renders_one_source_and_requires_exactly_one() {
     let out = dir.path().join("report");
     let result = success(
         cli()
-            .args(["generate-report", "--manifest"])
+            .args(["report", "--manifest"])
             .arg(&review)
             .args(["--out"])
             .arg(&out)
             .output()
             .unwrap(),
     );
-    assert_eq!(result["command"], "generate-report");
+    assert_eq!(result["command"], "report");
     assert_eq!(result["source"], "manifest");
     assert_eq!(result["image_count"], 3);
     assert!(out.join("index.html").is_file());
     assert!(out.join("report.json").is_file());
 
     for args in [
-        vec!["generate-report", "--out", "report"],
+        vec!["report", "--out", "report"],
         vec![
-            "generate-report",
+            "report",
             "--comparison",
             "comparison",
             "--manifest",
@@ -135,24 +136,27 @@ fn generate_regions_use_the_declared_measurement_intent() {
     let out = dir.path().join("regions.json");
     let result = success(
         cli()
-            .args(["generate-regions", "--manifest"])
+            .args(["regions", "--manifest"])
             .arg(&review)
             .args(["--set", "grid", "--out"])
             .arg(&out)
             .output()
             .unwrap(),
     );
-    assert_eq!(result["command"], "generate-regions");
+    assert_eq!(result["command"], "regions");
     assert_eq!(result["set"], "grid");
     assert_eq!(result["region_count"], 2);
     let regions: Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(regions["schema_version"], json!(1));
     assert_eq!(
-        regions,
+        regions["regions"],
         json!([
             {"id": "A1", "label": "A1", "role": "color",
-             "geometry": [4, 0, 8, 8], "measurements": ["color", "tone"]},
+             "geometry": {"x": 4, "y": 0, "width": 8, "height": 8, "space": "source"},
+             "measurements": ["color", "tone"]},
             {"id": "B1", "label": "B1", "role": "color",
-             "geometry": [20, 0, 8, 8], "measurements": ["color", "tone"]}
+             "geometry": {"x": 20, "y": 0, "width": 8, "height": 8, "space": "source"},
+             "measurements": ["color", "tone"]}
         ])
     );
     let validated = success(
@@ -170,7 +174,7 @@ fn generate_regions_use_the_declared_measurement_intent() {
     let full = dir.path().join("full.json");
     success(
         cli()
-            .args(["generate-regions", "--manifest"])
+            .args(["regions", "--manifest"])
             .arg(&defaults)
             .args(["--set", "grid", "--out"])
             .arg(&full)
@@ -178,10 +182,61 @@ fn generate_regions_use_the_declared_measurement_intent() {
             .unwrap(),
     );
     let regions: Value = serde_json::from_slice(&fs::read(&full).unwrap()).unwrap();
-    assert_eq!(regions[0]["geometry"], json!([0, 0, 16, 8]));
-    assert_eq!(regions[1]["geometry"], json!([16, 0, 16, 8]));
-    assert_eq!(regions[0]["role"], "other");
-    assert_eq!(regions[0]["measurements"], json!([]));
+    assert_eq!(
+        regions["regions"][0]["geometry"],
+        json!({"x": 0, "y": 0, "width": 16, "height": 8, "space": "source"})
+    );
+    assert_eq!(
+        regions["regions"][1]["geometry"],
+        json!({"x": 16, "y": 0, "width": 16, "height": 8, "space": "source"})
+    );
+    assert_eq!(regions["regions"][0]["role"], "other");
+    assert_eq!(regions["regions"][0]["measurements"], json!([]));
+}
+
+#[test]
+fn generated_regions_are_usable_as_a_sampling_document() {
+    // The grid's arithmetic is in decoded image pixels, and the document the
+    // derivation writes must serve a sampling command, which reads the source
+    // image. A window that is inside the source must therefore sample rather
+    // than be rejected as out of bounds.
+    let dir = TempDir::new().unwrap();
+    let review = manifest(dir.path(), None);
+    let out = dir.path().join("regions.json");
+    success(
+        cli()
+            .args(["regions", "--manifest"])
+            .arg(&review)
+            .args(["--set", "grid", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    let source = dir.path().join("source.png");
+    png(&source, 32, 8);
+    let sampled = dir.path().join("samples");
+    let result = success(
+        cli()
+            .args(["sample", "--source"])
+            .arg(&source)
+            .args([
+                "--input-color-space",
+                "sRGB",
+                "--input-cctf-decoding",
+                "true",
+            ])
+            .args(["--regions"])
+            .arg(&out)
+            .args(["--out"])
+            .arg(&sampled)
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(result["command"], "sample");
+    assert!(
+        sampled.join("readings.csv").is_file(),
+        "a derived regions document must sample the source it was derived against"
+    );
 }
 
 #[test]
@@ -191,7 +246,7 @@ fn generate_regions_reject_unknown_sets_regions_only_sets_and_destinations() {
     let out = dir.path().join("regions.json");
     let derive = |set: &str, out: &Path| {
         cli()
-            .args(["generate-regions", "--manifest"])
+            .args(["regions", "--manifest"])
             .arg(&review)
             .args(["--set", set, "--out"])
             .arg(out)
@@ -244,7 +299,7 @@ fn review_validation_checks_declared_measurement_intent() {
         assert_eq!(code(&validated), expected, "{measurement}");
         let derived = failure(
             cli()
-                .args(["generate-regions", "--manifest"])
+                .args(["regions", "--manifest"])
                 .arg(&review)
                 .args(["--set", "grid", "--out"])
                 .arg(&out)

@@ -215,22 +215,13 @@ pub fn summarize(metrics: &[SampleMetrics]) -> GroupSummary {
     }
 }
 
-/// `np.quantile`'s linear interpolation on a sorted copy.
+/// The shared interpolated percentile estimator, on a sorted copy. The
+/// evaluation library owns the estimator; this module reports values, it does
+/// not restate the convention.
 fn quantile(values: &[f64], q: f64) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
-    let n = sorted.len();
-    if n == 1 {
-        return sorted[0];
-    }
-    let position = q * (n - 1) as f64;
-    let low = position.floor() as usize;
-    let high = position.ceil() as usize;
-    if low == high {
-        sorted[low]
-    } else {
-        sorted[low] + (sorted[high] - sorted[low]) * (position - low as f64)
-    }
+    spektrafilm_benchmark::metrics::quantile(&sorted, q).unwrap_or(f64::NAN)
 }
 
 fn quantile_abs(values: &[f64], q: f64) -> f64 {

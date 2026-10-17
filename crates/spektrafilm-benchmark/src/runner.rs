@@ -53,7 +53,7 @@ fn tree_inventory(root: &Path) -> Result<Value> {
             if kind.is_symlink() {
                 return Err(
                     Error::new("data_symlink", "Data dependencies must be regular files")
-                        .at(path.display().to_string()),
+                        .file(path.display().to_string()),
                 );
             }
             if kind.is_dir() {
@@ -649,7 +649,7 @@ fn run_case(
             .as_u64()
             .ok_or_else(|| Error::new("source_geometry", "Missing source height"))?;
         let source_layout = json!({"width":source_width,"height":source_height,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":if cfg!(target_endian="little"){ "little" }else{ "big" }});
-        let source_color = json!({"color_space":"ACES2065-1","transfer":"linear"});
+        let source_color = json!({"color_space":"ACES2065-1","cctf_decoding":false});
         let expected = source_width
             .checked_mul(source_height)
             .and_then(|n| n.checked_mul(24))
@@ -720,7 +720,7 @@ fn run_case(
         let encoded = io["output_cctf_encoding"]
             .as_bool()
             .ok_or_else(|| Error::new("source_declaration", "Invalid transfer declaration"))?;
-        let color = json!({"color_space":space,"transfer":if !encoded{"linear"}else if space.eq_ignore_ascii_case("srgb"){"srgb"}else{"encoded"}});
+        let color = json!({"color_space":space,"cctf_decoding":!encoded});
         let layout = json!({"width":width,"height":height,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":if cfg!(target_endian="little"){"little"}else{"big"}});
         let expected = width
             .checked_mul(height)
@@ -784,7 +784,7 @@ fn run_case(
         Ok(())
     })();
     if let Err(error) = attempt {
-        row["error"] = error.at(case_id).to_value();
+        row["error"] = error.boundary(case_id).to_value();
     }
     Ok(row)
 }
@@ -820,7 +820,7 @@ fn retain_stage_evidence(
     }
     let bundle_dir = folder.join("stage-evidence");
     let bundle = documents::validate_stage_bundle(&bundle_dir)
-        .map_err(|error| error.at(bundle_dir.display().to_string()))?;
+        .map_err(|error| error.file(bundle_dir.display().to_string()))?;
     if bundle.availability != "available" {
         return Err(Error::new(
             "stage_evidence",
@@ -828,7 +828,7 @@ fn retain_stage_evidence(
                 .reason
                 .unwrap_or_else(|| "stage capture is incomplete".into()),
         )
-        .at(bundle_dir.display().to_string()));
+        .file(bundle_dir.display().to_string()));
     }
     documents::check_output_boundary(&bundle, published)?;
     let manifest_record = evidence.add(
@@ -1041,7 +1041,7 @@ fn render_cases<'a>(
             ) {
                 Ok(row) => row,
                 Err(error) => {
-                    json!({"case_id":case_id,"seed":seed,"status":"failed","error":error.at(case_id).to_value()})
+                    json!({"case_id":case_id,"seed":seed,"status":"failed","error":error.boundary(case_id).to_value()})
                 }
             };
             let status = row["status"].as_str().unwrap_or("failed").to_owned();
@@ -1163,7 +1163,7 @@ fn preflight_cases<'a>(
                 Ok(())
             })();
             if let Err(error) = result {
-                row["error"] = error.at(case_id).to_value();
+                row["error"] = error.boundary(case_id).to_value();
             }
             let status = row["status"].as_str().unwrap_or("failed").to_owned();
             progress.finish(case_id, seed, &status, started);
@@ -1311,7 +1311,7 @@ fn execute_suite(
     let result = (|| -> Result<(Value, i32)> {
         let mut evidence = Evidence::new(&root);
         let inventory =
-            tree_inventory(&data_root).map_err(|e| e.at(data_root.display().to_string()));
+            tree_inventory(&data_root).map_err(|e| e.file(data_root.display().to_string()));
         common::dump(&root.join("suite.json"), &suite)?;
         common::dump(&root.join("target.json"), &target)?;
         let suite_record = evidence.add(
@@ -1419,7 +1419,7 @@ fn execute_suite(
                 {"check":"print_normalization_observation","status":"unchecked","reason":"Dry-run never prepares print normalization, so its value stays unobserved"},
                 {"check":"stage_evidence","status":"unchecked","reason":if capture_stage_evidence{"Stage capture requested but unobserved: dry-run renders no stage boundaries"}else{"Stage capture not requested; stage boundaries unobserved"}}
             ]);
-            let mut manifest = json!({"schema_version":1,"mode":"dry_run","execution_status":if valid{"validated"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1,"errors":errors,"unchecked":unchecked});
+            let mut manifest = json!({"schema_version":1,"kind":"preflight","mode":"dry_run","execution_status":if valid{"validated"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1,"errors":errors,"unchecked":unchecked});
             manifest["id"] = json!(common::digest(&manifest)?);
             common::dump(&root.join("preflight.json.tmp"), &manifest)?;
             fs::rename(root.join("preflight.json.tmp"), root.join("preflight.json"))?;
@@ -1430,7 +1430,7 @@ fn execute_suite(
         }
         let completed = rows.iter().all(|r| r["status"] == "completed");
         let errors:Vec<_>=rows.iter().filter_map(|r|r.get("error").map(|e|json!({"case_id":r["case_id"],"seed":r["seed"],"boundary":"renderer","error":e}))).collect();
-        let mut manifest = json!({"schema_version":1,"execution_status":if completed{"completed"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1});
+        let mut manifest = json!({"schema_version":1,"kind":"run","execution_status":if completed{"completed"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1});
         finalize(&root, "run.json", &mut manifest)?;
         let mut result = json!({"schema_version":1,"command":"run","execution_status":manifest["execution_status"],"artifact":root.join("run.json"),"run_id":manifest["id"]});
         if !completed {

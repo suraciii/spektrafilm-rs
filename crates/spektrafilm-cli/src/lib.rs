@@ -1,8 +1,8 @@
 //! Shared command plumbing for the SpektraFilm binaries.
 //!
-//! The user binaries (`spektrafilm`, `spektrafilm-f64`) and the development
-//! `spektrafilm-lab` binary share these modules; only the lab binary is
-//! gated on the `precision-f64` feature. Each binary's own `main` owns its
+//! The user binaries (`spektrafilm`, `spektrafilm-f64`) and the instrument
+//! `spektrafilm-lab` binary share these modules; only the instrument binary
+//! is gated on the `precision-f64` feature. Each binary's own `main` owns its
 //! command surface.
 
 pub mod contract;
@@ -42,13 +42,25 @@ pub struct DataSelection {
     pub source: &'static str,
 }
 
+/// Whether the caller named `--data-dir` on this command line.
+///
+/// A command that carries no `data_dir` argument asks about an id clap does
+/// not know, which panics, so the id's presence is established first.
+pub(crate) fn named_data_dir(matches: &clap::ArgMatches) -> bool {
+    matches
+        .try_get_one::<PathBuf>("data_dir")
+        .ok()
+        .flatten()
+        .is_some()
+        && matches.value_source("data_dir") == Some(clap::parser::ValueSource::CommandLine)
+}
+
 pub(crate) fn explicit_data_selection(matches: &clap::ArgMatches) -> bool {
-    matches.value_source("data_dir") == Some(clap::parser::ValueSource::CommandLine)
-        || std::env::var_os("SPEKTRAFILM_DATA_DIR").is_some()
+    named_data_dir(matches) || std::env::var_os("SPEKTRAFILM_DATA_DIR").is_some()
 }
 
 pub fn select_data_dir(argument: PathBuf, matches: &clap::ArgMatches) -> Result<DataSelection> {
-    let explicit = matches.value_source("data_dir") == Some(clap::parser::ValueSource::CommandLine);
+    let explicit = named_data_dir(matches);
     select_data_dir_impl(argument, explicit)
 }
 

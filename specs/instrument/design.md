@@ -1,12 +1,14 @@
-# Benchmark system design
+# Instrument design
 
 ## Boundary
 
-`SpektraFilm` remains the renderer. `spektrafilm-bench` is an external evaluation orchestrator and artifact producer. It consumes the renderer's public CLI, machine-readable dry-run output, floating image output, and diagnostics. It does not import renderer internals or duplicate runtime parameter resolution.
+`SpektraFilm` remains the renderer. The instrument (`spektrafilm-lab`) is an external evaluation orchestrator, artifact producer, and in-process chain measurer. It consumes the renderer's public CLI, machine-readable dry-run output, floating image output, and diagnostics, and it shares the renderer's parameter surface and chain execution for readings. It does not import renderer internals or duplicate runtime parameter resolution.
 
-The benchmark owns suite selection, target identity, dependency hashing, run isolation, comparison policy, metric execution, region selection, evidence indexing, and review artifact generation. A metric adapter owns one measurement implementation. A report builder owns presentation of an existing comparison or a prepared image manifest.
+The instrument owns suite selection, target identity, dependency hashing, run isolation, comparison policy, metric execution, region selection, evidence indexing, review artifact generation, and the development measurement of an executed chain. A metric adapter owns one measurement implementation. A report builder owns presentation of an existing comparison or a prepared image manifest.
 
-The benchmark must keep rendering and evaluation separate. A run produces immutable render evidence. A comparison reads runs and produces immutable measurements. A report reads a retained comparison or a prepared image manifest and produces review artifacts; the source document kind selects the builder. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
+It is one binary over two libraries that stay separate: the evaluation library stays renderer-independent and depends only on the shared mathematics crate, and the command plumbing shared with the user binaries stays a library rather than forked code. A new development command lands in the instrument, not in `spektrafilm`, `spektrafilm-f64`, or the evaluation library.
+
+The instrument must keep rendering and evaluation separate. A run produces immutable render evidence. A comparison reads runs and produces immutable measurements. A report reads a retained comparison or a prepared image manifest and produces review artifacts; the source document kind selects the builder. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
 
 Preflight shares renderer configuration resolution with execution and publishes a separate validation record. It never enters the render-evidence lifecycle. Target construction owns executable pinning for both local commands and fixtures. The inspection view reads validated comparison records, projects existing measurements, and leaves metric computation and policy evaluation with their current owners.
 
@@ -23,25 +25,67 @@ flowchart LR
     E --> G[Optional gate status]
 ```
 
+## Surfaces and stability
+
+The command grammar, the document registry, and the machine-output contract live in the [specification](spec.md); this document states the boundaries behind them.
+
+Stability is bound to a document kind and its schema version, never to a command name. A supported command keeps its meaning across revisions; an experimental command may change. A retained record stays readable: a reader ignores unknown fields inside a supported version and fails on an unsupported version rather than guessing a default.
+
+## Determinism and build
+
+Instrument commands read declared inputs and write named outputs. They must not compare against budgets or emit pass/fail verdicts of their own; interpretation belongs to the caller or to a policy document. An execution must be a pure function of its inputs: identical inputs produce identical artifacts.
+
+The binary is built at f64 reference precision through the shared `precision-f64` gate, because a chain measurement must reproduce the reference path. Chain computation runs through the shared core, so a measurement reproduces the user binaries' path. A research render remains `spektrafilm-f64 process`; `experiment run` reaches it through the shared `process` entry rather than a second render path.
+
+Release packaging and its compatibility promise are defined by [Rust delivery](../benchmark/rust-delivery/spec.md).
+
+## Measurement boundary
+
+A measurement shares the parameter surface and the execution path of the user binaries. It must not resolve parameters on its own, reconstruct pipeline mathematics, or walk the stages beside an observed execution. A stage walk beside the executed chain would report a different result under a stochastic stage, so the observed path is the only permitted source of readings.
+
+The measured range is the same fact for both surfaces: `--enter` becomes the resolved `taps.inject` and the collection boundary is the chain's own `taps.collect` or the last requested reading. Nothing else decides what executes, so the retained effective document describes the execution and a re-verification reproduces it.
+
+The executed chain is resolved per invocation. A resolved parameter document is evidence, never a declaration. A command must not accept a stored resolution as its chain input, because nothing relates that document to the profiles, the data inventory, and the executable present at run time. This applies the resolution stance of the [CLI design](../cli/design.md) to measurement: resolve before executing, and keep the resolution beside the result instead of passing it between commands.
+
+The instrument must not own a second implementation of a metric. A color-difference, equal-lightness, or region-aggregation algorithm keeps one owner, and the measurement commands consume it.
+
+## Reading boundary
+
+Readings are defined only for a point-wise chain: an injected numeric sample has no neighborhood and no stochastic realization, so an operation that mixes samples, measures the whole frame, resizes it, or draws stochastic values would describe a different signal than the measured one. The command fails before executing instead of reporting those numbers; the [point-wise table](spec.md#point-wise-requirement) is the specification of that check.
+
+Eligibility is a measured property, not a reading of a flag name: each operation carries the first stage whose values it changes, and it is listed only when it executes inside the measured range. The instrument must not widen that table by guessing that a control is spatial because its name suggests so.
+
+A [regions document](spec.md#regions-document) is the only authority for a reading position. A command must not infer geometry from image dimensions, labels, or color similarity. A sample outside the declared source remains an error rather than a clamped value. A review grid is derived into that document by one command, so the review page's window arithmetic and the measurement windows cannot drift apart.
+
+A guard run is a frozen measurement artifact together with the stimuli that produced it. It carries no tolerance and no verdict; a tolerance belongs to the protocol document that declares it. Frozen readings make chain drift visible, so a comparison must report an identity difference beside the value difference instead of refusing the pair.
+
+## Artifact boundary
+
+A record is a directory: the record document carries the declarations and the identity, its table view carries the numbers with their identities, and `evidence/` carries the stage buffers of an executed run in the form the user binaries already write. A comparison, a verification, and a later reproduction all read that same directory, so the instrument must not invent a second record format for a retained reading.
+
+A run publishes last. The stage capture runs into a hidden staging directory beside `--out`, and the artifacts are named only when every check has passed: a failed measurement leaves neither a record nor a half-published `evidence/`, so the same destination stays usable. A reader is therefore allowed to treat the presence of a record as the presence of a complete measurement.
+
+A retained bundle is read through its own manifest: the buffer digest is verified against the manifest before any value is attributed to the run, so damaged bytes are an error rather than a reading.
+
 ## Chosen boundary options
 
-A renderer-integrated benchmark would remove subprocess setup but would bind evaluation to the current simulation runtime. A standalone Rust CLI preserves comparisons across historical renderer executables and retained artifacts. The target design chooses the standalone CLI with the existing renderer process boundary.
+A renderer-integrated instrument would remove subprocess setup but would bind evaluation to the current simulation runtime. A standalone Rust CLI preserves comparisons across historical renderer executables and retained artifacts. The target design chooses the standalone CLI with the existing renderer process boundary.
 
-The benchmark must not add a second parameter DSL. Suite and target documents may reference the renderer's existing `--preset`, `--params`, and `--set` carriers. The benchmark validates their shape and passes them to the renderer in the renderer's defined precedence order. Benchmark-only settings use typed JSON fields and have no shell or expression evaluation.
+The instrument must not add a second parameter DSL. Suite and target documents may reference the renderer's existing `--preset`, `--params`, and `--set` carriers. The instrument validates their shape and passes them to the renderer in the renderer's defined precedence order. Instrument-only settings use typed JSON fields and have no shell or expression evaluation.
 
-The delivered benchmark must use the Rust workspace implementation defined in [Rust delivery](rust-delivery/spec.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters.
+The delivered instrument must use the Rust workspace implementation defined in [Rust delivery](../benchmark/rust-delivery/spec.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters.
 
 The single-image CLI adapter must build the existing suite and case representation and call the existing run orchestrator. It must resolve each authored dependency against its owning document before producing the retained suite. It must not add chart detection or a separate simulation-parameter vocabulary.
 
-Externally preparing all images would keep the benchmark smaller but would discard original metering and film-scale context for simulation crops. A benchmark image editor would duplicate those rules. The chosen boundary accepts prepared local files, delegates simulation geometry to the renderer, and owns only completed-result measurement and detail regions. Preparation provenance remains passive evidence.
+Externally preparing all images would keep the instrument smaller but would discard original metering and film-scale context for simulation crops. An instrument image editor would duplicate those rules. The chosen boundary accepts prepared local files, delegates simulation geometry to the renderer, and owns only completed-result measurement and detail regions. Preparation provenance remains passive evidence.
 
 ### Standard configuration ownership
 
-The [standard configurations](standard-configurations/spec.md) extend fixture generation instead of adding a benchmark preset kind. A special film profile would mix test conditions with material data. A look preset alone cannot own source interpretation, route, geometry, or seed populations. Existing configuration and suite documents own those settings.
+The [standard configurations](../benchmark/standard-configurations/spec.md) extend fixture generation instead of adding a new preset kind. A special film profile would mix test conditions with material data. A look preset alone cannot own source interpretation, route, geometry, or seed populations. Existing configuration and suite documents own those settings.
 
 The fixture generator must use one construction rule for each standard rendering purpose. It must write standalone configurations and embed equivalent values into suite cases from that rule. It must not maintain separate handwritten defaults for local-image and suite execution.
 
-The renderer's preset export and parameter resolver remain authoritative for look fields, defaults, and profile compatibility. The benchmark must not reconstruct the preset schema or scrape a human listing. Effect-specific probes must apply explicit existing parameter overlays after the exported look.
+The renderer's preset export and parameter resolver remain authoritative for look fields, defaults, and profile compatibility. The instrument must not reconstruct the preset schema or scrape a human listing. Effect-specific probes must apply explicit existing parameter overlays after the exported look.
 
 Generation must complete validation before publishing its final provenance record. Renderer export output must remain a file dependency rather than hidden generator state. Run orchestration, comparison, and report generation must consume the generated documents without a special standard-mode path.
 
@@ -106,7 +150,7 @@ Region inspection must not become a second evaluation pipeline; it must use reta
 
 ### Prepared image review builder
 
-The prepared review builder imports explicitly declared raster images instead of synthesizing benchmark runs or comparison records. Its authored manifest owns sets, patch or region geometry, captions, and the initial pair. A set declares either a shared grid or explicit per-image regions; the builder must not infer correspondence from dimensions, labels, or similar colors. It does not own rendering, reference qualification, or measurement algorithms.
+The prepared review builder imports explicitly declared raster images instead of synthesizing instrument runs or comparison records. Its authored manifest owns sets, patch or region geometry, captions, and the initial pair. A set declares either a shared grid or explicit per-image regions; the builder must not infer correspondence from dimensions, labels, or similar colors. It does not own rendering, reference qualification, or measurement algorithms.
 
 A photographic pair without a declared shared layout must use explicit regions rather than a synthetic grid. A declared grid must remain the single geometry source for its review windows and their derived measurement regions: derivation is a deterministic document transformation that shares the review window arithmetic and reads the set's declared measurement intent, and review geometry enters a measured protocol only through a case or reference document.
 
@@ -120,9 +164,9 @@ The builder must bundle its viewer script as a local asset and embed non-executa
 
 A render result is reusable only when its suite, case, target, renderer executable, data inventory, source input, parameter files, protocol-independent render settings, selected environment, and seed identities match. A comparison result is reusable only when its two run identities, protocol digest, policy digest, and metric implementation identities match.
 
-The benchmark implementation identity must cover local workspace dependencies that implement measurements, including shared color and Lab mathematics. A path dependency without a lockfile change must not escape this identity. Capture selection must be retained separately from image settings so observed stage availability is never inferred from a previously rendered image alone.
+The instrument implementation identity must cover local workspace dependencies that implement measurements, including shared color and Lab mathematics. A path dependency without a lockfile change must not escape this identity. Capture selection must be retained separately from image settings so observed stage availability is never inferred from a previously rendered image alone.
 
-The benchmark must never reuse a stale result because a path stayed the same. It must reject a changed dependency before using the cache. It must not use a partial or failed run as a qualified baseline.
+The instrument must never reuse a stale result because a path stayed the same. It must reject a changed dependency before using the cache. It must not use a partial or failed run as a qualified baseline.
 
 ## Coordinate and color invariant
 
@@ -142,4 +186,4 @@ A comparison can complete with `insufficient_evidence`, but a qualified pass req
 
 ## Delivery
 
-[Rust delivery](rust-delivery/spec.md) defines the delivered implementation's scope, distribution, workspace and execution boundary, numerical implementation, and protocol identity. The delivered implementation is the Rust workspace crate.
+[Rust delivery](../benchmark/rust-delivery/spec.md) defines the delivered implementation's scope, distribution, workspace and execution boundary, numerical implementation, and protocol identity. The delivered implementation is the Rust workspace crate.

@@ -1,4 +1,5 @@
 #![cfg(unix)]
+#![cfg(feature = "precision-f64")]
 
 use serde_json::{Value, json};
 use spektrafilm_benchmark::common;
@@ -71,7 +72,7 @@ printf '{"film_profile":"film","print_profile":"paper","parameters":{"random_see
 }
 
 fn invoke(root: &Path, out: &str, dry: bool, selection: &[&str], code: i32) -> Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
     command
         .arg("run")
         .arg("--suite")
@@ -227,7 +228,7 @@ fn preflight_and_run_retain_identical_configuration_for_every_seed() {
     let mut content = manifest.clone();
     content.as_object_mut().unwrap().remove("id");
     assert_eq!(manifest["id"], common::digest(&content).unwrap());
-    let compare = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+    let compare = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
         .arg("compare")
         .arg("--baseline")
         .arg(root.join("preflight"))
@@ -281,7 +282,7 @@ fn stage_capture_under_preview_bounding_is_rejected_with_an_actionable_reason() 
     let mut suite = read(&root.join("suite.json"));
     suite["cases"][0]["configuration"] = json!({"set":["settings.preview_mode=true"]});
     common::dump(&root.join("suite.json"), &suite).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
         .arg("run")
         .arg("--suite")
         .arg(root.join("suite.json"))

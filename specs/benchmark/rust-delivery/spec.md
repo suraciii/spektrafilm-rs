@@ -2,15 +2,17 @@
 
 ## Scope and authority
 
-This document defines the delivered implementation's scope, distribution, workspace and execution boundary, numerical implementation, and protocol identity. The [product specification](../spec.md) owns evaluation meaning and human review. The [machine interface](../interface/spec.md) owns commands and documents. The [measurement protocol](../metrics/spec.md) owns measurement semantics. The [system design](../design.md) owns runtime boundaries.
+This document defines the delivered implementation's scope, distribution, workspace and execution boundary, numerical implementation, and protocol identity. The [product specification](../spec.md) owns evaluation meaning and human review. The [machine interface](../../instrument/spec.md) owns commands and documents. The [measurement protocol](../metrics/spec.md) owns measurement semantics. The [system design](../../instrument/design.md) owns runtime boundaries.
 
-The delivered implementation must provide the complete benchmark as a Rust CLI. All existing command families, reference scopes, measurement families, failure states, and review capabilities must remain supported.
+The delivered implementation must provide the complete instrument as a Rust CLI. All existing command families, reference scopes, measurement families, failure states, and review capabilities must remain supported.
 
 The benchmark must not change film simulation algorithms, add measurement families, change qualification budgets, or expand the reference corpus.
 
 ## Installation and distribution
 
-The release must include `spektrafilm-bench` and the existing `spektrafilm-bench-fixtures` entry point. The fixture entry point must retain its current options and source attribution behavior, and it must answer the [standard configuration generation](../interface/spec.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. Both entry points must run without Python, uv, pip, or Python packages.
+The release must include `spektrafilm-lab` and its `fixtures` command. The `fixtures` command must retain its current options and source attribution behavior, and it must answer the [standard configuration generation](../../instrument/spec.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. The instrument and its fixture generation must run without Python, uv, pip, or Python packages.
+
+The release ships the instrument's supported commands as the surface a release user gets. An experimental command ships with the binary and carries no compatibility promise.
 
 Release archives must provide binaries for the platforms supported by the application's packaging workflows. Every non-system runtime dependency must be bundled or linked into the delivered executable. The release must identify required system libraries and third-party licenses. A Rust executable with C or C++ dependencies satisfies this requirement; a pure-Rust dependency graph is not required.
 
@@ -20,7 +22,7 @@ Help, version, and schema discovery must work before native metric libraries or 
 
 The Rust implementation must use workspace boundaries selected from actual dependencies. This specification does not prescribe a new crate or module hierarchy. Its executable must continue to invoke the renderer path declared by the target document. It must not substitute a linked runtime for that renderer.
 
-The benchmark must support historical renderer executables and retained results independently of the current application's build. Compiling the benchmark must not require a GPU runtime or GUI toolkit solely to obtain color math, image decoding, or document helpers. Shared mathematical code may be reused through an existing dependency boundary when that boundary meets this constraint.
+The instrument must support historical renderer executables and retained results independently of the current application's build. Compiling the benchmark must not require a GPU runtime or GUI toolkit solely to obtain color math, image decoding, or document helpers. Shared mathematical code may be reused through an existing dependency boundary when that boundary meets this constraint.
 
 The implementation must use typed internal records for documents, measurements, artifact roles, availability, and terminal states. JSON remains the public carrier. Typed records must preserve the interface's different rules for authored and generated documents. Runtime validation remains responsible for hashes, paths, geometry, populations, and cross-document identities.
 
@@ -46,7 +48,7 @@ The Rust readers must accept supported schema-version-1 authored documents and c
 
 A report generated from an existing comparison must retain its measurement values, availability, findings, and evaluation result. Report markup and PNG compressed bytes may differ. Decoded full-image and detail channel codes must remain exact when the report copies or crops existing display artifacts.
 
-A new comparison computed by Rust must have a new resolved measurement identity. That identity must include the benchmark implementation revision and relevant numerical-library versions and settings. A preserved schema version does not imply a preserved measurement identity.
+A new comparison must have a new resolved measurement identity. That identity must include the benchmark implementation revision and relevant numerical-library versions and settings. A preserved schema version does not imply a preserved measurement identity.
 
 A policy bound to a Python measurement identity must not qualify a new Rust comparison. The policy must be rebound to the Rust identity with reviewed calibration evidence. The benchmark must not rewrite or automatically approve an old policy. An existing comparison's recorded policy result remains historical evidence when that comparison is reported.
 

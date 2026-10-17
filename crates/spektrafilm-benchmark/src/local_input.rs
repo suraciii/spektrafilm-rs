@@ -98,12 +98,16 @@ impl LocalInput {
             self.seeds.clone()
         };
         let configuration = load("configuration", &self.configuration)?;
-        let regions = self
-            .regions
-            .as_ref()
-            .map(|path| load("regions", path))
-            .transpose()?
-            .unwrap_or_else(|| json!([]));
+        // `--regions` declares a regions document; the case embeds its
+        // regions array, so one region shape serves both the standalone
+        // document and the case element.
+        let regions = match self.regions.as_ref() {
+            Some(path) => load("regions", path)?
+                .get("regions")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+            None => json!([]),
+        };
         let mut case = json!({"id":"image","kind":"scene","input":input,"configuration":configuration,"seeds":seeds,"regions":regions,"measurements":["numeric","color","tone","flip"]});
         match (&self.reference, &self.reference_info) {
             (Some(image), Some(info)) => {

@@ -190,13 +190,39 @@
                   "geometry": {
                     "anyOf": [
                       {
-                        "type": "array",
-                        "items": {
-                          "type": "integer",
-                          "minimum": 0
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "y": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "width": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "height": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "space": {
+                            "enum": [
+                              "source",
+                              "render"
+                            ]
+                          }
                         },
-                        "minItems": 4,
-                        "maxItems": 4
+                        "required": [
+                          "x",
+                          "y",
+                          "width",
+                          "height",
+                          "space"
+                        ],
+                        "additionalProperties": false
                       },
                       {
                         "type": "object",
@@ -216,13 +242,20 @@
                           "height": {
                             "type": "integer",
                             "minimum": 1
+                          },
+                          "space": {
+                            "enum": [
+                              "source",
+                              "render"
+                            ]
                           }
                         },
                         "required": [
                           "path",
                           "sha256",
                           "width",
-                          "height"
+                          "height",
+                          "space"
                         ],
                         "additionalProperties": false
                       }
@@ -327,19 +360,34 @@
               "original": {
                 "type": "object",
                 "properties": {
-                  "path": { "type": "string", "minLength": 1 },
-                  "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
                 },
-                "required": ["path", "sha256"],
+                "required": [
+                  "path",
+                  "sha256"
+                ],
                 "additionalProperties": false
               },
               "operations": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "type": "string", "minLength": 1 }
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             },
-            "required": ["original", "operations"],
+            "required": [
+              "original",
+              "operations"
+            ],
             "additionalProperties": false
           },
           "configuration": {
@@ -460,19 +508,46 @@
                     "flat_field",
                     "edge",
                     "texture",
-                    "other"
+                    "other",
+                    "full_image"
                   ]
                 },
                 "geometry": {
                   "anyOf": [
                     {
-                      "type": "array",
-                      "items": {
-                        "type": "integer",
-                        "minimum": 0
+                      "type": "object",
+                      "properties": {
+                        "x": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "width": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "height": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "space": {
+                          "enum": [
+                            "source",
+                            "render"
+                          ]
+                        }
                       },
-                      "minItems": 4,
-                      "maxItems": 4
+                      "required": [
+                        "x",
+                        "y",
+                        "width",
+                        "height",
+                        "space"
+                      ],
+                      "additionalProperties": false
                     },
                     {
                       "type": "object",
@@ -492,13 +567,20 @@
                         "height": {
                           "type": "integer",
                           "minimum": 1
+                        },
+                        "space": {
+                          "enum": [
+                            "source",
+                            "render"
+                          ]
                         }
                       },
                       "required": [
                         "path",
                         "sha256",
                         "width",
-                        "height"
+                        "height",
+                        "space"
                       ],
                       "additionalProperties": false
                     }
@@ -519,11 +601,16 @@
                   },
                   "minItems": 0,
                   "uniqueItems": true
+                },
+                "source": {
+                  "type": "string"
+                },
+                "partition": {
+                  "type": "string"
                 }
               },
               "required": [
                 "id",
-                "label",
                 "role",
                 "geometry",
                 "measurements"
@@ -808,19 +895,46 @@
                         "flat_field",
                         "edge",
                         "texture",
-                        "other"
+                        "other",
+                        "full_image"
                       ]
                     },
                     "geometry": {
                       "anyOf": [
                         {
-                          "type": "array",
-                          "items": {
-                            "type": "integer",
-                            "minimum": 0
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "y": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "width": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "height": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "space": {
+                              "enum": [
+                                "source",
+                                "render"
+                              ]
+                            }
                           },
-                          "minItems": 4,
-                          "maxItems": 4
+                          "required": [
+                            "x",
+                            "y",
+                            "width",
+                            "height",
+                            "space"
+                          ],
+                          "additionalProperties": false
                         },
                         {
                           "type": "object",
@@ -840,13 +954,20 @@
                             "height": {
                               "type": "integer",
                               "minimum": 1
+                            },
+                            "space": {
+                              "enum": [
+                                "source",
+                                "render"
+                              ]
                             }
                           },
                           "required": [
                             "path",
                             "sha256",
                             "width",
-                            "height"
+                            "height",
+                            "space"
                           ],
                           "additionalProperties": false
                         }
@@ -1112,13 +1233,39 @@
                     "geometry": {
                       "anyOf": [
                         {
-                          "type": "array",
-                          "items": {
-                            "type": "integer",
-                            "minimum": 0
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "y": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "width": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "height": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "space": {
+                              "enum": [
+                                "source",
+                                "render"
+                              ]
+                            }
                           },
-                          "minItems": 4,
-                          "maxItems": 4
+                          "required": [
+                            "x",
+                            "y",
+                            "width",
+                            "height",
+                            "space"
+                          ],
+                          "additionalProperties": false
                         },
                         {
                           "type": "object",
@@ -1138,13 +1285,20 @@
                             "height": {
                               "type": "integer",
                               "minimum": 1
+                            },
+                            "space": {
+                              "enum": [
+                                "source",
+                                "render"
+                              ]
                             }
                           },
                           "required": [
                             "path",
                             "sha256",
                             "width",
-                            "height"
+                            "height",
+                            "space"
                           ],
                           "additionalProperties": false
                         }

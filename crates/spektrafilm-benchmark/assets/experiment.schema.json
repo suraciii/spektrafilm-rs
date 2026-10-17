@@ -1,0 +1,56 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+    "case": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "suite": { "type": "string", "minLength": 1 }
+      },
+      "required": ["id", "suite"],
+      "additionalProperties": false
+    },
+    "grid": {
+      "type": "object",
+      "properties": {
+        "rows": { "type": "integer", "minimum": 1 },
+        "cols": { "type": "integer", "minimum": 1 },
+        "patch_px": { "type": "integer", "minimum": 1 },
+        "gap_px": { "type": "integer", "minimum": 0 },
+        "origin": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 },
+        "patch": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 } }
+      },
+      "required": ["rows", "cols", "patch_px", "gap_px", "origin", "patch"],
+      "additionalProperties": false
+    },
+    "chain": {
+      "type": "object",
+      "properties": {
+        "film": { "type": ["string", "null"] },
+        "paper": { "type": ["string", "null"] },
+        "preset": { "type": ["string", "null"] },
+        "params": { "type": ["string", "null"] },
+        "set": { "type": "array", "items": { "type": "string" } },
+        "route": { "type": ["string", "null"] },
+        "scan_output": { "type": ["string", "null"] },
+        "input_color_space": { "type": ["string", "null"] },
+        "input_cctf_decoding": { "type": ["boolean", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["path", "sha256"],
+      "additionalProperties": false
+    },
+    "seeds": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 1 }
+  },
+  "required": ["schema_version", "id", "case", "grid", "chain", "input", "seeds"],
+  "additionalProperties": false
+}

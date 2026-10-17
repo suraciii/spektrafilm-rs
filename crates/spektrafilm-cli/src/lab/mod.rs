@@ -1,8 +1,10 @@
-//! Development-only spectral diagnostics exposed as `spektrafilm-lab`.
+//! Instrument command surface: the research commands exposed as
+//! `spektrafilm-lab`.
 //!
-//! Lab commands compute through `spektrafilm-core`, share the user binaries'
-//! command plumbing and parameter surface, and are gated on the f64
-//! reference precision. They report values; they never judge them.
+//! Instrument commands compute through `spektrafilm-core` and the
+//! renderer-independent evaluation library, share the user binaries' command
+//! plumbing and parameter surface, and are gated on the f64 reference
+//! precision. They report values; they never judge them.
 
 pub mod arrays;
 pub mod cli;

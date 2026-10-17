@@ -35,7 +35,8 @@ impl Stimuli {
     pub fn manifest_record(&self) -> serde_json::Value {
         match self {
             Stimuli::Spectra(set) => serde_json::json!({
-                "kind": "spectra",
+                "kind": "stimuli",
+                "domain": "reflectance",
                 "path": set.manifest_path.display().to_string(),
                 "sha256": set.manifest_sha256,
                 "array": {
@@ -44,12 +45,21 @@ impl Stimuli {
                     "sha256": set.array_sha256,
                 },
                 "name": set.name,
+                "color_space": set.color_space,
+                "cctf_decoding": set.cctf_decoding,
+                "condition": match (&set.condition_reference, &set.condition_target) {
+                    (Some(reference), Some(target)) => serde_json::json!({
+                        "reference": reference,
+                        "target": target,
+                    }),
+                    _ => serde_json::Value::Null,
+                },
             }),
             Stimuli::Points(set) => serde_json::json!({
-                "kind": "points",
+                "kind": "stimuli",
                 "domain": set.domain,
                 "color_space": set.color_space,
-                "transfer": set.transfer,
+                "cctf_decoding": set.cctf_decoding,
                 "path": set.manifest_path.display().to_string(),
                 "sha256": set.manifest_sha256,
                 "array": {
@@ -68,8 +78,9 @@ pub struct PointsSet {
     pub name: Option<String>,
     pub domain: String,
     pub color_space: Option<String>,
-    /// `encoded` or `linear`: the transfer state the values are declared in.
-    pub transfer: Option<String>,
+    /// Whether the stored values are transfer-encoded, exactly as a raster
+    /// input to `process` declares it.
+    pub cctf_decoding: Option<bool>,
     pub manifest_path: PathBuf,
     pub manifest_sha256: String,
     pub array_path: PathBuf,
@@ -87,7 +98,7 @@ impl PointsSet {
 
     /// Whether the chain must decode the declared values before filming.
     pub fn cctf_decoding(&self) -> bool {
-        self.transfer.as_deref() == Some("encoded")
+        self.cctf_decoding.unwrap_or(false)
     }
 
     /// The sample's three channel values.
@@ -112,7 +123,7 @@ struct RawPointsManifest {
     #[serde(default)]
     color_space: Option<String>,
     #[serde(default)]
-    transfer: Option<String>,
+    cctf_decoding: Option<bool>,
     points: RawArray,
     samples: Vec<SampleLabel>,
 }
@@ -159,13 +170,11 @@ pub fn load(path: &Path, entry: MeasureEntry) -> Result<Stimuli, String> {
                     .into(),
             );
         }
-        match manifest.transfer.as_deref() {
-            Some("encoded") | Some("linear") => {}
-            other => {
-                return Err(format!(
-                    "a scene_rgb points manifest must declare transfer as \"encoded\" or \"linear\", got {other:?}"
-                ));
-            }
+        if manifest.cctf_decoding.is_none() {
+            return Err(
+                "a scene_rgb points manifest must declare cctf_decoding; the values are read in that transfer state"
+                    .into(),
+            );
         }
     } else {
         if manifest.color_space.is_some() {
@@ -173,9 +182,9 @@ pub fn load(path: &Path, entry: MeasureEntry) -> Result<Stimuli, String> {
                 "a {expected} points manifest must not declare color_space"
             ));
         }
-        if manifest.transfer.is_some() {
+        if manifest.cctf_decoding.is_some() {
             return Err(format!(
-                "a {expected} points manifest must not declare transfer; its values are film-domain numbers"
+                "a {expected} points manifest must not declare cctf_decoding; its values are film-domain numbers"
             ));
         }
     }
@@ -219,7 +228,7 @@ pub fn load(path: &Path, entry: MeasureEntry) -> Result<Stimuli, String> {
         name: manifest.name,
         domain: manifest.domain,
         color_space: manifest.color_space,
-        transfer: manifest.transfer,
+        cctf_decoding: manifest.cctf_decoding,
         manifest_path: path.to_path_buf(),
         manifest_sha256,
         array_path,

@@ -608,11 +608,11 @@ fn publish(out: &Path, comparison: &Value, assets: &Assets, body: String) -> Res
     manifest.push(json!({"path":"index.html","sha256":sha256_file(&out.join("index.html"))?,"role":"report","media_type":"text/html","availability":"available"}));
     dump(
         &out.join("report.json"),
-        &json!({"schema_version":1,"command":"generate-report","source":"comparison","execution_status":"completed","comparison_id":comparison.get("id"),"artifact":"index.html","artifacts":manifest}),
+        &json!({"schema_version":1,"command":"report","source":"comparison","execution_status":"completed","comparison_id":comparison.get("id"),"artifact":"index.html","artifacts":manifest}),
     )?;
     Ok(json!({
         "schema_version":1,
-        "command":"generate-report",
+        "command":"report",
         "source":"comparison",
         "execution_status":"completed",
         "artifact":crate::documents::normalize_path(out)?.join("index.html"),

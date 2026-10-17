@@ -1,6 +1,7 @@
 //! Validation of retained run manifests: completed source evidence is
 //! unconditional, requested stage bundles are validated and retained, and the
 //! manifest digest stays intact.
+#![cfg(feature = "precision-f64")]
 use serde_json::{Value, json};
 use spektrafilm_benchmark::common::{self, Evidence};
 use spektrafilm_benchmark::documents;
@@ -16,7 +17,7 @@ fn read(path: &Path) -> Value {
 }
 
 fn validate_run(root: &Path) -> (Value, i32) {
-    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
         .args(["validate", "--kind", "run", "--file"])
         .arg(root.join("run.json"))
         .output()
@@ -36,7 +37,7 @@ fn stage_bundle(bundle: &Path) -> Value {
             "input_rgb",
             "relative",
             "source_pixels",
-            Some(json!({"color_space":"sRGB","transfer":"encoded"})),
+            Some(json!({"color_space":"sRGB","cctf_decoding":false})),
         ),
         (
             "log_e_film",
@@ -76,7 +77,7 @@ fn stage_bundle(bundle: &Path) -> Value {
             "output_rgb",
             "relative",
             "output_pixels",
-            Some(json!({"color_space":"sRGB","transfer":"linear"})),
+            Some(json!({"color_space":"sRGB","cctf_decoding":true})),
         ),
     ] {
         let path = bundle.join(format!("{id}.f64"));
@@ -142,7 +143,7 @@ fn complete_run(root: &Path, capture: bool) {
         "render_diagnostics",
         json!({"configuration":{"published_dimensions":[4,4]},"execution":{"backend_selected":"cpu","path":"cpu"}}),
     );
-    let color = json!({"color_space":"sRGB","transfer":"linear"});
+    let color = json!({"color_space":"sRGB","cctf_decoding":false});
     let layout = json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little"});
     fs::write(
         root.join("master.f64"),
@@ -192,7 +193,7 @@ fn complete_run(root: &Path, capture: bool) {
             json!({}),
         )
         .unwrap();
-    let source_color = json!({"color_space":"ACES2065-1","transfer":"linear"});
+    let source_color = json!({"color_space":"ACES2065-1","cctf_decoding":false});
     fs::write(
         root.join("source.f64"),
         (0..48)
@@ -212,7 +213,7 @@ fn complete_run(root: &Path, capture: bool) {
         &mut evidence,
         "source.f64.json",
         "source_raw_metadata",
-        json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little","color_space":"ACES2065-1","transfer":"linear"}),
+        json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little","color_space":"ACES2065-1","cctf_decoding":false}),
     );
     let source_resolved = record(
         &mut evidence,
@@ -283,7 +284,7 @@ fn complete_run(root: &Path, capture: bool) {
     save_manifest(
         root,
         "run.json",
-        json!({"schema_version":1,"execution_status":"completed","suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":["probe"],"full_suite":true},"dependencies":[],"cases":[row],"artifacts":evidence.values(),"environment":{}}),
+        json!({"schema_version":1,"kind":"run","id":"validation-run","execution_status":"completed","suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":["probe"],"full_suite":true},"dependencies":[],"cases":[row],"artifacts":evidence.values(),"environment":{}}),
     )
 }
 
@@ -295,6 +296,30 @@ fn complete_retained_run_with_and_without_capture_validates() {
         let (result, code) = validate_run(temp.path());
         assert_eq!(code, 0, "{result}");
         assert_eq!(result["execution_status"], "completed");
+    }
+}
+
+#[test]
+fn validating_a_retained_run_lists_the_checks_it_did_not_perform() {
+    let temp = TempDir::new().unwrap();
+    complete_run(temp.path(), false);
+    let (result, code) = validate_run(temp.path());
+    assert_eq!(code, 0, "{result}");
+    // The record was produced by execution. Validating its shape decides
+    // nothing about whether its images decode, its buffers match the device
+    // that produced them, or its measurements hold on re-execution, so every
+    // such check must be named rather than left to implication.
+    let unchecked = result["unchecked"].as_array().unwrap();
+    for check in [
+        "image_decoding",
+        "rendering",
+        "compute_device",
+        "measurement",
+    ] {
+        assert!(
+            unchecked.iter().any(|v| v == check),
+            "{check} must be listed as unchecked: {result}"
+        );
     }
 }
 

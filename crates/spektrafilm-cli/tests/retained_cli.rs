@@ -1,3 +1,4 @@
+#![cfg(feature = "precision-f64")]
 use image::{GrayImage, Luma, Rgb, RgbImage};
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{
@@ -15,7 +16,7 @@ mod progress;
 use fixtures::{record, save_manifest, write};
 
 fn invoke(args: &[&str], paths: &[(&str, &Path)], code: i32) -> Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
     command.args(args);
     for (option, path) in paths {
         command.arg(option).arg(path);
@@ -76,11 +77,11 @@ fn retained_run_with_review_regions(root: &Path, value: f64, masked: bool, crops
             .add(&root.join("mask.png"), "mask", "image/png", json!({}))
             .unwrap();
         retained["source_path"] = json!(root.parent().unwrap().join("original/mask.png"));
-        regions.push(json!({"id":"patch","label":"Patch","role":"other","geometry":{"path":"mask.png","sha256":retained["sha256"],"width":4,"height":4},"measurements":["numeric"]}));
+        regions.push(json!({"id":"patch","label":"Patch","role":"other","geometry":{"path":"mask.png","sha256":retained["sha256"],"width":4,"height":4,"space":"render"},"measurements":["numeric"]}));
         dependencies.push(retained);
     }
     if crops {
-        regions.push(json!({"id":"detail","label":"Detail","role":"other","geometry":[1,1,2,2],"measurements":["numeric"]}));
+        regions.push(json!({"id":"detail","label":"Detail","role":"other","geometry":{"x":1,"y":1,"width":2,"height":2,"space":"render"},"measurements":["numeric"]}));
     }
     let suite = json!({"schema_version":1,"id":"retained","protocol":{"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":1.0,"border_px":0},"spectrum":{"window":"hann"}},"hotspots":{"count":if crops { 1 } else { 0 },"min_area_px":1}},"cases":[{"id":"probe","kind":"probe","input":{"kind":"raster","path":"input.png","sha256":input["sha256"],"color_space":"sRGB","cctf_decoding":true},"configuration":{},"seeds":[0],"regions":regions,"measurements":["numeric"]}]});
     let mut suite_record = record(&mut evidence, "suite.json", "suite", suite.clone());
@@ -107,7 +108,7 @@ fn retained_run_with_review_regions(root: &Path, value: f64, masked: bool, crops
         "render_diagnostics",
         json!({"configuration":{"published_dimensions":[4,4]}}),
     );
-    let color = json!({"color_space":"sRGB","transfer":"linear"});
+    let color = json!({"color_space":"sRGB","cctf_decoding":false});
     let layout = json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little"});
     let mut bytes = Vec::new();
     for _ in 0..48 {
@@ -157,7 +158,7 @@ fn retained_run_with_review_regions(root: &Path, value: f64, masked: bool, crops
             json!({}),
         )
         .unwrap();
-    let source_color = json!({"color_space":"ACES2065-1","transfer":"linear"});
+    let source_color = json!({"color_space":"ACES2065-1","cctf_decoding":false});
     let source_diagnostics = record(
         &mut evidence,
         "source-diagnostics.json",
@@ -184,13 +185,13 @@ fn retained_run_with_review_regions(root: &Path, value: f64, masked: bool, crops
         &mut evidence,
         "source.f64.json",
         "source_raw_metadata",
-        json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little","color_space":"ACES2065-1","transfer":"linear"}),
+        json!({"width":4,"height":4,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":"little","color_space":"ACES2065-1","cctf_decoding":false}),
     );
     let row = json!({"case_id":"probe","seed":0,"status":"completed","input":input,"raw":raw,"raw_metadata":metadata,"source_raw":source_raw,"source_raw_metadata":source_metadata,"source_resolved":source_resolved,"source_diagnostics":source_diagnostics,"source_master":master,"source_dimensions":[4,4],"source_geometry":{"published_dimensions":[4,4]},"simulation_geometry":{"published_dimensions":[4,4]},"source_pixel_aligned":true,"master":master,"diagnostics":diagnostics,"resolved":resolved,"stdout":stdout,"stderr":stderr,"dimensions":[4,4],"execution":{"backend_selected":"cpu","path":"cpu"},"precision":{"host_precision":"f64"},"command":["renderer","process","input.png","--output","master.tif","--raw-out","master.f64","--diagnostics","diagnostics.json","--seed","0"],"source_command":["renderer","process","input.png","--route","input","--output","source.tif","--raw-out","source.f64","--diagnostics","source-diagnostics.json","--seed","0"]});
     save_manifest(
         root,
         "run.json",
-        json!({"schema_version":1,"execution_status":"completed","suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":["probe"],"full_suite":true},"dependencies":dependencies,"cases":[row],"artifacts":evidence.values(),"environment":{}}),
+        json!({"schema_version":1,"kind":"run","execution_status":"completed","suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":["probe"],"full_suite":true},"dependencies":dependencies,"cases":[row],"artifacts":evidence.values(),"environment":{}}),
     );
 }
 fn compare(a: &Path, b: &Path, out: &Path, code: i32) -> Value {
@@ -233,7 +234,7 @@ fn cli_report_opens_images_and_exposes_real_manual_and_automatic_crops() {
     compare(&baseline, &candidate, &comparison, 0);
     let report = temp.path().join("report");
     invoke(
-        &["generate-report"],
+        &["report"],
         &[("--comparison", &comparison), ("--out", &report)],
         0,
     );
@@ -315,7 +316,7 @@ fn cli_report_without_regions_has_an_explicit_crop_empty_state() {
     compare(&baseline, &candidate, &comparison, 0);
     let report = temp.path().join("report");
     invoke(
-        &["generate-report"],
+        &["report"],
         &[("--comparison", &comparison), ("--out", &report)],
         0,
     );
@@ -341,7 +342,7 @@ fn offline_masked_comparison_preserves_native_linear_samples() {
     validate(&out, "comparison.json", 0);
     let report = temp.path().join("report");
     invoke(
-        &["generate-report"],
+        &["report"],
         &[("--comparison", &out), ("--out", &report)],
         0,
     );
@@ -446,7 +447,7 @@ fn undecodable_master_reports_failed_progress_and_retains_incomplete_destination
     }
     save_manifest(&run, "run.json", manifest);
     let out = temp.path().join("comparison");
-    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
         .arg("compare")
         .arg("--baseline")
         .arg(&run)
@@ -565,7 +566,7 @@ fn measurement_availability_and_unindexed_references_are_rejected_by_validate_an
         );
         let report = temp.path().join(format!("report-{index}"));
         let result = invoke(
-            &["generate-report"],
+            &["report"],
             &[("--comparison", &out), ("--out", &report)],
             1,
         );
@@ -594,7 +595,7 @@ fn artifact_traversal_missing_and_tampered_bytes_never_publish_reports() {
         save_manifest(&out, "comparison.json", d);
         let report = temp.path().join(format!("report-{index}"));
         let result = invoke(
-            &["generate-report"],
+            &["report"],
             &[("--comparison", &out), ("--out", &report)],
             1,
         );
@@ -614,7 +615,7 @@ fn artifact_traversal_missing_and_tampered_bytes_never_publish_reports() {
     let report = temp.path().join("tampered-report");
     assert_eq!(
         invoke(
-            &["generate-report"],
+            &["report"],
             &[("--comparison", &out), ("--out", &report)],
             1
         )["errors"][0]["code"],
@@ -669,7 +670,7 @@ fn artifact_symlink_is_rejected_even_when_bytes_match() {
     let report = temp.path().join("report");
     assert_eq!(
         invoke(
-            &["generate-report"],
+            &["report"],
             &[("--comparison", &out), ("--out", &report)],
             1
         )["errors"][0]["code"],
@@ -761,7 +762,7 @@ fn protocol_tone_policy_remains_selected_with_empty_case_probe() {
     let mut suite = read(&a.join("suite.json"));
     suite["cases"][0]["measurements"] = json!(["tone"]);
     suite["cases"][0]["probe"] = json!({});
-    suite["protocol"]["probe"] = json!({"tone_response":[{"exposure_stops":0.0,"geometry":[0,0,2,4]},{"exposure_stops":1.0,"geometry":[2,0,2,4]}]});
+    suite["protocol"]["probe"] = json!({"tone_response":[{"exposure_stops":0.0,"geometry":{"x":0,"y":0,"width":2,"height":4,"space":"render"}},{"exposure_stops":1.0,"geometry":{"x":2,"y":0,"width":2,"height":4,"space":"render"}}]});
     write(&a.join("suite.json"), &suite);
     let mut run = read(&a.join("run.json"));
     let hash = json!(common::sha256_file(&a.join("suite.json")).unwrap());
@@ -789,6 +790,12 @@ fn protocol_tone_policy_remains_selected_with_empty_case_probe() {
         ],
         1,
     );
+    if result["execution_status"] != "completed" {
+        panic!(
+            "COMPARE ERRORS: {}",
+            serde_json::to_string_pretty(&result).unwrap()
+        );
+    }
     assert_eq!(result["execution_status"], "completed");
     assert_eq!(result["evaluation_status"], "insufficient_evidence");
     let d = read(&out.join("comparison.json"));
@@ -951,12 +958,12 @@ fn offline_pair_report_preserves_unavailable_maps_and_redistribution_omissions()
     save_manifest(
         &comparison,
         "comparison.json",
-        json!({"schema_version":1,"mode":"single_run","execution_status":"completed","evaluation_status":"not_evaluated","run":{"id":"retained","manifest_sha256":"a".repeat(64)},"default_pair":"reference","protocol":{},"selection":{"case_ids":["image"],"full_suite":true},"condition_differences":[],"cases":[{"case_id":"image","seed":0,"status":"completed","pairs":[input,reference]}],"findings":[],"summary":{"selected_cases":1,"completed_results":1,"failed_results":0},"artifacts":artifacts}),
+        json!({"schema_version":1,"kind":"comparison","mode":"single_run","execution_status":"completed","evaluation_status":"not_evaluated","run":{"id":"retained","manifest_sha256":"a".repeat(64)},"default_pair":"reference","protocol":{},"selection":{"case_ids":["image"],"full_suite":true},"condition_differences":[],"cases":[{"case_id":"image","seed":0,"status":"completed","pairs":[input,reference]}],"findings":[],"summary":{"selected_cases":1,"completed_results":1,"failed_results":0},"artifacts":artifacts}),
     );
     let snapshot = fs::read(comparison.join("comparison.json")).unwrap();
     let report = temp.path().join("report");
     invoke(
-        &["generate-report"],
+        &["report"],
         &[("--comparison", &comparison), ("--out", &report)],
         0,
     );

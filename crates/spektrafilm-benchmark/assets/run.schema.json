@@ -4,6 +4,9 @@
     "schema_version": {
       "const": 1
     },
+    "kind": {
+      "const": "run"
+    },
     "id": {
       "type": "string",
       "minLength": 1
@@ -55,21 +58,30 @@
           },
           "command": {
             "type": "array",
-            "items": { "type": "string", "minLength": 1 },
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
             "minItems": 1,
             "uniqueItems": false,
             "description": "Actual executed simulation argv, including raw-out, diagnostics and requested stage-evidence sinks."
           },
           "source_command": {
             "type": "array",
-            "items": { "type": "string", "minLength": 1 },
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
             "minItems": 1,
             "uniqueItems": false,
             "description": "Actual executed source-route argv retained independently of the simulation argv."
           },
           "configuration_command": {
             "type": "array",
-            "items": { "type": "string", "minLength": 1 },
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
             "minItems": 1,
             "uniqueItems": false
           },
@@ -166,8 +178,14 @@
         "allOf": [
           {
             "if": {
-              "properties": { "status": { "const": "completed" } },
-              "required": ["status"]
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": [
+                "status"
+              ]
             },
             "then": {
               "description": "Completed rows always retain the actual argv and the original existing source evidence.",
@@ -197,11 +215,19 @@
           },
           {
             "if": {
-              "properties": { "status": { "const": "failed" } },
-              "required": ["status"]
+              "properties": {
+                "status": {
+                  "const": "failed"
+                }
+              },
+              "required": [
+                "status"
+              ]
             },
             "then": {
-              "required": ["error"]
+              "required": [
+                "error"
+              ]
             }
           }
         ],
@@ -221,6 +247,7 @@
   },
   "required": [
     "schema_version",
+    "kind",
     "id",
     "execution_status",
     "suite",
@@ -274,12 +301,29 @@
     "layout": {
       "type": "object",
       "properties": {
-        "width": { "type": "integer", "minimum": 1 },
-        "height": { "type": "integer", "minimum": 1 },
-        "channels": { "const": 3 },
-        "dtype": { "const": "f64" },
-        "endianness": { "const": "little" },
-        "channel_order": { "enum": ["RGB", "CMY"] }
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "channels": {
+          "const": 3
+        },
+        "dtype": {
+          "const": "f64"
+        },
+        "endianness": {
+          "const": "little"
+        },
+        "channel_order": {
+          "enum": [
+            "RGB",
+            "CMY"
+          ]
+        }
       },
       "required": [
         "width",
@@ -293,46 +337,57 @@
     },
     "native_buffer": {
       "allOf": [
-        { "$ref": "#/$defs/artifact" },
+        {
+          "$ref": "#/$defs/artifact"
+        },
         {
           "type": "object",
           "properties": {
-            "layout": { "$ref": "#/$defs/layout" },
+            "layout": {
+              "$ref": "#/$defs/layout"
+            },
             "color": {
-              "type": "object",
-              "properties": {
-                "color_space": { "type": "string", "minLength": 1 },
-                "transfer": { "type": "string", "minLength": 1 }
-              },
-              "required": ["color_space", "transfer"],
-              "additionalProperties": true
+              "$ref": "#/$defs/color_declaration"
             }
           },
-          "required": ["layout", "color"]
+          "required": [
+            "layout",
+            "color"
+          ]
         }
       ]
     },
     "picture": {
       "allOf": [
-        { "$ref": "#/$defs/artifact" },
+        {
+          "$ref": "#/$defs/artifact"
+        },
         {
           "type": "object",
           "properties": {
-            "dimensions": { "$ref": "#/$defs/dimensions" },
+            "dimensions": {
+              "$ref": "#/$defs/dimensions"
+            },
             "color": {
-              "type": "object"
+              "$ref": "#/$defs/color_declaration"
             }
           },
-          "required": ["color"]
+          "required": [
+            "color"
+          ]
         }
       ]
     },
     "geometry": {
       "type": "object",
       "properties": {
-        "published_dimensions": { "$ref": "#/$defs/dimensions" }
+        "published_dimensions": {
+          "$ref": "#/$defs/dimensions"
+        }
       },
-      "required": ["published_dimensions"],
+      "required": [
+        "published_dimensions"
+      ],
       "additionalProperties": true
     },
     "stage_evidence": {
@@ -343,7 +398,11 @@
           "type": "boolean"
         },
         "availability": {
-          "enum": ["available", "unavailable", "not_applicable"]
+          "enum": [
+            "available",
+            "unavailable",
+            "not_applicable"
+          ]
         },
         "reason": {
           "type": "string",
@@ -357,15 +416,28 @@
           "type": "array",
           "items": {
             "allOf": [
-              { "$ref": "#/$defs/artifact" },
+              {
+                "$ref": "#/$defs/artifact"
+              },
               {
                 "type": "object",
                 "properties": {
-                  "stage_id": { "type": "string", "minLength": 1 },
-                  "layout": { "$ref": "#/$defs/layout" },
-                  "bundle_path": { "type": "string", "minLength": 1 }
+                  "stage_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "layout": {
+                    "$ref": "#/$defs/layout"
+                  },
+                  "bundle_path": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 },
-                "required": ["stage_id", "layout"]
+                "required": [
+                  "stage_id",
+                  "layout"
+                ]
               }
             ]
           },
@@ -376,26 +448,72 @@
           "description": "Observed host precision, route, normalization mode, exposure, print normalization and stage availability, or explicit unobserved markers."
         }
       },
-      "required": ["requested", "availability"],
+      "required": [
+        "requested",
+        "availability"
+      ],
       "allOf": [
         {
           "if": {
-            "properties": { "requested": { "const": true } },
-            "required": ["requested"]
+            "properties": {
+              "requested": {
+                "const": true
+              }
+            },
+            "required": [
+              "requested"
+            ]
           },
           "then": {
-            "required": ["manifest", "buffers", "context"]
+            "required": [
+              "manifest",
+              "buffers",
+              "context"
+            ]
           }
         },
         {
           "if": {
-            "properties": { "requested": { "const": false } },
-            "required": ["requested"]
+            "properties": {
+              "requested": {
+                "const": false
+              }
+            },
+            "required": [
+              "requested"
+            ]
           },
           "then": {
-            "required": ["reason", "context"]
+            "required": [
+              "reason",
+              "context"
+            ]
           }
         }
+      ],
+      "additionalProperties": true
+    },
+    "color_declaration": {
+      "description": "The color interpretation of retained values: the declared space and the transfer state the chain reads them in.",
+      "type": "object",
+      "properties": {
+        "color_space": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cctf_decoding": {
+          "type": "boolean"
+        },
+        "icc": {
+          "type": "object"
+        },
+        "profile": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "color_space",
+        "cctf_decoding"
       ],
       "additionalProperties": true
     }

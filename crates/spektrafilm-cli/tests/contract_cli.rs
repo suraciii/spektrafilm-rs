@@ -1,3 +1,4 @@
+#![cfg(feature = "precision-f64")]
 use serde_json::{Value, json};
 use spektrafilm_benchmark::common;
 use std::{
@@ -8,7 +9,7 @@ use std::{
 use tempfile::TempDir;
 
 fn cli() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+    Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
 }
 
 fn write_json(path: &Path, value: &Value) {
@@ -81,6 +82,7 @@ fn failed_run(root: &Path) {
     );
     let mut run = json!({
         "schema_version":1,
+        "kind":"run",
         "execution_status":"failed",
         "suite": {"id":"contract-suite", "digest":common::digest(&suite).unwrap(), "path":"suite.json", "sha256":suite_file["sha256"]},
         "target": {"id":"contract-target", "digest":common::digest(&target).unwrap(), "path":"target.json", "sha256":target_file["sha256"]},
@@ -191,7 +193,7 @@ fn failed_render_remains_failed_through_compare_validation_and_report() {
 
     let report = temp.path().join("report");
     let reported = cli()
-        .args(["generate-report", "--comparison"])
+        .args(["report", "--comparison"])
         .arg(&comparison)
         .arg("--out")
         .arg(&report)

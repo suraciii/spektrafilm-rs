@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "execution_status": {
+      "type": "string",
+      "enum": ["completed", "failed"]
+    },
+    "host_precision": { "type": "string" },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "path": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "availability": {
+            "type": "string",
+            "enum": ["available", "unavailable", "not_applicable"]
+          },
+          "layout": {
+            "type": "object",
+            "properties": {
+              "width": { "type": "integer", "minimum": 1 },
+              "height": { "type": "integer", "minimum": 1 },
+              "channels": { "type": "integer", "minimum": 1 },
+              "dtype": { "type": "string" },
+              "endianness": { "type": "string" }
+            },
+            "required": ["width", "height", "channels", "dtype", "endianness"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["id", "path", "sha256", "availability"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "execution_status", "host_precision", "stages"],
+  "additionalProperties": false
+}

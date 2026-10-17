@@ -587,8 +587,9 @@ pub struct StageReading {
     pub channel_order: String,
     /// The declared color space of the values, when the stage declares one.
     pub color_space: Option<String>,
-    /// `encoded` or `linear`, when the stage declares a color space.
-    pub transfer: Option<String>,
+    /// Whether the stored values are transfer-decoded, when the stage
+    /// declares a color space.
+    pub cctf_decoding: Option<bool>,
     pub width: u32,
     pub height: u32,
     pub sha256: String,
@@ -734,11 +735,10 @@ fn read_stage(directory: &Path, record: &Value, id: String) -> Result<StageReadi
             .and_then(|color| color.get("color_space"))
             .and_then(Value::as_str)
             .map(str::to_owned),
-        transfer: record
+        cctf_decoding: record
             .get("color")
-            .and_then(|color| color.get("transfer"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+            .and_then(|color| color.get("cctf_decoding"))
+            .and_then(Value::as_bool),
         width,
         height,
         sha256: record
@@ -783,18 +783,10 @@ pub fn statistics(values: impl Iterator<Item = f64>) -> Statistics {
     } else {
         finite[middle]
     };
-    // The estimator is the benchmark's own (`metrics/math.rs::quantile`,
-    // linear interpolation between the two neighbouring order statistics),
-    // restated here because `spektrafilm-benchmark` is a research binary and is
-    // deliberately not a dependency of this CLI. A change there must land here.
-    let index = (count - 1) as f64 * 0.95;
-    let low = index.floor() as usize;
-    let high = index.ceil() as usize;
-    let fraction = index - low as f64;
-    let p95 = match fraction >= 0.5 {
-        true => finite[high] - (finite[high] - finite[low]) * (1.0 - fraction),
-        false => finite[low] + (finite[high] - finite[low]) * fraction,
-    };
+    // One estimator for the whole workspace: the benchmark's interpolating
+    // quantile (`spektrafilm_benchmark::metrics::quantile`), which this CLI
+    // already depends on under `precision-f64`.
+    let p95 = spektrafilm_benchmark::metrics::quantile(&finite, 0.95).unwrap_or(f64::NAN);
     Statistics {
         count,
         mean,

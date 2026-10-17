@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use spektrafilm_backend::{ComputeBackend, cpu_backend::CpuBackend};
 use spektrafilm_core::runtime::Runtime;
@@ -29,9 +29,24 @@ use super::{
 const SCENE_RGB_SPACE: &str = "ACES2065-1";
 
 pub fn run(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<()> {
+    run_with_result(args, matches).map(|_| ())
+}
+
+/// Execute a chain measurement and return the command result object.
+///
+/// The result carries `schema_version`, `command`, `execution_status`, and the
+/// `artifact` directory the measurement published.
+pub fn run_with_result(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<(Value, i32)> {
     // The data directory resolves exactly as it does on the user surface:
     // argument, then `SPEKTRAFILM_DATA_DIR`, then discovery.
-    let data_dir = select_data_dir(args.chain.data_dir.clone(), matches)?.path;
+    let data_dir = select_data_dir(
+        args.chain
+            .data_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("data")),
+        matches,
+    )?
+    .path;
 
     // Load the stimulus first: a measurement of nothing is an error, not an
     // empty run, and the stimulus is declared independently of the chain.
@@ -42,18 +57,31 @@ pub fn run(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<()> {
     // the film profile to validate that illuminant, so it resolves first.
     let mut target_illuminant: Option<String> = None;
     if args.enter == MeasureEntry::Spectra {
-        let condition = parse_condition(args.condition.as_deref())?;
+        // The illuminant pair is declared in the stimulus document: the
+        // document is its single authority, not a command option.
+        let Stimuli::Spectra(set) = &stimulus else {
+            unreachable!("the spectra entry loads a spectra set");
+        };
+        let reference = set
+            .condition_reference
+            .as_deref()
+            .unwrap_or_default()
+            .to_owned();
+        let target = set
+            .condition_target
+            .as_deref()
+            .unwrap_or_default()
+            .to_owned();
         let chain = resolve_spectra_chain(args, &data_dir)?;
         let film = &chain.film;
-        if film.info.reference_illuminant != condition.reference {
+        if film.info.reference_illuminant != reference {
             bail!(
-                "condition reference {:?} does not match the profile reference illuminant {:?}; \
-                 the spectral LUT is built for the profile's own reference",
-                condition.reference,
+                "stimulus condition reference {reference:?} does not match the profile reference \
+                 illuminant {:?}; the spectral LUT is built for the profile's own reference",
                 film.info.reference_illuminant
             );
         }
-        for name in [&condition.reference, &condition.target] {
+        for name in [&reference, &target] {
             if !spectral_service::is_supported_illuminant(name) {
                 bail!(
                     "unsupported illuminant {name:?}; supported names include {}",
@@ -61,16 +89,14 @@ pub fn run(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<()> {
                 );
             }
         }
-        if let Stimuli::Spectra(set) = &stimulus
-            && set.wavelengths != film.data.wavelengths
-        {
+        if set.wavelengths != film.data.wavelengths {
             bail!(
                 "spectra grid does not match the profile wavelength grid ({} samples vs {})",
                 set.wavelengths.len(),
                 film.data.wavelengths.len()
             );
         }
-        target_illuminant = Some(condition.target);
+        target_illuminant = Some(target);
     }
 
     let mut chain = resolve_measurement_chain(args, &data_dir, &stimulus)?;
@@ -220,7 +246,7 @@ pub fn run(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<()> {
         report::publish_staged(
             &out,
             &staging,
-            &[("measure.json", measure_text), ("points.csv", points_csv)],
+            &[("run.json", measure_text), ("readings.csv", points_csv)],
         )
         .map_err(anyhow::Error::msg)?;
         Ok(stages)
@@ -244,7 +270,15 @@ pub fn run(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<()> {
             None => eprintln!("{id}: {availability}"),
         }
     }
-    Ok(())
+    Ok((
+        json!({
+            "schema_version": 1,
+            "command": "run",
+            "execution_status": "completed",
+            "artifact": out.display().to_string(),
+        }),
+        0,
+    ))
 }
 
 /// The capture staging directory: a hidden sibling of the destination, so the
@@ -255,29 +289,6 @@ fn staging_directory(out: &Path) -> PathBuf {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "measurement".to_owned());
     out.with_file_name(format!(".{name}.staging-{}", std::process::id()))
-}
-
-/// The illuminant pair a `spectra` entry declares.
-struct Condition {
-    reference: String,
-    target: String,
-}
-
-fn parse_condition(text: Option<&str>) -> Result<Condition> {
-    let text = text.ok_or_else(|| {
-        anyhow!("--enter spectra requires --condition REFERENCE=TARGET naming the scene illuminant")
-    })?;
-    let (reference, target) = text
-        .split_once('=')
-        .ok_or_else(|| anyhow!("--condition must be REFERENCE=TARGET, got {text:?}"))?;
-    let (reference, target) = (reference.trim(), target.trim());
-    if reference.is_empty() || target.is_empty() {
-        bail!("--condition must name both illuminants, got {text:?}");
-    }
-    Ok(Condition {
-        reference: reference.to_owned(),
-        target: target.to_owned(),
-    })
 }
 
 /// Resolve the chain for the reference-illuminant check, which needs the film
@@ -304,9 +315,9 @@ fn resolve_measurement_chain(
     stimulus: &Stimuli,
 ) -> Result<ResolvedChain> {
     let request = match (args.enter, stimulus) {
-        (MeasureEntry::Spectra, _) => InputRequest {
+        (MeasureEntry::Spectra, Stimuli::Spectra(set)) => InputRequest {
             color_space: Some(SCENE_RGB_SPACE),
-            cctf_decoding: false,
+            cctf_decoding: set.cctf_decoding,
             require: true,
         },
         (MeasureEntry::RgbIn, Stimuli::Points(set)) => InputRequest {
@@ -316,6 +327,9 @@ fn resolve_measurement_chain(
         },
         (MeasureEntry::RgbIn, Stimuli::Spectra(_)) => {
             bail!("--enter rgb_in reads a points manifest, not a measured-spectra set")
+        }
+        (MeasureEntry::Spectra, Stimuli::Points(_)) => {
+            bail!("--enter spectra reads a measured-spectra manifest, not a points manifest")
         }
         (MeasureEntry::LogEFilm | MeasureEntry::CmyFilm, Stimuli::Points(_)) => InputRequest {
             color_space: None,
@@ -332,7 +346,11 @@ fn resolve_measurement_chain(
     let chain = resolve_chain(&args.chain, data_dir, request)?;
     match args.enter {
         MeasureEntry::Spectra => {
-            require_declaration(&chain, Some(SCENE_RGB_SPACE), false)?;
+            let (color_space, cctf_decoding) = match stimulus {
+                Stimuli::Spectra(set) => (Some(SCENE_RGB_SPACE), set.cctf_decoding),
+                Stimuli::Points(_) => (None, false),
+            };
+            require_declaration(&chain, color_space, cctf_decoding)?;
         }
         MeasureEntry::RgbIn => {
             let (color_space, cctf_decoding) = match stimulus {
@@ -423,7 +441,6 @@ fn declaration_record(
         "data_dir": data_dir.display().to_string(),
         "enter": args.enter.name(),
         "read": read,
-        "condition": args.condition,
         "stimuli": args.stimuli.display().to_string(),
         "resolved": {
             "film": chain.film_name,
@@ -486,7 +503,7 @@ fn stage_records(
                 "units": reading.units,
                 "channel_order": reading.channel_order,
                 "color_space": reading.color_space,
-                "transfer": reading.transfer,
+                "cctf_decoding": reading.cctf_decoding,
                 "sha256": reading.sha256,
                 "availability": "available",
                 "reason": Value::Null,
@@ -498,7 +515,7 @@ fn stage_records(
                 "units": Value::Null,
                 "channel_order": Value::Null,
                 "color_space": Value::Null,
-                "transfer": Value::Null,
+                "cctf_decoding": Value::Null,
                 "sha256": Value::Null,
                 "availability": entry.availability,
                 "reason": entry.reason,
@@ -621,7 +638,7 @@ fn build_points_csv(stimulus: &Stimuli, readings: &[StageReading], read: &[Strin
 /// any execution: a run writes no artifact unless the measurement completes,
 /// and it never replaces one.
 fn precheck_destination(out: &Path) -> Result<()> {
-    for name in ["measure.json", "points.csv"] {
+    for name in ["run.json", "readings.csv"] {
         let path = out.join(name);
         if path.exists() {
             bail!("refusing to replace an existing {}", path.display());
@@ -635,7 +652,7 @@ fn precheck_destination(out: &Path) -> Result<()> {
 }
 
 /// Resolve, load, guard, and write the identity record only: no execution, no
-/// evidence directory, no `points.csv`.
+/// evidence directory, no `readings.csv`.
 fn write_dry_run(
     args: &MeasureRunArgs,
     chain: &ResolvedChain,
@@ -643,7 +660,7 @@ fn write_dry_run(
     read: &[String],
     stimulus: Stimuli,
     identity: Value,
-) -> Result<()> {
+) -> Result<(Value, i32)> {
     let out = args.out.clone();
     precheck_destination(&out)?;
     let stages: Vec<Value> = read
@@ -655,7 +672,7 @@ fn write_dry_run(
                 "units": Value::Null,
                 "channel_order": Value::Null,
                 "color_space": Value::Null,
-                "transfer": Value::Null,
+                "cctf_decoding": Value::Null,
                 "sha256": Value::Null,
                 "availability": "not_executed",
                 "reason": "dry_run",
@@ -674,10 +691,17 @@ fn write_dry_run(
         "summaries": [],
     });
     let measure_text = format!("{}\n", serde_json::to_string_pretty(&measure_json)?);
-    report::write_measure_named(&out, &[("measure.json", measure_text)])
-        .map_err(anyhow::Error::msg)?;
+    report::write_measure_named(&out, &[("run.json", measure_text)]).map_err(anyhow::Error::msg)?;
     eprintln!("Measurement (dry run): {}", out.display());
     eprintln!("Samples: {}", stimulus.sample_count());
     eprintln!("Entry: {}", args.enter.name());
-    Ok(())
+    Ok((
+        json!({
+            "schema_version": 1,
+            "command": "run",
+            "execution_status": "completed",
+            "artifact": out.display().to_string(),
+        }),
+        0,
+    ))
 }

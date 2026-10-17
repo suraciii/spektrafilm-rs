@@ -62,6 +62,7 @@ graph TD
     gui --> model
     gui --> raw
     bench --> math
+    cli --> bench
 ```
 
 `spektrafilm-benchmark` depends on `spektrafilm-math` only, so it is unaffected by the boundary.

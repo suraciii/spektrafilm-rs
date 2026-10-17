@@ -6,7 +6,7 @@
 
 Profile fitting is a calibration mechanism for profile authors. It is not a GUI feature. It must not modify a preset library, a profile file, or any other input in place; every result is written to the paths the caller names.
 
-The lab CLI exposes fitting as `spektrafilm-lab fit`; see the [lab CLI spec](../lab/spec.md). The command must exist in the lab binary and must not exist in `spektrafilm` or `spektrafilm-f64`.
+The instrument exposes fitting as `spektrafilm-lab fit`; see the [instrument specification](../instrument/spec.md). The command must exist in the instrument binary and must not exist in `spektrafilm` or `spektrafilm-f64`.
 
 ## Inputs
 

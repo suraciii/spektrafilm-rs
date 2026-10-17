@@ -1,4 +1,4 @@
-//! `spektrafilm-lab spectral evaluate` and `spektrafilm-lab measure` end-to-end.
+//! `spektrafilm-lab spectral evaluate` and `spektrafilm-lab run` end-to-end.
 
 #![cfg(feature = "precision-f64")]
 
@@ -36,6 +36,9 @@ impl Fixture {
             r#"{
                 "schema_version": 1,
                 "name": "synthetic roundtrip",
+                "color_space": "ACES2065-1",
+                "cctf_decoding": false,
+                "condition": {"reference": "D55", "target": "D65"},
                 "grid_nm": {"start": 380.0, "end": 780.0, "step": 5.0},
                 "valid_band": [380.0, 780.0],
                 "reflectances": {"path": "reflectances.npy"},
@@ -70,8 +73,6 @@ impl Fixture {
             spectra.to_str().unwrap(),
             "--profile",
             profile.to_str().unwrap(),
-            "--condition",
-            "D55=D65",
             "--out",
             out.to_str().unwrap(),
             "--data-dir",
@@ -183,8 +184,6 @@ fn preset_mode_resolves_the_chain_and_reports_mismatches() {
         f.root.join("manifest.json").to_str().unwrap(),
         "--preset",
         "Kodak Portra 400",
-        "--condition",
-        "D55=D65",
         "--out",
         out.to_str().unwrap(),
         "--data-dir",
@@ -201,7 +200,24 @@ fn preset_mode_resolves_the_chain_and_reports_mismatches() {
 
     // A reference illuminant that does not match the profile is rejected.
     let mismatch = f.root.join("mismatch");
-    let spectra = f.root.join("manifest.json");
+    let spectra = f.root.join("manifest-mismatch.json");
+    std::fs::write(
+        &spectra,
+        r#"{
+            "schema_version": 1,
+            "name": "synthetic roundtrip",
+            "color_space": "ACES2065-1",
+            "cctf_decoding": false,
+            "condition": {"reference": "T", "target": "D65"},
+            "grid_nm": {"start": 380.0, "end": 780.0, "step": 5.0},
+            "valid_band": [380.0, 780.0],
+            "reflectances": {"path": "reflectances.npy"},
+            "samples": [
+                {"id": "midgray", "source": "synthetic", "partition": "neutral", "row": 0}
+            ]
+        }"#,
+    )
+    .unwrap();
     let profile = f.data.join("profiles/kodak_portra_400.json");
     let result = f.run(&[
         "spectral",
@@ -210,8 +226,6 @@ fn preset_mode_resolves_the_chain_and_reports_mismatches() {
         spectra.to_str().unwrap(),
         "--profile",
         profile.to_str().unwrap(),
-        "--condition",
-        "T=D65",
         "--out",
         mismatch.to_str().unwrap(),
         "--data-dir",
@@ -224,7 +238,7 @@ fn preset_mode_resolves_the_chain_and_reports_mismatches() {
 }
 
 // ---------------------------------------------------------------------------
-// measurement: `spektrafilm-lab measure`
+// measurement: `spektrafilm-lab run`, `sample`, `compare`, `verify`
 // ---------------------------------------------------------------------------
 
 /// The chart is one row of twelve samples: a measurement executes its
@@ -337,7 +351,7 @@ impl MeasureFixture {
                 "name": "dyadic chart",
                 "domain": "scene_rgb",
                 "color_space": "sRGB",
-                "transfer": "linear",
+                "cctf_decoding": false,
                 "points": {"path": "points.npy"},
                 "samples": labels,
             }))
@@ -348,10 +362,12 @@ impl MeasureFixture {
             .map(|index| {
                 serde_json::json!({
                     "id": format!("p{index:02}"),
+                    "label": format!("p{index:02}"),
                     "source": "chart",
                     "partition": "all",
-                    "x": index as u32,
-                    "y": 0u32,
+                    "role": "other",
+                    "measurements": ["numeric", "color"],
+                    "geometry": {"x": index as u32, "y": 0u32},
                 })
             })
             .collect();
@@ -360,8 +376,9 @@ impl MeasureFixture {
             &plan,
             serde_json::to_string_pretty(&serde_json::json!({
                 "schema_version": 1,
+                "id": "chart-pixels",
                 "name": "chart pixels",
-                "samples": windows,
+                "regions": windows,
             }))
             .unwrap(),
         )
@@ -446,7 +463,6 @@ impl MeasureFixture {
     /// document.
     fn measure_with(&self, stimuli: &Path, out: &Path) -> Output {
         let mut args = vec![
-            "measure",
             "run",
             "--stimuli",
             stimuli.to_str().unwrap(),
@@ -504,7 +520,7 @@ fn rgb_in_manifest(fixture: &MeasureFixture, bundle: &Path, name: &str) -> PathB
         .find(|record| record["id"] == "rgb_in")
         .unwrap();
     assert_eq!(record["availability"], "available", "{record}");
-    let transfer = record["color"]["transfer"].as_str().unwrap();
+    let decoding = record["color"]["cctf_decoding"].as_bool().unwrap();
     let color_space = record["color"]["color_space"].as_str().unwrap();
     let width = record["layout"]["width"].as_u64().unwrap() as usize;
     let height = record["layout"]["height"].as_u64().unwrap() as usize;
@@ -537,7 +553,7 @@ fn rgb_in_manifest(fixture: &MeasureFixture, bundle: &Path, name: &str) -> PathB
             "name": name,
             "domain": "scene_rgb",
             "color_space": color_space,
-            "transfer": transfer,
+            "cctf_decoding": decoding,
             "points": {"path": array.file_name().unwrap().to_str().unwrap()},
             "samples": samples,
         }))
@@ -547,7 +563,7 @@ fn rgb_in_manifest(fixture: &MeasureFixture, bundle: &Path, name: &str) -> PathB
     path
 }
 
-/// One reading row per sample of a stage, from a `points.csv` artifact.
+/// One reading row per sample of a stage, from a `readings.csv` artifact.
 fn read_points(path: &Path, stage: &str) -> BTreeMap<String, [f64; 3]> {
     let text = std::fs::read_to_string(path).unwrap();
     let mut lines = text.lines();
@@ -666,12 +682,12 @@ fn measure_run_matches_process_stage_evidence_on_log_e_film() {
     );
 
     assert_eq!(
-        read_points(&lab.join("points.csv"), "log_e_film").len(),
+        read_points(&lab.join("readings.csv"), "log_e_film").len(),
         CHART.len()
     );
     for stage in ["log_e_film", "cmy_film", "rgb_out"] {
         let evidence = bundle_stage(&bundle, stage);
-        let read = read_points(&lab.join("points.csv"), stage);
+        let read = read_points(&lab.join("readings.csv"), stage);
         for (index, expected) in evidence.iter().enumerate() {
             let id = format!("p{index:02}");
             assert_close(&format!("{stage} {id}"), read[&id], *expected);
@@ -681,7 +697,7 @@ fn measure_run_matches_process_stage_evidence_on_log_e_film() {
     // Repeated runs on identical inputs produce identical artifacts.
     let repeat = f.root.join("lab-repeat");
     assert!(f.measure_with(&stimuli, &repeat).status.success());
-    for name in ["measure.json", "points.csv"] {
+    for name in ["run.json", "readings.csv"] {
         assert_eq!(
             std::fs::read(lab.join(name)).unwrap(),
             std::fs::read(repeat.join(name)).unwrap(),
@@ -694,7 +710,7 @@ fn measure_run_matches_process_stage_evidence_on_log_e_film() {
     );
 
     let record: Value =
-        serde_json::from_slice(&std::fs::read(lab.join("measure.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(lab.join("run.json")).unwrap()).unwrap();
     assert_eq!(record["kind"], "run");
     assert_eq!(record["executed"], true);
     assert_eq!(record["declaration"]["enter"], "rgb_in");
@@ -730,7 +746,9 @@ fn measure_run_matches_process_stage_evidence_on_log_e_film() {
             && stage["units"] == "log10"
     }));
     assert!(stages.iter().any(|stage| {
-        stage["id"] == "rgb_out" && stage["color_space"] == "sRGB" && stage["transfer"] == "encoded"
+        stage["id"] == "rgb_out"
+            && stage["color_space"] == "sRGB"
+            && stage["cctf_decoding"] == false
     }));
 }
 
@@ -739,7 +757,6 @@ fn measure_run_fails_on_a_point_wise_violation_and_writes_nothing() {
     let f = MeasureFixture::new();
     let out = f.root.join("violating");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -767,14 +784,13 @@ fn measure_run_fails_on_a_point_wise_violation_and_writes_nothing() {
         error.contains("--set film_render.grain.active=false"),
         "no remediation: {error}"
     );
-    assert!(!out.join("measure.json").exists());
+    assert!(!out.join("run.json").exists());
     assert!(!out.join("evidence").exists());
 
     // Reading the injected boundary itself needs no disabled effect at all:
     // every operation that would mix samples changes a later stage.
     let boundary = f.root.join("rgb-in-only");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -803,7 +819,6 @@ fn measure_run_fails_on_a_point_wise_violation_and_writes_nothing() {
     // `rgb_out` only.
     let limited = f.root.join("log-e-only");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -828,7 +843,7 @@ fn measure_run_fails_on_a_point_wise_violation_and_writes_nothing() {
         String::from_utf8_lossy(&result.stderr)
     );
     let record: Value =
-        serde_json::from_slice(&std::fs::read(limited.join("measure.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(limited.join("run.json")).unwrap()).unwrap();
     // The range is recorded through the shared tap controls, so the retained
     // effective document describes what executed.
     assert_eq!(
@@ -845,7 +860,6 @@ fn measure_run_fails_on_a_point_wise_violation_and_writes_nothing() {
     // operations the default chain leaves active are not named.
     let density = f.root.join("density-entry");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.density_manifest.to_str().unwrap(),
@@ -877,7 +891,6 @@ fn measure_run_fails_on_a_point_wise_violation_and_writes_nothing() {
         );
     }
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.density_manifest.to_str().unwrap(),
@@ -908,7 +921,6 @@ fn measure_refuses_a_declared_entry_or_collection_it_cannot_honour() {
     let f = MeasureFixture::new();
     let declared = f.root.join("declared");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -935,7 +947,6 @@ fn measure_refuses_a_declared_entry_or_collection_it_cannot_honour() {
 
     let truncated = f.root.join("truncated");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -963,7 +974,6 @@ fn measure_refuses_a_declared_entry_or_collection_it_cannot_honour() {
     // A reading the entry cannot reach is refused before executing.
     let upstream = f.root.join("upstream");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.log_e_manifest.to_str().unwrap(),
@@ -991,13 +1001,12 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
 
     let sample = f.root.join("sample");
     let result = f.lab(&[
-        "measure",
         "sample",
         "--from-evidence",
         bundle.to_str().unwrap(),
         "--stage",
         "log_e_film",
-        "--plan",
+        "--regions",
         f.plan.to_str().unwrap(),
         "--out",
         sample.to_str().unwrap(),
@@ -1008,7 +1017,7 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
         String::from_utf8_lossy(&result.stderr)
     );
     let evidence = bundle_stage(&bundle, "log_e_film");
-    let read = read_points(&sample.join("points.csv"), "log_e_film");
+    let read = read_points(&sample.join("readings.csv"), "log_e_film");
     assert_eq!(read.len(), CHART.len());
     for (index, expected) in evidence.iter().enumerate() {
         let id = format!("p{index:02}");
@@ -1018,22 +1027,22 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
     // A reading states the state its own values are in. A film-domain stage
     // declares no transfer state and the reading does not invent one.
     let record: Value =
-        serde_json::from_slice(&std::fs::read(sample.join("measure.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(sample.join("run.json")).unwrap()).unwrap();
     assert_eq!(record["executed"], false);
-    assert_eq!(record["stages"][0]["transfer"], Value::Null);
-    assert_eq!(record["source"]["transfer"], Value::Null);
+    assert_eq!(record["stages"][0]["cctf_decoding"], Value::Null);
+    assert_eq!(record["source"]["cctf_decoding"], Value::Null);
 
-    // Sampling an encoded buffer applies the declared decoding, so the reading
-    // is linear while the source block keeps the bundle's own declaration.
+    // The retained `rgb_in` boundary already stores decoded values, so
+    // sampling passes them through: the reading keeps the decoded state and
+    // the source block reports the bundle's own declaration verbatim.
     let encoded = f.root.join("sample-rgb-in");
     let result = f.lab(&[
-        "measure",
         "sample",
         "--from-evidence",
         bundle.to_str().unwrap(),
         "--stage",
         "rgb_in",
-        "--plan",
+        "--regions",
         f.plan.to_str().unwrap(),
         "--out",
         encoded.to_str().unwrap(),
@@ -1044,19 +1053,18 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
         String::from_utf8_lossy(&result.stderr)
     );
     let record: Value =
-        serde_json::from_slice(&std::fs::read(encoded.join("measure.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(encoded.join("run.json")).unwrap()).unwrap();
     let bundle_record = bundle_stage_record(&bundle, "rgb_in");
-    assert_eq!(bundle_record["color"]["transfer"], "encoded");
-    assert_eq!(record["source"]["transfer"], "encoded");
-    assert_eq!(record["stages"][0]["transfer"], "linear");
+    assert_eq!(bundle_record["color"]["cctf_decoding"], true);
+    assert_eq!(record["source"]["cctf_decoding"], true);
+    assert_eq!(record["stages"][0]["cctf_decoding"], true);
     assert_eq!(record["stages"][0]["color_space"], "sRGB");
-    let read = read_points(&encoded.join("points.csv"), "rgb_in");
+    let read = read_points(&encoded.join("readings.csv"), "rgb_in");
     for (index, stored) in bundle_stage(&bundle, "rgb_in").iter().enumerate() {
-        let decoded = stored.map(spektrafilm_math::colorspace::srgb_decode_f64);
         assert_close(
             &format!("decoded p{index:02}"),
             read[&format!("p{index:02}")],
-            decoded,
+            *stored,
         );
     }
 
@@ -1068,13 +1076,12 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
     bytes[0] ^= 1;
     std::fs::write(tampered.join("log_e_film.f64"), &bytes).unwrap();
     let result = f.lab(&[
-        "measure",
         "sample",
         "--from-evidence",
         tampered.to_str().unwrap(),
         "--stage",
         "log_e_film",
-        "--plan",
+        "--regions",
         f.plan.to_str().unwrap(),
         "--out",
         f.root.join("tampered-out").to_str().unwrap(),
@@ -1087,20 +1094,19 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
     let outside = f.root.join("plan-outside.json");
     std::fs::write(
         &outside,
-        r#"{"schema_version": 1, "samples": [
-            {"id": "edge", "source": "chart", "partition": "all", "x": 11, "y": 0, "width": 2}
+        r#"{"schema_version": 1, "id": "outside", "regions": [
+            {"id": "edge", "label": "edge", "source": "chart", "partition": "all", "role": "other", "measurements": ["numeric"], "geometry": {"x": 11, "y": 0, "width": 2}}
         ]}"#,
     )
     .unwrap();
     let rejected = f.root.join("rejected");
     let result = f.lab(&[
-        "measure",
         "sample",
         "--from-evidence",
         bundle.to_str().unwrap(),
         "--stage",
         "log_e_film",
-        "--plan",
+        "--regions",
         outside.to_str().unwrap(),
         "--out",
         rejected.to_str().unwrap(),
@@ -1108,7 +1114,7 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
     assert!(!result.status.success());
     let error = String::from_utf8_lossy(&result.stderr);
     assert!(error.contains("edge"), "{error}");
-    assert!(!rejected.join("points.csv").exists());
+    assert!(!rejected.join("readings.csv").exists());
 }
 
 #[test]
@@ -1121,7 +1127,6 @@ fn measure_compare_reports_deltas_and_identity_drift_beside_them() {
 
     let compare = f.root.join("compare");
     let result = f.lab(&[
-        "measure",
         "compare",
         "--baseline",
         lab.to_str().unwrap(),
@@ -1136,7 +1141,7 @@ fn measure_compare_reports_deltas_and_identity_drift_beside_them() {
         String::from_utf8_lossy(&result.stderr)
     );
     let report: Value =
-        serde_json::from_slice(&std::fs::read(compare.join("compare.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(compare.join("comparison.json")).unwrap()).unwrap();
     assert!(
         report["identity_differences"]
             .as_array()
@@ -1195,13 +1200,12 @@ fn measure_compare_reports_deltas_and_identity_drift_beside_them() {
     assert!(f.measure_with(&stimuli, &measured).status.success());
     assert!(
         f.lab(&[
-            "measure",
             "sample",
             "--from-evidence",
             bundle.to_str().unwrap(),
             "--stage",
             "log_e_film",
-            "--plan",
+            "--regions",
             f.plan.to_str().unwrap(),
             "--out",
             sample.to_str().unwrap(),
@@ -1211,7 +1215,6 @@ fn measure_compare_reports_deltas_and_identity_drift_beside_them() {
     );
     let mixed = f.root.join("mixed");
     let result = f.lab(&[
-        "measure",
         "compare",
         "--baseline",
         measured.to_str().unwrap(),
@@ -1226,7 +1229,7 @@ fn measure_compare_reports_deltas_and_identity_drift_beside_them() {
         String::from_utf8_lossy(&result.stderr)
     );
     let report: Value =
-        serde_json::from_slice(&std::fs::read(mixed.join("compare.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(mixed.join("comparison.json")).unwrap()).unwrap();
     assert!(
         !report["identity_differences"]
             .as_array()
@@ -1260,7 +1263,6 @@ fn measure_compare_pairs_a_reference_under_its_own_role() {
     // exposure: `log_e_film` is linear in EV, and one stop is 0.30103 log10.
     let shifted = |compensation: &str, out: &Path| -> Vec<String> {
         let mut args: Vec<String> = vec![
-            "measure".to_owned(),
             "run".to_owned(),
             "--stimuli".to_owned(),
             f.stimuli.display().to_string(),
@@ -1299,13 +1301,12 @@ fn measure_compare_pairs_a_reference_under_its_own_role() {
 
     let out = f.root.join("reference-compare");
     let result = f.lab(&[
-        "measure",
         "compare",
         "--baseline",
         baseline.to_str().unwrap(),
         "--candidate",
         candidate.to_str().unwrap(),
-        "--reference",
+        "--reference-run",
         reference.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
@@ -1316,7 +1317,7 @@ fn measure_compare_pairs_a_reference_under_its_own_role() {
         String::from_utf8_lossy(&result.stderr)
     );
     let report: Value =
-        serde_json::from_slice(&std::fs::read(out.join("compare.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(out.join("comparison.json")).unwrap()).unwrap();
     let summaries = report["summaries"].as_array().unwrap();
     let median = |side: &str, stage: &str| -> f64 {
         summaries
@@ -1400,9 +1401,18 @@ fn measure_reads_back_identities_that_carry_separators() {
         &plan,
         serde_json::to_string_pretty(&serde_json::json!({
             "schema_version": 1,
+            "id": "separators",
             "name": "separators",
-            "samples": [
-                {"id": awkward, "source": "chart", "partition": "all", "x": 0, "y": 0},
+            "regions": [
+                {
+                    "id": awkward,
+                    "label": awkward,
+                    "source": "chart",
+                    "partition": "all",
+                    "role": "other",
+                    "measurements": ["numeric"],
+                    "geometry": {"x": 0, "y": 0},
+                },
             ],
         }))
         .unwrap(),
@@ -1410,13 +1420,12 @@ fn measure_reads_back_identities_that_carry_separators() {
     .unwrap();
     let sample = f.root.join("sample-separators");
     let result = f.lab(&[
-        "measure",
         "sample",
         "--from-evidence",
         bundle.to_str().unwrap(),
         "--stage",
         "log_e_film",
-        "--plan",
+        "--regions",
         plan.to_str().unwrap(),
         "--out",
         sample.to_str().unwrap(),
@@ -1429,7 +1438,6 @@ fn measure_reads_back_identities_that_carry_separators() {
     // Comparing the reading with itself must read back the identity it wrote.
     let out = f.root.join("compare-separators");
     let result = f.lab(&[
-        "measure",
         "compare",
         "--baseline",
         sample.to_str().unwrap(),
@@ -1444,7 +1452,7 @@ fn measure_reads_back_identities_that_carry_separators() {
         String::from_utf8_lossy(&result.stderr)
     );
     let report: Value =
-        serde_json::from_slice(&std::fs::read(out.join("compare.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(out.join("comparison.json")).unwrap()).unwrap();
     let summaries = report["summaries"].as_array().unwrap();
     assert!(!summaries.is_empty(), "{report}");
     assert_eq!(summaries[0]["source"], "chart");
@@ -1467,7 +1475,6 @@ fn measure_gates_a_narrower_range_by_the_path_it_executes() {
     // `input` route skips the film stage only when the whole chain runs.
     let short = f.root.join("short-input-route");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -1495,7 +1502,6 @@ fn measure_gates_a_narrower_range_by_the_path_it_executes() {
     assert!(!short.exists(), "a refused run writes nothing");
 
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -1527,7 +1533,6 @@ fn measure_gates_a_narrower_range_by_the_path_it_executes() {
     // path, so its controls are listed.
     let converted = f.root.join("short-convert-route");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -1569,7 +1574,6 @@ fn measure_compare_keeps_incomparable_pairs_out_of_the_deltas() {
     for (space, name) in [("sRGB", "sample-srgb"), ("ProPhoto RGB", "sample-prophoto")] {
         let out = f.root.join(name);
         let result = f.lab(&[
-            "measure",
             "sample",
             "--source",
             f.root.join("input.png").to_str().unwrap(),
@@ -1577,7 +1581,7 @@ fn measure_compare_keeps_incomparable_pairs_out_of_the_deltas() {
             space,
             "--input-cctf-decoding",
             "false",
-            "--plan",
+            "--regions",
             f.plan.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
@@ -1591,7 +1595,6 @@ fn measure_compare_keeps_incomparable_pairs_out_of_the_deltas() {
     }
     let out = f.root.join("incomparable-compare");
     let result = f.lab(&[
-        "measure",
         "compare",
         "--baseline",
         sides[0].to_str().unwrap(),
@@ -1606,7 +1609,7 @@ fn measure_compare_keeps_incomparable_pairs_out_of_the_deltas() {
         String::from_utf8_lossy(&result.stderr)
     );
     let report: Value =
-        serde_json::from_slice(&std::fs::read(out.join("compare.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(out.join("comparison.json")).unwrap()).unwrap();
     assert!(
         report["unavailable"]
             .as_array()
@@ -1646,7 +1649,7 @@ fn measure_compare_refuses_an_incompatible_shared_key() {
     // A shared key whose own declaration disagrees is not a comparison of the
     // same quantity: the command names the key, the field, and both sides
     // instead of dropping the key or truncating the join.
-    let points = baseline.join("points.csv");
+    let points = baseline.join("readings.csv");
     let text = std::fs::read_to_string(&points).unwrap();
     let mut lines = text.lines();
     let header = lines.next().unwrap().to_owned();
@@ -1666,7 +1669,6 @@ fn measure_compare_refuses_an_incompatible_shared_key() {
 
     let out = f.root.join("clash-compare");
     let result = f.lab(&[
-        "measure",
         "compare",
         "--baseline",
         baseline.to_str().unwrap(),
@@ -1692,7 +1694,6 @@ fn measure_gates_the_operations_the_route_executes() {
     // the film, the print, nor the scanner stage.
     let route_args = |out: &Path, route: Option<&str>, quiet: bool| -> Vec<String> {
         let mut args: Vec<String> = vec![
-            "measure".to_owned(),
             "run".to_owned(),
             "--stimuli".to_owned(),
             f.stimuli.display().to_string(),
@@ -1767,13 +1768,12 @@ fn measure_compare_names_a_stage_whose_readings_are_all_invalid() {
     let sample = f.root.join("invalid-sample");
     assert!(f.process(&bundle).status.success());
     let result = f.lab(&[
-        "measure",
         "sample",
         "--from-evidence",
         bundle.to_str().unwrap(),
         "--stage",
         "rgb_in",
-        "--plan",
+        "--regions",
         f.plan.to_str().unwrap(),
         "--out",
         sample.to_str().unwrap(),
@@ -1788,7 +1788,7 @@ fn measure_compare_names_a_stage_whose_readings_are_all_invalid() {
     // fields with `valid` false. A colorimetric stage like this has an
     // eligible interpretation and no computable distance, so the comparison
     // must name the reason rather than drop the stage.
-    let points = sample.join("points.csv");
+    let points = sample.join("readings.csv");
     let text = std::fs::read_to_string(&points).unwrap();
     let mut lines = text.lines();
     let header = lines.next().unwrap().to_owned();
@@ -1813,7 +1813,6 @@ fn measure_compare_names_a_stage_whose_readings_are_all_invalid() {
 
     let out = f.root.join("invalid-compare");
     let result = f.lab(&[
-        "measure",
         "compare",
         "--baseline",
         sample.to_str().unwrap(),
@@ -1828,7 +1827,7 @@ fn measure_compare_names_a_stage_whose_readings_are_all_invalid() {
         String::from_utf8_lossy(&result.stderr)
     );
     let report: Value =
-        serde_json::from_slice(&std::fs::read(out.join("compare.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(out.join("comparison.json")).unwrap()).unwrap();
     assert_eq!(report["stages"][0]["colorimetric"], true);
     assert!(
         report["unavailable"]
@@ -1853,14 +1852,14 @@ fn publish_staged_leaves_nothing_when_the_files_cannot_be_written() {
     // The destination already holds one of the artifacts: the write must fail
     // and the staged capture must not be published.
     std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("measure.json"), "{}").unwrap();
+    std::fs::write(root.join("run.json"), "{}").unwrap();
 
     let result = spektrafilm_cli::lab::report::publish_staged(
         &root,
         &staging,
         &[
-            ("measure.json", "{}".to_owned()),
-            ("points.csv", String::new()),
+            ("run.json", "{}".to_owned()),
+            ("readings.csv", String::new()),
         ],
     );
     assert!(result.is_err(), "an existing artifact must not be replaced");
@@ -1869,7 +1868,7 @@ fn publish_staged_leaves_nothing_when_the_files_cannot_be_written() {
         "the staged capture stays unpublished"
     );
     assert_eq!(
-        std::fs::read_to_string(root.join("measure.json")).unwrap(),
+        std::fs::read_to_string(root.join("run.json")).unwrap(),
         "{}",
         "the existing artifact is untouched"
     );
@@ -1888,7 +1887,7 @@ fn measure_refuses_a_stimulus_whose_sample_identity_is_ambiguous() {
             "name": "duplicated",
             "domain": "scene_rgb",
             "color_space": "sRGB",
-            "transfer": "linear",
+            "cctf_decoding": false,
             "points": {"path": "points.npy"},
             "samples": [
                 {"id": "p", "source": "chart", "partition": "all", "row": 0},
@@ -1900,7 +1899,6 @@ fn measure_refuses_a_stimulus_whose_sample_identity_is_ambiguous() {
     .unwrap();
     let out = f.root.join("duplicated-out");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         duplicated.to_str().unwrap(),
@@ -1936,7 +1934,6 @@ fn measure_records_the_parameter_files_it_declared() {
     .unwrap();
     let out = f.root.join("with-file");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -1961,7 +1958,7 @@ fn measure_records_the_parameter_files_it_declared() {
         String::from_utf8_lossy(&result.stderr)
     );
     let record: Value =
-        serde_json::from_slice(&std::fs::read(out.join("measure.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(out.join("run.json")).unwrap()).unwrap();
     let files = record["identity"]["parameters"]["files"]
         .as_array()
         .unwrap();
@@ -1991,7 +1988,6 @@ fn measure_resolves_the_data_directory_from_the_environment() {
     let f = MeasureFixture::new();
     let out = f.root.join("env-data-dir");
     let mut args = vec![
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -2013,7 +2009,7 @@ fn measure_resolves_the_data_directory_from_the_environment() {
         String::from_utf8_lossy(&result.stderr)
     );
     let record: Value =
-        serde_json::from_slice(&std::fs::read(out.join("measure.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(out.join("run.json")).unwrap()).unwrap();
     let resolved = std::fs::canonicalize(&f.data).unwrap();
     assert_eq!(
         record["declaration"]["data_dir"],
@@ -2038,9 +2034,8 @@ fn measure_verify_reports_identity_differences_without_failing() {
     assert!(f.measure(&lab).status.success());
 
     let result = f.lab(&[
-        "measure",
         "verify",
-        "--run",
+        "--record",
         lab.to_str().unwrap(),
         "--data-dir",
         f.data.to_str().unwrap(),
@@ -2062,7 +2057,7 @@ fn measure_verify_reports_identity_differences_without_failing() {
 
     // Without `--data-dir` the command re-resolves against the directory the
     // run recorded, so a bare re-verification reproduces the recorded chain.
-    let result = f.lab(&["measure", "verify", "--run", lab.to_str().unwrap()]);
+    let result = f.lab(&["verify", "--record", lab.to_str().unwrap()]);
     assert!(
         result.status.success(),
         "{}",
@@ -2086,9 +2081,8 @@ fn measure_verify_reports_identity_differences_without_failing() {
     // identity and content, not about how it was spelled.
     let odd = f.data.join(".");
     let result = f.lab(&[
-        "measure",
         "verify",
-        "--run",
+        "--record",
         lab.to_str().unwrap(),
         "--data-dir",
         odd.to_str().unwrap(),
@@ -2112,7 +2106,6 @@ fn measure_verify_reports_identity_differences_without_failing() {
     // default collection boundary, and damaging it must be reported.
     let limited = f.root.join("verify-limited");
     let result = f.lab(&[
-        "measure",
         "run",
         "--stimuli",
         f.stimuli.to_str().unwrap(),
@@ -2136,7 +2129,7 @@ fn measure_verify_reports_identity_differences_without_failing() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    let untouched = f.lab(&["measure", "verify", "--run", limited.to_str().unwrap()]);
+    let untouched = f.lab(&["verify", "--record", limited.to_str().unwrap()]);
     let report: Value = serde_json::from_slice(&untouched.stdout).unwrap();
     assert!(
         report["buffer_differences"].as_array().unwrap().is_empty(),
@@ -2150,7 +2143,7 @@ fn measure_verify_reports_identity_differences_without_failing() {
     let mut bytes = std::fs::read(&retained).unwrap();
     bytes[0] ^= 1;
     std::fs::write(&retained, &bytes).unwrap();
-    let damaged = f.lab(&["measure", "verify", "--run", limited.to_str().unwrap()]);
+    let damaged = f.lab(&["verify", "--record", limited.to_str().unwrap()]);
     assert!(damaged.status.success());
     let report: Value = serde_json::from_slice(&damaged.stdout).unwrap();
     let differences = report["buffer_differences"].as_array().unwrap();
@@ -2160,13 +2153,13 @@ fn measure_verify_reports_identity_differences_without_failing() {
     // A record that no longer matches the re-resolution is a reported
     // difference, not a failure: the command still exits zero and writes
     // nothing.
-    let record_path = lab.join("measure.json");
+    let record_path = lab.join("run.json");
     let mut tampered: Value =
         serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
     tampered["identity"]["renderer"]["sha256"] = Value::String("0".repeat(64));
     let tampered_bytes = serde_json::to_vec_pretty(&tampered).unwrap();
     std::fs::write(&record_path, &tampered_bytes).unwrap();
-    let result = f.lab(&["measure", "verify", "--run", lab.to_str().unwrap()]);
+    let result = f.lab(&["verify", "--record", lab.to_str().unwrap()]);
     assert!(
         result.status.success(),
         "{}",
@@ -2181,5 +2174,204 @@ fn measure_verify_reports_identity_differences_without_failing() {
         std::fs::read(&record_path).unwrap(),
         tampered_bytes,
         "verify must not rewrite the run it verifies"
+    );
+}
+
+/// A comparison record is verified as a comparison: the record file is found
+/// rather than assumed, the sides it names are re-hashed from their own
+/// `run.json`, and each difference names the side it belongs to. A comparison
+/// directory holds `comparison.json`, never `run.json`.
+#[test]
+fn measure_verify_reads_a_comparison_record_and_rehashes_its_sides() {
+    let f = MeasureFixture::new();
+    let bundle = f.root.join("verify-bundle");
+    assert!(
+        f.process(&bundle).status.success(),
+        "{}",
+        String::from_utf8_lossy(&f.process(&bundle).stderr)
+    );
+    let lab = f.root.join("verify-lab");
+    assert!(
+        f.measure_with(&f.stimuli, &lab).status.success(),
+        "{}",
+        String::from_utf8_lossy(&f.measure_with(&f.stimuli, &lab).stderr)
+    );
+    let sample = f.root.join("verify-sample");
+    assert!(
+        f.lab(&[
+            "sample",
+            "--from-evidence",
+            bundle.to_str().unwrap(),
+            "--stage",
+            "log_e_film",
+            "--regions",
+            f.plan.to_str().unwrap(),
+            "--out",
+            sample.to_str().unwrap(),
+        ])
+        .status
+        .success()
+    );
+    let reference = f.root.join("verify-reference");
+    assert!(
+        f.measure_with(&f.stimuli, &reference).status.success(),
+        "{}",
+        String::from_utf8_lossy(&f.measure_with(&f.stimuli, &reference).stderr)
+    );
+    let comparison = f.root.join("verify-comparison");
+    assert!(
+        f.lab(&[
+            "compare",
+            "--baseline",
+            lab.to_str().unwrap(),
+            "--candidate",
+            sample.to_str().unwrap(),
+            "--reference-run",
+            reference.to_str().unwrap(),
+            "--out",
+            comparison.to_str().unwrap(),
+        ])
+        .status
+        .success(),
+        "a reference reading selects the reading comparison"
+    );
+
+    // An untouched comparison reports no difference, and its own record is
+    // never rewritten.
+    let record_path = comparison.join("comparison.json");
+    let recorded = std::fs::read(&record_path).unwrap();
+    let untouched = f.lab(&["verify", "--record", comparison.to_str().unwrap()]);
+    assert!(
+        untouched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&untouched.stderr)
+    );
+    let report: Value = serde_json::from_slice(&untouched.stdout).unwrap();
+    assert_eq!(report["kind"], "verify");
+    assert!(
+        report["identity_differences"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{report}"
+    );
+    assert!(
+        report["buffer_differences"].as_array().unwrap().is_empty(),
+        "{report}"
+    );
+    assert_eq!(
+        std::fs::read(&record_path).unwrap(),
+        recorded,
+        "verify must not rewrite the comparison it verifies"
+    );
+
+    // A side whose retained reading no longer matches the hash the comparison
+    // recorded is reported for that side, and the command still exits zero.
+    let mut document: Value = serde_json::from_slice(&recorded).unwrap();
+    document["baseline"]["measure_sha256"] = Value::String("0".repeat(64));
+    let tampered_bytes = serde_json::to_vec_pretty(&document).unwrap();
+    std::fs::write(&record_path, &tampered_bytes).unwrap();
+    let result = f.lab(&["verify", "--record", comparison.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    let differences = report["identity_differences"].as_array().unwrap();
+    assert_eq!(differences.len(), 1, "{report}");
+    assert_eq!(differences[0]["field"], "baseline.measure_sha256");
+    assert_eq!(
+        differences[0]["path"],
+        lab.to_str().unwrap().to_owned(),
+        "each difference names the side it belongs to"
+    );
+    assert_eq!(differences[0]["recorded"], "0".repeat(64));
+    assert!(
+        report["buffer_differences"].as_array().unwrap().is_empty(),
+        "{report}"
+    );
+}
+
+/// A rejected invocation exits 2, not 1: the exit status separates an
+/// argument syntax error from a failure to execute. The spec grammar makes
+/// `--enter` mandatory in the `--stimuli` form and `--stage` mandatory in the
+/// `--from-evidence` form, so omitting either is a rejected invocation rather
+/// than a failed execution.
+#[test]
+fn rejected_invocations_exit_two_and_failed_executions_exit_one() {
+    let f = MeasureFixture::new();
+    // A grammar violation the parser rejects before any execution reports the
+    // usage error on stderr and exits 2.
+    for args in [
+        vec![
+            "sample",
+            "--from-evidence",
+            "bundle",
+            "--regions",
+            f.plan.to_str().unwrap(),
+            "--out",
+            "out",
+        ],
+        vec![
+            "sample",
+            "--source",
+            "image.png",
+            "--regions",
+            f.plan.to_str().unwrap(),
+            "--out",
+            "out",
+        ],
+    ] {
+        let result = f.lab(&args);
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(
+            result.stdout.is_empty(),
+            "a rejected invocation writes no command result"
+        );
+        assert!(!result.stderr.is_empty(), "it must say why it was rejected");
+    }
+    // A form that parses but cannot execute still reaches the command, which
+    // reports the failed execution on stdout and exits 2 as well, because a
+    // missing mandatory companion is an argument syntax error, not a failure.
+    let result = f.lab(&[
+        "run",
+        "--stimuli",
+        f.stimuli.to_str().unwrap(),
+        "--out",
+        "out",
+    ]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["execution_status"], "failed", "{report}");
+    assert_eq!(report["errors"][0]["code"], "argument_syntax", "{report}");
+    // A form that parses but cannot execute reports a failed execution with
+    // status 1, so the two failures stay distinguishable.
+    let executed = f.lab(&[
+        "sample",
+        "--from-evidence",
+        "no-such-bundle",
+        "--stage",
+        "log_e_film",
+        "--regions",
+        f.plan.to_str().unwrap(),
+        "--out",
+        "out",
+    ]);
+    assert_eq!(
+        executed.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
     );
 }

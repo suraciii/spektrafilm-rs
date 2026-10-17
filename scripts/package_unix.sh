@@ -29,7 +29,7 @@ fi
 rm -rf "$dist_root" "$archive"
 mkdir -p "$dist_root"
 
-for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
+for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
     source="$repo_root/target/release/$binary"
     test -x "$source" || { echo "missing release binary: $source" >&2; exit 1; }
     cp "$source" "$dist_root/$binary"
@@ -47,7 +47,7 @@ cat > "$dist_root/README.txt" <<EOF
 Spektrafilm ${platform}-${arch}
 
 Run ./spektrafilm-gui for the desktop application.
-The CLI, f64 exporter, and Rust benchmark tools are in this directory, together with data/.
+The CLI, f64 exporter, and lab instrument are in this directory, together with data/.
 The package uses the default wgpu/WGSL backend.
 EOF
 

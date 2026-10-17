@@ -59,7 +59,7 @@ fn export_look(renderer: &Path, data_dir: &Path, out: &Path) -> Result<()> {
         .arg(data_dir);
     let output = renderer_output(&mut command).map_err(|error| {
         Error::new("preset_export", error.to_string())
-            .at(renderer.display().to_string())
+            .file(renderer.display().to_string())
             .boundary("renderer")
     })?;
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -75,7 +75,7 @@ fn export_look(renderer: &Path, data_dir: &Path, out: &Path) -> Result<()> {
     if let Some(message) = failure {
         return Err(
             Error::new("preset_export", format!("{message}; stderr: {stderr}"))
-                .at(renderer.display().to_string())
+                .file(renderer.display().to_string())
                 .boundary("renderer"),
         );
     }
@@ -94,7 +94,7 @@ fn resolve_configuration(
     let path = renderer.display().to_string();
     let invalid = |message: String| {
         Error::new("renderer_configuration", message)
-            .at(path.clone())
+            .file(path.clone())
             .boundary("renderer")
     };
     let mut command = Command::new(renderer);
@@ -149,7 +149,19 @@ fn resolve_configuration(
     Ok(())
 }
 fn region(id: &str, rect: [usize; 4], families: &[&str], role: &str) -> Value {
-    json!({"id":id,"label":human_label(id),"role":role,"geometry":rect,"measurements":families})
+    json!({
+        "id": id,
+        "label": human_label(id),
+        "role": role,
+        "geometry": {
+            "x": rect[0],
+            "y": rect[1],
+            "width": rect[2],
+            "height": rect[3],
+            "space": "render",
+        },
+        "measurements": families,
+    })
 }
 fn human_label(id: &str) -> String {
     id.split('_')
@@ -189,7 +201,7 @@ fn save_probe(
     }
     image
         .save(path)
-        .map_err(|e| Error::new("image_write", e.to_string()).at(path.display().to_string()))
+        .map_err(|e| Error::new("image_write", e.to_string()).file(path.display().to_string()))
 }
 /// Generate controlled authored suites. Natural RAW acquisition occurs only on explicit request.
 pub fn create_fixtures(
@@ -257,7 +269,7 @@ pub fn create_fixtures(
             [image_data::srgb_encode((0.18 * 2_f64.powi(x as i32 / 16 - 5)).min(1.0)); 3]
         })?;
         let response: Vec<_> = (0..8)
-            .map(|i| json!({"exposure_stops":(i as f64)-5.0,"geometry":[i*16+3,3,10,58]}))
+            .map(|i| json!({"exposure_stops":(i as f64)-5.0,"geometry":{"x":i*16+3,"y":3,"width":10,"height":58,"space":"render"}}))
             .collect();
         let tone = make_case(
             "exposure_response",
@@ -376,7 +388,7 @@ pub fn create_fixtures(
                     "dependency_hash",
                     "Natural RAW does not match pinned provenance",
                 )
-                .at(destination.display().to_string()));
+                .file(destination.display().to_string()));
             }
             let mut config = color_tone.clone();
             config["raw"] = json!({"white_balance":"as-shot","lens_correction":false});
@@ -389,7 +401,7 @@ pub fn create_fixtures(
                     "dependency_hash",
                     "Natural RAW byte count does not match pinned provenance",
                 )
-                .at(destination.display().to_string()));
+                .file(destination.display().to_string()));
             }
             let natural = json!({"id":"kodak_dc50_scene","kind":"scene","input":{"kind":"raw","adapter":"spektrafilm-raw","path":"natural.KDC","sha256":source["sha256"]},"configuration":config,"seeds":[0],"regions":[region("shadow",[64,64,160,128],&["color","tone"],"shadow"),region("texture",[320,192,160,128],&["color","tone"],"texture")],"measurements":["numeric","color","tone","flip"]});
             let mut natural_appearance = natural.clone();
@@ -715,7 +727,10 @@ mod tests {
             let out = temp.path().join("fixtures");
             let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
             assert_eq!(error.code, "preset_export");
-            assert_eq!(error.path, Some(renderer.display().to_string()));
+            assert_eq!(
+                error.to_value()["file"],
+                json!(renderer.display().to_string())
+            );
             assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
         }
         let temp = tempfile::tempdir().unwrap();
@@ -723,7 +738,10 @@ mod tests {
         let out = temp.path().join("fixtures");
         let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
         assert_eq!(error.code, "preset_export");
-        assert_eq!(error.path, Some(renderer.display().to_string()));
+        assert_eq!(
+            error.to_value()["file"],
+            json!(renderer.display().to_string())
+        );
         assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
     }
     #[cfg(unix)]
@@ -739,7 +757,10 @@ mod tests {
         let out = temp.path().join("fixtures");
         let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
         assert_eq!(error.code, "renderer_configuration");
-        assert_eq!(error.path, Some(renderer.display().to_string()));
+        assert_eq!(
+            error.to_value()["file"],
+            json!(renderer.display().to_string())
+        );
         assert!(error.message.contains("unsupported assignment"));
         assert_eq!(fs::read(out.join("look.toml")).unwrap(), LOOK.as_bytes());
     }

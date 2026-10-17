@@ -1,3 +1,4 @@
+#![cfg(feature = "precision-f64")]
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{common, documents};
 use std::{
@@ -8,7 +9,7 @@ use std::{
 use tempfile::TempDir;
 
 fn cli() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+    Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
 }
 fn success(output: Output) -> Value {
     assert!(
@@ -86,7 +87,7 @@ fn comparison(root: &Path, single: bool) {
     if single {
         finding["pair_id"] = json!("input");
     }
-    let mut value = json!({"schema_version":1,"execution_status":"failed","evaluation_status":"not_evaluated",
+    let mut value = json!({"schema_version":1,"kind":"comparison","execution_status":"failed","evaluation_status":"not_evaluated",
         "protocol":{},"selection":{"case_ids":["probe","scene","failed"]},"condition_differences":[],
         "cases":cases,"findings":[finding],"summary":{"selected_cases":3,"completed_results":4,"failed_results":1},
         "artifacts":[{"path":"evidence.json","sha256":common::sha256_file(&root.join("evidence.json")).unwrap(),"role":"measurements","media_type":"application/json"}]});

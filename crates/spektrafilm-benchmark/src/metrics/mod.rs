@@ -15,7 +15,7 @@ mod math;
 pub use evidence::{ArtifactRole, Evidence};
 pub use families::{Map, edge, grain, halation, health, numeric, summary, tone};
 pub use mask::geometry_mask;
-pub use math::{count, luminance, mean, median, number, selected, spelling};
+pub use math::{count, luminance, mean, median, number, quantile, selected, spelling};
 
 pub const METRIC_VERSION: &str = "spektrafilm-appearance-spatial-v3";
 pub const COLOR_TRANSFORM: &str = "colour-science-CAT02-srgb-D65-2deg-v1";

@@ -21,7 +21,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use spektrafilm_core::presets::PresetLibrary;
 
-use super::cli::{ExperimentCommand, ExperimentExportArgs, ExperimentRunArgs, OutputFormatArg};
+use super::cli::{
+    ChainArgs, ExperimentCommand, ExperimentExportArgs, ExperimentRunArgs, OutputFormatArg,
+};
 use super::report;
 use crate::process::{self, OutputFormat, ProcessArgs, WorkflowOptions};
 use crate::select_data_dir_impl;
@@ -40,6 +42,23 @@ pub fn dispatch(command: &ExperimentCommand) -> Result<()> {
     match command {
         ExperimentCommand::Run(args) => run(args),
         ExperimentCommand::Export(args) => export(args),
+    }
+}
+
+/// Run an experimental command and return its command result object.
+pub fn dispatch_with_result(command: &ExperimentCommand) -> Result<(serde_json::Value, i32)> {
+    match command {
+        ExperimentCommand::Run(_) | ExperimentCommand::Export(_) => {
+            dispatch(command)?;
+            Ok((
+                serde_json::json!({
+                    "schema_version": 1,
+                    "command": "experiment",
+                    "execution_status": "completed",
+                }),
+                0,
+            ))
+        }
     }
 }
 
@@ -77,10 +96,11 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
     // `--data-dir` is optional; an omitted flag still honours
     // SPEKTRAFILM_DATA_DIR and automatic discovery.
     let data = select_data_dir_impl(
-        args.data_dir
+        args.chain
+            .data_dir
             .clone()
             .unwrap_or_else(|| PathBuf::from("data")),
-        args.data_dir.is_some(),
+        args.chain.data_dir.is_some(),
     )?;
     let bundle_dir = out.join("bundle");
     // A route the bundle cannot describe is a configuration-level failure
@@ -93,7 +113,7 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
     if let Some(route) = &document.chain.route {
         ensure_describable_route(route)?;
     }
-    let resolved = resolve_chain(&document, &document_root, &data.path)?;
+    let resolved = resolve_chain(&document, &document_root, &data.path, &args.chain)?;
     let resolved_route = resolved
         .params
         .get("workflow")
@@ -119,14 +139,34 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
             raw_temperature: None,
             raw_tint: None,
             lens_correction: false,
-            route: document.chain.route.clone(),
-            scan_output: document.chain.scan_output.clone(),
+            route: args
+                .chain
+                .route
+                .clone()
+                .or_else(|| document.chain.route.clone()),
+            scan_output: args
+                .chain
+                .scan_output
+                .clone()
+                .or_else(|| document.chain.scan_output.clone()),
             film_channel_swap: "none".to_owned(),
             print_channel_swap: "none".to_owned(),
         },
-        film: document.chain.film.clone(),
-        paper: document.chain.paper.clone(),
-        preset: document.chain.preset.clone(),
+        film: args
+            .chain
+            .film
+            .clone()
+            .or_else(|| document.chain.film.clone()),
+        paper: args
+            .chain
+            .paper
+            .clone()
+            .or_else(|| document.chain.paper.clone()),
+        preset: {
+            let mut presets = document.chain.preset.clone();
+            presets.extend(args.chain.preset.iter().cloned());
+            presets
+        },
         scan_film: false,
         timings: false,
         diagnostics: None,
@@ -137,10 +177,14 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
             .as_ref()
             .map(|path| resolve_inside(path, &document_root, "chain.params"))
             .transpose()?,
-        sources: set_sources
-            .iter()
-            .map(|source| source.display().to_string())
-            .collect(),
+        sources: {
+            let mut sources: Vec<String> = set_sources
+                .iter()
+                .map(|source| source.display().to_string())
+                .collect();
+            sources.extend(args.chain.sources.iter().cloned());
+            sources
+        },
         dry_run: false,
         dry_run_format: None,
         seed: Some(document.seeds[0]),
@@ -873,18 +917,31 @@ fn resolve_chain(
     document: &ExperimentDocument,
     document_root: &Path,
     data_dir: &Path,
+    chain: &ChainArgs,
 ) -> Result<ResolvedChain> {
     let library = PresetLibrary::default();
-    let presets = document
-        .chain
-        .preset
+    // The command line is the last word: a CLI chain option replaces the
+    // document's declaration of the same name, and a CLI `--set` source
+    // applies after the document's, so the later assignment wins exactly as
+    // it does on the `process` surface.
+    let mut preset_selectors = document.chain.preset.clone();
+    preset_selectors.extend(chain.preset.iter().cloned());
+    let presets = preset_selectors
         .iter()
         .map(|selector| crate::preset::select(&library, selector).map(|selected| selected.preset))
         .collect::<Result<Vec<_>>>()?;
-    let set_sources: Vec<String> = resolve_set_sources(&document.chain.set, document_root)?
+    let mut set_sources: Vec<String> = resolve_set_sources(&document.chain.set, document_root)?
         .iter()
         .map(|source| source.display().to_string())
         .collect();
+    set_sources.extend(chain.sources.iter().cloned());
+    let film = chain.film.as_deref().or(document.chain.film.as_deref());
+    let paper = chain.paper.as_deref().or(document.chain.paper.as_deref());
+    let route = chain.route.as_deref().or(document.chain.route.as_deref());
+    let scan_output = chain
+        .scan_output
+        .as_deref()
+        .or(document.chain.scan_output.as_deref());
     let params_file = document
         .chain
         .params
@@ -906,14 +963,14 @@ fn resolve_chain(
         });
     let resolved = spektrafilm_core::process_params::resolve(
         spektrafilm_core::process_params::ProcessParamsRequest {
-            film: document.chain.film.as_deref(),
-            paper: document.chain.paper.as_deref(),
+            film,
+            paper,
             presets: &presets,
             params_file: params_file.as_deref(),
             sources: &set_sources,
-            route: document.chain.route.as_deref(),
+            route,
             scan_film: false,
-            scan_output: document.chain.scan_output.as_deref(),
+            scan_output,
             input_is_raw,
             input_color_space: document.chain.input_color_space.as_deref(),
             input_cctf_decoding: document.chain.input_cctf_decoding,

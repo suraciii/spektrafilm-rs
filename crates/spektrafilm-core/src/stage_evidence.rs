@@ -376,11 +376,11 @@ impl StageCapture {
                     let color = match id {
                         StageId::RgbIn => Some(Color {
                             color_space: statics.input_color_space.clone(),
-                            transfer: transfer(statics.input_cctf_decoding),
+                            cctf_decoding: statics.input_cctf_decoding,
                         }),
                         StageId::RgbOut => Some(Color {
                             color_space: statics.output_color_space.clone(),
-                            transfer: transfer(statics.output_cctf_encoding),
+                            cctf_decoding: !statics.output_cctf_encoding,
                         }),
                         _ => None,
                     };
@@ -493,10 +493,6 @@ impl StageCapture {
         (self.inject.position() as usize) <= id.position()
             && id.position() <= (self.collect.position() as usize)
     }
-}
-
-fn transfer(encoded: bool) -> &'static str {
-    if encoded { "encoded" } else { "linear" }
 }
 
 /// Declared host storage precision: buffers always store f64, widened from
@@ -663,7 +659,7 @@ struct Geometry {
 #[derive(Serialize)]
 struct Color {
     color_space: String,
-    transfer: &'static str,
+    cctf_decoding: bool,
 }
 
 #[cfg(test)]
@@ -689,6 +685,26 @@ mod tests {
         params.io.output_color_space = "sRGB".into();
         params.io.output_cctf_encoding = false;
         params
+    }
+
+    #[test]
+    fn capture_rejects_preview_mode_with_an_actionable_reason() {
+        // Preview bounding resizes the decoded source before metering, so the
+        // bundle would claim a geometry the contract cannot describe. The
+        // request must fail naming the setting and the way out, not silently
+        // render at the preview geometry.
+        let mut params = capture_params();
+        params.settings.preview_mode = true;
+        let error = ensure_supported_params(&params).unwrap_err();
+        assert!(
+            error.contains("preview mode") && error.contains("settings.preview_mode=false"),
+            "the rejection must name the setting and how to proceed: {error}"
+        );
+    }
+
+    #[test]
+    fn capture_accepts_the_full_resolution_cpu_configuration() {
+        assert!(ensure_supported_params(&capture_params()).is_ok());
     }
 
     fn image(width: u32, height: u32) -> ImageBuf {
@@ -755,7 +771,7 @@ mod tests {
         assert_eq!(stages[1]["layout"]["channel_order"], "CMY");
         assert!(stages[1].get("color").is_none());
         assert_eq!(stages[0]["layout"]["channel_order"], "RGB");
-        assert_eq!(stages[0]["color"]["transfer"], "linear");
+        assert_eq!(stages[0]["color"]["cctf_decoding"], false);
         assert_eq!(stages[2]["availability"], "not_applicable");
         assert_eq!(stages[2].get("path"), None);
         assert_eq!(stages[2].get("layout"), None);

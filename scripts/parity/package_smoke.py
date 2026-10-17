@@ -62,16 +62,15 @@ def _write_provenance(evidence, package_root, binaries, observations):
 
 def _benchmark_smoke(exporter, data, evidence, environment):
     suffix = exporter.suffix
-    binaries = {name: exporter.with_name(name + suffix) for name in
-                ('spektrafilm-bench', 'spektrafilm-bench-fixtures')}
-    for binary in binaries.values():
-        assert binary.is_file(), f'Installed benchmark missing: {binary}'
+    binaries = {'instrument': exporter.with_name('spektrafilm-lab' + suffix)}
+    instrument = binaries['instrument']
+    assert instrument.is_file(), f'Installed instrument missing: {instrument}'
     root = evidence / 'benchmark'
     root.mkdir()
     commands = []
 
-    def invoke(binary, *arguments):
-        argv = [str(binary), *map(str, arguments)]
+    def invoke(*arguments):
+        argv = [str(instrument), *map(str, arguments)]
         result = subprocess.run(argv, cwd=evidence, env=environment,
                                 capture_output=True, text=True, timeout=300)
         commands.append({'argv': argv, 'returncode': result.returncode,
@@ -80,26 +79,25 @@ def _benchmark_smoke(exporter, data, evidence, environment):
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
 
-    bench = binaries['spektrafilm-bench']
     fixtures = root / 'fixtures'
-    invoke(binaries['spektrafilm-bench-fixtures'], '--renderer', exporter,
-           '--data-dir', data, '--out', fixtures)
+    invoke('fixtures', '--renderer', exporter, '--data-dir', data,
+           '--out', fixtures)
     target = root / 'local-target.json'
-    invoke(bench, 'target', '--renderer', exporter, '--data-dir', data,
+    invoke('target', '--renderer', exporter, '--data-dir', data,
            '--backend', 'cpu', '--out', target)
-    invoke(bench, 'validate', '--kind', 'target', '--file', target)
+    invoke('validate', '--kind', 'target', '--file', target)
     preflight = root / 'preflight'
-    invoke(bench, 'run', '--suite', fixtures / 'complete.json', '--target',
+    invoke('run', '--suite', fixtures / 'complete.json', '--target',
            target, '--dry-run', '--out', preflight)
     preflight_manifest = json.loads((preflight / 'preflight.json').read_text())
     assert preflight_manifest['execution_status'] == 'validated'
     assert not (preflight / 'run.json').exists()
     run = root / 'run'
-    invoke(bench, 'run', '--suite', fixtures / 'quick.json', '--target',
+    invoke('run', '--suite', fixtures / 'quick.json', '--target',
            target, '--case', 'color_chart', '--out', run)
-    invoke(bench, 'validate', '--kind', 'run', '--file', run / 'run.json')
+    invoke('validate', '--kind', 'run', '--file', run / 'run.json')
     comparison = root / 'comparison'
-    invoke(bench, 'compare', '--baseline', run, '--candidate', run,
+    invoke('compare', '--baseline', run, '--candidate', run,
            '--out', comparison)
     manifest = json.loads((comparison / 'comparison.json').read_text())
     rows = manifest['cases'][0]['measurements']
@@ -107,21 +105,21 @@ def _benchmark_smoke(exporter, data, evidence, environment):
         row = next(row for row in rows if row['metric'] == metric
                    and row['region_id'] == 'full_image')
         assert row['availability'] == 'available' and row['value'] == 0, row
-    invoke(bench, 'validate', '--kind', 'comparison', '--file',
+    invoke('validate', '--kind', 'comparison', '--file',
            comparison / 'comparison.json')
-    inspected = invoke(bench, 'inspect', '--comparison', comparison,
+    inspected = invoke('inspect', '--comparison', comparison,
                        '--case', 'color_chart', '--region', 'full_image',
                        '--metric', 'numeric.rmse')
     assert inspected['comparison_id'] == manifest['id']
     assert all(row['value'] == 0 and row['metric'] == 'numeric.rmse'
                for row in inspected['measurements'])
     report = root / 'report'
-    invoke(bench, 'generate-report', '--comparison', comparison, '--out', report)
+    invoke('report', '--comparison', comparison, '--out', report)
     assert (report / 'index.html').is_file()
     assert json.loads((report / 'report.json').read_text())['comparison_id'] == manifest['id']
     for license_name in ('nvlabs-flip-bsd-3-clause.txt', 'littlecms-mit.txt'):
         assert any(path.is_file() for path in exporter.parents[1].rglob(license_name)), license_name
-    return binaries, {'installed_benchmark': str(bench),
+    return binaries, {'installed_instrument': str(instrument),
                       'comparison_id': manifest['id'], 'identity_metrics':
                       ['numeric.rmse', 'delta_e00.median', 'flip.mean'],
                       'report': str(report / 'index.html')}
@@ -306,9 +304,9 @@ def main():
     observations.append({'installed_lut_exporter': str(exporter),
                          'bundle': str(bundle), 'artifacts': artifact_evidence,
                          'ocio_processors': processor_count, 'qa_report_passed': qa['passed']})
-    benchmark_binaries, benchmark_observation = _benchmark_smoke(
+    instrument_binaries, instrument_observation = _benchmark_smoke(
         exporter, data, evidence, environment)
-    observations.append(benchmark_observation)
+    observations.append(instrument_observation)
     if args.gui:
         from gui_acceptance import accept_gui
         observations.append(accept_gui(args.gui.resolve(), exporter, source, raw,
@@ -316,11 +314,11 @@ def main():
     _write_provenance(
         evidence, package_root,
         {'cli': cli, 'exporter': exporter, 'raw_helper': helper,
-         **benchmark_binaries,
+         **instrument_binaries,
          **({'gui': args.gui.resolve()} if args.gui else {})},
         observations)
     gui_suffix = ' and native GUI acceptance' if args.gui else ''
-    print(f'PASS installed image depths, float headroom, metadata, spectral export, errors, RAW, LUT/OCIO/QA, native benchmark{gui_suffix}')
+    print(f'PASS installed image depths, float headroom, metadata, spectral export, errors, RAW, LUT/OCIO/QA, instrument evaluation{gui_suffix}')
 
 
 if __name__ == '__main__':

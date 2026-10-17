@@ -39,7 +39,7 @@ done
 
 release_dir="$BUILD_TARGET_DIR/$RELEASE_SUBDIR"
 [[ -d "$release_dir" ]] || fail "release directory missing: $release_dir"
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
     [[ -x "$release_dir/$executable" ]] || fail "built executable missing: $release_dir/$executable"
 done
 
@@ -106,13 +106,13 @@ internal_library() {
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib/spektrafilm" "$DIST_DIR/share/licenses"
 
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
     canonical_file "$release_dir/$executable" >"$DIST_DIR/.source.$executable"
     cp "$(cat "$DIST_DIR/.source.$executable")" "$DIST_DIR/lib/spektrafilm/$executable"
     chmod 0755 "$DIST_DIR/lib/spektrafilm/$executable"
     rm "$DIST_DIR/.source.$executable"
 done
-lcms_library="$(resolve_dependency liblcms2.so.2 "$DIST_DIR/lib/spektrafilm/spektrafilm-bench" 2>/dev/null || true)"
+lcms_library="$(resolve_dependency liblcms2.so.2 "$DIST_DIR/lib/spektrafilm/spektrafilm-lab" 2>/dev/null || true)"
 if [[ -z "$lcms_library" ]]; then
     for directory in ${library_dirs[@]+"${library_dirs[@]}"}; do
         [[ -f "$directory/liblcms2.so.2" ]] && { lcms_library="$directory/liblcms2.so.2"; break; }
@@ -127,7 +127,7 @@ declare -A dependency_sources
 queue=()
 dependency_sources[liblcms2.so.2]="$lcms_library"
 queue+=("$lcms_library")
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
     queue+=("$(canonical_file "$release_dir/$executable")")
 done
  
@@ -258,7 +258,7 @@ for required in libraw lensfun exiv2 glib openimageio; do
     ((found == 1)) || fail "required native dependency was not bundled: $required"
 done
 
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
     launcher="$DIST_DIR/bin/$executable"
     cat >"$launcher" <<LAUNCHER
 #!/bin/sh

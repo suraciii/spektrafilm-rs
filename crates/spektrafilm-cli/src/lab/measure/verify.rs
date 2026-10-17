@@ -1,7 +1,7 @@
 //! `measure verify`: re-resolve a recorded measurement's chain and report
 //! every difference from the identity it recorded.
 //!
-//! The command reads the retained `measure.json`, rebuilds the chain
+//! The command reads the retained `run.json`, rebuilds the chain
 //! declaration the run recorded, and re-resolves it against the data
 //! directory present now. It re-hashes the renderer executable, the selected
 //! data inventory, the profiles, and every retained stage buffer, then reports
@@ -37,8 +37,36 @@ const ENTRY_RGB_IN: &str = "rgb_in";
 const ENTRY_SPECTRA: &str = "spectra";
 
 pub fn verify(args: &MeasureVerifyArgs, matches: &clap::ArgMatches) -> Result<()> {
-    let run = args.run.as_path();
+    verify_with_result(args, matches).map(|_| ())
+}
+
+/// Re-resolve a recorded record and return its report as the command result.
+pub fn verify_with_result(
+    args: &MeasureVerifyArgs,
+    matches: &clap::ArgMatches,
+) -> Result<(Value, i32)> {
+    let run = args.record.as_path();
     let (record, record_path) = read_run_record(run)?;
+
+    // A comparison record carries no chain: its identity is the retained run
+    // and comparison digests plus the artifacts they cite, so the verification
+    // re-hashes those instead of re-resolving a chain.
+    if record.get("kind").and_then(Value::as_str) == Some("comparison") {
+        return verify_comparison(run, &record);
+    }
+
+    // An image-domain run record retains no chain declaration: its identity is
+    // the suite, target, case configurations, authored dependencies, and every
+    // artifact it published, each with the hash recorded at write time. That is
+    // what this form re-hashes.
+    if record
+        .get("declaration")
+        .and_then(Value::as_object)
+        .is_none()
+    {
+        return verify_image_run(run, &record);
+    }
+
     let declaration = recorded_declaration(&record, &record_path)?;
 
     let entry = declaration
@@ -51,10 +79,7 @@ pub fn verify(args: &MeasureVerifyArgs, matches: &clap::ArgMatches) -> Result<()
     // names another one: a bare `measure verify --run DIR` reproduces the
     // recorded chain instead of discovering a different data directory.
     let recorded = recorded_data_dir(&declaration);
-    let data_dir = if matches.value_source("data_dir")
-        == Some(clap::parser::ValueSource::CommandLine)
-        || recorded.is_empty()
-    {
+    let data_dir = if crate::named_data_dir(matches) || recorded.is_empty() {
         select_data_dir(args.data_dir.clone(), matches)?.path
     } else {
         PathBuf::from(recorded)
@@ -80,10 +105,15 @@ pub fn verify(args: &MeasureVerifyArgs, matches: &clap::ArgMatches) -> Result<()
     // so a buffer the run captured but the request never named is verified too.
     let buffer_differences = rehash_stage_buffers(run);
 
-    let report = json!({
+    // The report is the command result: the command writes no artifact, so
+    // its stdout object carries both the verification envelope and the report
+    // itself.
+    let result = json!({
         "schema_version": REPORT_SCHEMA_VERSION,
+        "command": "verify",
+        "execution_status": "completed",
         "kind": "verify",
-        "run": run.display().to_string(),
+        "artifact": run.display().to_string(),
         "re_resolved": {
             "film": chain.film_name,
             "print": chain.print_name,
@@ -99,8 +129,6 @@ pub fn verify(args: &MeasureVerifyArgs, matches: &clap::ArgMatches) -> Result<()
         },
     });
 
-    println!("{}", serde_json::to_string_pretty(&report)?);
-
     for difference in &identity_differences {
         eprintln!("identity: {}", difference_line(difference));
     }
@@ -115,12 +143,171 @@ pub fn verify(args: &MeasureVerifyArgs, matches: &clap::ArgMatches) -> Result<()
 
     // Differences are evidence, not failure: the record was read and the
     // chain re-resolved, so the verification completed.
-    Ok(())
+    Ok((result, 0))
 }
 
-/// Read the retained run record and require it to be a `measure run` record.
+/// Verify a comparison record: re-hash the retained run and comparison
+/// identities and the evidence the comparison cites. A comparison computes no
+/// chain, so there is nothing to re-resolve.
+fn verify_comparison(run: &Path, record: &Value) -> Result<(Value, i32)> {
+    // A reading comparison names its sides rather than carrying one identity,
+    // so the report identifies the pair it re-hashed.
+    let recorded = record
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            ["baseline", "candidate", "reference"]
+                .into_iter()
+                .filter_map(|key| record.get(key))
+                .filter_map(|side| side.get("path"))
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" vs ")
+        });
+    let mut differences = Vec::new();
+    for key in ["baseline", "candidate", "reference"] {
+        let Some(side) = record.get(key).filter(|side| side.is_object()) else {
+            continue;
+        };
+        let path = side.get("path").and_then(Value::as_str).unwrap_or_default();
+        if path.is_empty() {
+            continue;
+        }
+        let declared = side
+            .get("measure_sha256")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        // `path` is the side's measurement directory and the hash names that
+        // directory's `run.json`, which is what the comparison recorded.
+        let actual = sha256_file(&Path::new(path).join("run.json")).unwrap_or_default();
+        if actual != declared {
+            differences.push(json!({
+                "field": format!("{key}.measure_sha256"),
+                "path": path,
+                "recorded": declared,
+                "current": actual,
+            }));
+        }
+    }
+    let result = json!({
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "command": "verify",
+        "execution_status": "completed",
+        "kind": "verify",
+        "artifact": run.display().to_string(),
+        "comparison": recorded,
+        "identity_differences": differences,
+        "buffer_differences": [],
+    });
+    for difference in &differences {
+        eprintln!("identity: {}", difference_line(difference));
+    }
+    eprintln!(
+        "verify: {} identity difference(s), 0 buffer difference(s)",
+        differences.len()
+    );
+    Ok((result, 0))
+}
+
+/// Re-hash an image-domain run record's retained identity.
+///
+/// The record names what it read and what it wrote: the suite and target
+/// snapshots, the authored dependencies, and every published artifact, each
+/// with the hash taken when it was written. Verification re-hashes each one in
+/// place and reports the difference, so a record whose inputs or outputs moved
+/// says so instead of silently passing. The renderer executable is named by the
+/// environment the record retained and is re-hashed the same way when it is
+/// still where the record says it is.
+fn verify_image_run(run: &Path, record: &Value) -> Result<(Value, i32)> {
+    let mut differences = Vec::new();
+    let mut checked = 0_usize;
+    // A record that names a file relative to its own root resolves against that
+    // root; one that names an absolute path is used as recorded.
+    let resolve = |path: &str| -> PathBuf {
+        let candidate = Path::new(path);
+        if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            run.join(candidate)
+        }
+    };
+    let mut check = |path: &str, recorded: &str, label: &str| {
+        if path.is_empty() {
+            return;
+        }
+        checked += 1;
+        let actual = sha256_file(&resolve(path)).unwrap_or_default();
+        if actual != recorded {
+            differences.push(json!({
+                "field": label,
+                "path": path,
+                "recorded": recorded,
+                "current": actual,
+            }));
+        }
+    };
+    for key in ["suite", "target"] {
+        if let Some(entry) = record.get(key).filter(|entry| entry.is_object()) {
+            check(
+                entry["path"].as_str().unwrap_or_default(),
+                entry["sha256"].as_str().unwrap_or_default(),
+                key,
+            );
+        }
+    }
+    for entry in record["dependencies"].as_array().into_iter().flatten() {
+        check(
+            entry["path"].as_str().unwrap_or_default(),
+            entry["sha256"].as_str().unwrap_or_default(),
+            "dependency",
+        );
+    }
+    for entry in record["artifacts"].as_array().into_iter().flatten() {
+        check(
+            entry["path"].as_str().unwrap_or_default(),
+            entry["sha256"].as_str().unwrap_or_default(),
+            "artifact",
+        );
+    }
+    let result = json!({
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "command": "verify",
+        "execution_status": "completed",
+        "kind": "verify",
+        "artifact": run.display().to_string(),
+        "form": "image_run",
+        "checked": checked,
+        "identity_differences": differences,
+        "buffer_differences": [],
+    });
+    for difference in &differences {
+        eprintln!("identity: {}", difference_line(difference));
+    }
+    eprintln!(
+        "verify: {} identity difference(s) of {} retained hash(es), 0 buffer difference(s)",
+        differences.len(),
+        checked
+    );
+    Ok((result, 0))
+}
+
+/// Read the retained record a directory holds and require it to be one this
+/// command can re-resolve.
 fn read_run_record(run: &Path) -> Result<(Value, PathBuf)> {
-    let path = run.join("measure.json");
+    // A measurement directory holds `run.json`; a comparison directory holds
+    // `comparison.json`. The record names its own kind, so the directory's
+    // single record file is found rather than assumed.
+    let path = ["run.json", "comparison.json"]
+        .into_iter()
+        .map(|name| run.join(name))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            anyhow!(
+                "{} holds no run.json or comparison.json to verify",
+                run.display()
+            )
+        })?;
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let record: Value =
@@ -137,19 +324,24 @@ fn read_run_record(run: &Path) -> Result<(Value, PathBuf)> {
         );
     }
     match record.get("kind").and_then(Value::as_str) {
-        Some("run") => Ok((record, path)),
+        // A record names its own kind, so the command reads it without being
+        // told which one it is. A `run` record carries a chain to re-resolve;
+        // a `comparison` record carries retained identities to re-hash; a
+        // `sample` record reads one source and carries no chain, so there is
+        // no chain identity to re-resolve.
+        Some("run") | Some("comparison") => Ok((record, path)),
         Some("sample") => bail!(
-            "{} is a `measure sample` record; it reads one source and carries no chain, \
+            "{} is a sample record; it reads one source and carries no chain, \
              so there is no chain identity to re-resolve",
             path.display()
         ),
         Some(other) => bail!(
-            "{} has kind {:?}, expected a `measure run` record",
+            "{} has kind {:?}, expected a `run` or `comparison` record",
             path.display(),
             other
         ),
         None => bail!(
-            "{} carries no kind, expected a `measure run` record",
+            "{} carries no kind, expected a `run` or `comparison` record",
             path.display()
         ),
     }
@@ -192,7 +384,7 @@ fn rebuild_chain_args(declaration: &Value, data_dir: &Path) -> ChainArgs {
         route: string_field(declaration, "route"),
         scan_output: string_field(declaration, "scan_output"),
         seed: seed_of(declaration),
-        data_dir: data_dir.to_path_buf(),
+        data_dir: Some(data_dir.to_path_buf()),
     }
 }
 

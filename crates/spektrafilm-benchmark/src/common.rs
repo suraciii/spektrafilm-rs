@@ -10,24 +10,55 @@ use std::{
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Where an offending value lives: the file and its JSON Pointer within it. The
+/// two are independent because a caller can know the file without being able to
+/// name the value exactly.
+#[derive(Debug, Clone, Default)]
+struct Location {
+    file: Option<String>,
+    pointer: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Error {
     pub code: String,
     pub message: String,
     pub path: Option<String>,
     pub boundary: Option<String>,
+    /// The file the offending value lives in and the JSON Pointer (RFC 6901) of
+    /// that value, when the error can name both exactly. Boxed as one allocation
+    /// so adding the pair does not enlarge the `Result` error variant, which
+    /// clippy bounds.
+    location: Option<Box<Location>>,
 }
 impl Error {
+    /// Build an `Error` from any `Display` value, so a nested error keeps its
+    /// own text while carrying the boundary's stable code.
+    pub fn with_message(code: impl Into<String>, message: impl fmt::Display) -> Self {
+        Self::new(code, message.to_string())
+    }
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
             path: None,
             boundary: None,
+            location: None,
         }
     }
     pub fn at(mut self, path: impl Into<String>) -> Self {
         self.path = Some(path.into());
+        self
+    }
+    /// Name the file the offending value lives in.
+    pub fn file(mut self, file: impl Into<String>) -> Self {
+        self.location.get_or_insert_with(Box::default).file = Some(file.into());
+        self
+    }
+    /// Name the JSON Pointer (RFC 6901) of the offending value. A pointer that
+    /// cannot name the value exactly is omitted rather than approximated.
+    pub fn pointer(mut self, pointer: impl Into<String>) -> Self {
+        self.location.get_or_insert_with(Box::default).pointer = Some(pointer.into());
         self
     }
     pub fn boundary(mut self, boundary: impl Into<String>) -> Self {
@@ -41,6 +72,14 @@ impl Error {
         }
         if let Some(boundary) = &self.boundary {
             value["boundary"] = json!(boundary);
+        }
+        if let Some(location) = &self.location {
+            if let Some(file) = &location.file {
+                value["file"] = json!(file);
+            }
+            if let Some(pointer) = &location.pointer {
+                value["pointer"] = json!(pointer);
+            }
         }
         value
     }

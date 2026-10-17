@@ -20,10 +20,23 @@ struct RawManifest {
     schema_version: u32,
     #[serde(default)]
     name: Option<String>,
+    /// The scene color space the values are read in.
+    color_space: String,
+    /// Whether the stored values are transfer-encoded.
+    cctf_decoding: bool,
+    /// The illuminant pair: the film reference illuminant and the scene
+    /// illuminant that produced the input RGB.
+    condition: RawCondition,
     grid_nm: RawGrid,
     valid_band: [f64; 2],
     reflectances: RawArray,
     samples: Vec<SampleLabel>,
+}
+
+#[derive(Deserialize)]
+struct RawCondition {
+    reference: String,
+    target: String,
 }
 
 #[derive(Deserialize)]
@@ -43,6 +56,10 @@ struct RawArray {
 /// A loaded measured-spectra set.
 pub struct SpectraSet {
     pub name: Option<String>,
+    pub color_space: String,
+    pub cctf_decoding: bool,
+    pub condition_reference: Option<String>,
+    pub condition_target: Option<String>,
     pub manifest_path: PathBuf,
     pub manifest_sha256: String,
     pub array_path: PathBuf,
@@ -170,6 +187,10 @@ pub fn load(path: &Path) -> Result<SpectraSet, String> {
 
     Ok(SpectraSet {
         name: manifest.name,
+        color_space: manifest.color_space,
+        cctf_decoding: manifest.cctf_decoding,
+        condition_reference: Some(manifest.condition.reference),
+        condition_target: Some(manifest.condition.target),
         manifest_path: path.to_path_buf(),
         manifest_sha256,
         array_path,
@@ -213,6 +234,9 @@ mod tests {
             dir.join("manifest.json"),
             r#"{
                 "schema_version": 1,
+                "color_space": "ACES2065-1",
+                "cctf_decoding": false,
+                "condition": {"reference": "D65", "target": "D65"},
                 "grid_nm": {"start": 380.0, "end": 390.0, "step": 5.0},
                 "valid_band": [380.0, 390.0],
                 "reflectances": {"path": "reflectances.npy"},
@@ -250,6 +274,9 @@ mod tests {
                 format!(
                     r#"{{
                         "schema_version": 1,
+                        "color_space": "ACES2065-1",
+                        "cctf_decoding": false,
+                        "condition": {{"reference": "D65", "target": "D65"}},
                         "grid_nm": {{"start": {start}, "end": {end}, "step": {step}}},
                         "valid_band": [380.0, 390.0],
                         "reflectances": {{"path": "missing.npy"}},

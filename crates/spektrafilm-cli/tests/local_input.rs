@@ -1,3 +1,4 @@
+#![cfg(feature = "precision-f64")]
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{common, documents, local_input::LocalInput};
 use std::fs;
@@ -48,7 +49,7 @@ fn generated_suite_retains_explicit_protocol_and_each_document_path_owner() {
     );
     write_json(
         &regions.join("regions.json"),
-        &json!([{ "id":"detail","label":"Detail","role":"other","geometry":[0,0,2,2],"measurements":["numeric"] }]),
+        &json!({"schema_version":1,"id":"chart","regions":[{ "id":"detail","label":"Detail","role":"other","geometry":{"x":0,"y":0,"width":2,"height":2,"space":"render"},"measurements":["numeric"] }]}),
     );
     fs::write(prep.join("original.bin"), b"original").unwrap();
     write_json(

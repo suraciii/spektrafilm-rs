@@ -426,7 +426,7 @@ pub fn validate_stage_bundle(bundle_dir: &Path) -> Result<StageBundle> {
             if color["color_space"]
                 .as_str()
                 .is_none_or(|space| space.is_empty())
-                || !matches!(color["transfer"].as_str(), Some("linear" | "encoded"))
+                || color["cctf_decoding"].as_bool().is_none()
             {
                 return Err(err(
                     "stage_evidence",
@@ -663,7 +663,8 @@ fn validate_retained_bundle(
 
 pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result<()> {
     finite(v)?;
-    validate_schema(kind, v)?;
+    validate_schema(kind, v)
+        .map_err(|e| e.file(root.join(format!("{kind}.json")).display().to_string()))?;
     let o = obj(v)?;
     let body = Value::Object(
         o.iter()
@@ -1023,7 +1024,7 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                             .and_then(|v| v.checked_mul(24))
                             .ok_or_else(|| err("raw_layout", "Source dimensions overflow"))?;
                         if source["color"]
-                            != json!({"color_space":"ACES2065-1","transfer":"linear"})
+                            != json!({"color_space":"ACES2065-1","cctf_decoding":false})
                             || layout["channels"] != 3
                             || layout["dtype"] != "f64"
                             || layout["channel_order"] != "RGB"
@@ -1198,7 +1199,8 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                                 _ => None,
                             };
                             if let Some((color_space, encoded)) = declaration {
-                                let expected = json!({"color_space":color_space,"transfer":if encoded {"encoded"} else {"linear"}});
+                                let expected =
+                                    json!({"color_space":color_space,"cctf_decoding":!encoded});
                                 if buffer["color"] != expected {
                                     return Err(err(
                                         "stage_evidence",
