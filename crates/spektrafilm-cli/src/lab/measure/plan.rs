@@ -100,14 +100,10 @@ struct RawGeometry {
     #[serde(default = "default_space")]
     space: String,
 }
-
 /// A one-pixel window is the document's default span.
 fn default_span() -> u32 {
     1
 }
-
-/// A region's group labels default to its own identity, so a document that
-/// declares none still reports one group per region.
 fn default_source() -> String {
     String::new()
 }
@@ -122,12 +118,17 @@ fn default_space() -> String {
     "source".to_owned()
 }
 
-/// Load and validate a regions document from its manifest path.
 pub fn load(path: &Path) -> Result<Plan, String> {
     let manifest_bytes = std::fs::read(path)
         .map_err(|e| format!("reading regions document {}: {e}", path.display()))?;
-    let manifest: RawPlan = serde_json::from_slice(&manifest_bytes)
-        .map_err(|e| format!("parsing regions document {}: {e}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| format!("parsing regions document {}: {error}", path.display()))?;
+    spektrafilm_benchmark::documents::validate_shape("regions", &value)
+        .map_err(|error| format!("validating regions document {}: {error}", path.display()))?;
+    spektrafilm_benchmark::documents::validate_local_dependencies("regions", &value, path)
+        .map_err(|error| format!("validating regions document {}: {error}", path.display()))?;
+    let manifest: RawPlan = serde_json::from_value(value)
+        .map_err(|error| format!("parsing regions document {}: {error}", path.display()))?;
     if manifest.schema_version != 1 {
         return Err(format!(
             "unsupported regions document schema_version {} in {} (expected 1)",
@@ -169,9 +170,18 @@ pub fn load(path: &Path) -> Result<Plan, String> {
                 raw.id, raw.geometry.height
             ));
         }
-        if !matches!(raw.geometry.space.as_str(), "source" | "render") {
+        if !matches!(
+            raw.geometry.space.as_str(),
+            "source"
+                | "render"
+                | "source_pixels"
+                | "working_pixels"
+                | "film_frame_pixels"
+                | "grain_aperture_pixels"
+                | "output_pixels"
+        ) {
             return Err(format!(
-                "region {:?} declares space {:?}; a geometry declares `source` or `render`",
+                "region {:?} declares unsupported coordinate space {:?}",
                 raw.id, raw.geometry.space
             ));
         }

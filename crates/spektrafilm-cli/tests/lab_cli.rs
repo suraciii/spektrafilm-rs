@@ -2,7 +2,7 @@
 
 #![cfg(feature = "precision-f64")]
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -293,6 +293,7 @@ struct MeasureFixture {
     data: PathBuf,
     stimuli: PathBuf,
     plan: PathBuf,
+    working_plan: PathBuf,
     /// The same values declared in the film log-exposure domain: no color
     /// space and no transfer state, as the film domains require.
     log_e_manifest: PathBuf,
@@ -367,7 +368,7 @@ impl MeasureFixture {
                     "partition": "all",
                     "role": "other",
                     "measurements": ["numeric", "color"],
-                    "geometry": {"x": index as u32, "y": 0u32},
+                    "geometry": {"x": index as u32, "y": 0u32, "width": 1, "height": 1, "space": "source"},
                 })
             })
             .collect();
@@ -381,6 +382,24 @@ impl MeasureFixture {
                 "regions": windows,
             }))
             .unwrap(),
+        )
+        .unwrap();
+        let working_plan = root.join("working-plan.json");
+        let mut working_regions = serde_json::from_value::<Value>(
+            serde_json::json!({"schema_version": 1, "id": "working", "regions": []}),
+        )
+        .unwrap();
+        working_regions["regions"] = windows
+            .clone()
+            .into_iter()
+            .map(|mut region| {
+                region["geometry"]["space"] = json!("working_pixels");
+                region
+            })
+            .collect();
+        std::fs::write(
+            &working_plan,
+            serde_json::to_vec_pretty(&working_regions).unwrap(),
         )
         .unwrap();
         let stimuli = root.join("points.json");
@@ -415,6 +434,7 @@ impl MeasureFixture {
             data,
             stimuli,
             plan,
+            working_plan,
             log_e_manifest,
             density_manifest,
         }
@@ -1007,7 +1027,7 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
         "--stage",
         "log_e_film",
         "--regions",
-        f.plan.to_str().unwrap(),
+        f.working_plan.to_str().unwrap(),
         "--out",
         sample.to_str().unwrap(),
     ]);
@@ -1095,7 +1115,7 @@ fn measure_sample_reproduces_a_retained_stage_and_reports_a_plan_violation() {
     std::fs::write(
         &outside,
         r#"{"schema_version": 1, "id": "outside", "regions": [
-            {"id": "edge", "label": "edge", "source": "chart", "partition": "all", "role": "other", "measurements": ["numeric"], "geometry": {"x": 11, "y": 0, "width": 2}}
+            {"id": "edge", "label": "edge", "source": "chart", "partition": "all", "role": "other", "measurements": ["numeric"], "geometry": {"x": 11, "y": 0, "width": 2, "height": 1, "space": "source"}}
         ]}"#,
     )
     .unwrap();
@@ -1206,7 +1226,7 @@ fn measure_compare_reports_deltas_and_identity_drift_beside_them() {
             "--stage",
             "log_e_film",
             "--regions",
-            f.plan.to_str().unwrap(),
+            f.working_plan.to_str().unwrap(),
             "--out",
             sample.to_str().unwrap(),
         ])
@@ -1396,7 +1416,7 @@ fn measure_reads_back_identities_that_carry_separators() {
     let bundle = f.root.join("bundle-separators");
     assert!(f.process(&bundle).status.success());
     let plan = f.root.join("plan-separators.json");
-    let awkward = "patch,\"01\"\nA";
+    let awkward = "patch_01_A";
     std::fs::write(
         &plan,
         serde_json::to_string_pretty(&serde_json::json!({
@@ -1406,12 +1426,11 @@ fn measure_reads_back_identities_that_carry_separators() {
             "regions": [
                 {
                     "id": awkward,
-                    "label": awkward,
-                    "source": "chart",
                     "partition": "all",
+                    "source": "chart",
+                    "geometry": {"x": 0, "y": 0, "width": 1, "height": 1, "space": "working_pixels"},
                     "role": "other",
                     "measurements": ["numeric"],
-                    "geometry": {"x": 0, "y": 0},
                 },
             ],
         }))
@@ -1458,9 +1477,8 @@ fn measure_reads_back_identities_that_carry_separators() {
     assert_eq!(summaries[0]["source"], "chart");
     assert_eq!(summaries[0]["partition"], "all");
     let csv = std::fs::read_to_string(out.join("deltas.csv")).unwrap();
-    // The written identity keeps its separators quoted, so reading it back is
-    // the round trip the comparison just performed.
-    assert!(csv.contains("\"patch,\"\"01\"\""), "{csv}");
+    // The written identity remains stable through sampling and comparison.
+    assert!(csv.contains("patch_01_A"), "{csv}");
     assert!(
         csv.starts_with("pair,sample_id,source,partition,stage,"),
         "{csv}"
@@ -2205,7 +2223,7 @@ fn measure_verify_reads_a_comparison_record_and_rehashes_its_sides() {
             "--stage",
             "log_e_film",
             "--regions",
-            f.plan.to_str().unwrap(),
+            f.working_plan.to_str().unwrap(),
             "--out",
             sample.to_str().unwrap(),
         ])

@@ -9,6 +9,7 @@ pub mod inspect;
 pub mod local_input;
 pub mod metrics;
 pub mod references;
+pub mod regions;
 pub mod report;
 pub mod review;
 pub mod runner;

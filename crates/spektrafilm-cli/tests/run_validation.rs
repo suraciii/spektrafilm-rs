@@ -313,6 +313,7 @@ fn sample_reads_the_exact_stage_from_a_retained_run_directory_or_manifest() {
             "regions": [{
                 "id": "p00",
                 "role": "other",
+                "measurements": [],
                 "geometry": {"x": 0, "y": 0, "width": 1, "height": 1, "space": "source"}
             }]
         }))
