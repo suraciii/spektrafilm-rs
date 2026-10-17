@@ -306,3 +306,53 @@ mod roles {
         assert_eq!(node.role(), egui::accesskit::Role::TextInput);
     }
 }
+
+#[cfg(test)]
+mod row_layout {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+
+    /// A parameter row presents its label before its value, on one line, and
+    /// every row on a page aligns to one label column.
+    #[test]
+    fn a_row_presents_its_label_before_its_value_on_one_line() {
+        let params = scanner_params();
+        let harness = Harness::new_ui_state(camera, params);
+        // The label sits left of its editor and shares its vertical band, so
+        // the pair reads as one row rather than a stacked pair.
+        let rows = ["film format mm", "exposure compensation ev"];
+        let mut left_edges: Vec<f64> = Vec::new();
+        let mut value_lefts: Vec<f64> = Vec::new();
+        for label in rows {
+            let node = harness.get_by_label(label);
+            let rect = node.raw_bounds().expect("row editor has no bounds");
+            let mut labels = node.labelled_by();
+            let visible = labels.next().expect("row editor has no visible label");
+            let label_rect = visible.raw_bounds().expect("visible label has no bounds");
+            assert!(
+                label_rect.x1 <= rect.x0,
+                "{label}: label must sit before its value (label {:?}, value {:?})",
+                label_rect,
+                rect
+            );
+            let shared = label_rect.y0 < rect.y1 && rect.y0 < label_rect.y1;
+            assert!(shared, "{label}: label and value must share one line");
+            left_edges.push(label_rect.x0);
+            value_lefts.push(rect.x0);
+        }
+        // One label column per page: the labels share a left edge and the values
+        // share a left edge, so rows align rather than float independently.
+        let label_left = left_edges[0];
+        let value_left = value_lefts[0];
+        for (i, (l, v)) in left_edges.iter().zip(value_lefts.iter()).enumerate() {
+            assert!(
+                (l - label_left).abs() < 1.0,
+                "row {i} label column drifted: {l} vs {label_left}"
+            );
+            assert!(
+                (v - value_left).abs() < 1.0,
+                "row {i} value column drifted: {v} vs {value_left}"
+            );
+        }
+    }
+}

@@ -855,3 +855,37 @@ fn every_parameter_section_presents_a_reset() {
         );
     }
 }
+
+/// A toggle's guard must be the toggle's own visible label, so a search for that
+/// label reaches the control. The chemistry toggle is medium-specific and used a
+/// medium-agnostic guard, which made both toggles unreachable by search.
+#[test]
+fn the_chemistry_enable_toggle_is_reachable_by_its_own_label() {
+    let mut s = session();
+    let h = &mut s.harness;
+
+    click(h, "FILM");
+    search(h, "enable film density curves");
+    assert!(
+        h.query_by_label("Enable film density curves").is_some(),
+        "the film chemistry toggle is unreachable by its visible label"
+    );
+    search(h, "enable density curves");
+    assert!(
+        h.query_by_label("Enable film density curves").is_none(),
+        "the medium-agnostic label must not match the film toggle"
+    );
+    search(h, "");
+
+    click(h, "PRINT");
+    search(h, "enable print density curves");
+    assert!(
+        h.query_by_label("Enable print density curves").is_some(),
+        "the print chemistry toggle is unreachable by its visible label"
+    );
+    search(h, "enable density curves");
+    assert!(
+        h.query_by_label("Enable print density curves").is_none(),
+        "the medium-agnostic label must not match the print toggle"
+    );
+}
