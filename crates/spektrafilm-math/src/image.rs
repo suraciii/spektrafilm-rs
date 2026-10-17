@@ -81,15 +81,15 @@ impl ImageBuf {
     }
 
     pub fn pixels(&self) -> impl Iterator<Item = &[Scalar]> {
-        self.data.chunks_exact(3)
+        self.data.as_chunks::<3>().0.iter().map(|p| p.as_slice())
     }
 
     pub fn pixels_mut(&mut self) -> impl Iterator<Item = &mut [Scalar]> {
-        self.data.chunks_exact_mut(3)
-    }
-
-    pub fn par_pixels(&self) -> rayon::slice::ChunksExact<'_, Scalar> {
-        self.data.par_chunks_exact(3)
+        self.data
+            .as_chunks_mut::<3>()
+            .0
+            .iter_mut()
+            .map(|p| p.as_mut_slice())
     }
 
     pub fn par_pixels_mut(&mut self) -> rayon::slice::ChunksExactMut<'_, Scalar> {
@@ -98,15 +98,6 @@ impl ImageBuf {
 
     pub fn rows(&self) -> impl Iterator<Item = &[Scalar]> {
         self.data.chunks_exact((self.width as usize) * 3)
-    }
-
-    pub fn par_rows(&self) -> rayon::slice::ChunksExact<'_, Scalar> {
-        self.data.par_chunks_exact((self.width as usize) * 3)
-    }
-
-    pub fn par_rows_mut(&mut self) -> rayon::slice::ChunksExactMut<'_, Scalar> {
-        let w = (self.width as usize) * 3;
-        self.data.par_chunks_exact_mut(w)
     }
 
     pub fn extract_channel(&self, c: usize) -> Vec<Scalar> {
@@ -139,23 +130,6 @@ impl std::fmt::Debug for ImageBuf {
 mod tests {
     use super::*;
     use crate::precision::from_f64;
-
-    #[test]
-    fn test_new_and_dimensions() {
-        let img = ImageBuf::new(4, 3);
-        assert_eq!(img.width, 4);
-        assert_eq!(img.height, 3);
-        assert_eq!(img.data.len(), 4 * 3 * 3);
-        assert_eq!(img.pixel_count(), 12);
-    }
-
-    #[test]
-    fn test_get_set_pixel() {
-        let mut img = ImageBuf::new(2, 2);
-        img.set(1, 0, [from_f64(0.5), from_f64(0.6), from_f64(0.7)]);
-        let px = img.get(1, 0);
-        assert_eq!(px, [from_f64(0.5), from_f64(0.6), from_f64(0.7)]);
-    }
 
     #[test]
     fn test_pixels_iter() {

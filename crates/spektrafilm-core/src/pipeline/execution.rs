@@ -1,4 +1,5 @@
 //! Pipeline render entry points.
+use crate::WorkflowRoute;
 
 use super::*;
 
@@ -21,17 +22,7 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
     ) -> Result<ImageBuf, String> {
-        self.process_with_taps_timed(image, backend, inject, collect, None)
-    }
-
-    /// Process while collecting per-node wall-clock timings.
-    pub fn process_with_timings(
-        &self,
-        image: ImageBuf,
-        backend: &dyn ComputeBackend,
-        timings: &mut BTreeMap<String, f64>,
-    ) -> Result<ImageBuf, String> {
-        self.process_with_taps_timed(image, backend, None, None, Some(timings))
+        self.process_with_taps_timed(image, backend, inject, collect, None, None)
     }
 
     pub fn process_with_taps_timed(
@@ -41,7 +32,12 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
         mut timings: Option<&mut BTreeMap<String, f64>>,
+        mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
+        if capture.is_some() {
+            crate::stage_evidence::ensure_supported_backend(backend)?;
+            crate::stage_evidence::ensure_supported_params(&self.params)?;
+        }
         let inject = match inject {
             Some(tap) => tap,
             None => self
@@ -68,6 +64,7 @@ impl Pipeline {
                 Some(inject),
                 collect,
                 timings,
+                capture,
             );
         }
         // Negative-to-positive interpretation is part of the resident
@@ -119,14 +116,36 @@ impl Pipeline {
                 spektrafilm_backend::telemetry::ExecutionPath::Cpu
             });
         }
+        if let Some(capture) = capture.as_deref_mut() {
+            capture.begin(
+                &self.params,
+                self.print_exposure_factor,
+                inject,
+                collect,
+                &image,
+            );
+        }
         if inject == Tap::RgbIn && collect == Tap::RgbOut {
             let source = if self.params.output_mix.amount < 1.0 {
                 Some(self.prepare_output_mix_source(&image)?)
             } else {
                 None
             };
-            let result = self.process_full(image, backend, timings.as_deref_mut())?;
-            return self.compose_output_mix(result, source, backend, timings);
+            let result = self.process_full(
+                image,
+                backend,
+                timings.as_deref_mut(),
+                capture.as_deref_mut(),
+            )?;
+            let result = self.compose_output_mix(result, source, backend, timings)?;
+            if let Some(capture) = capture.as_deref_mut() {
+                capture.record_boundary(
+                    crate::stage_evidence::StageId::RgbOut,
+                    &result,
+                    crate::stage_evidence::CoordinateSpace::Output,
+                );
+            }
+            return Ok(result);
         }
         tracing::info!(
             inject = inject.name(),
@@ -136,7 +155,26 @@ impl Pipeline {
         let t = Instant::now();
         let color_ref = self.color_reference(backend);
         record_stage_timing(&mut timings, "color_reference", t);
-        self.run_from(image, inject, collect, backend, &color_ref, None, timings)
+        let result = self.run_from(
+            image,
+            inject,
+            collect,
+            backend,
+            &color_ref,
+            None,
+            timings,
+            capture.as_deref_mut(),
+        )?;
+        if collect == Tap::RgbOut
+            && let Some(capture) = capture
+        {
+            capture.record_boundary(
+                crate::stage_evidence::StageId::RgbOut,
+                &result,
+                crate::stage_evidence::CoordinateSpace::Output,
+            );
+        }
+        Ok(result)
     }
 
     pub fn process(
@@ -152,6 +190,7 @@ impl Pipeline {
         image: ImageBuf,
         backend: &dyn ComputeBackend,
         mut timings: Option<&mut BTreeMap<String, f64>>,
+        mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
         // Active Dye outside its supported condition fails here, before any
         // route work — including the passthrough and convert routes, which
@@ -159,7 +198,14 @@ impl Pipeline {
         crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
-        if self.params.workflow.route == "input" {
+        if self.params.workflow.route_enum() == WorkflowRoute::Input {
+            if let Some(capture) = capture.as_deref_mut() {
+                use crate::stage_evidence::StageId;
+                capture.record_skip(StageId::LogEFilm, "no_film_stage_on_route");
+                capture.record_skip(StageId::CmyFilm, "no_film_stage_on_route");
+                capture.record_skip(StageId::LogEPrint, "no_print_stage_on_route");
+                capture.record_skip(StageId::CmyPrint, "no_print_stage_on_route");
+            }
             let (working, _) = crate::resizing::crop_and_rescale(
                 &image,
                 &self.params.io,
@@ -211,7 +257,7 @@ impl Pipeline {
             );
             return Ok(output);
         }
-        let image = self.expose_full_input(image, backend);
+        let image = self.expose_full_input(image, backend, capture.as_deref_mut());
         let t = Instant::now();
         let (working, pixel_size_um) = self.rescale_working(&image, backend)?;
         print_stage_timing(stage_timings_enabled(), "resize", t);
@@ -229,9 +275,9 @@ impl Pipeline {
             .route
             .starts_with("input > convert-film")
         {
-            return self.process_convert(working, pixel_size_um, backend);
+            return self.process_convert(working, pixel_size_um, backend, capture);
         }
-        self.run(working, pixel_size_um, 0.0, backend, timings)
+        self.run(working, pixel_size_um, 0.0, backend, timings, capture)
     }
 
     fn process_convert(
@@ -239,7 +285,14 @@ impl Pipeline {
         image: ImageBuf,
         pixel_size_um: f64,
         backend: &dyn ComputeBackend,
+        mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
+        use crate::stage_evidence::{CoordinateSpace, StageId};
+        if let Some(capture) = capture.as_deref_mut() {
+            // Conversion maps the receiver capture back to film density: the
+            // chain has no film exposure boundary.
+            capture.record_skip(StageId::LogEFilm, "no_film_exposure_on_route");
+        }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
                 spektrafilm_backend::telemetry::ExecutionPath::PerStage
@@ -250,9 +303,9 @@ impl Pipeline {
                 spektrafilm_backend::telemetry::ResidentDeclineReason::WorkflowRoute,
             );
         }
-        let route = self.params.workflow.route.as_str();
-        let print_after_convert = route == "input > convert-film > print > scan";
-        let scan_minus_base = route == "input > convert-film > scan-minus-base";
+        let route = self.params.workflow.route_enum();
+        let print_after_convert = route == WorkflowRoute::ConvertFilmPrintScan;
+        let scan_minus_base = route == WorkflowRoute::ConvertFilmScanMinusBase;
         let mut converting = crate::stages::StageObservation::cpu(
             backend,
             "converting",
@@ -262,6 +315,9 @@ impl Pipeline {
         converting.set_complete(converted.is_ok());
         let film_density = converted?;
         drop(converting);
+        if let Some(capture) = capture.as_deref_mut() {
+            capture.record_boundary(StageId::CmyFilm, &film_density, CoordinateSpace::Working);
+        }
         let color_ref = self.color_reference(backend);
         if print_after_convert {
             let mut printing = crate::stages::StageObservation::new(backend, "printing");
@@ -278,6 +334,13 @@ impl Pipeline {
                 color_ref.printing_exposure_correction,
                 pixel_size_um,
             );
+            if let Some(capture) = capture.as_deref_mut() {
+                capture.record_boundary(
+                    StageId::LogEPrint,
+                    &print_density,
+                    CoordinateSpace::Working,
+                );
+            }
             let developed = crate::stages::printing::develop(
                 &print_density,
                 &self.print,
@@ -287,6 +350,13 @@ impl Pipeline {
             printing.set_complete(developed.is_ok());
             let print_density = developed?;
             drop(printing);
+            if let Some(capture) = capture.as_deref_mut() {
+                capture.record_boundary(
+                    StageId::CmyPrint,
+                    &print_density,
+                    CoordinateSpace::Working,
+                );
+            }
             let scanning = crate::stages::StageObservation::new(backend, "scanning");
             let backend = scanning.backend(backend);
             Ok(crate::stages::scanning::process(
@@ -298,6 +368,10 @@ impl Pipeline {
                 &self.output_gamut,
             )?)
         } else {
+            if let Some(capture) = capture {
+                capture.record_skip(StageId::LogEPrint, "no_print_stage_on_route");
+                capture.record_skip(StageId::CmyPrint, "no_print_stage_on_route");
+            }
             let mut scan_params = self.scan_params().into_owned();
             scan_params.io.scan_film = true;
             let scanning = crate::stages::StageObservation::new(backend, "scanning");
@@ -325,6 +399,7 @@ impl Pipeline {
         ae_ev: f64,
         backend: &dyn ComputeBackend,
         mut timings: Option<&mut BTreeMap<String, f64>>,
+        capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
         let stage_timings = stage_timings_enabled();
         if let Some(context) = backend.observation_context() {
@@ -373,6 +448,7 @@ impl Pipeline {
             &color_ref,
             Some((pixel_size_um, ae_ev)),
             timings,
+            capture,
         )
     }
 

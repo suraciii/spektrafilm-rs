@@ -102,15 +102,10 @@ sensitivity with white-balance normalization
 (`params.rs:82-85`) and even ships the erf4 window evaluation
 (`spectral_service.rs:232`), but nothing connects the camera params to it.
 
-### 4. Ignored blur/layered-grain controls — scenarios `layered_grain`,
-`preview_mode_digest` (issues #6, #3, #5)
-`film_render.grain.sublayers_active` (default **True** upstream!),
-`particle_scale_layers`, `blur_dye_clouds_um`, `micro_structure`,
-`settings.use_fast_stats`, `settings.preview_mode` are all accepted by Rust
-serde and never read. The upstream default path develops grain through
-`interp_density_cmy_layers` + `apply_grain_to_density_layers`
-(`model/grain.py:193-213`); only the single-curve fallback
-(`sublayers_active=False`) is ported. The Hanatos adaptation blur knobs
+### 4. Ignored preview/adaptation controls — scenario `preview_mode_digest`
+(`issues #3, #5`)
+`settings.preview_mode` is accepted by Rust serde but is not yet applied to
+the resident pipeline. The Hanatos adaptation blur knobs
 `settings.spectral_gaussian_blur` and
 `settings.apply_hanatos2025_adaptation_surface` (issue #5) are likewise
 parsed and never applied when the tc LUT is built
@@ -123,8 +118,7 @@ correction (`utils/spectral_upsampling.py:336-386`).
 output as error-logged **identity fallback**
 (`crates/spektrafilm-core/src/gamut_compression.rs:267-293`); Python 0.3.4
 supports all five algorithms on any output space
-(`utils/gamut_compression.py:197-216`). Similarly unknown input color
-spaces silently fall back (filming.rs:516 → ProPhoto; scanning.rs:455 →
+spaces silently fall back (filming.rs:516 → ProPhoto; `scanning.rs::scan_with_capture` →
 sRGB) where Python raises.
 
 ### 6. Wrong LUT constructor — CLI `export-lut` (issue #13)
@@ -137,7 +131,7 @@ per-pixel regime (spatial/stochastic off, AE off, corrections off).
 
 ### 7. Output encoding / clipping — scenario `output_encoding_srgb` (issue #4)
 Rust clamps the final RGB to [0,1] on **both** branches of the encoding
-switch (`crates/spektrafilm-core/src/stages/scanning.rs:370-389`); Python
+switch (`crates/spektrafilm-core/src/stages/scanning.rs::scan_with_capture`); Python
 0.3.4's `_apply_cctf_encoding` never clips (`runtime/stages/scanning.py:130-139`)
 — the doc-comment in Rust references a `_apply_cctf_encoding_and_clip`
 helper that does not exist at this pin. With gamut compression off and
@@ -147,8 +141,8 @@ out-of-gamut input, Python returns out-of-range values.
 On `scan_film=True` Python passes `glare=None`
 (`runtime/stages/scanning.py:54-55`) — no glare on the direct scan, ever.
 Rust selects `film_render.glare` for the scan path
-(`crates/spektrafilm-core/src/stages/scanning.rs:284-288`) and applies it
-with a **fixed seed 42** (`scanning.rs:325-333`), diverging both in
+(`crates/spektrafilm-core/src/stages/scanning.rs::scan_with_capture`) and applies it
+with a **fixed seed 42** (same function), diverging both in
 semantics and in RNG stream.
 
 ## Integrated acceptance evidence
@@ -196,10 +190,27 @@ Independent executed checks establish:
   camera/white-balance cases exactly, both before and after relocation, including
   a known Lensfun correction. The rebuilt consumers load LibRaw 0.22's actual
   `libraw.so.24`; its selected link artifact prevents system-header ABI mismatch.
-  The final DIR-corrected Linux package passed the same portable image/RAW/GUI
-  smoke under Xvfb with a clean environment. The fork's Release workflow is now
-  active; Windows/macOS installed-workflow acceptance remains unverified.
-  PR #18 remains a draft, and acceptance issues #17/#1 remain open.
+- The latest non-GUI cross-platform package workflow is pinned to Rust
+  `79b98c9927b3b74e6183695890a5cdc3e979739c` and Python
+  `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc` (workflow `37242896312`).
+  Windows, macOS and Linux package smoke all passed. Windows and macOS
+  reports were clean; Linux recorded the known Python-generated worktree
+  bytecode change. Each report covered six package scenarios; the spectral
+  maximum absolute error was `6.634529148286106e-9` against the `1e-6`
+  budget.
+- The preceding GUI-enabled workflow `37226896580` passed Windows package
+  smoke and Linux runtime/LUT/package gates, but macOS failed
+  `Reveal did not produce observable transition frames`; that historical
+  desktop result remains explicitly incomplete.
+- The release workflow now invokes `package_smoke.py` without `--gui` on all
+  three platforms and no longer installs or configures GUI-only acceptance
+  dependencies. Its package result intentionally excludes native desktop
+  interaction; the historical GUI results above remain evidence, not a release
+  pass.
+- Earlier platform repairs are retained in commits `8bdd7fe` and `85376a8`;
+  they fixed macOS native path entry/profile selection and the white-border
+  slider coordinate. No further desktop-driver retries are warranted
+  without a reproducible macOS transition-frame failure.
 - Saving into the output layer's own colour space and encoding is now a
   bit-exact copy, matching the pinned Python save guard
   (`spektrafilm_gui/controller.py:354-369`). Previously the export ran the
@@ -230,13 +241,13 @@ Independent executed checks establish:
   comparisons plus 32 additional comparisons for disabled xy and active oklch,
   with unchanged metric budgets, status semantics, offline artifact and OCIO checks.
   The integrated precision-f64 workspace passed 192 tests after these corrections.
-- The new external Linux package GUI gate passed real native window and file
-  chooser operations under Xvfb: standard/RAW loading and preview, input/output
-  raster comparison, Auto exposure and float-depth edits, state save/load and
-  restart restoration, float save, actual bundled f64 export, Cancel and closing
-  in flight. Observed exporter executable hashes match installed native payloads;
-  cancelled/closed exports left no output, child process or temporary JSON.
-  Windows/macOS drivers exist but have no passing target-platform evidence yet.
+- The latest three-platform workflow (`37226896580`, Rust `9f52fc2`) passed
+  Windows x64 package smoke and Linux x64 runtime parity, LUT acceptance and
+  package smoke. The Windows report is clean; Linux's report is valid but
+  records `rust_worktree_dirty: true` after Python generated tracked bytecode.
+  macOS completed chooser, profile, slider and preceding viewer assertions,
+  then failed only at `Reveal did not produce observable transition frames`.
+  This is an incomplete macOS acceptance result, not a passing platform row.
 - The first real three-platform workflow exposed Ubuntu Exiv2 auto_ptr predicate
   incompatibility, Homebrew OIIO's missing external fmt include path, and MSYS2
   LibRaw below 0.22. The fixes retain the native contracts: get() pointer checks,

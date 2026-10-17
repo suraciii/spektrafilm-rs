@@ -38,6 +38,26 @@ fn value(value: &Value) -> String {
     }
 }
 
+fn output_value(name: &str, field: &Value) -> String {
+    if field.is_null() {
+        return match name {
+            "path" => "not selected".into(),
+            "format" => "unresolved".into(),
+            _ => "not applicable".into(),
+        };
+    }
+    value(field)
+}
+
+fn output_record(fields: &Value) {
+    println!("OUTPUT");
+    if let Some(fields) = fields.as_object() {
+        for (name, field) in fields {
+            println!("  {name}: {}", output_value(name, field));
+        }
+    }
+}
+
 fn record(label: &str, fields: &Value) {
     println!("{label}");
     if let Some(fields) = fields.as_object() {
@@ -109,7 +129,7 @@ pub(crate) fn print_text(report: &Value) {
         "BACKEND (requested, not device availability)",
         &report["backend"],
     );
-    record("OUTPUT", &report["output"]);
+    output_record(&report["output"]);
     println!("EXPLICIT EDITS");
     if let Some(edits) = report["edits"].as_array() {
         for edit in edits {
@@ -128,7 +148,14 @@ pub(crate) fn print_text(report: &Value) {
         }
     }
     println!("NOT CHECKED");
-    println!(
-        "  Pixel decoding; compute-device availability; metered exposure; final pixel geometry"
-    );
+    let unresolved_format = report["unchecked"]
+        .as_array()
+        .map(|values| values.iter().any(|value| value == "output_format"))
+        .unwrap_or(false);
+    let unchecked = if unresolved_format {
+        "Pixel decoding; compute-device availability; metered exposure; final pixel geometry; output format"
+    } else {
+        "Pixel decoding; compute-device availability; metered exposure; final pixel geometry"
+    };
+    println!("  {unchecked}");
 }

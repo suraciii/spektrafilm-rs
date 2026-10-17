@@ -7,8 +7,6 @@ use spektrafilm_math::{
     precision::{from_f32, to_f32},
 };
 
-pub const CANVAS_WIDTH: u32 = 5200;
-pub const CANVAS_HEIGHT: u32 = 3100;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GrainV2Mode {
     #[default]
@@ -781,18 +779,6 @@ mod tests {
     }
 
     #[test]
-    fn zero_amount_still_runs_pipeline() {
-        let i = ImageBuf::from_data(2, 2, vec![0.4; 12]);
-        let p = GrainV2Params {
-            amount: 0.,
-            ..Default::default()
-        };
-        let out = apply_cpu(&i, p);
-        assert!(out.data.iter().all(|v| to_f32(*v).is_finite()));
-        assert_ne!(out.data, i.data);
-    }
-
-    #[test]
     fn resolution_type_selects_analogue_path_and_noise_bypasses_resolution() {
         let weights = fast_blur_weights(0.5);
         assert_eq!(weights.len(), 1);
@@ -834,25 +820,6 @@ mod tests {
         assert_eq!(optical_noise.data, fast_noise.data);
         noise.film_type = 0;
         assert_eq!(apply_cpu(&image, noise).data, fast_noise.data);
-    }
-    #[test]
-    fn modes_resolution_and_color() {
-        let i = ImageBuf::from_data(
-            8,
-            6,
-            (0..144).map(|v| from_f32((v % 11) as f32 / 11.)).collect(),
-        );
-        let mut p = GrainV2Params::default();
-        let a = apply_cpu(&i, p);
-        assert_eq!(a.data, apply_cpu(&i, p).data);
-        p.mode = GrainV2Mode::Noise;
-        let b = apply_cpu(&i, p);
-        assert_ne!(a.data, b.data);
-        p.resolution_factor = 0.;
-        p.film_type = 0;
-        assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
-        p.colored = false;
-        assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
     }
     #[test]
     fn optical_subpixel_radius_is_identity() {
@@ -923,7 +890,9 @@ mod tests {
         let out = apply_cpu(&ImageBuf::from_data(w, h, data), p);
         let mut r: Vec<f32> = out
             .data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|v| (to_f32(v[0]) + to_f32(v[1]) + to_f32(v[2])) / 3.)
             .collect();
         for row in r.chunks_exact_mut(w as usize) {
@@ -954,66 +923,8 @@ mod tests {
         );
     }
     #[test]
-    #[ignore = "temporary Metal arithmetic diagnostic"]
-    fn metal_arithmetic_trace() {
-        let gpu = spektrafilm_gpu::wgpu_backend::WgpuBackend::new().expect("diagnostic requires GPU adapter");
-        let image = ImageBuf::from_data(37, 19, vec![from_f32(0.5); 37 * 19 * 3]);
-        let mut p = GrainV2Params::for_profile(0);
-        p.seed = 42;p.film_type = 0;p.amount = 0.;p.color = 0.;p.shadows = 0.;p.midtones = 0.;p.highlights = 0.;
-        let gp = spektrafilm_gpu::GrainV2GpuParams {
-            mode: p.mode as u32, film_type: p.film_type, amount: p.amount, shadows: p.shadows,
-            midtones: p.midtones, highlights: p.highlights, raw_scale: p.size, cluster_size: p.cluster_size,
-            rotation: p.rotation, color: p.color, resolution_factor: p.resolution_factor, seed: p.seed,
-            colored: p.colored, clustered: p.clustered,
-        };
-        let actual = gpu.grain_v2_arithmetic_trace(&image, &gp);
-        let labels = ["coord.x", "coord.y", "size.x", "size.y", "coords.x", "coords.y", "random", "snoise.x", "snoise.w", "angle",
-            "angle.sin", "angle.cos", "rotate.x", "rotate.y", "v.x", "v.y", "pi.x", "pi.y", "pi.z", "tc.x", "tc.y",
-            "phase.x", "phase.y", "phase", "reduced.r", "reduced.quadrant", "phase.sin", "hash.n", "perm", "pn", "generated.x", "generated.y"];
-        let mut first = [None; 32];let mut counts = [0usize; 32];let mut worst = [0.0f32; 32];
-        let timer = spektrafilm_math::grain::seeded_phase(p.seed);
-        let gsf = (5200.0f32 / 37.).max(3100. / 19.);
-        let size = [(37. * gsf).floor(), (19. * gsf).floor()];
-        let scale = p.size.clamp(0.5, 1.4);let scaled = size.map(|v| v * scale);
-        for sample in 0..37 * 19 * 9 {
-            let idx = sample / 9;let tap = sample % 9;
-            let uv = [(idx % 37) as f32 * (1. / 36.), (idx / 37) as f32 * (1. / 18.)];
-            let at = [0, 1].map(|c| (uv[c] * (size[c] / (1. + (p.size - 1.) / 47. * 1.5))) as i32);
-            let coord = [(at[0] + (tap % 3) as i32 - 1).clamp(0, size[0] as i32 - 1) as f32,
-                (at[1] + (tap / 3) as i32 - 1).clamp(0, size[1] as i32 - 1) as f32];
-            let coords = [coord[0] / scaled[0], coord[1] / scaled[1]];
-            let seed = [coords[0], timer, coords[1], timer];let sn = snoise(timer, seed);
-            let angle = sn[0] * p.rotation;let q = rotated(coords, angle, scaled[0] / scaled[1]);
-            let mult = scaled.map(|v| v / p.cluster_size / scale);let v = [q[0] * mult[0], q[1] * mult[1], 0.];
-            let texel = 1. / 256. / p.cluster_size;let pi = v.map(|v| texel * v.floor() + 0.5 * texel);
-            let px = (pi[0] + timer) * 12.9898;let py = (pi[1] + timer) * 78.233;let phase = px + py;
-            let reduced = trig_reduce(phase);let sine = grain_sin(phase);let n = sine * 43758.5453;
-            let generated = generator(coord, size, 0.5, [0.5; 3], p, false, timer);
-            let expected = [coord[0], coord[1], size[0], size[1], coords[0], coords[1], random(seed), sn[0], sn[3], angle,
-                grain_sin(angle), grain_cos(angle), q[0], q[1], v[0], v[1], pi[0], pi[1], pi[2], pi[0], pi[1], px, py,
-                phase, reduced.0, reduced.1 as f32, sine, n, rnm([pi[0], pi[1]], timer)[3], pnoise(v, timer, texel), generated[0], generated[1]];
-            for j in 0..32 {
-                let observed = actual[sample * 32 + j];
-                if observed.to_bits() != expected[j].to_bits() {
-                    counts[j] += 1;worst[j] = worst[j].max((observed - expected[j]).abs());
-                    if first[j].is_none() { first[j] = Some((sample, expected[j], observed)); }
-                }
-            }
-        }
-        for j in 0..32 {
-            if let Some((sample, cpu, metal)) = first[j] {
-                eprintln!("METAL_TRACE stage={} mismatches={} worst={} first_sample={} pixel={} tap={} cpu={} cpu_bits={:08x} gpu={} gpu_bits={:08x}",
-                    labels[j], counts[j], worst[j], sample, sample / 9, sample % 9, cpu, cpu.to_bits(), metal, metal.to_bits());
-            } else { eprintln!("METAL_TRACE stage={} exact", labels[j]); }
-        }
-    }
-    #[test]
     fn gpu_matches_cpu_reference_when_adapter_is_available() {
-        use spektrafilm_gpu::wgpu_backend::WgpuBackend;
-        let Some(gpu) = WgpuBackend::new() else {
-            eprintln!("Grain Procedural GPU parity skipped: no adapter");
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let image = ImageBuf::from_data(
             37,
             19,

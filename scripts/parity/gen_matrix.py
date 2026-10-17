@@ -21,14 +21,16 @@ from collections import Counter
 import hashlib
 import json
 import platform
+import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
-PY_REPO = Path("/home/szf/repos/spektrafilm")
+RUNTIME_REPO = Path(os.environ.get(
+    "SPEKTRAFILM_RUNTIME_REPO", str(REPO_ROOT)
+)).resolve()
 PY_COMMIT = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc"
 RS_COMMIT = "9dd59b0380194b93686aaa230a8bb9680aa270a4"
 EXPECTED_RUST_COMMIT = "a1910231fbd2c049c5177b539b6e7963c97f4e90"
@@ -91,12 +93,12 @@ RUNTIME_FIELDS = {
         "preflash_m_filter_shift": (S, None, ""),
     },
     "scanner": {
-        "lens_blur": (S, None, "scanning.rs:348"),
+        "lens_blur": (S, None, "scanning.rs::scan_with_capture"),
         "white_correction": (S, None, "color_reference luminance remap"),
         "black_correction": (S, None, ""),
         "white_level": (S, None, ""),
         "black_level": (S, None, ""),
-        "unsharp_mask": (S, None, "scanning.rs:353"),
+        "unsharp_mask": (S, None, "scanning.rs::scan_with_capture"),
     },
     "film_render": {
         "density_curve_gamma": (S, None, ""),
@@ -167,7 +169,7 @@ RUNTIME_FIELDS = {
         "input_gamut_compress.knee": (S, None, "input_gamut.rs"),
         "output_gamut_compress.algorithm": (S, None, "gamut_compression.rs"),
         "output_gamut_compress.knee": (S, None, ""),
-        "output_gamut_compress.lightness_compression": (RETIRED, None, "Intentionally retired under specs/material-response/spec.md; no replacement or parity claim"),
+        "output_gamut_compress.lightness_compression": (RETIRED, None, "Intentionally retired under specs/output-mix/spec.md; no replacement or parity claim"),
         "crop": (S, None, "resizing.rs:170-205"),
         "crop_center": (S, None, "resizing.rs:75-147"),
         "crop_size": (S, None, "resizing.rs:75-147"),
@@ -190,8 +192,8 @@ RUNTIME_FIELDS = {
         "apply_hanatos2025_adaptation_surface": (S, None, "spectral_service.rs:1163"),
         "spectral_gaussian_blur": (S, None, "spectral_service.rs:1159-1160"),
         "use_enlarger_lut": (S, None, "printing.rs:201-215"),
-        "use_scanner_lut": (S, None, "scanning.rs:252-267"),
-        "lut_resolution": (S, None, "printing.rs:214; scanning.rs:265"),
+        "use_scanner_lut": (S, None, "scanning/spectral.rs::scan_spectral_rgb"),
+        "lut_resolution": (S, None, "printing.rs:214; scanning/spectral.rs::scan_spectral_rgb"),
         "use_fast_stats": (S, None, "filming.rs:557"),
         "preview_max_size": (S, None, "runtime.rs:133-141"),
         "preview_mode": (S, None, "params_builder.rs:61-73"),
@@ -379,11 +381,11 @@ AUDIT_BASELINE_GAPS = [
     {"gap": "stock-specific DIR presets (velvia_100, provia_100f) and halation use/antihalation presets",
      "owner_issue": 3, "evidence": "params_builder.py:199-252 vs pipeline.rs:55-94"},
     {"gap": "direct-scan glare: Python passes glare=None on scan_film; Rust applies film_render.glare (seed 42)",
-     "owner_issue": 8, "evidence": "scanning.py:54-55 vs scanning.rs:284-288,325-333"},
+     "owner_issue": 8, "evidence": "scanning.py:54-55 vs scanning.rs::scan_with_capture"},
     {"gap": "output clip semantics: Rust clamps [0,1] when output_cctf_encoding=False; Python never clips",
-     "owner_issue": 4, "evidence": "scanning.rs:385-389 vs scanning.py:130-139"},
+     "owner_issue": 4, "evidence": "scanning.rs::scan_with_capture vs scanning.py:130-139"},
     {"gap": "unsupported color spaces silently fall back (input->ProPhoto, output->sRGB) instead of erroring",
-     "owner_issue": 4, "evidence": "filming.rs:510-518 _ => PROPHOTO_TO_XYZ; scanning.rs:449-456 _ => XYZ_TO_SRGB_F64"},
+     "owner_issue": 4, "evidence": "filming.rs:510-518 _ => PROPHOTO_TO_XYZ; scanning.rs::scan_with_capture"},
     {"gap": "jzazbz/oklrab output gamut + perceptual compression on non-sRGB output fall back to identity",
      "owner_issue": 4, "evidence": "gamut_compression.rs:267-293 error-and-identity branches"},
     {"gap": "enlarger LUT reduction (use_enlarger_lut) unported; lut_resolution param unread",
@@ -391,7 +393,7 @@ AUDIT_BASELINE_GAPS = [
     {"gap": "crop + AE order: Rust rescales before AE; Python AEs before crop/rescale",
      "owner_issue": 7, "evidence": "pipeline.rs:462-471 vs pipeline.py:191-195"},
     {"gap": "glare RNG stream: Rust fixed seed 42 vs Python continued np.random stream (statistical parity only)",
-     "owner_issue": 8, "evidence": "scanning.rs:331 comment; model/glare.py via fast_stats np.random"},
+     "owner_issue": 8, "evidence": "scanning.rs::scan_with_capture; model/glare.py via fast_stats np.random"},
     {"gap": "ICC profiles (166 files) + SPEKTRAFILM_LICENSE.txt not bundled in the Rust tree",
      "owner_issue": 9, "evidence": "src/spektrafilm/data/icc vs data/ (Rust) directory listing"},
     {"gap": "RAW white-balance modes and lensfun corrections; Rust GUI/CLI use rawler with as-shot only",
@@ -427,7 +429,7 @@ BUDGETS = {
 def asset_inventory():
     """Hash-compare every bundled Python 0.3.4 data file against the Rust tree."""
     py_data = PY_REPO / "src" / "spektrafilm" / "data"
-    rs_data = REPO_ROOT / "data"
+    rs_data = RUNTIME_REPO / "data"
     assets = []
     for path in sorted(py_data.rglob("*")):
         if not path.is_file():
@@ -471,7 +473,7 @@ def integration_entry(status, owner, notes, source, audit_status=None):
         return {
             "rust_status": RETIRED,
             "owner_issue": owner,
-            "implementation_source": "specs/material-response/spec.md#output-boundary-and-retirement",
+            "implementation_source": "specs/output-mix/spec.md#output-boundary-and-retirement",
             "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
             "audit_baseline": {
                 "rust_status": status if audit_status is None else audit_status,
@@ -515,7 +517,7 @@ def report_evidence(path):
     if pins.get("python_commit") != PY_COMMIT or pins.get("python_version") != "0.3.4":
         sys.exit(f"Refusing report with incorrect Python pin: {path}")
     current_rust = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        ["git", "-C", str(RUNTIME_REPO), "rev-parse", "HEAD"],
         capture_output=True, text=True, check=True).stdout.strip()
     rust_commit = environment.get("rust_commit")
     if current_rust != EXPECTED_RUST_COMMIT or rust_commit != EXPECTED_RUST_COMMIT:
@@ -589,7 +591,7 @@ def gui_evidence(path):
     provenance = next((row for row in records if row.get("rust_commit")), None)
     if not provenance or provenance.get("rust_worktree_dirty") is not False:
         sys.exit(f"Refusing GUI evidence without a clean Rust provenance record: {path}")
-    current = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+    current = subprocess.run(["git", "-C", str(RUNTIME_REPO), "rev-parse", "HEAD"],
                              capture_output=True, text=True, check=True).stdout.strip()
     if current != EXPECTED_RUST_COMMIT or provenance["rust_commit"] != EXPECTED_RUST_COMMIT:
         sys.exit(
@@ -650,10 +652,10 @@ def main() -> None:
     if head != PY_COMMIT:
         sys.exit(f"Python repo at {head}, expected {PY_COMMIT}")
 
-    rs_head = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+    rs_head = subprocess.run(["git", "-C", str(RUNTIME_REPO), "rev-parse", "HEAD"],
                              capture_output=True, text=True, check=True).stdout.strip()
     rs_status = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "status", "--porcelain", "--untracked-files=all"],
+        ["git", "-C", str(RUNTIME_REPO), "status", "--porcelain", "--untracked-files=all"],
         capture_output=True, text=True, check=True,
     ).stdout
     if rs_status:

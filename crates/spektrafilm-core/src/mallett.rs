@@ -601,10 +601,7 @@ mod parity_tests {
         use spektrafilm_math::image::ImageBuf;
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
-            eprintln!("no GPU adapter available; skipping");
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
 
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
@@ -630,7 +627,7 @@ mod parity_tests {
             .collect();
         let img = ImageBuf::from_data(w, h, data);
 
-        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
         let out_cpu = pipeline
             .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
             .unwrap();

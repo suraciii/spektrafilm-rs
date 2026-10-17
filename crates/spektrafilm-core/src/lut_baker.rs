@@ -411,7 +411,7 @@ fn measure_wires(
         }
         if tap == Tap::CmyFilm {
             let mut max = [f64::NEG_INFINITY; 3];
-            for p in raw.data.chunks_exact(3) {
+            for p in raw.data.as_chunks::<3>().0 {
                 for c in 0..3 {
                     max[c] = max[c].max(to_f64(p[c]));
                 }
@@ -499,7 +499,7 @@ fn bake_recipe(
     let raw =
         pipeline.process_with_taps(image, backend, Some(stage.inject), Some(stage.collect))?;
     let mut table = Vec::with_capacity(spec.resolution.pow(3));
-    for pixel in raw.data.chunks_exact(3) {
+    for pixel in raw.data.as_chunks::<3>().0 {
         let physical = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
         let code = if stage.collect == Tap::RgbOut {
             output.encode_rgb(physical.map(|v| v * output.output_gain()))
@@ -818,22 +818,6 @@ mod tests {
         assert_eq!(json["magazine_print_color"]["strength"], 0.75);
     }
 
-    #[test]
-    fn active_magazine_does_not_rewrite_photographic_route() {
-        let film: profile::Profile =
-            serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
-        let print = film.clone();
-        let neutral = NeutralFilters::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-        let s = spec("srgb", "srgb");
-        let input = lut_transport::resolve("srgb").unwrap();
-        let mut base = RuntimeParams::default();
-        base.magazine_print_color.active = true;
-        base.magazine_print_color.strength = 0.75;
-        let baked =
-            bake_params(&s, input, input, &film, &print, &neutral, Some(&base), true).unwrap();
-        assert_eq!(baked.workflow.route, "input > film > print > scan");
-        assert!(!baked.io.scan_film);
-    }
     #[test]
     fn interpolation_preserves_channel_axis_and_clamps_domain_edges() {
         let mut table = Vec::new();

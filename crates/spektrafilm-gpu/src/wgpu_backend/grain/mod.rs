@@ -1,5 +1,10 @@
 use super::*;
 
+pub mod dye;
+pub mod dye_decisions;
+pub mod dye_layers;
+mod dye_spatial;
+
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct ShaderParams {

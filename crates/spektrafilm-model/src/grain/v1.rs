@@ -59,14 +59,13 @@ pub fn layer_particle_model(
     let mut p_arr = Vec::with_capacity(n);
     let mut sat_arr = Vec::with_capacity(n);
     for &d in density.iter() {
-        let p = ((d as f64) / dmax).clamp(1e-6, 1.0 - 1e-6);
+        let p = (to_f64(d) / dmax).clamp(1e-6, 1.0 - 1e-6);
         let saturation = 1.0 - p * gu * (1.0 - 1e-6);
         p_arr.push(p);
         sat_arr.push(saturation);
     }
 
-    let grain: Vec<Scalar>;
-    if use_fast_stats {
+    let grain: Vec<Scalar> = if use_fast_stats {
         // `fast_stats` regime: Python runs `fast_poisson(lam_array)` then
         // `fast_binomial(seeds, p)` as whole-array numba kernels whose
         // element draws are independent, so per-element tagged streams
@@ -74,11 +73,11 @@ pub fn layer_particle_model(
         // parallel) regardless of numba's thread schedule.
         let lam: Vec<f64> = sat_arr.iter().map(|&sat| npp / sat).collect();
         let seeds = stats::fast_poisson_array(seed, POISSON_TAG, &lam);
-        grain = stats::fast_binomial_array(seed, BINOMIAL_TAG, &seeds, &p_arr)
+        stats::fast_binomial_array(seed, BINOMIAL_TAG, &seeds, &p_arr)
             .into_iter()
             .zip(&sat_arr)
             .map(|(developed, &sat)| from_f64((developed as f64) * od_particle * sat))
-            .collect();
+            .collect()
     } else {
         // scipy regime — Python-bit-exact RNG: numpy's MT19937 +
         // RandomState distribution algorithms (`rk_poisson` / `rk_binomial`).
@@ -105,8 +104,8 @@ pub fn layer_particle_model(
             let developed = spektrafilm_math::numpy_rng::rk_binomial(&mut rng, seeds[i], p_arr[i]);
             *slot = from_f64((developed as f64) * od_particle * sat_arr[i]);
         }
-        grain = out;
-    }
+        out
+    };
     finish_grain(grain, width, height, blur_particle, od_particle)
 }
 
@@ -338,50 +337,6 @@ fn apply_multiplicative_unsharp_mask(
         }
     }
     out
-}
-
-/// Derive the coarsest-sub-layer particle area from the datasheet RMS
-/// granularity, matching the upstream multilayer peak calculation.
-pub fn particle_area_from_rms_granularity(
-    density_curves_layers: &[[[f64; 3]; 3]],
-    density_max_layers: &[[f64; 3]; 3],
-    density_min: [f64; 3],
-    grain_uniformity: [f64; 3],
-    rms_granularity: [f64; 3],
-    particle_scale_sublayers: [f64; 3],
-) -> [f64; 3] {
-    const APERTURE_AREA_UM2: f64 = std::f64::consts::PI * 24.0 * 24.0;
-    let mut total = [0.0f64; 3];
-    for layer in density_max_layers {
-        for ch in 0..3 {
-            total[ch] += layer[ch];
-        }
-    }
-    let mut peak = [0.0f64; 3];
-    for ch in 0..3 {
-        let mut weighted = [0.0; 3];
-        for sl in 0..3 {
-            let fraction = density_max_layers[sl][ch] / total[ch].max(1e-12);
-            weighted[sl] = fraction * density_min[ch];
-        }
-        for curve in density_curves_layers {
-            let mut variance = 0.0;
-            for sl in 0..3 {
-                let density = curve[sl][ch] + weighted[sl];
-                let dmax = density_max_layers[sl][ch] + weighted[sl];
-                let fraction = density_max_layers[sl][ch] / total[ch].max(1e-12);
-                variance += (particle_scale_sublayers[sl] / fraction.max(1e-12))
-                    * density
-                    * (dmax - grain_uniformity[ch] * density);
-            }
-            peak[ch] = peak[ch].max(variance);
-        }
-    }
-    [
-        (rms_granularity[0] / 1000.0).powi(2) * APERTURE_AREA_UM2 / peak[0].max(1e-9),
-        (rms_granularity[1] / 1000.0).powi(2) * APERTURE_AREA_UM2 / peak[1].max(1e-9),
-        (rms_granularity[2] / 1000.0).powi(2) * APERTURE_AREA_UM2 / peak[2].max(1e-9),
-    ]
 }
 
 /// Apply layered (per-sublayer) grain to a CMY density image.

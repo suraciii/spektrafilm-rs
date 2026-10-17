@@ -48,11 +48,22 @@ Preflash help must explain that, on negative-to-photographic-paper printing, it 
 
 FILM and PRINT must retain their existing chemistry and development controls. Developer exhaustion must keep its model-specific development meaning and capability conditions. It must not be renamed as a generic highlight or high-dynamic-range control. Profile and route feedback must identify unsupported or inactive controls without clearing stored values or fabricating model support. Film-development controls are inactive when converting a real captured negative; print-development controls remain available only on admitted printing routes. Finished RGB must mark material and Scanner controls inapplicable. Existing Scanner black and white points retain their medium-specific meaning; the GUI must not add duplicate generic levels.
 
-Material edits must use existing scanner calibration, inverse reconstruction, and automatic setup semantics. The GUI must not promise creative-reference isolation or add separate baseline and effective reference controls. Resets and section presets must retain existing ownership without new response resets or preset sections.
+Material edits must use existing scanner calibration, inverse reconstruction, and automatic setup semantics. The GUI must not promise creative-reference isolation or add separate baseline and effective reference controls. [Section reset](#section-reset) owns reset scope; this rule adds no response reset and no preset section.
 
-MAIN Output must expose Overall effect amount as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix), with its existing section menu. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output must not expose standalone lightness compression, an Output response section or preset, or a new Finished RGB output-processing switch. A negative-capture source must state that zero Overall effect amount returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
+MAIN Output must expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix), with its existing section menu. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output must not expose standalone lightness compression, an Output response section or preset, or a new Finished RGB output-processing switch. A negative-capture source must state that zero Simulation blend returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
 
 Loading retired settings must follow [Output boundary and retirement](../output-mix/spec.md#output-boundary-and-retirement). A rejected document must identify the exact offending path and leave the source document, active controls, accepted render identity, and retained output unchanged. The GUI must require explicit removal of a retired numeric lightness triplet without suggesting withdrawn response groups or automatically substituting preflash or chemistry. Withdrawn draft response groups and cyan-shift paths must fail normal unknown-field validation without aliases or migration.
+
+## Window layout
+
+The window has three regions and one header.
+
+- The viewer occupies the central region and is the primary surface. It presents the retained input, output, or paper back under [Viewer presentation](#viewer-presentation), and its footer owns the layer selector.
+- The control panel occupies the right region. It owns the page tabs, the control search, the tonal-distribution readout, and the primary actions. It is the only surface that edits parameter values.
+- The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser design](../presets/design.md).
+- The window header spans the full width above the three regions. It shows the current film profile, print profile, and workflow route as read-only text, and it is the only surface that shows the operation status.
+
+A region is a layout slot, not a page. A control belongs to exactly one region, and a persisted value keeps exactly one editable surface under [Labels and surfaces](#labels-and-surfaces).
 
 ## Optical and grain labels
 
@@ -72,7 +83,7 @@ FILM owns the film material. It holds Chemistry for film, Film base, Halation, C
 
 PRINT owns the print material. It holds Chemistry for print, Print base, Glare, and Enlarger diffusion.
 
-ADVANCED owns processing controls that most sessions never change. It holds Spectral upsampling, Magazine print color, Input gamut compress, and Output gamut compress.
+ADVANCED owns processing controls that most sessions never change. It holds Spectral upsampling, Input gamut compress, and Output gamut compress.
 
 CONFIG owns session configuration. It holds Diagnostics, GUI parameters, and Display.
 
@@ -100,6 +111,8 @@ The editor range is declared once per parameter path in a single table. The GUI 
 
 The viewer presents the retained input, the retained output, or the paper back. Its presentation state is viewer-only under the [GUI workflow design](design.md).
 
+The viewer presents an explicit empty state when no image is loaded. The empty state must name the import action and must not present a blank canvas. It is viewer-only and must not alter saved or exported pixels.
+
 The viewer footer owns the layer selector. It is the only surface that exposes it. CONFIG must not repeat it.
 
 The development animation is fixed viewer behaviour. It must not have an editor, and it must not be persisted as an editable control. An automatic parameter update skips it; an explicit Preview or Scan retains it.
@@ -107,37 +120,59 @@ The development animation is fixed viewer behaviour. It must not have an editor,
 The viewer must let the user select a display ICC profile. The selected profile applies to the disposable viewer raster only. Windows discovers the primary display profile when the user selects none. An explicitly selected profile applies on every platform that supports LittleCMS. Without a usable profile, the encoded sRGB preview is used directly.
 
 The viewer must expose a tonal-distribution readout of the retained output. It must be viewer-only: it must not alter saved or exported pixels.
-- The readout is a fixed strip at the top of the control panel, above the tab row. It is co-visible with the controls, does not occlude the image, and does not compete for width with the 420px panel. It is default-on, collapsible, and its visibility state is persisted. It is viewer-only and never affects saved or exported pixels.
+- The readout is a fixed strip at the top of the control panel, above the tab row. It is co-visible with the controls, does not occlude the image, and does not increase the control panel width. It is default-on, collapsible, and its visibility state is persisted. It is viewer-only and never affects saved or exported pixels.
 
 The readout must derive from the retained output. It must not require a second render.
 
 An empty or absent output must present an explicit empty state instead of a blank or broken readout.
 
-## Deleted surfaces
+## Experimental controls
 
-The GUI must not expose these controls. Their parameters remain valid document fields where a specification owns them.
+The following controls carry an experimental marker. The marker is a UI hint; it does not change the parameter's behavior or validation. [GUI presentation](../gui-presentation/spec.md#markers) owns the marker's presentation.
 
-- The `print illuminant` selector. The GUI fixes the print illuminant to the bundled value. The parameter remains a document field.
-- The input gamut-compression algorithm selector. The GUI fixes the input algorithm to `xy`. The parameter remains a document field.
-- The Spektra `rms granularity` control. The Spektra stage does not read it.
-- The `Experimental` section, including its channel-swap controls. A channel swap is a quality-control operation, not a GUI control.
+- `print illuminant` selector — MAIN → Enlarger
+- Input gamut-compression algorithm selector — ADVANCED → Input gamut compress
+- Spektra `rms granularity` — FILM → Grain
+- `film_channel_swap`, `print_channel_swap` — FILM → Convert
 
 The channel-swap validator must reject a non-permutation. A value such as `[0, 0, 0]` currently passes validation and silently duplicates one density channel while dropping the other two. The shared renderer applies the swap to `profile.data.channel_density`, so a non-permutation corrupts the profile at render time. The validator must require exactly three indices in `0..2` that form a permutation of `0, 1, 2`.
-- A `reveal` or `crossfade` editor.
 
 The GUI must not present a selector that offers one choice.
 
 A parameter that no control can change and that no pipeline stage reads must not own a GUI section under the [preset section rule](../presets/design.md).
 
+## Section reset
+
+Every parameter section presents a reset on its header, under [GUI presentation](../gui-presentation/spec.md#section-headers). A reset restores the factory value of every parameter that section presents, and changes nothing outside that section.
+
+The factory value of a parameter is the value the validated factory state projects. A parameter that only the runtime model carries — a grain engine and its engine-specific group among them — keeps a factory value and therefore a reset target, even though no persisted section holds it.
+
+One section-to-parameter table maps each section to the parameters it presents. That table is the only source of a section's reset scope. A section's parameter set is not derived from the numeric range table, which holds numeric parameters only.
+
+The existing Output section owns its mix reset to 1, and the Enlarger section follows its existing scope. This section adds no response reset and no preset section.
+
+## Control search
+
+The GUI must expose a search box at the top of the control panel. The search filters the controls of the parameter sections on the current tab by label.
+
+- The search box is a single-line text field, always visible above the tab content.
+- Filtering is case-insensitive substring match against the control label.
+- A control whose label does not match the filter must not appear while the filter is not empty.
+- A section with a matching control shows the section title and its matching controls, also when the section or one of its sub-sections is collapsed.
+- A section without a matching control must not appear.
+- Surfaces outside the parameter sections — import file selection, export options, profiles, the viewer, and GUI settings — keep their normal layout.
+- The filter is transient UI state. It is not persisted and does not affect parameter values.
+- An empty filter must restore the normal panel layout, so no control is hidden by the search.
+
 ## Labels and surfaces
 
 A label must name the current product concept. A label must not name a removed implementation, a development tool, or a file format of a former dependency.
 
-An operation status must appear on exactly one surface. It must be short and must describe the last accepted operation, under the [telemetry status rule](../telemetry/spec.md#local-surfaces).
+An operation status must appear on exactly one surface, the window header. It must be short and must describe the last accepted operation, under the [telemetry status rule](../telemetry/spec.md#local-surfaces).
 
 A control that changes a persisted value must be reachable from the GUI. A persisted value with no control, no pipeline consumer, and no owning specification must be removed from the document.
 
 Two controls that edit the same persisted value must not both be editable. When two surfaces must show one value, one is read-only.
 
-Two different parameters that share a label must carry a qualifier that distinguishes them.
+Two different parameters that share a label must carry a qualifier that distinguishes them. A qualifier that names the owning concept satisfies this rule; a section title alone does not, because rows share one label column across a whole page.
 

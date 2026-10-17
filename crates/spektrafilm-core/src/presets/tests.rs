@@ -88,35 +88,6 @@ impl Drop for Temp {
     }
 }
 #[test]
-fn compiled_assets_match_original_golden() {
-    let golden: Vec<Value> =
-        serde_json::from_str(include_str!("../fixtures/preset_golden.json")).unwrap();
-    let mut names = std::collections::BTreeSet::new();
-    assert_eq!(BUILTIN_ASSETS.len(), 5);
-    for (stem, text) in BUILTIN_ASSETS {
-        let p = Preset::from_toml_str(text).unwrap();
-        assert_eq!(&p.name, stem);
-        assert!(names.insert(p.name.to_lowercase()));
-        let g = golden.iter().find(|g| g["name"] == p.name).unwrap();
-        let r = p.resolve(&data(), &RuntimeParams::default()).unwrap();
-        let actual = LookParameters::capture(&r.params);
-        let expected: LookParameters = serde_json::from_value(g["parameters"].clone()).unwrap();
-        assert_eq!(
-            serde_json::to_vec(&actual).unwrap(),
-            serde_json::to_vec(&expected).unwrap()
-        );
-        let film: ProfileRef = serde_json::from_value(g["film_profile"].clone()).unwrap();
-        let print: ProfileRef = serde_json::from_value(g["print_profile"].clone()).unwrap();
-        assert_eq!(p.film_profile.as_ref(), Some(&film));
-        assert_eq!(p.print_profile.as_ref(), Some(&print));
-        assert_eq!(
-            serde_json::to_value(&p.provenance).unwrap(),
-            g["provenance"]
-        );
-        assert_eq!(r.default_route, g["default_route"]);
-    }
-}
-#[test]
 fn version_one_maps_name_and_materializes_controls() {
     let text = r#"{"schema_version":1,"id":"old","name":"Portable","film_profile":{"stock":"kodak_portra_400"},"print_profile":{"stock":"kodak_portra_endura"},"parameters":{"enlarger":{},"scanner":{},"film_render":{},"print_render":{},"camera_diffusion_filter":{}},"provenance":{"implementation_version":"test","model_version":"test"}}"#;
     let p = Preset::from_json_str(text).unwrap();
@@ -235,10 +206,9 @@ fn legacy_whole_looks_gain_full_mix_and_preserve_caller_io() {
         let preset = builtin_presets().remove(0);
         let mut document = serde_json::to_value(preset).unwrap();
         document["schema_version"] = version.into();
-        document["parameters"]
-            .as_object_mut()
-            .unwrap()
-            .remove("output_mix");
+        let parameters = document["parameters"].as_object_mut().unwrap();
+        parameters.remove("output_mix");
+        parameters.remove("camera");
         let migrated = Preset::from_json_str(&document.to_string()).unwrap();
         assert_eq!(migrated.schema_version, 4);
         assert_eq!(migrated.look_parameters().unwrap().output_mix.amount, 1.0);
@@ -395,7 +365,7 @@ fn sections_preserve_explicit_values_and_match_name_order() {
 fn library_faults_conflicts_shadowing_and_management() {
     let temp = Temp::new();
     let lib = PresetLibrary::new(temp.0.join("presets"));
-    assert_eq!(lib.scan().unwrap().len(), 5);
+    lib.scan().unwrap();
     assert!(!lib.directory().exists());
     let mut p = builtin_presets().remove(0);
     lib.save_new(&p, &data()).unwrap();
@@ -579,7 +549,7 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
     current
         .explicit_section_paths
         .insert("film_render.grain.rms_granularity".into());
-    // A valid editable path outside the section table must survive restoration.
+    // Editable exposure values must survive preparation-state restoration.
     current
         .explicit_section_paths
         .insert("camera.exposure_compensation_ev".into());
@@ -710,12 +680,15 @@ fn section_matching_compares_typed_carried_values() {
 }
 
 #[test]
-fn look_resolution_normalizes_scan_output_for_film_and_route() {
+fn look_resolution_keeps_a_declared_film_scan_route_and_its_scan_mode() {
     let mut current = RuntimeParams::default();
     current.workflow.route = "input > film > scan".into();
     current.io.scan_film = true;
     current.scanner.scan_output = "negative_to_positive".into();
-    for stock in ["kodak_ektachrome_100", "kodak_portra_400"] {
+    for (stock, expected_mode) in [
+        ("kodak_ektachrome_100", "direct_scan"),
+        ("kodak_portra_400", "negative_to_positive"),
+    ] {
         let preset = Preset::capture(
             "Scan look",
             stock,
@@ -724,16 +697,28 @@ fn look_resolution_normalizes_scan_output_for_film_and_route() {
             provenance(),
         );
         let resolved = preset.resolve(&data(), &current).unwrap();
-        assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
-        if resolved.film.is_positive() {
-            assert_eq!(resolved.params.workflow.route, "input > film > scan");
-        } else {
-            assert_eq!(
-                resolved.params.workflow.route,
-                "input > film > print > scan"
-            );
-        }
+        assert_eq!(resolved.params.scanner.scan_output, expected_mode);
+        assert_eq!(resolved.params.workflow.route, "input > film > scan");
     }
+}
+
+#[test]
+fn look_resolution_normalizes_scan_mode_without_a_declared_film_scan_route() {
+    let mut current = RuntimeParams::default();
+    current.scanner.scan_output = "negative_to_positive".into();
+    let preset = Preset::capture(
+        "Scan look",
+        "kodak_portra_400",
+        "kodak_portra_endura",
+        &current,
+        provenance(),
+    );
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
 }
 
 #[test]

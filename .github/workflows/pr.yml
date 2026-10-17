@@ -1,23 +1,24 @@
 name: PR checks
 
+# Pull request gate only, fast by design: formatting, Python cache checks, and
+# the pure-math test profile. The full verification gate and the three-platform
+# package build run post-merge in ci.yml; formal releases run from release.yml
+# on version tags. See docs/building.md.
+
 on:
   pull_request:
     branches: [main-0.3.4]
-  push:
-    branches: [main-0.3.4]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   pr:
     name: PR lightweight
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -47,115 +48,6 @@ jobs:
           tool: just
       - name: Run fast PR gate with evidence
         run: just verify-pr "$RUNNER_TEMP/verification"
-      - name: Preserve verification evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: verification-evidence
-          path: ${{ runner.temp }}/verification
-          if-no-files-found: error
-
-  main:
-    name: Main full verification
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    env:
-      OPENBLAS_NUM_THREADS: '1'
-      RAYON_NUM_THREADS: '2'
-      CARGO_INCREMENTAL: '0'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Identify Rust cache environment
-        id: rust-environment
-        run: echo "version=$(rustc -V | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-      - name: Restore Rust workspace cache
-        id: rust-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rust-verification-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}-${{ github.sha }}
-          # The lock/Cargo.toml hash in the first restore key makes any
-          # dependency change a total cache miss (measured: a 0s restore for the
-          # 084be533 main run, then 29m07s of cold dependency build). The second
-          # key matches the newest cache for the same toolchain, so cargo only
-          # rebuilds the delta of the changed lock file.
-          restore-keys: |
-            rust-verification-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}-
-            rust-verification-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: '3.13'
-          enable-cache: false
-      - name: Configure native library paths
-        run: |
-          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/libraw-022/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/libraw-022/lib" >> "$GITHUB_ENV"
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config curl ca-certificates \
-            libgtk-3-dev libudev-dev libxkbcommon-dev \
-            liblensfun-dev libexiv2-dev libglib2.0-dev libopenimageio-dev \
-            libjpeg-dev zlib1g-dev libopenblas-dev
-      - name: Install software GPU for full verification
-        if: github.event_name != 'pull_request'
-        run: sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
-      - name: Cache pinned LibRaw
-        id: libraw
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/libraw-022
-          key: libraw-0.22.0-ubuntu-24.04-${{ runner.arch }}-v1
-      - name: Build pinned LibRaw 0.22.0
-        if: steps.libraw.outputs.cache-hit != 'true'
-        working-directory: ${{ runner.temp }}
-        run: |
-          curl -fsSL --retry 3 -o LibRaw-0.22.0.tar.gz \
-            https://www.libraw.org/data/LibRaw-0.22.0.tar.gz
-          echo "1071e6e8011593c366ffdadc3d3513f57c90202d526e133174945ec1dd53f2a1  LibRaw-0.22.0.tar.gz" | sha256sum -c -
-          tar -xzf LibRaw-0.22.0.tar.gz
-          cd LibRaw-0.22.0
-          ./configure --prefix="$RUNNER_TEMP/libraw-022" --disable-static --disable-examples
-          make -j"$(nproc)"
-          make install
-      - name: Install just
-        uses: taiki-e/install-action@v2
-        with:
-          tool: just
-      - name: Restore and refresh lightweight math cache
-        uses: actions/cache@v4
-        with:
-          path: target/pr-lightweight
-          key: pr-math-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', 'crates/spektrafilm-math/Cargo.toml') }}-${{ github.sha }}
-          restore-keys: |
-            pr-math-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', 'crates/spektrafilm-math/Cargo.toml') }}-
-            pr-math-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-
-      - name: Warm lightweight math cache for subsequent PRs
-        env:
-          CARGO_TARGET_DIR: target/pr-lightweight
-          CARGO_PROFILE_DEV_DEBUG: '0'
-          CARGO_PROFILE_TEST_DEBUG: '0'
-        run: just ci-pr
-      - name: Run full main gate with evidence
-        run: just verify "$RUNNER_TEMP/verification"
-      - name: Save main Rust workspace cache
-        # `always()` retains a partially warmed `target` after a cancelled or
-        # failed gate, so the next main run restores it instead of rebuilding
-        # from scratch; an exact cache hit still skips the duplicate save.
-        if: always() && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - name: Preserve verification evidence
         if: always()
         uses: actions/upload-artifact@v4

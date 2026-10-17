@@ -258,6 +258,8 @@ def cancel_export(driver, source, destination):
     driver.require_export_in_flight('Cancel')
     driver.xd('mousemove', '--window', driver.window, int(left + 20), int(top + height / 2))
     driver.xd('click', 1)
+    driver.wait_text(r'Cancelling export|Export cancel(?:ed|led)',
+                     'cancel-request-accepted', timeout=15)
     driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=240)
     require(not destination.exists(), 'Cancelled export published output')
     driver.records.append({'cancel_output_absent': True})

@@ -42,8 +42,3 @@ pub fn data_dir_candidates() -> Vec<PathBuf> {
     }
     candidates
 }
-
-/// First existing candidate from [`data_dir_candidates`].
-pub fn locate_data_dir() -> Option<PathBuf> {
-    data_dir_candidates().into_iter().find(|path| path.is_dir())
-}

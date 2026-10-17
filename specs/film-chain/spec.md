@@ -2,15 +2,18 @@
 
 ## Contract
 
-- Film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine print color entry-point contract](../magazine-print-color/spec.md#enablement).
+- Film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine finishing entry-point contract](../magazine-finishing/spec.md#enablement).
 - A photographic print route must provide a photographic print profile.
-- Optional magazine finishing must satisfy the [Magazine print color](../magazine-print-color/spec.md) contract. It must not determine base workflow topology.
+- Optional magazine finishing must satisfy the [Magazine finishing](../magazine-finishing/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path is: source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → destination color transform and encoding → scanner-domain effects (including Procedural grain) → optional magazine finishing → output handoff.
-- [Material controls and output composition](../material-response/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
+- [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
+- A profile's `hanatos2025_adaptation_window_params` and `hanatos2025_adaptation_surface_params` are **conditional fields** of a filming-stage material. A `stage = printing` material — photographic paper and motion-picture print film — does not convert an encoded input to a film exposure, so it carries neither field and must not be selected as a film.
+- A filming-stage material whose `hanatos2025_adaptation_window_params` is absent runs the RGB-to-exposure conversion **without the sensitivity-adaptation window**. The conversion keeps white balance but models no ultraviolet or infrared cutoff, so that material's spectral response is idealized. The run must report the downgrade with the material identity instead of downgrading silently.
+- A filming-stage material that carries `hanatos2025_adaptation_surface_params` runs the log-exposure correction surface when the look enables it. An absent surface field runs no surface correction.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
-- Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). CPU f64 remains the numerical reference; GPU execution must cover the selected chain without replacing its model.
+- Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). GPU execution must cover the selected chain without replacing its model.
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
 
@@ -32,7 +35,7 @@ The [Digital Reference contract](digital-reference/spec.md) defines a common ref
 2. GUI controls must display `Preserve medium polarity` for `direct_scan`, `Negative to positive` for `negative_to_positive`, and `Negative conversion method` for `scanner.negative_conversion_method`.
 3. Replacing the removed value with `negative_to_positive` must preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls. Verify density, separable, coupled, direct-negative, reversal-film, and paper paths with the same executable precision.
 4. Removed-value rejection must occur before output publication. A failed GUI import must retain the accepted parameters and image.
-5. Conversion telemetry must identify stage `negative_to_positive` and its actual executor under [Telemetry](../telemetry/metrics.md#effective-configuration). Selecting this mode must not require a CPU reason or a resident decline.
+5. Conversion telemetry must identify stage `negative_to_positive` and its actual executor under [Telemetry](../telemetry/metrics/spec.md#effective-configuration). Selecting this mode must not require a CPU reason or a resident decline.
 
 ## Scan medium and scanner controls
 
@@ -54,7 +57,7 @@ The [Digital Reference contract](digital-reference/spec.md) defines a common ref
   slide film scan must not expose them. See
   [Direct negative-film scan output](#direct-negative-film-scan-output).
 - An appearance applied to a completed paper or film scan belongs to finishing. Existing exposure and development controls belong to their material stage. The optional Fotufilm-derived scanner finish remains a film-scan treatment.
-- Scanner calibration, inverse curves, point ranges, correction references, and automatic setup retain their existing dependencies on profile and development settings. Material-control simplification must not add a second reference model or alter the real captured-negative recovery solve.
+- Scanner calibration, inverse curves, point ranges, correction references, and automatic setup retain their existing dependencies on profile and development settings. Material controls must not add a second reference model or alter the real captured-negative recovery solve.
 - The product may model a scanner receiver response. A receiver profile must identify its spectral response, reference levels, source, and calibration status.
 
 ## Scan optics and print viewing glare
@@ -71,10 +74,9 @@ Unsharp mask is digital scan sharpening, not lens resolution. It remains downstr
 
 The historical direct-scan sequence that blurs after output gamut processing must not remain as a compatibility mode. All admitted scan routes must obey [Scan optics and print viewing glare](#scan-optics-and-print-viewing-glare). Parameter names, units, and zero-blur meaning remain unchanged. Nonzero blur on a previously late-blur path may intentionally change pixels even with unchanged material settings and full output amount.
 
-The implementation must identify the new ordering in its render/model version and user-facing change notes. Recipe replay must report the model version used and must not claim historical pixel identity. It must not silently rescale blur or scanner points to emulate the old order. Existing before/after budgets and photographic evidence must isolate this cutover from preflash branch separation and output mixing.
+The implementation must identify the new ordering in its render/model version. Recipe replay must report the model version used and must not claim historical pixel identity. It must not silently rescale blur or scanner points to emulate the old order.
 
-The [Print exposure composition](../material-response/design.md#print-exposure-composition) fixes the print optical boundary. Separating a uniform preflash must preserve the old result within its numerical budget where the old linear constant-preserving operator was equivalent, including existing exposure gains and finite-exposure floors. This separation is not a general exemption from numerical preservation.
-
+The [Print exposure composition](../output-mix/design.md#print-exposure-composition) fixes the print optical boundary and owns the preflash-separation equivalence conditions.
 
 ## Scanner receiver and interpretation
 
@@ -85,7 +87,7 @@ The [Print exposure composition](../material-response/design.md#print-exposure-c
 - `scanner.negative_conversion_method` selects `density`, `separable`, `coupled`, or `digital_reference` when `scanner.scan_output=negative_to_positive`. `density` is the default. The first three values name real scanner operations. `digital_reference` names the modeled convention; the GUI must list it after the real methods and keep its `(modeled)` label. The matched receiver, controls, route restrictions, and reference response for `digital_reference` follow the [Digital Reference contract](digital-reference/spec.md).
 - `density` reads record densities through the film's own monotone characteristic curves. It acquires no receiver capture and must produce identical output for identical record densities and scanner controls, whatever `scanner.receiver_profile` selects.
 - `separable` uses the per-channel monotone inverse defined by [Direct negative-film scan output](#direct-negative-film-scan-output).
-- `coupled` uses a three-channel inverse of the resolved film, receiver, and output response. It must be prepared once per render configuration and evaluated per pixel through a finite lookup table or an equivalent bounded interpolation structure.
+- `coupled` uses a three-channel inverse of the resolved film, receiver, and output response. It must be prepared once per render configuration and evaluated with bounded per-pixel work.
 - A coupled inverse must use the CPU f64 path as its reference. It must preserve finite endpoints, bounded output, and continuous behavior at the film toe, mid-range, and shoulder. It must not run an iterative solver per image pixel.
 - `scanner.auto_setup` selects `off` or `per_frame`. `off` is the default. `per_frame` derives scanner exposure, channel balance, and bounded contrast placement from the full input before crop and resize.
 - Per-frame setup may use image measurements to derive scanner controls. It must not derive or replace the receiver response, film profile, or positive calibration from image content.
@@ -95,14 +97,6 @@ The [Print exposure composition](../material-response/design.md#print-exposure-c
 - Scanner finishing runs after negative conversion and before output gamut compression, unsharp masking, transfer encoding, and output handoff. It must not run on a direct negative output.
 - Scanner finishing must be independently disableable from the receiver profile and negative conversion. Disabling it must return the converted image before scanner finishing, subject to the shared output stages.
 - Receiver profiles, negative conversion methods, per-frame setup, and scanner finishes must be serialized in complete GUI state and render recipes. Preset documents may carry only the scanner controls allowed by the [preset specification](../presets/spec.md#look-ownership), with receiver and finish provenance retained when present. An unavailable profile or invalid combination must fail before output publication.
-
-## Print exposure mode
-
-- `enlarger.print_exposure_mode` selects `manual` or `auto`. `auto` is the default.
-- `auto` normalizes the print exposure so the developed midgray density prints to the paper midgray, and follows camera exposure compensation.
-- `manual` applies `enlarger.print_exposure` without midgray normalization.
-- `settings.print_exposure_ev_tracking` selects `follow_mode` (default), `never`, or `always`. `never` removes camera exposure compensation from `auto`. `always` applies the relative compensation factor in `manual`. It must not change any other stage.
-- The legacy `enlarger.normalize_print_exposure` and `enlarger.print_exposure_compensation` leaves must not appear in runtime models, editable paths, discovery, GUI, or new documents. Only a versioned migration maps them: both true to `auto`, both false to `manual`, normalization without compensation to `auto` with `never`, and compensation without normalization to `manual` with `always`. The mapping must preserve rendered pixels.
 
 ## Film-scan black and white points
 
@@ -176,13 +170,21 @@ The [Print exposure composition](../material-response/design.md#print-exposure-c
 - `negative_to_positive` rejects scanner white/black correction and active Procedural grain.
   Its execution follows [GPU execution](../gpu-execution/spec.md#backend-selection); conversion selection must not force CPU.
 
+## Print exposure mode
+
+- `enlarger.print_exposure_mode` selects `manual` or `auto`. `auto` is the default.
+- `auto` normalizes the print exposure so the developed midgray density prints to the paper midgray, and follows camera exposure compensation.
+- `manual` applies `enlarger.print_exposure` without midgray normalization.
+- `settings.print_exposure_ev_tracking` selects `follow_mode` (default), `never`, or `always`. `never` removes camera exposure compensation from `auto`. `always` applies the relative compensation factor in `manual`. It must not change any other stage.
+- The legacy `enlarger.normalize_print_exposure` and `enlarger.print_exposure_compensation` leaves must not appear in runtime models, editable paths, discovery, GUI, or new documents. Only a versioned migration maps them: both true to `auto`, both false to `manual`, normalization without compensation to `auto` with `never`, and compensation without normalization to `manual` with `always`. The mapping must preserve rendered pixels.
+
 ## Conversion control naming acceptance
 
 1. Discovery, CLI help, effective parameter reports, saved presets, recipes, and GUI state must emit the canonical paths `scanner.negative_conversion_method`, `scanner.conversion_brightness_ev`, `scanner.conversion_balance_ev`, `scanner.conversion_contrast`, `scanner.conversion_dmax`, and `enlarger.print_exposure_mode`.
 2. GUI display names must use the real operation words: negative conversion method, brightness, balance, contrast, maximum density, and print exposure mode.
 3. Replacing a legacy path with its canonical path must preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls.
 4. The legacy `scanner.positive_interpretation`, `scanner.positive_density_ev`, `scanner.positive_balance_ev`, `scanner.positive_contrast`, and `scanner.positive_dmax` paths, and the legacy `enlarger.normalize_print_exposure` and `enlarger.print_exposure_compensation` leaves, must fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes. Only the versioned preset migration and the versioned complete GUI state migration may map them.
-5. Legacy rejection must occur before output publication. A failed GUI import must retain the accepted parameters and image.
+5. Rejection timing and failed-import retention follow [Scan output naming acceptance](#scan-output-naming-acceptance).
 6. The implementation must identify the rename in its render/model version. Readers must not alias legacy paths at the current schema version.
 
 ## Scanner acceptance

@@ -16,6 +16,9 @@ precision-f64 = [
     "spektrafilm-raw/precision-f64",
 ]
 gui-snapshots = ["egui_kittest/wgpu"]
+# Exercise the pinned Kodak DC50 RAW fixture. The fixture is not redistributed,
+# so this stays out of the default gate; `just gui-raw` opts in.
+gui-raw = []
 
 [dependencies]
 spektrafilm-core.workspace = true

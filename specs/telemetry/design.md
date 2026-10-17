@@ -35,6 +35,8 @@ Full-GPU scope and acceptance follow the [GPU execution contract](../gpu-executi
 
 Host durations use a monotonic clock. Each observation must name its boundary and parent. Phase and stage durations are inclusive wall durations; backend batch durations nest within stages. Nested durations must not be summed as if they were disjoint. Cross-thread overlaps must remain visible rather than be converted into a serial total.
 
+Each host observation must derive its start offset and duration from the same captured start instant. Computing the offset must not read the clock again, because scheduling delay between readings would inflate the reconstructed end time.
+
 A backend batch covers host preparation, command submission, completion wait, and result materialization. Host preparation can include parameter conversion, cache lookup, resource creation, upload calls, and command encoding. It is not CPU utilization. Submit-to-map-ready includes submission overhead, queue contention, device work, staging copies, driver scheduling, callback scheduling, and host wakeup. It is not kernel time. Materialization covers mapped-range access, CPU copying, scalar conversion, result construction, and unmap work.
 
 At compute-device creation, the backend must request adapter-supported `TIMESTAMP_QUERY` as an optional capability regardless of current collection mode. It must allocate query resources and write timestamps only for operations captured in GPU timing mode. This allows session mode changes without recreating the active device. Each Adapter object must receive at most one device request. If optional-feature device creation fails, initialization must request one fresh Adapter with the same selection options and make one baseline device request using the existing feature and limit policy. A fresh adapter request does not guarantee the same physical device; the report must identify the final adapter actually used. This initialization policy must be identical in all collection modes and must not broaden adapter selection or required timestamp features. Failed baseline initialization retains the existing backend-unavailable behavior. Timing must remain unavailable as `feature_request_failed` after a successful baseline request. Summary mode and off mode must use unchanged image commands.
@@ -59,7 +61,7 @@ Requested GPU buffer bytes describe API resource sizes. They do not describe com
 
 ## Terminal records and overhead
 
-The frontend finalizes the record at the [operation terminal boundary](metrics.md#operation-and-phase-wall-time). CPU or GPU failure may leave partial observations; those values must identify their completed scope. Telemetry persistence errors must not rewrite the operation outcome. Preview completion ends at the presentation handoff, not at physical display scanout.
+The frontend finalizes the record at the [operation terminal boundary](metrics/spec.md#operation-and-phase-wall-time). CPU or GPU failure may leave partial observations; those values must identify their completed scope. Telemetry persistence errors must not rewrite the operation outcome. Preview completion ends at the presentation handoff, not at physical display scanout.
 
 Detailed reports must use stable schema fields and stable enumerated categories. Paths and raw exceptions must not enter those fields. Operation and revision identifiers are correlation fields for local reports and traces; they must not become metric labels. Device names, stock identifiers, dimensions, seeds, and arbitrary user strings must not become aggregate metric labels.
 

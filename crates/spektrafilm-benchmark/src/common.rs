@@ -10,61 +10,82 @@ use std::{
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Where an offending value lives: the file and its JSON Pointer within it. The
+/// two are independent because a caller can know the file without being able to
+/// name the value exactly.
+#[derive(Debug, Clone, Default)]
+struct Location {
+    file: Option<String>,
+    pointer: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Error {
     pub code: String,
     pub message: String,
+    pub path: Option<String>,
     pub boundary: Option<String>,
-    /// The file the offending value lives in, when one is known.
-    pub file: Option<String>,
-    /// The RFC 6901 JSON Pointer of the offending value, when it can be named
-    /// exactly. A pointer that would only approximate the value is omitted.
-    pub pointer: Option<String>,
+    /// The file the offending value lives in and the JSON Pointer (RFC 6901) of
+    /// that value, when the error can name both exactly. Boxed as one allocation
+    /// so adding the pair does not enlarge the `Result` error variant, which
+    /// clippy bounds.
+    location: Option<Box<Location>>,
 }
 impl Error {
+    /// Build an `Error` from any `Display` value, so a nested error keeps its
+    /// own text while carrying the boundary's stable code.
+    pub fn with_message(code: impl Into<String>, message: impl fmt::Display) -> Self {
+        Self::new(code, message.to_string())
+    }
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
+            path: None,
             boundary: None,
-            file: None,
-            pointer: None,
+            location: None,
         }
+    }
+    pub fn at(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+    /// Name the file the offending value lives in.
+    pub fn file(mut self, file: impl Into<String>) -> Self {
+        self.location
+            .get_or_insert_with(Box::default)
+            .file = Some(file.into());
+        self
+    }
+    /// Name the JSON Pointer (RFC 6901) of the offending value. A pointer that
+    /// cannot name the value exactly is omitted rather than approximated.
+    pub fn pointer(mut self, pointer: impl Into<String>) -> Self {
+        self.location
+            .get_or_insert_with(Box::default)
+            .pointer = Some(pointer.into());
+        self
     }
     pub fn boundary(mut self, boundary: impl Into<String>) -> Self {
         self.boundary = Some(boundary.into());
         self
     }
-    /// The file the offending value lives in.
-    pub fn file(mut self, file: impl Into<String>) -> Self {
-        self.file = Some(file.into());
-        self
-    }
-    /// The RFC 6901 JSON Pointer of the offending value.
-    pub fn pointer(mut self, pointer: impl Into<String>) -> Self {
-        self.pointer = Some(pointer.into());
-        self
-    }
     pub fn to_value(&self) -> Value {
         let mut value = json!({"code":self.code,"message":self.message});
+        if let Some(path) = &self.path {
+            value["path"] = json!(path);
+        }
         if let Some(boundary) = &self.boundary {
             value["boundary"] = json!(boundary);
         }
-        if let Some(file) = &self.file {
-            value["file"] = json!(file);
-        }
-        if let Some(pointer) = &self.pointer {
-            value["pointer"] = json!(pointer);
+        if let Some(location) = &self.location {
+            if let Some(file) = &location.file {
+                value["file"] = json!(file);
+            }
+            if let Some(pointer) = &location.pointer {
+                value["pointer"] = json!(pointer);
+            }
         }
         value
-    }
-    /// Adopt an arbitrary error's message with a stable code.
-    ///
-    /// The instrument reports one structured error envelope; a failure from a
-    /// layer without a code still carries its message instead of being
-    /// replaced by a generic one.
-    pub fn with_message(code: impl Into<String>, message: impl fmt::Display) -> Self {
-        Self::new(code, message.to_string())
     }
 }
 impl fmt::Display for Error {
@@ -204,9 +225,8 @@ pub fn digest(value: &Value) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(canonical_json(value)?)))
 }
 pub fn sha256_file(path: &Path) -> Result<String> {
-    let mut input = fs::File::open(path).map_err(|e| {
-        Error::new("dependency_read", e.to_string()).file(path.display().to_string())
-    })?;
+    let mut input = fs::File::open(path)
+        .map_err(|e| Error::new("dependency_read", e.to_string()).at(path.display().to_string()))?;
     let mut hash = Sha256::new();
     let mut bytes = [0u8; 65536];
     loop {
@@ -232,7 +252,7 @@ pub fn destination_exists(path: &Path) -> Error {
             path.display()
         ),
     )
-    .file(path.display().to_string())
+    .at(path.display().to_string())
     .boundary("publication")
 }
 
@@ -348,7 +368,7 @@ pub fn create_destination(path: &Path) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::create_dir(path).map_err(|e| {
-        Error::new("publication_failure", e.to_string()).file(path.display().to_string())
+        Error::new("publication_failure", e.to_string()).at(path.display().to_string())
     })?;
     Ok(())
 }
@@ -499,7 +519,7 @@ impl Evidence {
                 "artifact_changed",
                 "Source changed while retaining evidence",
             )
-            .file(source.display().to_string()));
+            .at(source.display().to_string()));
         }
         let media_type = metadata
             .get("media_type")

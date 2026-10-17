@@ -6,13 +6,14 @@ use clap::{ArgMatches, Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 use spektrafilm_core::lut_baker::{BundleBuilder, BundleSpec, Topology};
 use spektrafilm_core::lut_delivery::{self, DeliveryOptions};
+use spektrafilm_core::lut_formats::LutFormat;
 use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::{lut_transport, profile};
 
 // Clap subcommands are built once at startup, outside hot paths.
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
-pub(crate) enum LutCommand {
+pub enum LutCommand {
     /// Bake a deterministic LUT bundle. CLI flags override a flat TOML BundleSpec.
     Build(BuildArgs),
     /// List sorted stock names or canonical color spaces and their short tags.
@@ -27,7 +28,7 @@ pub(crate) enum LutCommand {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
-pub(crate) enum ListKind {
+pub enum ListKind {
     Film,
     Print,
     Input,
@@ -39,7 +40,7 @@ pub(crate) enum ListKind {
 #[command(
     after_long_help = "Examples:\n  spektrafilm lut build build/lut_bundles --film kodak_portra_400 --print kodak_portra_endura --input vlog --output srgb\n  spektrafilm lut list film\n  spektrafilm lut list input\n  spektrafilm lut list target"
 )]
-pub(crate) struct BuildArgs {
+pub struct BuildArgs {
     /// Load flat BundleSpec fields, including gamut-compression tables, from TOML.
     #[arg(
         long = "from",
@@ -78,10 +79,20 @@ pub(crate) struct BuildArgs {
     /// Bundle delivery container.
     #[arg(long, value_parser = ["directory", "zip"], help_heading = "Delivery")]
     container: Option<String>,
+    /// LUT file format to emit; repeat for several. Defaults to cube, and a
+    /// camera target forces its strict lumix format.
+    #[arg(
+        long = "format",
+        value_name = "FORMAT",
+        value_parser = ["cube", "3dl", "hald_png"],
+        help_heading = "Delivery"
+    )]
+    formats: Vec<String>,
     /// Upstream input exposure stops (auto, native, null, or finite number).
     #[arg(
         long = "stops-above-midgray",
         value_name = "STOPS",
+        allow_negative_numbers = true,
         help_heading = "Bundle configuration"
     )]
     stops_above_midgray: Option<String>,
@@ -116,7 +127,7 @@ pub(crate) struct BuildArgs {
     data_dir: PathBuf,
 }
 
-pub(crate) fn run(command: LutCommand, matches: &ArgMatches) -> Result<()> {
+pub fn run(command: LutCommand, matches: &ArgMatches) -> Result<()> {
     let (_, matches) = matches.subcommand().expect("required lut subcommand");
     match command {
         LutCommand::Build(mut args) => {
@@ -149,6 +160,11 @@ fn load_bundle_spec(args: &BuildArgs) -> Result<BundleSpec> {
     } else {
         Map::new()
     };
+    if let Some(value) = args.stops_above_midgray.as_deref()
+        && value.parse::<f64>().is_ok_and(|stops| !stops.is_finite())
+    {
+        bail!("--stops-above-midgray must be auto, native, null, or a finite number: {value}");
+    }
     for (field, value) in [
         ("name", json!(args.name)),
         ("film_profile", json!(args.film)),
@@ -233,7 +249,16 @@ fn build(args: BuildArgs) -> Result<()> {
         .build(&args.data_dir, backend.as_ref())
         .map_err(anyhow::Error::msg)?;
     let out = args.out.join(&bundle.spec.name);
-    let mut meta = lut_delivery::write_bundle_files(&bundle, &out, &DeliveryOptions::default())?;
+    let formats = args
+        .formats
+        .iter()
+        .map(|name| LutFormat::from_name(name).map_err(anyhow::Error::msg))
+        .collect::<Result<Vec<_>>>()?;
+    let delivery = DeliveryOptions {
+        formats,
+        ..DeliveryOptions::default()
+    };
+    let mut meta = lut_delivery::write_bundle_files(&bundle, &out, &delivery)?;
     if bundle.spec.ocio_config {
         match spektrafilm_core::lut_ocio::emit(&out, &bundle, &meta)? {
             spektrafilm_core::lut_ocio::OcioEmission::Written(artifact) => {
@@ -339,7 +364,7 @@ fn list(kind: ListKind, data_dir: &Path) -> Result<()> {
 
 /// Compatibility export uses the canonical one-stage baker with encoded
 /// ProPhoto RGB input, encoded sRGB output, and the input's native linear scale.
-pub(crate) fn export_lut(
+pub fn export_lut(
     film_name: &str,
     paper_name: Option<&str>,
     resolution: u32,

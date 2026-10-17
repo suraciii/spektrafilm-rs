@@ -331,6 +331,7 @@ fn validate_observation_name(observation: &Observation) -> Result<(), Validation
         "output_mix",
         "negative_to_positive",
         "scanner_film_points",
+        "scanner_finish",
         "input_transfer",
         "output_transfer",
         "rgb_to_raw",

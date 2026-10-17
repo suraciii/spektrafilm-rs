@@ -829,7 +829,7 @@ mod tests {
         // `resolve_path` canonicalizes the source, so on macOS the temp dir
         // arrives as `/private/var/...` rather than the `/var/...` symlink.
         let expected = broken.canonicalize().unwrap();
-        assert_eq!(error.file.as_deref(), expected.to_str());
+        assert_eq!(error.to_value()["file"], json!(expected.to_str()));
         assert!(error.message.contains("broken"));
         assert!(!out.join("report.json").exists());
     }

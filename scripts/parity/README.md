@@ -66,7 +66,7 @@ Local verification on 2026-10-08: workspace tests passed (240 tests); native f32
 
 The subsequent V2 sky-stripe repair passed eight grain tests in both f32 and f64, the shader device check, profile inheritance checks, and all six render/export roundtrips. Final Noise host scale, half-effective Amount and Film Resolution behavior are included. A separate f64 CLI run exported and decoded a 768×512 synthetic sky TIFF with spatial grain residual RMS 0.00799 against grain disabled. These checks do not establish a fix for an unavailable original user photo or hardware-GPU performance.
 
-The public-control alignment passed nine grain tests in each precision, shader device validation, preset/Custom inheritance, and ten TIFF roundtrips per precision. Four GUI state tests passed separately. Native GUI scanning exercised Positive/Noise and preset-to-Custom inheritance with editable preset Amount. The isolated display did not open the Save state dialog; native state saving is not claimed for this run. Current CLI measurements and host dispatch provenance are recorded in [the public-control alignment evidence](../../docs/dehancer-grain-reverse-engineering.md#12-公开参数对齐2026-10-08).
+The public-control alignment passed nine grain tests in each precision, shader device validation, preset/Custom inheritance, and ten TIFF roundtrips per precision. Four GUI state tests passed separately. Native GUI scanning exercised Positive/Noise and preset-to-Custom inheritance with editable preset Amount. The isolated display did not open the Save state dialog; native state saving is not claimed for this run.
 
 Evidence, budgets and provenance live in
 [`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
@@ -83,6 +83,10 @@ The same tests run in the workspace test step of `just ci` and `just verify`.
 The tests use isolated state, image, and output files. They drive production
 controls and check scanner mode changes, numeric edits, rendering, state
 restoration, and image output.
+
+Render actions wait for pending state-load previews and worker jobs to drain
+before clicking the enabled production button. Parameter edits can supersede
+those previews; a click while the button is disabled does not request a render.
 
 Save and Export tests enter at the selected-path boundary. They use the same
 conversion, worker, and writer as the native dialog actions. These tests do not
@@ -359,7 +363,7 @@ target/release/spektrafilm-f64 process \
 
 `run_parity.py` automates exactly this invocation for every scenario.
 
-The generated legacy `rs_params.json` supplies both `io.input_color_space` and `io.input_cctf_decoding` from the scenario. These leaves declare the prepared raster samples without adding a `--set` source or changing the legacy numerical preparation. The package smoke and experimental runtime scripts also declare their linear sRGB inputs in legacy parameter files. See the [source declaration contract](../../specs/cli-parameters/spec.md#input-declaration).
+The generated legacy `rs_params.json` supplies both `io.input_color_space` and `io.input_cctf_decoding` from the scenario. These leaves declare the prepared raster samples without adding a `--set` source or changing the legacy numerical preparation. The package smoke and experimental runtime scripts also declare their linear sRGB inputs in legacy parameter files. See the [source declaration contract](../../specs/cli/spec.md#input-declaration).
 
 ## Interpretation rules
 
@@ -429,6 +433,16 @@ Exact zoom verification temporarily widens the window to 1560 pixels so the
 400% raster fits with the preset browser visible, then restores its dimensions.
 Paper-back readiness uses the selected layer in the viewer status overlay;
 OCR ordering of the layer name and zoom text does not determine readiness.
+Zoom and rotation geometry use the known colored Input raster, selected after
+the render completes. Processed Output can be nearly neutral; its dimensions
+and metadata are checked separately through render reports and decoded Export.
+White-padding verification waits for the requested white border before
+measuring pixel differences; an unrelated changed frame is not completion.
+Crossfade verification disables automatic preview while changing exposure,
+then clicks Preview to request the animated render.
+The Linux file chooser driver tracks its native window through closure and
+locates the primary action beside Cancel in the window's bottom button row.
+It does not treat the Open files read-only checkbox as an Open action.
 Numeric-entry acceptance uses native select-all, text entry, and Enter on each
 desktop platform.
 

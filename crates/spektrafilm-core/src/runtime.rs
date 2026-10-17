@@ -21,17 +21,6 @@ pub const MODEL_VERSION: &str = "conversion_language_v1";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
-/// Parameters accepted by the upstream-style selective soft-update path.
-#[derive(Debug, Clone, Default)]
-pub struct SoftUpdate {
-    pub exposure_compensation_ev: Option<f32>,
-    pub print_exposure: Option<f32>,
-    pub c_filter_neutral: Option<f32>,
-    pub m_filter_neutral: Option<f32>,
-    pub y_filter_neutral: Option<f32>,
-    pub film_density_curves: Option<Vec<Vec<f64>>>,
-    pub print_density_curves: Option<Vec<Vec<f64>>>,
-}
 /// Selects whether profile-specific defaults are applied when building a runtime.
 ///
 /// GUI edits use `PreserveUserEdits`; batch and LUT construction use
@@ -369,64 +358,6 @@ impl Runtime {
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
         self.pipeline = self.pipeline.with_params(params)?;
         Ok(self)
-    }
-
-    pub fn soft_update(&mut self, params: RuntimeParams) -> Result<(), String> {
-        self.update(params)
-    }
-    /// Apply only the controls permitted by upstream `soft_update`.
-    ///
-    /// Rebuilding the owned pipeline is deliberate: print-filter and density
-    /// changes affect calibration state, so retaining derived values would
-    /// produce stale output.
-    pub fn soft_update_fields(&mut self, update: SoftUpdate) -> Result<(), String> {
-        if update.film_density_curves.is_none() && update.print_density_curves.is_none() {
-            let mut params = self.pipeline.params.clone();
-            if let Some(value) = update.exposure_compensation_ev {
-                params.camera.exposure_compensation_ev = value;
-            }
-            if let Some(value) = update.print_exposure {
-                params.enlarger.print_exposure = value;
-            }
-            if let Some(value) = update.c_filter_neutral {
-                params.enlarger.c_filter_neutral = value;
-            }
-            if let Some(value) = update.m_filter_neutral {
-                params.enlarger.m_filter_neutral = value;
-            }
-            if let Some(value) = update.y_filter_neutral {
-                params.enlarger.y_filter_neutral = value;
-            }
-            return self.update(params);
-        }
-        let mut params = self.pipeline.params.clone();
-        if let Some(value) = update.exposure_compensation_ev {
-            params.camera.exposure_compensation_ev = value;
-        }
-        if let Some(value) = update.print_exposure {
-            params.enlarger.print_exposure = value;
-        }
-        if let Some(value) = update.c_filter_neutral {
-            params.enlarger.c_filter_neutral = value;
-        }
-        if let Some(value) = update.m_filter_neutral {
-            params.enlarger.m_filter_neutral = value;
-        }
-        if let Some(value) = update.y_filter_neutral {
-            params.enlarger.y_filter_neutral = value;
-        }
-        params.validate()?;
-        let mut film = self.pipeline.film.clone();
-        let mut print = self.pipeline.print.clone();
-        if let Some(curves) = update.film_density_curves {
-            film.data.density_curves = curves;
-        }
-        if let Some(curves) = update.print_density_curves {
-            print.data.density_curves = curves;
-        }
-        self.pipeline = Pipeline::new_with_spectral(film, print, params, &self.data_dir)?
-            .with_cancellation(self.cancellation.clone());
-        Ok(())
     }
 
     pub fn params(&self) -> &RuntimeParams {

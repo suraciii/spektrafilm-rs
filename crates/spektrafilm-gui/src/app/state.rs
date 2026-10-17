@@ -52,13 +52,8 @@ pub(crate) struct App {
     pub(crate) gui_tab: ui::GuiTab,
     pub(crate) output_color_space: String,
     pub(crate) output_cctf_encoding: bool,
-    pub(crate) last_render_ms: f32,
-    pub(crate) last_pipeline_build_ms: f32,
-    pub(crate) last_input_clone_ms: f32,
-    pub(crate) last_scale_ms: f32,
-    pub(crate) last_preview_ms: f32,
-    pub(crate) last_worker_total_ms: f32,
     pub(crate) status: String,
+    pub(crate) last_export_error: Option<String>,
     /// Controls changed since the latest submitted render snapshot.
     pub(crate) dirty: bool,
     pub(crate) dirty_since: Option<Instant>,
@@ -76,13 +71,19 @@ pub(crate) struct App {
     /// surfaces success/failure in `status` when the worker thread
     /// completes. Joined eagerly to release the thread.
     pub(crate) export_job: Option<ExportJob>,
+    /// Transient control-search filter. Not persisted.
+    pub(crate) filter: String,
+    /// Labels the control sections rendered last, keyed by section name. The
+    /// control search hides a section whose cache was recorded by a filtered
+    /// render and does not match.
+    pub(crate) section_labels:
+        std::collections::HashMap<String, crate::controls::SectionLabelCache>,
     /// In-flight Convert controller action. The epoch drops results made stale
     /// by later parameter edits or a newer action.
     pub(crate) calibration_job: Option<CalibrationJob>,
     pub(crate) calibration_epoch: u64,
     pub(crate) parameter_revision: u64,
     pub(crate) histogram: histogram::HistogramStrip,
-    pub(crate) right_panel_mode: Option<String>,
     pub(crate) compare_active: bool,
     pub(crate) compare_split: f32,
 }
@@ -149,7 +150,7 @@ impl App {
         let mut params = gui_state
             .runtime_params()
             .expect("validated GUI factory state");
-        normalize_scan_output(&mut params, film_medium);
+        normalize_scanner_selections(&mut params, film_medium);
         let film_dev_times = film_profile
             .as_ref()
             .map(|f| f.data.development_time.clone())
@@ -213,17 +214,12 @@ impl App {
             gui_tab: ui::GuiTab::default(),
             output_color_space: "sRGB".into(),
             output_cctf_encoding: true,
-            last_render_ms: 0.0,
-            last_pipeline_build_ms: 0.0,
-            last_input_clone_ms: 0.0,
-            last_scale_ms: 0.0,
-            last_preview_ms: 0.0,
-            last_worker_total_ms: 0.0,
             dirty_since: None,
             render_job: None,
             render_worker: RenderWorker::new(),
             export_job: None,
             status: startup_error.unwrap_or_else(|| String::from("Load an image to start.")),
+            last_export_error: None,
             dirty: false,
             #[cfg(target_os = "macos")]
             metal_colorspace_tagged: false,
@@ -231,9 +227,10 @@ impl App {
             calibration_epoch: 0,
             parameter_revision: 0,
             histogram: histogram::HistogramStrip::new(),
-            right_panel_mode: None,
             compare_active: false,
             compare_split: 0.5,
+            filter: String::new(),
+            section_labels: std::collections::HashMap::new(),
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
@@ -248,6 +245,8 @@ impl App {
         }
         app.viewer
             .restore_state(&app.gui_state.sections["rust"]["viewer"]);
+        app.histogram
+            .restore_state(&app.gui_state.sections["rust"]["histogram"]);
         app
     }
 
@@ -266,6 +265,7 @@ impl App {
             extras["rust"] = serde_json::json!({"version":1});
         }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
+        extras["rust"]["histogram"] = self.histogram.persistent_state();
         self.export_options.write_state(&mut extras);
         extras["rust"]["presets"] = serde_json::to_value(&self.presets.state)?;
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
@@ -287,7 +287,7 @@ impl App {
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         let film_medium = scan_medium(&film);
-        normalize_scan_output(&mut params, film_medium);
+        normalize_scanner_selections(&mut params, film_medium);
         self.film_name = state.film().to_owned();
         self.film_medium = film_medium;
         self.print_name = state.paper().to_owned();
@@ -319,6 +319,8 @@ impl App {
         }
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);
+        self.histogram
+            .restore_state(&self.gui_state.sections["rust"]["histogram"]);
         Ok(())
     }
 

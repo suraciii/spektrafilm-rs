@@ -94,13 +94,27 @@ pub fn save_profile(
         .ok_or_else(|| ProfileError::Validation("profile stock is missing".into()))?;
     stock.push_str(suffix);
     let path = data_dir.join("profiles").join(format!("{stock}.json"));
-    validate_profile(&saved)?;
-    std::fs::create_dir_all(path.parent().expect("profile path has parent"))
-        .map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
-    let json = serde_json::to_vec_pretty(&saved)
-        .map_err(|e| ProfileError::Serialize(path.display().to_string(), e))?;
-    std::fs::write(&path, json).map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+    save_profile_to(&path, &saved)?;
     Ok(path)
+}
+
+/// Save a profile to an explicit path, validating it first.
+///
+/// The parent directory is created when missing, and the profile is validated
+/// before anything is written.
+pub fn save_profile_to(path: &Path, profile: &Profile) -> Result<(), ProfileError> {
+    validate_profile(profile)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+    }
+    let json = serde_json::to_vec_pretty(profile)
+        .map_err(|e| ProfileError::Serialize(path.display().to_string(), e))?;
+    std::fs::write(path, json).map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+    Ok(())
 }
 
 /// Compatibility spelling for callers that used the upstream split API.

@@ -115,13 +115,9 @@ pub fn validate_report_destination(
             return Err(PersistenceError::ProtectedAlias);
         }
     }
-    if let Ok(metadata) = fs::metadata(path) {
-        for protected_path in protected {
-            if let Ok(protected_metadata) = fs::metadata(protected_path) {
-                if same_file(&metadata, &protected_metadata) {
-                    return Err(PersistenceError::ProtectedAlias);
-                }
-            }
+    for protected_path in protected {
+        if same_file(path, protected_path) {
+            return Err(PersistenceError::ProtectedAlias);
         }
     }
     Ok(ReportDestination {
@@ -195,20 +191,83 @@ fn lexical_absolute(path: &Path) -> Result<PathBuf, PersistenceError> {
 }
 
 #[cfg(unix)]
-fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+fn same_file(left: &Path, right: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
+    let (Ok(left), Ok(right)) = (fs::metadata(left), fs::metadata(right)) else {
+        return false;
+    };
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
+/// Stable file identity for Windows. The standard library's volume/file-index
+/// metadata accessors still require the unstable `windows_by_handle` feature, so
+/// the identity comes from the documented handle interface instead.
 #[cfg(windows)]
-fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    left.volume_serial_number() == right.volume_serial_number()
-        && left.file_index() == right.file_index()
+fn same_file(left: &Path, right: &Path) -> bool {
+    let (Some(left), Some(right)) = (handle_identity(left), handle_identity(right)) else {
+        return false;
+    };
+    left == right
+}
+
+#[cfg(windows)]
+fn handle_identity(path: &Path) -> Option<(u32, u64)> {
+    use std::ffi::c_void;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    #[allow(dead_code)] // Unused fields keep the platform layout.
+    struct ByHandleFileInformation {
+        file_attributes: u32,
+        creation_time: FileTime,
+        last_access_time: FileTime,
+        last_write_time: FileTime,
+        volume_serial_number: u32,
+        file_size_high: u32,
+        file_size_low: u32,
+        number_of_links: u32,
+        file_index_high: u32,
+        file_index_low: u32,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFileInformationByHandle(
+            handle: *mut c_void,
+            information: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    // Identity needs no data access: the standard library's Windows
+    // `fs::metadata` also opens with access mode 0 before querying the handle.
+    let file = fs::OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .ok()?;
+    let mut information = ByHandleFileInformation::default();
+    // SAFETY: `file` owns a live handle and `information` is writable storage of
+    // the exact layout `GetFileInformationByHandle` fills.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+    (ok != 0).then_some((
+        information.volume_serial_number,
+        (u64::from(information.file_index_high) << 32) | u64::from(information.file_index_low),
+    ))
 }
 
 #[cfg(not(any(unix, windows)))]
-fn same_file(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
+fn same_file(_left: &Path, _right: &Path) -> bool {
     false
 }
 

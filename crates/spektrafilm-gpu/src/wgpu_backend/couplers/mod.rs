@@ -522,7 +522,6 @@ impl DirState {
 
 #[cfg(all(test, feature = "wgpu-backend"))]
 mod tests {
-    use super::super::observation::TEST_DEVICE_LOCK;
     use super::*;
 
     #[repr(C)]
@@ -543,13 +542,7 @@ mod tests {
 
     #[test]
     fn dir_matmul_shader_matches_reference_math() {
-        let _guard = TEST_DEVICE_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(b) = WgpuBackend::new() else {
-            eprintln!("no GPU adapter; skipping");
-            return;
-        };
+        let b = crate::test_support::adapter();
         let density: Vec<f32> = vec![2.511903, 2.7011967, 0.26266688, 0.34336, 0.07575, 0.05212];
         let params = MatmulParams {
             n_pixels: 2,
@@ -612,13 +605,7 @@ mod tests {
 
     #[test]
     fn dir_matmul_shader_applies_donor_langmuir_on_masked_channels() {
-        let _guard = TEST_DEVICE_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(b) = WgpuBackend::new() else {
-            eprintln!("no GPU adapter; skipping");
-            return;
-        };
+        let b = crate::test_support::adapter();
         // Negative film at the acceptor, where the donor langmuir runs.
         let density: Vec<f32> = vec![0.4, 1.6, 2.4, 0.9, 0.2, 1.1];
         let donor_k = [1.0f32, 2.0, 1.0, 1.0];

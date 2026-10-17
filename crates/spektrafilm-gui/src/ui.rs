@@ -74,33 +74,11 @@ impl App {
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Save current to file").clicked()
-                && let Some(path) = self.chooser.save_file(
-                    self.file_dialog("state")
-                        .set_file_name("gui_state.json")
-                        .add_filter("JSON", &["json"]),
-                )
-            {
-                self.remember_dialog("state", &path);
-                let result = self.current_state().and_then(|s| s.save(&path));
-                self.status = match result {
-                    Ok(()) => format!("Saved GUI state to {}", path.display()),
-                    Err(e) => format!("State save error: {e:#}"),
-                };
+            if ui.button("Save current to file").clicked() {
+                self.save_state_with_dialog();
             }
-            if ui.button("Load from file").clicked()
-                && let Some(path) = self
-                    .chooser
-                    .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
-            {
-                let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
-                self.status = match result {
-                    Ok(()) => {
-                        self.remember_dialog("state", &path);
-                        format!("Loaded GUI state from {}", path.display())
-                    }
-                    Err(e) => format!("State load error: {e:#}"),
-                };
+            if ui.button("Load from file").clicked() {
+                self.load_state_with_dialog();
             }
             if ui.button("Save current as default").clicked() {
                 let result = self
@@ -120,6 +98,37 @@ impl App {
                 };
             }
         });
+    }
+
+    fn save_state_with_dialog(&mut self) {
+        if let Some(path) = self.chooser.save_file(
+            self.file_dialog("state")
+                .set_file_name("gui_state.json")
+                .add_filter("JSON", &["json"]),
+        ) {
+            self.remember_dialog("state", &path);
+            let result = self.current_state().and_then(|s| s.save(&path));
+            self.status = match result {
+                Ok(()) => format!("Saved GUI state to {}", path.display()),
+                Err(e) => format!("State save error: {e:#}"),
+            };
+        }
+    }
+
+    fn load_state_with_dialog(&mut self) {
+        if let Some(path) = self
+            .chooser
+            .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
+        {
+            let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
+            self.status = match result {
+                Ok(()) => {
+                    self.remember_dialog("state", &path);
+                    format!("Loaded GUI state from {}", path.display())
+                }
+                Err(e) => format!("State load error: {e:#}"),
+            };
+        }
     }
 
     pub(super) fn toggle_scan_for_print(&mut self) {
@@ -171,9 +180,9 @@ impl App {
             if ui
                 .checkbox(
                     &mut self.params.magazine_print_color.active,
-                    "Magazine print",
+                    "Magazine finish",
                 )
-                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
+                .on_hover_text("Apply a magazine finish appearance after the selected workflow.")
                 .changed()
             {
                 self.mark_parameters_changed();
@@ -209,6 +218,14 @@ impl App {
                 self.save_dialog();
             }
         });
+        if let Some(error) = self.last_export_error.clone() {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(error).color(theme::ERROR).small());
+                if ui.button("Dismiss").clicked() {
+                    self.last_export_error = None;
+                }
+            });
+        }
     }
 
     pub(super) fn file_dialog(&self, key: &str) -> rfd::FileDialog {
@@ -248,7 +265,7 @@ impl App {
             self.params.print_render.glare.active = glare;
         }
         self.params.io.scan_film = self.params.workflow.route == "input > film > scan";
-        normalize_scan_output(&mut self.params, self.film_medium);
+        normalize_scanner_selections(&mut self.params, self.film_medium);
         self.invalidate_look_render();
     }
 
@@ -276,7 +293,7 @@ impl App {
         self.params.workflow.route = workflow_default(&film);
         self.params.io.scan_film = film.is_positive();
         self.params.scanner.scan_output = "direct_scan".into();
-        normalize_scan_output(&mut self.params, self.film_medium);
+        normalize_scanner_selections(&mut self.params, self.film_medium);
         self.invalidate_look_render();
     }
 
@@ -436,6 +453,7 @@ impl App {
             "Halation" => Some((Section::Halation, "Halation", false)),
             "Couplers" => Some((Section::Couplers, "Couplers", false)),
             "Convert" => Some((Section::Convert, "Convert", false)),
+            "Camera" => Some((Section::Camera, "Camera", true)),
             "Camera diffusion" => Some((Section::CameraFilter, "Diffusion", false)),
             "Enlarger diffusion" => Some((Section::EnlargerFilter, "Diffusion", false)),
             "Enlarger" => Some((Section::Enlarger, "Enlarger", true)),
@@ -443,6 +461,21 @@ impl App {
             "Output" => Some((Section::OutputMix, "Output", true)),
             _ => None,
         };
+        if !self.filter.is_empty() {
+            // Search mode: reveal the matching controls of a section that has
+            // any, and drop a section that has none.
+            if !self.section_has_filter_match(section) {
+                return;
+            }
+            if let Some((kind, label, _)) = preset_section {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(label).strong());
+                    self.section_preset_menu(ui, kind);
+                });
+            }
+            self.parameter_section_controls(ui, section);
+            return;
+        }
         if let Some((kind, label, default_open)) = preset_section {
             let mut label_clicked = false;
             let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -465,13 +498,22 @@ impl App {
         }
     }
 
+    /// Whether `section` rendered a control whose label matches the search
+    /// filter.
+    fn section_has_filter_match(&self, section: &str) -> bool {
+        controls::cached_labels_match(&self.filter, self.section_labels.get(section))
+    }
+
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
+        let cache = self.section_labels.entry(section.to_owned()).or_default();
         let changes = controls::show(
             ui,
             &mut self.params,
             &mut self.gui_state.sections,
             section,
             self.film_medium,
+            &self.filter,
+            cache,
         );
         if changes.runtime_changed {
             self.mark_parameters_changed_invalidating_calibration();
@@ -568,6 +610,27 @@ impl App {
             });
     }
     fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
+        let section = if film {
+            "Film chemistry"
+        } else {
+            "Print chemistry"
+        };
+        if !self.filter.is_empty() {
+            // Search mode: no collapsing header, and matching parts only.
+            let development_time = controls::label_matches(&self.filter, "development time");
+            if !development_time && !self.section_has_filter_match(section) {
+                return;
+            }
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Chemistry").strong());
+                self.section_preset_menu(ui, if film { Section::Film } else { Section::Print });
+            });
+            if development_time {
+                self.chemistry_dev_time(ui, film);
+            }
+            self.parameter_section(ui, section);
+            return;
+        }
         let mut label_clicked = false;
         let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
@@ -584,35 +647,32 @@ impl App {
             header.toggle();
         }
         header.body(|ui| {
-            let (times, selected) = if film {
-                (
-                    &self.film_dev_times,
-                    &mut self.params.film_render.development_time,
-                )
-            } else {
-                (
-                    &self.print_dev_times,
-                    &mut self.params.print_render.development_time,
-                )
-            };
-            if dev_time_combo(
-                ui,
-                if film { "film-time" } else { "print-time" },
-                "development time",
-                times,
-                selected,
-            ) {
-                self.mark_parameters_changed();
-            }
-            self.parameter_section(
-                ui,
-                if film {
-                    "Film chemistry"
-                } else {
-                    "Print chemistry"
-                },
-            );
+            self.chemistry_dev_time(ui, film);
+            self.parameter_section(ui, section);
         });
+    }
+
+    fn chemistry_dev_time(&mut self, ui: &mut egui::Ui, film: bool) {
+        let (times, selected) = if film {
+            (
+                &self.film_dev_times,
+                &mut self.params.film_render.development_time,
+            )
+        } else {
+            (
+                &self.print_dev_times,
+                &mut self.params.print_render.development_time,
+            )
+        };
+        if dev_time_combo(
+            ui,
+            if film { "film-time" } else { "print-time" },
+            "development time",
+            times,
+            selected,
+        ) {
+            self.mark_parameters_changed();
+        }
     }
 
     fn controls_panel(&mut self, ui: &mut egui::Ui) {
@@ -676,14 +736,13 @@ impl App {
                 for section in ["Print base", "Glare", "Enlarger diffusion"] {
                     self.parameter_section(ui, section);
                 }
+                self.parameter_section(ui, "Magazine finish color");
             }
             GuiTab::Advanced => {
                 for section in [
                     "Spectral upsampling",
-                    "Magazine print color",
                     "Input gamut compress",
                     "Output gamut compress",
-                    "Experimental",
                 ] {
                     self.parameter_section(ui, section);
                 }
@@ -702,12 +761,8 @@ impl App {
                         self.refresh_viewing_artifacts();
                     }
                 });
-                ui.collapsing("napari layers", |ui| {
-                    self.viewer.layer_controls(ui);
-                });
             }
         }
-        ui.label(egui::RichText::new(&self.status).small());
         if input_view_before
             != (
                 self.params.io.input_color_space.clone(),
@@ -717,6 +772,34 @@ impl App {
         {
             self.refresh_viewing_artifacts();
         }
+    }
+
+    /// The window header spans the full width above the three regions. It
+    /// shows the film profile, print profile, and workflow route as
+    /// read-only text, and it is the only surface that shows the
+    /// operation status.
+    fn window_header(&self, ctx: &egui::Context) {
+        let film = profiles::selected_display(&self.films, &self.film_name);
+        let paper = profiles::selected_display(&self.papers, &self.print_name);
+        egui::TopBottomPanel::top("window-header")
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::SURFACE2)
+                    .inner_margin(egui::Margin::symmetric(8, 4)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new("spektrafilm").strong());
+                    ui.separator();
+                    ui.label(format!("Film: {film}"));
+                    ui.separator();
+                    ui.label(format!("Print: {paper}"));
+                    ui.separator();
+                    ui.label(format!("Route: {}", self.params.workflow.route));
+                    ui.separator();
+                    ui.label(egui::RichText::new(&self.status).small());
+                });
+            });
     }
 }
 
@@ -762,22 +845,44 @@ impl eframe::App for App {
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
         self.poll_export_job(ctx);
-        if let Some(options) = self.export_dialog.show(ctx) {
+        // The export renders the retained input, so the dialog's estimate
+        // reads that image's dimensions while the dialog is open.
+        let export_dimensions = self
+            .image
+            .as_ref()
+            .map(|image| [image.width, image.height])
+            .unwrap_or([0, 0]);
+        if let Some(options) = self.export_dialog.show(ctx, export_dimensions) {
             self.start_export(ctx, options);
         }
+        self.window_header(ctx);
         self.preset_panel(ctx);
+        // Right control panel: histogram at top, tabs, scrollable controls, action bar
         egui::SidePanel::right("controls")
             .resizable(false)
-            .exact_width(420.0)
+            .exact_width(320.0)
             .show(ctx, |ui| {
-                ui.heading("spektrafilm");
-                ui.add_space(6.0);
+                let output_id = self
+                    .output_image
+                    .as_ref()
+                    .map(|o| Arc::as_ptr(o) as usize as u64)
+                    .unwrap_or(0);
+                self.histogram
+                    .update(&self.output_image, output_id, ui.ctx());
+                self.histogram.render(ui);
+                ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
                     for tab in GuiTab::ALL {
                         ui.selectable_value(&mut self.gui_tab, tab, tab.label());
                     }
                 });
                 ui.separator();
+                ui.horizontal(|ui| {
+                    let label = ui.label("Filter controls");
+                    ui.text_edit_singleline(&mut self.filter)
+                        .labelled_by(label.id);
+                });
+                ui.add_space(2.0);
                 let scroll_height = (ui.available_height() - 95.0).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
                     egui::ScrollArea::vertical()
@@ -795,6 +900,7 @@ impl eframe::App for App {
         if let Some(error) = self.diagnostics.take_publication_error() {
             self.status = format!("Diagnostic report publication error: {error}");
         }
+        // Central viewer
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -816,20 +922,84 @@ impl eframe::App for App {
                         self.viewer.reset_view();
                         ui.ctx().request_repaint();
                     }
+                    // Before/after compare slider
+                    let compare_label = if self.compare_active {
+                        "compare ON"
+                    } else {
+                        "compare"
+                    };
+                    if ui
+                        .selectable_label(self.compare_active, compare_label)
+                        .on_hover_text("Split-screen before/after comparison")
+                        .clicked()
+                    {
+                        self.compare_active = !self.compare_active;
+                        ui.ctx().request_repaint();
+                    }
+                    if self.compare_active {
+                        ui.add_space(8.0);
+                        let slider = ui.add(
+                            egui::Slider::new(&mut self.compare_split, 0.0..=1.0)
+                                .fixed_decimals(2)
+                                .trailing_fill(false),
+                        );
+                        if slider.changed() {
+                            ui.ctx().request_repaint();
+                        }
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "←input {:.0}% | {:.0}%output→",
+                                self.compare_split * 100.0,
+                                (1.0 - self.compare_split) * 100.0
+                            ))
+                            .color(theme::FG_MUTED)
+                            .size(9.0),
+                        );
+                    }
                     let zoom = self.viewer.zoom_percent().map_or_else(
                         || format!("{:.0}% fit", self.viewer.zoom * 100.0),
                         |percent| format!("{percent:.0}%"),
                     );
-                    ui.label(format!("{} · zoom {zoom}", self.status));
+                    ui.label(format!("zoom {zoom}"));
                 });
             });
             self.viewer.layer_controls(ui);
             self.viewer
                 .set_display_max_size(self.params.settings.preview_max_size);
+            self.viewer.set_compare_split(if self.compare_active {
+                Some(self.compare_split)
+            } else {
+                None
+            });
             self.viewer
                 .show(ui, self.image.as_ref(), self.output_image.as_ref());
+            // Before/after compare divider overlay
+            if self.compare_active {
+                let rect = ui.max_rect();
+                let painter = ui.painter_at(rect);
+                let x = rect.left() + rect.width() * self.compare_split;
+                // Divider line
+                painter.line_segment(
+                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                    egui::Stroke::new(2.0_f32, theme::ACCENT),
+                );
+                // Labels
+                painter.text(
+                    egui::pos2(x - 8.0, rect.top() + 12.0),
+                    egui::Align2::RIGHT_TOP,
+                    "input",
+                    egui::FontId::proportional(10.0),
+                    theme::ACCENT,
+                );
+                painter.text(
+                    egui::pos2(x + 8.0, rect.top() + 12.0),
+                    egui::Align2::LEFT_TOP,
+                    "output",
+                    egui::FontId::proportional(10.0),
+                    theme::ACCENT,
+                );
+            }
         });
-
         // Accept drag-and-dropped image files.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw

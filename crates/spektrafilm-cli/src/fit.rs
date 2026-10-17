@@ -27,7 +27,7 @@ impl From<FitGroupArg> for FitGroup {
 }
 
 #[derive(Args)]
-pub(crate) struct FitArgs {
+pub struct FitArgs {
     /// Chart layout JSON: grid geometry and patch index ranges.
     #[arg(long, help_heading = "Fit data")]
     layout: PathBuf,
@@ -145,12 +145,12 @@ fn record_surface_provenance(datasource: &mut String, scene: &str, reference: &s
     ));
 }
 
-pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
+pub fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
     cmd_fit_with_result(args, matches).map(|_| ())
 }
 
 /// Fit the declared groups and return the command result object.
-pub(crate) fn cmd_fit_with_result(args: &FitArgs, matches: &clap::ArgMatches) -> Result<(Value, i32)> {
+pub fn cmd_fit_with_result(args: &FitArgs, matches: &clap::ArgMatches) -> Result<(Value, i32)> {
     let data_dir = crate::select_data_dir(args.data_dir.clone(), matches)?.path;
     let data_dir = data_dir.as_path();
     let layout: ChartLayout = read_json(&args.layout, "chart layout")?;

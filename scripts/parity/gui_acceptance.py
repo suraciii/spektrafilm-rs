@@ -21,10 +21,16 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 import numpy as np
 import OpenImageIO as oiio
+
+
+def viewer_canvas_bounds(image):
+    """Pinned client-coordinate canvas between the preset and controls panels."""
+    return (260, 80, image.width - 420, max(81, image.height - 80))
 
 
 def require(value, message):
@@ -191,10 +197,10 @@ class X11:
         """
         directory = self.root / 'diagnostics'
         directory.mkdir(exist_ok=True)
-        for stale in directory.glob('operation-*.json'):
-            stale.unlink()
+        self.report_directory = Path(tempfile.mkdtemp(prefix='session-', dir=directory))
+        self.records.append({'diagnostic_session': str(self.report_directory.relative_to(self.root))})
         env = dict(env)
-        env['SPEKTRAFILM_GUI_DIAGNOSTICS_DIR'] = str(directory)
+        env['SPEKTRAFILM_GUI_DIAGNOSTICS_DIR'] = str(self.report_directory)
         self.last_report_id = 0
         return env
 
@@ -307,10 +313,12 @@ class X11:
                 grouped.setdefault(key, []).append((text, data['left'][i] / 3, top + data['top'][i] / 3,
                                                     data['width'][i] / 3, data['height'][i] / 3))
         lines.extend(grouped.values())
-        region = image.crop((370, image.height - 30, image.width - 420, image.height))
+        left = viewer_canvas_bounds(image)[0]
+        top = image.height - 80
+        region = image.crop((left, top, image.width - 420, image.height))
         data = self.ocr.image_to_data(normalize(region).resize((region.width * 4, region.height * 4)),
-                                      config='--psm 7', output_type=self.ocr.Output.DICT, timeout=15)
-        words = [(text, 370 + data['left'][i] / 4, image.height - 30 + data['top'][i] / 4,
+                                      config='--psm 6', output_type=self.ocr.Output.DICT, timeout=15)
+        words = [(text, left + data['left'][i] / 4, top + data['top'][i] / 4,
                   data['width'][i] / 4, data['height'][i] / 4)
                  for i, text in enumerate(data['text']) if text.strip()]
         lines.append(words)
@@ -415,25 +423,34 @@ class X11:
             'Input': (26, 16),
             'Output': (78, 16),
             'Paper back': (145, 16),
-            'ccw rotate': (42, 963),
-            'cw rotate': (114, 963),
-            '100%': (174, 963),
-            '200%': (221, 963),
-            '400%': (268, 963),
-            'reset view': (328, 963),
         }
         if label in fixed:
             x, y = fixed[label]
+            image, _ = self.image()
+            x += viewer_canvas_bounds(image)[0]
             if sys.platform == 'darwin' and y < 300:
                 # AX window bounds include the 30px macOS title bar; the
                 # fixed points above are content-relative Linux coordinates.
                 y += 30
-            if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view'):
-                image, _ = self.image()
-                y = image.height - 17
             self.xd('mousemove', '--window', self.window, x, y)
             self.xd('click', 1)
             time.sleep(.8 if label.endswith('%') or label in ('Input', 'Output', 'Paper back') else .15)
+            return
+        if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view'):
+            # The status can wrap as the preset panel narrows the viewer.
+            # Locate the rendered footer row instead of pinning its height.
+            def locate_footer():
+                image, _, lines = self.read()
+                left, _, right_edge, bottom = viewer_canvas_bounds(image)
+                footer = [[word for word in line
+                           if left <= word[1] < right_edge and word[2] >= bottom]
+                          for line in lines]
+                matches = self.match(footer, label)
+                return matches[0] if matches else None
+            x, y = wait_for(locate_footer, f'viewer footer {label}', 30)
+            self.xd('mousemove', '--window', self.window, int(x), int(y))
+            self.xd('click', 1)
+            time.sleep(.8 if label.endswith('%') else .15)
             return
         if label in ('Open', 'Export'):
             self.scroll(True)
@@ -527,10 +544,9 @@ class X11:
                 self.snap(f'{label}-{name}-{"bottom" if bottom else "top"}', image, lines)
         self.tab('MAIN')
     def viewer_canvas(self):
-        """Viewer canvas pixels, excluding both status bars."""
+        """Central canvas pixels, excluding panels and both status bars."""
         image, _ = self.image()
-        pixels = np.asarray(image.convert('RGB'))
-        return image, pixels[80:max(81, image.height - 80), :min(1030, image.width)]
+        return image, np.asarray(image.crop(viewer_canvas_bounds(image)).convert('RGB'))
 
     def viewer_fingerprint(self):
         """Canvas hash captured before a view change, for the next measurement."""
@@ -569,7 +585,7 @@ class X11:
         return state['image'], state['canvas']
 
     def measure_viewer(self, label, changed_from=None, timeout=60):
-        """Record displayed image bounds once the view change has been painted."""
+        """Measure the known colored fixture after selecting its Input raster."""
         image, canvas = self.await_viewer(changed_from, timeout, label)
         channels = [canvas[..., i].astype(np.int16) for i in range(3)]
         chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
@@ -577,11 +593,14 @@ class X11:
         ys, xs = np.where(mask)
         bounds = None
         if xs.size > 100:
-            bounds = [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
+            left, top, _, _ = viewer_canvas_bounds(image)
+            bounds = [int(xs.min() + left), int(ys.min() + top),
+                      int(xs.max() + left + 1), int(ys.max() + top + 1)]
         screenshot = f'{len(self.records):02d}-{label}.png'
         image.save(self.root / screenshot)
         self.records.append({'surface': label, 'screenshot': screenshot,
                              'pixel_viewer_bounds': bounds})
+        require(bounds is not None, f'Colored Input raster is not visible for {label}: {screenshot}')
         return bounds
 
     def wait_text(self, pattern, label, timeout=120):
@@ -597,13 +616,38 @@ class X11:
 
     def dialog(self, path, save=False):
         dialog_classes = ('zenity', 'yad', 'xdg-desktop-portal-gtk')
+        def visible_choosers():
+            windows = []
+            for dialog_class in dialog_classes:
+                found = self.xd('search', '--onlyvisible', '--class', dialog_class, check=False)
+                windows.extend(found.splitlines())
+            return windows
+
         def find():
             for dialog_class in dialog_classes:
                 found = self.xd('search', '--onlyvisible', '--class', dialog_class, check=False)
                 if found:
                     return found.splitlines()[-1]
             return None
+
         dialog = wait_for(find, 'native file chooser (zenity/yad/portal)', 25)
+
+        def visible():
+            return dialog in visible_choosers()
+
+        def key(*keys):
+            if not visible():
+                return False
+            self.xd('key', *keys)
+            return True
+
+        def geometry():
+            try:
+                return self.window_geometry(dialog)
+            except subprocess.CalledProcessError:
+                if not visible():
+                    return None
+                raise
         for child in self.psutil.Process(self.proc.pid).children(recursive=True):
             try:
                 if 'zenity' in child.name():
@@ -620,11 +664,15 @@ class X11:
         chooser.save(chooser_path)
         self.records.append({'surface': 'native-file-chooser', 'screenshot': chooser_path.name,
                              'requested_path': str(path), 'save': save})
+        if not visible():
+            return
         self.xd('windowactivate', '--sync', dialog)
         time.sleep(.6)
-        self.xd('key', 'ctrl+l')
+        if not key('ctrl+l'):
+            return
         time.sleep(.2)
-        self.xd('key', 'ctrl+a')
+        if not key('ctrl+a'):
+            return
         text = str(path if save else path.parent) + ('' if save else '/')
         # GTK completion consumes synthetic per-character input; paste the
         # complete path atomically through the real desktop clipboard.
@@ -633,43 +681,95 @@ class X11:
         subprocess.run(['xclip', '-selection', 'clipboard'], input=text,
                        text=True, check=True, timeout=10,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.xd('key', 'ctrl+v')
+        if not key('ctrl+v'):
+            return
         time.sleep(.3)
-        self.xd('key', 'Return')
+        if not key('Return'):
+            return
         if not save:
             time.sleep(.6)
-            self.xd('key', 'ctrl+l')
-            self.xd('key', 'ctrl+a')
+            if not key('ctrl+l') or not key('ctrl+a'):
+                return
             subprocess.run(['xclip', '-selection', 'clipboard'], input=str(path),
                            text=True, check=True, timeout=10,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.xd('key', 'ctrl+v')
+            if not key('ctrl+v'):
+                return
             time.sleep(.3)
-            self.xd('key', 'Return')
+            if not key('Return'):
+                return
         # Save choosers may first navigate the entered full path, then require
         # a final action button. Open dialogs likewise expose Select/Open on
         # portal backends instead of silently accepting Return.
         deadline = time.monotonic() + 15
+        primary_clicked = False
+        expected = {'save', 'ok'} if save else {'open', 'select', 'ok'}
         while time.monotonic() < deadline:
-            if not find():
+            if not visible():
                 return
+            if primary_clicked:
+                time.sleep(.25)
+                continue
+            bounds = geometry()
+            if bounds is None:
+                return
+            strip = dict(left=bounds['left'] + bounds['width'] - 320,
+                         top=bounds['top'] + bounds['height'] - 60,
+                         width=320, height=60)
             with self.mss.mss() as screen:
-                shot = screen.grab(screen.monitors[0])
-            surface = self.Image.frombytes('RGB', shot.size, shot.rgb)
-            buttons = self.ocr.image_to_data(surface, config='--psm 11', output_type=self.ocr.Output.DICT)
-            # A chooser may close while OCR runs. Never let a stale click or
-            # Return reach the main window and reopen its focused Save button.
-            if find() != dialog:
+                action_shot = screen.grab(strip)
+            actions = self.Image.frombytes('RGB', action_shot.size, action_shot.rgb)
+            actions = actions.convert('L').resize((320 * 3, 60 * 3))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                buttons = self.ocr.image_to_data(actions, config='--psm 6',
+                                                 output_type=self.ocr.Output.DICT,
+                                                 timeout=remaining)
+            except subprocess.TimeoutExpired:
+                break
+            except RuntimeError as error:
+                if str(error) != 'Tesseract process timeout':
+                    raise
+                break
+            cancels = [i for i, word in enumerate(buttons['text'])
+                       if word.strip().casefold() == 'cancel']
+            candidates = []
+            if len(cancels) == 1:
+                cancel = cancels[0]
+                cancel_y = buttons['top'][cancel] + buttons['height'][cancel] / 2
+                cancel_right = buttons['left'][cancel] + buttons['width'][cancel]
+                for i, word in enumerate(buttons['text']):
+                    center_y = buttons['top'][i] + buttons['height'][i] / 2
+                    same_row = abs(center_y - cancel_y) <= max(
+                        buttons['height'][i], buttons['height'][cancel]) / 2
+                    if (word.strip().casefold() in expected and same_row
+                            and buttons['left'][i] > cancel_right):
+                        candidates.append(i)
+            # OCR can outlive a chooser or a move. Discard that frame rather
+            # than sending a stale click to another desktop surface.
+            if not visible():
                 return
-            for i, word in enumerate(buttons['text']):
-                if (word.strip() in ('OK', 'Open', 'Select', 'Save')
-                        and 100 <= buttons['left'][i] <= 1000
-                        and 100 <= buttons['top'][i] <= 750):
-                    self.xd('mousemove', buttons['left'][i] + buttons['width'][i] // 2,
-                            buttons['top'][i] + buttons['height'][i] // 2)
+            if (len(candidates) == 1 and time.monotonic() < deadline
+                    and self.xd('getactivewindow', check=False) == dialog
+                    and geometry() == bounds):
+                i = candidates[0]
+                x = strip['left'] + (buttons['left'][i] + buttons['width'][i] / 2) / 3
+                y = strip['top'] + (buttons['top'][i] + buttons['height'][i] / 2) / 3
+                self.xd('mousemove', int(x), int(y))
+                if not visible():
+                    return
+                if (self.xd('getactivewindow', check=False) == dialog
+                        and geometry() == bounds and time.monotonic() < deadline):
                     self.xd('click', 1)
-                    break
+                    primary_clicked = True
             time.sleep(.25)
+        if not visible():
+            return
+        with self.mss.mss() as screen:
+            shot = screen.grab(screen.monitors[0])
+        surface = self.Image.frombytes('RGB', shot.size, shot.rgb)
         surface.save(self.root / 'native-chooser-timeout.png')
         raise RuntimeError(f'Native chooser did not accept {path}')
 
@@ -693,16 +793,55 @@ class X11:
         self.dialog(path, save)
 
     def click_export_button(self):
-        """Click the Output-section Export button, not its section header.
+        """Click the button below the rendered Export options section header."""
+        from PIL import ImageOps, ImageStat
 
-        The header shares the label prefix, so match the single-token row.
-        """
+        def prepare(region):
+            grayscale = ImageOps.grayscale(region)
+            background = grayscale.crop((0, 0, grayscale.width, min(50, grayscale.height)))
+            if ImageStat.Stat(background).median[0] < 128:
+                grayscale = ImageOps.invert(grayscale)
+            return grayscale.resize((region.width * 3, region.height * 3))
+
         def locate():
-            image, _, lines = self.read()
-            for line in lines:
-                tokens = [re.sub(r'[^a-z0-9]', '', word[0].lower()) for word in line]
-                if tokens == ['export'] and line[0][1] > self.right_control_x:
-                    return (line[0][1] + line[0][3] / 2, line[0][2] + line[0][4] / 2)
+            image, _ = self.image()
+            # Read the label half of the existing 420px sidebar independently;
+            # long Saved GUI state paths otherwise corrupt the adjacent labels.
+            left = image.width - 420
+            region = image.crop((left, 0, left + 210, image.height - 100))
+            data = self.ocr.image_to_data(prepare(region), config='--psm 11',
+                                          output_type=self.ocr.Output.DICT, timeout=15)
+            grouped = {}
+            for i, text in enumerate(data['text']):
+                if text.strip():
+                    key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+                    grouped.setdefault(key, []).append((text, left + data['left'][i] / 3,
+                        data['top'][i] / 3, data['width'][i] / 3, data['height'][i] / 3))
+            for line in grouped.values():
+                header = [word for word in line
+                          if re.sub(r'[^a-z0-9]', '', word[0].lower())
+                          in ('export', 'options', 'exportoptions')]
+                if ''.join(re.sub(r'[^a-z0-9]', '', word[0].lower())
+                           for word in header) != 'exportoptions':
+                    continue
+                height = max(word[4] for word in header)
+                bottom = max(word[2] + word[4] for word in header)
+                # Bound the next row by the rendered header's font height,
+                # excluding both the section header and the status below it.
+                x0 = int(min(word[1] for word in header) - height)
+                y0 = int(bottom + height / 4)
+                x1 = int(max(word[1] + word[3] for word in header) + height)
+                y1 = min(image.height - 100, int(bottom + height * 2))
+                if y1 <= y0:
+                    continue
+                button = image.crop((x0, y0, x1, y1))
+                data = self.ocr.image_to_data(prepare(button), config='--psm 7',
+                                              output_type=self.ocr.Output.DICT, timeout=15)
+                words = [i for i, text in enumerate(data['text']) if text.strip()]
+                if len(words) == 1 and re.sub(r'[^a-z0-9]', '', data['text'][words[0]].lower()) == 'export':
+                    i = words[0]
+                    return (x0 + (data['left'][i] + data['width'][i] / 2) / 3,
+                            y0 + (data['top'][i] + data['height'][i] / 2) / 3)
             return None
         x, y = None, None
         try:
@@ -735,7 +874,7 @@ class X11:
         that stale report instead of the operation the action started.
         """
         highest = self.last_report_id
-        for path in (self.root / 'diagnostics').glob('operation-*.json'):
+        for path in self.report_directory.glob('operation-*.json'):
             try:
                 operation = json.loads(path.read_text())['operation']
             except (OSError, ValueError, KeyError):
@@ -754,7 +893,7 @@ class X11:
         def ready():
             require(self.proc.poll() is None, 'GUI exited; see gui.log')
             reports = []
-            for path in (self.root / 'diagnostics').glob('operation-*.json'):
+            for path in self.report_directory.glob('operation-*.json'):
                 try:
                     report = json.loads(path.read_text())
                 except (OSError, ValueError):
@@ -1290,6 +1429,26 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
             else:
                 self.input.mouseUp()
             time.sleep(.08)
+        elif args[0] == 'key':
+            require(len(args) == 2 and args[1] in ('ctrl+a', 'Return'),
+                    f'Unsupported desktop key command: {args}')
+            if args[1] == 'ctrl+a':
+                self.input.hotkey('command' if sys.platform == 'darwin' else 'ctrl', 'a')
+            else:
+                self.input.press('enter')
+        elif args[0] == 'type':
+            require(len(args) >= 3 and args[1:-1] in (
+                ('--clearmodifiers',), ('--clearmodifiers', '--delay', '0')),
+                f'Unsupported desktop type options: {args}')
+            text = args[-1]
+            require(isinstance(text, str) and text.isascii()
+                    and all(character.isprintable() for character in text),
+                    'Native desktop typing requires printable ASCII text')
+            modifiers = ('ctrl', 'shift', 'alt',
+                         'command' if sys.platform == 'darwin' else 'win')
+            for modifier in modifiers:
+                self.input.keyUp(modifier)
+            self.input.write(text, interval=0)
         else:
             raise RuntimeError(f'Unsupported desktop input: {args}')
         return ''
@@ -1743,6 +1902,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         viewing.write_text(json.dumps(viewing_state))
         driver.state_action('Load from file', viewing)
         driver.rendered('configured-after-factory-reset')
+        driver.click('Input', False)
         # Keep the preset panel visible while leaving room for all 768 pixels
         # of the 400% raster, rather than measuring a clipped zoom at 1460px.
         original_image, _ = driver.image()
@@ -1773,6 +1933,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(clockwise['configuration']['working_dimensions'] == [96, 192],
                 f"Clockwise rotation did not re-render portrait: "
                 f"{clockwise['configuration']['working_dimensions']}")
+        driver.click('Input', False)
         cw_bounds = driver.measure_viewer('clockwise-rotation', before_rotate)
         driver.tab('MAIN')
         rotated_export = root / 'rotated-export.tif'
@@ -1804,13 +1965,14 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(counterclockwise['configuration']['working_dimensions'] == [192, 96],
                 f"Counterclockwise rotation did not restore landscape: "
                 f"{counterclockwise['configuration']['working_dimensions']}")
+        driver.click('Input', False)
         ccw_bounds = driver.measure_viewer('counterclockwise-rotation', before_ccw)
         require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
-                f'Clockwise rotation did not produce portrait pixels: {cw_bounds}')
+                f'Clockwise rotation did not produce portrait Input pixels: {cw_bounds}')
         require(ccw_bounds[2] - ccw_bounds[0] > ccw_bounds[3] - ccw_bounds[1],
-                f'Counterclockwise rotation did not restore landscape pixels: {ccw_bounds}')
+                f'Counterclockwise rotation did not restore landscape Input pixels: {ccw_bounds}')
         driver.records.append({'parity_action': 'rotate_input_image_counterclockwise',
-                               'assertion': 'counterclockwise rotation restores landscape viewer bounds',
+                               'assertion': 'counterclockwise rotation restores landscape Input viewer bounds',
                                'zoom_pixel_widths': widths,
                                'rotation_pixel_bounds': {'cw': cw_bounds, 'ccw': ccw_bounds}})
         from gui_viewer_acceptance import accept_viewer

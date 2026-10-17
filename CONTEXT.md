@@ -6,6 +6,9 @@ SpektraFilm models how a digital photograph forms a film image and how that imag
 
 Real operations of exposure, development, photographic printing, and film digitization own the unqualified vocabulary of this language. A modeled convention must carry a distinguishing qualifier and must not occupy an unqualified term of a real operation. The product models the real operational workflow first; a modeled convention extends it.
 
+**Record exposure**: The exposure received by one film or photographic-paper record before development. In a chromogenic material, cyan, magenta, and yellow identify the dye-forming records, not RGB image colors or developed record densities.
+_Avoid_: Receiver capture, record density
+
 **Record density**: The optical density formed in one developed record of a film or a photographic paper. It describes the developed material, before an output receiver interprets it.
 _Avoid_: Scanned density, receiver capture
 
@@ -55,3 +58,16 @@ _Avoid_: Scanner white and black correction, output levels
 
 **Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver the image.
 _Avoid_: Scanned medium, negative conversion
+
+**CIELAB**: A three-coordinate color representation under a declared reference white and observer. L* describes lightness; a* and b* describe opponent color directions. These coordinates describe color appearance, not film or photographic-paper record exposures or densities.
+_Avoid_: Lab Scan, film record channels
+
+**Color center**: A representative color of a declared sample population, calculated with a named estimator. A median of Lab channels and Lab converted from mean linear RGB are different color centers. Neither establishes that a reference is suitable for fitting or acceptance.
+
+**Prepared image**: A raster image explicitly prepared outside the benchmark and declared in a review manifest. Its color interpretation is declared rather than inferred; preparation does not establish measured color values, exposure equivalence, or original framing.
+_Avoid_: Prepared chart image
+
+**Set**: A declared group of prepared images inside one review manifest, with either a shared patch grid or explicit per-image regions. A shared set does not establish the same spectral stimulus or pixel-level registration.
+_Avoid_: Chart group
+
+**Patch window**: The declared rectangular area of one grid patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another set.

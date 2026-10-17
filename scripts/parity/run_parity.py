@@ -51,7 +51,9 @@ from scenarios import (  # noqa: E402
 EXPECTED_RUST_COMMIT = "a1910231fbd2c049c5177b539b6e7963c97f4e90"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
-REPO_ROOT = HERE.parent.parent
+REPO_ROOT = Path(os.environ.get(
+    "SPEKTRAFILM_RUNTIME_REPO", str(HERE.parent.parent)
+)).resolve()
 
 PY_REPO = Path(os.environ.get("SPEKTRAFILM_PY_REPO", "/home/szf/repos/spektrafilm"))
 PY_BIN = Path(os.environ.get("SPEKTRAFILM_PY", "/tmp/spektrafilm-034-venv/bin/python"))

@@ -4,6 +4,49 @@ use spektrafilm_math::{
     precision::{from_f64, to_f64},
 };
 
+/// Open descriptors of this process that point inside `directory`.
+#[cfg(target_os = "linux")]
+fn directory_descriptors(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir("/proc/self/fd")
+        .unwrap()
+        .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+        .filter(|target| target.starts_with(directory))
+        .collect()
+}
+
+/// A staged image must not retain an open handle when `save` returns: Windows
+/// rejects the publishing rename while the staged file is still open.
+#[test]
+#[cfg(target_os = "linux")]
+fn save_releases_the_staged_file_handle() {
+    let directory =
+        std::env::temp_dir().join(format!("spektrafilm-io-handles-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let image = ImageBuf::from_data(2, 1, vec![from_f64(0.5); 6]);
+    let path = directory.join("staged.png");
+    image_io::save(
+        &path,
+        &image,
+        SaveOptions {
+            depth: BitDepth::Eight,
+            color_space: "sRGB",
+            cctf_encoding: true,
+            jpeg_quality: None,
+            jpeg_subsampling: None,
+            compression: None,
+        },
+        None,
+    )
+    .unwrap();
+    let leaked = directory_descriptors(&directory);
+    assert!(
+        leaked.is_empty(),
+        "save retained open descriptors for the output file: {leaked:?}"
+    );
+    assert!(path.exists());
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 #[test]
 fn integer_boundary_truncates_and_float_formats_preserve_headroom() {
     let directory = std::env::temp_dir().join(format!("spektrafilm-io-{}", std::process::id()));
@@ -206,7 +249,7 @@ fn exr_half_rounds_directly_from_f64_and_float32_exports_keep_their_precision() 
         .unwrap();
         let decoded = image_io::load(&path).unwrap().image;
         assert_eq!((decoded.width, decoded.height), (cases.len() as u32, 1));
-        for (pixel, &(input, half_expected)) in decoded.data.chunks_exact(3).zip(&cases) {
+        for (pixel, &(input, half_expected)) in decoded.data.as_chunks::<3>().0.iter().zip(&cases) {
             let expected = if depth == BitDepth::Sixteen {
                 half_expected
             } else {

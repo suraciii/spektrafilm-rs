@@ -1,4 +1,5 @@
 use super::{RuntimeParams, Tap};
+use crate::WorkflowRoute;
 use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 
 pub(crate) const SUPPORTED_ROUTES: [&str; 6] = [
@@ -98,6 +99,12 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.grain.v3_dye_support_um" | "film_render.grain.v3_event_area_um2" => {
             Some((0.0, None))
         }
+        "film_render.grain.channel_correlation" => Some((
+            0.0,
+            Some(super::grain::MEASURED_CHANNEL_CORRELATION_CEILING),
+        )),
+        // Discovery range only; `validate` and the sparse-source leaf check
+        // own the strict positivity.
         "camera.film_format_mm" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
@@ -567,6 +574,18 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
                 .into(),
         );
     }
+    // The bound is the measured band, not the structural limit: the split
+    // itself tolerates anything below one, but the record coherence above the
+    // band is what the evidence attributes to the scanner, so a preset may not
+    // reach it.
+    let ceiling = super::grain::MEASURED_CHANNEL_CORRELATION_CEILING;
+    if !grain.channel_correlation.is_finite()
+        || !(0.0..=ceiling).contains(&grain.channel_correlation)
+    {
+        return Err(format!(
+            "film_render.grain.channel_correlation: must be finite and in [0, {ceiling}]"
+        ));
+    }
     for (name, value) in [
         ("v2_size", grain.v2_size),
         ("v2_amount", grain.v2_amount),
@@ -623,6 +642,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             params.camera.color_filter
         ));
     }
+    validate_enum_value(
+        "camera.auto_exposure_method",
+        &params.camera.auto_exposure_method,
+    )?;
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
     let scanner = &params.scanner;
     let reference =
@@ -638,9 +661,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         }
     }
     if reference {
-        if params.workflow.route != "input > film > scan"
-            || scanner.scan_output != "negative_to_positive"
-        {
+        if params.workflow.route_enum() != WorkflowRoute::FilmScan {
+            return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
+        }
+        if scanner.scan_output != "negative_to_positive" {
             return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
         }
         if scanner.auto_setup != super::ScannerAutoSetup::Off {
@@ -832,5 +856,20 @@ mod tests {
         let error = validate(&params).unwrap_err();
         assert!(error.contains("spektrafilm process --help"));
         assert!(!error.contains("did you mean"));
+    }
+
+    #[test]
+    fn camera_metering_method_must_match_the_dispatch_vocabulary() {
+        for method in enum_values("camera.auto_exposure_method").unwrap() {
+            let mut params = RuntimeParams::default();
+            params.camera.auto_exposure = true;
+            params.camera.auto_exposure_method = method;
+            validate(&params).unwrap();
+        }
+        let mut params = RuntimeParams::default();
+        params.camera.auto_exposure_method = "typo".into();
+        let error = validate(&params).unwrap_err();
+        assert!(error.starts_with("camera.auto_exposure_method:"));
+        assert!(error.contains("average"));
     }
 }

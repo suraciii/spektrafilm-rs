@@ -257,7 +257,7 @@ fn active_v3_field_reports_its_device_stage() {
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
     params.camera.auto_exposure = false;
-    params.camera.film_format_mm = 36.0;
+    params.camera.film_format_mm = 8.0;
     params.workflow.route = "input > film > scan".to_owned();
     params.io.scan_film = true;
     params.io.output_gamut_compress.algorithm = "off".into();
@@ -281,7 +281,7 @@ fn active_v3_field_reports_its_device_stage() {
         .context()
         .scope("simulation", ObservationKind::Phase, Purpose::Image);
     let output = runtime
-        .process_observed(image, &gpu, simulation.context())
+        .process_observed(image, gpu.backend(), simulation.context())
         .unwrap();
     drop(simulation);
     attempt.finish(Outcome::Succeeded);
@@ -345,7 +345,7 @@ fn gpu_timing_collection_survives_a_host_fence() {
         .context()
         .scope("simulation", ObservationKind::Phase, Purpose::Image);
     let output = runtime
-        .process_observed(image, &gpu, simulation.context())
+        .process_observed(image, gpu.backend(), simulation.context())
         .unwrap();
     drop(simulation);
     attempt.finish(Outcome::Succeeded);
@@ -366,8 +366,36 @@ fn gpu_timing_collection_survives_a_host_fence() {
         "the fence must split the chain into several submissions: {:?}",
         chain.work.submit_count
     );
-    assert_eq!(chain.work.timed_pass_count, chain.work.executed_pass_count);
-    assert_eq!(chain.work.valid_pass_count, chain.work.executed_pass_count);
+    // Timed passes require device timestamp queries. llvmpipe exposes them, so
+    // every pass is timed there; Metal on the macOS runner does not, so the
+    // same fence yields `timed_pass_count == 0` against 39 executed passes.
+    // Branch on the adapter's own claim so both devices assert the strict
+    // invariant that applies to them, instead of an equality that only holds
+    // on one. `valid <= executed` is checked unconditionally because a pass
+    // cannot be valid without having run on either device.
+    let timestamps = report
+        .execution
+        .adapter
+        .as_ref()
+        .map(|adapter| adapter.timestamp_supported)
+        .unwrap_or(false);
+    let executed = chain.work.executed_pass_count.unwrap_or(0);
+    let timed = chain.work.timed_pass_count.unwrap_or(0);
+    let valid = chain.work.valid_pass_count.unwrap_or(0);
+    assert!(
+        timed <= executed,
+        "timed {timed} exceeds executed {executed}"
+    );
+    assert!(
+        valid <= executed,
+        "valid {valid} exceeds executed {executed}"
+    );
+    if timestamps {
+        assert_eq!(timed, executed, "every executed pass must be timed");
+        assert_eq!(valid, executed, "every executed pass must be valid");
+    } else {
+        assert_eq!(timed, 0, "no pass may be timed without timestamp support");
+    }
     assert_eq!((output.width, output.height), (width, height));
 }
 
@@ -455,7 +483,7 @@ fn slide_reference_batches_are_calibration_not_image_work() {
     runtime
         .process_observed(
             ImageBuf::from_data(3, 2, vec![from_f64(0.18); 18]),
-            &backend,
+            backend.backend(),
             simulation.context(),
         )
         .unwrap();

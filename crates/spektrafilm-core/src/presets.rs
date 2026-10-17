@@ -643,9 +643,6 @@ pub fn load_selector(selector: &str, _data_dir: &Path) -> Result<Preset, String>
         .resolve_selector(selector)
         .map(|selection| selection.preset)
 }
-pub fn suggest_preset_names(input: &str) -> Vec<String> {
-    PresetLibrary::default().suggest(input)
-}
 fn validate_stock_id(kind: &str, stock: &str) -> Result<(), String> {
     if stock.is_empty()
         || !stock

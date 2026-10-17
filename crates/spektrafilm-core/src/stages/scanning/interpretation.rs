@@ -3,6 +3,7 @@ use super::{
     coupled::{CoupledBounds, CoupledInverse},
     developed_density_curves,
 };
+use crate::WorkflowRoute;
 use crate::{params::RuntimeParams, profile::Profile};
 
 struct DensityAxis {
@@ -159,7 +160,7 @@ impl CoupledCalibration {
 }
 
 pub(super) fn camera_ev(params: &RuntimeParams) -> f64 {
-    if params.workflow.route == "input > film > scan" {
+    if params.workflow.route_enum() == WorkflowRoute::FilmScan {
         params.camera.exposure_compensation_ev as f64
     } else {
         0.0

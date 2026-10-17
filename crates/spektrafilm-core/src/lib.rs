@@ -30,12 +30,14 @@ pub mod resizing;
 pub mod runtime;
 pub mod scan_receiver;
 pub use scan_receiver::ScannerProvenance;
+pub mod spectral_eval;
 pub mod spectral_service;
+pub mod stage_evidence;
 pub mod stages;
 mod suggest;
 pub mod telemetry;
 pub use telemetry::WorkflowRoute;
 
-pub mod math;
+pub(crate) mod math;
 #[cfg(test)]
 pub(crate) mod test_support;

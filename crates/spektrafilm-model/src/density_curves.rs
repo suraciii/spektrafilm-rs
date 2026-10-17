@@ -8,7 +8,6 @@
 /// density curve tables.
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::interp;
 use spektrafilm_math::precision::{ONE, Scalar, ZERO, from_f64};
 
 const SEPT_K: f64 = 5.8013;
@@ -211,24 +210,6 @@ fn validate_alphas(
         }
     }
     Ok(())
-}
-
-/// f64 variant — preserves precision through the interpolation.
-pub fn interpolate_exposure_to_density_f64(
-    log_raw: &ImageBuf,
-    density_curves: &[[f64; 3]],
-    log_exposure: &[f64],
-    gamma_factor: f64,
-) -> ImageBuf {
-    if (gamma_factor - 1.0).abs() < 1e-12 {
-        interp::fast_interp_image_f64(log_raw, log_exposure, density_curves)
-    } else {
-        let x_axes: Vec<[f64; 3]> = log_exposure
-            .iter()
-            .map(|&le| [le / gamma_factor, le / gamma_factor, le / gamma_factor])
-            .collect();
-        interp::fast_interp_image_perchannel_f64(log_raw, &x_axes, density_curves)
-    }
 }
 
 /// f64 variant — normalize density curves by subtracting the per-channel minimum.
@@ -453,7 +434,7 @@ mod tests {
         let pos = interp_density_cmy_layers(&img, &composite, &layers, true);
         for (i, px) in img.pixels().enumerate() {
             for ch in 0..3 {
-                let x = -(px[ch] as f64);
+                let x = -spektrafilm_math::precision::to_f64(px[ch]);
                 let xa: Vec<f64> = composite.iter().map(|r| -r[ch]).collect();
                 let expect = if x <= xa[0] {
                     layers[0][0][ch]
@@ -482,6 +463,30 @@ mod tests {
         ];
         let max = density_max_layers_f64(&layers);
         assert_eq!(max, [[1.1, 0.2, 0.3], [0.4, 1.4, 0.6], [0.7, 0.8, 1.8]]);
+    }
+
+    #[test]
+    fn parametric_model_is_monotonic_and_near_zero_in_toe() {
+        let x: Vec<f64> = (-60..=20).map(|v| v as f64 / 10.0).collect();
+        let curves = parametric_density_curves_model(
+            &x,
+            [0.6, 0.65, 0.7],
+            [-1.0, -1.1, -0.9],
+            [2.2, 2.0, 1.8],
+            [0.3, 0.3, 0.3],
+            [0.5, 0.5, 0.5],
+        );
+        assert!(curves[0].iter().all(|value| value.abs() < 1e-10));
+        for channel in 0..3 {
+            for pair in curves.windows(2) {
+                assert!(
+                    pair[1][channel] + 1e-14 >= pair[0][channel],
+                    "channel {channel} decreased beyond floating-point tolerance: {} -> {}",
+                    pair[0][channel],
+                    pair[1][channel]
+                );
+            }
+        }
     }
 
     #[test]

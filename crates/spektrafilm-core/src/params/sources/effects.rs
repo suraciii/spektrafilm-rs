@@ -213,7 +213,10 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
             {
                 out.push(Custom);
             }
-        } else if path.contains(".v3_") || path.ends_with(".rms_granularity") {
+        } else if path.contains(".v3_")
+            || path.ends_with(".rms_granularity")
+            || path.ends_with(".channel_correlation")
+        {
             out.push(Dye);
         } else if ["density_min", "uniformity", "particle_scale_sublayers"]
             .iter()
@@ -267,8 +270,11 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         out.push(FilmScan);
     } else if path.starts_with("scanner.reference_") {
         out.push(DigitalReference);
-    } else if path.starts_with("scanner.positive_")
-        || matches!(path, "scanner.auto_setup" | "scanner.finish")
+    } else if path.starts_with("scanner.conversion_")
+        || matches!(
+            path,
+            "scanner.negative_conversion_method" | "scanner.auto_setup" | "scanner.finish"
+        )
     {
         out.push(NegativeToPositive);
     } else if path.starts_with("magazine_print_color.") {

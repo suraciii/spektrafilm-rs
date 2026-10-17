@@ -68,18 +68,8 @@ impl WorkflowRoute {
             Self::ConvertFilmPrintScan => "input > convert-film > print > scan",
             Self::ConvertFilmScanMinusBase => "input > convert-film > scan-minus-base",
             Self::ConvertFilmScan => "input > convert-film > scan",
-            Self::Custom => "custom",
+            Self::Custom => "",
         }
-    }
-    pub fn scans_film(&self) -> bool {
-        matches!(
-            self,
-            Self::FilmScan
-                | Self::FilmPrintScan
-                | Self::ConvertFilmPrintScan
-                | Self::ConvertFilmScanMinusBase
-                | Self::ConvertFilmScan
-        )
     }
 
     pub fn prints(&self) -> bool {

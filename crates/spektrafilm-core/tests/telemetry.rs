@@ -29,7 +29,16 @@ fn collected_report() -> Report {
         .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
     stage.finish(Outcome::Succeeded);
     phase.finish(Outcome::Succeeded);
-    operation.finish(Outcome::Succeeded).unwrap()
+    let mut report = operation.finish(Outcome::Succeeded).unwrap();
+
+    // The collector records wall-clock offsets. Normalize this fixture so
+    // validator tests do not depend on how long the setup took to execute.
+    report.operation.duration = Some(1.0);
+    report.phases[0].start_offset = 0.1;
+    report.phases[0].duration = 0.5;
+    report.stages[0].start_offset = 0.2;
+    report.stages[0].duration = 0.1;
+    report
 }
 
 #[test]

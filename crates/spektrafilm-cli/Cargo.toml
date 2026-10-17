@@ -55,15 +55,12 @@ spektrafilm-benchmark = { path = "../spektrafilm-benchmark", optional = true }
 # The workspace `image` dependency is PNG-only. These suites decode the
 # TIFF/EXR artifacts the CLI writes, so the test target restores those
 # decoders without widening the production feature set.
-[dev-dependencies]
-image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
-tempfile = "3"
-
 # The workspace `image` dependency is PNG-only. These suites decode the
 # TIFF/EXR artifacts the CLI writes, so the test target restores those
 # decoders without widening the production feature set.
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
+tempfile = "3"
 
 [lints]
 workspace = true

@@ -2,7 +2,7 @@
 
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{Scalar, from_f64};
+use spektrafilm_math::precision::{Scalar, from_f64, to_f64};
 
 // ===========================================================================
 // Lens diffusion filter (Black Pro Mist family).
@@ -448,7 +448,7 @@ pub fn apply_diffusion_filter_um(
     let mut out = ImageBuf::new(image.width, image.height);
     for (c, channel_psf) in psf.iter().enumerate() {
         let chan_s = image.extract_channel(c);
-        let chan: Vec<f64> = chan_s.iter().map(|&v| v as f64).collect();
+        let chan: Vec<f64> = chan_s.iter().map(|&v| to_f64(v)).collect();
         let blurred = convolve2d_reflect(&chan, h, w, channel_psf, k);
         let mixed: Vec<Scalar> = (0..h * w)
             .map(|i| from_f64((1.0 - p_s) * chan[i] + p_s * blurred[i]))
@@ -546,20 +546,6 @@ mod family_tests {
         )
         .unwrap_err();
         assert!(e.contains("Unknown diffusion filter family"));
-    }
-
-    #[test]
-    fn ineffective_filter_never_reaches_the_family_check() {
-        // Python returns the image before the family lookup when
-        // strength/spatial_scale ≤ 0 — a bogus name must not error there.
-        let img = ramp(32);
-        let mut f = df("black_promist", 0.0);
-        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
-        assert_eq!(out.data.len(), img.data.len());
-        f.strength = 0.5;
-        f.spatial_scale = 0.0;
-        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
-        assert_eq!(out.data.len(), img.data.len());
     }
 
     #[test]

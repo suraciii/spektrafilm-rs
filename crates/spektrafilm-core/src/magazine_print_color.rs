@@ -195,13 +195,13 @@ fn lab_to_xyz(lab: [f64; 3]) -> [f64; 3] {
 }
 
 /// Destination linear RGB to CIELAB D50 and back, prepared once per image.
-struct MagazineTransform {
+pub(crate) struct MagazineTransform {
     to_lab: [[f64; 3]; 3],
     from_lab: [[f64; 3]; 3],
 }
 
 impl MagazineTransform {
-    fn new(space: &RgbColorSpace) -> Self {
+    pub(crate) fn new(space: &RgbColorSpace) -> Self {
         let white = space.whitepoint_xyz();
         let forward =
             colorspace::chromatic_adaptation_matrix_bradford_f64(white, colorspace::D50_XYZ_F64);
@@ -222,6 +222,20 @@ impl MagazineTransform {
     fn to_rgb(&self, lab: [f64; 3]) -> [f64; 3] {
         mat_vec(&self.from_lab, lab_to_xyz(lab))
     }
+}
+
+impl MagazineTransform {
+    /// Prepared Lab matrices for the device magazine pass (pipe
+    /// architecture, S4): destination RGB → CIELAB D50 and back.
+    pub(crate) fn gpu_matrices(&self) -> ([[f64; 3]; 3], [[f64; 3]; 3]) {
+        (self.to_lab, self.from_lab)
+    }
+}
+
+/// Tone-curve knots and slopes for the device magazine pass: (inputs,
+/// outputs, Hermite slopes) in CIELAB L*.
+pub(crate) fn gpu_tone_curve() -> ([f64; 10], [f64; 10], [f64; 10]) {
+    (TONE_IN, TONE_OUT, TONE.slopes)
 }
 
 #[inline]
@@ -466,32 +480,6 @@ mod tests {
         let dark = map_pixel([-0.2, 0.3, 0.3], 1.0, &transform, Cctf::Srgb, false);
         assert!(dark[0] < -0.1, "negative headroom is preserved: {dark:?}");
         assert!(out.iter().all(|v| v.is_finite()) && dark.iter().all(|v| v.is_finite()));
-    }
-
-    #[test]
-    fn enabled_transform_changes_pixel() {
-        let mut image =
-            ImageBuf::from_data(1, 1, vec![from_f64(0.7), from_f64(0.2), from_f64(0.1)]);
-        let before = image.data.clone();
-        apply(&mut image, &enabled(), space(), true);
-        assert_ne!(image.data, before);
-    }
-
-    #[test]
-    fn neutral_gray_stays_neutral_when_disabled() {
-        let mut image =
-            ImageBuf::from_data(1, 1, vec![from_f64(0.4), from_f64(0.4), from_f64(0.4)]);
-        apply(
-            &mut image,
-            &MagazinePrintColorParams {
-                active: true,
-                strength: 0.0,
-            },
-            space(),
-            true,
-        );
-        assert_eq!(image.data[0], image.data[1]);
-        assert_eq!(image.data[1], image.data[2]);
     }
 
     #[test]

@@ -21,7 +21,11 @@ pub fn from_f64(v: f64) -> Scalar {
 }
 
 /// Convert Scalar to f64 (no-op in f64 mode, promotion in f32 mode).
+///
+/// The cast is redundant with `--features precision-f64` (`Scalar = f64`) and
+/// required with the default `Scalar = f32`, so it must stay.
 #[inline(always)]
+#[allow(clippy::unnecessary_cast)]
 pub fn to_f64(v: Scalar) -> f64 {
     v as f64
 }

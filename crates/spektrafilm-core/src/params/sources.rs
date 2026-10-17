@@ -1498,6 +1498,55 @@ mod tests {
     }
 
     #[test]
+    fn dye_only_controls_carry_the_dye_engine_condition() {
+        use super::effects::conditions;
+        for path in [
+            "film_render.grain.v3_dye_support_um",
+            "film_render.grain.v3_event_area_um2",
+            "film_render.grain.rms_granularity",
+            "film_render.grain.channel_correlation",
+        ] {
+            let found = conditions(path);
+            let described: Vec<_> = found.iter().map(|c| c.description()).collect();
+            assert!(
+                described
+                    .iter()
+                    .any(|d| d.starts_with("film_render.grain.engine = dye;")),
+                "missing the Dye engine condition for {path}: {described:?}"
+            );
+            assert!(
+                !described
+                    .iter()
+                    .any(|d| d.starts_with("film_render.grain.engine = spektra")),
+                "a Dye-only control must not claim the Spektra engine: {path}: {described:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn renamed_conversion_paths_keep_the_negative_to_positive_condition() {
+        use super::effects::conditions;
+        for path in [
+            "scanner.negative_conversion_method",
+            "scanner.conversion_brightness_ev",
+            "scanner.conversion_balance_ev",
+            "scanner.conversion_contrast",
+            "scanner.conversion_dmax",
+        ] {
+            let found = conditions(path);
+            assert!(
+                found
+                    .iter()
+                    .any(|c| c.description() == "scanner.scan_output = negative_to_positive"),
+                "missing NegativeToPositive condition for {path}: {:?}",
+                found.iter().map(|c| c.description()).collect::<Vec<_>>()
+            );
+        }
+        // The retired prefix carries no activation condition (hard cut).
+        assert!(conditions("scanner.positive_density_ev").is_empty());
+    }
+
+    #[test]
     fn legacy_conversion_rejections_leave_documents_unchanged() {
         // A mixed print-exposure pair needs the settings group; a non-object
         // there must fail before any mutation instead of panicking.

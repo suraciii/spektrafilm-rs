@@ -1506,9 +1506,6 @@ mod tests {
     #[test]
     fn oversized_geometry_declines_the_automatic_route_and_fails_an_explicit_request() {
         use spektrafilm_backend::ComputeBackend;
-        let _lock = crate::wgpu_backend::observation::TEST_DEVICE_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // 20k x 20k x 12 B = 4.8 GB declared: beyond any device limit and never
         // allocated, because the preflight runs before the first allocation.
         let image = ImageBuf {
@@ -1517,17 +1514,19 @@ mod tests {
             data: vec![],
         };
         let params = params(&image);
-        let (automatic, explicit) = (
-            crate::test_support::adapter(),
-            crate::test_support::explicit_adapter(),
-        );
-        assert!(
-            automatic
-                .try_run_film_chain(&params)
-                .expect("the automatic route declines, it does not error")
-                .is_none(),
-            "the automatic route must decline instead of allocating 4.8 GB"
-        );
+        // Each adapter owns the device lock for its lifetime, so the two
+        // requests run in sequence rather than holding two devices at once.
+        {
+            let automatic = crate::test_support::adapter();
+            assert!(
+                automatic
+                    .try_run_film_chain(&params)
+                    .expect("the automatic route declines, it does not error")
+                    .is_none(),
+                "the automatic route must decline instead of allocating 4.8 GB"
+            );
+        }
+        let explicit = crate::test_support::explicit_adapter();
         let error = explicit
             .try_run_film_chain(&params)
             .expect_err("an explicit request must fail");

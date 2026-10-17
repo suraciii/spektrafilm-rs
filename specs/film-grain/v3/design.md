@@ -4,7 +4,7 @@
 
 Dye must retain the developed film-density boundary and the profile's three-sublayer response. It must realize conditional Poisson dye masses in global film coordinates. A normalized spatial operator must form the complete realization, including its subject-dependent expectation. Rectangular output footprints must integrate that field. The next existing spectral stage must receive the resulting CMY density.
 
-Dye uses one Gaussian dye-support width shared by the layers and channels. Statistical event area controls count variance independently of this width. The CMY realizations are independent. The common width does not imply neutral grain or correlated channel samples. A raw, unprocessed negative scan shows weak inter-record grain correlation, consistent with this choice; see [evidence and limits](#evidence-and-limits).
+Dye uses one Gaussian dye-support width shared by the layers and channels. Statistical event area controls count variance independently of this width. The CMY realizations are independent. The common width does not imply neutral grain or correlated channel samples. A raw, unprocessed negative scan shows weak inter-record grain correlation, consistent with this choice.
 
 The microscopic Spektra-derived support formula is a diagnostic alternative, not the production default. With resolved Portra 800 default controls it gives sigma about 0.38–1.15 micrometers. Resolving its narrowest support at half-sigma requires about 23 billion field cells for a 36 mm long-edge 3:2 frame. Tiling reduces memory but does not remove this sampling cost. This alternative must not determine the full-frame allocation policy.
 
@@ -68,7 +68,7 @@ Resolve `rms_granularity`, `particle_scale_sublayers`, `density_min`, and `unifo
 
 The stock granularity preset sets the channel event-area scale `k_c`. For preset value `G_c`, `k_c = (G_c / 6)^2`. The anchor `6` is the preset of the reference stock `kodak_portra_800`. A non-finite or non-positive `G_c` gives `k_c = 1`. Readout variance is proportional to event area, so at fixed density and support the readout RMS is proportional to `G_c`. The preset is a ratio only. Its absolute value is not Kodak density RMS, and it does not enter the sampler by another path.
 
-`k_c` is the only source of channel-to-channel strength differences. Dye must not read `particle_scale`. That Spektra control defaults to `[1.6, 1.6, 3.2]` and already makes the blue record coarser. A blue-heavy granularity preset would count the same difference twice; see [evidence and limits](#evidence-and-limits). Monochrome resolution equalizes `rms_granularity` across channels and therefore `k_c`.
+`k_c` is the only source of channel-to-channel strength differences. Dye must not read `particle_scale`. That Spektra control defaults to `[1.6, 1.6, 3.2]` and already makes the blue record coarser. A blue-heavy granularity preset would count the same difference twice. Monochrome resolution equalizes `rms_granularity` across channels and therefore `k_c`.
 
 `v3_event_area_um2` gives the base event area in square micrometers, with default `1.28`. It must be finite and strictly positive. With the reference stock, `k_c = 1`, and the default is the validated absolute event area of every channel. Dye must not read `particle_area_um2`, which keeps its Spektra meaning and default.
 
@@ -112,13 +112,37 @@ mass_lc = M_lc*a_lc*s_lc / f_lc
 cell_absolute_density_lc = mass_lc*K_lc / A
 ```
 
-At `p=0`, use zero count. At `p=1`, sample the stated law. CPU and GPU must use this same exact Poisson law and reference conditioning. A device precision limitation must use exact integer or extended-precision arithmetic or fail under [numerical alignment](../../gpu-execution/design.md#numerical-alignment). Rounded normal count approximations must not replace it. Poisson thinning gives this law from Spektra's interior Poisson-then-binomial distribution without requiring its random-call order.
+At `p=0`, use zero count. At `p=1`, sample the stated law. CPU and GPU must use this same exact Poisson law and the same conditioning formulas. The device evaluates that law in its own precision and from its own words under [device count law](#device-count-law), or fails under [numerical alignment](../../gpu-execution/design.md#numerical-alignment). Rounded normal count approximations must not replace it. Poisson thinning gives this law from Spektra's interior Poisson-then-binomial distribution without requiring its random-call order.
 
 The local expectation is `t_lc`. Unformed cell variance is `M_lc*M_lc*a_lc*p_lc*s_lc/(A*f_lc)`. Event mass is independent of cell area; intensity scales with area. Raw cell-density variance grows under refinement while formed readout statistics must converge.
 
 Address streams by the full 64-bit seed, fixed Dye channel/layer tags, and global signed cell coordinates. Output indices, crop dimensions, tile size, traversal order, and thread scheduling must not enter the address. Keep rejection state local to a cell. Reuse the tagged RNG boundary where possible; do not allocate a full MT19937 state per cell to reproduce Spektra order.
 
 Production packs the two signed 32-bit cell coordinates into one 64-bit address and applies a bijective integer mixer. Both coordinates, including formation halos, must fit this domain. This address mapping replaces the prototype mapping, so the same prototype seed produces a different realization. Counts remain conditionally independent with the same model parameters and probability law.
+
+### Channel correlation
+
+Independent per-channel counts give zero inter-channel grain correlation. Real negatives need not be independent: record counts share the emulsion's own event population, and every reference measurement sees it through a scanner that mixes the records. The correlation is therefore a model control (`channel_correlation`), not a constant.
+
+It is off by default. The available measurements do not separate an intrinsic record correlation from the scanner's own contribution, and the appearance contract forbids imitating scanner chroma processing by correlating the records, so the independent realization stays the default and a preset that wants correlation opts in.
+
+Split each layer's per-channel rate into a shared and an independent part:
+
+```text
+lambda_shared_l = channel_correlation * min over active c of lambda_lc
+lambda_independent_lc = lambda_lc - lambda_shared_l
+K_lc = S_l + I_lc,  S_l ~ Poisson(lambda_shared_l),  I_lc ~ Poisson(lambda_independent_lc)
+```
+
+`min` runs over the channels that this layer actually realizes. An inactive channel has no rate to correlate with; treating it as zero would drive `lambda_shared_l` to zero and silently remove the layer's correlation while the control still reads `0.342`. A layer with fewer than two active channels has no partner and takes `lambda_shared_l = 0`.
+
+The shared independent split preserves every marginal: `Var(K_lc) = lambda_shared_l + lambda_independent_lc = lambda_lc`, so the shared Poisson part adds `Cov(K_lc, K_lc') = lambda_shared_l` between two channels of a layer and changes no channel's strength, formation, or readout. The realized correlation is `lambda_shared_l / sqrt(lambda_lc*lambda_lc')`, which equals the control only when the channels of a layer have equal rates and is otherwise bounded above by the control. The shared part is drawn once per layer, so the three channels of one cell stay correlated at zero lag; the emulsions remain independent across layers.
+
+Each layer takes its own shared stream. Tags `0..=8` remain the per-`(channel, layer)` streams and `9+l` is layer `l`'s shared stream, so no existing sequence moves. All three layers of a cell share the cell address, so one shared tag for all of them would hand three independently coated emulsions the same uniform sequence.
+
+At `channel_correlation = 0` the shared rate is zero, the shared stream is not drawn, and every channel keeps its own stream and rate, so the realization is bit-identical to the independent-count model. At `channel_correlation = 1` the independent remainder would reach zero only for equal channel rates, which is why the control's structural domain is bounded on `[0, 1)`. The accepted range is narrower: the implemented ceiling is `MEASURED_CHANNEL_CORRELATION_CEILING = 0.45`, the upper end of the measured inter-record coherence band above, and validation rejects an enabled value outside `[0, 0.45]`. Expectation mode substitutes each channel's marginal mean and does not split at all, so the deterministic expectation never moves with this control.
+
+Available evidence brackets the control but does not pin it. A raw UltraMax 400 negative scan without disclosed noise reduction shows inter-record coherence of about `0.0` to `0.45`; a lab scan of the same stock measures `0.342`, which already includes scanner crosstalk and is therefore an upper bound on the intrinsic part; correlated noise fields extracted from a commercial film-simulation product measure `0.853`. Only the first is evidence about the film, and its lower end is zero, which is why the default is zero. A value above the raw-scan band reproduces coherence that the evidence attributes to scanner processing, so an enabled value must be recorded per preset and must stay inside the measured band until better evidence replaces it.
 
 ## Dye formation
 
@@ -191,6 +215,57 @@ At fixed pitch, seed, target surface, and precision, overlapping CMY full-frame/
 
 Two canvases at an equal physical pitch differ in film extent, so their conditioning agrees only to pipeline float precision. A cell whose Poisson threshold falls inside that noise can still move by one count. This cross-canvas comparison does not relax exact CPU/GPU count decisions when reference conditioning values are identical. The 512-squared 24 mm against 1024-squared 48 mm probe measured a conditioning difference of `1.8e-7`, 99% of overlapping samples within `1e-5`, a 0.17% tail of at most one count quantum (`3.6e-4` in density), and high-passed grain sigma within `0.1%` between canvases. Cross-canvas comparison therefore checks the count law and the covariance, not sample identity; sample identity belongs to reads of one canvas.
 
+### Device count law
+
+CPU f64 is the reference *implementation* of the count law, not the oracle for
+the device's individual draws. Dye's appearance is a function of the realized
+count statistics -- a cell's conditional Poisson masses -- and not of which
+uniform landed in which comparison, so the device is not asked to reproduce the
+reference's draws. The owner's decision is that the device evaluates the law in
+single precision, from words addressed by the cell, channel, layer, and seed.
+
+What the device must not do is change the law. It runs Knuth's multiplication
+below 30 and Hörmann's transformed rejection above, exactly as the reference
+does, including the reference's branch boundary, its squeeze, its rejection
+test, and its `ln(k!)` term; a normal approximation, a clipped tail, or a
+Gaussian substitute is a different law and is not admissible. This is the
+latitude `../../gpu-execution/design.md#stochastic-alignment` grants an owning
+engine whose appearance model does not depend on draw identity.
+
+The device's words are coordinate-addressed rather than chained, so a stream is a
+function of its address alone: crop bounds, tile size, dispatch shape, workgroup
+size, and queue order cannot reseed a cell, and a repeated render of the same
+cell reproduces its count.
+
+A device that cannot represent a realized count reports that case as a failure
+rather than rounding it: `f32` holds integers exactly only below `2^24`, and a
+rounded count would be a different law rather than a different precision.
+
+Acceptance is statistical, and it is per branch and per conditioning:
+
+1. Over a fixed, image-independent case set covering both branches, both sides of
+   the switch, and both ends of the realizable rate range, the realized counts
+   must be Poisson in mean, variance, skewness, and probability of an empty cell,
+   in bands derived from the Poisson moments and the sample count rather than from
+   a tolerance chosen after the fact.
+2. A control build that replaces the law must fail the same checks, and it must
+   fail them on both sides of the switch: below it through the empty-cell
+   probability, above it through the shape, because a substitute can be built to
+   match the mean and variance. The checks must report both, so that neither
+   half's power rests on an untested assertion. A check that cannot see a
+   different law is not evidence.
+3. The count must not depend on how the dispatch was shaped: the same case run
+   alone and inside a large batch must produce the same count.
+4. Pool the five independent 300,000-case replicates at each rate and apply the same predeclared seven-standard-error screen at the pooled sample count. Per-replicate success alone can conceal a persistent bias. For unbiased sample variance, use standard error `sqrt(lambda/n + 2*lambda^2/(n-1))`; for moment skewness, use the asymptotic standard error `sqrt((6 + 9/(2*lambda) + 1/(4*lambda^2))/n)`. Handle the degenerate zero-rate case exactly. These are calibrated engineering screens, not a guaranteed familywise confidence statement.
+5. Place rejection comparisons near their boundaries and compare their log-probabilities with an independent f64 factorial oracle. The production rejection expression must avoid large-rate cancellation without changing the factorial approximation or count law. With `z=k+1` and `t=(lambda-z)/z`, the equivalent Stirling expression is `k*(log1p(t)-t) - t - log(z)/2 - log(sqrt(2*pi)) - 1/(12*z)`; use a bounded series for `log1p(t)-t` near zero. An on-device control retaining the cancelled expression must fail the same checks or, where its counts stay inside the pooled bands, consume words differently from the production law over the same cases by more than seven standard errors of that difference. The pooled bands must stay narrower than the certified adapter's recorded distortion.
+
+The implemented f32 rate ceiling is `65536`. An unrepresentable positive rate, event mass, count, or exhausted rejection budget must fail explicitly, not clamp or borrow another channel's shared events. Hardware certification on RADV RAPHAEL_MENDOCINO at the ceiling measured pooled variance `65592.5771` for 1,500,000 production draws against the expected `65536`; the cancelled-expression control measured `66100.5493` for 3,000,000 draws and failed its pooled screen. Ninety placed rejection probes measured maximum log-probability error `2.786e-6`; the cancelled control flipped 23 of 50 placed top-rate decisions. The same control on the software adapter used for continuous integration (`llvmpipe`) measured pooled variance `65553.0360` for 3,000,000 draws, inside the bands, while 2.4% of the same cases consumed a different number of words than the production law (`+0.0286` per case, 133 standard errors of the difference); the software adapter rounds the cancelled arrangement's threshold error negative, where the certified adapter rounds it positive. This certifies the tested count kernel on that adapter, not full-pipeline photographic acceptance.
+
+
+The device half of this contract is `crates/spektrafilm-gpu/src/wgpu_backend/grain/dye_decisions.wgsl`,
+with its checks and its control module in the sibling `dye_decisions.rs`. No
+precision-control marker is involved: the device arithmetic is the device's own.
+
 ## Runtime integration
 
 `params/grain.rs` owns selection, support sigma, and the Dye event area. Metadata, CLI edits, presets, GUI controls, and state serialization must use that contract. Ignored Spektra/Procedural controls, including `particle_area_um2`, must not appear as active Dye controls.
@@ -199,9 +274,9 @@ Geometry must carry full-film bounds, crop origin, target grid, and actual outpu
 
 Apply inactive, preview, spatial-deactivation, stochastic-deactivation, and LUT bypass before active-Dye parameter resolution and allocation. These specific modes must not allocate the field. Diagnostic taps, timing, and output dumps must continue to exercise active Dye; a generic debug flag must not disable it. The expectation diagnostic must not mutate the user's recipe.
 
-Active Dye must execute population preparation, exact count realization, formation, filtering, and readout on the selected executor. CPU f64 remains the numerical reference. GPU production must keep numerical preparation and grain computation on the device and must not consume CPU-prepared population, bank, image-sized field, or grain arithmetic. Follow [GPU backend selection](../../gpu-execution/spec.md#backend-selection), [device residency](../../gpu-execution/design.md#device-residency), [numerical alignment](../../gpu-execution/design.md#numerical-alignment), and [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment). Report the effective executor in capability and dry-run output. Unsupported conditions and resources must fail before publication. Scan and Export must share the resolved model.
+Active Dye must execute population preparation, exact count realization, formation, filtering, and readout on the selected executor. GPU production must keep numerical preparation and grain computation on the device. Follow [GPU backend selection](../../gpu-execution/spec.md#backend-selection), [device residency](../../gpu-execution/design.md#device-residency), [numerical alignment](../../gpu-execution/design.md#numerical-alignment), and [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment). Report the effective executor after backend selection. CLI dry run retains `film_grain_dye.effective_backend` as `null`, reports the requested backend separately, and explicitly leaves compute-device availability unchecked; it must not create a device or claim execution. Unsupported conditions and resources must fail before publication. Scan and Export must share the resolved model.
 
-On the print route, Dye density enters the [print exposure composition](../../material-response/design.md#print-exposure-composition). Every scan of that material must follow [Scan optics and print viewing glare](../../film-chain/spec.md#scan-optics-and-print-viewing-glare), including direct scans. Dye must not restore the historical post-gamut optical blur or compose its grain after encoding. Convert-film remains outside active Dye support.
+On the print route, Dye density enters the [print exposure composition](../../output-mix/design.md#print-exposure-composition). Every scan of that material must follow [Scan optics and print viewing glare](../../film-chain/spec.md#scan-optics-and-print-viewing-glare), including direct scans. Dye must not restore the historical post-gamut optical blur or compose its grain after encoding. Convert-film remains outside active Dye support.
 
 CMY crop certification does not by itself establish final RGB crop equality. With an active downstream spatial operation, such as the enlarger diffusion filter, scanner blur, or unsharp mask, evaluate it on the corresponding full-film output grid and crop afterward. An implementation may use bounded halos only if it proves equivalent boundary behavior. Otherwise use full-frame downstream processing. If crop output rounding changes footprint alignment, report this sampling difference rather than claim pixel equality.
 
@@ -211,34 +286,10 @@ First prove layer allocation, reconstruction, count law, independent formation/r
 
 Before declaring the reference condition supported, render the actual full frame through CLI and GUI Scan/Export. Record machine, source/output dimensions, pitch, peak resident memory, stage times, and cancellation behavior. Tile or cache optimizations must keep certified output. If the full-frame workload is unacceptable, revise execution and re-certify before release; do not silently fall back to another model or reduce the promised frame scope.
 
-Permanent tests must cover allocation including zero weights, bypass precedence, support independence from event area, global crop/tile identity, fractional boxes, supported routes, the unsupported cine usage, and state round trips. The covariance certification test must use the default support and the zero-lag-variance error measure. Numerical and photographic evidence must identify the real entry point and precision. Synthetic proof alone must not be reported as visual acceptance.
+Permanent tests must cover allocation including zero weights, bypass precedence, support independence from event area, global crop/tile identity, fractional boxes, still and cine stock resolution on supported routes, rejected film chemistries and routes, and state round trips. The covariance certification test must use the default support and the zero-lag-variance error measure. Numerical and photographic evidence must identify the real entry point and precision. Synthetic proof alone must not be reported as visual acceptance.
 
 The format change must retain the existing 36 mm realization for the same source, seed, recipe, precision, and implementation. Permanent regression tests must cover the default 35 mm recipe, an arbitrary positive non-36 mm long edge, format persistence, invalid format values, unchanged output dimensions, and crop/tile identity at both smaller and larger formats. Resource-limit checks must exercise an exceeded limit without allocating the oversized canvas.
 
-
 ## Evidence and limits
 
-Normally processed color-negative film retains image dyes after silver removal. Kodak distinguishes subjective graininess from measured granularity. Conventional diffuse RMS uses a 48-micrometer diameter aperture at net density 1.00. Output-pixel RMS is not that measurement.
-
-Portra 800's Print Grain Index cannot be compared with density RMS. Repository granularity presets are not verified Kodak density-RMS values.
-
-Independent CMY fields are consistent with the available negative evidence. A raw UltraMax 400 negative scan from a Coolscan V ED, without disclosed noise reduction, shows inter-record grain coherence of about 0.0–0.45 across 5–160-micrometer wavelengths. The Dye film-scan negative of a flat patch at the same pitch measures −0.1–0.25. Finished lab scans of CineStill 800T and pushed Portra 800 show coherence of 0.56–0.99 and chroma-to-luma ratios of 0.3–0.77 at fine scales. In the night-sky window, red-green coherence falls from 0.94 at fine scales to 0.70 at coarse scales. This pattern matches scanner chroma low-pass filtering more closely than intrinsic record correlation. A prototype that correlated the record counts produced a flat coherence spectrum and d…
-
-Matched-tone comparisons against high-speed lab scans at the same film pitch agree on grain-clump size (4.0–4.6 versus 4.5–5.6 micrometers by half-autocorrelation radius) and on tonal polarity: bright regions show sparse light specks and dark regions show sparse dark specks. Luminance grain RMS agrees within about 20% on the pushed Portra 800 sky and the 800T night sky. In bright regions, the real scans are more strongly skewed toward sparse light specks (skewness −0.48 and −0.98) than Dye (−0.18 and −0.62). The references pass through unknown lab tone curves, sharpening, and JPEG encoding, so this difference is not attributed to the film model.
-
-A coarser blue record is a real negative property. Kodak's VISION3 500T 5219 data publish diffuse RMS granularity per record with a 48-micrometer aperture. At low and middle exposures, blue reads about 0.02–0.03 sigma D, and green and red about 0.005–0.008. The repository 500T preset `[9, 13, 30]` has the same direction. Finished lab scans of CineStill 800T, which uses this emulsion, show a much smaller blue excess: the blue-to-green ratio of high-passed grain RMS is 1.29 and 1.13 in two tone-matched windows. Before the channel-scale rule above, Dye on the print route gave 3.13 and 2.71. Removing the doubled blue `particle_scale` gives 2.55 and 2.43 and halves the blue mean shift caused by grain through the nonlinear print response. An 8-micrometer scanner ch…
-
-The field boundary and exact Poisson mass law are mathematical choices. The 3.5-micrometer support is resolvable at the comparison scale and was preferred in user review over 8 micrometers. Unknown reference provenance and the supported output range remain explicit acceptance limits.
-
-## References
-
-- [Dye product contract](spec.md)
-- [Film grain architecture](../design.md)
-- [Spektra contract](../v1/spec.md)
-- [Procedural contract](../v2/spec.md)
-- [Dehancer investigation](../../../docs/dehancer-grain-reverse-engineering.md)
-- Kodak, [The Essential Reference Guide for Filmmakers](https://www.kodak.com/content/products-brochures/Film/kodak-essential-reference-guide-for-filmmakers.pdf), printed pages 31 and 56–57.
-- Kodak Alaris, [Portra 800 E-4040](https://kodakprofessional.com/sites/default/files/2025-07/e4040.pdf), printed page 3.
-- Kodak, [VISION3 500T 5219/7219 technical data H-1-5219t, July 2015](https://www.kodak.com/content/products-brochures/Film/VISION3-500T-Color-Negative-Film-7219-TECHNICAL-DATA.pdf), page 4.
-- Newson et al., [Realistic Film Grain Rendering](https://www.ipol.im/pub/art/2017/192/), sections 2–4.
-- Last and Penrose, [Lectures on the Poisson Process](https://stoch.math.kit.edu/img/Last/lastpenrose2017.pdf), sections 5.3 and 15.4.
+Unknown reference provenance and the supported output range remain explicit acceptance limits. Film-scan optical accuracy and cine photographic calibration remain unverified.

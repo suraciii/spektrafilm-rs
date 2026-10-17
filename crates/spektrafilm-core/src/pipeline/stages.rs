@@ -193,6 +193,7 @@ impl Pipeline {
         color_ref: &crate::color_reference::ColorReference,
         physical_context: Option<(f64, f64)>,
         stage_timings: Option<&mut BTreeMap<String, f64>>,
+        mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
         self.check_cancelled()?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
@@ -236,9 +237,17 @@ impl Pipeline {
         {
             return Err("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR requires injection at or before log_e_film and collect=rgb_out".to_owned());
         }
+        if let Some(capture) = capture.as_deref_mut()
+            && self.params.io.scan_film
+        {
+            // `io.scan_film` short-circuits the print stages.
+            use crate::stage_evidence::StageId;
+            capture.record_skip(StageId::LogEPrint, "no_print_stage_on_route");
+            capture.record_skip(StageId::CmyPrint, "no_print_stage_on_route");
+        }
         let (mut cur, mut pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
             crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
-            let image = self.expose_full_input(image, backend);
+            let image = self.expose_full_input(image, backend, capture.as_deref_mut());
             let (working, pitch) = self.rescale_working(&image, backend)?;
             let working = match working {
                 std::borrow::Cow::Owned(working) => working,
@@ -267,6 +276,8 @@ impl Pipeline {
             i += 1;
         }
         let mut output_crop = None;
+        use crate::stage_evidence::CoordinateSpace;
+        let mut stage_space = CoordinateSpace::Working;
         while i < cp {
             self.check_cancelled()?;
             cur = self.fire_node(
@@ -278,6 +289,13 @@ impl Pipeline {
                 ae_ev,
                 &mut stage_timings,
             )?;
+            if order[i] == Tap::RgbPre
+                && let Some(capture) = capture.as_deref_mut()
+            {
+                // The filming exposure multiply runs inside the node just
+                // fired; the stage evidence reports what was applied.
+                capture.record_compensation(self.params.camera.exposure_compensation_ev as f64);
+            }
             if order[i] == Tap::LogEFilm && crate::stages::grain_v3::active(&self.params) {
                 let t = Instant::now();
                 let geometry =
@@ -290,14 +308,17 @@ impl Pipeline {
                 let print_spatial = !self.params.io.scan_film
                     && collect != Tap::CmyFilm
                     && self.params.enlarger.diffusion_filter.active;
-                let grid = if let Some(factor) = aperture_factor {
-                    crate::stages::grain_v3::aperture_grid(&geometry, factor)?
+                let (grid, readout_space) = if let Some(factor) = aperture_factor {
+                    (
+                        crate::stages::grain_v3::aperture_grid(&geometry, factor)?,
+                        CoordinateSpace::GrainAperture,
+                    )
                 } else if self.params.io.crop && (scan_spatial || print_spatial) {
                     let (grid, crop) = geometry.full_film_grid(&cur)?;
                     output_crop = Some(crop);
-                    grid
+                    (grid, CoordinateSpace::FilmFrame)
                 } else {
-                    geometry.grid()
+                    (geometry.grid(), CoordinateSpace::Output)
                 };
                 // The existing scalar optical controls use the actual pitch
                 // on the full source's long axis. Rounding may make the other
@@ -336,7 +357,14 @@ impl Pipeline {
                             }
                         },
                     )?;
+                    stage_space = readout_space;
                     pixel_size_um = requested_pitch_um;
+                    if let Some(capture) = capture.as_deref_mut() {
+                        // The optical readout fused development and grain
+                        // into one step: no developed-density boundary flows.
+                        use crate::stage_evidence::StageId;
+                        capture.record_skip(StageId::CmyFilm, "fused_into_grain_readout");
+                    }
                     if self.params.io.scan_film {
                         let observation = crate::stages::StageObservation::new(backend, "scanning");
                         cur = crate::stages::scanning::finish_capture(
@@ -353,6 +381,13 @@ impl Pipeline {
                             *value = from_f64(to_f64(*value).log10());
                         });
                         dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &cur);
+                        if let Some(capture) = capture.as_deref_mut() {
+                            capture.record_boundary(
+                                crate::stage_evidence::StageId::LogEPrint,
+                                &cur,
+                                stage_space,
+                            );
+                        }
                         i = order.iter().position(|tap| *tap == Tap::LogEPrint).unwrap();
                     }
                     print_stage_timing(stage_timings_enabled(), "grain_v3_cell_spectral", t);
@@ -367,6 +402,7 @@ impl Pipeline {
                     grid,
                     backend,
                 )?;
+                stage_space = readout_space;
                 pixel_size_um = if let Some(factor) = aperture_factor {
                     aperture_output_pitch_um = Some(requested_pitch_um);
                     requested_pitch_um / factor as f64
@@ -389,13 +425,14 @@ impl Pipeline {
                 let print_spatial = !self.params.io.scan_film
                     && collect != Tap::CmyFilm
                     && self.params.enlarger.diffusion_filter.active;
-                let grid = if self.params.io.crop && (scan_spatial || print_spatial) {
-                    let (grid, crop) = geometry.full_film_grid(&cur)?;
-                    output_crop = Some(crop);
-                    grid
-                } else {
-                    geometry.grid()
-                };
+                let (grid, readout_space) =
+                    if self.params.io.crop && (scan_spatial || print_spatial) {
+                        let (grid, crop) = geometry.full_film_grid(&cur)?;
+                        output_crop = Some(crop);
+                        (grid, CoordinateSpace::FilmFrame)
+                    } else {
+                        (geometry.grid(), CoordinateSpace::Output)
+                    };
                 let long_axis = usize::from(cur.height > cur.width);
                 cur = self.fotufilm_prepared.readout(
                     &cur,
@@ -406,6 +443,7 @@ impl Pipeline {
                     backend,
                     &|| self.check_cancelled(),
                 )?;
+                stage_space = readout_space;
                 pixel_size_um = geometry.output_pitch_um[long_axis];
                 record_stage_timing(&mut stage_timings, "grain_fotufilm_readout", t);
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
@@ -415,12 +453,23 @@ impl Pipeline {
             {
                 let t = Instant::now();
                 cur = crate::stages::grain_v3::collapse_log_exposure(&cur, factor)?;
+                stage_space = CoordinateSpace::Output;
                 pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
                     "film grain Dye aperture: missing requested output pitch".to_owned()
                 })?;
                 print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
                 record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
                 tracing::info!(factor, "film grain Dye: collapsed linear print exposure");
+            }
+            // The value at the next tap has settled (post-grain, post-crop
+            // decision). `rgb_out` is recorded by the caller as the delivered
+            // pre-saving output, including post-processing.
+            if let Some(next) = order.get(i + 1).copied()
+                && next != Tap::RgbOut
+                && let Some(id) = crate::stage_evidence::StageId::of_tap(next)
+                && let Some(capture) = capture.as_deref_mut()
+            {
+                capture.record_boundary(id, &cur, stage_space);
             }
             i += 1;
         }

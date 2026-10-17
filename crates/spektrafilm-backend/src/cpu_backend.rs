@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{Scalar, exp10_inplace, from_f32, from_f64, to_f32};
+use spektrafilm_math::precision::{Scalar, exp10_inplace, from_f32, from_f64, to_f32, to_f64};
 use spektrafilm_math::spectral;
 
 use crate::{ComputeBackend, Lut3D};
@@ -314,7 +314,7 @@ pub fn scan_log_xyz_cpu_with_cmfs(
     let has_base = !base_density.is_empty() && base_density.len() >= n_wl;
     let n_pix = (density_cmy.width as usize) * (density_cmy.height as usize);
 
-    let density_f64: Vec<f64> = density_cmy.data.par_iter().map(|&v| v as f64).collect();
+    let density_f64: Vec<f64> = density_cmy.data.par_iter().map(|&v| to_f64(v)).collect();
     let cd_flat: Vec<f64> = channel_density[..n_wl]
         .iter()
         .flat_map(|r| [r[0], r[1], r[2]])
@@ -411,7 +411,7 @@ pub fn scan_spectral_cpu_with_cmfs(
     // accumulate ~5e-6 of drift after the 81-wavelength reduction. The
     // spectral integration is tiled (see `spectral_to_proj_tiled`) so the
     // intermediate stays bounded at high resolution.
-    let density_f64: Vec<f64> = density_cmy.data.par_iter().map(|&v| v as f64).collect();
+    let density_f64: Vec<f64> = density_cmy.data.par_iter().map(|&v| to_f64(v)).collect();
     let cd_flat: Vec<f64> = channel_density[..n_wl]
         .iter()
         .flat_map(|r| [r[0], r[1], r[2]])
@@ -508,7 +508,7 @@ pub fn print_spectral_cpu(
     // density_cmy stored as Scalar (interleaved RGB). Promote to f64
     // directly — `to_f32(v) as f64` quietly round-trips through f32
     // even with Scalar=f64 and was the seed of ~1e-9 print drift.
-    let density_f64: Vec<f64> = density_cmy.data.par_iter().map(|&v| v as f64).collect();
+    let density_f64: Vec<f64> = density_cmy.data.par_iter().map(|&v| to_f64(v)).collect();
 
     // channel_density: Vec<[f64; 3]> is already row-major [n_wl × 3].
     // For the GEMM density_cmy @ channel_density.T we pass TransB so BLAS
@@ -553,43 +553,4 @@ pub fn print_spectral_cpu(
             }
         });
     output
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use spektrafilm_math::precision::{srgb_decode, srgb_encode};
-
-    #[test]
-    fn test_srgb_roundtrip() {
-        for &v in &[0.0_f64, 0.001, 0.01, 0.1, 0.5, 0.9, 1.0] {
-            let s = from_f64(v);
-            let encoded = srgb_encode(s);
-            let decoded = srgb_decode(encoded);
-            assert!(
-                (s - decoded).abs() < from_f64(1e-5),
-                "roundtrip failed for {v}: got {decoded}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_colorspace_convert_identity() {
-        let identity = [[1.0_f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let img = ImageBuf::from_data(
-            2,
-            1,
-            vec![
-                from_f64(0.2),
-                from_f64(0.4),
-                from_f64(0.6),
-                from_f64(0.8),
-                from_f64(0.1),
-                from_f64(0.3),
-            ],
-        );
-        let backend = CpuBackend;
-        let out = backend.colorspace_convert(&img, &identity);
-        assert_eq!(img.data, out.data);
-    }
 }

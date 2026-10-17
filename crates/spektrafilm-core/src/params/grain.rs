@@ -143,6 +143,14 @@ pub struct GrainParams {
     /// dye support. Dye-only; Spektra reads `particle_area_um2` instead.
     #[serde(default = "default_v3_event_area_um2")]
     pub v3_event_area_um2: f64,
+    /// Fraction of one emulsion layer's count rate that Dye's active channels
+    /// share, in `[0, MEASURED_CHANNEL_CORRELATION_CEILING]`. Raising it correlates the channels of a layer while
+    /// every channel keeps its marginal Poisson rate. The value is the shared
+    /// fraction, not the realized correlation: unequal channel rates make the
+    /// realized correlation lower. Dye-only; the other engines have no
+    /// equivalent control.
+    #[serde(default = "default_channel_correlation")]
+    pub channel_correlation: f64,
     #[serde(default = "default_07")]
     pub mult_usm_sigma: f32,
     #[serde(default = "default_15")]
@@ -208,6 +216,26 @@ fn default_v3_dye_support_um() -> f32 {
 fn default_v3_event_area_um2() -> f64 {
     1.28
 }
+/// Ceiling of [`Grain::channel_correlation`], the top of the band the evidence
+/// supports.
+///
+/// A raw UltraMax 400 negative scan without disclosed noise reduction brackets
+/// inter-record coherence at `0.0` to `0.45`; everything above that band that
+/// has been measured (`0.853` in a commercial film-simulation product) is
+/// coherence the evidence attributes to scanner processing, which
+/// `specs/film-grain/v3/design.md` forbids the records from imitating. The
+/// control stays legal on `[0, 1)` in principle -- the split only requires the
+/// independent remainder to be non-negative -- so this bound is an evidence
+/// bound, not a structural one, and it moves when better evidence replaces the
+/// band.
+pub const MEASURED_CHANNEL_CORRELATION_CEILING: f64 = 0.45;
+
+/// Off by default: the independent-field realization stays the shipped
+/// behavior, and a recipe or preset that wants record correlation opts in
+/// (`specs/film-grain/v3/design.md` §Channel correlation).
+fn default_channel_correlation() -> f64 {
+    0.0
+}
 fn default_grain_v2_resolution_type() -> u32 {
     1
 }
@@ -260,6 +288,7 @@ impl Default for GrainParams {
             particle_scale_sublayers: [1.0, 0.4, 0.25],
             v3_dye_support_um: default_v3_dye_support_um(),
             v3_event_area_um2: default_v3_event_area_um2(),
+            channel_correlation: default_channel_correlation(),
             blur: 0.89,
             mult_usm_sigma: 0.7,
             mult_usm_amount: 1.5,

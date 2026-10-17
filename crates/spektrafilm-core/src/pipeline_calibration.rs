@@ -6,7 +6,7 @@ use crate::WorkflowRoute;
 use crate::enlarger;
 use crate::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams};
 use crate::profile::Profile;
-use crate::spectral_service::{self, select_illuminant, select_illuminant_f64};
+use crate::spectral_service::{self, select_illuminant};
 
 /// Runtime controls that invalidate spectral calibration artifacts.
 #[derive(Debug, Clone, PartialEq)]
@@ -390,122 +390,15 @@ pub(crate) fn build(
     ]);
     let (c_neutral_f64, m_neutral_f64, y_neutral_f64) = (cmy_f64[0], cmy_f64[1], cmy_f64[2]);
 
-    // Film sensitivity: Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)`.
-    let mut sensitivity: Vec<[f64; 3]> = film.sensitivity_f64();
-
-    let ref_illuminant = select_illuminant(&film.info.reference_illuminant);
-    let ref_illuminant_f64 = select_illuminant_f64(&film.info.reference_illuminant);
-    let mut front_illuminant = film.info.reference_illuminant.clone();
-
-    // Camera UV/IR filter — Python `FilmingStage._rgb_to_film_raw` filters
-    // the film sensitivity through the UV/IR band-pass (with
-    // reference-illuminant normalization preserving white balance) before
-    // BOTH upsampler branches and before the midgray calibration below.
-    // Off at default amplitudes (0, 0), matching Python's guard
-    // `filter_uv[0] > 0 or filter_ir[0] > 0`.
-    if params.camera.filter_uv[0] > 0.0 || params.camera.filter_ir[0] > 0.0 {
-        spectral_service::apply_camera_uv_ir_band_pass(
-            &mut sensitivity,
-            [
-                params.camera.filter_uv[0] as f64,
-                params.camera.filter_uv[1] as f64,
-                params.camera.filter_uv[2] as f64,
-            ],
-            [
-                params.camera.filter_ir[0] as f64,
-                params.camera.filter_ir[1] as f64,
-                params.camera.filter_ir[2] as f64,
-            ],
-            &ref_illuminant_f64,
-        );
-    }
-    if params.camera.color_filter != spectral_service::NO_COLOR_FILTER {
-        let transmittance = spectral_service::load_color_filter_transmittance(
-            data_dir,
-            &params.camera.color_filter,
-        )?
-        .expect("named camera color filters always have transmission");
-        for (row, transmission) in sensitivity.iter_mut().zip(transmittance) {
-            for channel in row {
-                *channel *= transmission;
-            }
-        }
-    }
-    // RGB → film raw upsampler. Default `hanatos2025` builds the spectral tc
-    // LUT; `mallett2019` builds a 3×3 reflectance-basis matrix instead (no
-    // LUT). Dispatch mirrors Python `_rgb_to_film_raw`.
-    let method_name = params.settings.rgb_to_raw_method.as_str();
-    let method = crate::params::validation::RgbToRawMethod::parse(method_name)?;
-    let (tc_lut, mallett_core): (Option<TcLut>, Option<[[f64; 3]; 3]>) = match method {
-        crate::params::validation::RgbToRawMethod::Hanatos2025 => {
-            let window_params: Vec<f64> = film.data.hanatos2025_adaptation_window_params.clone();
-            let adaptation = spectral_service::Hanatos2025Adaptation {
-                window_params: &window_params,
-                surface_params: &film.data.hanatos2025_adaptation_surface_params,
-                spectral_gaussian_blur: params.settings.spectral_gaussian_blur as f64,
-                reference_illuminant: &ref_illuminant_f64,
-                reference_illuminant_xy: spektrafilm_math::spectral::illuminant_to_xy(
-                    &ref_illuminant,
-                ),
-                apply_window: params.settings.apply_hanatos2025_adaptation_window,
-                apply_surface: params.settings.apply_hanatos2025_adaptation_surface,
-            };
-            let tc_lut = spectral_service::compute_registered_tc_lut(
-                data_dir,
-                "hanatos2025",
-                &sensitivity,
-                &ref_illuminant_f64,
-                Some(&adaptation),
-            )?;
-
-            (Some(tc_lut), None)
-        }
-        crate::params::validation::RgbToRawMethod::Arctic2026Alpha02
-        | crate::params::validation::RgbToRawMethod::Arctic2026Beta04
-        | crate::params::validation::RgbToRawMethod::GaussLasers
-        | crate::params::validation::RgbToRawMethod::Jakob2019
-        | crate::params::validation::RgbToRawMethod::Otsu2018 => {
-            front_illuminant = "D65".into();
-            let tc_lut = spectral_service::compute_registered_tc_lut(
-                data_dir,
-                method_name,
-                &sensitivity,
-                &ref_illuminant_f64,
-                None,
-            )?;
-            (Some(tc_lut), None)
-        }
-        crate::params::validation::RgbToRawMethod::Mallett2019 => (
-            None,
-            Some(crate::mallett::compute_core_matrix(
-                &sensitivity,
-                &ref_illuminant_f64,
-            )),
-        ),
-    };
-    let tc_lut = if let Some(tc_lut) = tc_lut {
-        let input_gamut =
-            crate::input_gamut::InputGamutCompress::build(&params.io.input_gamut_compress)?;
-        Some(if input_gamut.is_active() {
-            // Hanatos remaps around fixed D65, independently of film adaptation.
-            // Other LUT methods set their front illuminant before this boundary.
-            let remap_illuminant = if matches!(
-                method,
-                crate::params::validation::RgbToRawMethod::Hanatos2025
-            ) {
-                "D65"
-            } else {
-                &front_illuminant
-            };
-            let (rx, ry) =
-                spektrafilm_math::spectral::illuminant_to_xy(&select_illuminant(remap_illuminant));
-            input_gamut.remap(&tc_lut, [rx, ry])
-        } else {
-            tc_lut
-        })
-    } else {
-        None
-    };
+    // The filming front end — filtered sensitivity, RGB → film-raw
+    // upsampler, and the illuminant the front pass projects through — is
+    // shared with the lab spectral evaluation.
+    let spectral_service::FilmingUpsampler {
+        tc_lut,
+        mallett_core,
+        front_illuminant,
+        ..
+    } = spectral_service::build_filming_upsampler(&film, &params, data_dir)?;
 
     // Python parity: sensitivities are pre-balanced in the profile so midgray ≈ 1.0.
     // The TC LUT is used unnormalized — Python's `rgb_to_raw_hanatos2025` does NOT scale it.
@@ -673,6 +566,42 @@ mod tests {
             }
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn print_exposure_factor_folds_degenerate_tracking_onto_the_mode_default() {
+        use crate::params::{PrintExposureEvTracking, PrintExposureMode};
+        use crate::test_support::data_dir;
+        use PrintExposureEvTracking::{Always, FollowMode, Never};
+        use PrintExposureMode::{Auto, Manual};
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let factor = |mode: PrintExposureMode, tracking: PrintExposureEvTracking| {
+            let mut params = RuntimeParams::default();
+            params.enlarger.print_exposure_mode = mode;
+            params.settings.print_exposure_ev_tracking = tracking;
+            params.camera.exposure_compensation_ev = 0.5;
+            super::build(film.clone(), print.clone(), params, &dir)
+                .unwrap()
+                .print_exposure_factor
+        };
+        let auto_follow = factor(Auto, FollowMode);
+        let auto_never = factor(Auto, Never);
+        let auto_always = factor(Auto, Always);
+        let manual_follow = factor(Manual, FollowMode);
+        let manual_never = factor(Manual, Never);
+        let manual_always = factor(Manual, Always);
+        // The degenerate tracking choices fold exactly onto the mode
+        // default; they only carry the legacy mixed states.
+        assert_eq!(auto_always, auto_follow);
+        assert_eq!(manual_never, manual_follow);
+        // The manual default applies the print exposure alone.
+        assert_eq!(manual_follow, 1.0);
+        // The tracked branches stay distinct at nonzero camera EV ...
+        assert_ne!(auto_follow, auto_never);
+        // ... and manual+always carries exactly the tracking ratio.
+        assert!((manual_always * auto_never - auto_follow).abs() < 1e-12);
     }
 
     #[test]

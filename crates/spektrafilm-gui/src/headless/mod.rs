@@ -4,8 +4,12 @@ use super::*;
 use egui_kittest::{Harness, kittest::Queryable};
 use spektrafilm_backend::cpu_backend::CpuBackend;
 use tempfile::TempDir;
+mod calibration;
+mod dialogs;
 mod files;
 mod lifecycle;
+mod pages;
+mod panels;
 mod raw;
 mod viewer;
 mod workflow;
@@ -29,8 +33,32 @@ pub(crate) fn data_dir() -> PathBuf {
 
 /// Repository root (the parent of [`data_dir`]), for assertions that generated
 /// artifacts stay outside the checkout.
+#[cfg(feature = "gui-snapshots")]
 pub(crate) fn repository_root() -> PathBuf {
     data_dir().parent().unwrap().to_path_buf()
+}
+
+/// Write `image` under `SPEKTRAFILM_GUI_SNAPSHOT_DIR` when that absolute,
+/// repository-external directory is set. Returns without writing otherwise,
+/// so the default gate never depends on a snapshot directory.
+#[cfg(feature = "gui-snapshots")]
+pub(crate) fn save_snapshot(image: &image::RgbaImage, name: &str) {
+    let Some(directory) = std::env::var_os("SPEKTRAFILM_GUI_SNAPSHOT_DIR") else {
+        return;
+    };
+    let directory = PathBuf::from(directory);
+    assert!(
+        directory.is_absolute(),
+        "snapshot directory must be absolute"
+    );
+    let repository = repository_root().canonicalize().unwrap();
+    std::fs::create_dir_all(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
+    assert!(
+        !directory.starts_with(repository),
+        "snapshot artifacts must be outside the repository"
+    );
+    image.save(directory.join(name)).unwrap();
 }
 
 fn app(state_path: PathBuf, image_path: PathBuf, browser_path: PathBuf) -> App {
@@ -56,11 +84,36 @@ fn script(h: &mut Harness<'_, App>, result: chooser::ChooserResult) {
     h.state_mut().chooser.scripted(result);
 }
 
-/// The shared harness deactivates stochastic effects so preview and scan
-/// comparisons stay deterministic.
-fn session_fixture() -> Session {
-    let directory = tempfile::tempdir().unwrap();
-    let image_path = directory.path().join("asymmetric-ramp.png");
+/// Deterministic factory state shared by the headless fixtures: stochastic,
+/// spatial, and reveal effects disabled so preview and scan comparisons stay
+/// reproducible. Returns the saved state path.
+fn deterministic_state(directory: &Path) -> PathBuf {
+    let factory = state::GuiState::factory();
+    let mut params = factory.runtime_params().unwrap();
+    params.settings.preview_max_size = 128;
+    params.camera.auto_exposure = false;
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = true;
+    params.io.crop = false;
+    let mut initial =
+        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+            .unwrap();
+    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
+    // The viewer's 50-frame Polaroid reveal paints one full-canvas raster per
+    // frame. That costs about 0.7 s per frame at this harness size, so sessions
+    // start with the animation off. The animation keeps its coverage in
+    // `headless::viewer::explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not`,
+    // which turns it back on through `viewer.settings.reveal`.
+    initial.sections["rust"]["viewer"]["settings"]["reveal"] = serde_json::json!(false);
+    let state_path = directory.join("initial.json");
+    initial.save(&state_path).unwrap();
+    state_path
+}
+
+/// Deterministic synthetic input shared by the headless fixtures: a ramp image
+/// plus the deterministic state from [`deterministic_state`].
+fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
+    let image_path = directory.join("asymmetric-ramp.png");
     let mut image = ImageBuf::new(160, 80);
     for y in 0..image.height {
         for x in 0..image.width {
@@ -86,19 +139,15 @@ fn session_fixture() -> Session {
         None,
     )
     .unwrap();
-    let factory = state::GuiState::factory();
-    let mut params = factory.runtime_params().unwrap();
-    params.settings.preview_max_size = 128;
-    params.camera.auto_exposure = false;
-    params.debug.deactivate_spatial_effects = true;
-    params.debug.deactivate_stochastic_effects = true;
-    params.io.crop = false;
-    let mut initial =
-        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
-            .unwrap();
-    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
-    let state_path = directory.path().join("initial.json");
-    initial.save(&state_path).unwrap();
+    let state_path = deterministic_state(directory);
+    (image_path, state_path)
+}
+
+/// The shared harness deactivates stochastic effects so preview and scan
+/// comparisons stay deterministic.
+fn session_fixture() -> Session {
+    let directory = tempfile::tempdir().unwrap();
+    let (image_path, state_path) = deterministic_inputs(directory.path());
     let browser_path = directory.path().join("browser.json");
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
@@ -108,24 +157,27 @@ fn session_fixture() -> Session {
     Session { harness, directory }
 }
 
+/// A session built for offscreen pixel capture: the production window size, the
+/// wgpu renderer, and the presets panel left in its default expanded state.
+#[cfg(feature = "gui-snapshots")]
+fn snapshot_session() -> Session {
+    let directory = tempfile::tempdir().unwrap();
+    let (image_path, state_path) = deterministic_inputs(directory.path());
+    let browser_path = directory.path().join("browser.json");
+    let harness = Harness::builder()
+        .with_size(egui::vec2(1460.0, 980.0))
+        .wgpu()
+        .build_eframe(move |_| app(state_path, image_path, browser_path));
+    assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
+    Session { harness, directory }
+}
+
 /// Build a session whose App starts without an image, so a test can drive its
-/// own import path. Shares the deterministic runtime settings with
-/// [`session_fixture`]; only the synthetic image and the initial click differ.
+/// own import path. Shares the deterministic state from [`deterministic_state`].
+#[cfg(feature = "gui-raw")]
 fn empty_session() -> Session {
     let directory = tempfile::tempdir().unwrap();
-    let factory = state::GuiState::factory();
-    let mut params = factory.runtime_params().unwrap();
-    params.settings.preview_max_size = 128;
-    params.camera.auto_exposure = false;
-    params.debug.deactivate_spatial_effects = true;
-    params.debug.deactivate_stochastic_effects = true;
-    params.io.crop = false;
-    let mut initial =
-        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
-            .unwrap();
-    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
-    let state_path = directory.path().join("initial.json");
-    initial.save(&state_path).unwrap();
+    let state_path = deterministic_state(directory.path());
     let browser_path = directory.path().join("browser.json");
     let harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
@@ -176,15 +228,44 @@ fn import_file(h: &mut Harness<'_, App>, raw: bool) {
     h.run_steps(3);
 }
 
+/// Scroll the controls panel down so elements below the fold come into view.
+///
+/// The harness's `simulate_click` doesn't scroll, and a section that expands
+/// below the fold reveals its controls outside the scroll viewport's clip
+/// rect, where pointer events no longer reach them. Real wheel input over the
+/// panel scrolls it through the same path a user takes.
+fn scroll_controls_down(h: &mut Harness<'_, App>) {
+    let screen = h.ctx.screen_rect();
+    let pointer = egui::pos2(screen.right() - 160.0, screen.center().y);
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(pointer));
+    h.input_mut().events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -600.0),
+        modifiers: Default::default(),
+    });
+    // egui smooths a large wheel delta over several frames; keep stepping so
+    // the scroll settles before the next interaction.
+    h.run_steps(10);
+}
+
+/// Pick `option` from the combo labeled `label`.
+///
+/// The option is looked up by button role: a grain engine group is a
+/// `CollapsingHeader` whose title carries the engine's label, so a plain
+/// label query would match both the header and the popup option.
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .simulate_click();
     h.run_steps(3);
     if h.state().export_dialog.is_open() {
-        h.get_by_label(option).simulate_click();
+        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+            .simulate_click();
         h.run_steps(3);
     } else {
-        h.get_by_label(option).click();
+        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+            .click();
         h.run_steps(3);
         h.press_key(egui::Key::Escape);
         h.run_steps(3);
@@ -216,8 +297,20 @@ fn edit(h: &mut Harness<'_, App>, label: &str, text: &str) {
     h.run_steps(3);
 }
 
+/// Wall-clock budget for a headless wait. The waits assert that the app
+/// finishes, never how fast, and CI runners are several times slower than
+/// developer machines while running the bin's tests in parallel.
+pub(crate) const WAIT_DEADLINE: Duration = Duration::from_secs(180);
+
+/// Yield the runner's cores to the worker thread a wait is waiting for. The
+/// workers are separate threads, so a spinning waiter competes with the very
+/// work it waits on and can starve it past the deadline on few-core runners.
+pub(crate) fn wait_tick() {
+    std::thread::sleep(Duration::from_millis(1));
+}
+
 fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(90);
+    let deadline = Instant::now() + WAIT_DEADLINE;
     loop {
         h.step();
         if condition(h.state()) {
@@ -228,11 +321,31 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
             "App completion timed out: {}",
             h.state().status
         );
-        std::thread::yield_now();
+        wait_tick();
     }
 }
 
+/// Advance the viewer until it has painted the last frame of its
+/// reveal/crossfade transition and accepted the new output. Sessions start with
+/// the reveal animation disabled, so this returns once the display worker
+/// accepts the render.
+fn settle_animation(h: &mut Harness<'_, App>) {
+    wait_until(h, |a| {
+        let observation = a.viewer.observation();
+        observation.generation == observation.accepted_generation
+            && observation.transition.is_none()
+    });
+}
+
 fn render(h: &mut Harness<'_, App>, button: &str) -> Arc<ImageBuf> {
+    // State loading can schedule a preview even with auto-preview off. Drain it
+    // before clicking: a disabled action does not enqueue the requested render.
+    wait_until(h, |a| {
+        a.render_job.is_none()
+            && a.export_job.is_none()
+            && a.calibration_job.is_none()
+            && !a.force_preview
+    });
     let previous = h.state().output_image.clone();
     click(h, button);
     wait_until(h, |a| {
@@ -543,6 +656,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // Export must ignore the most recently retained preview's reduced resolution.
     render(h, "PREVIEW");
     click(h, "Export options");
+    scroll_controls_down(h);
     click(h, "Export…");
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");
@@ -715,10 +829,24 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
         Arc::ptr_eq(&baseline, h.state().output_image.as_ref().unwrap()),
         "stale real worker response must not replace retained output"
     );
+    let start_guard = active.lock();
     h.state_mut().dispatch_render(&ctx);
     let first_request = h.state().render_job.as_ref().unwrap().request_id;
+    // The worker takes the preview before blocking on its start marker. Keep
+    // that preview in flight so submitting a full scan cannot replace it in
+    // the pending slot; both real responses must reach the App.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while h.state().render_worker.state.0.lock().is_some() {
+        assert!(
+            Instant::now() < deadline,
+            "worker did not take first request"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    h.state_mut().full_scan_requested = true;
     h.state_mut().dispatch_render(&ctx);
     assert!(h.state().render_job.as_ref().unwrap().request_id > first_request);
+    drop(start_guard);
     wait_until(h, |a| {
         a.render_job.is_none()
             && a.output_image
@@ -726,7 +854,9 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
                 .is_some_and(|out| !Arc::ptr_eq(out, &baseline))
     });
     assert!(edge_difference(h.state().output_image.as_ref().unwrap()) < -0.01);
-    assert!(h.state().status.starts_with("Preview ·"));
+    let accepted = h.state().output_image.as_ref().unwrap();
+    assert_eq!((accepted.width, accepted.height), (160, 80));
+    assert!(h.state().status.starts_with("Scan ·"));
 }
 
 #[cfg(feature = "gui-snapshots")]
@@ -747,12 +877,18 @@ mod layout_snapshots {
         assert!(h.query_by_label("Apply saving CCTF encoding").is_some());
         // Attach the offscreen renderer only in this opt-in gate; render the
         // real dialog's TIFF-specific controls selected above.
+        let dimensions = h
+            .state()
+            .image
+            .as_ref()
+            .map(|image| [image.width, image.height])
+            .unwrap_or([0, 0]);
         let mut modal = Harness::builder()
             .with_size(egui::vec2(700.0, 650.0))
             .wgpu()
             .build_state(
                 |ctx, dialog: &mut ExportDialog| {
-                    dialog.show(ctx);
+                    dialog.show(ctx, dimensions);
                 },
                 std::mem::take(&mut h.state_mut().export_dialog),
             );
@@ -808,25 +944,49 @@ mod layout_snapshots {
                 pair[1].0
             );
         }
+        // The dialog must state what the chosen settings will write; the row
+        // is a read-only label, so it carries no widget of its own to query.
+        assert!(
+            modal
+                .query_by_label_contains("Estimated output size")
+                .is_some(),
+            "the export dialog must state the estimated output size"
+        );
         let colors: std::collections::HashSet<_> = image.pixels().map(|p| p.0).collect();
         assert!(
             colors.len() > 20,
             "modal text and controls must render, not just a background"
         );
-        if let Some(directory) = std::env::var_os("SPEKTRAFILM_GUI_SNAPSHOT_DIR") {
-            let directory = PathBuf::from(directory);
-            assert!(
-                directory.is_absolute(),
-                "snapshot directory must be absolute"
-            );
-            let repository = repository_root().canonicalize().unwrap();
-            std::fs::create_dir_all(&directory).unwrap();
-            let directory = directory.canonicalize().unwrap();
-            assert!(
-                !directory.starts_with(repository),
-                "snapshot artifacts must be outside the repository"
-            );
-            image.save(directory.join("export-modal.png")).unwrap();
+        save_snapshot(&image, "export-modal.png");
+    }
+
+    /// Render the real App window for every page offscreen. The PNGs are layout
+    /// evidence; they are written outside the repository when
+    /// `SPEKTRAFILM_GUI_SNAPSHOT_DIR` is set.
+    #[test]
+    fn app_window_renders_every_page_offscreen() {
+        let mut previous: Option<image::RgbaImage> = None;
+        for label in ["MAIN", "FILM", "PRINT", "ADVANCED", "CONFIG"] {
+            let mut s = snapshot_session();
+            let h = &mut s.harness;
+            click(h, label);
+            render(h, "PREVIEW");
+            settle_animation(h);
+            // The histogram is binned off the UI thread; the PNG is layout
+            // evidence for the readout, so wait for the distribution to land.
+            wait_until(h, |a| a.histogram.cached_data().is_some());
+            h.run_steps(3);
+            let image = h.render().expect("offscreen app render");
+            assert_eq!((image.width(), image.height()), (1460, 980));
+            if let Some(previous) = &previous {
+                assert_ne!(
+                    previous.as_raw(),
+                    image.as_raw(),
+                    "page {label} rendered identically to the previous page"
+                );
+            }
+            save_snapshot(&image, &format!("app-{label}.png"));
+            previous = Some(image);
         }
     }
 }
@@ -1096,4 +1256,44 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         ReceiverProfile::LegacyColorimetric
     );
     render(h, "PREVIEW");
+}
+
+#[test]
+fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().params.camera.exposure_compensation_ev = -1.0;
+    h.state_mut().params.camera.auto_exposure = true;
+    click(h, "▶");
+    click(h, "American Reminiscence");
+    assert_eq!(h.state().params.camera.exposure_compensation_ev, 0.5);
+    assert!(!h.state().params.camera.auto_exposure);
+    assert!(
+        h.query_by_label("American Reminiscence • applied")
+            .is_some()
+    );
+    let initial = render(h, "PREVIEW");
+    assert!(edge_difference(&initial) > 0.01);
+    edit(h, "exposure compensation ev", "-1.0");
+    assert!(
+        h.query_by_label("American Reminiscence • modified")
+            .is_some()
+    );
+    let changed = render(h, "PREVIEW");
+    assert!(
+        initial
+            .data
+            .iter()
+            .zip(&changed.data)
+            .any(|(a, b)| (*a as f64 - *b as f64).abs() > 0.001)
+    );
+    click(h, "American Reminiscence • modified");
+    let restored = render(h, "PREVIEW");
+    assert!(
+        h.query_by_label("American Reminiscence • applied")
+            .is_some()
+    );
+    for (a, b) in initial.data.iter().zip(&restored.data) {
+        assert!((*a as f64 - *b as f64).abs() < 1e-6);
+    }
 }

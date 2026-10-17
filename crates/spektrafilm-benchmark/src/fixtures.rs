@@ -727,7 +727,10 @@ mod tests {
             let out = temp.path().join("fixtures");
             let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
             assert_eq!(error.code, "preset_export");
-            assert_eq!(error.file, Some(renderer.display().to_string()));
+            assert_eq!(
+                error.to_value()["file"],
+                json!(renderer.display().to_string())
+            );
             assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
         }
         let temp = tempfile::tempdir().unwrap();
@@ -735,7 +738,10 @@ mod tests {
         let out = temp.path().join("fixtures");
         let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
         assert_eq!(error.code, "preset_export");
-        assert_eq!(error.file, Some(renderer.display().to_string()));
+        assert_eq!(
+                error.to_value()["file"],
+                json!(renderer.display().to_string())
+            );
         assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
     }
     #[cfg(unix)]
@@ -751,7 +757,10 @@ mod tests {
         let out = temp.path().join("fixtures");
         let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
         assert_eq!(error.code, "renderer_configuration");
-        assert_eq!(error.file, Some(renderer.display().to_string()));
+        assert_eq!(
+                error.to_value()["file"],
+                json!(renderer.display().to_string())
+            );
         assert!(error.message.contains("unsupported assignment"));
         assert_eq!(fs::read(out.join("look.toml")).unwrap(), LOOK.as_bytes());
     }

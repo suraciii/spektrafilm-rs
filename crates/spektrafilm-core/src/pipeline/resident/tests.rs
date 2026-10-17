@@ -132,7 +132,7 @@ fn resident_positive_slide_matches_cpu_per_stage() {
         ResidentDecision::UseResident
     ));
     let image = comparison_image(16);
-    let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
+    let gpu_out = pipeline.process(image.clone(), gpu.backend()).unwrap();
     let cpu_out = pipeline
         .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -168,7 +168,7 @@ fn active_slide_points_stay_resident_and_match_cpu() {
     // produces a different image, so the parity below is not vacuous.
     let baseline = Pipeline::new_with_spectral(film, print, base_params, &dir).unwrap();
     let image = comparison_image(16);
-    let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
+    let gpu_out = pipeline.process(image.clone(), gpu.backend()).unwrap();
     let cpu_out = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -214,7 +214,7 @@ fn luminance_correction_matches_cpu_on_the_resident_route() {
     // produces a different image, so the parity below is not vacuous.
     let baseline = Pipeline::new_with_spectral(film, print, base_params, &dir).unwrap();
     let image = comparison_image(16);
-    let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
+    let gpu_out = pipeline.process(image.clone(), gpu.backend()).unwrap();
     let cpu_out = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -260,7 +260,7 @@ fn luminance_correction_matches_cpu_on_the_print_route() {
     ));
     let baseline = Pipeline::new_with_spectral(film, print, base_params, &dir).unwrap();
     let image = comparison_image(16);
-    let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
+    let gpu_out = pipeline.process(image.clone(), gpu.backend()).unwrap();
     let cpu_out = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -311,7 +311,7 @@ fn scanner_lut_acquisition_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -364,7 +364,7 @@ fn scanner_receiver_acquisition_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -421,7 +421,7 @@ fn scanner_receiver_luminance_correction_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -482,7 +482,7 @@ fn enlarger_lut_print_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -537,7 +537,7 @@ fn enlarger_diffusion_print_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -596,7 +596,7 @@ fn negative_to_positive_capture_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -647,7 +647,7 @@ fn spektra_grain_resident_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -703,7 +703,7 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
         ResidentDecision::UseResident
     ));
     let image = comparison_image(64);
-    let snapshot = observed_render(&pipeline, image.clone(), &gpu);
+    let snapshot = observed_render(&pipeline, image.clone(), gpu.backend());
     assert_eq!(
         snapshot.execution.path,
         Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident),
@@ -724,7 +724,7 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
             .collect::<Vec<_>>()
     );
 
-    let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(image.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -786,7 +786,7 @@ fn spatial_deactivation_bypasses_the_dye_density_fence() {
         ResidentDecision::UseResident
     ));
     let image = comparison_image(16);
-    let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(image.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -843,7 +843,7 @@ fn input_transfer_decoding_resident_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -887,7 +887,7 @@ fn langmuir_dir_non_default_donor_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -925,7 +925,7 @@ fn n2p_density_reading_fence_matches_cpu() {
         ResidentDecision::UseResident
     ));
     let image = n2p_comparison_image(16);
-    let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(image.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -935,7 +935,7 @@ fn n2p_density_reading_fence_matches_cpu() {
         "density reading fence: mean={mean:.6} max={max_diff:.6}"
     );
     assert_eq!(
-        observed_execution_path(&pipeline, image.clone(), &gpu),
+        observed_execution_path(&pipeline, image.clone(), gpu.backend()),
         spektrafilm_backend::telemetry::ExecutionPath::GpuResident
     );
 
@@ -991,7 +991,7 @@ fn digital_reference_fence_matches_cpu() {
         ResidentDecision::UseResident
     ));
     let image = n2p_comparison_image(16);
-    let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(image.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1001,7 +1001,7 @@ fn digital_reference_fence_matches_cpu() {
         "digital reference fence: mean={mean:.6} max={max_diff:.6}"
     );
     assert_eq!(
-        observed_execution_path(&pipeline, image.clone(), &gpu),
+        observed_execution_path(&pipeline, image.clone(), gpu.backend()),
         spektrafilm_backend::telemetry::ExecutionPath::GpuResident
     );
 
@@ -1141,7 +1141,7 @@ fn static_cache_does_not_serve_stale_data_after_a_configuration_change() {
     let image = comparison_image(32);
     let render = |pipeline: &Pipeline| {
         let context = ObservationContext::new(CollectionMode::Summary);
-        let observed = spektrafilm_backend::bind_backend(&gpu, context.clone());
+        let observed = spektrafilm_backend::bind_backend(gpu.backend(), context.clone());
         pipeline
             .process(image.clone(), observed.as_ref())
             .expect("resident render")
@@ -1182,7 +1182,7 @@ fn explicit_gpu_request_fails_on_the_scanner_correction_fence() {
         ResidentDecision::UseResident
     ));
     let err = pipeline
-        .process(comparison_image(8), &gpu)
+        .process(comparison_image(8), gpu.backend())
         .expect_err("explicit GPU request must fail on the readout fence");
     assert!(
         err.contains("explicit GPU request") && err.contains("scanner readout interpretation"),
@@ -1216,7 +1216,7 @@ fn explicit_gpu_request_fails_on_the_n2p_acquisition_fences() {
             ResidentDecision::UseResident
         ));
         let err = pipeline
-            .process(image.clone(), &gpu)
+            .process(image.clone(), gpu.backend())
             .expect_err("explicit GPU request must fail on the acquisition fence");
         assert!(
             err.contains("explicit GPU request") && err.contains("scanner acquisition"),
@@ -1346,7 +1346,7 @@ fn explicit_gpu_request_fails_for_every_fenced_stage() {
             "{name}: the case must keep the resident route, not decline"
         );
         let err = pipeline
-            .process(image.clone(), &gpu)
+            .process(image.clone(), gpu.backend())
             .expect_err("explicit GPU request must fail on the host fence");
         assert!(
             err.contains("explicit GPU request") && err.contains(expected),
@@ -1395,7 +1395,7 @@ fn explicit_gpu_request_fails_on_the_field_band_budget() {
     );
     let img = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5; 48]);
     let err = pipeline
-        .process(img, &gpu)
+        .process(img, gpu.backend())
         .expect_err("an output row above the band budget must fail by name");
     assert!(
         err.contains("film grain Dye") && err.contains("field cells") && err.contains("limit"),
@@ -1424,7 +1424,7 @@ fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
         ResidentDecision::UseResident
     ));
     let image = comparison_image(16);
-    let snapshot = observed_render(&pipeline, image, &gpu);
+    let snapshot = observed_render(&pipeline, image, gpu.backend());
     assert_eq!(
         snapshot.execution.path,
         Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident),
@@ -1473,7 +1473,7 @@ fn explicit_gpu_request_runs_a_cropped_dye_field_on_the_device() {
         "a cropped Dye request reads out per stage: {:?}",
         pipeline.resident_decision()
     );
-    let snapshot = observed_render(&pipeline, comparison_image(16), &gpu);
+    let snapshot = observed_render(&pipeline, comparison_image(16), gpu.backend());
     assert_eq!(
         snapshot.execution.path,
         Some(spektrafilm_backend::telemetry::ExecutionPath::PerStage),
@@ -1524,7 +1524,6 @@ fn experimental_mass_law_child() {
         eprintln!("skipped: run through the parent case with the mass-law selector set");
         return;
     }
-    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1545,16 +1544,21 @@ fn experimental_mass_law_child() {
         ResidentDecision::UseResident
     ));
     let image = comparison_image(8);
-    let err = pipeline
-        .process(image.clone(), &gpu)
-        .expect_err("explicit GPU must name the host field");
-    assert!(
-        err.contains("explicit GPU request") && err.contains("film grain distribution"),
-        "{err}"
-    );
+    {
+        // Each adapter owns the device lock for its lifetime, so the two
+        // devices in this test cannot be alive at the same time.
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let err = pipeline
+            .process(image.clone(), gpu.backend())
+            .expect_err("explicit GPU must name the host field");
+        assert!(
+            err.contains("explicit GPU request") && err.contains("film grain distribution"),
+            "{err}"
+        );
+    }
     // The automatic route keeps the host fence with its published reason.
     let auto = spektrafilm_gpu::test_support::adapter();
-    let snapshot = observed_render(&pipeline, image, &auto);
+    let snapshot = observed_render(&pipeline, image, auto.backend());
     assert_eq!(
         snapshot.execution.path,
         Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident),
@@ -1606,7 +1610,7 @@ fn camera_diffusion_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1657,7 +1661,7 @@ fn output_transfer_encode_pipe_tail_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1705,7 +1709,7 @@ fn output_transfer_decode_pipe_tail_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1755,7 +1759,7 @@ fn magazine_pipe_tail_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1811,7 +1815,7 @@ fn procedural_grain_linear_export_with_magazine_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
     let out_cpu = pipeline
         .process(img.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1846,7 +1850,7 @@ fn resident_negative_matches_cpu_per_stage() {
         ResidentDecision::UseResident
     ));
     let image = comparison_image(16);
-    let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
+    let gpu_out = pipeline.process(image.clone(), gpu.backend()).unwrap();
     let cpu_out = pipeline
         .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();

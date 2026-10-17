@@ -860,6 +860,21 @@ impl Tap {
         }
     }
 
+    /// The boundary's position in the chain, counted from the input side. A
+    /// route that skips a stage removes it instead of renumbering the rest, so
+    /// positions stay comparable across topologies.
+    pub const fn position(self) -> u8 {
+        match self {
+            Self::RgbIn => 0,
+            Self::RgbPre => 1,
+            Self::LogEFilm => 2,
+            Self::CmyFilm => 3,
+            Self::LogEPrint => 4,
+            Self::CmyPrint => 5,
+            Self::RgbOut => 6,
+        }
+    }
+
     /// The wire name (upstream `Tap` attribute values).
     pub fn name(self) -> &'static str {
         match self {
@@ -1270,17 +1285,25 @@ mod tests {
         );
         assert_eq!(default.film_render.grain.v3_dye_support_um, 3.5);
         assert_eq!(default.film_render.grain.v3_event_area_um2, 1.28);
-        // A recipe saved before the Dye event area existed gets its default.
+        assert_eq!(default.film_render.grain.channel_correlation, 0.0);
+        // Recipes saved before the Dye event area and the channel
+        // correlation existed get their defaults.
         let mut legacy = value.clone();
         legacy["film_render"]["grain"]
             .as_object_mut()
             .unwrap()
             .remove("v3_event_area_um2");
+        legacy["film_render"]["grain"]
+            .as_object_mut()
+            .unwrap()
+            .remove("channel_correlation");
         let legacy: super::RuntimeParams = serde_json::from_value(legacy).unwrap();
         assert_eq!(legacy.film_render.grain.v3_event_area_um2, 1.28);
+        assert_eq!(legacy.film_render.grain.channel_correlation, 0.0);
         value["film_render"]["grain"]["engine"] = serde_json::json!("dye");
         value["film_render"]["grain"]["v3_dye_support_um"] = serde_json::json!(4.5);
         value["film_render"]["grain"]["v3_event_area_um2"] = serde_json::json!(0.6);
+        value["film_render"]["grain"]["channel_correlation"] = serde_json::json!(0.35);
         let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
         let reparsed: super::RuntimeParams =
             serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
@@ -1288,6 +1311,7 @@ mod tests {
             assert_eq!(grain.engine, super::grain::GrainEngine::Dye);
             assert_eq!(grain.v3_dye_support_um, 4.5);
             assert_eq!(grain.v3_event_area_um2, 0.6);
+            assert_eq!(grain.channel_correlation, 0.35);
         }
         assert!(serde_json::from_str::<super::GrainParams>(r#"{"engine":"unknown"}"#).is_err());
     }
@@ -1311,6 +1335,23 @@ mod tests {
                 error.contains("film_render.grain.v3_event_area_um2"),
                 "unexpected error for {value}: {error}"
             );
+        }
+        // The channel correlation is bounded by the measured record-coherence
+        // band, so a value the evidence attributes to scanner processing is
+        // rejected rather than stored.
+        for value in [-0.5, 0.4500001, 1.0, f64::NAN, f64::INFINITY] {
+            let mut bad = params.clone();
+            bad.film_render.grain.channel_correlation = value;
+            let error = bad.validate().unwrap_err();
+            assert!(
+                error.contains("film_render.grain.channel_correlation"),
+                "unexpected error for {value}: {error}"
+            );
+        }
+        for value in [0.0, 0.342, 0.45] {
+            let mut ok = params.clone();
+            ok.film_render.grain.channel_correlation = value;
+            ok.validate().unwrap();
         }
         // Spektra ignores the controls, but stored values stay validated so a
         // later switch to Dye cannot render from an invalid recipe.
