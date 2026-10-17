@@ -52,17 +52,13 @@ impl Error {
     }
     /// Name the file the offending value lives in.
     pub fn file(mut self, file: impl Into<String>) -> Self {
-        self.location
-            .get_or_insert_with(Box::default)
-            .file = Some(file.into());
+        self.location.get_or_insert_with(Box::default).file = Some(file.into());
         self
     }
     /// Name the JSON Pointer (RFC 6901) of the offending value. A pointer that
     /// cannot name the value exactly is omitted rather than approximated.
     pub fn pointer(mut self, pointer: impl Into<String>) -> Self {
-        self.location
-            .get_or_insert_with(Box::default)
-            .pointer = Some(pointer.into());
+        self.location.get_or_insert_with(Box::default).pointer = Some(pointer.into());
         self
     }
     pub fn boundary(mut self, boundary: impl Into<String>) -> Self {

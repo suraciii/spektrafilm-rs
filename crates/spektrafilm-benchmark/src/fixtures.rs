@@ -739,9 +739,9 @@ mod tests {
         let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
         assert_eq!(error.code, "preset_export");
         assert_eq!(
-                error.to_value()["file"],
-                json!(renderer.display().to_string())
-            );
+            error.to_value()["file"],
+            json!(renderer.display().to_string())
+        );
         assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
     }
     #[cfg(unix)]
@@ -758,9 +758,9 @@ mod tests {
         let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
         assert_eq!(error.code, "renderer_configuration");
         assert_eq!(
-                error.to_value()["file"],
-                json!(renderer.display().to_string())
-            );
+            error.to_value()["file"],
+            json!(renderer.display().to_string())
+        );
         assert!(error.message.contains("unsupported assignment"));
         assert_eq!(fs::read(out.join("look.toml")).unwrap(), LOOK.as_bytes());
     }
