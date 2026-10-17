@@ -14,7 +14,10 @@ use spektrafilm_cli::lab::cli::{
 #[command(
     name = "spektrafilm-lab",
     about = "SpektraFilm instrument: film-profile development, calibration, and appearance evaluation at f64 reference precision",
-    version,
+    // Version must identify the instrument implementation and the document
+    // versions it reads and writes, so the instrument's own version is not the
+    // only number a caller can rely on.
+    version = concat!(env!("CARGO_PKG_VERSION"), " (instrument documents schema_version 1)"),
     after_help = "Generate packaged examples with `spektrafilm-lab fixtures --renderer RENDERER --data-dir DATA --out BUNDLE`, then consume a generated suite with `spektrafilm-lab run --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`."
 )]
 struct LabCli {
@@ -99,6 +102,8 @@ enum LabCommands {
         args: EvaluationRegionsArgs,
     },
     /// Generate the packaged examples: probe assets, suites, targets, and policy.
+    ///
+    /// Consume a generated suite with `spektrafilm-lab run --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`.
     Fixtures {
         /// Renderer executable the generated targets pin.
         #[arg(long, value_name = "FILE")]
@@ -218,6 +223,27 @@ fn validate(
             "rendering",
             "compute_device",
             "cross_document_applicability"
+        ]),
+        // A policy document binds no suite, so its selectors, measurement
+        // selection, and protocol binding are all unverified here. Declaring
+        // them is what keeps a passing policy validation from reading as proof
+        // that a suite agrees with it.
+        "policy" => serde_json::json!([
+            "selector_applicability",
+            "measurement_selection",
+            "protocol_binding",
+            "rendering",
+            "compute_device"
+        ]),
+        // A preparation record carries the image a reference was derived
+        // from, but not the derivation itself: whether the derived reference
+        // still matches a suite's declared intent is decided against that
+        // suite, not against this record.
+        "preparation" => serde_json::json!([
+            "reference_derivation",
+            "cross_document_applicability",
+            "rendering",
+            "compute_device"
         ]),
         _ => serde_json::json!([]),
     };
@@ -519,8 +545,20 @@ fn run() -> i32 {
             emit(
                 &serde_json::json!({"schema_version":1,"command":name,"execution_status":"failed","errors":[error.to_value()]}),
             );
-            1
+            exit_status_for(&error)
         }
+    }
+}
+
+/// The exit status one command result reports. A rejected invocation is an
+/// argument syntax error and must not share the exit status of a failure to
+/// execute: the error code is the discriminator, so the mapping is stated once
+/// here rather than repeated at every construction site.
+fn exit_status_for(error: &BenchError) -> i32 {
+    if error.code == "argument_syntax" {
+        2
+    } else {
+        1
     }
 }
 
@@ -586,6 +624,24 @@ mod tests {
             ]))
             .is_ok()
         );
+    }
+
+    /// The instrument returns 2 for a rejected invocation and 1 for a failure
+    /// to execute. The discriminator is the error code, so the mapping lives in
+    /// one place and every argument-syntax rejection shares it.
+    #[test]
+    fn argument_syntax_rejection_exits_two_and_execution_failure_exits_one() {
+        let syntax = spektrafilm_benchmark::Error::new("argument_syntax", "missing --enter");
+        assert_eq!(exit_status_for(&syntax), 2);
+        for code in [
+            "operation_failed",
+            "schema_validation",
+            "invalid_path",
+            "unresolved_metric",
+        ] {
+            let error = spektrafilm_benchmark::Error::new(code, "rejected elsewhere");
+            assert_eq!(exit_status_for(&error), 1, "{code} must exit 1");
+        }
     }
 
     #[test]

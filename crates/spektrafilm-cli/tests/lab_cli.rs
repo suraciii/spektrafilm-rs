@@ -2292,3 +2292,86 @@ fn measure_verify_reads_a_comparison_record_and_rehashes_its_sides() {
         "{report}"
     );
 }
+
+/// A rejected invocation exits 2, not 1: the exit status separates an
+/// argument syntax error from a failure to execute. The spec grammar makes
+/// `--enter` mandatory in the `--stimuli` form and `--stage` mandatory in the
+/// `--from-evidence` form, so omitting either is a rejected invocation rather
+/// than a failed execution.
+#[test]
+fn rejected_invocations_exit_two_and_failed_executions_exit_one() {
+    let f = MeasureFixture::new();
+    // A grammar violation the parser rejects before any execution reports the
+    // usage error on stderr and exits 2.
+    for args in [
+        vec![
+            "sample",
+            "--from-evidence",
+            "bundle",
+            "--regions",
+            f.plan.to_str().unwrap(),
+            "--out",
+            "out",
+        ],
+        vec![
+            "sample",
+            "--source",
+            "image.png",
+            "--regions",
+            f.plan.to_str().unwrap(),
+            "--out",
+            "out",
+        ],
+    ] {
+        let result = f.lab(&args);
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(
+            result.stdout.is_empty(),
+            "a rejected invocation writes no command result"
+        );
+        assert!(!result.stderr.is_empty(), "it must say why it was rejected");
+    }
+    // A form that parses but cannot execute still reaches the command, which
+    // reports the failed execution on stdout and exits 2 as well, because a
+    // missing mandatory companion is an argument syntax error, not a failure.
+    let result = f.lab(&[
+        "run",
+        "--stimuli",
+        f.stimuli.to_str().unwrap(),
+        "--out",
+        "out",
+    ]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["execution_status"], "failed", "{report}");
+    assert_eq!(report["errors"][0]["code"], "argument_syntax", "{report}");
+    // A form that parses but cannot execute reports a failed execution with
+    // status 1, so the two failures stay distinguishable.
+    let executed = f.lab(&[
+        "sample",
+        "--from-evidence",
+        "no-such-bundle",
+        "--stage",
+        "log_e_film",
+        "--regions",
+        f.plan.to_str().unwrap(),
+        "--out",
+        "out",
+    ]);
+    assert_eq!(
+        executed.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+}

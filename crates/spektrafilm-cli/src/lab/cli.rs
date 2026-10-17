@@ -515,6 +515,7 @@ pub struct MeasureSampleArgs {
         value_enum,
         value_name = "STAGE",
         requires = "from_evidence",
+        required_unless_present = "source",
         help_heading = "Source"
     )]
     pub stage: Option<MeasureStage>,
@@ -523,6 +524,7 @@ pub struct MeasureSampleArgs {
         long,
         value_name = "NAME",
         requires = "source",
+        required_unless_present = "from_evidence",
         help_heading = "Source"
     )]
     pub input_color_space: Option<String>,
@@ -531,6 +533,7 @@ pub struct MeasureSampleArgs {
         long,
         value_name = "true|false",
         requires = "source",
+        required_unless_present = "from_evidence",
         help_heading = "Source"
     )]
     pub input_cctf_decoding: Option<bool>,
