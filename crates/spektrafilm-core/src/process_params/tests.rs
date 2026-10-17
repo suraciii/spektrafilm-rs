@@ -214,11 +214,11 @@ fn preset_neutral_axes_remain_explicit_after_later_controls() {
     let look = presets::load_selector("Kodak Portra 400", &data_dir()).unwrap();
     assert_eq!(
         result.params.enlarger.m_filter_neutral,
-        look.look_parameters().unwrap().enlarger.m_filter_neutral
+        look.look_parameters().enlarger.m_filter_neutral
     );
     assert_eq!(
         result.params.enlarger.y_filter_neutral,
-        look.look_parameters().unwrap().enlarger.y_filter_neutral
+        look.look_parameters().enlarger.y_filter_neutral
     );
     assert!(result.params.settings.neutral_print_filters_from_database);
 }
@@ -363,18 +363,9 @@ fn resolved_explicit_axes_survive_runtime_construction_and_updates() {
 #[test]
 fn preset_resolver_protects_actual_runtime_axes_for_all_consumers() {
     let mut look = presets::load_selector("Kodak Portra 400", &data_dir()).unwrap();
-    look.look_parameters_mut()
-        .unwrap()
-        .enlarger
-        .c_filter_neutral = 12.0;
-    look.look_parameters_mut()
-        .unwrap()
-        .enlarger
-        .m_filter_neutral = 34.0;
-    look.look_parameters_mut()
-        .unwrap()
-        .enlarger
-        .y_filter_neutral = 56.0;
+    look.look_parameters_mut().enlarger.c_filter_neutral = 12.0;
+    look.look_parameters_mut().enlarger.m_filter_neutral = 34.0;
+    look.look_parameters_mut().enlarger.y_filter_neutral = 56.0;
     let mut context = RuntimeParams::default();
     context.settings.rgb_to_raw_method = "mallett2019".into();
     let resolved = look.resolve(&data_dir(), &context).unwrap();

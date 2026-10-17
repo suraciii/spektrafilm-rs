@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{ArgMatches, Args, Subcommand, ValueEnum};
 use serde_json::json;
-use spektrafilm_core::presets::{PresetGroup, PresetKind, PresetLibrary, PresetSelection};
+use spektrafilm_core::presets::{PresetGroup, PresetLibrary, PresetSelection};
 use std::path::PathBuf;
 
 #[derive(Subcommand)]
@@ -101,15 +101,13 @@ pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
                             .unwrap_or_else(|| entry.name.clone())
                     );
                 }
-                let (kind, section) = match entry.kind {
-                    Some(PresetKind::Look) => (Some("look"), None),
-                    Some(PresetKind::Section(section)) => (Some("section"), Some(section.name())),
-                    None => (None, None),
+                let kind = if entry.preset.is_some() {
+                    Some("look")
+                } else {
+                    None
                 };
                 let mut record = json!({"name": entry.name, "kind": kind, "group": entry.group});
-                if let Some(section) = section {
-                    record["section"] = json!(section);
-                } else if kind == Some("look") {
+                if kind == Some("look") {
                     record["film_profile"] = json!(entry.film_profile);
                     record["print_profile"] = json!(entry.print_profile);
                 }
@@ -142,17 +140,13 @@ pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
             let selected = select(&library, &args.selector)?;
             let preset = selected.preset;
             preset.validate().map_err(anyhow::Error::msg)?;
-            if preset.kind().map_err(anyhow::Error::msg)? == PresetKind::Look {
-                let data = crate::select_data_dir(args.data_dir, matches)?;
-                preset
-                    .resolve(
-                        &data.path,
-                        &spektrafilm_core::params::RuntimeParams::default(),
-                    )
-                    .map_err(anyhow::Error::msg)?;
-            } else if crate::explicit_data_selection(matches) {
-                crate::select_data_dir(args.data_dir, matches)?;
-            }
+            let data = crate::select_data_dir(args.data_dir, matches)?;
+            preset
+                .resolve(
+                    &data.path,
+                    &spektrafilm_core::params::RuntimeParams::default(),
+                )
+                .map_err(anyhow::Error::msg)?;
             match args.format {
                 ShowFormat::Toml => println!("{}", preset.to_toml().map_err(anyhow::Error::msg)?),
                 ShowFormat::Json => println!("{}", preset.to_json().map_err(anyhow::Error::msg)?),

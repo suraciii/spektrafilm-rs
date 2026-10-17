@@ -16,7 +16,7 @@ use spektrafilm_backend::ComputeBackend;
 use spektrafilm_backend::telemetry::{CollectionMode, ObservationKind, Purpose};
 use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
 use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
-use spektrafilm_core::presets::{Section, workflow_default};
+use spektrafilm_core::presets::workflow_default;
 use spektrafilm_core::profile;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome, SourceRender};

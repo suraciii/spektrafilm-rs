@@ -228,7 +228,7 @@ class ExperimentalDesktop(X11):
             seen = []
             for label in expected:
                 matches = [line for line in sidebar
-                           if words(' '.join(w[0] for w in line).split('Preset:')[0]) in
+                           if words(' '.join(w[0] for w in line)) in
                            (words(label), ['v'] + words(label), ['y'] + words(label), ['vy'] + words(label))]
                 require(len(matches) == 1, f'{tab}: expected one section {label}, saw {len(matches)}')
                 seen.append(matches[0][0][2])

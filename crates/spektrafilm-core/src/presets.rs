@@ -1,6 +1,5 @@
-//! Portable look and section documents. Library operations are shared by both frontends.
+//! Portable look documents. Library operations are shared by both frontends.
 mod library;
-mod sections;
 use crate::params::sources::{ParameterEdits, parse_carrier};
 use crate::params::{
     DiffusionFilterParams, EnlargerParams, FilmRenderingParams, OutputMixParams,
@@ -9,7 +8,6 @@ use crate::params::{
 use crate::params_builder::apply_film_specifics;
 use crate::profile::{self, Profile};
 pub use library::*;
-pub use sections::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -120,14 +118,7 @@ impl Default for LookSettingsParams {
 fn default_true() -> bool {
     true
 }
-// The look variant owns the full look, and preset collections are small.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum PresetParameters {
-    Look(LookParameters),
-    Section(Value),
-}
+/// The look-owned parameters a preset document carries.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Preset {
     pub schema_version: u32,
@@ -140,7 +131,7 @@ pub struct Preset {
     pub film_profile: Option<ProfileRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub print_profile: Option<ProfileRef>,
-    pub parameters: PresetParameters,
+    pub parameters: LookParameters,
     pub provenance: Provenance,
 }
 impl<'de> Deserialize<'de> for Preset {
@@ -227,19 +218,11 @@ impl LookSettingsParams {
     }
 }
 impl Preset {
-    pub fn look_parameters(&self) -> Option<&LookParameters> {
-        if let PresetParameters::Look(look) = &self.parameters {
-            Some(look)
-        } else {
-            None
-        }
+    pub fn look_parameters(&self) -> &LookParameters {
+        &self.parameters
     }
-    pub fn look_parameters_mut(&mut self) -> Option<&mut LookParameters> {
-        if let PresetParameters::Look(look) = &mut self.parameters {
-            Some(look)
-        } else {
-            None
-        }
+    pub fn look_parameters_mut(&mut self) -> &mut LookParameters {
+        &mut self.parameters
     }
     pub fn from_json_str(text: &str) -> Result<Self, String> {
         Self::from_value(parse_carrier(text, false)?)
@@ -321,14 +304,6 @@ impl Preset {
         }
         let wire: Wire =
             serde_json::from_value(value).map_err(|e| format!("invalid preset: {e}"))?;
-        let parameters = if wire.film_profile.is_some() || wire.print_profile.is_some() {
-            PresetParameters::Look(
-                serde_json::from_value(wire.parameters)
-                    .map_err(|e| format!("invalid look: {e}"))?,
-            )
-        } else {
-            PresetParameters::Section(wire.parameters)
-        };
         let preset = Self {
             schema_version: wire.schema_version,
             name: wire.name,
@@ -336,18 +311,12 @@ impl Preset {
             description: wire.description,
             film_profile: wire.film_profile,
             print_profile: wire.print_profile,
-            parameters,
+            parameters: serde_json::from_value(wire.parameters)
+                .map_err(|e| format!("invalid look: {e}"))?,
             provenance: wire.provenance,
         };
         preset.validate()?;
         Ok(preset)
-    }
-    pub fn kind(&self) -> Result<PresetKind, String> {
-        match &self.parameters {
-            PresetParameters::Look(_) if self.film_profile.is_some() && self.print_profile.is_some()=>Ok(PresetKind::Look),
-            PresetParameters::Section(payload) if self.film_profile.is_none() && self.print_profile.is_none()=>Ok(PresetKind::Section(section_from_payload(payload)?)),
-            _=>Err("a preset must carry a complete look with both profiles or exactly one section without profiles".into()),
-        }
     }
     pub fn validate(&self) -> Result<(), String> {
         if self.schema_version != PRESET_SCHEMA_VERSION {
@@ -362,7 +331,6 @@ impl Preset {
         {
             return Err("preset provenance versions must not be empty".into());
         }
-        self.kind()?;
         for (kind, reference) in [("film", &self.film_profile), ("print", &self.print_profile)] {
             if let Some(reference) = reference {
                 validate_stock_id(kind, &reference.stock)?;
@@ -374,10 +342,7 @@ impl Preset {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
-        match &self.parameters {
-            PresetParameters::Look(look) => look.apply_to(&mut params),
-            PresetParameters::Section(payload) => parameter_edits(payload)?.apply(&mut params)?,
-        }
+        self.parameters.apply_to(&mut params);
         if let Some(scanner) = &self.provenance.scanner {
             let expected = serde_json::to_value(
                 crate::scan_receiver::ScannerProvenance::from_params(&params),
@@ -398,30 +363,6 @@ impl Preset {
     }
     pub fn to_toml(&self) -> Result<String, String> {
         self.validate()?;
-        if let PresetParameters::Section(payload) = &self.parameters {
-            fn null_paths(prefix: &str, value: &Value, out: &mut Vec<String>) {
-                if let Some(map) = value.as_object() {
-                    for (key, value) in map {
-                        let path = if prefix.is_empty() {
-                            key.clone()
-                        } else {
-                            format!("{prefix}.{key}")
-                        };
-                        null_paths(&path, value, out);
-                    }
-                } else if value.is_null() {
-                    out.push(prefix.to_owned());
-                }
-            }
-            let mut paths = Vec::new();
-            null_paths("", payload, &mut paths);
-            if !paths.is_empty() {
-                return Err(format!(
-                    "TOML cannot represent explicit null at {}; use --format json or a .json extension",
-                    paths.join(", ")
-                ));
-            }
-        }
         toml::to_string_pretty(self).map_err(|e| e.to_string())
     }
     pub fn resolve(
@@ -430,11 +371,10 @@ impl Preset {
         current: &RuntimeParams,
     ) -> Result<ResolvedPreset, String> {
         self.validate()?;
-        let (Some(film_ref), Some(print_ref), PresetParameters::Look(look)) =
-            (&self.film_profile, &self.print_profile, &self.parameters)
-        else {
-            return Err("section presets use apply_section, not look resolution".into());
+        let (Some(film_ref), Some(print_ref)) = (&self.film_profile, &self.print_profile) else {
+            return Err("a preset must carry a complete look with both profiles".into());
         };
+        let look = &self.parameters;
         let film_identity = profile_content_identity_if_requested(data_dir, film_ref)?;
         let print_identity = profile_content_identity_if_requested(data_dir, print_ref)?;
         let film =
@@ -540,94 +480,10 @@ impl Preset {
                 version: None,
                 content_identity: None,
             }),
-            parameters: PresetParameters::Look(LookParameters::capture(params)),
+            parameters: LookParameters::capture(params),
             provenance,
         }
     }
-    pub fn capture_section(
-        name: impl Into<String>,
-        section: Section,
-        params: &RuntimeParams,
-        mut provenance: Provenance,
-    ) -> Result<Self, String> {
-        let payload = extract_section(section, params)?;
-        let mut captured = RuntimeParams::default();
-        parameter_edits(&payload)?.apply(&mut captured)?;
-        provenance.scanner = Some(
-            serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(
-                &captured,
-            ))
-            .map_err(|e| e.to_string())?,
-        );
-        let preset = Self {
-            schema_version: PRESET_SCHEMA_VERSION,
-            name: name.into(),
-            author: None,
-            description: None,
-            film_profile: None,
-            print_profile: None,
-            parameters: PresetParameters::Section(payload),
-            provenance,
-        };
-        preset.validate()?;
-        Ok(preset)
-    }
-    /// Returns a candidate validated against the current film and scan configuration.
-    /// An unrelated edit may preserve an already-invalid scan configuration.
-    pub fn apply_section(
-        &self,
-        current: &RuntimeParams,
-        film: &Profile,
-    ) -> Result<RuntimeParams, String> {
-        let params = self.overlay_section(current)?;
-        params.validate()?;
-        let scan_changed = params.scanner.scan_output != current.scanner.scan_output
-            || params.scanner.white_correction != current.scanner.white_correction
-            || params.scanner.black_correction != current.scanner.black_correction
-            || params.film_render.grain.active != current.film_render.grain.active
-            || params.film_render.grain.engine != current.film_render.grain.engine;
-        if scan_changed || crate::pipeline_calibration::validate_scan_output(current, film).is_ok()
-        {
-            crate::pipeline_calibration::validate_scan_output(&params, film)?;
-        }
-        Ok(params)
-    }
-
-    /// Compose independently validated leaves without validating intermediate controls.
-    /// The caller must validate the complete candidate before applying it.
-    pub(crate) fn overlay_section(&self, current: &RuntimeParams) -> Result<RuntimeParams, String> {
-        self.validate()?;
-        let PresetParameters::Section(payload) = &self.parameters else {
-            return Err("expected a section preset".into());
-        };
-        let edits = parameter_edits(payload)?;
-        let mut params = current.clone();
-        edits.apply(&mut params)?;
-        for path in edits.paths() {
-            params.explicit_section_paths.insert(path.to_owned());
-            for (axis, name) in ["c_filter_neutral", "m_filter_neutral", "y_filter_neutral"]
-                .iter()
-                .enumerate()
-            {
-                if path == format!("enlarger.{name}") {
-                    params
-                        .neutral_print_filters_protected
-                        .get_or_insert([false; 3])[axis] = true;
-                }
-            }
-        }
-        Ok(params)
-    }
-}
-fn parameter_edits(payload: &Value) -> Result<ParameterEdits, String> {
-    let mut value = payload.clone();
-    if let Some(filter) = value
-        .as_object_mut()
-        .and_then(|m| m.remove("camera_diffusion_filter"))
-    {
-        value["camera"] = serde_json::json!({"diffusion_filter":filter});
-    }
-    ParameterEdits::from_value(value)
 }
 include!(concat!(env!("OUT_DIR"), "/preset_assets.rs"));
 pub fn builtin_presets() -> Vec<Preset> {
