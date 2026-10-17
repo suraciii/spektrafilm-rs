@@ -152,10 +152,10 @@ fn generate_regions_use_the_declared_measurement_intent() {
         regions["regions"],
         json!([
             {"id": "A1", "label": "A1", "role": "color",
-             "geometry": {"x": 4, "y": 0, "width": 8, "height": 8, "space": "render"},
+             "geometry": {"x": 4, "y": 0, "width": 8, "height": 8, "space": "source"},
              "measurements": ["color", "tone"]},
             {"id": "B1", "label": "B1", "role": "color",
-             "geometry": {"x": 20, "y": 0, "width": 8, "height": 8, "space": "render"},
+             "geometry": {"x": 20, "y": 0, "width": 8, "height": 8, "space": "source"},
              "measurements": ["color", "tone"]}
         ])
     );
@@ -184,14 +184,59 @@ fn generate_regions_use_the_declared_measurement_intent() {
     let regions: Value = serde_json::from_slice(&fs::read(&full).unwrap()).unwrap();
     assert_eq!(
         regions["regions"][0]["geometry"],
-        json!({"x": 0, "y": 0, "width": 16, "height": 8, "space": "render"})
+        json!({"x": 0, "y": 0, "width": 16, "height": 8, "space": "source"})
     );
     assert_eq!(
         regions["regions"][1]["geometry"],
-        json!({"x": 16, "y": 0, "width": 16, "height": 8, "space": "render"})
+        json!({"x": 16, "y": 0, "width": 16, "height": 8, "space": "source"})
     );
     assert_eq!(regions["regions"][0]["role"], "other");
     assert_eq!(regions["regions"][0]["measurements"], json!([]));
+}
+
+#[test]
+fn generated_regions_are_usable_as_a_sampling_document() {
+    // The grid's arithmetic is in decoded image pixels, and the document the
+    // derivation writes must serve a sampling command, which reads the source
+    // image. A window that is inside the source must therefore sample rather
+    // than be rejected as out of bounds.
+    let dir = TempDir::new().unwrap();
+    let review = manifest(dir.path(), None);
+    let out = dir.path().join("regions.json");
+    success(
+        cli()
+            .args(["regions", "--manifest"])
+            .arg(&review)
+            .args(["--set", "grid", "--out"])
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    let source = dir.path().join("source.png");
+    png(&source, 32, 8);
+    let sampled = dir.path().join("samples");
+    let result = success(
+        cli()
+            .args(["sample", "--source"])
+            .arg(&source)
+            .args([
+                "--input-color-space",
+                "sRGB",
+                "--input-cctf-decoding",
+                "true",
+            ])
+            .args(["--regions"])
+            .arg(&out)
+            .args(["--out"])
+            .arg(&sampled)
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(result["command"], "sample");
+    assert!(
+        sampled.join("readings.csv").is_file(),
+        "a derived regions document must sample the source it was derived against"
+    );
 }
 
 #[test]

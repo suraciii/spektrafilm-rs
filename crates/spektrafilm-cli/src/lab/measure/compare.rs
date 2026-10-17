@@ -1047,14 +1047,6 @@ fn artifact_index(out: &Path) -> Value {
     )
 }
 
-/// The comparison's own name, from the destination directory, so a record
-/// cannot be read as another comparison.
-fn comparison_id(out: &Path) -> String {
-    out.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| out.display().to_string())
-}
-
 /// The joined samples of one pairing, as the comparison's `cases`.
 ///
 /// A reading comparison has no suite cases, so its case population is the

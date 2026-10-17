@@ -709,7 +709,13 @@ pub fn derive_regions(manifest: &Path, set_id: &str, out: &Path) -> Result<Value
                 "y": window[1],
                 "width": window[2],
                 "height": window[3],
-                "space": "render",
+                // The grid's arithmetic is in decoded image pixels
+                // (specs/instrument/spec.md: the review grid's own contract
+                // states "All geometry uses decoded image pixels"), and the
+                // document this derivation writes must be usable as a sampling
+                // `regions` value, which reads the source image. The space is
+                // therefore `source`, never `render`.
+                "space": "source",
             },
             "measurements": &measurements,
         }));
