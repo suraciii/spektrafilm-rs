@@ -91,7 +91,7 @@ fn engine_group(
                     "Inactive until this engine is selected; stored values are retained.",
                 )
                 .small()
-                .color(egui::Color32::GRAY),
+                .color(theme::FG_MUTED),
             );
             ui.add_enabled_ui(false, |ui| add_contents(ui, filter));
             return;
@@ -111,8 +111,8 @@ pub(crate) fn sections(
     if section == "Grain" {
         ui.scope(|ui| {
             let grain = &mut params.film_render.grain;
-            if filter_matches(filter, "active") {
-                flags.runtime_changed |= toggle(ui, "active", &mut grain.active, "Add grain to the negative");
+            if filter_matches(filter, "enable grain") {
+                flags.runtime_changed |= toggle(ui, "Enable grain", &mut grain.active, "Add grain to the negative");
             }
             if filter_matches(filter, "engine") {
                 flags.runtime_changed |= enum_choice(ui, "Engine", &mut grain.engine, &[
@@ -125,12 +125,12 @@ pub(crate) fn sections(
             ui.label(
                 egui::RichText::new("Recommended: Spektra (material grain) · Procedural (post-scan, lightweight)")
                     .small()
-                    .color(egui::Color32::GRAY),
+                    .color(theme::FG_MUTED),
                 );
             let engine = grain.engine;
             engine_group(ui, filter, engine, GrainEngine::Spektra, |ui, filter| {
-                if filter_matches(filter, "rms granularity (experimental)") {
-                    flags.runtime_changed |= param_tuple(ui, "rms granularity (experimental)", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel RMS granularity.");
+                if filter_matches(filter, "rms granularity") {
+                    flags.runtime_changed |= param_tuple_experimental(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel RMS granularity.");
                 }
                 if filter_matches(filter, "density min") {
                     flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density.");
@@ -223,8 +223,8 @@ pub(crate) fn sections(
                 if filter_matches(filter, "channel correlation") {
                     flags.runtime_changed |= param_numeric(ui, "Channel correlation", &mut grain.channel_correlation, "film_render.grain.channel_correlation", "Shared fraction of each emulsion layer's per-channel event rate; the realized channel correlation is a lower bound of this value, and no channel's strength changes.");
                 }
-                if filter_matches(filter, "rms granularity (experimental)") {
-                    flags.runtime_changed |= param_tuple(ui, "rms granularity (experimental)", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
+                if filter_matches(filter, "rms granularity") {
+                    flags.runtime_changed |= param_tuple_experimental(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
                 }
                 if filter_matches(filter, "particle scale sublayers") {
                     flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Positive relative particle scale per emulsion sublayer.");

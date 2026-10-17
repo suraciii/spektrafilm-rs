@@ -2,6 +2,7 @@
 use super::{ControlFilter, filter_matches};
 use crate::editor_ranges;
 use crate::numeric::{numeric, numeric_field, numeric_field_validated};
+use crate::theme;
 use egui::Ui;
 use serde_json::{Map, Value};
 use spektrafilm_core::params::diffusion::DiffusionFilterParams;
@@ -20,20 +21,18 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
     tooltip: &str,
 ) -> bool {
     let (min, max, step, decimals) = editor_range_for(path);
-    numeric(ui, label, value, min, max, step, decimals, tooltip)
-}
-
-pub(crate) fn param_slider<T>(ui: &mut Ui, value: &mut T, path: &str, tooltip: &str) -> bool
-where
-    T: egui::emath::Numeric,
-{
-    let (min, max, _step, _decimals) = editor_range_for(path);
-    ui.add(egui::Slider::new(
+    numeric(
+        ui,
+        label,
         value,
-        T::from_f64(min)..=T::from_f64(max),
-    ))
-    .on_hover_text(tooltip)
-    .changed()
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        crate::numeric::unit_suffix(path),
+        false,
+    )
 }
 
 /// `param_numeric` whose effective maximum is additionally capped at
@@ -56,8 +55,16 @@ pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
         step,
         decimals,
         tooltip,
+        crate::numeric::unit_suffix(path),
+        false,
     )
 }
+
+/// Per-component identifiers for a tuple row. Empty means the components are
+/// numbered by position, which is what the accessible names already carry.
+pub(crate) const POSITION_IDENTIFIERS: &[&str] = &[];
+/// Component identifiers for a film-scan point tuple.
+pub(crate) const CHANNEL_IDENTIFIERS: &[&str] = &["R", "G", "B"];
 
 pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
     ui: &mut Ui,
@@ -67,15 +74,53 @@ pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
     tooltip: &str,
 ) -> bool {
     let (min, max, step, decimals) = editor_range_for(path);
-    tuple(ui, label, values, min, max, step, decimals, tooltip)
+    tuple(
+        ui,
+        label,
+        values,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        POSITION_IDENTIFIERS,
+        false,
+    )
 }
 
+/// `param_tuple` on a row marked experimental.
+pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
+    ui: &mut Ui,
+    label: &str,
+    values: &mut [T; N],
+    path: &str,
+    tooltip: &str,
+) -> bool {
+    let (min, max, step, decimals) = editor_range_for(path);
+    tuple(
+        ui,
+        label,
+        values,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        POSITION_IDENTIFIERS,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn param_numeric_field_validated<T, Id>(
     ui: &mut Ui,
+    label: &str,
     id_salt: Id,
     value: &mut T,
     path: &str,
     tooltip: &str,
+    unit: Option<&str>,
+    labelled_by: Option<egui::Id>,
     valid: impl Fn(T) -> bool,
 ) -> bool
 where
@@ -83,7 +128,20 @@ where
     Id: std::hash::Hash,
 {
     let (min, max, step, decimals) = editor_range_for(path);
-    numeric_field_validated(ui, id_salt, value, min, max, step, decimals, tooltip, valid)
+    numeric_field_validated(
+        ui,
+        label,
+        id_salt,
+        value,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        unit,
+        labelled_by,
+        valid,
+    )
 }
 
 /// Per-path table keys for the shared diffusion-filter editor. Camera and
@@ -126,15 +184,24 @@ pub(crate) const ENLARGER_DIFFUSION_PATHS: DiffusionPaths = DiffusionPaths {
 
 pub(crate) fn diffusion(
     ui: &mut Ui,
+    label: &str,
     value: &mut DiffusionFilterParams,
     paths: &DiffusionPaths,
     filter: &mut ControlFilter<'_>,
 ) -> bool {
     let mut changed = false;
-    if filter_matches(filter, "active") {
+    // The row's label is the section's own name, so a search for that name
+    // finds the toggle; `filter_matches` needs a stable key, and the section
+    // names are stable.
+    let key: &'static str = if label == "Camera diffusion" {
+        "Camera diffusion"
+    } else {
+        "Enlarger diffusion"
+    };
+    if filter_matches(filter, key) {
         changed |= toggle(
             ui,
-            "active",
+            label,
             &mut value.active,
             "Toggle the diffusion filter (Pro-Mist family).",
         );
@@ -260,29 +327,55 @@ pub(crate) fn tuple<T: egui::emath::Numeric, const N: usize>(
     step: f64,
     decimals: usize,
     tooltip: &str,
+    identifiers: &[&str],
+    experimental: bool,
 ) -> bool {
     ui.push_id(label, |ui| {
-        ui.label(label).on_hover_text(tooltip);
-        ui.horizontal(|ui| {
+        row_label(ui, label, experimental).on_hover_text(tooltip);
+        ui.horizontal_wrapped(|ui| {
             values
                 .iter_mut()
                 .enumerate()
                 .map(|(index, value)| {
-                    let changed =
-                        numeric_field(ui, (label, index), value, min, max, step, decimals, tooltip);
-                    let id = ui.make_persistent_id(("numeric-field", (label, index)));
-                    // Build the indexed name only when accessibility is requested, not in
-                    // the ordinary per-frame widget path. The visible group stays unchanged.
-                    ui.ctx().accesskit_node_builder(id, |node| {
-                        node.set_label(format!("{label} {index}"));
-                    });
-                    changed
+                    let identifier = identifiers
+                        .get(index)
+                        .copied()
+                        .unwrap_or_else(|| index_identifier(index));
+                    let identifier_response = ui
+                        .label(
+                            egui::RichText::new(identifier)
+                                .color(theme::FG_MUTED)
+                                .size(theme::SIZE_HINT),
+                        )
+                        .on_hover_text(tooltip);
+                    numeric_field(
+                        ui,
+                        // The visible identifier and the accessible name agree,
+                        // so the component is named the same way for every
+                        // reader.
+                        &format!("{label} {identifier}"),
+                        (label, index),
+                        value,
+                        min,
+                        max,
+                        step,
+                        decimals,
+                        tooltip,
+                        None,
+                        Some(identifier_response.id),
+                    )
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
         })
         .inner
     })
     .inner
+}
+
+/// Fallback component identifier: the 0-based position, which matches the
+/// accessible names the harness already queries.
+fn index_identifier(index: usize) -> &'static str {
+    ["0", "1", "2", "3", "4", "5"][index]
 }
 
 pub(crate) fn fotufilm_sublayer_shares(
@@ -365,17 +458,30 @@ pub(crate) fn point_tuple(
     let tooltip = "Red, green, and blue positions in the film scan range. Each black point must be below its white point; values outside the points are not clipped.";
     ui.push_id(label, |ui| {
         ui.label(label).on_hover_text(tooltip);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             values
                 .iter_mut()
                 .enumerate()
                 .map(|(channel, value)| {
-                    let changed = param_numeric_field_validated(
+                    let identifier_response = ui
+                        .label(
+                            egui::RichText::new(CHANNEL_IDENTIFIERS[channel])
+                                .color(theme::FG_MUTED)
+                                .size(theme::SIZE_HINT),
+                        )
+                        .on_hover_text(tooltip);
+                    param_numeric_field_validated(
                         ui,
+                        // The visible identifier and the accessible name agree,
+                        // so the component is named the same way for every
+                        // reader.
+                        &format!("{label} {}", CHANNEL_IDENTIFIERS[channel]),
                         (label, channel),
                         value,
                         path,
                         tooltip,
+                        None,
+                        Some(identifier_response.id),
                         |next| {
                             if is_black {
                                 next < other[channel]
@@ -383,12 +489,7 @@ pub(crate) fn point_tuple(
                                 next > other[channel]
                             }
                         },
-                    );
-                    let id = ui.make_persistent_id(("numeric-field", (label, channel)));
-                    ui.ctx().accesskit_node_builder(id, |node| {
-                        node.set_label(format!("{label} {channel}"));
-                    });
-                    changed
+                    )
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
         })
@@ -397,8 +498,84 @@ pub(crate) fn point_tuple(
     .inner
 }
 
+/// A boolean parameter row's editor: a switch.
+///
+/// Built on a focusable button so pointer and keyboard operability come from
+/// the toolkit, then named as a switch for assistive technology. The role is
+/// set after the widget is added, because egui rewrites the node's role from
+/// its own widget info on every frame.
 pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) -> bool {
-    ui.checkbox(value, label).on_hover_text(tooltip).changed()
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let label_response = ui.label(label).on_hover_text(tooltip);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (fill, knob, text) = if *value {
+                (theme::ACCENT, theme::CONTRAST_ON_ACCENT, "on")
+            } else {
+                (theme::SURFACE3, theme::FG_MUTED, "off")
+            };
+            let response = ui
+                .add(
+                    egui::Button::new(egui::RichText::new(text).color(knob).size(theme::SIZE_HINT))
+                        .fill(fill)
+                        .corner_radius(theme::RADIUS_CARD)
+                        .min_size(egui::vec2(44.0, 18.0))
+                        .selected(*value),
+                )
+                .on_hover_text(tooltip);
+            if response.clicked() {
+                *value = !*value;
+                changed = true;
+            }
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    *value,
+                    label,
+                )
+            });
+            // Name the switch and declare the visible label as its labelling
+            // node, so a label query resolves to the switch itself.
+            let id = response.id;
+            response.labelled_by(label_response.id);
+            ui.ctx().accesskit_node_builder(id, |node| {
+                node.set_role(egui::accesskit::Role::Switch);
+                node.set_toggled(if *value {
+                    egui::accesskit::Toggled::True
+                } else {
+                    egui::accesskit::Toggled::False
+                });
+                node.set_label(label);
+            });
+        });
+    });
+    changed
+}
+
+/// Mark a row's label as experimental.
+///
+/// The marker is a chip beside the label rather than a suffix in the label
+/// text, so the row's accessible name and its search match stay the bare
+/// parameter name.
+pub(crate) fn experimental_badge(ui: &mut Ui) {
+    ui.label(
+        egui::RichText::new("experimental")
+            .color(theme::WARNING)
+            .size(theme::SIZE_HINT),
+    );
+}
+
+/// A row label with the experimental marker when the parameter is marked.
+///
+/// The badge sits beside the label, so the row's accessible name and its
+/// search match stay the bare parameter name.
+pub(crate) fn row_label(ui: &mut Ui, label: &str, experimental: bool) -> egui::Response {
+    let response = ui.add(egui::Label::new(egui::RichText::new(label)).sense(egui::Sense::click()));
+    if experimental {
+        experimental_badge(ui);
+    }
+    response
 }
 
 pub fn choice_tip(
@@ -414,6 +591,25 @@ pub fn choice_tip(
         value,
         choices.iter().map(|&option| (option, option)),
         tooltip,
+        false,
+    )
+}
+
+/// `choice_tip` on a row marked experimental.
+pub fn choice_tip_experimental(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: &[&str],
+    tooltip: &str,
+) -> bool {
+    choice_tip_options(
+        ui,
+        label,
+        value,
+        choices.iter().map(|&option| (option, option)),
+        tooltip,
+        true,
     )
 }
 
@@ -426,7 +622,7 @@ pub fn choice_tip_entries<'a>(
     choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
     tooltip: &str,
 ) -> bool {
-    choice_tip_options(ui, label, value, choices, tooltip)
+    choice_tip_options(ui, label, value, choices, tooltip, false)
 }
 
 pub(crate) fn choice_tip_options<'a>(
@@ -435,32 +631,67 @@ pub(crate) fn choice_tip_options<'a>(
     value: &mut String,
     choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
     tooltip: &str,
+    experimental: bool,
 ) -> bool {
     let selected_label = choices
         .clone()
         .find(|&(option, _)| option == value.as_str())
         .map(|(_, display_label)| display_label)
-        .unwrap_or(value.as_str());
-    let mut changed = false;
-    egui::ComboBox::from_label(label)
-        .selected_text(selected_label)
-        .show_ui(ui, |ui| {
-            for (option, display_label) in choices {
-                // Allocate only when a selection changes, not for every option each frame.
-                if ui
-                    .selectable_label(value.as_str() == option, display_label)
-                    .on_hover_text(tooltip)
-                    .clicked()
-                    && value.as_str() != option
-                {
-                    *value = option.to_owned();
-                    changed = true;
+        .unwrap_or_else(|| value.as_str())
+        .to_owned();
+    let prev = value.clone();
+    // Label first, selector second, so a choice row reads like every other
+    // parameter row. The selector paints in its own horizontal row inside a
+    // vertical section body, so both share one explicit row here. `from_id_salt`
+    // paints the box where it is placed instead of appending its own label
+    // after it. The width is capped so a selector sharing a row with another
+    // control leaves room for it.
+    ui.horizontal(|ui| {
+        row_label(ui, label, experimental).on_hover_text(tooltip);
+        // The selector takes the width still unclaimed in its row, capped, so a
+        // selector sharing a row with another control leaves room for it and
+        // never pushes the row past its container.
+        let width = ui
+            .available_width()
+            .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
+        egui::ComboBox::from_id_salt(label)
+            .selected_text(&selected_label)
+            .width(width)
+            // Truncate rather than extend: an extending selector takes its
+            // text's full width and pushes whatever shares the row past the
+            // container.
+            .wrap_mode(egui::TextWrapMode::Truncate)
+            .show_ui(ui, |ui| {
+                for (option, display_label) in choices {
+                    // Allocate only when a selection changes, not for every
+                    // option each frame.
+                    if ui
+                        .selectable_label(value.as_str() == option, display_label)
+                        .on_hover_text(tooltip)
+                        .clicked()
+                        && value.as_str() != option
+                    {
+                        *value = option.to_owned();
+                    }
                 }
-            }
-        })
-        .response
-        .on_hover_text(tooltip);
-    changed
+            })
+            .response
+            .on_hover_text(tooltip);
+        name_choice(ui, label);
+    });
+    prev != *value
+}
+
+/// Name a choice row's selector with the parameter's own accessible name.
+///
+/// The selector's own widget info carries an empty label, and a `labelled_by`
+/// link to the visible label would make that label node the one a label query
+/// returns, so the selector is named directly instead.
+pub(crate) fn name_choice(ui: &Ui, label: &str) {
+    let id = ui.make_persistent_id(egui::Id::new(label));
+    ui.ctx().accesskit_node_builder(id, |node| {
+        node.set_label(label);
+    });
 }
 
 // UI helpers keep their existing parameter interfaces.
@@ -477,22 +708,29 @@ pub(crate) fn extra_choice(
 ) -> bool {
     let current = extras[section][key].as_str().unwrap_or(default);
     let mut selected = None;
-    egui::ComboBox::from_label(label)
-        .selected_text(current)
-        .show_ui(ui, |ui| {
-            for &option in choices {
-                if ui
-                    .selectable_label(current == option, option)
-                    .on_hover_text(tooltip)
-                    .clicked()
-                    && current != option
-                {
-                    selected = Some(option);
+    // Label first, selector second, so a choice row reads like every other
+    // parameter row. The selector paints in its own horizontal row inside a
+    // vertical section body, so both share one explicit row here.
+    ui.horizontal(|ui| {
+        row_label(ui, label, false).on_hover_text(tooltip);
+        egui::ComboBox::from_id_salt(label)
+            .selected_text(current)
+            .show_ui(ui, |ui| {
+                for &option in choices {
+                    if ui
+                        .selectable_label(current == option, option)
+                        .on_hover_text(tooltip)
+                        .clicked()
+                        && current != option
+                    {
+                        selected = Some(option);
+                    }
                 }
-            }
-        })
-        .response
-        .on_hover_text(tooltip);
+            })
+            .response
+            .on_hover_text(tooltip);
+        name_choice(ui, label);
+    });
     if let Some(selected) = selected {
         set_extra(extras, section, key, Value::from(selected));
         true
@@ -555,7 +793,7 @@ pub(crate) fn extra_channels(
             }
         }
     }
-    if param_tuple(ui, label, &mut values, path, "") {
+    if param_tuple_experimental(ui, label, &mut values, path, "") {
         set_extra(extras, "special", key, Value::from(values.to_vec()));
         true
     } else {

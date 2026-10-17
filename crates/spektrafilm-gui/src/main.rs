@@ -42,6 +42,7 @@ mod profiles;
 mod render;
 mod render_worker;
 mod routes;
+mod section_reset;
 mod state;
 mod theme;
 mod ui;

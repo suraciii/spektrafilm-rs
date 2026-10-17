@@ -1,6 +1,38 @@
 use std::hash::Hash;
 
 use egui::{TextEdit, Ui};
+use serde_json::Value;
+
+use crate::theme;
+
+/// Whether a numeric row's slider spans its range linearly or logarithmically.
+///
+/// Derived from the declared editor range, which stays the only source of
+/// value decimals and slider bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SliderScale {
+    Linear,
+    Logarithmic,
+}
+
+/// Pick the slider scale for a declared editor range.
+///
+/// Logarithmic when the range spans more than three decades, or when the
+/// declared minimum is zero and the declared maximum reaches one thousand or
+/// more. A linear slider over those puts every working value within a
+/// fraction of a pixel of the track's zero end.
+///
+/// A signed range stays linear: a symmetric range is usable as declared, and
+/// a logarithmic track would only add a zero cutoff that hides half of it.
+pub(crate) fn slider_scale(min: f64, max: f64) -> SliderScale {
+    if min > 0.0 && (max / min).log10() > 3.0 {
+        return SliderScale::Logarithmic;
+    }
+    if min == 0.0 && max >= 1000.0 {
+        return SliderScale::Logarithmic;
+    }
+    SliderScale::Linear
+}
 
 #[derive(Clone, Debug)]
 struct NumericEditState {
@@ -8,6 +40,42 @@ struct NumericEditState {
     last_value: f64,
     edit_start: f64,
     focused: bool,
+}
+
+/// Unit suffix for a parameter path, from core parameter discovery.
+///
+/// Core owns the unit vocabulary, so the GUI reads it rather than keeping a
+/// second table. The result is cached because `describe_field` walks JSON.
+pub(crate) fn unit_suffix(path: &str) -> Option<&'static str> {
+    static UNITS: std::sync::LazyLock<std::collections::HashMap<String, Option<String>>> =
+        std::sync::LazyLock::new(|| {
+            let mut units: std::collections::HashMap<String, Option<String>> =
+                crate::editor_ranges::paths()
+                    .map(|path| {
+                        let unit = spektrafilm_core::params::sources::describe_field(path)
+                            .ok()
+                            .and_then(|field| {
+                                field.get("unit").and_then(Value::as_str).map(str::to_owned)
+                            })
+                            .filter(|unit| !unit.is_empty());
+                        (path.to_owned(), unit)
+                    })
+                    .collect();
+            // These two numeric rows live only in GUI extras state, so core has
+            // no entry for them.
+            units.insert(
+                "extras.load_raw.temperature".to_owned(),
+                Some("K".to_owned()),
+            );
+            units.insert("extras.load_raw.tint".to_owned(), Some("CC".to_owned()));
+            units
+        });
+    UNITS
+        .get(path)
+        .and_then(|unit| unit.as_deref())
+        // A composite unit such as `[px (sigma), dimensionless (amount)]`
+        // describes a whole tuple and is not shown per component.
+        .filter(|unit| !unit.starts_with('['))
 }
 
 fn format_value(value: f64, integral: bool, decimals: usize) -> String {
@@ -41,7 +109,10 @@ fn parse_value<T: egui::emath::Numeric>(text: &str, min: f64, max: f64) -> Optio
     Some(parsed)
 }
 
-// Numeric widgets keep their existing parameter interfaces.
+/// One parameter row: the label on the left, the value on the right of the
+/// same line, and the slider on the line below.
+///
+/// The value stays the row's editor; the slider only moves it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn numeric<T: egui::emath::Numeric>(
     ui: &mut Ui,
@@ -52,23 +123,80 @@ pub(crate) fn numeric<T: egui::emath::Numeric>(
     step: f64,
     decimals: usize,
     tooltip: &str,
+    unit: Option<&str>,
+    experimental: bool,
 ) -> bool {
+    let mut changed = false;
     ui.horizontal(|ui| {
-        let label_response = ui.label(label).on_hover_text(tooltip);
-        let changed = numeric_field(ui, label, value, min, max, step, decimals, tooltip);
-        let id = ui.make_persistent_id(("numeric-field", label));
-        if let Some(response) = ui.ctx().read_response(id) {
-            response.labelled_by(label_response.id);
-        }
-        changed
-    })
-    .inner
+        let label_response =
+            crate::controls::row_label(ui, label, experimental).on_hover_text(tooltip);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            changed |= numeric_field(
+                ui,
+                label,
+                label,
+                value,
+                min,
+                max,
+                step,
+                decimals,
+                tooltip,
+                unit,
+                Some(label_response.id),
+            );
+        });
+    });
+    changed |= row_slider(ui, label, value, min, max, step);
+    changed
+}
+
+/// The slider that sits under a numeric row's value.
+///
+/// Salted by the row label plus the declared bounds, so two rows that share a
+/// label in different sections keep separate sliders.
+#[allow(clippy::too_many_arguments)]
+fn row_slider<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    min: f64,
+    max: f64,
+    step: f64,
+) -> bool {
+    let logarithmic = slider_scale(min, max) == SliderScale::Logarithmic;
+    // A logarithmic track anchors its positive floor at the declared step, so
+    // the granularity the value field offers is the granularity the track
+    // spans. egui honours `smallest_positive` only when the range minimum is
+    // zero, so a positive minimum moves the floor onto the track itself; a
+    // zero minimum keeps its zero, which is a value the editor accepts.
+    let track_min = if logarithmic && min > 0.0 {
+        min.max(step)
+    } else {
+        min
+    };
+    let mut slider = egui::Slider::new(value, T::from_f64(track_min)..=T::from_f64(max))
+        .show_value(false)
+        .clamping(egui::SliderClamping::Never);
+    if logarithmic {
+        slider = slider
+            .logarithmic(true)
+            .smallest_positive(step.max(f64::MIN_POSITIVE));
+    }
+    let response = ui.add(slider).on_hover_text(tooltip_for(label));
+    response.changed()
+}
+
+/// Tooltip text for a row slider: the value field carries the parameter's own
+/// tooltip, so the slider names the interaction instead.
+fn tooltip_for(label: &str) -> String {
+    format!("Drag to change {label}")
 }
 
 // Numeric widgets keep their existing parameter interfaces.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn numeric_field<T, Id>(
     ui: &mut Ui,
+    label: &str,
     id_salt: Id,
     value: &mut T,
     min: f64,
@@ -76,6 +204,8 @@ pub(crate) fn numeric_field<T, Id>(
     step: f64,
     decimals: usize,
     tooltip: &str,
+    unit: Option<&str>,
+    labelled_by: Option<egui::Id>,
 ) -> bool
 where
     T: egui::emath::Numeric,
@@ -83,6 +213,7 @@ where
 {
     numeric_field_validated(
         ui,
+        label,
         id_salt,
         value,
         min,
@@ -90,6 +221,8 @@ where
         step,
         decimals,
         tooltip,
+        unit,
+        labelled_by,
         |_| true,
     )
 }
@@ -97,6 +230,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn numeric_field_validated<T, Id>(
     ui: &mut Ui,
+    label: &str,
     id_salt: Id,
     value: &mut T,
     min: f64,
@@ -104,6 +238,8 @@ pub(crate) fn numeric_field_validated<T, Id>(
     step: f64,
     decimals: usize,
     tooltip: &str,
+    unit: Option<&str>,
+    labelled_by: Option<egui::Id>,
     valid: impl Fn(T) -> bool,
 ) -> bool
 where
@@ -136,26 +272,82 @@ where
         Some(v) => !valid(T::from_f64(v)),
     };
 
-    let mut text_edit = TextEdit::singleline(&mut state.text)
-        .id(id)
-        .desired_width(72.0);
-    if is_invalid {
-        text_edit = text_edit.text_color(egui::Color32::from_rgb(0xe0, 0x55, 0x55));
-    }
-    let response = ui.add(text_edit).on_hover_text(tooltip);
-    if is_invalid {
-        ui.painter().rect_stroke(
-            response.rect.expand(1.5),
-            0.0_f32,
-            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(0xe0, 0x55, 0x55)),
-            egui::StrokeKind::Inside,
-        );
-    }
-    if response.gained_focus() {
-        state.edit_start = current;
-    }
-
     let mut changed = false;
+    ui.horizontal(|ui| {
+        let mut text_edit = TextEdit::singleline(&mut state.text)
+            .id(id)
+            .font(theme::text(theme::TEXT_VALUE, theme::SIZE_VALUE))
+            .desired_width(theme::WIDTH_VALUE);
+        if is_invalid {
+            // Invalid state is colour plus a border, never colour alone.
+            text_edit = text_edit.text_color(theme::ERROR);
+        }
+        let mut response = ui.add(text_edit).on_hover_text(tooltip);
+        // Name the editor itself, so assistive technology and the
+        // accessibility tree's label lookup both find the field rather than a
+        // separate label node, and declare the visible label as the field's
+        // labelling node so the two read as one control.
+        ui.ctx().accesskit_node_builder(id, |node| {
+            node.set_label(label);
+        });
+        if let Some(label_id) = labelled_by {
+            response = response.labelled_by(label_id);
+        }
+        if let Some(unit) = unit {
+            ui.label(
+                egui::RichText::new(unit)
+                    .color(theme::FG_MUTED)
+                    .size(theme::SIZE_HINT),
+            )
+            .on_hover_text(tooltip);
+        }
+        if is_invalid {
+            ui.painter().rect_stroke(
+                response.rect.expand(theme::INVALID_RING_EXPAND),
+                0.0_f32,
+                egui::Stroke::new(theme::STROKE_INVALID, theme::ERROR),
+                egui::StrokeKind::Inside,
+            );
+        }
+        value_row_events(
+            ui,
+            &response,
+            value,
+            &mut state,
+            id,
+            min,
+            max,
+            step,
+            decimals,
+            valid,
+            &mut changed,
+        );
+    });
+
+    changed
+}
+
+/// Commit a value field's edits: typed text, the wheel, and focus loss.
+///
+/// Called inside the value row's horizontal scope so the field's own widget
+/// state is written once per frame, whatever else the row renders.
+#[allow(clippy::too_many_arguments)]
+fn value_row_events<T: egui::emath::Numeric>(
+    ui: &Ui,
+    response: &egui::Response,
+    value: &mut T,
+    state: &mut NumericEditState,
+    id: egui::Id,
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    valid: impl Fn(T) -> bool,
+    changed: &mut bool,
+) {
+    if response.gained_focus() {
+        state.edit_start = value.to_f64();
+    }
     if response.changed()
         && let Some(parsed) = parse_value::<T>(&state.text, min, max)
     {
@@ -165,18 +357,16 @@ where
             && *value != next
         {
             *value = next;
-            changed = true;
+            *changed = true;
         }
     }
     let mut wheel_value = *value;
     let wheel_changed =
-        wheel_adjust(ui, &response, &mut wheel_value, min, max, step) && valid(wheel_value);
+        wheel_adjust(ui, response, &mut wheel_value, min, max, step) && valid(wheel_value);
     if wheel_changed {
         *value = wheel_value;
-    }
-    if wheel_changed {
         state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
-        changed = true;
+        *changed = true;
     }
 
     if response.lost_focus() {
@@ -195,15 +385,14 @@ where
             && *value != next
         {
             *value = next;
-            changed = true;
+            *changed = true;
         }
         state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
     }
     state.last_value = value.to_f64();
     state.focused = response.has_focus();
-    ui.ctx().data_mut(|data| data.insert_temp(id, state));
-
-    changed
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id, state.clone()));
 }
 
 fn apply_wheel_delta<T: egui::emath::Numeric>(
@@ -250,7 +439,23 @@ fn wheel_adjust<T: egui::emath::Numeric>(
 
 #[cfg(test)]
 mod tests {
-    use super::{numeric_field, parse_value};
+    use super::{SliderScale, numeric_field, parse_value, slider_scale};
+
+    #[test]
+    fn slider_scale_picks_logarithmic_only_for_wide_positive_ranges() {
+        // Signed ranges stay linear.
+        assert_eq!(slider_scale(-10.0, 10.0), SliderScale::Linear);
+        // A zero floor with a narrow span stays linear.
+        assert_eq!(slider_scale(0.0, 100.0), SliderScale::Linear);
+        // A zero floor at or past a thousand goes logarithmic.
+        assert_eq!(slider_scale(0.0, 1000.0), SliderScale::Logarithmic);
+        assert_eq!(slider_scale(0.0, 1000000.0), SliderScale::Logarithmic);
+        // A positive floor spans more than three decades.
+        assert_eq!(slider_scale(1.0, 100.0), SliderScale::Linear);
+        assert_eq!(slider_scale(1.0, 10000.0), SliderScale::Logarithmic);
+        // Exactly three decades is not more than three decades.
+        assert_eq!(slider_scale(1000.0, 1000000.0), SliderScale::Linear);
+    }
 
     #[test]
     fn incomplete_and_nonfinite_text_does_not_change_parameters() {
@@ -296,7 +501,10 @@ mod tests {
                         }) {
                             ctx.memory_mut(|memory| memory.request_focus(id));
                         }
-                        numeric_field(ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure");
+                        numeric_field(
+                            ui, "exposure", "exposure", &mut value, -10.0, 10.0, 0.25, 2,
+                            "Exposure", None, None,
+                        );
                         field_rect = ctx.read_response(id).unwrap().rect;
                     });
                 },
@@ -359,7 +567,10 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    numeric_field(ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure");
+                    numeric_field(
+                        ui, "exposure", "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure",
+                        None, None,
+                    );
                     let id = ui.make_persistent_id(("numeric-field", "exposure"));
                     field_rect.set(ctx.read_response(id).unwrap().rect);
                 });
@@ -384,7 +595,10 @@ mod tests {
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    numeric_field(ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure");
+                    numeric_field(
+                        ui, "exposure", "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure",
+                        None, None,
+                    );
                 });
             },
         );
@@ -417,7 +631,9 @@ mod tests {
                     }) {
                         ctx.memory_mut(|memory| memory.request_focus(id));
                     }
-                    *changed = numeric_field(ui, "exposure", value, 0.0, 1.0, 0.05, 3, "tip");
+                    *changed = numeric_field(
+                        ui, "exposure", "exposure", value, 0.0, 1.0, 0.05, 3, "tip", None, None,
+                    );
                     rect.set(ctx.read_response(id).unwrap().rect);
                 });
             },
@@ -555,12 +771,15 @@ mod tests {
                         *changed = super::numeric_field_validated(
                             ui,
                             "black",
+                            "black",
                             value,
                             0.0,
                             1.0,
                             0.05,
                             3,
                             "tip",
+                            None,
+                            None,
                             |next| next < other.get(),
                         );
                         rect.set(ctx.read_response(id).unwrap().rect);
