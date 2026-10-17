@@ -1594,11 +1594,21 @@ fn library_document(f: &Fixture, name: &str, grain_amount: f64) -> PathBuf {
     let library = f.root.join("config").join("presets");
     std::fs::create_dir_all(&library).unwrap();
     let path = library.join(format!("{name}.json"));
-    // A look document: both profiles plus the full look, so the loader accepts it.
+    // A look document: both profiles plus every look-owned group, so the
+    // loader accepts it. `LookParameters` has no `#[serde(default)]` on these
+    // groups — a look is a whole look — so a document that carries only the
+    // group under test is rejected as `missing field`.
     let document = json!({"schema_version": PRESET_SCHEMA_VERSION, "name": name,
         "film_profile": {"stock": "kodak_gold_200"},
         "print_profile": {"stock": "kodak_portra_endura"},
-        "parameters": {"film_render": {"grain": {"v2_amount": grain_amount}}},
+        "parameters": {
+            "enlarger": {},
+            "scanner": {},
+            "film_render": {"grain": {"v2_amount": grain_amount}},
+            "print_render": {},
+            "camera_diffusion_filter": {"active": false},
+            "output_mix": {"amount": 1.0},
+        },
         "provenance": {"implementation_version": "test", "model_version": "test"}});
     std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
     path
@@ -1787,9 +1797,14 @@ fn chemistry_validation_runs_after_later_sources_and_looks() {
     let path = f.root.join("inactive.json");
     std::fs::write(&path, serde_json::to_vec(&look).unwrap()).unwrap();
     let base = ["--preset", path.to_str().unwrap()];
-    // A later source repairs the chemistry the look left inactive.
+    // A later source repairs the chemistry the look left inactive. The repair
+    // has to name `.active`: every other chemistry leaf is gated on it
+    // (`conditions()`), so editing only a gamma factor stores the value but
+    // leaves the domain off.
     let mut repaired = base.to_vec();
     repaired.extend_from_slice(&[
+        "--set",
+        "print_render.density_curves_morph.active=true",
         "--set",
         "print_render.density_curves_morph.gamma_factor=1",
         "--dry-run",
@@ -1803,6 +1818,23 @@ fn chemistry_validation_runs_after_later_sources_and_looks() {
         report["parameters"]["print_render"]["density_curves_morph"]["gamma_factor"],
         1.0
     );
+    // A gamma factor alone cannot switch the domain on: the edit is stored and
+    // reported inactive, and the run still fails.
+    let mut gated = base.to_vec();
+    gated.extend_from_slice(&[
+        "--set",
+        "print_render.density_curves_morph.gamma_factor=1",
+        "--dry-run",
+    ]);
+    let gated_report = f.report(&gated);
+    assert_eq!(
+        gated_report["parameters"]["print_render"]["density_curves_morph"]["active"],
+        false
+    );
+    assert_eq!(
+        gated_report["parameters"]["print_render"]["density_curves_morph"]["gamma_factor"],
+        1.0
+    );
     // Applying the same look twice is idempotent.
     let mut repeated = base.to_vec();
     repeated.extend_from_slice(&["--preset", "Kodak Portra 400", "--dry-run"]);
@@ -1810,10 +1842,27 @@ fn chemistry_validation_runs_after_later_sources_and_looks() {
         f.report(&repeated),
         f.report(&["--preset", "Kodak Portra 400", "--dry-run"])
     );
-    // The unrepaired chemistry still fails.
+    // The unrepaired look is not a hard failure: `validate()` returns early
+    // while the domain is off, so the stored gamma factor is kept and the
+    // chemistry simply stays inactive. It is reported as an inactive edit,
+    // not rejected.
     let mut invalid = base.to_vec();
     invalid.push("--dry-run");
-    let rejected = f.process(&invalid);
+    let accepted = f.process(&invalid);
+    assert!(accepted.status.success());
+    let inactive_report = f.report(&invalid);
+    assert_eq!(
+        inactive_report["parameters"]["print_render"]["density_curves_morph"]["active"],
+        false
+    );
+    // Activating the domain without repairing the gamma factor is what fails.
+    let mut unset = base.to_vec();
+    unset.extend_from_slice(&[
+        "--set",
+        "print_render.density_curves_morph.active=true",
+        "--dry-run",
+    ]);
+    let rejected = f.process(&unset);
     assert!(!rejected.status.success());
     assert!(
         String::from_utf8_lossy(&rejected.stderr)
