@@ -41,7 +41,7 @@ spektrafilm-lab target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --
 spektrafilm-lab run suite --suite FILE --target FILE --out DIRECTORY [RUN OPTIONS]
 spektrafilm-lab run image --input FILE --configuration FILE --target FILE --out DIRECTORY [RUN OPTIONS]
 spektrafilm-lab measure run --stimuli FILE --enter BOUNDARY --out DIRECTORY [CHAIN OPTIONS]
-spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space source|render] [--role ROLE] [--measurements FAMILY,...] --out FILE
+spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space source|render|source_pixels|working_pixels|film_frame_pixels|grain_aperture_pixels|output_pixels] [--role ROLE] [--measurements FAMILY,...] --out FILE
 spektrafilm-lab sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
 spektrafilm-lab sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
 spektrafilm-lab sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
@@ -100,7 +100,7 @@ A regions document may contain overlapping regions. Overlap is declared intent, 
 spektrafilm-lab regions grid \
   --id ID --rows N --columns N --origin X,Y \
   --patch-size WIDTHxHEIGHT --gap X,Y \
-  [--sample WIDTHxHEIGHT] [--space source|render] \
+  [--sample WIDTHxHEIGHT] [--space source|render|source_pixels|working_pixels|film_frame_pixels|grain_aperture_pixels|output_pixels] \
   [--role ROLE] [--measurements FAMILY,...] --out REGIONS.json
 ```
 
