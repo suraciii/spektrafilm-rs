@@ -25,8 +25,9 @@ use spektrafilm_core::params::RuntimeParams;
 /// `rust.runtime`, while the Convert channel swaps live only in `extras`.
 ///
 /// One section owns each carrier key, so a reset never disturbs a neighbour.
-/// `camera` and `camera_diffusion` are separate entries even though both feed
-/// `camera.diffusion_filter` at projection time.
+/// `Camera` and `Camera diffusion` are separate entries even though both feed
+/// `camera.diffusion_filter` at projection time; the same holds for the two
+/// Enlarger entries and `enlarger.diffusion_filter`.
 const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
     ("Film base", &["film_render.base"], &[]),
     ("Print base", &["print_render.base"], &[]),
@@ -40,21 +41,63 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
         &["film_render.convert"],
         &["special.film_channel_swap", "special.print_channel_swap"],
     ),
-    // The Camera diffusion section owns `camera.diffusion_filter`, so the
-    // Camera section's own rows stop at the rest of the group.
-    ("Camera", &["camera"], &[]),
-    ("Enlarger diffusion", &["enlarger.diffusion_filter"], &[]),
-    // `print_exposure_ev_tracking` rides on `settings`, not on the enlarger
-    // group, but the Enlarger section owns it.
+    // The Camera diffusion section owns `camera.diffusion_filter`, and the
+    // camera group also carries calibration outputs (`lens_blur_um`, the UV
+    // and IR taking filters) that no row presents, so the Camera section's own
+    // rows are named individually.
     (
-        "Enlarger",
-        &["enlarger", "settings.print_exposure_ev_tracking"],
+        "Camera",
+        &[
+            "camera.exposure_compensation_ev",
+            "camera.auto_exposure",
+            "camera.auto_exposure_method",
+            "camera.color_filter",
+            "camera.film_format_mm",
+        ],
         &[],
     ),
+    ("Camera diffusion", &["camera.diffusion_filter"], &[]),
+    // The Enlarger diffusion section owns `enlarger.diffusion_filter`, and the
+    // enlarger group also carries the calibrated neutral filter pack that no
+    // row presents, so the Enlarger section's own rows are named individually.
+    // `print_exposure_ev_tracking` rides on `settings` rather than the group,
+    // but the Enlarger section owns it.
+    (
+        "Enlarger",
+        &[
+            "enlarger.illuminant",
+            "enlarger.print_exposure",
+            "enlarger.print_exposure_mode",
+            "enlarger.y_filter_shift",
+            "enlarger.m_filter_shift",
+            "enlarger.preflash_exposure",
+            "enlarger.preflash_y_filter_shift",
+            "enlarger.preflash_m_filter_shift",
+            "settings.print_exposure_ev_tracking",
+        ],
+        &[],
+    ),
+    ("Enlarger diffusion", &["enlarger.diffusion_filter"], &[]),
     ("Scanner", &["scanner"], &[]),
     ("Glare", &["print_render.glare"], &[]),
-    ("Input gamut compress", &["io.input_gamut_compress"], &[]),
-    ("Output gamut compress", &["io.output_gamut_compress"], &[]),
+    (
+        "Input gamut compress",
+        &[
+            "io.input_gamut_compress.active",
+            "io.input_gamut_compress.algorithm",
+            "io.input_gamut_compress.knee",
+            "io.input_gamut_compress.hull_detail",
+        ],
+        &[],
+    ),
+    (
+        "Output gamut compress",
+        &[
+            "io.output_gamut_compress.algorithm",
+            "io.output_gamut_compress.knee",
+        ],
+        &[],
+    ),
     ("Magazine finish color", &["magazine_print_color"], &[]),
     (
         "Crop and upscale",
@@ -80,6 +123,14 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
         "Input",
         &["io.input_color_space", "io.input_cctf_decoding"],
         &[],
+    ),
+    (
+        "Output",
+        &["output_mix.amount", "io.output_color_space"],
+        &[
+            "simulation.saving_color_space",
+            "simulation.saving_cctf_encoding",
+        ],
     ),
 ];
 
@@ -197,7 +248,13 @@ pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> b
             let Some(factory) = value_at(&factory_root, path) else {
                 continue;
             };
-            if value_at(&live_root, path).as_ref() == Some(&factory) {
+            // The mark and the reset must agree on what differs, so both use
+            // the exact-bit comparison: a `-0.0` leaf differs from the
+            // factory's `0.0` by its bits while comparing equal as numbers.
+            if value_at(&live_root, path)
+                .as_ref()
+                .is_some_and(|live| same_bits(live, &factory))
+            {
                 continue;
             }
             if !set_value(&mut live_root, path, factory) {
@@ -207,11 +264,12 @@ pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> b
         }
         if changed {
             // The round trip through the runtime model keeps a reset from
-            // writing a value the model cannot hold.
-            if let Ok(restored) = serde_json::from_value::<RuntimeParams>(live_root)
-                && restored.validate().is_ok()
-            {
-                *params = restored;
+            // writing a value the model cannot hold. A restore the model
+            // rejects leaves the section unrestored, so the caller is told
+            // nothing changed rather than marking a reset that did not happen.
+            match serde_json::from_value::<RuntimeParams>(live_root) {
+                Ok(restored) if restored.validate().is_ok() => *params = restored,
+                _ => return false,
             }
         }
     }
@@ -220,7 +278,10 @@ pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> b
             let Some(factory) = document_value(&FACTORY_EXTRAS, path) else {
                 continue;
             };
-            if document_value(extras, path).as_ref() == Some(&factory) {
+            if document_value(extras, path)
+                .as_ref()
+                .is_some_and(|live| same_bits(live, &factory))
+            {
                 continue;
             }
             if set_value(extras, path, factory) {
@@ -349,6 +410,81 @@ mod tests {
         // restore it.
         assert_eq!(params.io.input_color_space, "ProPhoto RGB");
         assert_eq!(params.io.upscale_factor, 1.0);
+    }
+
+    #[test]
+    fn a_camera_reset_leaves_the_camera_diffusion_section_untouched() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections.clone();
+        // The Camera diffusion section owns the diffusion filter, so a Camera
+        // reset must not reach it even though the camera group carries it.
+        let diffusion = params.camera.diffusion_filter.strength;
+        params.camera.diffusion_filter.strength = diffusion + 1.0;
+        assert!(is_modified("Camera diffusion", &params, &extras));
+        assert!(
+            !is_modified("Camera", &params, &extras),
+            "a diffusion edit marks its own section, not the Camera header"
+        );
+        params.camera.exposure_compensation_ev = 0.5;
+        assert!(is_modified("Camera", &params, &extras));
+        assert!(reset(&mut params, &mut extras, "Camera"));
+        assert_eq!(params.camera.exposure_compensation_ev, 0.0);
+        assert_eq!(
+            params.camera.diffusion_filter.strength,
+            diffusion + 1.0,
+            "the Camera reset leaves the Camera diffusion section alone"
+        );
+        assert!(is_modified("Camera diffusion", &params, &extras));
+    }
+
+    #[test]
+    fn an_enlarger_reset_leaves_the_enlarger_diffusion_section_untouched() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections.clone();
+        let diffusion = params.enlarger.diffusion_filter.strength;
+        params.enlarger.diffusion_filter.strength = diffusion + 1.0;
+        assert!(is_modified("Enlarger diffusion", &params, &extras));
+        assert!(
+            !is_modified("Enlarger", &params, &extras),
+            "a diffusion edit marks its own section, not the Enlarger header"
+        );
+        params.enlarger.print_exposure = 2.0;
+        assert!(is_modified("Enlarger", &params, &extras));
+        assert!(reset(&mut params, &mut extras, "Enlarger"));
+        assert_eq!(params.enlarger.print_exposure, 1.0);
+        assert_eq!(
+            params.enlarger.diffusion_filter.strength,
+            diffusion + 1.0,
+            "the Enlarger reset leaves the Enlarger diffusion section alone"
+        );
+    }
+
+    #[test]
+    fn a_reset_keeps_the_calibrated_neutral_filter_pack() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections.clone();
+        // The neutral filter pack is a calibration output that no Enlarger row
+        // presents, so a reset must not discard it.
+        let neutral = params.enlarger.y_filter_neutral;
+        params.enlarger.y_filter_neutral = neutral + 10.0;
+        params.enlarger.print_exposure = 2.0;
+        assert!(reset(&mut params, &mut extras, "Enlarger"));
+        assert_eq!(
+            params.enlarger.y_filter_neutral,
+            neutral + 10.0,
+            "a reset keeps a calibrated value no row presents"
+        );
+    }
+
+    #[test]
+    fn the_output_reset_restores_the_simulation_blend() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections.clone();
+        params.output_mix.amount = 0.25;
+        assert!(is_modified("Output", &params, &extras));
+        assert!(reset(&mut params, &mut extras, "Output"));
+        assert_eq!(params.output_mix.amount, 1.0);
+        assert!(!is_modified("Output", &params, &extras));
     }
 
     #[test]

@@ -24,15 +24,15 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 **Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value. The text resets when focus leaves the field. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
 
-Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity.
+Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
 
-A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name on the left and its selector on the right. A row marked experimental carries an `experimental` chip beside its name.
+A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name on the left and its selector on the right. A row marked experimental carries an `experimental` chip beside its name. A checkbox belongs to list selection only.
 
 Pages and their section assignment follow [page ownership](../specs/gui-workflow/spec.md#page-ownership).
 
 Page navigation is one segmented control above the control list; the current page is the selected segment.
 
-A section header shows a `modified` chip while any of the section's parameters differs from the factory state, and a `reset` button that restores the section to that state. The reset touches only the section's own parameters, so a neighbouring section keeps its values. See [section reset](../specs/gui-workflow/spec.md#section-reset).
+A resettable section presents a `modified` chip while any of its parameters differs from the factory state, and a `reset` action that restores the section to that state. The reset touches only the section's own parameters, so a neighbouring section keeps its values. A section that carries a preset menu presents both on its header; a section that draws its own header inside the controls presents them beside it. See [section reset](../specs/gui-workflow/spec.md#section-reset).
 
 The GUI shows scanner controls for the scanned medium:
 
