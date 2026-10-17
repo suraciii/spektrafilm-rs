@@ -2176,3 +2176,119 @@ fn measure_verify_reports_identity_differences_without_failing() {
         "verify must not rewrite the run it verifies"
     );
 }
+
+/// A comparison record is verified as a comparison: the record file is found
+/// rather than assumed, the sides it names are re-hashed from their own
+/// `run.json`, and each difference names the side it belongs to. A comparison
+/// directory holds `comparison.json`, never `run.json`.
+#[test]
+fn measure_verify_reads_a_comparison_record_and_rehashes_its_sides() {
+    let f = MeasureFixture::new();
+    let bundle = f.root.join("verify-bundle");
+    assert!(
+        f.process(&bundle).status.success(),
+        "{}",
+        String::from_utf8_lossy(&f.process(&bundle).stderr)
+    );
+    let lab = f.root.join("verify-lab");
+    assert!(
+        f.measure_with(&f.stimuli, &lab).status.success(),
+        "{}",
+        String::from_utf8_lossy(&f.measure_with(&f.stimuli, &lab).stderr)
+    );
+    let sample = f.root.join("verify-sample");
+    assert!(
+        f.lab(&[
+            "sample",
+            "--from-evidence",
+            bundle.to_str().unwrap(),
+            "--stage",
+            "log_e_film",
+            "--regions",
+            f.plan.to_str().unwrap(),
+            "--out",
+            sample.to_str().unwrap(),
+        ])
+        .status
+        .success()
+    );
+    let reference = f.root.join("verify-reference");
+    assert!(
+        f.measure_with(&f.stimuli, &reference).status.success(),
+        "{}",
+        String::from_utf8_lossy(&f.measure_with(&f.stimuli, &reference).stderr)
+    );
+    let comparison = f.root.join("verify-comparison");
+    assert!(
+        f.lab(&[
+            "compare",
+            "--baseline",
+            lab.to_str().unwrap(),
+            "--candidate",
+            sample.to_str().unwrap(),
+            "--reference-run",
+            reference.to_str().unwrap(),
+            "--out",
+            comparison.to_str().unwrap(),
+        ])
+        .status
+        .success(),
+        "a reference reading selects the reading comparison"
+    );
+
+    // An untouched comparison reports no difference, and its own record is
+    // never rewritten.
+    let record_path = comparison.join("comparison.json");
+    let recorded = std::fs::read(&record_path).unwrap();
+    let untouched = f.lab(&["verify", "--record", comparison.to_str().unwrap()]);
+    assert!(
+        untouched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&untouched.stderr)
+    );
+    let report: Value = serde_json::from_slice(&untouched.stdout).unwrap();
+    assert_eq!(report["kind"], "verify");
+    assert!(
+        report["identity_differences"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{report}"
+    );
+    assert!(
+        report["buffer_differences"].as_array().unwrap().is_empty(),
+        "{report}"
+    );
+    assert_eq!(
+        std::fs::read(&record_path).unwrap(),
+        recorded,
+        "verify must not rewrite the comparison it verifies"
+    );
+
+    // A side whose retained reading no longer matches the hash the comparison
+    // recorded is reported for that side, and the command still exits zero.
+    let mut document: Value = serde_json::from_slice(&recorded).unwrap();
+    document["baseline"]["measure_sha256"] = Value::String("0".repeat(64));
+    let tampered_bytes = serde_json::to_vec_pretty(&document).unwrap();
+    std::fs::write(&record_path, &tampered_bytes).unwrap();
+    let result = f.lab(&["verify", "--record", comparison.to_str().unwrap()]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    let differences = report["identity_differences"].as_array().unwrap();
+    assert_eq!(differences.len(), 1, "{report}");
+    assert_eq!(differences[0]["field"], "baseline.measure_sha256");
+    assert_eq!(
+        differences[0]["path"],
+        lab.to_str().unwrap().to_owned(),
+        "each difference names the side it belongs to"
+    );
+    assert_eq!(differences[0]["recorded"], "0".repeat(64));
+    assert!(
+        report["buffer_differences"].as_array().unwrap().is_empty(),
+        "{report}"
+    );
+}
