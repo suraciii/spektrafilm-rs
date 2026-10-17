@@ -255,13 +255,22 @@ fn contract_with_window(
     spectra_cube: &SpectraCube,
     sensitivity: &[[f64; 3]],
     window_params: &[f64],
-    illuminant: &[f64],
+    reference_xy: (f64, f64),
 ) -> TcLut {
     let n_wl = spectra_cube
         .n_wavelengths
         .min(sensitivity.len())
         .min(N_WAVELENGTHS);
     let window = eval_erf4_bandpass(window_params);
+    let (tx, ty) = spectral::xy_to_tc(reference_xy.0, reference_xy.1);
+    let neutral = spektrafilm_math::lut::bicubic_2d_f64(
+        &spectra_cube.data,
+        spectra_cube.size,
+        spectra_cube.size,
+        spectra_cube.n_wavelengths,
+        tx * (spectra_cube.size - 1) as f64,
+        ty * (spectra_cube.size - 1) as f64,
+    );
     let mut num_per_wl = [
         Vec::<f64>::with_capacity(n_wl),
         Vec::with_capacity(n_wl),
@@ -274,7 +283,7 @@ fn contract_with_window(
     ];
     for wl in 0..n_wl {
         for c in 0..3 {
-            let si = sensitivity[wl][c] * illuminant[wl];
+            let si = sensitivity[wl][c] * neutral[wl];
             num_per_wl[c].push(si * window[wl][c]);
             den_per_wl[c].push(si);
         }
@@ -398,7 +407,7 @@ pub fn compute_hanatos2025_tc_lut(
             &cube,
             sensitivity,
             adaptation.window_params,
-            adaptation.reference_illuminant,
+            adaptation.reference_illuminant_xy,
         )
     } else {
         compute_tc_lut(&cube, sensitivity)

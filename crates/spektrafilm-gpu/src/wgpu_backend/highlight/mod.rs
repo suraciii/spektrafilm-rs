@@ -176,5 +176,3 @@ impl HighlightBoostState {
         dispatch_linear(&mut pass, self.n_values);
     }
 }
-
-

@@ -222,7 +222,10 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         const bool flushed = std::fflush(file.get()) == 0;
         const bool stream_failed = std::ferror(file.get()) != 0;
         proxy.close();
-        if (proxy.failed || !flushed || stream_failed) {
+        // Close the staged file before the caller publishes it: Windows rejects
+        // the publishing rename while this handle is open.
+        const bool stream_closed = std::fclose(file.release()) == 0;
+        if (proxy.failed || !flushed || stream_failed || !stream_closed) {
             if (!message.empty()) message += "; ";
             message += "Native image file write/finalization failed";
         }

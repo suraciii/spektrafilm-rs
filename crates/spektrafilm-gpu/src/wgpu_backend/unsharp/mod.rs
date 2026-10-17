@@ -194,4 +194,3 @@ impl UnsharpState {
         encoder.copy_buffer_to_buffer(&self.out_buf, 0, buf_b, 0, img_bytes);
     }
 }
-

@@ -220,8 +220,8 @@ mod tests {
                     "channel_density":[[0.0,0.0,0.0]],
                     "base_density":[[0.0]],
                     "log_exposure":[-4.0,0.0,4.0],
-                    "density_curves":[[99.0,99.0,99.0],[99.0,99.0,99.0],[99.0,99.0,99.0]],
-                    "density_curves_layers":[[[99.0,99.0,99.0]]],
+                    "density_curves":[[0.2,0.2,0.2],[0.8,0.8,0.8],[1.8,1.8,1.8]],
+                    "density_curves_layers":[[[0.2,0.2,0.2]]],
                     "density_curves_model":{"model_type":model_type,"centers":[[0.0],[0.0],[0.0]],"amplitudes":[[2.0],[2.0],[2.0]],"sigmas":[[1.0],[1.0],[1.0]],"alphas":[[0.6],[0.6],[0.6]]}
                 }
             });

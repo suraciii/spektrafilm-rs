@@ -96,4 +96,3 @@ pub fn boost_highlights(
     });
     out
 }
-

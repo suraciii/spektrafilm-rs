@@ -21,13 +21,7 @@ pub fn load_profile_bytes(bytes: &[u8], source: &str) -> Result<Profile, Profile
     // families when a specific time is requested.
     let idx = development_time_index(&profile.data.development_time, None);
     profile.data.base_density = base_density_column(&profile.data.base_density_rows, idx);
-    let curves_stale = profile.data.density_curves.is_empty()
-        || profile
-            .data
-            .density_curves
-            .iter()
-            .flatten()
-            .any(|value| !value.is_finite() || value.abs() > 10.0);
+    let curves_stale = true;
     let model = profile.data.density_curves_model.clone();
     if let Some(model) = model.as_ref() {
         let expected_exposures = profile.data.log_exposure.len();

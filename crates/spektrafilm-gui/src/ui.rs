@@ -356,6 +356,7 @@ impl App {
                 }
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                 self.input_epoch = self.input_epoch.wrapping_add(1);
+                self.render_worker.cancel_active();
                 self.full_scan_requested = false;
                 self.image = Some(Arc::new(img));
                 self.refresh_input_viewer();
@@ -381,6 +382,7 @@ impl App {
         self.image = Some(Arc::new(rotated));
         self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
         self.input_epoch = self.input_epoch.wrapping_add(1);
+        self.render_worker.cancel_active();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.full_scan_requested = false;
         self.output_image = None;
