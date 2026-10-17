@@ -157,11 +157,22 @@ pub(crate) fn section_header<R>(
         if !filter.section_matches() {
             return;
         }
-        ui.label(egui::RichText::new(title).strong());
+        ui.label(
+            egui::RichText::new(title)
+                .color(theme::FG)
+                .size(theme::SIZE_TITLE)
+                .strong(),
+        );
         add_contents(ui, filter);
         return;
     }
-    egui::CollapsingHeader::new(title).show(ui, |ui| add_contents(ui, filter));
+    egui::CollapsingHeader::new(
+        egui::RichText::new(title)
+            .color(theme::FG)
+            .size(theme::SIZE_TITLE)
+            .strong(),
+    )
+    .show(ui, |ui| add_contents(ui, filter));
 }
 
 pub(crate) fn show(

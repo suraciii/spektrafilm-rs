@@ -562,7 +562,7 @@ pub(crate) fn experimental_badge(ui: &mut Ui) {
     ui.label(
         egui::RichText::new("experimental")
             .color(theme::WARNING)
-            .size(theme::SIZE_HINT),
+            .size(theme::SIZE_UNIT),
     );
 }
 
@@ -571,7 +571,14 @@ pub(crate) fn experimental_badge(ui: &mut Ui) {
 /// The badge sits beside the label, so the row's accessible name and its
 /// search match stay the bare parameter name.
 pub(crate) fn row_label(ui: &mut Ui, label: &str, experimental: bool) -> egui::Response {
-    let response = ui.add(egui::Label::new(egui::RichText::new(label)).sense(egui::Sense::click()));
+    let response = ui.add(
+        egui::Label::new(
+            egui::RichText::new(label)
+                .color(theme::FG_SECONDARY)
+                .size(theme::SIZE_LABEL),
+        )
+        .sense(egui::Sense::click()),
+    );
     if experimental {
         experimental_badge(ui);
     }

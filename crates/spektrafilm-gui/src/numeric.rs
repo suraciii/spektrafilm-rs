@@ -297,7 +297,7 @@ where
             ui.label(
                 egui::RichText::new(unit)
                     .color(theme::FG_MUTED)
-                    .size(theme::SIZE_HINT),
+                    .size(theme::SIZE_UNIT),
             )
             .on_hover_text(tooltip);
         }

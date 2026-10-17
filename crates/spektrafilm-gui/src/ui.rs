@@ -643,7 +643,7 @@ impl App {
             if let Some(p) = &self.image_path {
                 ui.label(egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small());
             }
-            ui.add_space(4.0);
+            ui.add_space(theme::SPACE_BLOCK);
         });
     }
 
@@ -845,11 +845,9 @@ impl App {
         let film = profiles::selected_display(&self.films, &self.film_name);
         let paper = profiles::selected_display(&self.papers, &self.print_name);
         egui::TopBottomPanel::top("window-header")
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::SURFACE2)
-                    .inner_margin(egui::Margin::symmetric(8, 4)),
-            )
+            .frame(egui::Frame::default().fill(theme::SURFACE2).inner_margin(
+                egui::Margin::symmetric(theme::SPACE_GROUP as i8, theme::SPACE_ROW as i8),
+            ))
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(egui::RichText::new("spektrafilm").strong());
@@ -960,7 +958,7 @@ impl eframe::App for App {
                     ui.text_edit_singleline(&mut self.filter)
                         .labelled_by(label.id);
                 });
-                ui.add_space(2.0);
+                ui.add_space(theme::SPACE_ROW);
                 // Reserve the action bar's height below the scrollable
                 // controls, so the bar stays inside the panel.
                 let scroll_height =
