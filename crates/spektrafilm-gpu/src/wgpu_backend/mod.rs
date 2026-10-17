@@ -8,7 +8,8 @@ use spektrafilm_backend::telemetry::*;
 use spektrafilm_math::image::ImageBuf;
 
 use crate::gpu_helpers::{
-    f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
+    f32_to_scalars, is_uniform_grid_endpoint, nan_safe_rows_to_f32, nan_safe_slice_to_f32,
+    sanitize_spectral_inputs, scalars_to_f32,
 };
 #[cfg(feature = "wgpu-backend")]
 use spektrafilm_backend::cpu_backend;

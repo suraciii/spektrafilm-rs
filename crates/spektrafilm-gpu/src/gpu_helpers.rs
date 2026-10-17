@@ -28,6 +28,33 @@ pub(crate) fn f32_to_scalars(v: Vec<f32>) -> Vec<Scalar> {
     }
 }
 
+/// Narrow one f64 to f32 at the GPU boundary, mapping NaN to `0.0`.
+///
+/// GPU shaders are f32-only, and Metal's compiler runs fast-math (no-NaN
+/// assumption), so NaNs must never reach a shader. Channel data (curves,
+/// sensitivities, illuminants) follows the CPU model of zeroing NaNs; callers
+/// needing the spectral base-density rule instead use
+/// [`sanitize_spectral_inputs`].
+#[inline]
+pub(crate) fn nan_safe_f32(v: f64) -> f32 {
+    if v.is_nan() { 0.0 } else { v as f32 }
+}
+
+/// NaN-safe narrowing of a flat f64 slice (e.g. an illuminant) to f32.
+#[inline]
+pub(crate) fn nan_safe_slice_to_f32(values: &[f64]) -> Vec<f32> {
+    values.iter().map(|&v| nan_safe_f32(v)).collect()
+}
+
+/// NaN-safe narrowing plus flattening of `[[f64; 3]]` rows (curves,
+/// sensitivities) into a row-major `Vec<f32>`.
+#[inline]
+pub(crate) fn nan_safe_rows_to_f32(rows: &[[f64; 3]]) -> Vec<f32> {
+    rows.iter()
+        .flat_map(|r| r.iter().map(|&v| nan_safe_f32(v)))
+        .collect()
+}
+
 /// Sanitize profile NaNs before GPU upload.
 ///
 /// NaN channel densities become zero. A NaN base density, or any NaN in a
@@ -47,11 +74,7 @@ pub(crate) fn sanitize_spectral_inputs(
         let [r, g, b] = channel_density[wl];
         let base = base_density.get(wl).copied().unwrap_or(f64::NAN);
         let row_has_nan = r.is_nan() || g.is_nan() || b.is_nan() || base.is_nan();
-        cd.extend([
-            if r.is_nan() { 0.0 } else { r as f32 },
-            if g.is_nan() { 0.0 } else { g as f32 },
-            if b.is_nan() { 0.0 } else { b as f32 },
-        ]);
+        cd.extend([nan_safe_f32(r), nan_safe_f32(g), nan_safe_f32(b)]);
         bd.push(if row_has_nan { 1000.0 } else { base as f32 });
     }
     (cd, bd)
@@ -90,5 +113,27 @@ mod tests {
     fn detects_wgpu_endpoint_grid() {
         assert!(is_uniform_grid_endpoint(&[0.0, 0.5, 1.0]));
         assert!(!is_uniform_grid_endpoint(&[0.0, 0.50000001, 1.0]));
+    }
+
+    #[test]
+    fn narrowing_helpers_zero_nans_and_preserve_values() {
+        assert_eq!(nan_safe_f32(2.5), 2.5);
+        assert!(nan_safe_f32(f64::NAN).is_finite() && nan_safe_f32(f64::NAN) == 0.0);
+        // Non-NaN infinities and out-of-range values narrow unchanged, matching
+        // a plain `as f32` for every input that is not NaN.
+        assert_eq!(nan_safe_f32(f64::INFINITY), f32::INFINITY);
+        assert_eq!(nan_safe_f32(1e300), f32::INFINITY);
+
+        assert_eq!(
+            nan_safe_slice_to_f32(&[1.0, f64::NAN, -2.5]),
+            vec![1.0, 0.0, -2.5]
+        );
+        assert_eq!(nan_safe_slice_to_f32(&[]), Vec::<f32>::new());
+
+        assert_eq!(
+            nan_safe_rows_to_f32(&[[1.0, f64::NAN, 3.0], [f64::NAN, 5.0, f64::NAN]]),
+            vec![1.0, 0.0, 3.0, 0.0, 5.0, 0.0]
+        );
+        assert_eq!(nan_safe_rows_to_f32(&[]), Vec::<f32>::new());
     }
 }

@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 mod evidence;
 mod masks;
 
+pub use crate::common::Availability;
 pub use evidence::{
-    Availability, MeasurementRecord, STAGE_IDS, StageBuffer, StageBundle, check_output_boundary,
+    MeasurementRecord, STAGE_IDS, StageBuffer, StageBundle, check_output_boundary,
     validate_generated_document, validate_stage_bundle,
 };
 pub use masks::{geometry_mask, reference_geometry_mask};

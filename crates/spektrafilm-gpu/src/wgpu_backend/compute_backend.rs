@@ -428,10 +428,7 @@ impl ComputeBackend for WgpuBackend {
         // `pow(10, -d) ≈ 0`, zeroing that wavelength's contribution exactly the same
         // way Python's `density_to_light` zeros NaN-bearing wavelengths.
         let (cd_flat, mut bd) = sanitize_spectral_inputs(channel_density, base_density, n_wl);
-        let illu_f32: Vec<f32> = illuminant
-            .iter()
-            .map(|&v| if v.is_nan() { 0.0 } else { v as f32 })
-            .collect();
+        let illu_f32: Vec<f32> = nan_safe_slice_to_f32(illuminant);
         bd.resize(n_wl, 0.0);
         let input_f32 = scalars_to_f32(&density_cmy.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
@@ -512,15 +509,9 @@ impl ComputeBackend for WgpuBackend {
         // GPU shaders are f32-only — narrow f64 inputs at the shader boundary.
         // See `sanitize_spectral_inputs` for the NaN-handling story (Metal fast-math).
         let (cd_flat, mut bd) = sanitize_spectral_inputs(channel_density, base_density, n_wl);
-        let sens_flat: Vec<f32> = sensitivity
-            .iter()
-            .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-            .collect();
+        let sens_flat: Vec<f32> = nan_safe_rows_to_f32(sensitivity);
         bd.resize(n_wl, 0.0);
-        let illu_f32: Vec<f32> = illuminant
-            .iter()
-            .map(|&v| if v.is_nan() { 0.0 } else { v as f32 })
-            .collect();
+        let illu_f32: Vec<f32> = nan_safe_slice_to_f32(illuminant);
         let input_f32 = scalars_to_f32(&density_cmy.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
 
@@ -671,10 +662,7 @@ impl ComputeBackend for WgpuBackend {
         };
 
         let log_exp_f32: Vec<f32> = log_exposure.iter().map(|&v| v as f32).collect();
-        let curves_f32: Vec<f32> = density_curves
-            .iter()
-            .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-            .collect();
+        let curves_f32: Vec<f32> = nan_safe_rows_to_f32(density_curves);
         let input_f32 = scalars_to_f32(&log_raw.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
 
