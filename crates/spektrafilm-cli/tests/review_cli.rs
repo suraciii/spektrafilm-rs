@@ -148,7 +148,8 @@ fn regions_grid_refuses_invalid_geometry_and_existing_destinations() {
         .output()
         .unwrap();
     assert!(!duplicate.status.success());
-    assert!(String::from_utf8_lossy(&duplicate.stdout).contains("destination_exists"));
+    let duplicate_value: Value = serde_json::from_slice(&duplicate.stdout).unwrap();
+    assert_eq!(duplicate_value["errors"][0]["code"], "destination_exists");
 }
 
 #[test]

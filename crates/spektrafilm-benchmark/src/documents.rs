@@ -649,6 +649,9 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
         }
         "preparation" => file_record(&value["original"], document)?,
         "reference" => {
+            for region in value["regions"].as_array().into_iter().flatten() {
+                consumer_geometry(&region["geometry"])?;
+            }
             for key in [
                 "transform",
                 "aligned_derivative",
@@ -663,7 +666,6 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
                 file_record(icc, document)?;
             }
             for region in value["regions"].as_array().into_iter().flatten() {
-                consumer_geometry(&region["geometry"])?;
                 geometry(&region["geometry"], document)?;
             }
             if value["scope"] == "aligned_scene"
@@ -685,6 +687,7 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
                 )?;
                 let review = load_json_document(&review_path)?;
                 for region in review["excluded_regions"].as_array().into_iter().flatten() {
+                    consumer_geometry(&region["geometry"])?;
                     geometry(&region["geometry"], &review_path)?;
                 }
             }
@@ -831,6 +834,32 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
     // validation instead of a later measurement.
     validate_tone_probe(&v["protocol"]["probe"]["tone_response"])?;
     for c in cases {
+        for geometry in c["reference"]["regions"].as_array().into_iter().flatten() {
+            consumer_geometry(&geometry["geometry"])?;
+        }
+        for probe in c["probe"]["tone_response"].as_array().into_iter().flatten() {
+            consumer_geometry(&probe["geometry"])?;
+        }
+        for r in c["regions"].as_array().into_iter().flatten() {
+            consumer_geometry(&r["geometry"])?;
+        }
+        if let Some(reference) = c.get("reference") {
+            if reference["scope"] == "aligned_scene" {
+                if let Some(review) = reference.get("correspondence_review") {
+                    let review_path = resolve_path(review["path"].as_str().unwrap(), path)?;
+                    let review_document = load_json_document(&review_path)?;
+                    for exclusion in review_document["excluded_regions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                    {
+                        consumer_geometry(&exclusion["geometry"])?;
+                    }
+                }
+            }
+        }
+    }
+    for c in cases {
         let parsed: CaseDocument = serde_json::from_value(c.clone())?;
         file_record(&c["input"], path)?;
         if let Some(preparation) = c.get("preparation") {
@@ -906,7 +935,8 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
                         resolve_path(r["correspondence_review"]["path"].as_str().unwrap(), path)?;
                     let review = load_json_document(&review_path)?;
                     for x in review["excluded_regions"].as_array().into_iter().flatten() {
-                        geometry(&x["geometry"], &review_path)?
+                        consumer_geometry(&x["geometry"])?;
+                        geometry(&x["geometry"], &review_path)?;
                     }
                 }
                 "regional" => {
@@ -1245,5 +1275,21 @@ mod tests {
         ] {
             assert!(validate_shape("suite", &suite(None, invalid)).is_err());
         }
+    }
+    #[test]
+    fn suite_rejects_native_region_spaces_until_a_consumer_mapping_exists() {
+        let mut document = suite(None, json!([]));
+        document["cases"][0]["regions"][0]["geometry"]["space"] = json!("output_pixels");
+        assert!(validate_shape("suite", &document).is_ok());
+        let error = validate_suite(&document, Path::new("suite.json")).unwrap_err();
+        assert_eq!(error.code, "unsupported_coordinate_space");
+    }
+    #[test]
+    fn suite_rejects_duplicate_case_ids() {
+        let mut document = suite(None, json!([]));
+        let duplicate = document["cases"][0].clone();
+        document["cases"] = json!([document["cases"][0].clone(), duplicate]);
+        let error = validate_suite(&document, Path::new("suite.json")).unwrap_err();
+        assert_eq!(error.code, "duplicate_id");
     }
 }

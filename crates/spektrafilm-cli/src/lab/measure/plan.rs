@@ -42,11 +42,11 @@ pub struct PlanSample {
     pub x: u32,
     /// Top row of the rectangle, in declared-space pixels.
     pub y: u32,
-    /// Rectangle width in pixels; defaults to 1.
+    /// Rectangle width in pixels; required and positive.
     pub width: u32,
-    /// Rectangle height in pixels; defaults to 1.
+    /// Rectangle height in pixels; required and positive.
     pub height: u32,
-    /// The coordinate space the geometry is expressed in.
+    /// The coordinate space the geometry is expressed in; required.
     pub space: String,
 }
 
@@ -93,29 +93,15 @@ struct RawPlanSample {
 struct RawGeometry {
     x: u32,
     y: u32,
-    #[serde(default = "default_span")]
     width: u32,
-    #[serde(default = "default_span")]
     height: u32,
-    #[serde(default = "default_space")]
     space: String,
-}
-/// A one-pixel window is the document's default span.
-fn default_span() -> u32 {
-    1
 }
 fn default_source() -> String {
     String::new()
 }
-
 fn default_partition() -> String {
     String::new()
-}
-
-/// The source coordinate space is the default: a regions document that omits
-/// the declaration reads the declared source image's pixels.
-fn default_space() -> String {
-    "source".to_owned()
 }
 
 pub fn load(path: &Path) -> Result<Plan, String> {

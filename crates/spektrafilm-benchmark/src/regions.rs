@@ -158,9 +158,10 @@ pub fn generate_grid(
     let bytes = serde_json::to_vec_pretty(&value)?;
     let root = documents::normalize_path(out)?;
     documents::validate_shape("regions", &value)?;
-    if let Some(parent) = out.parent() {
+    if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
+
     let temp = out.with_extension(format!(
         "{}.tmp-{}",
         out.extension()
@@ -182,10 +183,15 @@ pub fn generate_grid(
         drop(file);
         let stored = documents::load_json_value(&temp)?;
         documents::validate_shape("regions", &stored)?;
-        if fs::symlink_metadata(out).is_ok() {
-            return Err(common::destination_exists(out));
+        match fs::hard_link(&temp, out) {
+            Ok(()) => {
+                let _ = fs::remove_file(&temp);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(common::destination_exists(out));
+            }
+            Err(error) => return Err(error.into()),
         }
-        fs::rename(&temp, out)?;
         Ok(())
     })();
     if let Err(error) = publication {
