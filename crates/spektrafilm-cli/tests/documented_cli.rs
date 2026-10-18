@@ -48,11 +48,15 @@ fn documented_instrument_commands_use_supported_flags() {
                 continue;
             }
             let binary = env!("CARGO_BIN_EXE_spektrafilm-lab");
-            let subcommand = words.get(1).filter(|word| !word.starts_with('-')).copied();
+            let command_path: Vec<_> = words
+                .iter()
+                .skip(1)
+                .take_while(|word| !word.starts_with('-'))
+                .copied()
+                .collect();
+            let subcommand = command_path.first().copied();
             let mut help = Command::new(binary);
-            if let Some(subcommand) = subcommand {
-                help.arg(subcommand);
-            }
+            help.args(&command_path);
             let output = help.arg("--help").output().unwrap();
             assert!(
                 output.status.success(),
