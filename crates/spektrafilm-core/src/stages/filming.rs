@@ -180,6 +180,7 @@ pub fn expose(
             halation.scatter_tail_weight,
             halation.halation_amount,
             halation.halation_spatial_scale,
+            halation.source_compression,
             halation.halation_strength,
             halation.halation_first_sigma_um,
             halation.halation_n_bounces,

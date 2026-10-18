@@ -141,6 +141,7 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
 
         // Halation
         "film_render.halation.halation_amount" => Some((0.0, 1.0, 0.05, 2)),
+        "film_render.halation.source_compression" => Some((0.0, 0.999999, 0.05, 3)),
         "film_render.halation.halation_bounce_decay" => Some((0.0, 1.0, 0.05, 2)),
         "film_render.halation.halation_n_bounces" => Some((1.0, 5.0, 1.0, 2)),
         "film_render.halation.halation_spatial_scale" => Some((0.0, 100.0, 0.1, 2)),
@@ -316,7 +317,7 @@ mod tests {
         "film_render.dir_couplers.langmuir_donor_k_rgb",
         "film_render.dir_couplers.langmuir_receiver_k_rgb",
         "film_render.halation.halation_amount",
-        "film_render.halation.halation_bounce_decay",
+        "film_render.halation.source_compression",
         "film_render.halation.halation_n_bounces",
         "film_render.halation.halation_spatial_scale",
         "film_render.halation.boost_ev",

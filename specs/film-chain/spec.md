@@ -87,6 +87,14 @@ Spectral integration may precede blur when the receiver is linear and spatially 
 
 Unsharp mask is digital scan sharpening, not lens resolution. It remains downstream of interpretation, optional scanner finish, and output gamut processing. Procedural grain retains its separate [post-scan boundary](../film-grain/v2/spec.md); it must not be moved into optical acquisition to make the grain engines appear equivalent.
 
+## Film halation source response
+
+`film_render.halation.source_compression` is an experimental appearance control, not a measured CineStill threshold or a replacement for film halation physics. It defaults to `0`, which preserves the existing linear halation source response. A positive value applies a single per-pixel response to the post-scatter film raw only for the halation blur input; it does not modify the base film raw, film exposure, density, grain, bloom, or scanner readout.
+
+The response uses the maximum nonnegative channel value at each pixel and the fixed linear film-raw anchor `1.0`. For a peak at or below the anchor, the response is `source / ((1 - compression) + compression * peak)`; for a peak above the anchor, the response is unchanged. CPU and resident GPU paths must prepare this source once and reuse it for every halation bounce. The value is bounded to `0..=0.999999`. It is intended for experimental night-scene looks where secondary bright sources should contribute more nearly like the brightest source; it must not be described as stock calibration or a physical trigger threshold.
+
+This control remains separate from `halation_strength`, `halation_amount`, `boost_ev`, camera diffusion, and lens/atmospheric bloom. The general GPU execution contract still governs convolution support and CPU/GPU alignment.
+
 ## Optical-order cutover
 
 The historical direct-scan sequence that blurs after output gamut processing must not remain as a compatibility mode. All admitted scan routes must obey [Scan optics and print viewing glare](#scan-optics-and-print-viewing-glare). Parameter names, units, and zero-blur meaning remain unchanged. Nonzero blur on a previously late-blur path may intentionally change pixels even with unchanged material settings and full output amount.

@@ -17,6 +17,12 @@ pub struct HalationParams {
     pub halation_amount: f64,
     #[serde(default = "default_one_f64")]
     pub halation_spatial_scale: f64,
+    /// Experimental source-response compression for the halation blur input.
+    /// Zero preserves the linear source response; positive values compress
+    /// bright-source differences without changing the film raw base image.
+    #[serde(default)]
+    pub source_compression: f64,
+
     #[serde(default = "default_scatter_core_f64")]
     pub scatter_core_um: [f64; 3],
     #[serde(default = "default_scatter_tail_f64")]
@@ -68,6 +74,7 @@ impl Default for HalationParams {
             scatter_spatial_scale: 1.0,
             halation_amount: 1.0,
             halation_spatial_scale: 1.0,
+            source_compression: 0.0,
             scatter_core_um: [2.2, 2.0, 1.6],
             scatter_tail_um: [9.3, 9.7, 9.1],
             scatter_tail_weight: [0.78, 0.65, 0.67],

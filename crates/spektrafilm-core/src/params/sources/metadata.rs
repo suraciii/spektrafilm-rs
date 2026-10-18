@@ -451,6 +451,9 @@ fn description(path: &str) -> Option<&'static str> {
         "camera.capture_illuminant" => Some(
             "Scene illuminant the filming front pass projects through; unset follows the film profile reference illuminant, and an explicit named catalog source or BB<kelvin> blackbody overrides it. Distinct from the film reference (sensitivity calibration), scan and enlarger illuminants, and the output white point; never inferred from EXIF or RAW metadata and never rewrites RAW white balance.",
         ),
+        "film_render.halation.source_compression" => Some(
+            "Experimental local source-response compression for halation only. Zero preserves the linear source response; positive values lift sub-anchor sources toward the brightest source before halation blur while leaving sources above the fixed anchor unchanged. This does not change the base film raw exposure and is not a measured stock threshold.",
+        ),
         "io.crop_size" => Some(
             "Both components are fractions of the uncropped source long edge, not independent width and height fractions.",
         ),
