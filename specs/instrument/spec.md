@@ -320,7 +320,7 @@ A regions document must contain `schema_version`, an `id`, and a nonempty `regio
 `geometry` must be either a half-open rectangle with the named fields `x`, `y`, `width`, `height`, or a lossless mask with its `path`, `sha256`, and declared `width` and `height`. Widths and heights must be positive integers. Every geometry must declare its coordinate space. `source` names the declared source image's pixels; `render` names a completed simulation's output pixels; native stage names are `source_pixels`, `working_pixels`, `film_frame_pixels`, `grain_aperture_pixels`, or `output_pixels`. Mask paths must resolve relative to the document that contains them and enter the retained dependency inventory as immutable evidence.
 
 Regions may overlap: a reading carries its own identity, and a narrower window inside a wider one is a declared intent, not a conflict. Correspondence is never inferred from equal dimensions, labels, or shared region identities.
-`regions grid` is the only instrument geometry generator. It writes a normal `regions` document and does not read images or produce a review page. Non-grid geometry is authored directly. A suite case, a sampling command, and a reference may consume the same regions shape through one validator.
+`regions grid` is the only instrument geometry generator. It writes a normal `regions` document and does not read images or produce a review page. Non-grid geometry is authored directly. A suite case, a sampling command, and a reference may consume the same regions shape through one validator; benchmark image-domain consumers currently accept only `source` and `render`, while native stage values require a producer mapping and are rejected there until one exists.
 
 ## Suite document
 
