@@ -33,19 +33,19 @@ just build-lab
 
 ./target/release/spektrafilm-lab validate --kind suite \
     --file /tmp/spektrafilm-benchmark-fixtures/complete.json
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab run suite \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
     --dry-run --out /tmp/spektrafilm-benchmark-preflight
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab run suite \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
     --out /tmp/spektrafilm-benchmark-baseline
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab run suite \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/candidate.json \
     --out /tmp/spektrafilm-benchmark-candidate
-./target/release/spektrafilm-lab compare \
+./target/release/spektrafilm-lab compare runs \
     --baseline /tmp/spektrafilm-benchmark-baseline \
     --candidate /tmp/spektrafilm-benchmark-candidate \
     --out /tmp/spektrafilm-benchmark-comparison
@@ -76,13 +76,13 @@ JSON
     --backend cpu --out /tmp/spektrafilm-local-target.json
 ./target/release/spektrafilm-lab validate --kind configuration \
     --file /tmp/spektrafilm-local-configuration.json
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab run image \
     --input /tmp/spektrafilm-benchmark-fixtures/chart.png \
     --input-color-space sRGB --input-cctf-decoding true \
     --configuration /tmp/spektrafilm-local-configuration.json \
     --target /tmp/spektrafilm-local-target.json \
     --out /tmp/spektrafilm-local-run
-./target/release/spektrafilm-lab compare \
+./target/release/spektrafilm-lab compare pairs \
     --run /tmp/spektrafilm-local-run --against input \
     --out /tmp/spektrafilm-local-comparison
 ./target/release/spektrafilm-lab report comparison \
@@ -113,13 +113,13 @@ just build-lab
     --backend cpu --out /tmp/spektrafilm-standard-baseline-target.json
 
 LOCAL_IMAGE=/tmp/spektrafilm-standard-bundle/chart.png
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab run image \
     --input "$LOCAL_IMAGE" \
     --input-color-space sRGB --input-cctf-decoding true \
     --configuration /tmp/spektrafilm-standard-bundle/color-tone.json \
     --target /tmp/spektrafilm-standard-baseline-target.json \
     --seed 0 --out /tmp/spektrafilm-standard-color-tone
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab run image \
     --input "$LOCAL_IMAGE" \
     --input-color-space sRGB --input-cctf-decoding true \
     --configuration /tmp/spektrafilm-standard-bundle/appearance.json \
@@ -130,14 +130,14 @@ LOCAL_IMAGE=/tmp/spektrafilm-standard-bundle/chart.png
 ./target/release/spektrafilm-lab target \
     --renderer "$CANDIDATE_RENDERER" --data-dir ./data \
     --backend cpu --out /tmp/spektrafilm-standard-candidate-target.json
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab run image \
     --input "$LOCAL_IMAGE" \
     --input-color-space sRGB --input-cctf-decoding true \
     --configuration /tmp/spektrafilm-standard-bundle/appearance.json \
     --target /tmp/spektrafilm-standard-candidate-target.json \
     --seed 0 --seed 42 --seed 99 \
     --out /tmp/spektrafilm-standard-appearance-candidate
-./target/release/spektrafilm-lab compare \
+./target/release/spektrafilm-lab compare runs \
     --baseline /tmp/spektrafilm-standard-appearance-baseline \
     --candidate /tmp/spektrafilm-standard-appearance-candidate \
     --out /tmp/spektrafilm-standard-comparison
@@ -170,12 +170,12 @@ For a replay across renderer versions, compare the resolved values as well as th
 Add `--stage-evidence` to a CPU run with `settings.preview_mode=false` to retain the renderer's native stage bundle. Capture rejects preview mode instead of changing its rendering or metering behavior. Ordinary crop and resize remain supported and carry their own stage geometry. This example reuses the generated quick suite and target:
 
 ```bash
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab run suite \
     --suite /tmp/spektrafilm-benchmark-fixtures/quick.json \
     --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
     --case color_chart --stage-evidence \
     --out /tmp/spektrafilm-diagnostic-run
-./target/release/spektrafilm-lab compare \
+./target/release/spektrafilm-lab compare pairs \
     --run /tmp/spektrafilm-diagnostic-run --against input \
     --out /tmp/spektrafilm-diagnostic-comparison
 ./target/release/spektrafilm-lab inspect \
@@ -201,7 +201,7 @@ Use `--input-kind raw` for camera RAW and omit the raster color flags. Set dedic
 
 ## Retain a local reference
 
-Add `--reference FILE --reference-info FILE` to retain a local reference. Reference info uses the existing reference declaration without `path` and `sha256`; it must declare color, provenance, processing, and scope. Then select `compare --run DIRECTORY --against reference` or `--against both`. Input/simulation reports describe processing changes; reference/simulation reports describe applicable distances to the reference. Visual and regional references remain separate native views, with explicit limits on pixelwise measurements. Both-pair reports open reference/simulation and provide a selector for input/simulation. No single-run comparison claims acceptance.
+Add `--reference FILE --reference-info FILE` to retain a local reference. Reference info uses the existing reference declaration without `path` and `sha256`; it must declare color, provenance, processing, and scope. Then select `spektrafilm-lab compare pairs --run DIRECTORY --against reference` or `--against both`. Input/simulation reports describe processing changes; reference/simulation reports describe applicable distances to the reference. Visual and regional references remain separate native views, with explicit limits on pixelwise measurements. Both-pair reports open reference/simulation and provide a selector for input/simulation. No single-run comparison claims acceptance.
 
 ## Preserve evidence integrity
 

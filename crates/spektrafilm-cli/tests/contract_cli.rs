@@ -141,7 +141,7 @@ fn path_traversal_case_id_is_rejected_before_run_output_creation() {
     let output_dir = temp.path().join("run");
 
     let output = cli()
-        .args(["run", "--suite"])
+        .args(["run", "suite", "--suite"])
         .arg(&suite_path)
         .arg("--target")
         .arg(&target_path)
@@ -170,7 +170,7 @@ fn failed_render_remains_failed_through_compare_validation_and_report() {
     let comparison = temp.path().join("comparison");
 
     let output = cli()
-        .args(["compare", "--baseline"])
+        .args(["compare", "runs", "--baseline"])
         .arg(&baseline)
         .arg("--candidate")
         .arg(&candidate)
@@ -231,7 +231,7 @@ fn altered_run_evidence_rejects_compare_before_output_publication() {
     let comparison = temp.path().join("comparison");
 
     let output = cli()
-        .args(["compare", "--baseline"])
+        .args(["compare", "runs", "--baseline"])
         .arg(&baseline)
         .arg("--candidate")
         .arg(&candidate)

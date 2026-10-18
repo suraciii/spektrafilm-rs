@@ -36,26 +36,33 @@ The supported command families have distinct endpoint roles:
 
 | Family | Endpoint role | May consume | Must not do |
 |---|---|---|---|
-| `run` | execute a declared image-domain job | authored suite, target, or local-input declaration | compare, score, or select |
+| `run suite` | execute one authored image-domain suite | suite and target declarations | execute an image adapter, measure stimuli, sample, compare, or select |
+| `run image` | adapt one local image into one image-domain run | image, configuration, and target declarations | execute a suite, measure stimuli, sample, compare, or select |
+| `measure run` | execute one declared point-wise stimulus chain | stimuli and chain declarations | execute an image-domain run, sample, compare, or select |
 | `sample` | read declared windows from one source | image or retained stage evidence plus `regions` | render, resize, infer geometry, or score |
-| `compare` | compare two or more retained records | completed runs or retained readings | invoke a renderer or borrow another pair's availability |
-| `inspect` / `report` | project retained evidence | completed comparison | recalculate metrics |
-| `verify` | re-hash retained identity | one retained record | render, rewrite, or judge |
+| `compare runs` | compare two completed image-domain runs | retained run records | compare readings, invoke a renderer, or select a candidate |
+| `compare readings` | compare two retained reading records | retained reading records | compare image-domain runs, invoke a renderer, or select a candidate |
+| `compare pairs` | create explicitly requested pairs from one retained run | one retained run record | compare two runs, infer a default pair, or invoke a renderer |
+| `inspect` / `report comparison` | project retained evidence | completed comparison | recalculate metrics |
+| `verify` | re-hash retained identity | one retained record | render, rewrite, compare, or judge |
 
-The current flat command forms remain the compatibility surface while their handlers are separated by these roles. A future grammar revision may expose explicit subfamilies such as `compare runs` and `compare readings`, but a new form must not be added to an existing command merely by guessing the input document's shape. The semantic input kind must be selected by the invocation or by an explicit retained kind.
+The parent names `run`, `measure`, and `compare` group leaf endpoints. A parent must not own execution semantics. Each leaf has one input kind, one core operation, one publication boundary, and one handler.
 
-The current `run` forms are three endpoint contracts, not one extensible workflow mode: suite execution, local-image execution, and point-wise stimulus measurement. The implementation and future documentation must keep their validation, output, and failure boundaries separate. No fourth execution mode may be added without a separate product decision.
+The canonical research pipe is:
 
-The current `compare` forms are likewise separate contracts: version comparison, single-run pair comparison, and retained-reading comparison. A retained `kind` and explicit command form are authoritative; field presence heuristics are not a product contract.
+```text
+declaration → run suite|image or measure run → retained evidence → sample → retained readings → compare runs|readings|pairs → inspect/report comparison
+```
 
-The first Unix-style implementation slice is `run → sample → compare` over retained stage evidence and declared regions. It must eliminate repeated stage-buffer reading, region averaging, CSV alignment, and standard color-distance calculation from external research scripts without adding an optimizer or a second metric implementation.
+Each edge is replaceable by a file, a retained directory, or an external tool. The instrument must not collapse this pipe into a command that renders, samples, scores, selects a candidate, and publishes a report as one hidden operation.
 
-- **Supported** commands carry the compatibility promise of this document and of [Rust delivery](../benchmark/rust-delivery/spec.md): `schema`, `validate`, `target`, `run`, `sample`, `compare`, `inspect`, `verify`, `report`, `regions`, `fixtures`.
-- **Experimental** commands compute through the same plumbing but carry no compatibility promise: `experiment run` and `experiment export` ([contract](experiment/spec.md)), `spectral evaluate` ([contract](spectral-evaluation/spec.md)), and `fit`. An experimental command may change or disappear between revisions; its results must still satisfy the document, artifact, and machine-output contracts below.
+The endpoint name is authoritative. A retained document kind and schema version are validated by the selected endpoint; they must not select another endpoint from field presence or directory shape.
+
+The supported command families carry the compatibility promise of this document and of [Rust delivery](../benchmark/rust-delivery/spec.md). `experiment run`, `experiment export`, `spectral evaluate`, and `fit` remain experimental endpoints under their own specifications. An experimental endpoint may change or disappear between revisions, but its result must still satisfy the document, artifact, and machine-output contracts below.
 
 ## Commands
 
-The executable must accept the following command grammar:
+The executable must accept the following canonical command grammar:
 
 ```text
 spektrafilm-lab --help
@@ -63,45 +70,40 @@ spektrafilm-lab --version
 spektrafilm-lab schema --kind KIND
 spektrafilm-lab validate --kind KIND --file FILE
 spektrafilm-lab target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --out FILE
-spektrafilm-lab run --suite FILE --target FILE --out DIRECTORY [--case ID ...] [--dry-run] [--stage-evidence]
-spektrafilm-lab run --input FILE --configuration FILE --target FILE --out DIRECTORY [--input-kind raster|raw] [--input-color-space NAME --input-cctf-decoding true|false] [--seed UINT32 ...] [--regions FILE] [--reference FILE --reference-info FILE] [--preparation FILE] [--dry-run] [--stage-evidence]
+spektrafilm-lab run suite --suite FILE --target FILE --out DIRECTORY [RUN OPTIONS]
+spektrafilm-lab run image --input FILE --configuration FILE --target FILE --out DIRECTORY [RUN OPTIONS]
+spektrafilm-lab measure run --stimuli FILE --enter BOUNDARY --out DIRECTORY [CHAIN OPTIONS]
 spektrafilm-lab sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
 spektrafilm-lab sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
 spektrafilm-lab sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
-spektrafilm-lab compare --baseline DIRECTORY --candidate DIRECTORY [--reference-run DIRECTORY] --out DIRECTORY [--policy FILE] [--gate]
-spektrafilm-lab compare --run DIRECTORY --against input|reference|both --out DIRECTORY
+spektrafilm-lab compare runs --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [COMPARISON OPTIONS]
+spektrafilm-lab compare readings --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [--reference DIRECTORY]
+spektrafilm-lab compare pairs --run DIRECTORY --against input|reference|both --out DIRECTORY
 spektrafilm-lab inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
 spektrafilm-lab verify --record DIRECTORY [--data-dir DIRECTORY]
 spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY
-spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space source|render|source_pixels|working_pixels|film_frame_pixels|grain_aperture_pixels|output_pixels] [--role ROLE] [--measurements FAMILY,...] --out FILE
+spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space SPACE] [--role ROLE] [--measurements FAMILY,...] --out FILE
 spektrafilm-lab fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [--natural-input FILE | --download-natural]
 spektrafilm-lab experiment run --experiment FILE --out DIRECTORY [CHAIN OPTIONS] [--output-format FORMAT] [--force]
 spektrafilm-lab experiment export --stage-evidence DIRECTORY --out DIRECTORY [--stage ID ...] [--force]
 spektrafilm-lab spectral evaluate --spectra FILE {--preset NAME ... | --profile FILE} [--set PATH=VALUE|FILE ...] [--data-dir DIRECTORY] --out DIRECTORY
 spektrafilm-lab fit [FIT OPTIONS]
 ```
-The target grammar for a future command revision is explicit about endpoint input kinds:
 
-```text
-spektrafilm-lab run suite --suite FILE --target FILE --out DIRECTORY [RUN OPTIONS]
-spektrafilm-lab run image --input FILE --configuration FILE --target FILE --out DIRECTORY [RUN OPTIONS]
-spektrafilm-lab measure run --stimuli FILE --enter BOUNDARY --out DIRECTORY [CHAIN OPTIONS]
-spektrafilm-lab compare runs --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [COMPARISON OPTIONS]
-spektrafilm-lab compare readings --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [--reference DIRECTORY]
-spektrafilm-lab compare pairs --run DIRECTORY --against input|reference|both --out DIRECTORY
-```
+Each canonical leaf has one typed argument group and one semantic handler. The handler must not select a different contract from optional field presence or from the shape of a retained document.
 
-The existing flat forms remain valid until a compatibility revision explicitly replaces them. New implementation work must use the explicit semantic handlers internally; it must not extend flat `run` or `compare` by adding another shape-dispatched mode. The migration must preserve the existing stdout, stderr, status, publication, and document-kind contracts.
+The former flat forms may remain only as deprecated compatibility aliases during one migration revision. An alias must map to one canonical handler before endpoint execution, must accept no new options, and must reject mixed endpoint options with `argument_syntax`. The alias layer must not contain document-shape dispatch. New documentation and examples must use the canonical grammar. A later compatibility revision may remove the aliases.
 
-The command family names are semantic, not workflow steps. `measure run` still publishes one retained measurement; `compare readings` still reads only retained records; neither command invokes the next family. A shell pipeline may connect them by paths and result objects, but the instrument does not own that control flow.
+The command family names are semantic, not workflow steps. `measure run` publishes one retained measurement; `compare readings` reads only retained records; neither command invokes the next family. A shell pipeline may connect them by paths and result objects, but the instrument does not own that control flow.
 
 `KIND` is a [document registry](#document-registry) kind. `BOUNDARY` is `spectra`, `rgb_in`, `log_e_film`, or `cmy_film`. `STAGE` is `rgb_in`, `log_e_film`, `cmy_film`, `log_e_print`, `cmy_print`, or `rgb_out`. `CHAIN OPTIONS` is the parameter surface of `process`.
 
 Every option of the instrument and of its `fixtures` command must have a nonempty help description. Help, version, and schema discovery must work without a renderer, image decoder, input assets, or graphics device. Version must identify the instrument implementation and supported document versions. Instrument help must identify the `fixtures` command. `fixtures` help must name the command that consumes the generated bundle. The instrument must satisfy [Rust delivery](../benchmark/rust-delivery/spec.md).
 
 `schema` must emit the authoritative JSON Schema for one document kind. For the `metrics` vocabulary it must emit the metric-identity vocabulary instead of a JSON Schema. It must describe the required nested records and explain fields whose units, coordinate space, or applicability are not evident from their type. `validate` must validate a document and resolve the local dependencies needed for that kind. It must not render images. Standalone policy validation must not imply that selectors, measurement selection, or protocol binding have been checked against a suite. A valid target document must not imply that a GPU is available.
+`run suite` must resolve one suite and one target before rendering. Repeatable `--case` must select exact case identities in suite order. Duplicate selections and unknown identities must fail. Omitting `--case` must select all cases.
 
-`run` must resolve the suite and target before rendering. Repeatable `--case` must select exact case identities in suite order. Duplicate selections and unknown identities must fail. Omitting `--case` must select all cases.
+`run image` must resolve one local image, one configuration, and one target before rendering. It must not accept suite-only selectors. It must retain the generated local-image suite and case identity in the run record.
 
 `sample --from-run` reads exactly one completed case row selected by the pair `(case, seed)` from a retained image-domain `run` document. `RUN.JSON` may be the run document itself or its containing directory. The selected row must request and retain available stage evidence; the row's stage manifest reference and the run artifact index must agree on path and digest, and the retained path must remain under `cases/{case}/seed-{seed}/`. The stage bundle remains authoritative for stage layout, domain, units, color interpretation, transfer state, coordinate space, and buffer digest. Missing cases, failed rows, unrequested or unavailable capture, missing stages, malformed artifacts, traversal paths, and cross-seed artifact references are measurement failures; the command never falls back to another seed or stage.
 
@@ -119,14 +121,13 @@ The single-input form must construct and validate one `scene` case with identity
 
 `--preparation` must contain `original` with `path` and `sha256`, and a nonempty `operations` array of descriptive strings. The original path must resolve relative to that file and enter retained dependencies. The instrument must record but must not execute these operations. Suite cases may contain the same optional `preparation` object. The actual prepared input hash must remain authoritative.
 
-`compare` must load completed run records and masters. It must not invoke a renderer. It must match cases by case identity and seeds by their explicit value, not directory order. It must reject incompatible suite or protocol identities. It must retain declared target differences. Reference objectives must use the reference associated with the case.
+`compare runs` must load two completed image-domain run records and their masters. It must not invoke a renderer. It must match cases by case identity and seeds by their explicit value, not directory order. It must reject incompatible suite or protocol identities. It must retain declared target differences. Reference objectives must use the reference associated with the case.
 
-Single-run `compare` must require `--run` and `--against` together and conflict with `--baseline`, `--candidate`, `--policy`, and `--gate`. It must load retained input and simulation masters without invoking the renderer. `input` must select input/simulation, `reference` must select reference/simulation, and `both` must retain both pairs with reference selected by default. Reference selection must fail if a selected case has no reference. Measurements must obey reference scope and processing limits; visual-only pairs must retain an inspectable unavailable measurement reason instead of a numeric score. Signed processing changes must mean simulation minus input. Reference distance must identify simulation distance to reference and must not fabricate a baseline improvement. Single-run comparisons must remain `not_evaluated`.
+`compare readings` must load two retained reading records and join them by `(sample_id, stage)`. Duplicate keys fail. Missing keys remain unmatched with an explicit reason. Shared keys with incompatible domain, units, channel order, or coordinate space fail as an identity mismatch. It must not read image-domain masters or invoke a renderer. An optional retained reference is input evidence, not a policy document.
 
-`--gate` must require `--policy`. It must make a non-pass evaluation produce a failing command status after the comparison has been published. Without `--gate`, a successfully published comparison must not fail solely because its evaluation is non-pass.
+`compare pairs` must load one completed image-domain run and select only the explicitly requested `input`, `reference`, or `both` pairs. It must not compare two runs, infer a default pair, or apply a policy. A selected pair without its required reference must fail with an actionable error. The result must remain `not_evaluated`.
 
-`report comparison` must render exactly one offline inspection page from exactly one retained comparison. It must not invoke a renderer or recompute measurements. The command result must identify the page source as `comparison`.
-
+`compare runs` may accept `--policy` and `--gate`. `--gate` must require `--policy`. It must make a non-pass evaluation produce a failing command status after the comparison has been published. Without `--gate`, a successfully published comparison must not fail solely because its evaluation is non-pass.
 The comparison source must derive its views from the comparison and cited artifacts. It must not recompute metrics. Its output must remain usable without the run directories by copying required review artifacts and retaining their provenance. An external original that cannot be redistributed must remain excluded from a distributable report; the report must identify the omission rather than substitute another image.
 
 `regions grid` must expand one finite grid declaration into a normal `regions` document without reading an image, invoking a renderer, computing measurements, or generating HTML. It must validate positive dimensions, nonnegative origin and gap, checked arithmetic, sample-window containment, coordinate-space selection, role, and measurement families before publication. The generated document is the only input geometry consumed by later `sample` and run endpoints; downstream endpoints must not interpret a grid declaration.
@@ -214,7 +215,7 @@ The measured range is declared through the same controls the user binaries read:
 
 A stimulus that enters at `rgb_in` declares its color space and its transfer state in the stimulus document, exactly as a raster input to `process` does. A stimulus that enters at `spectra` declares its color space, its transfer state, and its illuminant pair in the stimulus document; the command must not accept these declarations as command options, because the document is their single authority. A film-domain stimulus declares neither, because its values are already film-domain numbers.
 
-The `spectra` entry uses the same front half as [spectral evaluation](spectral-evaluation/spec.md). `spectral evaluate` remains the roundtrip-error report against truth; `run --stimuli` reports readings and must not compute a truth value.
+The `spectra` entry uses the same front half as [spectral evaluation](spectral-evaluation/spec.md). `spectral evaluate` remains the roundtrip-error report against truth; `measure run` reports readings and must not compute a truth value.
 
 ### Point-wise requirement
 
@@ -264,10 +265,10 @@ A stimulus document declares the values a chain measurement injects. It must con
 
 The document must declare the wavelength grid or the band it covers, the per-sample `source` and `partition` labels, and the provenance hashes of the arrays it names. A sample outside the declared band is invalid. The command must not clip or extrapolate it.
 
-### `run --stimuli`
+### `measure run`
 
 ```text
-spektrafilm-lab run --stimuli PATH --enter BOUNDARY [--read STAGE ...] [--dry-run] [CHAIN OPTIONS] --out DIRECTORY
+spektrafilm-lab measure run --stimuli PATH --enter BOUNDARY [--read STAGE ...] [--dry-run] [CHAIN OPTIONS] --out DIRECTORY
 ```
 
 - `--stimuli` declares a [stimulus document](#stimulus-document).
@@ -543,8 +544,7 @@ The packaged usage example must generate once, use `color-tone.json` and `appear
 - `validate` must decide every locally decidable condition, including a probe's point count and ordering and a policy rule's metric identity against the selected families, and must list every other check in `unchecked`.
 - Repeated runs on identical inputs must produce identical artifacts.
 - On the `log_e_film` stage, a reading must match the `log_e_film` buffer of `process --stage-evidence` within a relative tolerance of 1e-9, with the operations the guard names for that range off.
-- Reading the injected boundary itself must need no disabled operation: every listed operation changes a later stage.
-- On a default chain, `run --stimuli` must fail before executing and name every active operation in the measured range with its remediation, and a `--read log_e_film` range must list only the operations that reach `log_e_film`.
+- On a default chain, `measure run` must fail before executing and name every active operation in the measured range with its remediation, and a `--read log_e_film` range must list only the operations that reach `log_e_film`.
 - With a frozen chart image and a frozen regions document, `sample` must reproduce the frozen values, and sampling a retained encoded stage must record a linear reading beside the source's own encoded declaration.
 - A reference that is unmatched or ineligible must report an unavailable reason per pair, and the comparison must still publish its other measurements.
 - A route that skips a boundary must not list that boundary's operations, and a range that executes them must not rely on the route: a chain measured through `input > convert-film > scan` with the camera and development controls left active must complete when it covers the whole chain, while the same chain on a route that runs them must fail and name them, and a narrower range on a skipping route (`input` with `--enter rgb_in --read log_e_film`, `input > convert-film > scan` with `--read cmy_film`) must fail and name the stages its tap topology fires.

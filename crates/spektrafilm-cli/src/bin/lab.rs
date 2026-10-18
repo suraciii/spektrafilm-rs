@@ -6,8 +6,9 @@ use spektrafilm_benchmark::{
     common, compare, documents, inspect, local_input, regions, report, runner, target,
 };
 use spektrafilm_cli::lab::cli::{
-    EvaluationCompareArgs, EvaluationInspectArgs, EvaluationRunArgs, ExperimentCommand,
-    RegionsCommand, ReportCommand, SpectralCommand,
+    CompareCommand, EvaluationCompareArgs, EvaluationInspectArgs, EvaluationRunArgs,
+    ExperimentCommand, MeasureCommand, RegionsCommand, ReportCommand, RunCommand, RunImageArgs,
+    RunSuiteArgs, SpectralCommand,
 };
 
 #[derive(Parser)]
@@ -18,7 +19,7 @@ use spektrafilm_cli::lab::cli::{
     // versions it reads and writes, so the instrument's own version is not the
     // only number a caller can rely on.
     version = concat!(env!("CARGO_PKG_VERSION"), " (instrument documents schema_version 1)"),
-    after_help = "Generate packaged examples with `spektrafilm-lab fixtures --renderer RENDERER --data-dir DATA --out BUNDLE`, then consume a generated suite with `spektrafilm-lab run --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`."
+    after_help = "Generate packaged examples with `spektrafilm-lab fixtures --renderer RENDERER --data-dir DATA --out BUNDLE`, then consume a generated suite with `spektrafilm-lab run suite --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`."
 )]
 struct LabCli {
     #[command(subcommand)]
@@ -76,15 +77,20 @@ enum LabCommands {
         #[arg(long, value_name = "FILE")]
         out: std::path::PathBuf,
     },
-    /// Render a suite, one local image, or a declared stimulus set.
+    /// Execute an image-domain endpoint, or accept the deprecated flat run alias.
     Run {
-        #[command(flatten)]
-        args: EvaluationRunArgs,
+        #[command(subcommand)]
+        command: RunCommand,
     },
-    /// Compare retained runs, one run's evidence pairs, or two readings.
+    /// Execute one declared chain measurement.
+    Measure {
+        #[command(subcommand)]
+        command: MeasureCommand,
+    },
+    /// Compare retained records through one explicit endpoint, or accept the deprecated flat alias.
     Compare {
-        #[command(flatten)]
-        args: EvaluationCompareArgs,
+        #[command(subcommand)]
+        command: CompareCommand,
     },
     /// Read retained measurements without recomputing or invoking a renderer.
     Inspect {
@@ -103,7 +109,7 @@ enum LabCommands {
     },
     /// Generate the packaged examples: probe assets, suites, targets, and policy.
     ///
-    /// Consume a generated suite with `spektrafilm-lab run --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`.
+    /// Consume a generated suite with `spektrafilm-lab run suite --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`.
     Fixtures {
         /// Renderer executable the generated targets pin.
         #[arg(long, value_name = "FILE")]
@@ -159,6 +165,7 @@ fn command_name(command: &LabCommands) -> &'static str {
         LabCommands::Validate { .. } => "validate",
         LabCommands::Target { .. } => "target",
         LabCommands::Run { .. } => "run",
+        LabCommands::Measure { .. } => "measure",
         LabCommands::Compare { .. } => "compare",
         LabCommands::Inspect { .. } => "inspect",
         LabCommands::Report { .. } => "report",
@@ -292,49 +299,42 @@ fn execute(
             backend,
             out,
         } => Ok((target::create(&renderer, &data_dir, &backend, &out)?, 0)),
-        LabCommands::Run { args } => {
-            if let Some(stimuli) = args.stimuli {
-                // The chain run shares the `run` command surface: rebuild the
-                // measurement arguments from the merged options.
-                let enter = args.enter.ok_or_else(|| {
-                    BenchError::new("argument_syntax", "--stimuli requires --enter")
-                })?;
-                let measurement = spektrafilm_cli::lab::cli::MeasureRunArgs {
-                    stimuli,
-                    enter,
-                    read: args.read,
-                    dry_run: args.dry_run,
-                    out: args.out.clone(),
-                    chain: spektrafilm_cli::lab::cli::ChainArgs {
-                        preset: args.preset,
-                        film: args.film,
-                        paper: args.paper,
-                        sources: args.sources,
-                        route: args.route,
-                        scan_output: args.scan_output,
-                        seed: 0,
-                        data_dir: args.data_dir,
-                    },
-                };
+        LabCommands::Run { command } => match command {
+            RunCommand::Suite(args) => execute_run_suite(args),
+            RunCommand::Image(args) => execute_run_image(args),
+            RunCommand::Flat(args) => execute_run_legacy(args, matches),
+        },
+        LabCommands::Measure { command } => match command {
+            MeasureCommand::Run(args) => {
                 let (value, status) =
-                    spektrafilm_cli::lab::measure::run::run_with_result(&measurement, matches)
+                    spektrafilm_cli::lab::measure::run::run_with_result(&args, matches)
                         .map_err(|error| BenchError::with_message("operation_failed", error))?;
                 Ok((value, status))
-            } else {
-                // The suite and single-input forms take no data directory:
-                // the target document owns it. An explicit flag on those forms
-                // is a declaration the command would silently drop.
-                if matches.value_source("data_dir") == Some(clap::parser::ValueSource::CommandLine)
-                {
-                    return Err(BenchError::new(
-                        "argument_syntax",
-                        "--data-dir applies to the --stimuli form; the target document owns the data directory",
-                    ));
-                }
-                execute_run(args)
             }
-        }
-        LabCommands::Compare { args } => execute_compare_command(args),
+        },
+        LabCommands::Compare { command } => match command {
+            CompareCommand::Runs(args) => compare::compare(
+                &args.baseline,
+                &args.candidate,
+                &args.out,
+                args.policy.as_deref(),
+                args.gate,
+            ),
+            CompareCommand::Readings(args) => {
+                let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
+                    baseline: args.baseline,
+                    candidate: args.candidate,
+                    reference: args.reference,
+                    out: args.out,
+                };
+                spektrafilm_cli::lab::measure::compare::compare_with_result(&measurement)
+                    .map_err(|error| BenchError::with_message("operation_failed", error))
+            }
+            CompareCommand::Pairs(args) => {
+                compare::compare_single(&args.run, &args.against, &args.out)
+            }
+            CompareCommand::Flat(args) => execute_compare_legacy(args),
+        },
         LabCommands::Inspect { args } => Ok((
             inspect::inspect(
                 &args.comparison,
@@ -415,155 +415,281 @@ fn execute(
     }
 }
 
-fn execute_run(args: EvaluationRunArgs) -> Result<(serde_json::Value, i32), BenchError> {
-    let target = args.target.clone().ok_or_else(|| {
-        spektrafilm_benchmark::Error::new("argument_syntax", "Missing target document")
-    })?;
-    if let Some(suite) = args.suite {
-        if args.dry_run {
-            runner::preflight(
-                &suite,
-                &target,
-                &args.out,
-                &args.case_ids,
-                args.stage_evidence,
-            )
-        } else {
-            runner::run(
-                &suite,
-                &target,
-                &args.out,
-                &args.case_ids,
-                args.stage_evidence,
-            )
-        }
+fn execute_run_suite(args: RunSuiteArgs) -> Result<(serde_json::Value, i32), BenchError> {
+    if args.dry_run {
+        runner::preflight(
+            &args.suite,
+            &args.target,
+            &args.out,
+            &args.case_ids,
+            args.stage_evidence,
+        )
     } else {
-        let configuration = args.configuration.ok_or_else(|| {
-            spektrafilm_benchmark::Error::new("argument_syntax", "Missing configuration")
-        })?;
-        let adapter = local_input::LocalInput {
-            input: args.input.ok_or_else(|| {
-                spektrafilm_benchmark::Error::new("argument_syntax", "Missing input")
-            })?,
-            configuration: configuration.clone(),
-            input_kind: args.input_kind.unwrap_or_else(|| "raster".into()),
-            input_color_space: args.input_color_space,
-            input_cctf_decoding: args.input_cctf_decoding,
-            seeds: args.seeds,
-            regions: args.regions,
-            reference: args.reference,
-            reference_info: args.reference_info,
-            preparation: args.preparation,
-        };
-        if args.dry_run {
-            runner::preflight_suite(
-                adapter.suite()?,
-                &configuration,
-                &target,
-                &args.out,
-                &[],
-                args.stage_evidence,
-            )
-        } else {
-            runner::run_suite(
-                adapter.suite()?,
-                &configuration,
-                &target,
-                &args.out,
-                &[],
-                args.stage_evidence,
-            )
-        }
+        runner::run(
+            &args.suite,
+            &args.target,
+            &args.out,
+            &args.case_ids,
+            args.stage_evidence,
+        )
     }
 }
 
-/// Whether the two named sides are measurement records, so the comparison
-/// joins them as readings. A measurement record carries `stages` and
-/// `summaries`; a version run record carries `cases` and `artifacts`. The
-/// shape decides, so a reading comparison never needs a reference to be one
-/// and a failed version run still reaches the validation that names it.
-fn is_reading_comparison(
-    baseline: Option<&std::path::Path>,
-    candidate: Option<&std::path::Path>,
-) -> bool {
-    let is_measurement = |directory: Option<&std::path::Path>| {
-        let directory = directory?;
-        let bytes = std::fs::read(directory.join("run.json")).ok()?;
-        let document: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-        let object = document.as_object()?;
-        Some(
-            object.contains_key("stages")
-                && object.contains_key("summaries")
-                && !object.contains_key("cases"),
-        )
+fn execute_run_image(args: RunImageArgs) -> Result<(serde_json::Value, i32), BenchError> {
+    let adapter = local_input::LocalInput {
+        input: args.input,
+        configuration: args.configuration.clone(),
+        input_kind: args.input_kind,
+        input_color_space: args.input_color_space,
+        input_cctf_decoding: args.input_cctf_decoding,
+        seeds: args.seeds,
+        regions: args.regions,
+        reference: args.reference,
+        reference_info: args.reference_info,
+        preparation: args.preparation,
     };
-    is_measurement(baseline) == Some(true) && is_measurement(candidate) == Some(true)
+    if args.dry_run {
+        runner::preflight_suite(
+            adapter.suite()?,
+            &args.configuration,
+            &args.target,
+            &args.out,
+            &[],
+            args.stage_evidence,
+        )
+    } else {
+        runner::run_suite(
+            adapter.suite()?,
+            &args.configuration,
+            &args.target,
+            &args.out,
+            &[],
+            args.stage_evidence,
+        )
+    }
 }
 
-fn execute_compare(args: EvaluationCompareArgs) -> Result<(serde_json::Value, i32), BenchError> {
-    // The version form derives its reference pair from the retained run
-    // records' own pair sets; a caller cannot inject one from the command
-    // line. The single-run form selects among the pairs the run retained.
-    if args.run.is_none() && args.reference_run.is_some() {
+fn execute_run_legacy(
+    args: EvaluationRunArgs,
+    matches: &clap::ArgMatches,
+) -> Result<(serde_json::Value, i32), BenchError> {
+    let out = args
+        .out
+        .ok_or_else(|| BenchError::new("argument_syntax", "flat run requires --out"))?;
+    if args.stimuli.is_some()
+        && (args.suite.is_some()
+            || args.input.is_some()
+            || args.configuration.is_some()
+            || args.input_kind.is_some()
+            || args.input_color_space.is_some()
+            || args.input_cctf_decoding.is_some()
+            || !args.seeds.is_empty()
+            || args.regions.is_some()
+            || args.reference.is_some()
+            || args.reference_info.is_some()
+            || args.preparation.is_some()
+            || args.target.is_some()
+            || !args.case_ids.is_empty()
+            || args.stage_evidence)
+    {
         return Err(BenchError::new(
             "argument_syntax",
-            "--reference-run applies to a reading comparison of measurement records; a version comparison of run records derives its reference pair from the records",
+            "flat run cannot combine --stimuli with image-domain options",
+        ));
+    }
+    if args.stimuli.is_none()
+        && args.suite.is_some()
+        && (args.input.is_some()
+            || args.configuration.is_some()
+            || args.input_kind.is_some()
+            || args.input_color_space.is_some()
+            || args.input_cctf_decoding.is_some()
+            || !args.seeds.is_empty()
+            || args.regions.is_some()
+            || args.reference.is_some()
+            || args.reference_info.is_some()
+            || args.preparation.is_some())
+    {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat run cannot combine --suite with local-image options",
+        ));
+    }
+    if args.stimuli.is_none() && args.suite.is_none() && args.input.is_none() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat run requires --suite, --input, or --stimuli",
+        ));
+    }
+    if args.stimuli.is_some() && args.enter.is_none() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "--stimuli requires --enter",
+        ));
+    }
+    if let Some(stimuli) = args.stimuli {
+        let enter = args
+            .enter
+            .ok_or_else(|| BenchError::new("argument_syntax", "--stimuli requires --enter"))?;
+        let measurement = spektrafilm_cli::lab::cli::MeasureRunArgs {
+            stimuli,
+            enter,
+            read: args.read,
+            dry_run: args.dry_run,
+            out,
+            chain: spektrafilm_cli::lab::cli::ChainArgs {
+                preset: args.preset,
+                film: args.film,
+                paper: args.paper,
+                sources: args.sources,
+                route: args.route,
+                scan_output: args.scan_output,
+                seed: 0,
+                data_dir: args.data_dir,
+            },
+        };
+        let (value, status) =
+            spektrafilm_cli::lab::measure::run::run_with_result(&measurement, matches)
+                .map_err(|error| BenchError::with_message("operation_failed", error))?;
+        return Ok((value, status));
+    }
+    let target = args
+        .target
+        .ok_or_else(|| BenchError::new("argument_syntax", "flat run requires --target"))?;
+    if let Some(suite) = args.suite {
+        return execute_run_suite(RunSuiteArgs {
+            suite,
+            target,
+            out,
+            case_ids: args.case_ids,
+            dry_run: args.dry_run,
+            stage_evidence: args.stage_evidence,
+        });
+    }
+    let configuration = args
+        .configuration
+        .ok_or_else(|| BenchError::new("argument_syntax", "flat run requires --configuration"))?;
+    execute_run_image(RunImageArgs {
+        input: args
+            .input
+            .ok_or_else(|| BenchError::new("argument_syntax", "flat run requires --input"))?,
+        configuration,
+        input_kind: args.input_kind.unwrap_or_else(|| "raster".to_owned()),
+        input_color_space: args.input_color_space,
+        input_cctf_decoding: args.input_cctf_decoding,
+        seeds: args.seeds,
+        regions: args.regions,
+        reference: args.reference,
+        reference_info: args.reference_info,
+        preparation: args.preparation,
+        target,
+        out,
+        dry_run: args.dry_run,
+        stage_evidence: args.stage_evidence,
+    })
+}
+fn execute_compare_legacy(
+    args: EvaluationCompareArgs,
+) -> Result<(serde_json::Value, i32), BenchError> {
+    let out = args
+        .out
+        .ok_or_else(|| BenchError::new("argument_syntax", "flat compare requires --out"))?;
+    if args.run.is_some()
+        && (args.baseline.is_some()
+            || args.candidate.is_some()
+            || args.reference_run.is_some()
+            || args.policy.is_some()
+            || args.gate)
+    {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat compare cannot combine --run with two-sided comparison options",
+        ));
+    }
+    if args.run.is_some() && args.against.is_none() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat --run requires --against",
+        ));
+    }
+    if args.run.is_none() && args.against.is_some() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat --against requires --run",
         ));
     }
     if let Some(run) = args.run {
-        compare::compare_single(
-            &run,
-            args.against.as_deref().ok_or_else(|| {
-                spektrafilm_benchmark::Error::new("argument_syntax", "Missing against")
-            })?,
-            &args.out,
-        )
-    } else {
-        compare::compare(
-            &args.baseline.ok_or_else(|| {
-                spektrafilm_benchmark::Error::new("argument_syntax", "Missing baseline")
-            })?,
-            &args.candidate.ok_or_else(|| {
-                spektrafilm_benchmark::Error::new("argument_syntax", "Missing candidate")
-            })?,
-            &args.out,
-            args.policy.as_deref(),
-            args.gate,
-        )
+        let against = args
+            .against
+            .ok_or_else(|| BenchError::new("argument_syntax", "flat --run requires --against"))?;
+        return compare::compare_single(&run, &against, &out);
     }
-}
-
-/// Internal semantic dispatch retained behind the flat compatibility grammar.
-/// The input grammar remains unchanged; only the endpoint choice is explicit
-/// here rather than spread through the top-level match arm.
-fn execute_compare_command(
-    args: EvaluationCompareArgs,
-) -> Result<(serde_json::Value, i32), BenchError> {
-    if is_reading_comparison(args.baseline.as_deref(), args.candidate.as_deref()) {
-        if args.policy.is_some() || args.gate {
-            return Err(BenchError::new(
-                "argument_syntax",
-                "--policy and --gate apply to a version comparison of run records; a reading comparison of measurement records evaluates no rules",
-            ));
-        }
+    if args.reference_run.is_some() && args.policy.is_some() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat compare cannot combine --reference-run with --policy",
+        ));
+    }
+    if args.reference_run.is_some() {
         let measurement = spektrafilm_cli::lab::cli::MeasureCompareArgs {
-            baseline: args
-                .baseline
-                .ok_or_else(|| BenchError::new("argument_syntax", "Missing baseline run"))?,
-            candidate: args
-                .candidate
-                .ok_or_else(|| BenchError::new("argument_syntax", "Missing candidate run"))?,
+            baseline: args.baseline.ok_or_else(|| {
+                BenchError::new("argument_syntax", "flat compare requires --baseline")
+            })?,
+            candidate: args.candidate.ok_or_else(|| {
+                BenchError::new("argument_syntax", "flat compare requires --candidate")
+            })?,
             reference: args.reference_run,
-            out: args.out,
+            out,
         };
         return spektrafilm_cli::lab::measure::compare::compare_with_result(&measurement)
             .map_err(|error| BenchError::with_message("operation_failed", error));
     }
-    execute_compare(args)
+    let baseline = args
+        .baseline
+        .ok_or_else(|| BenchError::new("argument_syntax", "flat compare requires --baseline"))?;
+    let candidate = args
+        .candidate
+        .ok_or_else(|| BenchError::new("argument_syntax", "flat compare requires --candidate"))?;
+    compare::compare(
+        &baseline,
+        &candidate,
+        &out,
+        args.policy.as_deref(),
+        args.gate,
+    )
+}
+
+fn normalize_legacy_argv() -> Vec<std::ffi::OsString> {
+    let mut args: Vec<_> = std::env::args_os().collect();
+    if args.len() >= 3 {
+        let alias = match (args[1].to_str(), args[2].to_str()) {
+            (Some("run"), Some(value)) => !matches!(
+                value,
+                "suite" | "image" | "flat" | "help" | "-h" | "--help" | "-V" | "--version"
+            ),
+            (Some("compare"), Some(value)) => !matches!(
+                value,
+                "runs"
+                    | "readings"
+                    | "pairs"
+                    | "flat"
+                    | "help"
+                    | "-h"
+                    | "--help"
+                    | "-V"
+                    | "--version"
+            ),
+            _ => false,
+        };
+        if alias {
+            args.insert(2, std::ffi::OsString::from("flat"));
+        }
+    }
+    args
 }
 
 fn run() -> i32 {
-    let matches = LabCli::command().get_matches();
+    let matches = LabCli::command().get_matches_from(normalize_legacy_argv());
     let Ok(cli) = LabCli::from_arg_matches(&matches) else {
         eprintln!("argument syntax error: the command could not be parsed");
         return 2;
@@ -625,50 +751,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn run_modes_require_exactly_one_input_and_reject_inapplicable_options() {
-        let prefix = ["lab", "run", "--target", "target.json", "--out", "run"];
-        for suffix in [
-            vec![],
-            vec![
+    fn canonical_run_subcommands_keep_endpoint_options_separate() {
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "run",
+                "suite",
+                "--suite",
+                "suite.json",
+                "--target",
+                "target.json",
+                "--out",
+                "run",
+            ])
+            .is_ok()
+        );
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "run",
+                "image",
+                "--input",
+                "image.png",
+                "--configuration",
+                "config.json",
+                "--target",
+                "target.json",
+                "--out",
+                "run",
+                "--input-cctf-decoding",
+                "false",
+            ])
+            .is_ok()
+        );
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "run",
+                "suite",
                 "--suite",
                 "suite.json",
                 "--input",
                 "image.png",
-                "--configuration",
-                "config.json",
-            ],
-            vec!["--suite", "suite.json", "--seed", "7"],
-            vec!["--suite", "suite.json", "--regions", "regions.json"],
-            vec!["--input", "image.png"],
-            vec![
-                "--input",
-                "image.png",
-                "--configuration",
-                "config.json",
-                "--case",
-                "image",
-            ],
-            vec![
-                "--input",
-                "image.png",
-                "--configuration",
-                "config.json",
-                "--reference",
-                "ref.png",
-            ],
-        ] {
-            assert!(LabCli::try_parse_from(prefix.into_iter().chain(suffix)).is_err());
-        }
-        assert!(
-            LabCli::try_parse_from(prefix.into_iter().chain([
-                "--input",
-                "image.png",
-                "--configuration",
-                "config.json",
-                "--input-cctf-decoding",
-                "false"
-            ]))
-            .is_ok()
+                "--target",
+                "target.json",
+                "--out",
+                "run",
+            ])
+            .is_err()
         );
     }
 
@@ -691,49 +821,66 @@ mod tests {
     }
 
     #[test]
-    fn comparison_modes_reject_mixed_run_version_and_policy_arguments() {
-        let prefix = ["lab", "compare", "--out", "comparison"];
-        for suffix in [
-            vec![],
-            vec!["--run", "run"],
-            vec!["--against", "input"],
-            vec!["--baseline", "baseline"],
-            vec![
+    fn canonical_compare_subcommands_keep_sources_separate() {
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "compare",
+                "runs",
+                "--baseline",
+                "baseline",
+                "--candidate",
+                "candidate",
+                "--out",
+                "comparison",
+            ])
+            .is_ok()
+        );
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "compare",
+                "readings",
+                "--baseline",
+                "baseline",
+                "--candidate",
+                "candidate",
+                "--reference",
+                "reference",
+                "--out",
+                "comparison",
+            ])
+            .is_ok()
+        );
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "compare",
+                "pairs",
                 "--run",
                 "run",
                 "--against",
                 "both",
-                "--candidate",
-                "candidate",
-            ],
-            vec![
-                "--run",
-                "run",
-                "--against",
-                "input",
-                "--policy",
-                "policy.json",
-            ],
-            vec!["--run", "run", "--against", "input", "--gate"],
-        ] {
-            assert!(LabCli::try_parse_from(prefix.into_iter().chain(suffix)).is_err());
-        }
-        assert!(
-            LabCli::try_parse_from(
-                prefix
-                    .into_iter()
-                    .chain(["--run", "run", "--against", "both"])
-            )
+                "--out",
+                "comparison",
+            ])
             .is_ok()
         );
         assert!(
-            LabCli::try_parse_from(prefix.into_iter().chain([
+            LabCli::try_parse_from([
+                "lab",
+                "compare",
+                "runs",
                 "--baseline",
                 "baseline",
                 "--candidate",
-                "candidate"
-            ]))
-            .is_ok()
+                "candidate",
+                "--reference-run",
+                "reference",
+                "--out",
+                "comparison",
+            ])
+            .is_err()
         );
     }
 

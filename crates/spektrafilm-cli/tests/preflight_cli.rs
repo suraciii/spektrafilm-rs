@@ -75,6 +75,7 @@ fn invoke(root: &Path, out: &str, dry: bool, selection: &[&str], code: i32) -> V
     let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
     command
         .arg("run")
+        .arg("suite")
         .arg("--suite")
         .arg(root.join("suite.json"))
         .arg("--target")
@@ -230,6 +231,7 @@ fn preflight_and_run_retain_identical_configuration_for_every_seed() {
     assert_eq!(manifest["id"], common::digest(&content).unwrap());
     let compare = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
         .arg("compare")
+        .arg("runs")
         .arg("--baseline")
         .arg(root.join("preflight"))
         .arg("--candidate")
@@ -284,6 +286,7 @@ fn stage_capture_under_preview_bounding_is_rejected_with_an_actionable_reason() 
     common::dump(&root.join("suite.json"), &suite).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"))
         .arg("run")
+        .arg("suite")
         .arg("--suite")
         .arg(root.join("suite.json"))
         .arg("--target")
