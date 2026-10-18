@@ -476,6 +476,57 @@ fn execute_run_legacy(
     let out = args
         .out
         .ok_or_else(|| BenchError::new("argument_syntax", "flat run requires --out"))?;
+    if args.stimuli.is_some()
+        && (args.suite.is_some()
+            || args.input.is_some()
+            || args.configuration.is_some()
+            || args.input_kind.is_some()
+            || args.input_color_space.is_some()
+            || args.input_cctf_decoding.is_some()
+            || !args.seeds.is_empty()
+            || args.regions.is_some()
+            || args.reference.is_some()
+            || args.reference_info.is_some()
+            || args.preparation.is_some()
+            || args.target.is_some()
+            || !args.case_ids.is_empty()
+            || args.stage_evidence)
+    {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat run cannot combine --stimuli with image-domain options",
+        ));
+    }
+    if args.stimuli.is_none()
+        && args.suite.is_some()
+        && (args.input.is_some()
+            || args.configuration.is_some()
+            || args.input_kind.is_some()
+            || args.input_color_space.is_some()
+            || args.input_cctf_decoding.is_some()
+            || !args.seeds.is_empty()
+            || args.regions.is_some()
+            || args.reference.is_some()
+            || args.reference_info.is_some()
+            || args.preparation.is_some())
+    {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat run cannot combine --suite with local-image options",
+        ));
+    }
+    if args.stimuli.is_none() && args.suite.is_none() && args.input.is_none() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat run requires --suite, --input, or --stimuli",
+        ));
+    }
+    if args.stimuli.is_some() && args.enter.is_none() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "--stimuli requires --enter",
+        ));
+    }
     if let Some(stimuli) = args.stimuli {
         let enter = args
             .enter
@@ -543,6 +594,30 @@ fn execute_compare_legacy(
     let out = args
         .out
         .ok_or_else(|| BenchError::new("argument_syntax", "flat compare requires --out"))?;
+    if args.run.is_some()
+        && (args.baseline.is_some()
+            || args.candidate.is_some()
+            || args.reference_run.is_some()
+            || args.policy.is_some()
+            || args.gate)
+    {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat compare cannot combine --run with two-sided comparison options",
+        ));
+    }
+    if args.run.is_some() && args.against.is_none() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat --run requires --against",
+        ));
+    }
+    if args.run.is_none() && args.against.is_some() {
+        return Err(BenchError::new(
+            "argument_syntax",
+            "flat --against requires --run",
+        ));
+    }
     if let Some(run) = args.run {
         let against = args
             .against
@@ -676,50 +751,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn run_modes_require_exactly_one_input_and_reject_inapplicable_options() {
-        let prefix = ["lab", "run", "--target", "target.json", "--out", "run"];
-        for suffix in [
-            vec![],
-            vec![
+    fn canonical_run_subcommands_keep_endpoint_options_separate() {
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "run",
+                "suite",
+                "--suite",
+                "suite.json",
+                "--target",
+                "target.json",
+                "--out",
+                "run",
+            ])
+            .is_ok()
+        );
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "run",
+                "image",
+                "--input",
+                "image.png",
+                "--configuration",
+                "config.json",
+                "--target",
+                "target.json",
+                "--out",
+                "run",
+                "--input-cctf-decoding",
+                "false",
+            ])
+            .is_ok()
+        );
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "run",
+                "suite",
                 "--suite",
                 "suite.json",
                 "--input",
                 "image.png",
-                "--configuration",
-                "config.json",
-            ],
-            vec!["--suite", "suite.json", "--seed", "7"],
-            vec!["--suite", "suite.json", "--regions", "regions.json"],
-            vec!["--input", "image.png"],
-            vec![
-                "--input",
-                "image.png",
-                "--configuration",
-                "config.json",
-                "--case",
-                "image",
-            ],
-            vec![
-                "--input",
-                "image.png",
-                "--configuration",
-                "config.json",
-                "--reference",
-                "ref.png",
-            ],
-        ] {
-            assert!(LabCli::try_parse_from(prefix.into_iter().chain(suffix)).is_err());
-        }
-        assert!(
-            LabCli::try_parse_from(prefix.into_iter().chain([
-                "--input",
-                "image.png",
-                "--configuration",
-                "config.json",
-                "--input-cctf-decoding",
-                "false"
-            ]))
-            .is_ok()
+                "--target",
+                "target.json",
+                "--out",
+                "run",
+            ])
+            .is_err()
         );
     }
 
@@ -742,49 +821,66 @@ mod tests {
     }
 
     #[test]
-    fn comparison_modes_reject_mixed_run_version_and_policy_arguments() {
-        let prefix = ["lab", "compare", "--out", "comparison"];
-        for suffix in [
-            vec![],
-            vec!["--run", "run"],
-            vec!["--against", "input"],
-            vec!["--baseline", "baseline"],
-            vec![
+    fn canonical_compare_subcommands_keep_sources_separate() {
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "compare",
+                "runs",
+                "--baseline",
+                "baseline",
+                "--candidate",
+                "candidate",
+                "--out",
+                "comparison",
+            ])
+            .is_ok()
+        );
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "compare",
+                "readings",
+                "--baseline",
+                "baseline",
+                "--candidate",
+                "candidate",
+                "--reference",
+                "reference",
+                "--out",
+                "comparison",
+            ])
+            .is_ok()
+        );
+        assert!(
+            LabCli::try_parse_from([
+                "lab",
+                "compare",
+                "pairs",
                 "--run",
                 "run",
                 "--against",
                 "both",
-                "--candidate",
-                "candidate",
-            ],
-            vec![
-                "--run",
-                "run",
-                "--against",
-                "input",
-                "--policy",
-                "policy.json",
-            ],
-            vec!["--run", "run", "--against", "input", "--gate"],
-        ] {
-            assert!(LabCli::try_parse_from(prefix.into_iter().chain(suffix)).is_err());
-        }
-        assert!(
-            LabCli::try_parse_from(
-                prefix
-                    .into_iter()
-                    .chain(["--run", "run", "--against", "both"])
-            )
+                "--out",
+                "comparison",
+            ])
             .is_ok()
         );
         assert!(
-            LabCli::try_parse_from(prefix.into_iter().chain([
+            LabCli::try_parse_from([
+                "lab",
+                "compare",
+                "runs",
                 "--baseline",
                 "baseline",
                 "--candidate",
-                "candidate"
-            ]))
-            .is_ok()
+                "candidate",
+                "--reference-run",
+                "reference",
+                "--out",
+                "comparison",
+            ])
+            .is_err()
         );
     }
 

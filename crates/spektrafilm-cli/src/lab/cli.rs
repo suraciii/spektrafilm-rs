@@ -254,9 +254,6 @@ pub struct CompareRunsArgs {
     /// Candidate run directory.
     #[arg(long, value_name = "DIR")]
     pub candidate: PathBuf,
-    /// Reference run directory.
-    #[arg(long, value_name = "DIR")]
-    pub reference_run: Option<PathBuf>,
     /// New comparison directory.
     #[arg(long, value_name = "DIR")]
     pub out: PathBuf,
