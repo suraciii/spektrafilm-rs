@@ -128,6 +128,57 @@ pub(crate) fn sections(
                     .color(theme::FG_MUTED),
                 );
             let engine = grain.engine;
+            // Spektra's composite-layer controls sit outside the engine
+            // groups: they belong to one engine, so an engine group would
+            // either hide them from the other engines or duplicate them. The
+            // block stays editable for every engine, states the condition, and
+            // preserves inactive values.
+            section_header(ui, filter, "Shared material controls", |ui, filter| {
+                if engine != GrainEngine::Spektra {
+                    ui.label(
+                        egui::RichText::new(
+                            "Spektra controls; inactive until the Spektra engine is selected, stored values are retained.",
+                        )
+                        .small()
+                        .color(egui::Color32::GRAY),
+                    );
+                }
+                if filter_matches(filter, "sublayers active") {
+                    flags.runtime_changed |= toggle(
+                        ui,
+                        "sublayers active",
+                        &mut grain.sublayers_active,
+                        "Split the developed density into the film profile's emulsion sublayers instead of applying grain to the composite density. Spektra-only; Dye always uses sublayers and Procedural and Fotufilm ignore it.",
+                    );
+                }
+                if filter_matches(filter, "particle area (µm²)") {
+                    flags.runtime_changed |= param_numeric(
+                        ui,
+                        "particle area (µm²)",
+                        &mut grain.particle_area_um2,
+                        "film_render.grain.particle_area_um2",
+                        "Base statistical particle area in square film micrometers; smaller values give finer grain. Spektra reads this value; Dye uses its own event area.",
+                    );
+                }
+                if filter_matches(filter, "particle scale") {
+                    flags.runtime_changed |= param_tuple(
+                        ui,
+                        "particle scale",
+                        &mut grain.particle_scale,
+                        "film_render.grain.particle_scale",
+                        "Per-channel multiplier on the particle area; the default makes the blue record coarser. Spektra reads this value; Dye uses the granularity preset instead.",
+                    );
+                }
+                if filter_matches(filter, "sub-layers") {
+                    flags.runtime_changed |= param_numeric(
+                        ui,
+                        "sub-layers",
+                        &mut grain.n_sub_layers,
+                        "film_render.grain.n_sub_layers",
+                        "Number of emulsion sub-layers the composite density is split into when sublayers active is off; each sub-layer draws its own grain realization. Spektra-only.",
+                    );
+                }
+            });
             engine_group(ui, filter, engine, GrainEngine::Spektra, |ui, filter| {
                 if filter_matches(filter, "rms granularity") {
                     flags.runtime_changed |= param_tuple_experimental(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel RMS granularity.");

@@ -17,6 +17,23 @@
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
 
+## Capture light and scan light
+
+Each light source in the chain has one owner, and the chain holds them separate. The **capture illuminant** is the assumed scene light of the photograph; its semantics, inheritance, validation, and report contract are owned by the [Image input capture illuminant contract](../image-input/spec.md#capture-illuminant), because the camera-side conversion into film exposure belongs to image input.
+
+The capture illuminant MUST NOT change any of the following, and none of the following MAY change it:
+
+- film exposure, development, film-domain effects, or the developed negative;
+- `film_render.convert.scan_illuminant`, the scan light of a convert-film pass;
+- `enlarger.illuminant` and the enlarger filter pack, which belong to print exposure;
+- `scanner.receiver_profile` and scanner calibration, which belong to scan acquisition;
+- `scanner.auto_setup`, which derives scanner controls from image measurements and MUST NOT derive or replace the capture illuminant;
+- the output white point and transfer encoding.
+
+Stage preparation resolves the capture illuminant once for the selected profile and controls, before the camera-side spectral conversion. A route that computes no film exposure from scene RGB — the `input` route and a real negative-capture `input > convert-film > ...` route — does not consume it. A zero-balance negative conversion renders a grey lit by the profile reference illuminant neutral, and that rule continues to describe the conversion, not the capture declaration.
+
+No Capture & Scan Setup document, universal camera or scanner registry, or automatic scene-light inference is part of this contract.
+
 ## Scanner language
 
 Scanner terms follow the [Film simulation language](../../CONTEXT.md). A reversal-film scan and a photographic-paper scan already read positive images.

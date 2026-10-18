@@ -45,6 +45,27 @@ pub(crate) fn sections(
                     "Sigma in nm for Gaussian blur applied to reconstructed spectra.",
                 );
             }
+            if filter_matches(filter, "use cat16") {
+                flags.runtime_changed |= toggle(
+                    ui,
+                    "use cat16",
+                    &mut params.settings.use_cat16,
+                    "Use the CAT16 chromatic adaptation transform for the input RGB to film-space adaptation that feeds the Hanatos spectral upsampling. Off selects CAT02, the pre-0.3.4 behavior.",
+                );
+            }
+            if filter_matches(filter, "print exposure ev tracking") {
+                flags.runtime_changed |= enum_choice(
+                    ui,
+                    "print exposure ev tracking",
+                    &mut params.settings.print_exposure_ev_tracking,
+                    &[
+                        (PrintExposureEvTracking::FollowMode, "follow_mode"),
+                        (PrintExposureEvTracking::Never, "never"),
+                        (PrintExposureEvTracking::Always, "always"),
+                    ],
+                    "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual.",
+                );
+            }
         });
     }
 }

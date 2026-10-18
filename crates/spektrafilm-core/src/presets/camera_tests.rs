@@ -2,6 +2,10 @@ use super::*;
 
 use crate::test_support::data_dir as data;
 
+fn test_film() -> Profile {
+    profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap()
+}
+
 fn provenance() -> Provenance {
     Provenance {
         implementation_version: "test".into(),
@@ -25,6 +29,7 @@ fn exposure_params() -> RuntimeParams {
     params.camera.exposure_compensation_ev = 1.25;
     params.camera.auto_exposure = false;
     params.camera.auto_exposure_method = "median".into();
+    params.camera.capture_illuminant = Some("BB4000".into());
     params
 }
 
@@ -64,12 +69,13 @@ fn captured_exposure_roundtrips_and_restores_only_owned_camera_controls() {
         exposure_compensation_ev: source.camera.exposure_compensation_ev,
         auto_exposure: source.camera.auto_exposure,
         auto_exposure_method: source.camera.auto_exposure_method.clone(),
+        capture_illuminant: source.camera.capture_illuminant.clone(),
     });
-    assert_eq!(preset.look_parameters().camera, expected);
+    assert_eq!(preset.look_parameters().unwrap().camera, expected);
 
     let current = current_params();
     for imported in carrier_roundtrips(&preset) {
-        let look = imported.look_parameters();
+        let look = imported.look_parameters().unwrap();
         assert_eq!(look.camera, expected);
         assert!(!look.matches(&current));
 
@@ -79,6 +85,7 @@ fn captured_exposure_roundtrips_and_restores_only_owned_camera_controls() {
         expected_camera.exposure_compensation_ev = source.camera.exposure_compensation_ev;
         expected_camera.auto_exposure = source.camera.auto_exposure;
         expected_camera.auto_exposure_method = source.camera.auto_exposure_method.clone();
+        expected_camera.capture_illuminant = source.camera.capture_illuminant.clone();
         // Diffusion is independently carried by a full look.
         expected_camera.diffusion_filter = source.camera.diffusion_filter.clone();
         assert_eq!(applied.camera, expected_camera);
@@ -106,6 +113,12 @@ fn captured_look_matching_checks_each_owned_exposure_control() {
     assert!(!look.matches(&changed));
     let mut changed = source.clone();
     changed.camera.auto_exposure_method = "average".into();
+    assert!(!look.matches(&changed));
+    let mut changed = source.clone();
+    changed.camera.capture_illuminant = Some("D65".into());
+    assert!(!look.matches(&changed));
+    let mut changed = source.clone();
+    changed.camera.capture_illuminant = None;
     assert!(!look.matches(&changed));
     let mut changed = source.clone();
     changed.output_mix.amount = 0.5;
@@ -143,9 +156,9 @@ fn legacy_schema_versions_preserve_exposure_and_export_camera_absence() {
         }
         document["schema_version"] = version.into();
         let imported = Preset::from_json_str(&document.to_string()).unwrap();
-        assert_eq!(imported.look_parameters().camera, None);
+        assert_eq!(imported.look_parameters().unwrap().camera, None);
         for legacy in carrier_roundtrips(&imported) {
-            let look = legacy.look_parameters();
+            let look = legacy.look_parameters().unwrap();
             assert_eq!(look.camera, None);
             let exported: Value = serde_json::from_str(&legacy.to_json().unwrap()).unwrap();
             assert!(exported["parameters"].get("camera").is_none());
@@ -248,5 +261,187 @@ fn legacy_schema_versions_reject_the_schema_three_camera_group() {
             .unwrap()
             .remove("output_mix");
         assert!(Preset::from_toml_str(&toml::to_string(&toml).unwrap()).is_err());
+    }
+}
+
+#[test]
+fn camera_section_applies_only_its_leaves_and_records_explicit_paths() {
+    let source = exposure_params();
+    let preset =
+        Preset::capture_section("Camera section", Section::Camera, &source, provenance()).unwrap();
+    let expected_paths = [
+        "camera.exposure_compensation_ev",
+        "camera.auto_exposure",
+        "camera.auto_exposure_method",
+        "camera.capture_illuminant",
+    ];
+    assert_eq!(Section::Camera.name(), "camera");
+    assert_eq!(Section::Camera.paths(), expected_paths);
+    let current = current_params();
+
+    for imported in carrier_roundtrips(&preset) {
+        assert_eq!(
+            imported.kind().unwrap(),
+            PresetKind::Section(Section::Camera)
+        );
+        assert!(!section_matches(&imported, &current).unwrap());
+        let applied = imported.apply_section(&current, &test_film()).unwrap();
+        let mut expected = current.clone();
+        expected.camera.exposure_compensation_ev = source.camera.exposure_compensation_ev;
+        expected.camera.auto_exposure = source.camera.auto_exposure;
+        expected.camera.auto_exposure_method = source.camera.auto_exposure_method.clone();
+        expected.camera.capture_illuminant = source.camera.capture_illuminant.clone();
+        assert_eq!(
+            serde_json::to_value(&applied).unwrap(),
+            serde_json::to_value(&expected).unwrap()
+        );
+        assert_eq!(
+            applied.explicit_section_paths,
+            expected_paths.into_iter().map(str::to_owned).collect()
+        );
+        assert_eq!(
+            applied.neutral_print_filters_protected,
+            current.neutral_print_filters_protected
+        );
+        assert!(section_matches(&imported, &applied).unwrap());
+
+        let mut changed = applied.clone();
+        changed.camera.diffusion_filter.active = !changed.camera.diffusion_filter.active;
+        changed.camera.lens_blur_um += 1.0;
+        changed.io.crop = !changed.io.crop;
+        assert!(section_matches(&imported, &changed).unwrap());
+        for field in expected_paths {
+            let mut changed = applied.clone();
+            match field {
+                "camera.exposure_compensation_ev" => changed.camera.exposure_compensation_ev += 0.5,
+                "camera.auto_exposure" => {
+                    changed.camera.auto_exposure = !changed.camera.auto_exposure
+                }
+                "camera.auto_exposure_method" => {
+                    changed.camera.auto_exposure_method = "average".into()
+                }
+                "camera.capture_illuminant" => {
+                    changed.camera.capture_illuminant = Some("D65".into())
+                }
+                _ => unreachable!(),
+            }
+            assert!(!section_matches(&imported, &changed).unwrap());
+        }
+    }
+}
+
+#[test]
+fn capture_illuminant_roundtrips_explicit_values_and_preserves_none() {
+    // An explicit value survives capture, both carriers, and re-application.
+    let explicit = exposure_params();
+    assert_eq!(
+        explicit.camera.capture_illuminant.as_deref(),
+        Some("BB4000")
+    );
+    let preset = captured_look(&explicit);
+    let current = current_params();
+    assert_eq!(current.camera.capture_illuminant, None);
+
+    for imported in carrier_roundtrips(&preset) {
+        let look = imported.look_parameters().unwrap();
+        assert_eq!(
+            look.camera.as_ref().unwrap().capture_illuminant.as_deref(),
+            Some("BB4000")
+        );
+        let mut applied = current.clone();
+        look.apply_to(&mut applied);
+        assert_eq!(applied.camera.capture_illuminant.as_deref(), Some("BB4000"));
+        assert!(look.matches(&applied));
+    }
+
+    // `None` (inherit the film profile reference illuminant) is a real value:
+    // it is captured as null, survives the JSON carrier, clears an explicit
+    // value on apply, and is never silently rewritten to a profile reference.
+    let mut inherited = exposure_params();
+    inherited.camera.capture_illuminant = None;
+    let preset = captured_look(&inherited);
+    let document = serde_json::to_value(&preset).unwrap();
+    assert_eq!(
+        document["parameters"]["camera"]["capture_illuminant"],
+        Value::Null
+    );
+    for imported in carrier_roundtrips(&preset) {
+        let look = imported.look_parameters().unwrap();
+        assert_eq!(look.camera.as_ref().unwrap().capture_illuminant, None);
+        let mut applied = current_params();
+        applied.camera.capture_illuminant = Some("D65".into());
+        look.apply_to(&mut applied);
+        assert_eq!(applied.camera.capture_illuminant, None);
+        assert!(look.matches(&applied));
+    }
+
+    // A camera group without the leaf deserializes to None, and the section
+    // payload carries the explicit leaf as an owned path.
+    let mut missing = serde_json::to_value(captured_look(&explicit)).unwrap();
+    missing["parameters"]["camera"]
+        .as_object_mut()
+        .unwrap()
+        .remove("capture_illuminant");
+    let imported = Preset::from_json_str(&missing.to_string()).unwrap();
+    assert_eq!(
+        imported
+            .look_parameters()
+            .unwrap()
+            .camera
+            .as_ref()
+            .unwrap()
+            .capture_illuminant,
+        None
+    );
+
+    let section = Preset::capture_section(
+        "Inherited camera",
+        Section::Camera,
+        &inherited,
+        provenance(),
+    )
+    .unwrap();
+    let payload = serde_json::to_value(&section).unwrap();
+    assert_eq!(
+        payload["parameters"]["camera"]["capture_illuminant"],
+        Value::Null
+    );
+    let applied = section
+        .apply_section(&current_params(), &test_film())
+        .unwrap();
+    assert_eq!(applied.camera.capture_illuminant, None);
+    assert!(
+        applied
+            .explicit_section_paths
+            .contains("camera.capture_illuminant")
+    );
+}
+
+#[test]
+fn capture_illuminant_must_match_the_shared_illuminant_vocabulary() {
+    let preset = captured_look(&exposure_params());
+    for invalid in ["typo", "", "BB1000", "BB30000"] {
+        let mut document = serde_json::to_value(&preset).unwrap();
+        document["parameters"]["camera"]["capture_illuminant"] = invalid.into();
+        assert!(
+            Preset::from_json_str(&document.to_string()).is_err(),
+            "{invalid} must be rejected"
+        );
+        let mut toml: toml::Value = toml::from_str(&preset.to_toml().unwrap()).unwrap();
+        toml["parameters"]["camera"]["capture_illuminant"] = toml::Value::String(invalid.into());
+        assert!(Preset::from_toml_str(&toml::to_string(&toml).unwrap()).is_err());
+    }
+
+    // A supported catalog name and a blackbody token both resolve and reach
+    // the runtime parameters through the look.
+    for value in ["D65", "BB4000"] {
+        let mut document = serde_json::to_value(captured_look(&exposure_params())).unwrap();
+        document["parameters"]["camera"]["capture_illuminant"] = value.into();
+        let imported = Preset::from_json_str(&document.to_string()).unwrap();
+        let resolved = imported.resolve(&data(), &current_params()).unwrap();
+        assert_eq!(
+            resolved.params.camera.capture_illuminant.as_deref(),
+            Some(value)
+        );
     }
 }

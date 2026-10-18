@@ -1241,6 +1241,58 @@ mod tests {
     }
 
     #[test]
+    fn capture_illuminant_accepts_explicit_names_blackbodies_and_null() {
+        let mut params = RuntimeParams::default();
+        assert_eq!(params.camera.capture_illuminant, None);
+        for source in [
+            "camera.capture_illuminant=BB4000",
+            r#"camera.capture_illuminant="BB4000""#,
+            "camera.capture_illuminant=D75",
+            "camera.capture_illuminant=TH-KG3",
+        ] {
+            let mut params = RuntimeParams::default();
+            ParameterEdits::parse(source)
+                .unwrap()
+                .apply(&mut params)
+                .unwrap();
+            assert!(
+                params.camera.capture_illuminant.is_some(),
+                "{source} left the leaf unset"
+            );
+            params.validate().unwrap();
+        }
+        let mut explicit = RuntimeParams::default();
+        explicit.camera.capture_illuminant = Some("BB4000".into());
+        ParameterEdits::parse("camera.capture_illuminant=null")
+            .unwrap()
+            .apply(&mut explicit)
+            .unwrap();
+        assert_eq!(explicit.camera.capture_illuminant, None);
+        // A null on an unset leaf stays unset.
+        ParameterEdits::parse("camera.capture_illuminant=null")
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert_eq!(params.camera.capture_illuminant, None);
+    }
+
+    #[test]
+    fn capture_illuminant_rejects_unsupported_values_with_the_canonical_path() {
+        for source in [
+            "camera.capture_illuminant=not-an-illuminant",
+            "camera.capture_illuminant=BB1000",
+            "camera.capture_illuminant=BB25001",
+            "camera.capture_illuminant=",
+        ] {
+            assert!(ParameterEdits::parse(source).is_err(), "accepted {source}");
+        }
+        let error =
+            ParameterEdits::parse("camera.capture_illuminant=not-an-illuminant").unwrap_err();
+        assert!(error.starts_with("camera.capture_illuminant:"), "{error}");
+        assert!(error.contains("BB<kelvin>"), "{error}");
+    }
+
+    #[test]
     fn json_rejects_escape_decoded_duplicate_keys() {
         assert!(
             parse_carrier(
@@ -1286,6 +1338,16 @@ mod tests {
                 && f["enum_values"]
                     .as_array()
                     .is_some_and(|v| v.iter().any(|e| e == "procedural"))
+        }));
+        let camera = describe_module("camera").unwrap();
+        assert!(camera["fields"].as_array().unwrap().iter().any(|f| {
+            f["path"] == "camera.capture_illuminant"
+                && f["type"] == "Option<String>"
+                && f["nullable"] == true
+                && f["default"] == Value::Null
+                && f["enum_values"]
+                    .as_array()
+                    .is_some_and(|v| v.iter().any(|e| e == "BB<kelvin> (1667..=25000)"))
         }));
         assert!(describe_module("workflow").is_err());
         assert!(describe_module("unknown").is_err());

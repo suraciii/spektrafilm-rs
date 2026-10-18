@@ -20,6 +20,8 @@ Inline assignments must use the shared field types to distinguish plain strings 
 
 Stock look initialization, explicit controls, and runtime constraints must be separate preparation decisions. Preparation must retain each explicit neutral-filter axis through database calibration. It must use supplied-field information rather than comparing numbers with defaults. A value equal to a stock default is still an explicit edit.
 
+The capture illuminant is resolved in core, not in the CLI adapter. The CLI must not add a dedicated flag, a shortened path, or a second illuminant vocabulary for it: it is an optional camera leaf resolved through the same field description, sparse-file and inline carriers, and shared illuminant validator as every other light-source leaf, under the [capture illuminant contract](spec.md#capture-illuminant). An unset leaf resolves to the selected film profile's `reference_illuminant` after profile selection, so the resolution report must record the requested value, the effective value, and the source that supplied it rather than inferring one from the other.
+
 Explicit-axis ownership must survive runtime construction and calibration rebuilds. It must not change the user's database-calibration setting. Calibration must retain database f64 values for axes that remain database-owned.
 
 A prepared configuration must not receive another stock initialization step when the runtime is constructed. Applying preview, LUT-mode, or debug constraints must not corrupt the editable controls used to resolve a subsequent configuration. Legacy baseline decoding and numerical preparation must remain unchanged except for the explicit declaration and route changes in the [compatibility contract](spec.md#compatibility).

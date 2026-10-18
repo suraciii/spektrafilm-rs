@@ -518,6 +518,26 @@ fn with_params_recalibrates_print_exposure_for_camera_ev() {
 }
 
 #[test]
+fn inactive_capture_illuminant_does_not_change_convert_film_calibration() {
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let mut base = RuntimeParams::default();
+    base.workflow.route = "input > convert-film > print > scan".into();
+    base.camera.capture_illuminant = None;
+    let inherited =
+        Pipeline::new_with_spectral(film.clone(), print.clone(), base.clone(), &dir).unwrap();
+    let mut explicit = base;
+    explicit.camera.capture_illuminant = Some("BB4000".into());
+    let overridden = Pipeline::new_with_spectral(film, print, explicit, &dir).unwrap();
+    assert_eq!(
+        inherited.print_exposure_factor(),
+        overridden.print_exposure_factor()
+    );
+    assert_eq!(lut_data(&inherited), lut_data(&overridden));
+}
+
+#[test]
 fn input_gamut_active_toggle_matches_fresh_lut() {
     let base = build();
     let mut updated = base.clone();

@@ -198,6 +198,7 @@
     "exposure_compensation_ev": 0.0,
     "auto_exposure": true,
     "auto_exposure_method": "center_weighted",
+    "capture_illuminant": null,
     "lens_blur_um": 0.0,
     "film_format_mm": 35.0,
     "color_filter": "none",

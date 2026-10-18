@@ -438,6 +438,7 @@ impl App {
             }
         };
         self.film_name = selected;
+        self.film_reference_illuminant = film.info.reference_illuminant.clone();
         self.film_dev_times = film.data.development_time.clone();
         self.film_medium = scan_medium(&film);
         let before = self.params.scanner.clone();
@@ -785,6 +786,7 @@ impl App {
 
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
         let cache = self.section_labels.entry(section.to_owned()).or_default();
+        let capture_reference_illuminant = &self.film_reference_illuminant;
         let changes = controls::show(
             ui,
             &mut self.params,
@@ -793,6 +795,7 @@ impl App {
             self.film_medium,
             &self.filter,
             cache,
+            capture_reference_illuminant,
         );
         if changes.runtime_changed {
             self.mark_parameters_changed_invalidating_calibration();

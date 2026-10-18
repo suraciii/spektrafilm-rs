@@ -11,6 +11,15 @@ pub(crate) fn sections(
 ) {
     if section == "Film chemistry" {
         render_chemistry(ui, &mut params.film_render.chemistry, flags, true, filter);
+        if filter_matches(filter, "density curve gamma") {
+            flags.runtime_changed |= param_numeric(
+                ui,
+                "density curve gamma",
+                &mut params.film_render.density_curve_gamma,
+                "film_render.density_curve_gamma",
+                "Gamma applied to the film density curves during development; 1.0 keeps the profile curves unchanged. Requires an actual film-development route.",
+            );
+        }
     }
     if section == "Print chemistry" {
         render_chemistry(
@@ -20,6 +29,15 @@ pub(crate) fn sections(
             false,
             filter,
         );
+        if filter_matches(filter, "density curve gamma") {
+            flags.runtime_changed |= param_numeric(
+                ui,
+                "density curve gamma",
+                &mut params.print_render.density_curve_gamma,
+                "print_render.density_curve_gamma",
+                "Gamma applied to the paper density curves during print development; 1.0 keeps the profile curves unchanged. Requires an admitted print-development route.",
+            );
+        }
     }
 }
 

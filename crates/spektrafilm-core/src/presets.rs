@@ -1,5 +1,6 @@
-//! Portable look documents. Library operations are shared by both frontends.
+//! Portable look and section documents. Library operations are shared by both frontends.
 mod library;
+mod sections;
 use crate::params::sources::{ParameterEdits, parse_carrier};
 use crate::params::{
     DiffusionFilterParams, EnlargerParams, FilmRenderingParams, OutputMixParams,
@@ -8,6 +9,7 @@ use crate::params::{
 use crate::params_builder::apply_film_specifics;
 use crate::profile::{self, Profile};
 pub use library::*;
+pub use sections::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -31,15 +33,9 @@ pub struct Provenance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scanner: Option<Value>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LookParameters {
     /// Absent in legacy presets, which preserve the current virtual exposure.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_present_camera"
-    )]
     pub camera: Option<LookCameraParams>,
     pub enlarger: EnlargerParams,
     pub scanner: ScannerParams,
@@ -50,8 +46,127 @@ pub struct LookParameters {
     /// Spectral-reconstruction switches that shape the rendered look. This is
     /// deliberately a subset of `SettingsParams`: preview limits, performance
     /// toggles, and the working wavelength grid are not look content.
-    #[serde(default)]
     pub settings: LookSettingsParams,
+}
+/// Private carrier for the portable look surface. Runtime groups also contain
+/// calibration, derived, and compatibility fields that are not preset-owned.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LookParametersWire {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_camera"
+    )]
+    camera: Option<LookCameraParams>,
+    enlarger: EnlargerParams,
+    scanner: ScannerParams,
+    film_render: FilmRenderingParams,
+    print_render: PrintRenderingParams,
+    camera_diffusion_filter: DiffusionFilterParams,
+    output_mix: OutputMixParams,
+    #[serde(default)]
+    settings: LookSettingsParams,
+}
+
+const UNOWNED_PRESET_FIELDS: &[(&str, &[&str])] = &[
+    (
+        "enlarger",
+        &[
+            "c_filter_neutral",
+            "m_filter_neutral",
+            "y_filter_neutral",
+            "lens_blur",
+        ],
+    ),
+    ("film_render", &["glare"]),
+    (
+        "film_render.grain",
+        &["micro_sublayers", "monochrome", "particle_scale_layers"],
+    ),
+];
+
+fn remove_unowned_preset_fields(value: &mut Value) {
+    for &(group, fields) in UNOWNED_PRESET_FIELDS {
+        if let Some(object) = group
+            .split('.')
+            .try_fold(&mut *value, |current, key| current.get_mut(key))
+            .and_then(Value::as_object_mut)
+        {
+            for field in fields {
+                object.remove(*field);
+            }
+        }
+    }
+}
+fn remove_null_values(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.retain(|_, child| !child.is_null());
+            for child in object.values_mut() {
+                remove_null_values(child);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                remove_null_values(child);
+            }
+        }
+        _ => {}
+    }
+}
+pub(crate) fn reject_unowned_preset_fields(value: &Value) -> Result<(), String> {
+    for &(group, fields) in UNOWNED_PRESET_FIELDS {
+        let object = group
+            .split('.')
+            .try_fold(value, |current, key| current.get(key))
+            .and_then(Value::as_object);
+        if let Some(object) = object {
+            for field in fields {
+                if object.contains_key(*field) {
+                    return Err(format!("preset field {group}.{field} is not preset-owned"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+impl Serialize for LookParameters {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let wire = LookParametersWire {
+            camera: self.camera.clone(),
+            enlarger: self.enlarger.clone(),
+            scanner: self.scanner.clone(),
+            film_render: self.film_render.clone(),
+            print_render: self.print_render.clone(),
+            camera_diffusion_filter: self.camera_diffusion_filter.clone(),
+            output_mix: self.output_mix.clone(),
+            settings: self.settings.clone(),
+        };
+        let mut value = serde_json::to_value(wire).map_err(serde::ser::Error::custom)?;
+        remove_unowned_preset_fields(&mut value);
+        value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for LookParameters {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        reject_unowned_preset_fields(&value).map_err(serde::de::Error::custom)?;
+        let wire = serde_json::from_value::<LookParametersWire>(value)
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            camera: wire.camera,
+            enlarger: wire.enlarger,
+            scanner: wire.scanner,
+            film_render: wire.film_render,
+            print_render: wire.print_render,
+            camera_diffusion_filter: wire.camera_diffusion_filter,
+            output_mix: wire.output_mix,
+            settings: wire.settings,
+        })
+    }
 }
 /// Virtual film exposure and metering, separate from RAW and input correction.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,6 +175,13 @@ pub struct LookCameraParams {
     pub exposure_compensation_ev: f32,
     pub auto_exposure: bool,
     pub auto_exposure_method: String,
+    /// Scene illuminant of the filming front pass. `None` inherits the
+    /// selected film profile's reference illuminant; an explicit catalog
+    /// source or `BB<kelvin>` blackbody overrides it. Never inferred from
+    /// RAW or EXIF metadata, and distinct from the RAW white balance, the
+    /// scan illuminant, the enlarger illuminant and the output white point.
+    #[serde(default)]
+    pub capture_illuminant: Option<String>,
 }
 fn deserialize_present_camera<'de, D>(deserializer: D) -> Result<Option<LookCameraParams>, D::Error>
 where
@@ -73,6 +195,7 @@ impl LookCameraParams {
             exposure_compensation_ev: params.camera.exposure_compensation_ev,
             auto_exposure: params.camera.auto_exposure,
             auto_exposure_method: params.camera.auto_exposure_method.clone(),
+            capture_illuminant: params.camera.capture_illuminant.clone(),
         }
     }
     fn apply_to(&self, params: &mut RuntimeParams) {
@@ -82,11 +205,16 @@ impl LookCameraParams {
             .camera
             .auto_exposure_method
             .clone_from(&self.auto_exposure_method);
+        params
+            .camera
+            .capture_illuminant
+            .clone_from(&self.capture_illuminant);
     }
     fn matches(&self, params: &RuntimeParams) -> bool {
         self.exposure_compensation_ev == params.camera.exposure_compensation_ev
             && self.auto_exposure == params.camera.auto_exposure
             && self.auto_exposure_method == params.camera.auto_exposure_method
+            && self.capture_illuminant == params.camera.capture_illuminant
     }
 }
 /// Look-owned processing settings (subset of `SettingsParams`, same defaults).
@@ -118,7 +246,14 @@ impl Default for LookSettingsParams {
 fn default_true() -> bool {
     true
 }
-/// The look-owned parameters a preset document carries.
+// The look variant owns the full look, and preset collections are small.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum PresetParameters {
+    Look(LookParameters),
+    Section(Value),
+}
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Preset {
     pub schema_version: u32,
@@ -131,7 +266,7 @@ pub struct Preset {
     pub film_profile: Option<ProfileRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub print_profile: Option<ProfileRef>,
-    pub parameters: LookParameters,
+    pub parameters: PresetParameters,
     pub provenance: Provenance,
 }
 impl<'de> Deserialize<'de> for Preset {
@@ -174,16 +309,36 @@ impl LookParameters {
 
     /// Replace every look-owned parameter of `params` with this look.
     ///
-    /// The look owns virtual exposure when present, enlarger, scanner, film
-    /// and print rendering, camera diffusion, and look processing settings.
-    /// Every other parameter section keeps its value.
+    /// Runtime groups also contain calibration, derived, and compatibility
+    /// fields that are deliberately absent from the preset wire surface. Keep
+    /// those values from the active runtime while replacing owned leaves.
     pub fn apply_to(&self, params: &mut RuntimeParams) {
         if let Some(camera) = &self.camera {
             camera.apply_to(params);
         }
+        let neutral = [
+            params.enlarger.c_filter_neutral,
+            params.enlarger.m_filter_neutral,
+            params.enlarger.y_filter_neutral,
+        ];
+        let enlarger_lens_blur = params.enlarger.lens_blur;
         params.enlarger = self.enlarger.clone();
+        params.enlarger.c_filter_neutral = neutral[0];
+        params.enlarger.m_filter_neutral = neutral[1];
+        params.enlarger.y_filter_neutral = neutral[2];
+        params.enlarger.lens_blur = enlarger_lens_blur;
         params.scanner = self.scanner.clone();
+        let film_glare = params.film_render.glare.clone();
+        let grain_internal = (
+            params.film_render.grain.micro_sublayers,
+            params.film_render.grain.monochrome,
+            params.film_render.grain.particle_scale_layers,
+        );
         params.film_render = self.film_render.clone();
+        params.film_render.glare = film_glare;
+        params.film_render.grain.micro_sublayers = grain_internal.0;
+        params.film_render.grain.monochrome = grain_internal.1;
+        params.film_render.grain.particle_scale_layers = grain_internal.2;
         params.print_render = self.print_render.clone();
         params.camera.diffusion_filter = self.camera_diffusion_filter.clone();
         params.output_mix = self.output_mix.clone();
@@ -191,21 +346,18 @@ impl LookParameters {
     }
     /// Compare only carried controls; legacy presets do not own exposure.
     pub fn matches(&self, params: &RuntimeParams) -> bool {
+        let mut expected = params.clone();
+        self.apply_to(&mut expected);
         self.camera
             .as_ref()
             .is_none_or(|camera| camera.matches(params))
-            && self.enlarger == params.enlarger
-            && self.scanner == params.scanner
-            && self.film_render == params.film_render
-            && self.print_render == params.print_render
-            && self.camera_diffusion_filter == params.camera.diffusion_filter
-            && self.output_mix == params.output_mix
-            && self.settings.apply_hanatos2025_adaptation_window
-                == params.settings.apply_hanatos2025_adaptation_window
-            && self.settings.apply_hanatos2025_adaptation_surface
-                == params.settings.apply_hanatos2025_adaptation_surface
-            && self.settings.spectral_gaussian_blur == params.settings.spectral_gaussian_blur
-            && self.settings.use_cat16 == params.settings.use_cat16
+            && expected.enlarger == params.enlarger
+            && expected.scanner == params.scanner
+            && expected.film_render == params.film_render
+            && expected.print_render == params.print_render
+            && expected.camera.diffusion_filter == params.camera.diffusion_filter
+            && expected.output_mix == params.output_mix
+            && expected.settings == params.settings
     }
 }
 impl LookSettingsParams {
@@ -218,11 +370,19 @@ impl LookSettingsParams {
     }
 }
 impl Preset {
-    pub fn look_parameters(&self) -> &LookParameters {
-        &self.parameters
+    pub fn look_parameters(&self) -> Option<&LookParameters> {
+        if let PresetParameters::Look(look) = &self.parameters {
+            Some(look)
+        } else {
+            None
+        }
     }
-    pub fn look_parameters_mut(&mut self) -> &mut LookParameters {
-        &mut self.parameters
+    pub fn look_parameters_mut(&mut self) -> Option<&mut LookParameters> {
+        if let PresetParameters::Look(look) = &mut self.parameters {
+            Some(look)
+        } else {
+            None
+        }
     }
     pub fn from_json_str(text: &str) -> Result<Self, String> {
         Self::from_value(parse_carrier(text, false)?)
@@ -304,6 +464,14 @@ impl Preset {
         }
         let wire: Wire =
             serde_json::from_value(value).map_err(|e| format!("invalid preset: {e}"))?;
+        let parameters = if wire.film_profile.is_some() || wire.print_profile.is_some() {
+            PresetParameters::Look(
+                serde_json::from_value(wire.parameters)
+                    .map_err(|e| format!("invalid look: {e}"))?,
+            )
+        } else {
+            PresetParameters::Section(wire.parameters)
+        };
         let preset = Self {
             schema_version: wire.schema_version,
             name: wire.name,
@@ -311,12 +479,18 @@ impl Preset {
             description: wire.description,
             film_profile: wire.film_profile,
             print_profile: wire.print_profile,
-            parameters: serde_json::from_value(wire.parameters)
-                .map_err(|e| format!("invalid look: {e}"))?,
+            parameters,
             provenance: wire.provenance,
         };
         preset.validate()?;
         Ok(preset)
+    }
+    pub fn kind(&self) -> Result<PresetKind, String> {
+        match &self.parameters {
+            PresetParameters::Look(_) if self.film_profile.is_some() && self.print_profile.is_some()=>Ok(PresetKind::Look),
+            PresetParameters::Section(payload) if self.film_profile.is_none() && self.print_profile.is_none()=>Ok(PresetKind::Section(section_from_payload(payload)?)),
+            _=>Err("a preset must carry a complete look with both profiles or exactly one section without profiles".into()),
+        }
     }
     pub fn validate(&self) -> Result<(), String> {
         if self.schema_version != PRESET_SCHEMA_VERSION {
@@ -331,6 +505,7 @@ impl Preset {
         {
             return Err("preset provenance versions must not be empty".into());
         }
+        self.kind()?;
         for (kind, reference) in [("film", &self.film_profile), ("print", &self.print_profile)] {
             if let Some(reference) = reference {
                 validate_stock_id(kind, &reference.stock)?;
@@ -342,7 +517,10 @@ impl Preset {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
-        self.parameters.apply_to(&mut params);
+        match &self.parameters {
+            PresetParameters::Look(look) => look.apply_to(&mut params),
+            PresetParameters::Section(payload) => parameter_edits(payload)?.apply(&mut params)?,
+        }
         if let Some(scanner) = &self.provenance.scanner {
             let expected = serde_json::to_value(
                 crate::scan_receiver::ScannerProvenance::from_params(&params),
@@ -363,7 +541,35 @@ impl Preset {
     }
     pub fn to_toml(&self) -> Result<String, String> {
         self.validate()?;
-        toml::to_string_pretty(self).map_err(|e| e.to_string())
+        let mut value = serde_json::to_value(self).map_err(|e| e.to_string())?;
+        if matches!(self.parameters, PresetParameters::Look(_)) {
+            remove_null_values(&mut value);
+        } else if let PresetParameters::Section(payload) = &self.parameters {
+            fn null_paths(prefix: &str, value: &Value, out: &mut Vec<String>) {
+                if let Some(map) = value.as_object() {
+                    for (key, value) in map {
+                        let path = if prefix.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{prefix}.{key}")
+                        };
+                        null_paths(&path, value, out);
+                    }
+                } else if value.is_null() {
+                    out.push(prefix.to_owned());
+                }
+            }
+            let mut paths = Vec::new();
+            null_paths("", payload, &mut paths);
+            if !paths.is_empty() {
+                return Err(format!(
+                    "TOML cannot represent explicit null at {}; use --format json or a .json extension",
+                    paths.join(", ")
+                ));
+            }
+        }
+        let value = toml::Value::try_from(value).map_err(|e| e.to_string())?;
+        toml::to_string_pretty(&value).map_err(|e| e.to_string())
     }
     pub fn resolve(
         &self,
@@ -371,10 +577,11 @@ impl Preset {
         current: &RuntimeParams,
     ) -> Result<ResolvedPreset, String> {
         self.validate()?;
-        let (Some(film_ref), Some(print_ref)) = (&self.film_profile, &self.print_profile) else {
-            return Err("a preset must carry a complete look with both profiles".into());
+        let (Some(film_ref), Some(print_ref), PresetParameters::Look(look)) =
+            (&self.film_profile, &self.print_profile, &self.parameters)
+        else {
+            return Err("section presets use apply_section, not look resolution".into());
         };
-        let look = &self.parameters;
         let film_identity = profile_content_identity_if_requested(data_dir, film_ref)?;
         let print_identity = profile_content_identity_if_requested(data_dir, print_ref)?;
         let film =
@@ -480,10 +687,84 @@ impl Preset {
                 version: None,
                 content_identity: None,
             }),
-            parameters: LookParameters::capture(params),
+            parameters: PresetParameters::Look(LookParameters::capture(params)),
             provenance,
         }
     }
+    pub fn capture_section(
+        name: impl Into<String>,
+        section: Section,
+        params: &RuntimeParams,
+        mut provenance: Provenance,
+    ) -> Result<Self, String> {
+        let payload = extract_section(section, params)?;
+        let mut captured = RuntimeParams::default();
+        parameter_edits(&payload)?.apply(&mut captured)?;
+        provenance.scanner = Some(
+            serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(
+                &captured,
+            ))
+            .map_err(|e| e.to_string())?,
+        );
+        let preset = Self {
+            schema_version: PRESET_SCHEMA_VERSION,
+            name: name.into(),
+            author: None,
+            description: None,
+            film_profile: None,
+            print_profile: None,
+            parameters: PresetParameters::Section(payload),
+            provenance,
+        };
+        preset.validate()?;
+        Ok(preset)
+    }
+    /// Returns a candidate validated against the current film and scan configuration.
+    /// An unrelated edit may preserve an already-invalid scan configuration.
+    pub fn apply_section(
+        &self,
+        current: &RuntimeParams,
+        film: &Profile,
+    ) -> Result<RuntimeParams, String> {
+        let params = self.overlay_section(current)?;
+        params.validate()?;
+        let scan_changed = params.scanner.scan_output != current.scanner.scan_output
+            || params.scanner.white_correction != current.scanner.white_correction
+            || params.scanner.black_correction != current.scanner.black_correction
+            || params.film_render.grain.active != current.film_render.grain.active
+            || params.film_render.grain.engine != current.film_render.grain.engine;
+        if scan_changed || crate::pipeline_calibration::validate_scan_output(current, film).is_ok()
+        {
+            crate::pipeline_calibration::validate_scan_output(&params, film)?;
+        }
+        Ok(params)
+    }
+
+    /// Compose independently validated leaves without validating intermediate controls.
+    /// The caller must validate the complete candidate before applying it.
+    pub(crate) fn overlay_section(&self, current: &RuntimeParams) -> Result<RuntimeParams, String> {
+        self.validate()?;
+        let PresetParameters::Section(payload) = &self.parameters else {
+            return Err("expected a section preset".into());
+        };
+        let edits = parameter_edits(payload)?;
+        let mut params = current.clone();
+        edits.apply(&mut params)?;
+        for path in edits.paths() {
+            params.explicit_section_paths.insert(path.to_owned());
+        }
+        Ok(params)
+    }
+}
+fn parameter_edits(payload: &Value) -> Result<ParameterEdits, String> {
+    let mut value = payload.clone();
+    if let Some(filter) = value
+        .as_object_mut()
+        .and_then(|m| m.remove("camera_diffusion_filter"))
+    {
+        value["camera"] = serde_json::json!({"diffusion_filter":filter});
+    }
+    ParameterEdits::from_value(value)
 }
 include!(concat!(env!("OUT_DIR"), "/preset_assets.rs"));
 pub fn builtin_presets() -> Vec<Preset> {

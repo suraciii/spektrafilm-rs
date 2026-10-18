@@ -107,6 +107,77 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn capture_illuminant_reports_inheritance_overrides_clearing_and_inactive_routes() {
+    let f = Fixture::new();
+    let inherited = f.report(&["--film", "kodak_portra_400", "--dry-run"]);
+    assert_eq!(inherited["capture_illuminant"]["requested"], Value::Null);
+    assert_eq!(inherited["capture_illuminant"]["effective"], "D55");
+    assert_eq!(inherited["capture_illuminant"]["source"], "unset");
+    assert_eq!(inherited["capture_illuminant"]["status"], "active");
+
+    let explicit = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--set",
+        "camera.capture_illuminant=BB4000",
+        "--dry-run",
+    ]);
+    assert_eq!(explicit["capture_illuminant"]["requested"], "BB4000");
+    assert_eq!(explicit["capture_illuminant"]["effective"], "BB4000");
+    assert_eq!(explicit["capture_illuminant"]["source"], "set");
+    assert!(
+        explicit["edits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edit| edit["path"] == "camera.capture_illuminant")
+    );
+
+    let sparse = f.root.join("capture.toml");
+    std::fs::write(&sparse, "[camera]\ncapture_illuminant = \"T\"\n").unwrap();
+    let from_file = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--set",
+        sparse.to_str().unwrap(),
+        "--dry-run",
+    ]);
+    assert_eq!(from_file["capture_illuminant"]["requested"], "T");
+    assert_eq!(from_file["capture_illuminant"]["effective"], "T");
+    assert_eq!(from_file["capture_illuminant"]["source"], "set");
+
+    let cleared = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--set",
+        "camera.capture_illuminant=BB4000",
+        "--set",
+        "camera.capture_illuminant=null",
+        "--dry-run",
+    ]);
+    assert_eq!(cleared["capture_illuminant"]["requested"], Value::Null);
+    assert_eq!(cleared["capture_illuminant"]["effective"], "D55");
+    assert_eq!(cleared["capture_illuminant"]["source"], "unset");
+
+    let inactive = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--route",
+        "input",
+        "--set",
+        "camera.capture_illuminant=BB4000",
+        "--dry-run",
+    ]);
+    assert_eq!(inactive["capture_illuminant"]["status"], "inactive");
+    assert_eq!(inactive["capture_illuminant"]["effective"], Value::Null);
+    assert_eq!(
+        inactive["capture_illuminant"]["profile_reference_illuminant"],
+        "D55"
+    );
+    assert!(inactive["capture_illuminant"]["reason"].is_string());
+}
+
+#[test]
 fn output_mix_edits_are_discoverable_and_invalid_sources_preserve_outputs() {
     let f = Fixture::new();
     std::fs::write(f.root.join("output.tif"), b"retained-image").unwrap();

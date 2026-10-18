@@ -293,6 +293,11 @@ fn factory_matches_independently_generated_upstream_state() {
     ] {
         scanner.remove(key);
     }
+    // `camera.capture_illuminant` is a Rust-only optional leaf: the pinned
+    // Python oracle predates it, and its unset state is a real null rather
+    // than an absent key.
+    let camera = shared["camera"].as_object_mut().unwrap();
+    camera.remove("capture_illuminant");
     assert_eq!(compare(&shared, &expected, "factory"), 186);
     let params = factory.runtime_params().unwrap();
     assert_eq!(params.film_render.grain.rms_granularity, [5.0; 3]);
@@ -398,6 +403,49 @@ fn dedicated_diffusion_and_simulation_panels_win_over_passthrough_groups() {
     assert_eq!(params.camera.diffusion_filter.strength, 0.25);
     assert_eq!(params.enlarger.print_exposure, 1.75);
     assert_eq!(params.enlarger.preflash_exposure, 0.2);
+}
+#[test]
+fn camera_capture_illuminant_roundtrips_through_gui_state() {
+    let factory = GuiState::factory();
+    // `None` is a real unset value (inherit the film profile reference
+    // illuminant), not a missing field: it must survive the save/load
+    // projection as an explicit null rather than collapse to a default.
+    let mut params = factory.runtime_params().unwrap();
+    assert_eq!(params.camera.capture_illuminant, None);
+    let mut saved =
+        GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+            .unwrap()
+            .sections;
+    assert_eq!(saved["camera"]["capture_illuminant"], Value::Null);
+    saved.as_object_mut().unwrap().remove("rust");
+    let restored = GuiState::from_value(saved.clone()).unwrap();
+    assert_eq!(
+        restored.runtime_params().unwrap().camera.capture_illuminant,
+        None
+    );
+
+    // An explicit value survives the same round trip.
+    params.camera.capture_illuminant = Some("BB4000".into());
+    let mut saved =
+        GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+            .unwrap()
+            .sections;
+    assert_eq!(saved["camera"]["capture_illuminant"], json!("BB4000"));
+    saved.as_object_mut().unwrap().remove("rust");
+    let restored = GuiState::from_value(saved.clone()).unwrap();
+    assert_eq!(
+        restored
+            .runtime_params()
+            .unwrap()
+            .camera
+            .capture_illuminant
+            .as_deref(),
+        Some("BB4000")
+    );
+
+    // The leaf stays validated by the shared core validator.
+    saved["camera"]["capture_illuminant"] = json!("typo");
+    assert!(GuiState::from_value(saved).is_err());
 }
 #[test]
 fn legacy_export_depth_and_recipe_survive_save_reload() {

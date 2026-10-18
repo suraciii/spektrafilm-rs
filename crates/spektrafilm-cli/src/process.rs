@@ -782,14 +782,49 @@ fn cmd_process(
         if plan.is_none() {
             unchecked.push("output_format");
         }
+        let capture_requested = params.camera.capture_illuminant.clone();
+        let capture_effective = match film.info.reference_illuminant.as_str() {
+            reference if capture_requested.is_none() => reference.to_owned(),
+            _ => capture_requested
+                .clone()
+                .expect("explicit capture illuminant"),
+        };
+        let capture_active = matches!(
+            params.workflow.route_enum(),
+            spektrafilm_core::WorkflowRoute::FilmScan
+                | spektrafilm_core::WorkflowRoute::FilmPrintScan
+        );
+        let capture_source = if capture_requested.is_none() {
+            "unset"
+        } else if resolved
+            .edits
+            .iter()
+            .any(|edit| edit.path == "camera.capture_illuminant" && edit.source.kind == "set")
+        {
+            "set"
+        } else {
+            "preset"
+        };
+        let capture_illuminant = json!({
+            "requested": capture_requested,
+            "effective": capture_active.then_some(capture_effective),
+            "source": capture_source,
+            "profile_reference_illuminant": film.info.reference_illuminant,
+            "status": if capture_active { "active" } else { "inactive" },
+            "reason": (!capture_active).then_some("route computes no film exposure from scene RGB")
+        });
         let report = json!({
+            "data": {
+                "path": data.path,
+                "source": data.source,
+            },
             "film_profile": resolved.film_name,
             "print_profile": resolved.print_name,
+            "capture_illuminant": capture_illuminant,
             "parameters": params,
             "scanner_provenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
             "film_grain_dye": grain_v3,
             "film_grain_fotufilm": grain_fotufilm,
-            "data": {"path": data.path, "source": data.source},
             "input": {
                 "kind": if input_is_raw { "raw" } else { "raster" },
                 "declaration": resolved.input_declaration,
