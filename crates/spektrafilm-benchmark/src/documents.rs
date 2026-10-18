@@ -666,7 +666,6 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
                 file_record(icc, document)?;
             }
             for region in value["regions"].as_array().into_iter().flatten() {
-                consumer_geometry(&region["geometry"])?;
                 geometry(&region["geometry"], document)?;
             }
             if value["scope"] == "aligned_scene"
@@ -843,6 +842,21 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
         }
         for r in c["regions"].as_array().into_iter().flatten() {
             consumer_geometry(&r["geometry"])?;
+        }
+        if let Some(reference) = c.get("reference") {
+            if reference["scope"] == "aligned_scene" {
+                if let Some(review) = reference.get("correspondence_review") {
+                    let review_path = resolve_path(review["path"].as_str().unwrap(), path)?;
+                    let review_document = load_json_document(&review_path)?;
+                    for exclusion in review_document["excluded_regions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                    {
+                        consumer_geometry(&exclusion["geometry"])?;
+                    }
+                }
+            }
         }
     }
     for c in cases {
