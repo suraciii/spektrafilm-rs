@@ -451,21 +451,56 @@ pub fn create_fixtures(
             dump(&out.join(format!("{name}.json")), &target)?;
             documents::load_target(&out.join(format!("{name}.json")))?;
         }
+        let ordinary_regions = json!({
+            "schema_version": 1,
+            "id": "ordinary-45",
+            "regions": (0..45)
+                .map(|index| region(&format!("P{:02}", index + 1), [index % 9 * 12, index / 9 * 12, 8, 8], &["color"], "color"))
+                .collect::<Vec<_>>(),
+        });
+        let irregular_regions = json!({
+            "schema_version": 1,
+            "id": "irregular-explicit",
+            "regions": [
+                region("shadow", [2, 3, 7, 5], &["numeric"], "shadow"),
+                region("highlight", [41, 9, 11, 13], &["color"], "highlight"),
+                region("edge", [73, 4, 3, 96], &["tone"], "edge"),
+            ],
+        });
+        dump(&out.join("ordinary-45-regions.json"), &ordinary_regions)?;
+        dump(&out.join("irregular-regions.json"), &irregular_regions)?;
+        documents::validate_shape("regions", &ordinary_regions)?;
+        documents::validate_shape("regions", &irregular_regions)?;
+        let ordinary = documents::load_json_document(&out.join("ordinary-45-regions.json"))?;
+        let irregular = documents::load_json_document(&out.join("irregular-regions.json"))?;
+        if ordinary["regions"]
+            .as_array()
+            .is_none_or(|regions| regions.len() != 45)
+            || irregular["regions"]
+                .as_array()
+                .is_none_or(|regions| regions.len() != 3)
+        {
+            return Err(Error::new(
+                "fixture_regions",
+                "fixture regions have unexpected shape",
+            ));
+        }
         let policy = json!({"schema_version":1,"id":"exploratory-color","protocol_digest":documents::protocol_digest(&complete)?,"calibration":{"status":"exploratory","evidence":[]},"rules":[{"id":"skin-color","purpose":"protect","selector":{"case_id":"color_chart","region_id":"skin"},"metric":"delta_e00.p95","max":2.0,"required":true}]});
         dump(&out.join("exploratory-policy.json"), &policy)?;
         for suite in &suites {
             documents::load_suite(&out.join(suite))?;
         }
         documents::load_policy(&out.join("exploratory-policy.json"))?;
-        let review: Value = serde_json::from_str(include_str!("../assets/review.example.json"))?;
-        let review_path = out.join("review.json");
-        dump(&review_path, &review)?;
-        crate::review::validate_manifest(&review_path)?;
-        provenance["review"] = json!({"path":"review.json","sha256":sha256_file(&review_path)?});
         dump(&out.join("provenance.json"), &provenance)?;
-        Ok(
-            json!({"schema_version":1,"command":"fixtures","execution_status":"completed","artifact":out,"suites":suites,"preset":"look.toml","configurations":{"color_tone":"color-tone.json","appearance":"appearance.json"},"review":"review.json"}),
-        )
+        Ok(json!({
+            "schema_version": 1,
+            "command": "fixtures",
+            "execution_status": "completed",
+            "artifact": out,
+            "suites": suites,
+            "preset": "look.toml",
+            "configurations": {"color_tone": "color-tone.json", "appearance": "appearance.json"}
+        }))
     })();
     result.map_err(|error| crate::common::incomplete_destination(error, out, "provenance.json"))
 }
@@ -699,6 +734,11 @@ mod tests {
             complete["cases"][2]["configuration"]["set"],
             json!(grain_set)
         );
+        let ordinary =
+            documents::load_json_document(&out.join("ordinary-45-regions.json")).unwrap();
+        assert_eq!(ordinary["regions"].as_array().unwrap().len(), 45);
+        let irregular = documents::load_json_document(&out.join("irregular-regions.json")).unwrap();
+        assert_eq!(irregular["regions"].as_array().unwrap().len(), 3);
         let mut spatial_set = shared;
         spatial_set.extend([
             "debug.deactivate_spatial_effects=false",

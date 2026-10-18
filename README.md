@@ -14,8 +14,7 @@ This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolp
 - **Process in batch.** `spektrafilm` is the fast f32 processor and `spektrafilm-f64` is the CPU reference exporter; both keep floating samples in float TIFF/EXR, copy source EXIF/IPTC/XMP to non-EXR output, and write color tags or ICC profiles. See [the CLI guide](docs/cli.md).
 - **Choose a grain engine.** Spektra, Procedural (Dehancer-derived), Dye and Fotufilm Film are selectable, each with its own controls and defaults. See [grain engines](docs/grain.md).
 - **Deliver LUTs for a camera.** Bake deterministic bundles for Panasonic V-Log with CUBE, 3DL, Hald, OCIO and QA artifacts. See [LUT delivery](docs/luts.md).
-- **Compare versions.** `spektrafilm-lab` renders immutable evidence from color, tone, FLIP, grain, halation and edge measurements. Read retained measurements through `inspect`, then use `report --comparison` for an offline visual review. See [the appearance benchmark](docs/benchmark.md).
-- **Review prepared images.** `spektrafilm-lab report --manifest` builds an offline viewer for prepared image sets — a shared grid with linked patch selection or explicit per-image regions — with Chinese captions and a declared default pair. `spektrafilm-lab regions` derives a set's declared measurement regions for cases, references, or `run`. See [prepared image review](docs/benchmark.md#review-prepared-images).
+- **Review retained comparisons.** Use `spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY` for an offline report. Prepared-image visual review is benchmark-owned and is not a lab document or input.
 - **Decode camera RAW.** `decode_raw_gui` shares the native LibRaw and Lensfun path with the pipeline and writes linear ACES2065-1 TIFF. See [RAW decoding](docs/raw.md).
 
 ## Build

@@ -48,15 +48,28 @@ fn main(
     // Inner formed cell `(0, 0)` in global cell coordinates.
     let inner_x = bitcast<i32>(p.cell_rect.x) + i32(p.tile.x);
     let inner_y = bitcast<i32>(p.cell_rect.y) + i32(p.tile.x);
+    // The conservative window above is deliberately wider than the band's
+    // formed rectangle (`WINDOW_MARGIN` is 3, the window carries 5 spare
+    // cells), so its last rows and columns fall outside the buffer. Their
+    // overlap weight is zero, but the index would still be evaluated:
+    // `u32(i - inner)` on a negative difference wraps to ~4.29e9 and the
+    // read runs far past the committed resource. D3D12 turns that into an
+    // access violation (the Windows package job died in this test with exit
+    // code 2173); Vulkan and Metal happened to tolerate it. Clamp the loops
+    // to the rectangle instead: the skipped cells contribute nothing.
+    let lo_x = u32(max(0, inner_x - ix0));
+    let lo_y = u32(max(0, inner_y - iy0));
+    let hi_x = min(span_x, u32(inner_x + i32(p.tile.y) - ix0));
+    let hi_y = min(span_y, u32(inner_y + i32(p.tile.z) - iy0));
     var acc = vec3<f32>(0.0);
-    for (var sy = 0u; sy < span_y; sy = sy + 1u) {
+    for (var sy = lo_y; sy < hi_y; sy = sy + 1u) {
         let j = iy0 + i32(sy);
         let weight_y = overlap_weight(
             fx_sub(base_y, fx_signed_mul(j, p.pitches.xy)),
             p.widths.y, p.widths.y);
         if (weight_y == 0.0) { continue; }
         let ly = u32(j - inner_y);
-        for (var sx = 0u; sx < span_x; sx = sx + 1u) {
+        for (var sx = lo_x; sx < hi_x; sx = sx + 1u) {
             let i = ix0 + i32(sx);
             let weight_x = overlap_weight(
                 fx_sub(base_x, fx_signed_mul(i, p.pitches.xy)),

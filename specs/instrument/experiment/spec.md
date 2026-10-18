@@ -1,8 +1,10 @@
 # Experiment runs
 
-`experiment run` publishes one native stage-evidence bundle for a declared experiment, and `experiment export` converts an existing bundle's raw f64 buffers into `.npy` arrays. Together they are the development loop for a film profile: declare what to run, run it reproducibly, and hand its boundary values to a measurement tool.
+`experiment run` publishes one native stage-evidence bundle for one declared experiment invocation, and `experiment export` converts an existing bundle's raw f64 buffers into `.npy` arrays. Together they are one endpoint in the Unix-style research pipe; they do not execute a downstream sample, compare, report, or optimization step.
 
 Both commands are experimental: they carry no compatibility promise. See [command tiers](../spec.md#command-tiers).
+
+The experiment document is a typed declaration carrier, not a second parameter language or workflow DSL. Renderer parameter sources retain the [process surface](../../cli/spec.md) syntax and precedence. Instrument fields describe the endpoint input and retained evidence only.
 
 ## Command surface
 
@@ -19,11 +21,16 @@ Both commands are experimental: they carry no compatibility promise. See [comman
 - `chain` — the parameter chain. `--film`, `--paper`, `--preset`, `--params`, `--set`, `--route`, and `--scan-output` use the [process surface](../../cli/spec.md) names and precedence. The document is a source of these values, not a new parameter language. An omitted field takes the process default.
 - `case` — the case whose regions the grid describes. `id` must name a case in the suite that `suite` names; `suite` is that suite's path, resolved relative to the document. The case must declare a nonempty `regions` array.
 - `grid` — the patch grid the case's regions must reproduce. `rows` and `cols` are positive integers; `patch_px` and `gap_px` are nonnegative integers; `origin` is `[x, y]`; `patch` maps a region `id` to its `[row, col]` position, zero-based. A region matches when its `geometry` equals `origin + [col * (patch_px + gap_px), row * (patch_px + gap_px), patch_px, patch_px]` for the `[row, col]` that `patch` names. Every case region must appear in `patch`, and `patch` must not name an id the case does not declare. `rows` and `cols` must equal the largest declared row and column plus one.
-- `seeds` — one or more unsigned 32-bit seeds. The default is `[0]`.
+- `seeds` — one or more unsigned 32-bit seeds. The default is `[0]`. `experiment run` must execute and retain one result for every declared seed. Until that multi-seed publication contract is implemented, the command must reject more than one seed rather than execute only the first seed while reporting the whole population.
 
 The document must reject duplicate keys and unknown fields. A `--set` file path must resolve inside the document's directory tree; a path that escapes it is a command failure.
 
 The case reference keeps the region vocabulary in the [benchmark](../../benchmark/spec.md) owner: the suite declares region ids, roles, and measurement families, and the grid check is what surfaces a disagreement between the document and the case.
+`experiment run` is one endpoint invocation and currently publishes one retained result. Its `seeds` declaration must therefore contain exactly one seed; a document with more than one seed is rejected before rendering rather than executing only the first seed while reporting the whole population. A retained record must identify the seed that produced it; a report must not imply observations for a seed that was not executed.
+
+The case and grid fields are validation inputs for this endpoint. They must not become a second region language. The suite case remains authoritative for region identity, role, measurement family, and coordinate-space semantics. `grid` only checks that a declared experiment arrangement agrees with the referenced case; it does not license geometry inference from image dimensions, labels, or colors. A future endpoint may derive a standalone `regions` document from an authored review grid, but `experiment` must not add another geometry expression or silently replace the case's regions.
+
+The first implementation slice for this document must not publish one result with a report that lists unexecuted seeds.
 
 ## Invocation
 

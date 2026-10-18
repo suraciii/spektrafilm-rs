@@ -32,6 +32,24 @@ const BAND_OUTPUT_ROWS: u32 = 128;
 /// partitions of the global field; a single output row above the budget
 /// fails with an actionable error.
 const MAX_BAND_CELLS: u64 = 1 << 24;
+/// Largest scratch bytes one band may hold, independent of the device limit.
+///
+/// The cell budget above scales with the pitch/cell ratio, so a coarse
+/// readout — a small output over a wide film region — passes it while each
+/// band still needs hundreds of megabytes: the two nine-float layer tables
+/// cost 36 bytes per cell, so 10M cells are 373 MB per buffer and over a
+/// gigabyte of scratch for a 32x32 output. D3D12 reports a storage binding
+/// limit large enough to accept that, then fails to commit the allocation
+/// and the dispatch takes the process down with an access violation.
+///
+/// The five scratch buffers are allocated once at the plan's maximum band
+/// size and reused by every band, so this bounds the run's total scratch
+/// directly rather than per band. The band decomposition already halves its
+/// height until a band fits, so this is enforced by the existing loop: the
+/// geometry above decomposes into 8 bands of ~47 MB instead of one of
+/// 1.1 GB, and a normal scan is untouched. A single output row that still
+/// cannot fit is refused by name, as before.
+const MAX_BAND_BYTES: u64 = 128 << 20;
 /// Fixed-point scale of the device coordinate lattice: `2^-42` um.
 const FX_SCALE: f64 = 4398046511104.0;
 /// Largest absolute film coordinate (in um) the lattice represents with all
@@ -205,9 +223,10 @@ fn band_fit(band: &DyeBand, bound: u64) -> Result<(), String> {
         ));
     }
     for (name, bytes) in BAND_BUFFERS.iter().zip(band_bytes(band)) {
-        if bytes > bound {
+        if bytes > bound.min(MAX_BAND_BYTES) {
             return Err(format!(
-                "{name} needs {bytes} bytes, above the {bound}-byte device storage limit"
+                "{name} needs {bytes} bytes, above the {}-byte band budget",
+                bound.min(MAX_BAND_BYTES)
             ));
         }
     }

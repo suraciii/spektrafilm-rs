@@ -172,10 +172,7 @@ command prints its human text on stderr and a result object on stdout whose
     --regions regions.json --out sample-1
 ```
 
-`--source` declares a raster image and requires the same input declaration as `process`: a
-source color space and a transfer state. `--from-evidence DIRECTORY --stage STAGE` reads one
-stage of a retained render-evidence bundle instead, and the bundle manifest supplies that
-stage's coordinate space, channel order, units, color space, and transfer state.
+`--source` declares a raster image and requires the same input declaration as `process`: a source color space and a transfer state. `--from-evidence DIRECTORY --stage STAGE` reads one stage of a retained render-evidence bundle instead, and the bundle manifest supplies that stage's coordinate space, channel order, units, color space, and transfer state. `--from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE` resolves one exact completed case/seed row from a retained image-domain run and reads only its indexed available stage bundle. The run artifact index and the case manifest reference must agree on path and digest; unsafe paths, missing or failed rows, unavailable capture, missing stages, malformed buffers, and cross-seed references fail without fallback.
 
 An image source reports its readings under the stage name `source`, with the domain
 `source_rgb` and the declared color space. An evidence source reports the bundle's own stage
@@ -207,17 +204,10 @@ state — the density and exposure stages do not, since their values carry no tr
 Each region carries a stable `id`, an optional `label`, optional `source` and `partition`
 group labels, a `role`, and the `measurements` families it selects. The role is one of `skin`,
 `neutral`, `shadow`, `highlight`, `color`, `flat_field`, `edge`, `texture`, or `other`. The
-`geometry` names the rectangle with `x`, `y`, `width`, and `height`; `width` and `height`
-default to 1, and `space` declares the coordinate space as `source` for the declared source
-image's pixels or `render` for the coordinates of a completed simulation, defaulting to
-`source`. Identities are unique within the document, and `full_image` stays reserved for the
-whole declared source. Regions may overlap: a reading carries its own identity.
+`geometry` names a half-open rectangle with required `x`, `y`, `width`, `height`, and `space` fields. `width` and `height` are positive. `space` must be `source`, `render`, `source_pixels`, `working_pixels`, `film_frame_pixels`, `grain_aperture_pixels`, or `output_pixels`. `source` names the declared source image's pixels and `render` names the coordinates of a completed simulation; a native stage value names that exact stage coordinate grid. Sampling resolves the producer mapping exactly before reading and rejects a mismatch; it does not resize, crop, pad, translate, or clamp. Identities are unique within the document, and `full_image` stays reserved for the whole declared source. Regions may overlap: a reading carries its own identity.
 
-The same document serves a suite case, a reference, and this sampling command, and `regions
---manifest` derives one from a review manifest's grid set. A region window that leaves the
-source bounds fails with the region identity. The command does not clamp, pad, extrapolate, or
-repair a region, and it does not resize, re-encode, or convert the source beyond the declared
-input declaration.
+The same explicit regions document can be used for standalone retained-stage sampling, while suite and reference image consumers currently accept only `source` and `render` geometry. Native spaces remain valid in the shared schema and for standalone sampling only when the selected producer publishes the exact matching coordinate space; embedding native geometry in a suite or reference is rejected with `unsupported_coordinate_space` until that consumer mapping exists. To create ordinary rectangular geometry independently, use `spektrafilm-lab regions grid`; downstream commands consume the resulting explicit regions without interpreting a grid declaration.
+A region window that leaves the source bounds fails with the region identity. The command does not clamp, pad, extrapolate, or repair a region, and it does not resize, re-encode, or convert the source beyond the declared input declaration.
 
 ## `compare --baseline --candidate`
 

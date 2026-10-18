@@ -380,11 +380,7 @@ pub(super) fn build_dir_state(
         ],
     );
     let log_exp_f32: Vec<f32> = dp.log_exposure.iter().map(|&v| v as f32).collect();
-    let curves_f32: Vec<f32> = dp
-        .density_curves_0
-        .iter()
-        .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-        .collect();
+    let curves_f32: Vec<f32> = nan_safe_rows_to_f32(dp.density_curves_0);
     let log_exp_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("dir_density_log_exp"),
         contents: bytemuck::cast_slice(&log_exp_f32),

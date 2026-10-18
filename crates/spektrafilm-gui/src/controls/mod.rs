@@ -9,7 +9,7 @@ use spektrafilm_core::params::{
 use spektrafilm_core::profile::Profile;
 use spektrafilm_model::grain::v2::PROFILE_NAMES;
 
-const COLOR_SPACES: &[&str] = &[
+pub(crate) const COLOR_SPACES: &[&str] = &[
     "sRGB",
     "DCI-P3",
     "Display P3",

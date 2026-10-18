@@ -56,6 +56,8 @@ struct Pair {
     domain: String,
     units: String,
     channel_order: String,
+    /// The coordinate space both sides declare, when they declare the same one.
+    coordinate_space: Option<String>,
     /// The color space both sides declare, when they declare the same one.
     color_space: Option<String>,
     /// Whether both sides declare the stored values transfer-decoded, when
@@ -690,9 +692,24 @@ fn join_sides(left: &Side, right: &Side, roles: &Roles) -> Result<Vec<Pair>> {
                 );
             }
         }
-        // The declaration a pair is grouped and measured under is the one both
-        // sides agree on. A disagreement is not fatal here: the pairing still
-        // reports the raw values, and says which metric it could not compute.
+        let left_coordinate_space = stage_coordinate_space(&left.document, &key.1);
+        let right_coordinate_space = stage_coordinate_space(&right.document, &key.1);
+        if let (Some(left_space), Some(right_space)) =
+            (&left_coordinate_space, &right_coordinate_space)
+            && left_space != right_space
+        {
+            bail!(
+                "sample {} stage {} declares coordinate space {:?} on the {} side and {:?} on the {} side; the two readings do not address the same coordinates",
+                key.0,
+                key.1,
+                left_space,
+                roles.subtrahend,
+                right_space,
+                roles.minuend
+            );
+        }
+        let coordinate_space = left_coordinate_space
+            .filter(|left_space| right_coordinate_space.as_ref() == Some(left_space));
         let left_space = stage_color_space(&left.document, &key.1);
         let right_space = stage_color_space(&right.document, &key.1);
         let left_decoding = stage_transfer(&left.document, &key.1);
@@ -719,6 +736,7 @@ fn join_sides(left: &Side, right: &Side, roles: &Roles) -> Result<Vec<Pair>> {
             domain: left_row.domain.clone(),
             units: left_row.units.clone(),
             channel_order: left_row.channel_order.clone(),
+            coordinate_space,
             color_space,
             cctf_decoding,
             right_source: right_row.source.clone(),
@@ -811,6 +829,14 @@ fn stage_transfer(document: &Value, stage: &str) -> Option<bool> {
         .and_then(Value::as_bool)
 }
 
+/// The coordinate space one side's stage record declares, when it declares one.
+fn stage_coordinate_space(document: &Value, stage: &str) -> Option<String> {
+    stage_record(document, stage)?
+        .get("coordinate_space")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
 /// The stage record of one side's `run.json`.
 fn stage_record<'a>(document: &'a Value, stage: &str) -> Option<&'a Value> {
     document
@@ -835,6 +861,7 @@ fn stage_records(pairing: &Pairing) -> Vec<Value> {
             "domain": pair.domain,
             "units": pair.units,
             "channel_order": pair.channel_order,
+            "coordinate_space": pair.coordinate_space,
             "color_space": pair.color_space,
             "cctf_decoding": pair.cctf_decoding,
             "comparable": pair.incomparable.is_none(),

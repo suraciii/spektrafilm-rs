@@ -17,14 +17,12 @@ use spektrafilm_core::{spectral_eval, spectral_service};
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::spectral as math_spectral;
 
+use super::SCENE_RGB_SPACE;
 use super::cli::EvaluateArgs;
 use super::metrics::{self, SampleMetrics};
 use super::report::{csv_field, number_field};
 use super::spectra::SpectraSet;
 use crate::select_data_dir;
-
-/// The scene-linear RGB space the measured spectra are photographed into.
-const SCENE_RGB_SPACE: &str = "ACES2065-1";
 
 struct Condition {
     reference: String,

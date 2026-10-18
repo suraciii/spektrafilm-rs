@@ -45,8 +45,15 @@ fn main(
     // Inner formed cell `(0, 0)` in global cell coordinates.
     let inner_x = bitcast<i32>(p.cell_rect.x) + i32(p.tile.x);
     let inner_y = bitcast<i32>(p.cell_rect.y) + i32(p.tile.x);
+    // Same bound as the certified law: the conservative window is wider than
+    // the formed rectangle, and the out-of-rectangle cells carry zero weight
+    // in both shaders, so clamping changes no value either way.
+    let lo_x = u32(max(0, inner_x - ix0));
+    let lo_y = u32(max(0, inner_y - iy0));
+    let hi_x = min(span_x, u32(inner_x + i32(p.tile.y) - ix0));
+    let hi_y = min(span_y, u32(inner_y + i32(p.tile.z) - iy0));
     var acc = vec3<f32>(0.0);
-    for (var sy = 0u; sy < span_y; sy = sy + 1u) {
+    for (var sy = lo_y; sy < hi_y; sy = sy + 1u) {
         let j = iy0 + i32(sy);
         // Broken law: normalized by the cell width, not the footprint width.
         let weight_y = overlap_weight(
@@ -54,7 +61,7 @@ fn main(
             p.widths.y, p.widths.z);
         if (weight_y == 0.0) { continue; }
         let ly = u32(j - inner_y);
-        for (var sx = 0u; sx < span_x; sx = sx + 1u) {
+        for (var sx = lo_x; sx < hi_x; sx = sx + 1u) {
             let i = ix0 + i32(sx);
             // Broken law: normalized by the cell width, not the footprint width.
             let weight_x = overlap_weight(

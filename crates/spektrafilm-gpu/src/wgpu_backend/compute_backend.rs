@@ -4,6 +4,7 @@
 use super::film_chain::{
     explicit_resource_error, required_buffer_exceeds_limits, required_chain_buffers,
 };
+use super::pack_matrix_columns_f64;
 use super::*;
 
 impl ComputeBackend for WgpuBackend {
@@ -379,42 +380,16 @@ impl ComputeBackend for WgpuBackend {
 
         // Pack uniform params — mat3x3 in WGSL std140 is 3 columns of vec4.
         // GPU shaders are f32-only: cast precision-preserved inputs at the shader boundary.
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            n_wavelengths: u32,
-            normalization: f32,
-            col0: [f32; 4],
-            col1: [f32; 4],
-            col2: [f32; 4],
-            bw: [f32; 4],
-        }
 
-        let params = Params {
+        let columns = pack_matrix_columns_f64(xyz_to_rgb);
+        let params = ScanParams {
             width: density_cmy.width,
             height: density_cmy.height,
             n_wavelengths: n_wl as u32,
             normalization: normalization as f32,
-            col0: [
-                xyz_to_rgb[0][0] as f32,
-                xyz_to_rgb[1][0] as f32,
-                xyz_to_rgb[2][0] as f32,
-                0.0,
-            ],
-            col1: [
-                xyz_to_rgb[0][1] as f32,
-                xyz_to_rgb[1][1] as f32,
-                xyz_to_rgb[2][1] as f32,
-                0.0,
-            ],
-            col2: [
-                xyz_to_rgb[0][2] as f32,
-                xyz_to_rgb[1][2] as f32,
-                xyz_to_rgb[2][2] as f32,
-                0.0,
-            ],
+            col0: columns[0],
+            col1: columns[1],
+            col2: columns[2],
             // Standalone scan path carries no B&W remap (the resident chain
             // is the only caller that sets it). Identity / disabled.
             // Per-stage CPU callers consume linear scan RGB; final encoding
@@ -428,10 +403,7 @@ impl ComputeBackend for WgpuBackend {
         // `pow(10, -d) ≈ 0`, zeroing that wavelength's contribution exactly the same
         // way Python's `density_to_light` zeros NaN-bearing wavelengths.
         let (cd_flat, mut bd) = sanitize_spectral_inputs(channel_density, base_density, n_wl);
-        let illu_f32: Vec<f32> = illuminant
-            .iter()
-            .map(|&v| if v.is_nan() { 0.0 } else { v as f32 })
-            .collect();
+        let illu_f32: Vec<f32> = nan_safe_slice_to_f32(illuminant);
         bd.resize(n_wl, 0.0);
         let input_f32 = scalars_to_f32(&density_cmy.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
@@ -512,15 +484,9 @@ impl ComputeBackend for WgpuBackend {
         // GPU shaders are f32-only — narrow f64 inputs at the shader boundary.
         // See `sanitize_spectral_inputs` for the NaN-handling story (Metal fast-math).
         let (cd_flat, mut bd) = sanitize_spectral_inputs(channel_density, base_density, n_wl);
-        let sens_flat: Vec<f32> = sensitivity
-            .iter()
-            .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-            .collect();
+        let sens_flat: Vec<f32> = nan_safe_rows_to_f32(sensitivity);
         bd.resize(n_wl, 0.0);
-        let illu_f32: Vec<f32> = illuminant
-            .iter()
-            .map(|&v| if v.is_nan() { 0.0 } else { v as f32 })
-            .collect();
+        let illu_f32: Vec<f32> = nan_safe_slice_to_f32(illuminant);
         let input_f32 = scalars_to_f32(&density_cmy.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
 
@@ -581,27 +547,17 @@ impl ComputeBackend for WgpuBackend {
         // Pack uniform: mat3x3 in std140 = 3 vec4 columns. f32 only on GPU.
         // WGSL columns are read as columns of the matrix; storing row-major as
         // [col[0], col[1], col[2]] where col[j][i] = mat[i][j].
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            lut_size: u32,
-            _pad: u32,
-            col0: [f32; 4],
-            col1: [f32; 4],
-            col2: [f32; 4],
-        }
 
         let m = rgb_to_adapted_xyz;
-        let params = Params {
+        let columns = pack_matrix_columns_f64(m);
+        let params = FrontParams {
             width: image.width,
             height: image.height,
             lut_size,
             _pad: 0,
-            col0: [m[0][0] as f32, m[1][0] as f32, m[2][0] as f32, 0.0],
-            col1: [m[0][1] as f32, m[1][1] as f32, m[2][1] as f32, 0.0],
-            col2: [m[0][2] as f32, m[1][2] as f32, m[2][2] as f32, 0.0],
+            col0: columns[0],
+            col1: columns[1],
+            col2: columns[2],
         };
 
         // TC LUT data is f64 on disk; narrow to f32 at the GPU boundary.
@@ -644,16 +600,6 @@ impl ComputeBackend for WgpuBackend {
         let n_pixels = log_raw.pixel_count() as u32;
         let k = log_exposure.len() as u32;
 
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            k: u32,
-            uniform_grid: u32,
-            gamma_inv: [f32; 3],
-            _pad: f32,
-        }
         // Detect uniformly-spaced log_exposure (typical case) to use the fast path.
         let uniform = is_uniform_grid_endpoint(log_exposure);
         let gamma_inv = if gamma_factor.abs() > 1e-12 {
@@ -661,7 +607,7 @@ impl ComputeBackend for WgpuBackend {
         } else {
             1.0
         };
-        let params = Params {
+        let params = DensityParams {
             width: log_raw.width,
             height: log_raw.height,
             k,
@@ -671,10 +617,7 @@ impl ComputeBackend for WgpuBackend {
         };
 
         let log_exp_f32: Vec<f32> = log_exposure.iter().map(|&v| v as f32).collect();
-        let curves_f32: Vec<f32> = density_curves
-            .iter()
-            .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-            .collect();
+        let curves_f32: Vec<f32> = nan_safe_rows_to_f32(density_curves);
         let input_f32 = scalars_to_f32(&log_raw.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
 

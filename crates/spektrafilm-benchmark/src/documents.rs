@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 mod evidence;
 mod masks;
 
+pub use crate::common::Availability;
 pub use evidence::{
-    Availability, MeasurementRecord, STAGE_IDS, StageBuffer, StageBundle, check_output_boundary,
+    MeasurementRecord, STAGE_IDS, StageBuffer, StageBundle, check_output_boundary,
     validate_generated_document, validate_stage_bundle,
 };
 pub use masks::{geometry_mask, reference_geometry_mask};
@@ -32,18 +33,18 @@ pub const CASE_OWNED_FIELDS: &[(&str, &[&str])] = &[
     ),
     ("settings", &["preview_mode", "preview_max_size"]),
 ];
-fn err(code: &str, message: impl Into<String>) -> Error {
+pub(crate) fn err(code: &str, message: impl Into<String>) -> Error {
     Error::new(code, message.into())
 }
-fn obj(v: &Value) -> Result<&Map<String, Value>> {
+pub(crate) fn obj(v: &Value) -> Result<&Map<String, Value>> {
     v.as_object()
         .ok_or_else(|| err("document_type", "document root must be an object"))
 }
-fn req<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a Value> {
+pub(crate) fn req<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a Value> {
     o.get(k)
         .ok_or_else(|| err("missing_field", format!("missing field: {k}")))
 }
-fn text<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a str> {
+pub(crate) fn text<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a str> {
     req(o, k)?
         .as_str()
         .ok_or_else(|| err("schema_validation", format!("{k} must be a string")))
@@ -312,14 +313,38 @@ fn file_record(v: &Value, doc: &Path) -> Result<()> {
 /// One geometry: a named half-open rectangle, or a hashed mask. Both declare
 /// their coordinate space, which is what makes a region's position readable
 /// without knowing which document carried it.
+pub const AUTHORING_COORDINATE_SPACES: &[&str] = &["source", "render"];
+pub const NATIVE_COORDINATE_SPACES: &[&str] = &[
+    "source_pixels",
+    "working_pixels",
+    "film_frame_pixels",
+    "grain_aperture_pixels",
+    "output_pixels",
+];
+
+fn consumer_geometry(geometry: &Value) -> Result<()> {
+    let space = geometry
+        .get("space")
+        .and_then(Value::as_str)
+        .unwrap_or("source");
+    if !AUTHORING_COORDINATE_SPACES.contains(&space) {
+        return Err(err(
+            "unsupported_coordinate_space",
+            format!("benchmark image consumers do not map geometry space {space:?}"),
+        ));
+    }
+    Ok(())
+}
+
 fn geometry(v: &Value, doc: &Path) -> Result<()> {
     let o = obj(v)?;
     if let Some(space) = o.get("space").and_then(Value::as_str)
-        && !matches!(space, "source" | "render")
+        && !AUTHORING_COORDINATE_SPACES.contains(&space)
+        && !NATIVE_COORDINATE_SPACES.contains(&space)
     {
         return Err(err(
             "invalid_bounds",
-            "geometry space must be `source` or `render`",
+            "geometry space is not a supported coordinate space",
         ));
     }
     if let Some(a) = v.as_array() {
@@ -520,8 +545,6 @@ pub fn schema_for(kind: &str) -> Result<Value> {
         "policy" => include_str!("../assets/policy.schema.json"),
         "run" => include_str!("../assets/run.schema.json"),
         "comparison" => include_str!("../assets/comparison.schema.json"),
-        "review" => include_str!("../assets/review.schema.json"),
-        "regions" => include_str!("../assets/regions.schema.json"),
         "stimuli" => include_str!("../assets/stimuli.schema.json"),
         "experiment" => include_str!("../assets/experiment.schema.json"),
         "preflight" => include_str!("../assets/preflight.schema.json"),
@@ -618,6 +641,9 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
         }
         "preparation" => file_record(&value["original"], document)?,
         "reference" => {
+            for region in value["regions"].as_array().into_iter().flatten() {
+                consumer_geometry(&region["geometry"])?;
+            }
             for key in [
                 "transform",
                 "aligned_derivative",
@@ -653,6 +679,7 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
                 )?;
                 let review = load_json_document(&review_path)?;
                 for region in review["excluded_regions"].as_array().into_iter().flatten() {
+                    consumer_geometry(&region["geometry"])?;
                     geometry(&region["geometry"], &review_path)?;
                 }
             }
@@ -766,7 +793,7 @@ fn validate_tone_probe(points: &Value) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_shape(kind: &str, value: &Value) -> Result<()> {
+pub fn validate_shape(kind: &str, value: &Value) -> Result<()> {
     validate_authored(kind, value)
 }
 
@@ -791,12 +818,39 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
         .into_iter()
         .flatten()
     {
+        consumer_geometry(&x["geometry"])?;
         geometry(&x["geometry"], path)?
     }
     // A tone probe whose exposure coordinates are not at least two strictly
     // increasing values cannot produce a response curve, so it fails
     // validation instead of a later measurement.
     validate_tone_probe(&v["protocol"]["probe"]["tone_response"])?;
+    for c in cases {
+        for geometry in c["reference"]["regions"].as_array().into_iter().flatten() {
+            consumer_geometry(&geometry["geometry"])?;
+        }
+        for probe in c["probe"]["tone_response"].as_array().into_iter().flatten() {
+            consumer_geometry(&probe["geometry"])?;
+        }
+        for r in c["regions"].as_array().into_iter().flatten() {
+            consumer_geometry(&r["geometry"])?;
+        }
+        if let Some(reference) = c.get("reference") {
+            if reference["scope"] == "aligned_scene" {
+                if let Some(review) = reference.get("correspondence_review") {
+                    let review_path = resolve_path(review["path"].as_str().unwrap(), path)?;
+                    let review_document = load_json_document(&review_path)?;
+                    for exclusion in review_document["excluded_regions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                    {
+                        consumer_geometry(&exclusion["geometry"])?;
+                    }
+                }
+            }
+        }
+    }
     for c in cases {
         let parsed: CaseDocument = serde_json::from_value(c.clone())?;
         file_record(&c["input"], path)?;
@@ -837,10 +891,12 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
             if r.id == "full_image" {
                 return Err(err("reserved_region", "full_image is reserved"));
             }
+            consumer_geometry(&r.geometry)?;
             geometry(&r.geometry, path)?
         }
         crate::references::validate_region_pairs(c)?;
         for x in c["probe"]["tone_response"].as_array().into_iter().flatten() {
+            consumer_geometry(&x["geometry"])?;
             geometry(&x["geometry"], path)?
         }
         if let Some(r) = c.get("reference") {
@@ -871,7 +927,8 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
                         resolve_path(r["correspondence_review"]["path"].as_str().unwrap(), path)?;
                     let review = load_json_document(&review_path)?;
                     for x in review["excluded_regions"].as_array().into_iter().flatten() {
-                        geometry(&x["geometry"], &review_path)?
+                        consumer_geometry(&x["geometry"])?;
+                        geometry(&x["geometry"], &review_path)?;
                     }
                 }
                 "regional" => {
@@ -904,6 +961,7 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
                 ));
             }
             for x in r["regions"].as_array().into_iter().flatten() {
+                consumer_geometry(&x["geometry"])?;
                 geometry(&x["geometry"], path)?
             }
         }
@@ -1209,5 +1267,21 @@ mod tests {
         ] {
             assert!(validate_shape("suite", &suite(None, invalid)).is_err());
         }
+    }
+    #[test]
+    fn suite_rejects_native_region_spaces_until_a_consumer_mapping_exists() {
+        let mut document = suite(None, json!([]));
+        document["cases"][0]["regions"][0]["geometry"]["space"] = json!("output_pixels");
+        assert!(validate_shape("suite", &document).is_ok());
+        let error = validate_suite(&document, Path::new("suite.json")).unwrap_err();
+        assert_eq!(error.code, "unsupported_coordinate_space");
+    }
+    #[test]
+    fn suite_rejects_duplicate_case_ids() {
+        let mut document = suite(None, json!([]));
+        let duplicate = document["cases"][0].clone();
+        document["cases"] = json!([document["cases"][0].clone(), duplicate]);
+        let error = validate_suite(&document, Path::new("suite.json")).unwrap_err();
+        assert_eq!(error.code, "duplicate_id");
     }
 }

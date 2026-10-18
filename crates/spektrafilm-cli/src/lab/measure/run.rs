@@ -16,6 +16,7 @@ use spektrafilm_math::image::ImageBuf;
 
 use crate::select_data_dir;
 
+use super::super::SCENE_RGB_SPACE;
 use super::super::cli::{MeasureEntry, MeasureRunArgs, MeasureStage};
 use super::super::report;
 use super::stimuli::{self, Stimuli};
@@ -24,9 +25,6 @@ use super::{
     last_read_stage, number_field, point_wise_offenders, read_stage_bundle, resolve_chain,
     resolve_range, statistics,
 };
-
-/// The scene-linear RGB space the measured spectra are photographed into.
-const SCENE_RGB_SPACE: &str = "ACES2065-1";
 
 pub fn run(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Result<()> {
     run_with_result(args, matches).map(|_| ())

@@ -19,6 +19,18 @@
             "type": "string",
             "enum": ["available", "unavailable", "not_applicable"]
           },
+          "domain": { "type": "string" },
+          "units": { "type": "string" },
+          "geometry": {
+            "type": "object",
+            "properties": {
+              "coordinate_space": {
+                "enum": ["source_pixels", "working_pixels", "film_frame_pixels", "grain_aperture_pixels", "output_pixels"]
+              }
+            },
+            "required": ["coordinate_space"],
+            "additionalProperties": false
+          },
           "layout": {
             "type": "object",
             "properties": {
@@ -26,7 +38,8 @@
               "height": { "type": "integer", "minimum": 1 },
               "channels": { "type": "integer", "minimum": 1 },
               "dtype": { "type": "string" },
-              "endianness": { "type": "string" }
+              "endianness": { "type": "string" },
+              "channel_order": { "type": "string" }
             },
             "required": ["width", "height", "channels", "dtype", "endianness"],
             "additionalProperties": false

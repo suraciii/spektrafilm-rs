@@ -272,40 +272,97 @@ pub struct EvaluationTargetArgs {
     pub out: PathBuf,
 }
 
+#[derive(Subcommand)]
+pub enum ReportCommand {
+    /// Build an offline report from one retained comparison.
+    Comparison(ReportComparisonArgs),
+}
+
 #[derive(Args)]
-pub struct EvaluationReportArgs {
+pub struct ReportComparisonArgs {
     /// Retained comparison directory.
-    #[arg(
-        long,
-        value_name = "DIR",
-        required_unless_present = "manifest",
-        conflicts_with = "manifest"
-    )]
-    pub comparison: Option<PathBuf>,
-    /// Prepared image review manifest.
-    #[arg(
-        long,
-        value_name = "FILE",
-        required_unless_present = "comparison",
-        conflicts_with = "comparison"
-    )]
-    pub manifest: Option<PathBuf>,
+    #[arg(long, value_name = "DIR")]
+    pub comparison: PathBuf,
     /// New report directory; must not exist.
     #[arg(long, value_name = "DIR")]
     pub out: PathBuf,
 }
 
+#[derive(Subcommand)]
+pub enum RegionsCommand {
+    /// Expand one finite grid into an ordinary regions document.
+    Grid(RegionsGridArgs),
+}
+
 #[derive(Args)]
-pub struct EvaluationRegionsArgs {
-    /// Review manifest with the declared grid set.
-    #[arg(long, value_name = "FILE")]
-    pub manifest: PathBuf,
-    /// Grid set identity to derive.
+pub struct RegionsGridArgs {
+    /// Regions document identity.
     #[arg(long, value_name = "ID")]
-    pub set: String,
+    pub id: String,
+    /// Number of grid rows.
+    #[arg(long, value_name = "N")]
+    pub rows: u64,
+    /// Number of grid columns.
+    #[arg(long, value_name = "N")]
+    pub columns: u64,
+    /// Top-left origin as X,Y.
+    #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
+    pub origin: [u64; 2],
+    /// Patch size as WIDTHxHEIGHT.
+    #[arg(long, value_name = "WIDTHxHEIGHT", value_parser = parse_size)]
+    pub patch_size: [u64; 2],
+    /// Gap as X,Y.
+    #[arg(long, value_name = "X,Y", value_parser = parse_pair)]
+    pub gap: [u64; 2],
+    /// Centered sample size as WIDTHxHEIGHT.
+    #[arg(long, value_name = "WIDTHxHEIGHT", value_parser = parse_size)]
+    pub sample: Option<[u64; 2]>,
+    /// Coordinate space for generated rectangles.
+    #[arg(long, value_name = "SPACE", default_value = "source")]
+    pub space: String,
+    #[arg(long, value_name = "ROLE", default_value = "other")]
+    pub role: String,
+    /// Measurement families, separated by commas.
+    #[arg(long, value_name = "FAMILY,...", value_delimiter = ',', action = clap::ArgAction::Append)]
+    pub measurements: Vec<String>,
     /// New regions document JSON file; must not exist.
     #[arg(long, value_name = "FILE")]
     pub out: PathBuf,
+}
+fn parse_pair(value: &str) -> Result<[u64; 2], String> {
+    let mut parts = value.split(',');
+    let first = parts
+        .next()
+        .ok_or_else(|| "expected X,Y".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid pair {value:?}; expected X,Y"))?;
+    let second = parts
+        .next()
+        .ok_or_else(|| "expected X,Y".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid pair {value:?}; expected X,Y"))?;
+    if parts.next().is_some() {
+        return Err(format!("invalid pair {value:?}; expected X,Y"));
+    }
+    Ok([first, second])
+}
+
+fn parse_size(value: &str) -> Result<[u64; 2], String> {
+    let mut parts = value.split('x');
+    let first = parts
+        .next()
+        .ok_or_else(|| "expected WIDTHxHEIGHT".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid size {value:?}; expected WIDTHxHEIGHT"))?;
+    let second = parts
+        .next()
+        .ok_or_else(|| "expected WIDTHxHEIGHT".to_owned())?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid size {value:?}; expected WIDTHxHEIGHT"))?;
+    if parts.next().is_some() {
+        return Err(format!("invalid size {value:?}; expected WIDTHxHEIGHT"));
+    }
+    Ok([first, second])
 }
 
 /// The chain boundary a measurement enters at.
@@ -495,7 +552,7 @@ pub struct MeasureRunArgs {
 #[derive(Args)]
 #[command(group(
     clap::ArgGroup::new("sample_source").required(true).multiple(false)
-        .args(["source", "from_evidence"])
+        .args(["source", "from_evidence", "from_run"])
 ))]
 pub struct MeasureSampleArgs {
     /// Raster image to read; requires the input declaration below.
@@ -505,17 +562,42 @@ pub struct MeasureSampleArgs {
     #[arg(
         long,
         value_name = "DIR",
-        conflicts_with = "source",
+        conflicts_with_all = ["source", "from_run"],
         help_heading = "Source"
     )]
     pub from_evidence: Option<PathBuf>,
-    /// Stage to read from the bundle; its declaration governs the reading.
+    /// Retained image-domain run directory or RUN.JSON whose selected case owns the stage capture.
+    #[arg(
+        long,
+        value_name = "DIR|RUN.JSON",
+        conflicts_with_all = ["source", "from_evidence"],
+        help_heading = "Source"
+    )]
+    pub from_run: Option<PathBuf>,
+    /// Exact case identity in a retained image-domain run.
+    #[arg(
+        long,
+        value_name = "ID",
+        required_unless_present_any = ["source", "from_evidence"],
+        requires = "from_run",
+        help_heading = "Source"
+    )]
+    pub case: Option<String>,
+    #[arg(
+        long,
+        value_name = "UINT32",
+        required_unless_present_any = ["source", "from_evidence"],
+        requires = "from_run",
+        help_heading = "Source"
+    )]
+    pub seed: Option<u32>,
+    /// Stage to read from a retained source; its declaration governs the reading.
     #[arg(
         long,
         value_enum,
         value_name = "STAGE",
-        requires = "from_evidence",
         required_unless_present = "source",
+        conflicts_with = "source",
         help_heading = "Source"
     )]
     pub stage: Option<MeasureStage>,
@@ -524,7 +606,7 @@ pub struct MeasureSampleArgs {
         long,
         value_name = "NAME",
         requires = "source",
-        required_unless_present = "from_evidence",
+        required_unless_present_any = ["from_evidence", "from_run"],
         help_heading = "Source"
     )]
     pub input_color_space: Option<String>,
@@ -532,8 +614,9 @@ pub struct MeasureSampleArgs {
     #[arg(
         long,
         value_name = "true|false",
+        value_parser = clap::value_parser!(bool),
         requires = "source",
-        required_unless_present = "from_evidence",
+        required_unless_present_any = ["from_evidence", "from_run"],
         help_heading = "Source"
     )]
     pub input_cctf_decoding: Option<bool>,

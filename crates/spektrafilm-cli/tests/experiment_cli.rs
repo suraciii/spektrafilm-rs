@@ -456,6 +456,34 @@ fn run_rejects_a_document_with_a_duplicate_key_or_unknown_field() {
 }
 
 #[test]
+fn run_rejects_multiple_seeds_before_publishing_anything() {
+    let fixture = Fixture::new();
+    fixture.write_input("input.png", 14, 14);
+    fixture.write_suite(CHART);
+    let experiment = fixture.write_experiment(FULL_PATCH, 2, 2);
+    let text = std::fs::read_to_string(&experiment)
+        .unwrap()
+        .replace("\"seeds\": [7]", "\"seeds\": [7, 42]");
+    std::fs::write(&experiment, text).unwrap();
+    let out = fixture.root.join("multiple-seeds");
+    let output = fixture.run(&[
+        "experiment",
+        "run",
+        "--experiment",
+        experiment.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("one experiment run publishes one seed"),
+        "{stderr}"
+    );
+    assert!(!out.join("bundle/stage-evidence.json").exists());
+}
+
+#[test]
 fn run_rejects_dry_run_as_an_unknown_option() {
     let fixture = Fixture::new();
     fixture.write_input("input.png", 14, 14);

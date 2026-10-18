@@ -69,6 +69,15 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
     let document: ExperimentDocument = parse_document(&text, &document_path)?;
     let document_root = document_root(&document_path)?;
 
+    // One experiment run publishes one bundle and one retained record. It
+    // cannot truthfully represent a seed population in that shape; reject
+    // before resolving or invoking the renderer.
+    if document.seeds.len() > 1 {
+        bail!(
+            "experiment declares {} seeds, but one experiment run publishes one seed; use exactly one seed",
+            document.seeds.len()
+        );
+    }
     // Validate the declaration before anything is rendered: a geometry that
     // disagrees with the case is a failure, not a crop.
     let suite_path = resolve_inside(&document.case.suite, &document_root, "case.suite")?;

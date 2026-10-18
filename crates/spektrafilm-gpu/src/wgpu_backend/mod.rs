@@ -8,7 +8,8 @@ use spektrafilm_backend::telemetry::*;
 use spektrafilm_math::image::ImageBuf;
 
 use crate::gpu_helpers::{
-    f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
+    f32_to_scalars, is_uniform_grid_endpoint, nan_safe_rows_to_f32, nan_safe_slice_to_f32,
+    sanitize_spectral_inputs, scalars_to_f32,
 };
 #[cfg(feature = "wgpu-backend")]
 use spektrafilm_backend::cpu_backend;
@@ -56,6 +57,39 @@ fn dispatch_linear(pass: &mut ObservedPass<'_>, n_values: u32) {
 #[inline]
 fn fir_blur_radius(sigma: f32) -> u32 {
     ((3.0_f32 * sigma).ceil() as u32).min(MAX_BLUR_RADIUS)
+}
+#[cfg(feature = "wgpu-backend")]
+#[inline]
+fn pack_matrix_columns(matrix: &[[f32; 3]; 3]) -> [[f32; 4]; 3] {
+    [
+        [matrix[0][0], matrix[1][0], matrix[2][0], 0.0],
+        [matrix[0][1], matrix[1][1], matrix[2][1], 0.0],
+        [matrix[0][2], matrix[1][2], matrix[2][2], 0.0],
+    ]
+}
+
+#[inline]
+fn pack_matrix_columns_f64(matrix: &[[f64; 3]; 3]) -> [[f32; 4]; 3] {
+    [
+        [
+            matrix[0][0] as f32,
+            matrix[1][0] as f32,
+            matrix[2][0] as f32,
+            0.0,
+        ],
+        [
+            matrix[0][1] as f32,
+            matrix[1][1] as f32,
+            matrix[2][1] as f32,
+            0.0,
+        ],
+        [
+            matrix[0][2] as f32,
+            matrix[1][2] as f32,
+            matrix[2][2] as f32,
+            0.0,
+        ],
+    ]
 }
 
 #[cfg(feature = "wgpu-backend")]

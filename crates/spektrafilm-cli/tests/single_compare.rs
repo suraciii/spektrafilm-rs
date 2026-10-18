@@ -235,14 +235,16 @@ fn cli_report_opens_unaligned_reference_as_side_views() {
     let report = temp.path().join("report");
     for (command, source_option, source, destination) in [
         ("compare", "--run", &run, &comparison),
-        ("report", "--comparison", &comparison, &report),
+        ("report", "comparison", &comparison, &report),
     ] {
         let mut cli = std::process::Command::new(env!("CARGO_BIN_EXE_spektrafilm-lab"));
-        cli.arg(command)
-            .arg(source_option)
-            .arg(source)
-            .arg("--out")
-            .arg(destination);
+        cli.arg(command);
+        if command == "report" {
+            cli.arg("comparison").arg("--comparison");
+        } else {
+            cli.arg(source_option);
+        }
+        cli.arg(source).arg("--out").arg(destination);
         if command == "compare" {
             cli.args(["--against", "reference"]);
         }

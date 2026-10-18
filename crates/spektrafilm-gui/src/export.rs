@@ -1,7 +1,7 @@
 //! Full-render export preferences and a cancellable options draft.
 use std::path::{Path, PathBuf};
 
-use crate::controls::enum_choice;
+use crate::controls::{COLOR_SPACES, enum_choice};
 use crate::theme;
 use eframe::egui;
 use serde_json::{Value, json};
@@ -9,17 +9,6 @@ use spektrafilm_core::image_io::{
     BitDepth, Compression, ImageFormat, JpegSubsampling, SaveOptions,
 };
 
-const COLOR_SPACES: &[&str] = &[
-    "sRGB",
-    "DCI-P3",
-    "Display P3",
-    "Adobe RGB (1998)",
-    "ITU-R BT.2020",
-    "ProPhoto RGB",
-    "ACES2065-1",
-    "DaVinci Wide Gamut",
-    "V-Gamut",
-];
 const EXR_COLOR_SPACES: &[&str] = &["sRGB", "ACES2065-1"];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -325,10 +314,9 @@ impl ExportDialog {
             .id(egui::Id::new("full_render_export_options"))
             .open(&mut open).collapsible(false).resizable(false)
             .show(ctx, |ui| {
-                let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
                 enum_choice(ui, "Backend", &mut draft.backend, &[
-                    (ExportBackend::Cpu, cpu_label),
-                    (ExportBackend::Gpu, "GPU (WGPU f32)"),
+                    (ExportBackend::Cpu, ExportBackend::Cpu.label()),
+                    (ExportBackend::Gpu, ExportBackend::Gpu.label()),
                 ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
                 enum_choice(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, ExportFormat::Jpeg.label()),

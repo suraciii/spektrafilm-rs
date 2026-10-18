@@ -4,7 +4,10 @@
 //! former inline block read from the enclosing scope becomes an explicit
 //! parameter; every buffer it produced is returned in [`ChainBuffers`].
 use super::super::is_uniform_grid_endpoint;
-use super::super::{DensityParams, FrontParams, ScanParams, sanitize_spectral_inputs};
+use super::super::pack_matrix_columns_f64;
+use super::super::{
+    DensityParams, FrontParams, ScanParams, nan_safe_rows_to_f32, sanitize_spectral_inputs,
+};
 use spektrafilm_math::image::ImageBuf;
 
 /// Every static buffer and uniform the chain uploads once per call.
@@ -57,10 +60,7 @@ pub(super) fn upload(
     // ── Pre-compute every static GPU-side buffer ─────────────────────
     // Filming density curves — already normalized by caller.
     let film_log_exp_f32: Vec<f32> = film_log_exposure.iter().map(|&v| v as f32).collect();
-    let film_curves_f32: Vec<f32> = film_density_curves_normalized
-        .iter()
-        .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-        .collect();
+    let film_curves_f32: Vec<f32> = nan_safe_rows_to_f32(film_density_curves_normalized);
     let film_log_exp_buf = mk_storage("film_log_exp", bytemuck::cast_slice(&film_log_exp_f32));
     let film_curves_buf = mk_storage("film_curves", bytemuck::cast_slice(&film_curves_f32));
 
@@ -75,19 +75,13 @@ pub(super) fn upload(
     let film_bd_buf = mk_storage("film_bd", bytemuck::cast_slice(&film_bd_f32));
 
     let print_illu_f32: Vec<f32> = print_illuminant.iter().map(|&v| v as f32).collect();
-    let print_sens_f32: Vec<f32> = print_sensitivity
-        .iter()
-        .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-        .collect();
+    let print_sens_f32: Vec<f32> = nan_safe_rows_to_f32(print_sensitivity);
     let print_illu_buf = mk_storage("print_illu", bytemuck::cast_slice(&print_illu_f32));
     let print_sens_buf = mk_storage("print_sens", bytemuck::cast_slice(&print_sens_f32));
 
     // Print density curves (RAW, no normalization for print path).
     let print_log_exp_f32: Vec<f32> = print_log_exposure.iter().map(|&v| v as f32).collect();
-    let print_curves_f32: Vec<f32> = print_density_curves
-        .iter()
-        .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-        .collect();
+    let print_curves_f32: Vec<f32> = nan_safe_rows_to_f32(print_density_curves);
     let print_log_exp_buf = mk_storage("print_log_exp", bytemuck::cast_slice(&print_log_exp_f32));
     let print_curves_buf = mk_storage("print_curves", bytemuck::cast_slice(&print_curves_f32));
 
@@ -132,14 +126,15 @@ pub(super) fn upload(
         } => (rgb_to_adapted_xyz, tc_lut.size as u32),
         spektrafilm_backend::FrontPass::Mallett2019 { matrix } => (matrix, 0u32),
     };
+    let columns = pack_matrix_columns_f64(m);
     let front_params = FrontParams {
         width: image.width,
         height: image.height,
         lut_size: front_lut_size,
         _pad: 0,
-        col0: [m[0][0] as f32, m[1][0] as f32, m[2][0] as f32, 0.0],
-        col1: [m[0][1] as f32, m[1][1] as f32, m[2][1] as f32, 0.0],
-        col2: [m[0][2] as f32, m[1][2] as f32, m[2][2] as f32, 0.0],
+        col0: columns[0],
+        col1: columns[1],
+        col2: columns[2],
     };
     let front_params_buf = mk_uniform("front_params", bytemuck::bytes_of(&front_params));
 
@@ -207,14 +202,15 @@ pub(super) fn upload(
         Some((m, q)) => [m as f32, q as f32, 1.0, 0.0],
         None => [1.0, 0.0, 0.0, 0.0],
     };
+    let columns = pack_matrix_columns_f64(s);
     let scan_params = ScanParams {
         width: image.width,
         height: image.height,
         n_wavelengths: scan_cd_src.len() as u32,
         normalization: scan_normalization as f32,
-        col0: [s[0][0] as f32, s[1][0] as f32, s[2][0] as f32, 0.0],
-        col1: [s[0][1] as f32, s[1][1] as f32, s[2][1] as f32, 0.0],
-        col2: [s[0][2] as f32, s[1][2] as f32, s[2][2] as f32, 0.0],
+        col0: columns[0],
+        col1: columns[1],
+        col2: columns[2],
         bw: white_black,
     };
     let scan_params_buf = mk_uniform("scan_params", bytemuck::bytes_of(&scan_params));

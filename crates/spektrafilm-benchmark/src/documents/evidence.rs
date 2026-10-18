@@ -1,21 +1,14 @@
 use super::{
-    err, finite, identifier, load_json_document, obj, req, safe_artifact_path, text, unique,
-    validate_schema,
+    NATIVE_COORDINATE_SPACES, err, finite, identifier, load_json_document, obj, req,
+    safe_artifact_path, text, unique, validate_schema,
 };
-use crate::common::{Result, digest, sha256_file};
+use crate::common::{Availability, Result, digest, sha256_file};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Availability {
-    Available,
-    Unavailable,
-    NotApplicable,
-}
 #[derive(Debug, Deserialize)]
 pub struct MeasurementRecord {
     pub case_id: String,
@@ -55,14 +48,6 @@ const STAGE_SEMANTICS: [(&str, &str, &str, &str); 6] = [
 
 /// Every stage geometry names its coordinate space explicitly from this
 /// vocabulary; intermediate stages never silently inherit output crop space.
-const COORDINATE_SPACES: [&str; 5] = [
-    "source_pixels",
-    "working_pixels",
-    "film_frame_pixels",
-    "grain_aperture_pixels",
-    "output_pixels",
-];
-
 /// One validated stage buffer of a renderer stage bundle.
 #[derive(Debug)]
 pub struct StageBuffer {
@@ -448,7 +433,7 @@ pub fn validate_stage_bundle(bundle_dir: &Path) -> Result<StageBundle> {
         let geometry = obj(req(record, "geometry")?)?;
         if geometry["coordinate_space"]
             .as_str()
-            .is_none_or(|space| !COORDINATE_SPACES.contains(&space))
+            .is_none_or(|space| !NATIVE_COORDINATE_SPACES.contains(&space))
         {
             return Err(err(
                 "stage_evidence",

@@ -19,7 +19,7 @@ use spektrafilm_math::colorspace::{self, Cctf, RgbColorSpace};
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::from_f64;
 
-use crate::math::mat_vec;
+use crate::math::{mat_mul, mat_vec};
 use crate::params::MagazinePrintColorParams;
 
 /// Tone-curve input knots in CIELAB L*.
@@ -146,17 +146,6 @@ pub(crate) fn appearance(lab: [f64; 3]) -> [f64; 3] {
     ]
 }
 
-#[inline]
-fn mul3(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    let mut out = [[0.0f64; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            out[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
-        }
-    }
-    out
-}
-
 fn xyz_to_lab(xyz: [f64; 3]) -> [f64; 3] {
     let mut f = [0.0f64; 3];
     for c in 0..3 {
@@ -208,8 +197,8 @@ impl MagazineTransform {
         let backward =
             colorspace::chromatic_adaptation_matrix_bradford_f64(colorspace::D50_XYZ_F64, white);
         Self {
-            to_lab: mul3(&forward, &space.matrix_rgb_to_xyz),
-            from_lab: mul3(&space.matrix_xyz_to_rgb, &backward),
+            to_lab: mat_mul(&forward, &space.matrix_rgb_to_xyz),
+            from_lab: mat_mul(&space.matrix_xyz_to_rgb, &backward),
         }
     }
 
