@@ -20,19 +20,35 @@ Each arrow is a file, a retained directory, or a machine-readable result object.
 
 | Endpoint | Owns | Does not do |
 |---|---|---|
-| `run` | execute one declared image or chain measurement | sample, compare, select, or report |
-| `regions grid` | expand one finite grid declaration into explicit regions | read images, render, sample, or create a review page |
+| `run suite` | execute one authored image-domain suite | execute an image-only adapter, measure stimuli, sample, compare, select, or report |
+| `run image` | adapt one local image into one image-domain run | execute a suite, measure stimuli, sample, compare, select, or report |
+| `measure run` | execute one declared point-wise stimulus chain and retain stage evidence | execute an image-domain run, sample, compare, select, or report |
+| `regions grid` | expand one finite grid declaration into explicit regions | read images, render, sample, compare, or create a review page |
 | `sample` | read declared windows from one source | render, resize, infer geometry, or score |
-| `compare` | join and compare retained records | invoke a renderer or borrow another pair's availability |
-| `inspect` | project retained comparison evidence | recalculate metrics or alter decisions |
-| `report comparison` | build an offline page from one comparison | accept a manifest, render, or recalculate metrics |
-| `verify` | re-hash one retained record and its dependencies | rewrite, render, or judge |
+| `compare runs` | compare two completed image-domain runs | compare readings, select a candidate, invoke a renderer, or report |
+| `compare readings` | join and compare two retained reading records | compare image-domain runs, invoke a renderer, or report |
+| `compare pairs` | create explicitly requested pairs from one retained run | compare two runs, infer a default pair, invoke a renderer, or report |
+| `inspect` | project retained comparison evidence | recalculate metrics, evaluate policy, or alter decisions |
+| `report comparison` | build an offline page from one retained comparison | accept a manifest, render, or recalculate metrics |
+| `verify` | re-hash one retained record and its dependencies | rewrite, render, compare, or judge |
 
-The instrument must keep `run`, `sample`, `compare`, `inspect`, and `report` as independently replaceable endpoints. A shell script or another program may control the pipe. The lab does not become a workflow language.
+The parent names `run`, `measure`, and `compare` group leaf endpoints. A parent must not own execution semantics. Each leaf has one input kind, one core operation, one publication boundary, and one handler.
+
+The instrument must keep leaf endpoints independently replaceable. A shell script or another program may control the pipe. The lab does not become a workflow language.
+
+The following flow is the only product-owned composition:
+
+```text
+authored declaration → run suite|image or measure run → retained evidence → sample → retained readings → compare runs|readings|pairs → inspect/report comparison
+```
+
+An arrow is a file, retained directory, or machine-readable result object. A leaf endpoint must not invoke the next leaf, parse another command's stderr, or infer a semantic handler from a document's field presence.
+
+The endpoint name is authoritative. A retained document kind and schema version are validated by the selected endpoint; they do not select a different endpoint.
 
 ## Command surface
 
-The canonical semantic forms are:
+The canonical grammar is:
 
 ```text
 spektrafilm-lab schema --kind KIND
@@ -41,7 +57,7 @@ spektrafilm-lab target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --
 spektrafilm-lab run suite --suite FILE --target FILE --out DIRECTORY [RUN OPTIONS]
 spektrafilm-lab run image --input FILE --configuration FILE --target FILE --out DIRECTORY [RUN OPTIONS]
 spektrafilm-lab measure run --stimuli FILE --enter BOUNDARY --out DIRECTORY [CHAIN OPTIONS]
-spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space source|render|source_pixels|working_pixels|film_frame_pixels|grain_aperture_pixels|output_pixels] [--role ROLE] [--measurements FAMILY,...] --out FILE
+spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space SPACE] [--role ROLE] [--measurements FAMILY,...] --out FILE
 spektrafilm-lab sample --source IMAGE --input-color-space NAME --input-cctf-decoding true|false --regions FILE --out DIRECTORY
 spektrafilm-lab sample --from-evidence DIRECTORY --stage STAGE --regions FILE --out DIRECTORY
 spektrafilm-lab sample --from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE --regions FILE --out DIRECTORY
@@ -54,11 +70,13 @@ spektrafilm-lab verify --record DIRECTORY [--data-dir DIRECTORY]
 spektrafilm-lab fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [--natural-input FILE | --download-natural]
 ```
 
-The flat `run`, `measure`, `compare`, `report`, and `regions` forms may remain compatibility aliases while their meaning is identical to the semantic forms. The aliases must not accept the removed `--manifest` or `--set` review arguments. The implementation must select handlers from the command form or retained `kind`; it must not infer meaning from the presence of fields.
+`run suite`, `run image`, `measure run`, `compare runs`, `compare readings`, and `compare pairs` are distinct command contracts. They must have distinct typed argument groups and distinct semantic handlers. A handler must not choose among these contracts from optional field presence or from the shape of `run.json`.
+
+The former flat forms may remain only as deprecated compatibility aliases during one migration revision. An alias must map to one canonical handler before endpoint execution, must accept no new options, and must reject mixed endpoint options with `argument_syntax`. The alias layer must not contain document-shape dispatch. New documentation and examples must use the canonical grammar. A later compatibility revision may remove the aliases.
 
 `experiment run`, `experiment export`, `spectral evaluate`, and `fit` remain experimental endpoints under their own specifications. They use the same document, artifact, and machine-output contracts. They must not add a review input, workflow graph, sweep language, optimizer language, or second renderer parameter DSL.
 
-Every command option must have a nonempty help description. Help, version, and schema discovery must not require a renderer, image decoder, input asset, or graphics device. `--help` must identify `regions grid` and `report comparison` as separate operations.
+Every command option must have a nonempty help description. Help, version, and schema discovery must not require a renderer, image decoder, input asset, or graphics device. `--help` must identify each canonical leaf operation.
 
 ## Documents and artifacts
 
@@ -163,7 +181,19 @@ The shared instrument contract applies:
 - A failure names a stable error code, failed boundary, input document, file, and exact JSON Pointer when applicable.
 - A failed operation never publishes a successful terminal record.
 
-`regions grid`, `sample`, `compare`, `inspect`, and `report comparison` must not change their machine-output contract based on terminal detection. They must be usable with redirected stdout and stderr and in a pipeline that treats stdout as JSON.
+The stdout result is the only command-to-caller control record. A caller may pass its named artifact paths to another endpoint, but an endpoint must not parse another endpoint's stderr, progress text, or result prose. Named artifacts must carry their own document kind, schema version, relative paths, digests, and producer identity.
+
+`run suite`, `run image`, `measure run`, `sample`, `compare runs`, `compare readings`, `compare pairs`, `inspect`, and `report comparison` must not change their machine-output contract based on terminal detection. They must be usable with redirected stdout and stderr and in a pipeline that treats stdout as JSON.
+
+The implementation migration must proceed in this order:
+
+1. Define separate typed argument groups and handlers for `run suite`, `run image`, and `measure run`.
+2. Route each existing flat invocation to exactly one handler before execution. Preserve artifact bytes, result identity, exit status, publication behavior, and stderr semantics.
+3. Define separate typed argument groups and handlers for `compare runs`, `compare readings`, and `compare pairs`.
+4. Remove directory-shape dispatch and reject options that belong to another comparison contract.
+5. Add canonical-form coverage before changing or removing compatibility aliases.
+
+The migration must not add a fourth run mode, a fourth comparison mode, a workflow document, a sweep language, an optimizer language, a second renderer parameter DSL, or an implicit stdin document carrier.
 
 ## Schema and compatibility policy
 
