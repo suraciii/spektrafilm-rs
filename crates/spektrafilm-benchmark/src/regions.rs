@@ -181,10 +181,15 @@ pub fn generate_grid(
         drop(file);
         let stored = documents::load_json_value(&temp)?;
         documents::validate_shape("regions", &stored)?;
-        if fs::symlink_metadata(out).is_ok() {
-            return Err(common::destination_exists(out));
+        match fs::hard_link(&temp, out) {
+            Ok(()) => {
+                let _ = fs::remove_file(&temp);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(common::destination_exists(out));
+            }
+            Err(error) => return Err(error.into()),
         }
-        fs::rename(&temp, out)?;
         Ok(())
     })();
     if let Err(error) = publication {

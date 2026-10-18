@@ -204,11 +204,7 @@ state — the density and exposure stages do not, since their values carry no tr
 Each region carries a stable `id`, an optional `label`, optional `source` and `partition`
 group labels, a `role`, and the `measurements` families it selects. The role is one of `skin`,
 `neutral`, `shadow`, `highlight`, `color`, `flat_field`, `edge`, `texture`, or `other`. The
-`geometry` names the rectangle with `x`, `y`, `width`, and `height`; `width` and `height`
-default to 1, and `space` declares the coordinate space as `source` for the declared source
-image's pixels or `render` for the coordinates of a completed simulation, defaulting to
-`source`. Identities are unique within the document, and `full_image` stays reserved for the
-whole declared source. Regions may overlap: a reading carries its own identity.
+`geometry` names a half-open rectangle with required `x`, `y`, `width`, `height`, and `space` fields. `width` and `height` are positive. `space` must be `source`, `render`, `source_pixels`, `working_pixels`, `film_frame_pixels`, `grain_aperture_pixels`, or `output_pixels`. `source` names the declared source image's pixels and `render` names the coordinates of a completed simulation; a native stage value names that exact stage coordinate grid. Sampling resolves the producer mapping exactly before reading and rejects a mismatch; it does not resize, crop, pad, translate, or clamp. Identities are unique within the document, and `full_image` stays reserved for the whole declared source. Regions may overlap: a reading carries its own identity.
 
 The same document serves a suite case, a reference, and this sampling command. To create
 ordinary rectangular geometry independently, use `spektrafilm-lab regions grid`; downstream
