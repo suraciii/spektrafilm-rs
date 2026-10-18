@@ -195,6 +195,7 @@ impl Pipeline {
                     h.scatter_tail_weight[1] as f32,
                     h.scatter_tail_weight[2] as f32,
                 ],
+                source_compression: h.source_compression as f32,
                 halation_amount: h.halation_amount as f32,
                 halation_strength_avg: strength_avg,
                 halation_a_tot: a_tot,

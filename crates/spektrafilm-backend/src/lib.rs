@@ -637,6 +637,9 @@ pub struct HalationGpuParams {
     /// (Portra 0.78 / 0.65 / 0.67); averaging is a noticeable
     /// chromatic drift.
     pub scatter_tail_weight: [f32; 3],
+    /// Experimental local source-response compression applied only to the
+    /// halation blur input. Zero selects the existing linear source path.
+    pub source_compression: f32,
     pub halation_amount: f32,
     pub halation_strength_avg: f32,
     /// Per-channel `halation_strength[c] * halation_amount`. Used only

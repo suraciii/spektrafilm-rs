@@ -28,8 +28,8 @@ pub(crate) fn sections(
             if filter_matches(filter, "halation amount") {
                 flags.runtime_changed |= param_numeric(ui, "halation amount", &mut params.film_render.halation.halation_amount, "film_render.halation.halation_amount", "High-level halation strength multiplier (1.0 = physical defaults). Scales the per-channel halation amplitudes.");
             }
-            if filter_matches(filter, "halation spatial scale") {
-                flags.runtime_changed |= param_numeric(ui, "halation spatial scale", &mut params.film_render.halation.halation_spatial_scale, "film_render.halation.halation_spatial_scale", "High-level halation size multiplier (1.0 = physical defaults). Scales the first-bounce sigma.");
+            if filter_matches(filter, "source compression") {
+                flags.runtime_changed |= param_numeric(ui, "source compression", &mut params.film_render.halation.source_compression, "film_render.halation.source_compression", "Experimental local source-response compression for halation only. Zero preserves the linear response; higher values make secondary bright sources contribute more nearly like the brightest source without changing the base film raw exposure.");
             }
             if filter_matches(filter, "boost ev") {
                 flags.runtime_changed |= param_numeric(ui, "boost ev", &mut params.film_render.halation.boost_ev, "film_render.halation.boost_ev", "Maximum highlight boost in stops.");

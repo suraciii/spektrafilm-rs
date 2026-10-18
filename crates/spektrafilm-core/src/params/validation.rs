@@ -105,6 +105,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         )),
         // Discovery range only; `validate` and the sparse-source leaf check
         // own the strict positivity.
+        "film_render.halation.source_compression" => Some((0.0, Some(0.999999))),
         "camera.film_format_mm" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
@@ -761,6 +762,13 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
                 "{name}: must be finite, strictly positive, and <= 16"
             ));
         }
+    }
+    if !params.film_render.halation.source_compression.is_finite()
+        || !(0.0..=0.999999).contains(&params.film_render.halation.source_compression)
+    {
+        return Err(
+            "film_render.halation.source_compression: must be finite and in 0..=0.999999".into(),
+        );
     }
     RgbToRawMethod::parse(&params.settings.rgb_to_raw_method)?;
     if let Some(capture_illuminant) = params.camera.capture_illuminant.as_deref()
