@@ -688,6 +688,7 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
                 )?;
                 let review = load_json_document(&review_path)?;
                 for region in review["excluded_regions"].as_array().into_iter().flatten() {
+                    consumer_geometry(&region["geometry"])?;
                     geometry(&region["geometry"], &review_path)?;
                 }
             }
@@ -920,7 +921,8 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
                         resolve_path(r["correspondence_review"]["path"].as_str().unwrap(), path)?;
                     let review = load_json_document(&review_path)?;
                     for x in review["excluded_regions"].as_array().into_iter().flatten() {
-                        geometry(&x["geometry"], &review_path)?
+                        consumer_geometry(&x["geometry"])?;
+                        geometry(&x["geometry"], &review_path)?;
                     }
                 }
                 "regional" => {
