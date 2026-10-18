@@ -1246,4 +1246,12 @@ mod tests {
             assert!(validate_shape("suite", &suite(None, invalid)).is_err());
         }
     }
+
+    #[test]
+    fn suite_rejects_native_region_spaces_until_a_consumer_mapping_exists() {
+        let mut document = suite(None, json!([]));
+        document["cases"][0]["regions"][0]["geometry"]["space"] = json!("output_pixels");
+        let error = validate_shape("suite", &document).unwrap_err();
+        assert_eq!(error.code, "schema_validation");
+    }
 }

@@ -211,12 +211,7 @@
                           "space": {
                               "enum": [
                                 "source",
-                                "render",
-                                "source_pixels",
-                                "working_pixels",
-                                "film_frame_pixels",
-                                "grain_aperture_pixels",
-                                "output_pixels"
+                                "render"
                               ]
                           }
                         },
@@ -251,12 +246,7 @@
                           "space": {
                           "enum": [
                             "source",
-                            "render",
-                            "source_pixels",
-                            "working_pixels",
-                            "film_frame_pixels",
-                            "grain_aperture_pixels",
-                            "output_pixels"
+                            "render"
                           ]
                           }
                         },
@@ -546,12 +536,7 @@
                         "space": {
                           "enum": [
                             "source",
-                            "render",
-                            "source_pixels",
-                            "working_pixels",
-                            "film_frame_pixels",
-                            "grain_aperture_pixels",
-                            "output_pixels"
+                            "render"
                           ]
                         }
                       },
@@ -586,12 +571,7 @@
                         "space": {
                           "enum": [
                             "source",
-                            "render",
-                            "source_pixels",
-                            "working_pixels",
-                            "film_frame_pixels",
-                            "grain_aperture_pixels",
-                            "output_pixels"
+                            "render"
                           ]
                         }
                       },
@@ -943,12 +923,7 @@
                             "space": {
                               "enum": [
                                 "source",
-                                "render",
-                                "source_pixels",
-                                "working_pixels",
-                                "film_frame_pixels",
-                                "grain_aperture_pixels",
-                                "output_pixels"
+                                "render"
                               ]
                             }
                           },
@@ -983,12 +958,7 @@
                             "space": {
                               "enum": [
                                 "source",
-                                "render",
-                                "source_pixels",
-                                "working_pixels",
-                                "film_frame_pixels",
-                                "grain_aperture_pixels",
-                                "output_pixels"
+                                "render"
                               ]
                             }
                           },
@@ -1284,12 +1254,7 @@
                             "space": {
                               "enum": [
                                 "source",
-                                "render",
-                                "source_pixels",
-                                "working_pixels",
-                                "film_frame_pixels",
-                                "grain_aperture_pixels",
-                                "output_pixels"
+                                "render"
                               ]
                             }
                           },
@@ -1324,12 +1289,7 @@
                             "space": {
                               "enum": [
                                 "source",
-                                "render",
-                                "source_pixels",
-                                "working_pixels",
-                                "film_frame_pixels",
-                                "grain_aperture_pixels",
-                                "output_pixels"
+                                "render"
                               ]
                             }
                           },

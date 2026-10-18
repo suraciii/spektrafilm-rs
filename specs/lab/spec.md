@@ -91,6 +91,7 @@ The geometry's `space` identifies the producer coordinate grid. The accepted aut
 The `source` and `render` values are authoring names retained for image-domain cases. A producer must publish its native stage name. The sampler must resolve the mapping above before reading any pixel. Equal width and height do not establish compatibility. The sampler must reject a mismatch before reading, and must not resize, crop, pad, translate, or otherwise repair it.
 
 A regions document may contain overlapping regions. Overlap is declared intent, not an error. A region's `role`, `source`, `partition`, and `measurements` are reporting metadata; they do not establish correspondence between two images or two runs. A shared region identity is not proof of spectral, geometric, or pixel registration.
+Standalone `regions` and retained-stage sampling may use native spaces only when the selected producer publishes the exact matching coordinate space. Suite, reference, and benchmark image consumers do not yet implement those mappings and must reject native-space geometry with `unsupported_coordinate_space`; they must not treat it as source or render coordinates.
 
 ## `regions grid`
 
