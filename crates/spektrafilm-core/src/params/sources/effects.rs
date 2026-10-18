@@ -34,6 +34,7 @@ pub(super) enum Condition {
     FilmDevelopment,
     PrintDevelopment,
     Preflash,
+    CaptureIlluminant,
     Chemistry(bool),
 }
 impl Condition {
@@ -91,6 +92,9 @@ impl Condition {
             }
             Self::Chemistry(false) => {
                 "film_render.chemistry.active = true; supported fitted density_curves_model required"
+            }
+            Self::CaptureIlluminant => {
+                "film-exposure route that converts scene RGB to film exposure"
             }
             Self::Chemistry(true) => {
                 "print_render.density_curves_morph.active = true; supported fitted density_curves_model required"
@@ -158,6 +162,10 @@ impl Condition {
                 "input > film > print > scan" | "input > convert-film > print > scan"
             ),
             Self::Preflash => p.enlarger.preflash_exposure > 0.0,
+            Self::CaptureIlluminant => matches!(
+                p.workflow.route_enum(),
+                WorkflowRoute::FilmScan | WorkflowRoute::FilmPrintScan
+            ),
             Self::Chemistry(print) => {
                 if print {
                     p.print_render.density_curves_morph.active
@@ -277,6 +285,8 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         )
     {
         out.push(NegativeToPositive);
+    } else if path == "camera.capture_illuminant" {
+        out.push(CaptureIlluminant);
     } else if path.starts_with("magazine_print_color.") {
         out.push(if path.ends_with(".strength") {
             MagazineActive

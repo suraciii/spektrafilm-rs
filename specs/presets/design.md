@@ -9,12 +9,13 @@
 - A section preset must pass the same value validators as a look preset for the paths it carries, and its payload must follow the parameter-file leaf discipline: only supplied leaves are edited, unknown fields and duplicate keys fail, and omitted values must not be filled from defaults. Applying it edits exactly its section and registers those values as explicit, so neither stock initialization nor database calibration rewrites them, and it must not clear explicit values outside its section.
 - Writes, atomicity, rename, delete, duplicate, import, and export must treat both kinds through one code path. The resolver must reuse the parameter-file leaf-merge implementation for section presets instead of adding a second merge.
 - The library directory is `<config_dir>/presets`. The configuration directory policy is shared by the GUI and the CLI. `SPEKTRAFILM_CONFIG_DIR` must override it; there is no separate preset directory override. The library directory must not require a data directory.
+- Reusable combinations of controls that are already preset-owned belong in the existing look or section preset. They use the preset library, ownership table, strict validators, and shared resolver; there is no second cross-domain configuration document or selector.
 
 ## Sections
 
 A section is a named set of look-owned parameter paths. This table is authoritative for routing, and a section preset carries exactly its section's paths.
 
-A section must be a group of editable controls that a user can see and that can change the render. A parity-only, never-read, derived, or control-less parameter must not own a section: `film_render.glare` stays a document field for upstream parity but is not a section, because the pipeline never reads it and no control surface edits it. Print viewing glare remains in `print` through `print_render`; its [readout boundary](../film-chain/spec.md#scan-optics-and-print-viewing-glare) must not be inferred from that storage location.
+A section must be a group of editable controls that a user can see and that can change the render. A parity-only, never-read, derived, or control-less parameter must not own a section: `film_render.glare` is not preset-owned because the pipeline never reads it and no control surface edits it, `film_render.grain.monochrome` is derived from the film profile (`broadcast_monochrome_layout`) and `film_render.grain.micro_sublayers` is a no-op (`sources::effects` classifies it `NoOp`), `enlarger.lens_blur` is zeroed by digest and applied by no upstream stage, and the neutral enlarger filter anchors are database-calibration state rather than section-owned look controls. Print viewing glare remains in `print` through `print_render`; its [readout boundary](../film-chain/spec.md#scan-optics-and-print-viewing-glare) must not be inferred from that storage location.
 
 - `film`: `film_render.density_curve_gamma`, `film_render.development_time`, `film_render.chemistry`
 - `grain`: `film_render.grain`
@@ -22,7 +23,7 @@ A section must be a group of editable controls that a user can see and that can 
 - `couplers`: `film_render.dir_couplers`
 - `base`: `film_render.base`
 - `convert`: `film_render.convert`
-- `camera`: `camera.exposure_compensation_ev`, `camera.auto_exposure`, `camera.auto_exposure_method`
+- `camera`: `camera.exposure_compensation_ev`, `camera.auto_exposure`, `camera.auto_exposure_method`, `camera.capture_illuminant`
 - `camera filter`: `camera_diffusion_filter`
 - `enlarger filter`: `enlarger.diffusion_filter`
 - `enlarger`: `enlarger` without `enlarger.diffusion_filter`

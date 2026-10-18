@@ -71,6 +71,7 @@ impl Section {
                 "camera.exposure_compensation_ev",
                 "camera.auto_exposure",
                 "camera.auto_exposure_method",
+                "camera.capture_illuminant",
             ],
             Self::CameraFilter => &["camera_diffusion_filter"],
             Self::EnlargerFilter => &["enlarger.diffusion_filter"],
@@ -108,13 +109,20 @@ pub fn extract_section(section: Section, params: &RuntimeParams) -> Result<Value
     flatten("", &root, &mut leaves);
     let mut payload = serde_json::json!({});
     for (path, value) in leaves {
-        if section.owns(&path) && path != "film_render.grain.monochrome" {
+        // `monochrome` is derived from the film profile and `micro_sublayers`
+        // is a no-op; neither has a control surface, so neither is carried.
+        let unowned = matches!(
+            path.as_str(),
+            "film_render.grain.monochrome" | "film_render.grain.micro_sublayers"
+        );
+        if section.owns(&path) && !unowned {
             crate::params::sources::insert(&mut payload, &path, value);
         }
     }
     Ok(payload)
 }
 pub fn section_from_payload(payload: &Value) -> Result<Section, String> {
+    super::reject_unowned_preset_fields(payload)?;
     parameter_edits(payload)?;
     let mut leaves = Vec::new();
     flatten("", payload, &mut leaves);

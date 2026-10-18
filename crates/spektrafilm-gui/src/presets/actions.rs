@@ -13,6 +13,8 @@ impl App {
                 PresetKind::Look => {
                     let resolved = selected.preset.resolve(&self.data_dir, &current)?;
                     self.film_medium = crate::scan_medium(&resolved.film);
+                    self.film_reference_illuminant =
+                        resolved.film.info.reference_illuminant.clone();
                     self.film_name = resolved.film_name;
                     self.print_name = resolved.print_name;
                     self.params = resolved.params;
@@ -31,6 +33,7 @@ impl App {
                     .map_err(|error| error.to_string())?;
                     self.params = selected.preset.apply_section(&current, &film)?;
                     self.film_medium = crate::scan_medium(&film);
+                    self.film_reference_illuminant = film.info.reference_illuminant.clone();
                 }
             }
             self.invalidate_look_render();

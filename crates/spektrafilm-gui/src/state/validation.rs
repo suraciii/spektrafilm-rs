@@ -12,14 +12,9 @@ pub(super) fn normalize_grain_section(section: &mut Value) {
     if let Some(value) = object.get("particle_scale_layers").cloned() {
         object.insert("particle_scale_sublayers".to_string(), value);
     }
-    for key in [
-        "sublayers_active",
-        "particle_area_um2",
-        "particle_scale",
-        "particle_scale_layers",
-        "n_sub_layers",
-        "monochrome",
-    ] {
+    // These fields are now effective preset-owned controls. Keep them in the
+    // normalized GUI state; only the legacy derived/no-op fields are removed.
+    for key in ["particle_scale_layers", "monochrome"] {
         object.remove(key);
     }
 }

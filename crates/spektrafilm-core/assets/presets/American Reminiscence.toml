@@ -25,7 +25,6 @@ print_exposure = 1.0
 print_exposure_mode = "auto"
 y_filter_shift = -3.0
 m_filter_shift = 0.0
-lens_blur = 0.0
 preflash_exposure = 0.0
 preflash_y_filter_shift = 0.0
 preflash_m_filter_shift = 0.0
@@ -114,7 +113,6 @@ v3_dye_support_um = 3.5
 v3_event_area_um2 = 1.28
 mult_usm_sigma = 0.699999988079071
 mult_usm_amount = 1.5
-micro_sublayers = 1
 sublayers_active = true
 particle_area_um2 = 0.2
 particle_scale = [
@@ -144,7 +142,6 @@ micro_structure = [
     30.0,
 ]
 n_sub_layers = 1
-monochrome = false
 
 [parameters.film_render.grain.fotufilm]
 amount = 1.0
@@ -252,12 +249,6 @@ langmuir_receiver_k_rgb = [
 diffusion_size_um = 20.0
 diffusion_tail_um = 200.0
 diffusion_tail_weight = 0.03
-
-[parameters.film_render.glare]
-active = true
-percent = 0.029999999329447746
-roughness = 0.699999988079071
-blur = 0.5
 
 [parameters.film_render.base]
 active = true

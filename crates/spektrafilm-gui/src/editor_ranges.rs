@@ -59,6 +59,10 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
 
         // Film chemistry
         "film_render.chemistry.gamma_factor" => Some((0.25, 4.0, 0.05, 2)),
+        // Density-curve gamma of the film and print development: the
+        // validator only requires a finite positive value, so the editor
+        // holds the authored usable band.
+        "film_render.density_curve_gamma" => Some((0.25, 4.0, 0.05, 2)),
         "film_render.chemistry.gamma_factor_fast" => Some((0.25, 4.0, 0.05, 2)),
         "film_render.chemistry.gamma_factor_slow" => Some((0.25, 4.0, 0.05, 2)),
         "film_render.chemistry.gamma_factor_red" => Some((0.25, 4.0, 0.02, 2)),
@@ -99,6 +103,12 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.grain.mult_usm_amount" => Some((0.0, 1000000.0, 0.1, 2)),
         "film_render.grain.mult_usm_sigma" => Some((0.0, 1000000.0, 0.1, 2)),
         "film_render.grain.micro_structure" => Some((0.0, 1000000.0, 0.1, 2)),
+        // Spektra composite-layer controls. Validation accepts any finite
+        // non-negative value; the editor holds the authored usable band
+        // (presets carry 0.2 µm², scales around 1.6-3.2, one sub-layer).
+        "film_render.grain.particle_area_um2" => Some((0.0, 8.0, 0.05, 2)),
+        "film_render.grain.particle_scale" => Some((0.0, 16.0, 0.25, 2)),
+        "film_render.grain.n_sub_layers" => Some((1.0, 8.0, 1.0, 0)),
 
         // Film grain Fotufilm
         "film_render.grain.fotufilm.amount" => Some((0.0, 4.0, 0.05, 2)),
@@ -163,6 +173,7 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "print_render.base.yellow" => Some((0.0, 2.0, 0.05, 2)),
 
         // Print chemistry
+        "print_render.density_curve_gamma" => Some((0.25, 4.0, 0.05, 2)),
         "print_render.density_curves_morph.gamma_factor" => Some((0.25, 4.0, 0.05, 2)),
         "print_render.density_curves_morph.gamma_factor_fast" => Some((0.25, 4.0, 0.05, 2)),
         "print_render.density_curves_morph.gamma_factor_slow" => Some((0.25, 4.0, 0.05, 2)),
@@ -252,6 +263,7 @@ mod tests {
         "film_render.chemistry.gamma_factor_green",
         "film_render.chemistry.gamma_factor_blue",
         "film_render.chemistry.developer_exhaustion",
+        "film_render.density_curve_gamma",
         "film_render.convert.base_percentile",
         "film_render.convert.exposure_compensation_ev",
         "film_render.grain.v2_size",
@@ -275,6 +287,9 @@ mod tests {
         "film_render.grain.mult_usm_amount",
         "film_render.grain.mult_usm_sigma",
         "film_render.grain.micro_structure",
+        "film_render.grain.particle_area_um2",
+        "film_render.grain.particle_scale",
+        "film_render.grain.n_sub_layers",
         "film_render.grain.fotufilm.amount",
         "film_render.grain.fotufilm.size",
         "film_render.grain.fotufilm.softness",
@@ -332,6 +347,7 @@ mod tests {
         "print_render.density_curves_morph.gamma_factor_green",
         "print_render.density_curves_morph.gamma_factor_blue",
         "print_render.density_curves_morph.developer_exhaustion",
+        "print_render.density_curve_gamma",
         "print_render.glare.percent",
         "print_render.glare.roughness",
         "print_render.glare.blur",

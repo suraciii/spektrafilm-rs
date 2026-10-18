@@ -401,6 +401,65 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
     ui.checkbox(value, label).on_hover_text(tooltip).changed()
 }
 
+/// Selector/editor for an optional `String` leaf whose unset state means
+/// "inherit". Catalog values are offered in the dropdown; a valid custom
+/// `BB<kelvin>` value is retained and can be entered through the text field.
+pub(crate) fn optional_choice_tip(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut Option<String>,
+    unset: &str,
+    choices: &[&str],
+    tooltip: &str,
+) -> bool {
+    let mut changed = false;
+    let mut selected = value.clone().unwrap_or_else(|| unset.to_owned());
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_label(label)
+            .selected_text(selected.clone())
+            .show_ui(ui, |ui| {
+                let entries =
+                    std::iter::once((unset, unset)).chain(choices.iter().map(|c| (*c, *c)));
+                for (option, display_label) in entries {
+                    let is_selected = if value.is_none() {
+                        option == unset
+                    } else {
+                        selected == option
+                    };
+                    if ui
+                        .selectable_label(is_selected, display_label)
+                        .on_hover_text(tooltip)
+                        .clicked()
+                        && selected != option
+                    {
+                        selected = option.to_owned();
+                        *value = if option == unset {
+                            None
+                        } else {
+                            Some(option.to_owned())
+                        };
+                        changed = true;
+                    }
+                }
+            })
+            .response
+            .on_hover_text(tooltip);
+        let mut text_value = value.clone().unwrap_or_default();
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(&mut text_value)
+                    .desired_width(120.0)
+                    .hint_text("custom BB<kelvin>"),
+            )
+            .on_hover_text("Enter any shared catalog illuminant or BB<kelvin> (1667..=25000).");
+        if response.changed() {
+            *value = (!text_value.is_empty()).then_some(text_value);
+            changed = true;
+        }
+    });
+    changed
+}
+
 pub fn choice_tip(
     ui: &mut Ui,
     label: &str,

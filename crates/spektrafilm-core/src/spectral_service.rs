@@ -85,8 +85,9 @@ pub struct FilmingUpsampler {
     pub tc_lut: Option<TcLut>,
     /// Mallett2019 reflectance-basis matrix; `Some` for `mallett2019`.
     pub mallett_core: Option<[[f64; 3]; 3]>,
-    /// Illuminant the front pass projects through: the film reference, or
-    /// D65 for the other LUT methods.
+    /// `camera.capture_illuminant` when set, otherwise the film profile's
+    /// reference illuminant. It is not the sensitivity-calibration
+    /// illuminant, which always stays the film reference.
     pub front_illuminant: String,
 }
 
@@ -97,6 +98,12 @@ pub struct FilmingUpsampler {
 /// upsampler is built: a windowed Hanatos2025 TC LUT, another registered
 /// LUT, or the Mallett2019 matrix. The pipeline calibration and the lab
 /// spectral evaluation share this one builder so both see the same chain.
+///
+/// `front_illuminant` reports the effective filming illuminant: an explicit
+/// `camera.capture_illuminant` when set, otherwise the film profile's
+/// `reference_illuminant`. Sensitivity calibration — UV/IR filter
+/// normalization, the Hanatos2025 adaptation and the TC LUT — continues to
+/// use the film reference regardless of the selected capture light.
 pub fn build_filming_upsampler(
     film: &Profile,
     params: &RuntimeParams,
@@ -107,7 +114,14 @@ pub fn build_filming_upsampler(
 
     let ref_illuminant = select_illuminant(&film.info.reference_illuminant);
     let ref_illuminant_f64 = select_illuminant_f64(&film.info.reference_illuminant);
-    let mut front_illuminant = film.info.reference_illuminant.clone();
+    // The explicit value wins; omission inherits the selected profile's
+    // reference illuminant. The reference remains the calibration illuminant
+    // below, independently of this front projection.
+    let front_illuminant = params
+        .camera
+        .capture_illuminant
+        .clone()
+        .unwrap_or_else(|| film.info.reference_illuminant.clone());
 
     // Camera UV/IR filter — Python `FilmingStage._rgb_to_film_raw` filters
     // the film sensitivity through the UV/IR band-pass (with
@@ -201,23 +215,38 @@ pub fn build_filming_upsampler(
         | crate::params::validation::RgbToRawMethod::GaussLasers
         | crate::params::validation::RgbToRawMethod::Jakob2019
         | crate::params::validation::RgbToRawMethod::Otsu2018 => {
-            front_illuminant = "D65".into();
+            // Registered reflectance LUTs were recovered under D65; their
+            // chromaticity projection must remain D65 when capture is unset.
+            // An explicit capture illuminant is a deliberate scene-light
+            // override and is applied to the registered front pass.
+            let projection_illuminant = if params.camera.capture_illuminant.is_none() {
+                "D65"
+            } else {
+                &front_illuminant
+            };
             let tc_lut = compute_registered_tc_lut(
                 data_dir,
                 method_name,
                 &sensitivity,
-                &ref_illuminant_f64,
+                &select_illuminant_f64(projection_illuminant),
                 None,
             )?;
             (Some(tc_lut), None)
         }
-        crate::params::validation::RgbToRawMethod::Mallett2019 => (
-            None,
-            Some(crate::mallett::compute_core_matrix(
-                &sensitivity,
-                &ref_illuminant_f64,
-            )),
-        ),
+        crate::params::validation::RgbToRawMethod::Mallett2019 => {
+            let illuminant = if params.camera.capture_illuminant.is_some() {
+                select_illuminant_f64(&front_illuminant)
+            } else {
+                ref_illuminant_f64.clone()
+            };
+            (
+                None,
+                Some(crate::mallett::compute_core_matrix(
+                    &sensitivity,
+                    &illuminant,
+                )),
+            )
+        }
     };
     let tc_lut = if let Some(tc_lut) = tc_lut {
         let input_gamut =
@@ -278,6 +307,108 @@ mod tests {
             "{ctx}: got {got:.17}, want {want:.17} (diff {:.3e})",
             (got - want).abs()
         );
+    }
+
+    /// The front-end light follows the profile-relative capture contract:
+    /// omission inherits the film reference and an explicit value overrides
+    /// it for every registered method.
+    #[test]
+    fn filming_upsampler_front_illuminant_follows_capture_illuminant() {
+        let data = data_dir();
+        let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let reference = film.info.reference_illuminant.clone();
+        assert_eq!(reference, "D55");
+
+        for method in [
+            "hanatos2025",
+            "jakob2019",
+            "mallett2019",
+            "arctic2026alpha02",
+        ] {
+            let base = |capture: Option<String>| {
+                let mut params = RuntimeParams::default();
+                params.settings.rgb_to_raw_method = method.into();
+                params.camera.capture_illuminant = capture;
+                params
+            };
+
+            let fallback = build_filming_upsampler(&film, &base(None), &data).unwrap();
+            assert_eq!(
+                fallback.front_illuminant, reference,
+                "{method}: profile fallback"
+            );
+
+            let explicit =
+                build_filming_upsampler(&film, &base(Some("D75".into())), &data).unwrap();
+            assert_eq!(
+                explicit.front_illuminant, "D75",
+                "{method}: explicit override"
+            );
+
+            let blackbody =
+                build_filming_upsampler(&film, &base(Some("BB4000".into())), &data).unwrap();
+            assert_eq!(
+                blackbody.front_illuminant, "BB4000",
+                "{method}: blackbody override"
+            );
+        }
+    }
+
+    /// Sensitivity calibration stays on the film reference illuminant even
+    /// when the front pass projects through an explicit capture illuminant.
+    #[test]
+    fn capture_illuminant_leaves_sensitivity_calibration_on_the_film_reference() {
+        let data = data_dir();
+        let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let reference = film.info.reference_illuminant.clone();
+        let sensitivity = portra_sensitivity();
+
+        let build = |capture: Option<String>| {
+            let mut params = RuntimeParams::default();
+            params.settings.rgb_to_raw_method = "hanatos2025".into();
+            params.camera.capture_illuminant = capture;
+            build_filming_upsampler(&film, &params, &data).unwrap()
+        };
+
+        let fallback = build(None);
+        let explicit = build(Some("BB4000".into()));
+        assert_eq!(fallback.front_illuminant, reference);
+        assert_eq!(explicit.front_illuminant, "BB4000");
+        // The UV/IR band-pass normalization and the Hanatos2025 adaptation
+        // both read the film reference, so the filtered sensitivity and the
+        // LUT are identical to the historical build.
+        assert_eq!(fallback.sensitivity, sensitivity);
+        assert_eq!(explicit.sensitivity, sensitivity);
+        let reference_lut = fallback.tc_lut.expect("hanatos2025 builds a LUT");
+        let explicit_lut = explicit.tc_lut.expect("hanatos2025 builds a LUT");
+        assert_eq!(reference_lut.data, explicit_lut.data);
+    }
+
+    #[test]
+    fn explicit_capture_illuminant_changes_registered_projection_and_mallett_matrix() {
+        let data = data_dir();
+        let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+
+        let build = |method: &str, capture: Option<&str>| {
+            let mut params = RuntimeParams::default();
+            params.settings.rgb_to_raw_method = method.into();
+            params.camera.capture_illuminant = capture.map(str::to_owned);
+            build_filming_upsampler(&film, &params, &data).unwrap()
+        };
+
+        let registered_unset = build("jakob2019", None).tc_lut.expect("registered LUT");
+        let registered_explicit = build("jakob2019", Some("BB4000"))
+            .tc_lut
+            .expect("registered LUT");
+        assert_ne!(registered_unset.data, registered_explicit.data);
+
+        let mallett_unset = build("mallett2019", None)
+            .mallett_core
+            .expect("Mallett matrix");
+        let mallett_explicit = build("mallett2019", Some("BB4000"))
+            .mallett_core
+            .expect("Mallett matrix");
+        assert_ne!(mallett_unset, mallett_explicit);
     }
 
     /// Python `compute_band_pass_filter` parity (model/color_filters.py) —

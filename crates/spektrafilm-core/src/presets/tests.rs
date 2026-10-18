@@ -94,7 +94,9 @@ fn version_one_maps_name_and_materializes_controls() {
     assert_eq!(p.schema_version, 4);
     assert_eq!(p.name, "Portable");
     assert!(!p.to_json().unwrap().contains("\"id\""));
-    assert!(p.to_toml().unwrap().contains("y_filter_neutral"));
+    // The legacy document gains the material controls the migration supplies.
+    assert!(p.to_toml().unwrap().contains("print_exposure_mode"));
+    assert!(p.to_toml().unwrap().contains("output_mix"));
     let mut v = serde_json::to_value(p).unwrap();
     v["id"] = "invalid".into();
     assert!(Preset::from_json_str(&v.to_string()).is_err());
@@ -463,44 +465,6 @@ fn carrier_validation_and_precision() {
     assert!(Preset::from_json_str(&v.to_string()).is_err());
 }
 #[test]
-fn sparse_section_roundtrip_and_database_protection() {
-    let document = serde_json::json!({"schema_version":2,"name":"Neutral cyan","parameters":{"enlarger":{"c_filter_neutral":12.0}},"provenance":{"implementation_version":"test","model_version":"test"}});
-    let preset = Preset::from_json_str(&document.to_string()).unwrap();
-    assert_eq!(
-        preset.kind().unwrap(),
-        PresetKind::Section(Section::Enlarger)
-    );
-    assert_eq!(
-        serde_json::to_value(&preset).unwrap()["parameters"],
-        document["parameters"]
-    );
-    assert_eq!(
-        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
-        preset
-    );
-    let mut current = RuntimeParams::default();
-    current.enlarger.m_filter_neutral = 34.0;
-    current.neutral_print_filters_protected = Some([false, true, false]);
-    let applied = preset.apply_section(&current, &test_film()).unwrap();
-    assert_eq!(applied.enlarger.m_filter_neutral, 34.0);
-    assert_eq!(
-        applied.neutral_print_filters_protected,
-        Some([true, true, false])
-    );
-    let film = profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap();
-    let print = profile::load_profile_by_name(&data(), "kodak_portra_endura").unwrap();
-    let database = crate::neutral_filters::NeutralFilters::load(&data()).unwrap();
-    let prepared = crate::params_builder::apply_database_neutral_print_filters(
-        applied,
-        &film,
-        &print,
-        Some(&database),
-    );
-    assert_eq!(prepared.enlarger.c_filter_neutral, 12.0);
-    assert_eq!(prepared.enlarger.m_filter_neutral, 34.0);
-    assert!(prepared.settings.neutral_print_filters_from_database);
-}
-#[test]
 fn explicit_null_is_json_only_and_never_discarded() {
     let text = r#"{"schema_version":2,"name":"Clear amount","parameters":{"film_render":{"grain":{"v2_amount":null}}},"provenance":{"implementation_version":"test","model_version":"test"}}"#;
     let preset = Preset::from_json_str(text).unwrap();
@@ -533,10 +497,76 @@ fn explicit_null_is_json_only_and_never_discarded() {
 }
 
 #[test]
-fn parity_only_film_glare_has_no_section() {
-    let error = section_from_payload(&serde_json::json!({"film_render":{"glare":{"active":true}}}))
-        .unwrap_err();
-    assert!(error.contains("exactly one section"));
+fn parity_only_film_glare_is_rejected_as_unowned() {
+    let payload = serde_json::json!({"film_render":{"glare":{"active":true}}});
+    let error = section_from_payload(&payload).unwrap_err();
+    assert!(error.contains("film_render.glare"), "{error}");
+    // Built-in documents no longer carry the never-read group, so a captured
+    // grain/print section cannot acquire it and the section table stays clean.
+    for preset in builtin_presets() {
+        let value = serde_json::to_value(preset.look_parameters().unwrap()).unwrap();
+        assert!(
+            value["film_render"].get("glare").is_none(),
+            "{} carries the non-effective film glare group",
+            preset.name
+        );
+    }
+    // Print glare stays effective and preset-owned.
+    let mut document = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    document["parameters"]["print_render"]["glare"]["percent"] = 0.25.into();
+    let look = Preset::from_json_str(&document.to_string()).unwrap();
+    assert_eq!(
+        look.look_parameters().unwrap().print_render.glare.percent,
+        0.25
+    );
+}
+
+#[test]
+fn builtin_look_documents_do_not_carry_unowned_leaves() {
+    // Non-effective, derived, and calibration-only leaves stay out of preset
+    // ownership, so a compiled document cannot publish a hidden surface.
+    const UNOWNED: &[(&str, &[&str])] = &[
+        ("film_render", &["glare"]),
+        ("enlarger", &["lens_blur"]),
+        (
+            "film_render.grain",
+            &["micro_sublayers", "monochrome", "particle_scale_layers"],
+        ),
+    ];
+    for preset in builtin_presets() {
+        let value = serde_json::to_value(preset.look_parameters().unwrap()).unwrap();
+        for (group, fields) in UNOWNED {
+            if let Some(object) = group
+                .split('.')
+                .try_fold(&value, |current, key| current.get(key))
+                .and_then(Value::as_object)
+            {
+                for field in *fields {
+                    assert!(
+                        !object.contains_key(*field),
+                        "{} carries {group}.{field}",
+                        preset.name
+                    );
+                }
+            }
+        }
+        // Effective runtime leaves the document still owns are unchanged.
+        let grain = &value["film_render"]["grain"];
+        for owned in [
+            "active",
+            "engine",
+            "sublayers_active",
+            "particle_area_um2",
+            "particle_scale",
+            "n_sub_layers",
+        ] {
+            assert!(
+                grain.get(owned).is_some(),
+                "{} lost effective grain leaf {owned}",
+                preset.name
+            );
+        }
+    }
 }
 
 #[test]

@@ -92,6 +92,7 @@ pub(crate) fn print_text(report: &Value) {
         value(&params["scanner"]["scan_output"])
     );
     println!("  seed: {}", value(&report["seed"]));
+    record("CAPTURE ILLUMINANT", &report["capture_illuminant"]);
     record("SCANNER", &params["scanner"]);
     record(
         "SCANNER RECEIVER",

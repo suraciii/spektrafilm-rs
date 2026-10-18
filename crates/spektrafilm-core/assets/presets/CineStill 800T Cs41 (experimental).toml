@@ -28,7 +28,6 @@ m_filter_shift = 0.0
 # Neutral print filtration is not pinned here: it comes from
 # data/filters/neutral_print_filters.json, fitted per (paper, illuminant, film), so
 # every photo paper gets its own baseline instead of one paper's pack.
-lens_blur = 0.0
 preflash_exposure = 0.0
 preflash_y_filter_shift = 0.0
 preflash_m_filter_shift = 0.0
@@ -93,7 +92,6 @@ particle_scale_sublayers = [
 ]
 mult_usm_sigma = 0.699999988079071
 mult_usm_amount = 1.5
-micro_sublayers = 1
 sublayers_active = true
 particle_area_um2 = 0.2
 particle_scale = [
@@ -123,7 +121,6 @@ micro_structure = [
     30.0,
 ]
 n_sub_layers = 1
-monochrome = false
 
 [parameters.film_render.halation]
 active = true
@@ -198,12 +195,6 @@ langmuir_receiver_k_rgb = [
 diffusion_size_um = 20.0
 diffusion_tail_um = 200.0
 diffusion_tail_weight = 0.03
-
-[parameters.film_render.glare]
-active = false
-percent = 0.029999999329447746
-roughness = 0.699999988079071
-blur = 0.5
 
 [parameters.film_render.base]
 active = true

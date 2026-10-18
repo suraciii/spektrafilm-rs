@@ -19,10 +19,10 @@ pub(crate) struct App {
     pub(crate) chooser: chooser::Chooser,
     pub(crate) observed_browser_state: presets::BrowserState,
     pub(crate) browser_state_changed_at: Option<Instant>,
+    pub(crate) film_reference_illuminant: String,
     pub(crate) film_name: String,
     pub(crate) film_medium: controls::ScanMedium,
     pub(crate) print_name: String,
-    /// Development-time family (minutes) of the selected film / paper —
     /// non-trivial only for B&W stocks. Drives the dev-time pickers.
     pub(crate) film_dev_times: Vec<f64>,
     pub(crate) print_dev_times: Vec<f64>,
@@ -143,6 +143,10 @@ impl App {
         let film_name = gui_state.film().to_owned();
         let print_name = gui_state.paper().to_owned();
         let film_profile = profile::load_profile_by_name(&data_dir, &film_name).ok();
+        let film_reference_illuminant = film_profile
+            .as_ref()
+            .map(|profile| profile.info.reference_illuminant.clone())
+            .unwrap_or_else(|| "D65".to_owned());
         let film_medium = film_profile
             .as_ref()
             .map(scan_medium)
@@ -181,14 +185,15 @@ impl App {
             data_dir,
             films,
             papers,
-            observed_browser_state: presets.state.clone(),
-            browser_state_changed_at: explicit_state.then(Instant::now),
-            film_medium,
             browser_state_path,
             config_directory,
-            chooser: chooser::Chooser::default(),
-            presets,
+            observed_browser_state: presets.state.clone(),
+            browser_state_changed_at: explicit_state.then(Instant::now),
+            film_reference_illuminant,
             film_name,
+            film_medium,
+            presets,
+            chooser: chooser::Chooser::default(),
             print_name,
             film_dev_times,
             print_dev_times,
@@ -287,10 +292,11 @@ impl App {
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         let film_medium = scan_medium(&film);
+        let film_reference_illuminant = film.info.reference_illuminant.clone();
         normalize_scanner_selections(&mut params, film_medium);
         self.film_name = state.film().to_owned();
+        self.film_reference_illuminant = film_reference_illuminant;
         self.film_medium = film_medium;
-        self.print_name = state.paper().to_owned();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
         self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);

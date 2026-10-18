@@ -675,7 +675,7 @@ fn browser_extension_preserves_existing_fields() {
 #[test]
 fn section_explicitness_survives_state_roundtrip() {
     let mut params = RuntimeParams::default();
-    params.enlarger.m_filter_neutral = 31.0;
+    params.enlarger.m_filter_shift = 31.0;
     let preset =
         Preset::capture_section("Filters", Section::Enlarger, &params, provenance()).unwrap();
     let film = spektrafilm_core::profile::load_profile_by_name(
@@ -701,7 +701,7 @@ fn section_explicitness_survives_state_roundtrip() {
         restored.render_preparation_state(),
         applied.render_preparation_state()
     );
-    assert_eq!(restored.enlarger.m_filter_neutral, 31.0);
+    assert_eq!(restored.enlarger.m_filter_shift, 31.0);
     assert_eq!(
         restored.settings.neutral_print_filters_from_database,
         applied.settings.neutral_print_filters_from_database

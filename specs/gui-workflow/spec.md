@@ -35,6 +35,8 @@
 - The viewer retains the last completed frame while new composition runs. The development animation is fixed viewer behaviour under [Viewer presentation](#viewer-presentation).
 - Base workflow selection and optional finishing controls must follow the [Magazine finishing enablement contract](../magazine-finishing/spec.md#enablement).
 - The workflow selector must offer exactly the routes the workflow validator supports.
+- MAIN → Camera exposes `camera.capture_illuminant` as a single optional text or selector control that writes the canonical runtime leaf. Its semantics, inheritance, and validation follow the [capture illuminant contract](../image-input/spec.md#capture-illuminant). An unset value must be selectable and must display the inherited value — the selected film profile's `reference_illuminant` — as the effective value, so the control never hides which light the render assumes. The control must not offer a value the shared illuminant validator rejects and must not derive a value from image content or RAW metadata. It must be labeled with the product concept, for example `Capture illuminant`, and must be distinguished from the enlarger illuminant in MAIN → Enlarger and the scan illuminant in FILM → Convert. A route that computes no film exposure from scene RGB must state that the control is inactive and retain its stored value. The control and the canonical CLI `--set` path must share one type, validator, and effect conditions.
+- The capture illuminant control belongs to the Camera section. It must not be duplicated on another page, and no second surface may edit the same leaf.
 
 ## Material controls and output composition
 
@@ -138,8 +140,7 @@ The following controls carry an `(experimental)` label suffix. The suffix is a U
 The channel-swap validator must reject a non-permutation. A value such as `[0, 0, 0]` currently passes validation and silently duplicates one density channel while dropping the other two. The shared renderer applies the swap to `profile.data.channel_density`, so a non-permutation corrupts the profile at render time. The validator must require exactly three indices in `0..2` that form a permutation of `0, 1, 2`.
 
 The GUI must not present a selector that offers one choice.
-
-A parameter that no control can change and that no pipeline stage reads must not own a GUI section under the [preset section rule](../presets/design.md).
+A parameter that no control can change and that no pipeline stage reads must not own a GUI section under the [preset section rule](../presets/design.md). Every parameter carried by a look or section preset must have one visible GUI control or named action that writes the canonical runtime leaf; inactive conditions retain the value and explain why editing is disabled. GUI controls and canonical CLI `--set` paths must share the same type, validator, units, and conditions. Calibration baselines, derived values, and internal state are not preset-owned controls.
 
 ## Control search
 

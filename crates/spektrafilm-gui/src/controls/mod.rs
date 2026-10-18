@@ -2,8 +2,8 @@
 use egui::Ui;
 use serde_json::Value;
 use spektrafilm_core::params::{
-    NegativeConversionMethod, PrintCurvesMorphParams, PrintExposureMode, ReceiverProfile,
-    RuntimeParams, ScannerAutoSetup, ScannerFinish,
+    NegativeConversionMethod, PrintCurvesMorphParams, PrintExposureEvTracking, PrintExposureMode,
+    ReceiverProfile, RuntimeParams, ScannerAutoSetup, ScannerFinish,
     grain::{FotufilmMaterial, GrainEngine, GrainV2FilmType, GrainV2Mode},
 };
 use spektrafilm_core::profile::Profile;
@@ -19,6 +19,19 @@ const COLOR_SPACES: &[&str] = &[
     "ACES2065-1",
     "DaVinci Wide Gamut",
     "V-Gamut",
+];
+
+/// Capture/scene illuminants offered by the Camera control. This is the
+/// curated subset of the shared illuminant vocabulary that covers the
+/// photographic scene-light range; the bundled catalog carries the full set
+/// (daylight, fluorescent, LED and discharge series), and the canonical
+/// `--set camera.capture_illuminant=…` / preset path accepts every catalog
+/// name plus any `BB<kelvin>` blackbody. Keeping one list here avoids a
+/// second vocabulary while keeping the dropdown usable.
+const CAPTURE_ILLUMINANTS: &[&str] = &[
+    "D50", "D55", "D65", "D75", "T", "A", "BB3200", "BB4000", "BB5000", "BB5600", "BB6500",
+    "BB7500", "FL2", "FL11", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "B", "C", "D60", "E",
+    "BB2000", "BB3400", "TH-KG3", "TH-KG3-L", "K75P",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,6 +169,7 @@ pub(crate) fn section_header<R>(
     egui::CollapsingHeader::new(title).show(ui, |ui| add_contents(ui, filter));
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn show(
     ui: &mut Ui,
     params: &mut RuntimeParams,
@@ -164,6 +178,7 @@ pub(crate) fn show(
     film_medium: ScanMedium,
     filter: &str,
     cache: &mut SectionLabelCache,
+    capture_reference_illuminant: &str,
 ) -> ChangeFlags {
     let mut flags = ChangeFlags::default();
     let mut filter = ControlFilter::new(filter, cache);
@@ -176,12 +191,14 @@ pub(crate) fn show(
             film_medium,
             &mut flags,
             &mut filter,
+            capture_reference_illuminant,
         );
     });
     filter.finish();
     flags
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_sections(
     ui: &mut Ui,
     params: &mut RuntimeParams,
@@ -190,8 +207,18 @@ fn render_sections(
     film_medium: ScanMedium,
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
+    capture_reference_illuminant: &str,
 ) {
-    scanner::sections(ui, params, extras, film_medium, section, flags, filter);
+    scanner::sections(
+        ui,
+        params,
+        extras,
+        film_medium,
+        section,
+        flags,
+        filter,
+        capture_reference_illuminant,
+    );
     chemistry::sections(ui, params, section, flags, filter);
     glare::sections(ui, params, section, flags, filter);
     gamut::sections(ui, params, section, flags, filter);
@@ -206,7 +233,6 @@ fn render_sections(
     output::sections(ui, params, extras, section, flags, filter);
     display::sections(ui, params, extras, section, flags, filter);
 }
-
 mod base;
 mod chemistry;
 mod convert;
@@ -264,6 +290,7 @@ mod tests {
                         medium,
                         "",
                         &mut cache,
+                        "D55",
                     );
                 });
             },
@@ -423,6 +450,148 @@ mod tests {
         ]
     }
 
+    /// Camera section frame, so the capture-illuminant control is exercised
+    /// under its real section rather than a synthetic one.
+    fn camera_frame(
+        ctx: &egui::Context,
+        params: &mut RuntimeParams,
+        events: Vec<egui::Event>,
+    ) -> (ChangeFlags, egui::FullOutput) {
+        let mut flags = ChangeFlags::default();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 1600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut cache = SectionLabelCache::default();
+                    flags = show(
+                        ui,
+                        params,
+                        &mut serde_json::json!({}),
+                        "Camera",
+                        ScanMedium::Negative,
+                        "",
+                        &mut cache,
+                        "D55",
+                    );
+                });
+            },
+        );
+        (flags, output)
+    }
+
+    #[test]
+    fn camera_capture_illuminant_control_sets_and_clears_the_option() {
+        let ctx = egui::Context::default();
+        let mut params = RuntimeParams::default();
+        // The control renders inside the Camera section, not Scanner/Convert.
+        let (_, output) = camera_frame(&ctx, &mut params, vec![]);
+        assert!(has_text(&output, "inherit (film profile)"));
+        assert_eq!(params.camera.capture_illuminant, None);
+        /// `option` inside the popup.
+        fn select(
+            ctx: &egui::Context,
+            params: &mut RuntimeParams,
+            summary: &str,
+            option: &str,
+        ) -> ChangeFlags {
+            let (_, output) = camera_frame(ctx, params, vec![]);
+            let button = text_position(&output, summary);
+            camera_frame(ctx, params, click(button, true));
+            camera_frame(ctx, params, click(button, false));
+            // Popup areas lay out their first frame before becoming visible and hittable.
+            let (_, output) = camera_frame(ctx, params, vec![]);
+            let entry = popup_text_position(&output, option);
+            camera_frame(ctx, params, click(entry, true));
+            camera_frame(ctx, params, click(entry, false)).0
+        }
+
+        // An explicit illuminant writes Some and flags the runtime change.
+        let flags = select(&ctx, &mut params, "inherit (film profile)", "BB4000");
+        assert!(flags.runtime_changed);
+        assert_eq!(params.camera.capture_illuminant.as_deref(), Some("BB4000"));
+        // The selection is retained across frames.
+        let (_, output) = camera_frame(&ctx, &mut params, vec![]);
+        assert!(has_text(&output, "BB4000"));
+
+        // Clearing returns to inherit (None), which is a real unset value.
+        let flags = select(&ctx, &mut params, "BB4000", "inherit (film profile)");
+        assert!(flags.runtime_changed);
+        assert_eq!(params.camera.capture_illuminant, None);
+    }
+
+    #[test]
+    fn camera_capture_illuminant_is_not_rendered_by_other_sections() {
+        let ctx = egui::Context::default();
+        for section in ["Scanner", "Convert", "Enlarger", "Input"] {
+            let mut params = RuntimeParams::default();
+            params.workflow.route = "input > film > scan".into();
+            params.scanner.scan_output = "negative_to_positive".into();
+            let mut flags = ChangeFlags::default();
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 1600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let mut cache = SectionLabelCache::default();
+                        flags = show(
+                            ui,
+                            &mut params,
+                            &mut serde_json::json!({}),
+                            section,
+                            ScanMedium::Negative,
+                            "",
+                            &mut cache,
+                            "D55",
+                        );
+                    });
+                },
+            );
+            assert!(
+                !has_text(&output, "capture illuminant"),
+                "{section} must not own the capture illuminant"
+            );
+            assert!(!flags.runtime_changed);
+            assert_eq!(params.camera.capture_illuminant, None);
+        }
+    }
+
+    #[test]
+    fn camera_capture_illuminant_offered_values_are_supported_illuminants() {
+        // Every offered entry must be accepted by the shared core validator,
+        // so the dropdown cannot produce an unsupported value.
+        for name in CAPTURE_ILLUMINANTS {
+            assert!(
+                spektrafilm_core::spectral_service::is_supported_illuminant(name),
+                "{name} must be a supported illuminant"
+            );
+        }
+    }
+
+    #[test]
+    fn camera_capture_illuminant_accepts_custom_blackbody_text() {
+        let ctx = egui::Context::default();
+        let mut params = RuntimeParams::default();
+        let (_, output) = camera_frame(&ctx, &mut params, vec![]);
+        let position = text_position(&output, "custom BB<kelvin>");
+        camera_frame(&ctx, &mut params, click(position, true));
+        camera_frame(&ctx, &mut params, click(position, false));
+        let flags = camera_frame(&ctx, &mut params, replace_text("BB4321")).0;
+        assert!(flags.runtime_changed);
+        assert_eq!(params.camera.capture_illuminant.as_deref(), Some("BB4321"));
+    }
+
     fn text_position(output: &egui::FullOutput, text: &str) -> egui::Pos2 {
         output
             .shapes
@@ -499,6 +668,7 @@ mod tests {
                             ScanMedium::Negative,
                             "",
                             &mut Default::default(),
+                            "D55",
                         );
                     });
                 },
@@ -548,6 +718,7 @@ mod tests {
                             ScanMedium::Negative,
                             "",
                             &mut Default::default(),
+                            "D55",
                         );
                     });
                 },

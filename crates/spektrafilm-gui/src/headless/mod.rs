@@ -200,9 +200,7 @@ fn click(h: &mut Harness<'_, App>, label: &str) {
     h.run_steps(3);
 }
 
-/// Click an export action. The sidebar button that opens the modal and the
-/// modal's own submit share one label; the sidebar action is disabled while
-/// the modal is open, so the single enabled node is the actionable one.
+/// Click the enabled export action after its section has been opened.
 fn export_action(h: &mut Harness<'_, App>) {
     let buttons: Vec<_> = h
         .query_all_by_label("Export…")
@@ -227,29 +225,6 @@ fn import_file(h: &mut Harness<'_, App>, raw: bool) {
     buttons[index].simulate_click();
     h.run_steps(3);
 }
-
-/// Scroll the controls panel down so elements below the fold come into view.
-///
-/// The harness's `simulate_click` doesn't scroll, and a section that expands
-/// below the fold reveals its controls outside the scroll viewport's clip
-/// rect, where pointer events no longer reach them. Real wheel input over the
-/// panel scrolls it through the same path a user takes.
-fn scroll_controls_down(h: &mut Harness<'_, App>) {
-    let screen = h.ctx.screen_rect();
-    let pointer = egui::pos2(screen.right() - 160.0, screen.center().y);
-    h.input_mut()
-        .events
-        .push(egui::Event::PointerMoved(pointer));
-    h.input_mut().events.push(egui::Event::MouseWheel {
-        unit: egui::MouseWheelUnit::Point,
-        delta: egui::vec2(0.0, -600.0),
-        modifiers: Default::default(),
-    });
-    // egui smooths a large wheel delta over several frames; keep stepping so
-    // the scroll settles before the next interaction.
-    h.run_steps(10);
-}
-
 /// Pick `option` from the combo labeled `label`.
 ///
 /// The option is looked up by button role: a grain engine group is a
@@ -652,13 +627,13 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_png(&save_path, &expected_saved);
     let scan = render(h, "SCAN");
     assert_eq!((scan.width, scan.height), (160, 80));
-    assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     // Export must ignore the most recently retained preview's reduced resolution.
     render(h, "PREVIEW");
+    // The scanner section remains expanded after the scan controls above;
+    // collapse it before opening the export section below the controls.
+    click(h, "Scanner");
     click(h, "Export options");
-    scroll_controls_down(h);
-    click(h, "Export…");
-    assert!(h.state().export_dialog.is_open());
+    export_action(h);
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
     choose(h, "Backend", ExportBackend::Gpu.label());

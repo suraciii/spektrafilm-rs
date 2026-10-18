@@ -46,6 +46,14 @@ pub struct CameraParams {
     pub color_filter: String,
     #[serde(default)]
     pub diffusion_filter: DiffusionFilterParams,
+    /// Scene illuminant the filming front pass projects through. `None` keeps
+    /// the film profile's reference illuminant, preserving the historical
+    /// behavior; an explicit named catalog source or `BB<kelvin>` blackbody
+    /// overrides it. Distinct from the film reference (which stays the
+    /// sensitivity calibration illuminant), the scan and enlarger illuminants
+    /// and the output white point.
+    #[serde(default)]
+    pub capture_illuminant: Option<String>,
 }
 
 impl Default for CameraParams {
@@ -60,6 +68,7 @@ impl Default for CameraParams {
             filter_ir: [0.0, 675.0, 15.0],
             color_filter: "none".into(),
             diffusion_filter: DiffusionFilterParams::default(),
+            capture_illuminant: None,
         }
     }
 }
@@ -1343,6 +1352,57 @@ mod tests {
         params.film_render.grain.engine = super::grain::GrainEngine::Spektra;
         params.film_render.grain.v3_event_area_um2 = -1.0;
         assert!(params.validate().is_err());
+    }
+
+    #[test]
+    fn capture_illuminant_defaults_to_none_and_roundtrips_missing_and_null() {
+        let mut params = super::RuntimeParams::default();
+        assert_eq!(params.camera.capture_illuminant, None);
+
+        // A document without the leaf deserializes to None.
+        let restored: super::RuntimeParams =
+            serde_json::from_str(r#"{"camera":{"film_format_mm":35.0}}"#).unwrap();
+        assert_eq!(restored.camera.capture_illuminant, None);
+        // An explicit null deserializes to None as well.
+        let restored: super::RuntimeParams =
+            serde_json::from_str(r#"{"camera":{"capture_illuminant":null}}"#).unwrap();
+        assert_eq!(restored.camera.capture_illuminant, None);
+
+        params.camera.capture_illuminant = Some("BB4000".into());
+        params.validate().unwrap();
+        let saved = serde_json::to_vec(&params).unwrap();
+        let restored: super::RuntimeParams = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(
+            restored.camera.capture_illuminant.as_deref(),
+            Some("BB4000")
+        );
+        restored.validate().unwrap();
+
+        // None stays valid and preserves the historical behavior.
+        params.camera.capture_illuminant = None;
+        params.validate().unwrap();
+    }
+
+    #[test]
+    fn capture_illuminant_rejects_unsupported_explicit_values() {
+        let mut params = super::RuntimeParams::default();
+        for invalid in ["", "not-an-illuminant", "BB1000", "BB25001", "bb4000"] {
+            params.camera.capture_illuminant = Some(invalid.into());
+            let error = params.validate().unwrap_err();
+            assert!(
+                error.starts_with("camera.capture_illuminant:"),
+                "unexpected error for {invalid:?}: {error}"
+            );
+        }
+        // None and every supported spelling validate.
+        params.camera.capture_illuminant = None;
+        params.validate().unwrap();
+        for valid in [
+            "D65", "T", "TH-KG3", "TH-KG3-L", "K75P", "BB4000", "BB25000",
+        ] {
+            params.camera.capture_illuminant = Some(valid.into());
+            params.validate().unwrap();
+        }
     }
 
     #[test]

@@ -43,6 +43,7 @@ fn nullable_inner(path: &str) -> Option<&'static str> {
         | "film_render.grain.v2_resolution_factor" => "f32",
         "taps.inject" | "taps.collect" => "String",
         "neutral_print_filters_protected" => "[bool; 3]",
+        "camera.capture_illuminant" => "String",
         _ => return None,
     })
 }
@@ -446,6 +447,9 @@ fn description(path: &str) -> Option<&'static str> {
         }
         "camera.film_format_mm" => Some(
             "Exposed full-source long-edge dimension in millimeters; not roll width or film-stock designation.",
+        ),
+        "camera.capture_illuminant" => Some(
+            "Scene illuminant the filming front pass projects through; unset follows the film profile reference illuminant, and an explicit named catalog source or BB<kelvin> blackbody overrides it. Distinct from the film reference (sensitivity calibration), scan and enlarger illuminants, and the output white point; never inferred from EXIF or RAW metadata and never rewrites RAW white balance.",
         ),
         "io.crop_size" => Some(
             "Both components are fractions of the uncropped source long edge, not independent width and height fractions.",

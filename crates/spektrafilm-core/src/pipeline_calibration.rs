@@ -11,6 +11,7 @@ use crate::spectral_service::{self, select_illuminant};
 /// Runtime controls that invalidate spectral calibration artifacts.
 #[derive(Debug, Clone, PartialEq)]
 struct SpectralControlsKey {
+    capture_illuminant: Option<String>,
     rgb_to_raw_method: String,
     apply_hanatos2025_adaptation_window: bool,
     apply_hanatos2025_adaptation_surface: bool,
@@ -74,6 +75,7 @@ fn calibration_controls_key(params: &RuntimeParams) -> CalibrationControlsKey {
 
 fn spectral_controls_key(params: &RuntimeParams) -> SpectralControlsKey {
     SpectralControlsKey {
+        capture_illuminant: params.camera.capture_illuminant.clone(),
         rgb_to_raw_method: params.settings.rgb_to_raw_method.clone(),
         apply_hanatos2025_adaptation_window: params.settings.apply_hanatos2025_adaptation_window,
         apply_hanatos2025_adaptation_surface: params.settings.apply_hanatos2025_adaptation_surface,
@@ -390,15 +392,26 @@ pub(crate) fn build(
     ]);
     let (c_neutral_f64, m_neutral_f64, y_neutral_f64) = (cmy_f64[0], cmy_f64[1], cmy_f64[2]);
 
-    // The filming front end — filtered sensitivity, RGB → film-raw
-    // upsampler, and the illuminant the front pass projects through — is
-    // shared with the lab spectral evaluation.
+    // Capture illuminant is a filming-context input only for direct film-exposure
+    // routes. Keep the user value in the runtime params for reporting/persistence,
+    // but remove it from calibration on input and convert-film routes so inactive
+    // controls cannot change midgray or auto print-exposure artifacts.
+    let spectral_params = if matches!(
+        params.workflow.route_enum(),
+        WorkflowRoute::FilmScan | WorkflowRoute::FilmPrintScan
+    ) {
+        params.clone()
+    } else {
+        let mut inactive_params = params.clone();
+        inactive_params.camera.capture_illuminant = None;
+        inactive_params
+    };
     let spectral_service::FilmingUpsampler {
         tc_lut,
         mallett_core,
         front_illuminant,
         ..
-    } = spectral_service::build_filming_upsampler(&film, &params, data_dir)?;
+    } = spectral_service::build_filming_upsampler(&film, &spectral_params, data_dir)?;
 
     // Python parity: sensitivities are pre-balanced in the profile so midgray ≈ 1.0.
     // The TC LUT is used unnormalized — Python's `rgb_to_raw_hanatos2025` does NOT scale it.

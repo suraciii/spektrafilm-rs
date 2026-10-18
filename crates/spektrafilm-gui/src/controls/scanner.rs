@@ -3,6 +3,7 @@ use egui::Ui;
 use serde_json::Value;
 
 /// One `show()` section group, split out of the dispatcher for readability.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn sections(
     ui: &mut Ui,
     params: &mut RuntimeParams,
@@ -11,6 +12,7 @@ pub(crate) fn sections(
     section: &str,
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
+    capture_reference_illuminant: &str,
 ) {
     if section == "Input" {
         section_header(ui, filter, "Input", |ui, filter| {
@@ -35,6 +37,14 @@ pub(crate) fn sections(
     }
     if section == "Camera" {
         ui.scope(|ui| {
+            let capture_active = matches!(
+                params.workflow.route_enum(),
+                spektrafilm_core::WorkflowRoute::FilmScan
+                    | spektrafilm_core::WorkflowRoute::FilmPrintScan
+            );
+            if !capture_active {
+                ui.label("Capture illuminant inactive on this route; stored values are retained.");
+            }
             if filter_matches(filter, "exposure compensation ev") {
                 flags.runtime_changed |= param_numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, "camera.exposure_compensation_ev", "Add a bias to the auto-exposure of the camera.");
             }
@@ -49,6 +59,18 @@ pub(crate) fn sections(
             }
             if filter_matches(filter, "color filter") {
                 flags.runtime_changed |= choice_tip(ui, "color filter", &mut params.camera.color_filter, &["none", "hoya_x0", "hoya_x1", "hoya_y2", "hoya_ya3", "hoya_r1"], "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter.");
+            }
+            if filter_matches(filter, "capture illuminant") {
+                ui.add_enabled_ui(capture_active, |ui| {
+                    flags.runtime_changed |= optional_choice_tip(
+                        ui,
+                        "capture illuminant",
+                        &mut params.camera.capture_illuminant,
+                        "inherit (film profile)",
+                        CAPTURE_ILLUMINANTS,
+                        &format!("Scene illuminant for the filming front pass; unset inherits the selected film profile reference illuminant ({capture_reference_illuminant}). Distinct from film sensitivity calibration, scan and enlarger illuminants, and output white point."),
+                    );
+                });
             }
         });
     }

@@ -361,55 +361,6 @@ fn resolved_explicit_axes_survive_runtime_construction_and_updates() {
 }
 
 #[test]
-fn preset_resolver_protects_actual_runtime_axes_for_all_consumers() {
-    let mut look = presets::load_selector("Kodak Portra 400", &data_dir()).unwrap();
-    look.look_parameters_mut()
-        .unwrap()
-        .enlarger
-        .c_filter_neutral = 12.0;
-    look.look_parameters_mut()
-        .unwrap()
-        .enlarger
-        .m_filter_neutral = 34.0;
-    look.look_parameters_mut()
-        .unwrap()
-        .enlarger
-        .y_filter_neutral = 56.0;
-    let mut context = RuntimeParams::default();
-    context.settings.rgb_to_raw_method = "mallett2019".into();
-    let resolved = look.resolve(&data_dir(), &context).unwrap();
-    let runtime =
-        crate::runtime::Runtime::new(resolved.film, resolved.print, resolved.params, &data_dir())
-            .unwrap();
-    assert_eq!(runtime.params().enlarger.c_filter_neutral, 12.0);
-    assert_eq!(runtime.params().enlarger.m_filter_neutral, 34.0);
-    assert_eq!(runtime.params().enlarger.y_filter_neutral, 56.0);
-    assert!(
-        runtime
-            .params()
-            .settings
-            .neutral_print_filters_from_database
-    );
-    let resolved = look.resolve(&data_dir(), &context).unwrap();
-    let photo = crate::runtime::RuntimePhotoParams {
-        film: resolved.film,
-        print: resolved.print,
-        params: resolved.params,
-        data_dir: data_dir(),
-    };
-    let runtime = photo.into_runtime(DigestMode::PreserveUserEdits).unwrap();
-    assert_eq!(runtime.params().enlarger.c_filter_neutral, 12.0);
-    assert_eq!(runtime.params().enlarger.m_filter_neutral, 34.0);
-    assert_eq!(runtime.params().enlarger.y_filter_neutral, 56.0);
-    assert!(
-        runtime
-            .params()
-            .settings
-            .neutral_print_filters_from_database
-    );
-}
-
-#[test]
 fn partial_axis_calibration_preserves_unprotected_database_precision() {
     let sources =
         vec!["enlarger.m_filter_neutral=34,settings.rgb_to_raw_method=\"mallett2019\"".into()];
@@ -731,4 +682,24 @@ fn chemistry_feedback_identifies_disabled_and_unsupported_models() {
         assert!(crate::params::sources::inactive_reason(path, &params, &film, &print).is_some());
         assert_eq!(serde_json::to_value(&params).unwrap(), stored);
     }
+}
+
+#[test]
+fn capture_illuminant_edit_reports_inactive_on_input_route() {
+    let sources = vec!["camera.capture_illuminant=BB4000".into()];
+    let mut req = request(&sources);
+    req.route = Some("input");
+    let resolved = resolve(req, &data_dir()).unwrap();
+    let edit = resolved
+        .edits
+        .iter()
+        .find(|edit| edit.path == "camera.capture_illuminant")
+        .expect("capture illuminant edit");
+    assert_eq!(edit.status, EditStatus::Inactive);
+    assert_eq!(edit.effective, serde_json::json!("BB4000"));
+    assert!(
+        edit.reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("film-exposure route"))
+    );
 }
