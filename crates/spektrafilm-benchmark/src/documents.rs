@@ -647,8 +647,10 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
                 geometry(&region["geometry"], document)?;
             }
         }
-        "preparation" => file_record(&value["original"], document)?,
         "reference" => {
+            for region in value["regions"].as_array().into_iter().flatten() {
+                consumer_geometry(&region["geometry"])?;
+            }
             for key in [
                 "transform",
                 "aligned_derivative",
@@ -816,12 +818,8 @@ pub fn load_suite(path: &Path) -> Result<Value> {
 
 pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
     validate_authored("suite", v).map_err(|e| e.file(path.display().to_string()))?;
-    for c in v["cases"].as_array().into_iter().flatten() {
-        for r in c["regions"].as_array().into_iter().flatten() {
-            consumer_geometry(&r["geometry"])?;
-        }
-    }
     let cases = v["cases"].as_array().unwrap();
+    unique(cases, "id")?;
     for x in v["protocol"]["probe"]["tone_response"]
         .as_array()
         .into_iter()
@@ -830,10 +828,13 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
         consumer_geometry(&x["geometry"])?;
         geometry(&x["geometry"], path)?
     }
-    // A tone probe whose exposure coordinates are not at least two strictly
-    // increasing values cannot produce a response curve, so it fails
     // validation instead of a later measurement.
     validate_tone_probe(&v["protocol"]["probe"]["tone_response"])?;
+    for c in cases {
+        for r in c["regions"].as_array().into_iter().flatten() {
+            consumer_geometry(&r["geometry"])?;
+        }
+    }
     for c in cases {
         let parsed: CaseDocument = serde_json::from_value(c.clone())?;
         file_record(&c["input"], path)?;
@@ -1257,5 +1258,13 @@ mod tests {
         assert!(validate_shape("suite", &document).is_ok());
         let error = validate_suite(&document, Path::new("suite.json")).unwrap_err();
         assert_eq!(error.code, "unsupported_coordinate_space");
+    }
+    #[test]
+    fn suite_rejects_duplicate_case_ids() {
+        let mut document = suite(None, json!([]));
+        let duplicate = document["cases"][0].clone();
+        document["cases"] = json!([document["cases"][0].clone(), duplicate]);
+        let error = validate_suite(&document, Path::new("suite.json")).unwrap_err();
+        assert_eq!(error.code, "duplicate_id");
     }
 }
