@@ -53,6 +53,7 @@ pub(crate) struct App {
     pub(crate) output_color_space: String,
     pub(crate) output_cctf_encoding: bool,
     pub(crate) status: String,
+    pub(crate) last_state_normalization: Option<String>,
     pub(crate) last_export_error: Option<String>,
     /// Controls changed since the latest submitted render snapshot.
     pub(crate) dirty: bool,
@@ -243,6 +244,7 @@ impl App {
             filter: String::new(),
             factory_reset_confirm: false,
             section_labels: std::collections::HashMap::new(),
+            last_state_normalization: None,
             search_index: crate::controls::SearchIndex::default(),
             pending_scroll: None,
         };
@@ -296,12 +298,20 @@ impl App {
     }
 
     pub(crate) fn apply_state(&mut self, state: state::GuiState) -> Result<()> {
+        self.last_state_normalization = None;
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         let film_medium = scan_medium(&film);
+        let before_scanner = params.scanner.clone();
         normalize_scanner_selections(&mut params, film_medium);
+        self.last_state_normalization = App::scanner_normalization_detail(
+            &before_scanner,
+            &params.scanner,
+            film_medium,
+            &params.workflow.route,
+        );
         self.film_name = state.film().to_owned();
         self.film_medium = film_medium;
         self.print_name = state.paper().to_owned();

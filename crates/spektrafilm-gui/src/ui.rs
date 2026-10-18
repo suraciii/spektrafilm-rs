@@ -194,7 +194,12 @@ impl App {
             self.status = match result {
                 Ok(()) => {
                     self.remember_dialog("state", &path);
-                    format!("Loaded GUI state from {}", path.display())
+                    match self.last_state_normalization.take() {
+                        Some(detail) => {
+                            format!("Loaded GUI state from {}; {detail}", path.display())
+                        }
+                        None => format!("Loaded GUI state from {}", path.display()),
+                    }
                 }
                 Err(e) => format!("State load error: {e:#}"),
             };
@@ -276,7 +281,7 @@ impl App {
                 self.force_preview = true;
                 self.full_scan_requested = false;
             }
-            if ui.add_enabled(ready, egui::Button::new("SCAN")).on_hover_text("Render the original working resolution with the current runtime controls, with every spatial and stochastic effect, and retain it as the viewer's output.").clicked() {
+            if ui.add_enabled(ready, egui::Button::new("SCAN")).on_hover_text("Render the original working resolution with the current runtime controls and retain it as the viewer's output. Spatial and stochastic effects follow their current accepted controls, including any explicit deactivation settings.").clicked() {
                 self.dirty = true;
                 self.force_preview = true;
                 self.full_scan_requested = true;
@@ -370,10 +375,18 @@ impl App {
         if before.finish != after.finish {
             normalized.push("scanner finish");
         }
+        let default_finish_strength =
+            spektrafilm_core::params::ScannerParams::default().finish_strength;
+        if before.finish_strength.to_bits() != after.finish_strength.to_bits()
+            || (after.finish != spektrafilm_core::params::ScannerFinish::LabScan
+                && after.finish_strength.to_bits() != default_finish_strength.to_bits())
+        {
+            normalized.push("finish strength");
+        }
         if before.receiver_profile != after.receiver_profile {
             normalized.push("receiver profile");
         }
-        if before.reference_exposure_ev != after.reference_exposure_ev {
+        if before.reference_exposure_ev.to_bits() != after.reference_exposure_ev.to_bits() {
             normalized.push("reference exposure EV");
         }
         if before.reference_balance_ev != after.reference_balance_ev {

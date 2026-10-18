@@ -218,9 +218,9 @@ fn scanner_transitions_preserve_points_and_reset_illegal_output() {
         spektrafilm_core::params::NegativeConversionMethod::Coupled;
     app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
     app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
+    app.params.scanner.finish_strength = 0.75;
     app.params.scanner.reference_exposure_ev = 1.0;
     app.params.scanner.reference_balance_ev = [0.1, 0.2, 0.3];
-    app.dirty = false;
     let revision = app.parameter_revision;
     app.params.workflow.route = "input > film > print > scan".into();
     app.finish_route_change();
@@ -246,6 +246,7 @@ fn scanner_transitions_preserve_points_and_reset_illegal_output() {
         app.params.scanner.finish,
         spektrafilm_core::params::ScannerFinish::Neutral
     );
+    assert!(app.status.contains("finish strength"), "{}", app.status);
     assert!(app.dirty);
     assert_eq!(app.parameter_revision, revision.wrapping_add(1));
     app.params.workflow.route = "input".into();

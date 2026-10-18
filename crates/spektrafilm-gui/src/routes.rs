@@ -204,10 +204,10 @@ pub(crate) fn tooltip() -> &'static str {
             .iter()
             .map(|choice| {
                 let conditional = match choice.value {
-                    "input > film > scan" => " The scanned medium is the selected film; preserve medium polarity delivers its native negative or slide polarity, while Negative to positive performs negative conversion to a positive image.",
+                    "input > film > scan" => " The scanned medium is the selected film; a negative film may preserve its native negative polarity or use Negative to positive conversion, while a slide film retains its native positive polarity.",
                     "input > film > print > scan" | "input > convert-film > print > scan" => " The scanned medium is photographic paper and reads as a positive image.",
-                    "input > convert-film > scan" => " The scanned medium is film; preserve medium polarity delivers the native negative, while Negative to positive performs negative conversion to a positive image.",
-                    "input > convert-film > scan-minus-base" => " The scanned medium is film with its base removed and is delivered as a converted positive.",
+                    "input > convert-film > scan" => " The scanned medium is negative film; preserve medium polarity delivers the native negative, while Negative to positive performs negative conversion to a positive image.",
+                    "input > convert-film > scan-minus-base" => " The scanned medium is negative film with its base removed; it remains in native negative polarity.",
                     _ => "",
                 };
                 format!("{} ({}){}", choice.label, choice.description, conditional)
@@ -331,8 +331,8 @@ mod tests {
     fn route_tooltip_names_conditional_scanned_medium_and_polarity() {
         let tooltip = tooltip();
         assert!(tooltip.contains("scanned medium is photographic paper"));
-        assert!(tooltip.contains("preserve medium polarity delivers"));
-        assert!(tooltip.contains("Negative to positive performs negative conversion"));
-        assert!(tooltip.contains("film with its base removed"));
+        assert!(tooltip.contains("negative film may preserve"));
+        assert!(tooltip.contains("slide film retains its native positive polarity"));
+        assert!(tooltip.contains("remains in native negative polarity"));
     }
 }
