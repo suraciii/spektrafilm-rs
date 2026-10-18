@@ -647,6 +647,7 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
                 geometry(&region["geometry"], document)?;
             }
         }
+        "preparation" => file_record(&value["original"], document)?,
         "reference" => {
             for region in value["regions"].as_array().into_iter().flatten() {
                 consumer_geometry(&region["geometry"])?;
@@ -828,9 +829,17 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
         consumer_geometry(&x["geometry"])?;
         geometry(&x["geometry"], path)?
     }
+    // A tone probe whose exposure coordinates are not at least two strictly
+    // increasing values cannot produce a response curve, so it fails
     // validation instead of a later measurement.
     validate_tone_probe(&v["protocol"]["probe"]["tone_response"])?;
     for c in cases {
+        for geometry in c["reference"]["regions"].as_array().into_iter().flatten() {
+            consumer_geometry(&geometry["geometry"])?;
+        }
+        for probe in c["probe"]["tone_response"].as_array().into_iter().flatten() {
+            consumer_geometry(&probe["geometry"])?;
+        }
         for r in c["regions"].as_array().into_iter().flatten() {
             consumer_geometry(&r["geometry"])?;
         }
