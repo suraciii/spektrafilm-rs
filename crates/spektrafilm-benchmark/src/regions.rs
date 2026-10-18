@@ -158,9 +158,10 @@ pub fn generate_grid(
     let bytes = serde_json::to_vec_pretty(&value)?;
     let root = documents::normalize_path(out)?;
     documents::validate_shape("regions", &value)?;
-    if let Some(parent) = out.parent() {
+    if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
+
     let temp = out.with_extension(format!(
         "{}.tmp-{}",
         out.extension()
