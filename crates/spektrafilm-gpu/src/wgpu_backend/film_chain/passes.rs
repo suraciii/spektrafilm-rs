@@ -1,3 +1,4 @@
+use super::super::pack_matrix_columns;
 use super::*;
 use buffers::ChainBuffers;
 
@@ -1039,9 +1040,9 @@ impl WgpuBackend {
                 mode: if tp.decode { 1 } else { 0 },
                 cctf_kind: tp.cctf_kind,
                 _pad: 0,
-                col0: [m[0][0], m[1][0], m[2][0], 0.0],
-                col1: [m[0][1], m[1][1], m[2][1], 0.0],
-                col2: [m[0][2], m[1][2], m[2][2], 0.0],
+                col0: pack_matrix_columns(&m)[0],
+                col1: pack_matrix_columns(&m)[1],
+                col2: pack_matrix_columns(&m)[2],
             };
             let params_buf = self
                 .device
@@ -1135,12 +1136,12 @@ impl WgpuBackend {
                 encoded: u32::from(mp.encoded),
                 _pad0: 0,
                 strength_pad: [mp.strength, 0.0, 0.0, 0.0],
-                to_col0: [mp.to_lab[0][0], mp.to_lab[1][0], mp.to_lab[2][0], 0.0],
-                to_col1: [mp.to_lab[0][1], mp.to_lab[1][1], mp.to_lab[2][1], 0.0],
-                to_col2: [mp.to_lab[0][2], mp.to_lab[1][2], mp.to_lab[2][2], 0.0],
-                from_col0: [mp.from_lab[0][0], mp.from_lab[1][0], mp.from_lab[2][0], 0.0],
-                from_col1: [mp.from_lab[0][1], mp.from_lab[1][1], mp.from_lab[2][1], 0.0],
-                from_col2: [mp.from_lab[0][2], mp.from_lab[1][2], mp.from_lab[2][2], 0.0],
+                to_col0: pack_matrix_columns(&mp.to_lab)[0],
+                to_col1: pack_matrix_columns(&mp.to_lab)[1],
+                to_col2: pack_matrix_columns(&mp.to_lab)[2],
+                from_col0: pack_matrix_columns(&mp.from_lab)[0],
+                from_col1: pack_matrix_columns(&mp.from_lab)[1],
+                from_col2: pack_matrix_columns(&mp.from_lab)[2],
                 tin0: tin[0],
                 tin1: tin[1],
                 tin2: tin[2],

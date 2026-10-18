@@ -33,18 +33,18 @@ pub const CASE_OWNED_FIELDS: &[(&str, &[&str])] = &[
     ),
     ("settings", &["preview_mode", "preview_max_size"]),
 ];
-fn err(code: &str, message: impl Into<String>) -> Error {
+pub(crate) fn err(code: &str, message: impl Into<String>) -> Error {
     Error::new(code, message.into())
 }
-fn obj(v: &Value) -> Result<&Map<String, Value>> {
+pub(crate) fn obj(v: &Value) -> Result<&Map<String, Value>> {
     v.as_object()
         .ok_or_else(|| err("document_type", "document root must be an object"))
 }
-fn req<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a Value> {
+pub(crate) fn req<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a Value> {
     o.get(k)
         .ok_or_else(|| err("missing_field", format!("missing field: {k}")))
 }
-fn text<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a str> {
+pub(crate) fn text<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a str> {
     req(o, k)?
         .as_str()
         .ok_or_else(|| err("schema_validation", format!("{k} must be a string")))
@@ -339,16 +339,8 @@ fn consumer_geometry(geometry: &Value) -> Result<()> {
 fn geometry(v: &Value, doc: &Path) -> Result<()> {
     let o = obj(v)?;
     if let Some(space) = o.get("space").and_then(Value::as_str)
-        && !matches!(
-            space,
-            "source"
-                | "render"
-                | "source_pixels"
-                | "working_pixels"
-                | "film_frame_pixels"
-                | "grain_aperture_pixels"
-                | "output_pixels"
-        )
+        && !AUTHORING_COORDINATE_SPACES.contains(&space)
+        && !NATIVE_COORDINATE_SPACES.contains(&space)
     {
         return Err(err(
             "invalid_bounds",

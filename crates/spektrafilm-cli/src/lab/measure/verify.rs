@@ -24,10 +24,7 @@ use super::{
 
 /// The schema version of the identity report this command prints.
 const REPORT_SCHEMA_VERSION: u32 = 1;
-
-/// The scene-linear space the `spectra` entry photographs its samples into;
-/// the run resolved its input declaration with the same space.
-const SCENE_RGB_SPACE: &str = "ACES2065-1";
+use super::super::SCENE_RGB_SPACE;
 
 /// The `rgb_in` entry, whose color space comes from the recorded identity
 /// rather than from a fixed constant.

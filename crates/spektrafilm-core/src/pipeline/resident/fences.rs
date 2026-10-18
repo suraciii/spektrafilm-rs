@@ -3,8 +3,7 @@
 //! Each fence replaces a device stage with a host stage inside the resident
 //! route. They are pure code motion out of `try_gpu_resident`: the bodies are
 //! unchanged, only the enclosing locals become explicit parameters.
-use super::chain::CpuStageFn;
-use spektrafilm_backend::ComputeBackend;
+use spektrafilm_backend::{ComputeBackend, CpuStageFn};
 use spektrafilm_math::image::ImageBuf;
 
 /// Observed CPU backend for a fence stage, carrying the published reason.

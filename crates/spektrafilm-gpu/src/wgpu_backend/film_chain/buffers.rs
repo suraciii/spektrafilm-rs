@@ -4,6 +4,7 @@
 //! former inline block read from the enclosing scope becomes an explicit
 //! parameter; every buffer it produced is returned in [`ChainBuffers`].
 use super::super::is_uniform_grid_endpoint;
+use super::super::pack_matrix_columns_f64;
 use super::super::{
     DensityParams, FrontParams, ScanParams, nan_safe_rows_to_f32, sanitize_spectral_inputs,
 };
@@ -125,14 +126,15 @@ pub(super) fn upload(
         } => (rgb_to_adapted_xyz, tc_lut.size as u32),
         spektrafilm_backend::FrontPass::Mallett2019 { matrix } => (matrix, 0u32),
     };
+    let columns = pack_matrix_columns_f64(m);
     let front_params = FrontParams {
         width: image.width,
         height: image.height,
         lut_size: front_lut_size,
         _pad: 0,
-        col0: [m[0][0] as f32, m[1][0] as f32, m[2][0] as f32, 0.0],
-        col1: [m[0][1] as f32, m[1][1] as f32, m[2][1] as f32, 0.0],
-        col2: [m[0][2] as f32, m[1][2] as f32, m[2][2] as f32, 0.0],
+        col0: columns[0],
+        col1: columns[1],
+        col2: columns[2],
     };
     let front_params_buf = mk_uniform("front_params", bytemuck::bytes_of(&front_params));
 
@@ -200,14 +202,15 @@ pub(super) fn upload(
         Some((m, q)) => [m as f32, q as f32, 1.0, 0.0],
         None => [1.0, 0.0, 0.0, 0.0],
     };
+    let columns = pack_matrix_columns_f64(s);
     let scan_params = ScanParams {
         width: image.width,
         height: image.height,
         n_wavelengths: scan_cd_src.len() as u32,
         normalization: scan_normalization as f32,
-        col0: [s[0][0] as f32, s[1][0] as f32, s[2][0] as f32, 0.0],
-        col1: [s[0][1] as f32, s[1][1] as f32, s[2][1] as f32, 0.0],
-        col2: [s[0][2] as f32, s[1][2] as f32, s[2][2] as f32, 0.0],
+        col0: columns[0],
+        col1: columns[1],
+        col2: columns[2],
         bw: white_black,
     };
     let scan_params_buf = mk_uniform("scan_params", bytemuck::bytes_of(&scan_params));
