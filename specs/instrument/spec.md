@@ -215,7 +215,7 @@ The measured range is declared through the same controls the user binaries read:
 
 A stimulus that enters at `rgb_in` declares its color space and its transfer state in the stimulus document, exactly as a raster input to `process` does. A stimulus that enters at `spectra` declares its color space, its transfer state, and its illuminant pair in the stimulus document; the command must not accept these declarations as command options, because the document is their single authority. A film-domain stimulus declares neither, because its values are already film-domain numbers.
 
-The `spectra` entry uses the same front half as [spectral evaluation](spectral-evaluation/spec.md). `spectral evaluate` remains the roundtrip-error report against truth; `run --stimuli` reports readings and must not compute a truth value.
+The `spectra` entry uses the same front half as [spectral evaluation](spectral-evaluation/spec.md). `spectral evaluate` remains the roundtrip-error report against truth; `measure run` reports readings and must not compute a truth value.
 
 ### Point-wise requirement
 
@@ -265,10 +265,10 @@ A stimulus document declares the values a chain measurement injects. It must con
 
 The document must declare the wavelength grid or the band it covers, the per-sample `source` and `partition` labels, and the provenance hashes of the arrays it names. A sample outside the declared band is invalid. The command must not clip or extrapolate it.
 
-### `run --stimuli`
+### `measure run`
 
 ```text
-spektrafilm-lab run --stimuli PATH --enter BOUNDARY [--read STAGE ...] [--dry-run] [CHAIN OPTIONS] --out DIRECTORY
+spektrafilm-lab measure run --stimuli PATH --enter BOUNDARY [--read STAGE ...] [--dry-run] [CHAIN OPTIONS] --out DIRECTORY
 ```
 
 - `--stimuli` declares a [stimulus document](#stimulus-document).
@@ -544,8 +544,7 @@ The packaged usage example must generate once, use `color-tone.json` and `appear
 - `validate` must decide every locally decidable condition, including a probe's point count and ordering and a policy rule's metric identity against the selected families, and must list every other check in `unchecked`.
 - Repeated runs on identical inputs must produce identical artifacts.
 - On the `log_e_film` stage, a reading must match the `log_e_film` buffer of `process --stage-evidence` within a relative tolerance of 1e-9, with the operations the guard names for that range off.
-- Reading the injected boundary itself must need no disabled operation: every listed operation changes a later stage.
-- On a default chain, `run --stimuli` must fail before executing and name every active operation in the measured range with its remediation, and a `--read log_e_film` range must list only the operations that reach `log_e_film`.
+- On a default chain, `measure run` must fail before executing and name every active operation in the measured range with its remediation, and a `--read log_e_film` range must list only the operations that reach `log_e_film`.
 - With a frozen chart image and a frozen regions document, `sample` must reproduce the frozen values, and sampling a retained encoded stage must record a linear reading beside the source's own encoded declaration.
 - A reference that is unmatched or ineligible must report an unavailable reason per pair, and the comparison must still publish its other measurements.
 - A route that skips a boundary must not list that boundary's operations, and a range that executes them must not rely on the route: a chain measured through `input > convert-film > scan` with the camera and development controls left active must complete when it covers the whole chain, while the same chain on a route that runs them must fail and name them, and a narrower range on a skipping route (`input` with `--enter rgb_in --read log_e_film`, `input > convert-film > scan` with `--read cmy_film`) must fail and name the stages its tap topology fires.

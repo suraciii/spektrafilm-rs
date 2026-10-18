@@ -19,21 +19,6 @@ pub enum SpectralCommand {
 /// Appearance evaluation: document discovery, evidence rendering, comparison,
 /// and offline reporting.
 #[derive(Args)]
-#[command(group(
-    clap::ArgGroup::new("run_source").required(true).multiple(false)
-        .args(["suite", "input", "stimuli"])
-))]
-// The suite-only options must not combine with the single-input form; the
-// single-input options must not combine with the suite form.
-#[command(group(
-    clap::ArgGroup::new("suite_only").multiple(true).args(["case_ids"]).conflicts_with("input")
-))]
-#[command(group(
-    clap::ArgGroup::new("input_only").multiple(true)
-        .args(["configuration", "input_kind", "input_color_space", "input_cctf_decoding",
-               "seeds", "regions", "reference", "reference_info", "preparation"])
-        .conflicts_with("suite")
-))]
 pub struct EvaluationRunArgs {
     /// Suite document.
     #[arg(long, value_name = "FILE", help_heading = "Image-domain run")]
@@ -109,8 +94,7 @@ pub struct EvaluationRunArgs {
     pub target: Option<PathBuf>,
     /// New run directory; must not exist.
     #[arg(long, value_name = "DIR")]
-    pub out: PathBuf,
-    /// Exact suite case identity; repeat in suite mode.
+    pub out: Option<PathBuf>,
     #[arg(
         long = "case",
         value_name = "ID",
@@ -174,69 +158,184 @@ pub struct EvaluationRunArgs {
     pub data_dir: Option<PathBuf>,
 }
 
+/// Execute one authored image-domain suite.
 #[derive(Args)]
-#[command(group(
-    clap::ArgGroup::new("compare_source").required(true).multiple(false)
-        .args(["baseline", "run"])
-))]
-pub struct EvaluationCompareArgs {
+pub struct RunSuiteArgs {
+    /// Suite document.
+    #[arg(long, value_name = "FILE")]
+    pub suite: PathBuf,
+    /// Renderer target document.
+    #[arg(long, value_name = "FILE")]
+    pub target: PathBuf,
+    /// New run directory; must not exist.
+    #[arg(long, value_name = "DIR")]
+    pub out: PathBuf,
+    /// Exact suite case identity; repeat to select multiple cases.
+    #[arg(long = "case", value_name = "ID", action = clap::ArgAction::Append)]
+    pub case_ids: Vec<String>,
+    /// Resolve configurations without decoding or rendering.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Retain native CPU stage buffers.
+    #[arg(long)]
+    pub stage_evidence: bool,
+}
+
+/// Execute one local image through the image-domain runner.
+#[derive(Args)]
+pub struct RunImageArgs {
+    /// Prepared local image.
+    #[arg(long, value_name = "FILE")]
+    pub input: PathBuf,
+    /// Existing case configuration object.
+    #[arg(long, value_name = "FILE")]
+    pub configuration: PathBuf,
+    /// Explicit source kind.
+    #[arg(long, value_name = "KIND", value_parser = ["raster", "raw"], default_value = "raster")]
+    pub input_kind: String,
+    /// Raster source color space.
+    #[arg(long, value_name = "NAME")]
+    pub input_color_space: Option<String>,
+    /// Whether to decode the raster transfer function.
+    #[arg(long, value_name = "true|false", value_parser = clap::value_parser!(bool))]
+    pub input_cctf_decoding: Option<bool>,
+    /// Distinct UINT32 seed; repeat to choose a population.
+    #[arg(long = "seed", value_name = "UINT32", action = clap::ArgAction::Append)]
+    pub seeds: Vec<u32>,
+    /// Existing fixed region array in render coordinates.
+    #[arg(long, value_name = "FILE")]
+    pub regions: Option<PathBuf>,
+    /// Reference image.
+    #[arg(long, value_name = "FILE")]
+    pub reference: Option<PathBuf>,
+    /// Existing reference object without path and sha256.
+    #[arg(long, value_name = "FILE")]
+    pub reference_info: Option<PathBuf>,
+    /// Passive preparation provenance object.
+    #[arg(long, value_name = "FILE")]
+    pub preparation: Option<PathBuf>,
+    /// Renderer target document.
+    #[arg(long, value_name = "FILE")]
+    pub target: PathBuf,
+    /// New run directory; must not exist.
+    #[arg(long, value_name = "DIR")]
+    pub out: PathBuf,
+    /// Resolve configurations without decoding or rendering.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Retain native CPU stage buffers.
+    #[arg(long)]
+    pub stage_evidence: bool,
+}
+
+#[derive(Subcommand)]
+pub enum RunCommand {
+    /// Execute one authored image-domain suite.
+    Suite(RunSuiteArgs),
+    /// Execute one local image through the image-domain runner.
+    Image(RunImageArgs),
+    /// Compatibility alias target inserted by the argv normalizer.
+    #[command(hide = true)]
+    Flat(EvaluationRunArgs),
+}
+
+#[derive(Subcommand)]
+pub enum MeasureCommand {
+    /// Execute one declared point-wise stimulus chain.
+    Run(MeasureRunArgs),
+}
+
+#[derive(Args)]
+/// Compare two completed image-domain runs.
+pub struct CompareRunsArgs {
     /// Baseline run directory.
-    #[arg(
-        long,
-        value_name = "DIR",
-        requires = "candidate",
-        conflicts_with = "run",
-        help_heading = "Image-domain comparison"
-    )]
-    pub baseline: Option<PathBuf>,
+    #[arg(long, value_name = "DIR")]
+    pub baseline: PathBuf,
     /// Candidate run directory.
-    #[arg(
-        long,
-        value_name = "DIR",
-        requires = "baseline",
-        conflicts_with = "run",
-        help_heading = "Image-domain comparison"
-    )]
-    pub candidate: Option<PathBuf>,
-    /// Reference run directory; a per-sample distance needs one.
-    #[arg(
-        long,
-        value_name = "DIR",
-        requires = "baseline",
-        conflicts_with = "run",
-        help_heading = "Image-domain comparison"
-    )]
+    #[arg(long, value_name = "DIR")]
+    pub candidate: PathBuf,
+    /// Reference run directory.
+    #[arg(long, value_name = "DIR")]
     pub reference_run: Option<PathBuf>,
-    /// Single run directory.
-    #[arg(
-        long,
-        value_name = "DIR",
-        requires = "against",
-        conflicts_with = "baseline",
-        help_heading = "Image-domain comparison"
-    )]
-    pub run: Option<PathBuf>,
-    /// Evidence pairs to compare.
-    #[arg(long, value_name = "PAIR", value_parser = ["input", "reference", "both"], requires = "run", help_heading = "Image-domain comparison")]
-    pub against: Option<String>,
-    /// New comparison directory; must not exist.
+    /// New comparison directory.
     #[arg(long, value_name = "DIR")]
     pub out: PathBuf,
     /// Version-comparison policy document.
-    #[arg(
-        long,
-        value_name = "FILE",
-        conflicts_with = "run",
-        help_heading = "Image-domain comparison"
-    )]
+    #[arg(long, value_name = "FILE")]
     pub policy: Option<PathBuf>,
-    /// Fail command when policy does not pass.
-    #[arg(
-        long,
-        requires = "policy",
-        conflicts_with = "run",
-        help_heading = "Image-domain comparison"
-    )]
+    /// Fail when policy does not pass.
+    #[arg(long, requires = "policy")]
+    pub gate: bool,
+}
+
+/// Compare two retained reading records.
+#[derive(Args)]
+pub struct CompareReadingsArgs {
+    /// Baseline reading directory.
+    #[arg(long, value_name = "DIR")]
+    pub baseline: PathBuf,
+    /// Candidate reading directory.
+    #[arg(long, value_name = "DIR")]
+    pub candidate: PathBuf,
+    /// Reference reading directory.
+    #[arg(long, value_name = "DIR")]
+    pub reference: Option<PathBuf>,
+    /// New comparison directory.
+    #[arg(long, value_name = "DIR")]
+    pub out: PathBuf,
+}
+
+/// Select explicit evidence pairs from one retained run.
+#[derive(Args)]
+pub struct ComparePairsArgs {
+    /// Retained run directory.
+    #[arg(long, value_name = "DIR")]
+    pub run: PathBuf,
+    /// Evidence pair to select.
+    #[arg(long, value_name = "PAIR", value_parser = ["input", "reference", "both"])]
+    pub against: String,
+    /// New comparison directory.
+    #[arg(long, value_name = "DIR")]
+    pub out: PathBuf,
+}
+
+#[derive(Subcommand)]
+pub enum CompareCommand {
+    /// Compare two completed image-domain runs.
+    Runs(CompareRunsArgs),
+    /// Compare two retained reading records.
+    Readings(CompareReadingsArgs),
+    /// Select explicit evidence pairs from one retained run.
+    Pairs(ComparePairsArgs),
+    /// Compatibility alias target inserted by the argv normalizer.
+    #[command(hide = true)]
+    Flat(EvaluationCompareArgs),
+}
+#[derive(Args)]
+pub struct EvaluationCompareArgs {
+    /// Baseline retained image-domain run or reading directory.
+    #[arg(long, value_name = "DIR")]
+    pub baseline: Option<PathBuf>,
+    /// Candidate retained image-domain run or reading directory.
+    #[arg(long, value_name = "DIR")]
+    pub candidate: Option<PathBuf>,
+    /// Reference retained reading directory.
+    #[arg(long, value_name = "DIR")]
+    pub reference_run: Option<PathBuf>,
+    /// Single retained run directory.
+    #[arg(long, value_name = "DIR")]
+    pub run: Option<PathBuf>,
+    /// Evidence pair to select.
+    #[arg(long, value_name = "PAIR", value_parser = ["input", "reference", "both"])]
+    pub against: Option<String>,
+    /// New comparison directory.
+    #[arg(long, value_name = "DIR")]
+    pub out: Option<PathBuf>,
+    /// Version-comparison policy document.
+    #[arg(long, value_name = "FILE")]
+    pub policy: Option<PathBuf>,
+    /// Fail when policy does not pass.
+    #[arg(long)]
     pub gate: bool,
 }
 

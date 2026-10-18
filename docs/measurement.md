@@ -1,13 +1,12 @@
 # Measurement
 
 `spektrafilm-lab` reads the executed chain and reports what it produced. Four commands carry
-the measurement surface: `run --stimuli` measures the chain on a declared stimulus set,
-`sample` reads declared regions from an image or a retained stage capture, `compare
---baseline --candidate` matches two retained measurements, and `verify` re-resolves a recorded
-run. The commands exist only in the instrument binary and run at f64 reference precision. They
-compute values and write evidence; they do not fit parameters, render images, or judge a
-result. See the [measurement contract](../specs/instrument/spec.md#measurement) for the
-requirements.
+the measurement surface: `measure run` measures the chain on a declared stimulus set,
+`sample` reads declared regions from an image or a retained stage capture, `compare readings`
+matches two retained measurements, and `verify` re-resolves a recorded run. The commands exist
+only in the instrument binary and run at f64 reference precision. They compute values and write
+evidence; they do not fit parameters, render images, or judge a result. See the [measurement
+contract](../specs/instrument/spec.md#measurement) for the requirements.
 
 ## The point-wise requirement
 
@@ -16,7 +15,7 @@ neighborhood, so a stage that mixes samples, measures the whole image, or draws 
 values after the entry would describe a different signal than the measured one. Halation,
 glare, lens blur, automatic camera exposure, and grain are such stages.
 
-`run --stimuli` resolves the chain first and fails before executing when one of them executes
+`measure run` resolves the chain first and fails before executing when one of them executes
 inside the measured range: at or after the boundary `--enter` injects the stimulus at, and at
 or before the last stage `--read` asks for. An operation the range never reaches cannot change
 a reading, and a stage that does not execute at all cannot either, so neither is named.
@@ -39,10 +38,10 @@ active.
 
 The command does not disable a stage on your behalf. Pass the `--set` edits it names.
 
-## `run --stimuli`
+## `measure run`
 
 ```bash
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab measure run \
     --stimuli points.json --enter log_e_film \
     --read log_e_film,cmy_film,rgb_out \
     --preset "Kodak Portra 800" \
@@ -209,12 +208,12 @@ group labels, a `role`, and the `measurements` families it selects. The role is 
 The same explicit regions document can be used for standalone retained-stage sampling, while suite and reference image consumers currently accept only `source` and `render` geometry. Native spaces remain valid in the shared schema and for standalone sampling only when the selected producer publishes the exact matching coordinate space; embedding native geometry in a suite or reference is rejected with `unsupported_coordinate_space` until that consumer mapping exists. To create ordinary rectangular geometry independently, use `spektrafilm-lab regions grid`; downstream commands consume the resulting explicit regions without interpreting a grid declaration.
 A region window that leaves the source bounds fails with the region identity. The command does not clamp, pad, extrapolate, or repair a region, and it does not resize, re-encode, or convert the source beyond the declared input declaration.
 
-## `compare --baseline --candidate`
+## `compare readings`
 
 ```bash
-./target/release/spektrafilm-lab compare \
+./target/release/spektrafilm-lab compare readings \
     --baseline run-1 --candidate run-2 \
-    --reference-run run-ref --out compare-1
+    --reference run-ref --out compare-1
 ```
 
 Readings match by sample identity and stage identity. An incompatible identity set is
@@ -271,7 +270,6 @@ command result, so a verification cannot overwrite the record it verifies.
 
 This is how a guard run stays useful. Retain a measurement of a frozen stimulus set, then
 verify it later to see whether the executable, the data, the profiles, or the parameters
-moved. A comparison against retained readings is `compare --baseline --candidate`.
 
 ## Worked example
 
@@ -280,7 +278,7 @@ halation, DIR couplers, grain, print glare, and scanner unsharp masking, so the 
 fails before it executes:
 
 ```bash
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab measure run \
     --stimuli log_e.json --enter log_e_film \
     --preset "Kodak Portra 800" \
     --data-dir data --out run-1
@@ -302,10 +300,9 @@ do. The list names exactly the operations the measured range can reach.
 Disable the stages the failure names, and the same run completes:
 
 ```bash
-./target/release/spektrafilm-lab run \
+./target/release/spektrafilm-lab measure run \
     --stimuli log_e.json --enter log_e_film \
     --preset "Kodak Portra 800" \
-    --set film_render.dir_couplers.active=false \
     --set film_render.grain.active=false \
     --set print_render.glare.active=false \
     --set scanner.unsharp_mask=[0,0] \

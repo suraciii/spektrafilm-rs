@@ -77,7 +77,8 @@ fn documented_instrument_commands_use_supported_flags() {
     }
     // Protect the documented workflow, not just an empty extraction.
     for subcommand in [
-        "validate", "target", "run", "compare", "inspect", "report", "regions", "fixtures", "fit",
+        "validate", "target", "run", "measure", "compare", "inspect", "report", "regions",
+        "fixtures", "fit",
     ] {
         assert!(checked.contains(&Some(subcommand.into())), "{subcommand}");
     }
