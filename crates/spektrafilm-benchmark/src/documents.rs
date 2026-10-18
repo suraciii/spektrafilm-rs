@@ -816,8 +816,12 @@ pub fn load_suite(path: &Path) -> Result<Value> {
 
 pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
     validate_authored("suite", v).map_err(|e| e.file(path.display().to_string()))?;
+    for c in v["cases"].as_array().into_iter().flatten() {
+        for r in c["regions"].as_array().into_iter().flatten() {
+            consumer_geometry(&r["geometry"])?;
+        }
+    }
     let cases = v["cases"].as_array().unwrap();
-    unique(cases, "id")?;
     for x in v["protocol"]["probe"]["tone_response"]
         .as_array()
         .into_iter()
@@ -1246,12 +1250,12 @@ mod tests {
             assert!(validate_shape("suite", &suite(None, invalid)).is_err());
         }
     }
-
     #[test]
     fn suite_rejects_native_region_spaces_until_a_consumer_mapping_exists() {
         let mut document = suite(None, json!([]));
         document["cases"][0]["regions"][0]["geometry"]["space"] = json!("output_pixels");
-        let error = validate_shape("suite", &document).unwrap_err();
-        assert_eq!(error.code, "schema_validation");
+        assert!(validate_shape("suite", &document).is_ok());
+        let error = validate_suite(&document, Path::new("suite.json")).unwrap_err();
+        assert_eq!(error.code, "unsupported_coordinate_space");
     }
 }
