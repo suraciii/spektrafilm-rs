@@ -12,6 +12,7 @@
 //! the declared sources.
 
 use crate::common::{self, Error, Result, create_destination, dump, sha256_file};
+use crate::documents::{err, obj, req, text};
 use crate::{documents, image_data};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,22 +26,6 @@ const JS: &str = include_str!("../assets/review.js");
 const CSP: &str = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'";
 const WORK_DIR: &str = ".review-work";
 
-fn err(code: &str, message: impl Into<String>) -> Error {
-    Error::new(code, message.into())
-}
-fn obj(v: &Value) -> Result<&Map<String, Value>> {
-    v.as_object()
-        .ok_or_else(|| err("document_type", "document root must be an object"))
-}
-fn req<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a Value> {
-    o.get(k)
-        .ok_or_else(|| err("missing_field", format!("missing field: {k}")))
-}
-fn text<'a>(o: &'a Map<String, Value>, k: &str) -> Result<&'a str> {
-    req(o, k)?
-        .as_str()
-        .ok_or_else(|| err("schema_validation", format!("{k} must be a string")))
-}
 fn count(o: &Map<String, Value>, k: &str) -> Result<u64> {
     req(o, k)?
         .as_u64()

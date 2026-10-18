@@ -156,16 +156,11 @@ pub fn load(path: &Path) -> Result<Plan, String> {
                 raw.id, raw.geometry.height
             ));
         }
-        if !matches!(
-            raw.geometry.space.as_str(),
-            "source"
-                | "render"
-                | "source_pixels"
-                | "working_pixels"
-                | "film_frame_pixels"
-                | "grain_aperture_pixels"
-                | "output_pixels"
-        ) {
+        if !spektrafilm_benchmark::documents::AUTHORING_COORDINATE_SPACES
+            .contains(&raw.geometry.space.as_str())
+            && !spektrafilm_benchmark::documents::NATIVE_COORDINATE_SPACES
+                .contains(&raw.geometry.space.as_str())
+        {
             return Err(format!(
                 "region {:?} declares unsupported coordinate space {:?}",
                 raw.id, raw.geometry.space

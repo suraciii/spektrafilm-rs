@@ -6,6 +6,9 @@
 //! plumbing and parameter surface, and are gated on the f64 reference
 //! precision. They report values; they never judge them.
 
+/// Scene-linear RGB space used when measuring spectral stimuli.
+pub(super) const SCENE_RGB_SPACE: &str = "ACES2065-1";
+
 pub mod arrays;
 pub mod cli;
 pub mod evaluate;

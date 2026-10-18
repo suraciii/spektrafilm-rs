@@ -1,11 +1,9 @@
 use super::super::Pipeline;
 use super::decision::{ResidentDecision, ResidentFallbackReason};
 use crate::stages::StageObservation;
+
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
-
-pub(super) type CpuStageFn<'a> = Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>;
-
 impl Pipeline {
     pub(in crate::pipeline) fn try_gpu_resident(
         &self,

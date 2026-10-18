@@ -74,16 +74,9 @@ pub fn generate_grid(
     if patch_size[0] == 0 || patch_size[1] == 0 {
         return Err(invalid("patch width and height must be positive"));
     }
-    if !matches!(
-        space,
-        "source"
-            | "render"
-            | "source_pixels"
-            | "working_pixels"
-            | "film_frame_pixels"
-            | "grain_aperture_pixels"
-            | "output_pixels"
-    ) {
+    if !documents::AUTHORING_COORDINATE_SPACES.contains(&space)
+        && !documents::NATIVE_COORDINATE_SPACES.contains(&space)
+    {
         return Err(invalid(format!("unsupported coordinate space {space:?}")));
     }
     let region_count = rows
