@@ -1,4 +1,4 @@
-use crate::common::{Error, Result, digest, sha256_file};
+use crate::common::{Result, digest, sha256_file};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -33,9 +33,7 @@ pub const CASE_OWNED_FIELDS: &[(&str, &[&str])] = &[
     ),
     ("settings", &["preview_mode", "preview_max_size"]),
 ];
-pub(crate) fn err(code: &str, message: impl Into<String>) -> Error {
-    Error::new(code, message.into())
-}
+pub(crate) use crate::common::err;
 pub(crate) fn obj(v: &Value) -> Result<&Map<String, Value>> {
     v.as_object()
         .ok_or_else(|| err("document_type", "document root must be an object"))

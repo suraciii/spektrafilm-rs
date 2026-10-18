@@ -113,20 +113,11 @@ impl ComputeBackend for WgpuBackend {
             s.context().record_executor(Executor::Gpu, None);
         }
         let n_pixels = img.pixel_count() as u32;
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            mode: u32,
-            #[allow(dead_code)]
-            pad: u32,
-        }
-        let params = Params {
+        let params = CctfParams {
             width: img.width,
             height: img.height,
             mode: 0,
-            pad: 0,
+            _pad: 0,
         };
         let input_f32 = scalars_to_f32(&img.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
@@ -157,20 +148,11 @@ impl ComputeBackend for WgpuBackend {
             s.context().record_executor(Executor::Gpu, None);
         }
         let n_pixels = img.pixel_count() as u32;
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            mode: u32,
-            #[allow(dead_code)]
-            pad: u32,
-        }
-        let params = Params {
+        let params = CctfParams {
             width: img.width,
             height: img.height,
             mode: 1,
-            pad: 0,
+            _pad: 0,
         };
         let input_f32 = scalars_to_f32(&img.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];

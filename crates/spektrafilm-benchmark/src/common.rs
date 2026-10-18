@@ -31,6 +31,10 @@ pub struct Error {
     /// clippy bounds.
     location: Option<Box<Location>>,
 }
+/// Construct an error while preserving the caller's stable error code.
+pub(crate) fn err(code: &str, message: impl Into<String>) -> Error {
+    Error::new(code, message.into())
+}
 impl Error {
     /// Build an `Error` from any `Display` value, so a nested error keeps its
     /// own text while carrying the boundary's stable code.
