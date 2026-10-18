@@ -89,6 +89,14 @@ fn preset_row(h: &Harness<'_, App>, name: &str) -> String {
     let nodes: Vec<_> = h
         .query_all_by_label_contains(name)
         .filter(|node| node.node().role() == egui::accesskit::Role::Button)
+        // The card's action control is named after its entry, but it is not
+        // the row itself.
+        .filter(|node| {
+            !node
+                .label()
+                .unwrap_or_default()
+                .starts_with("preset actions for ")
+        })
         .collect();
     assert_eq!(nodes.len(), 1, "preset row for {name}");
     nodes[0].label().unwrap().to_string()
@@ -177,7 +185,7 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     let h = &mut s.harness;
     expand_preset_library(h);
 
-    click(h, "+");
+    click(h, "Save preset…");
     assert!(h.query_by_label("Name in My Presets").is_some());
     let invalid_name = "bad/name";
     edit_preset_name(h, invalid_name);
@@ -278,12 +286,59 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     );
 }
 
+// specs/gui-product-design/spec.md#preset-browser: the card carries a visible
+// action control, so the management actions are reachable without the context
+// menu, and the control takes focus so a keyboard activates it.
+#[test]
+fn preset_card_actions_are_reachable_by_pointer_and_by_keyboard() {
+    let mut s = session();
+    let h = &mut s.harness;
+    expand_preset_library(h);
+    click(h, "Save preset…");
+    edit_preset_name(h, "Card Look");
+    click(h, "Save");
+    assert_eq!(preset_row(h, "Card Look"), "Card Look • applied");
+
+    // The card's own action control is addressable per entry, so the context
+    // menu is not the only route to the actions.
+    let actions: Vec<_> = h
+        .query_all_by_label_contains("preset actions for Card Look")
+        .collect();
+    assert_eq!(actions.len(), 1, "one action control per preset card");
+    actions[0].simulate_click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Rename…").is_some());
+    assert!(h.query_by_label("Duplicate…").is_some());
+    assert!(h.query_by_label("Export…").is_some());
+    assert!(h.query_by_label("Show file").is_some());
+    assert!(h.query_by_label("Delete…").is_some());
+    h.press_key(egui::Key::Escape);
+    h.run_steps(3);
+
+    // Keyboard route: focus the control, then activate it.
+    let actions: Vec<_> = h
+        .query_all_by_label_contains("preset actions for Card Look")
+        .collect();
+    assert_eq!(actions.len(), 1, "the action control is addressable");
+    actions[0].focus();
+    h.step();
+    h.press_key(egui::Key::Space);
+    h.run_steps(3);
+    assert!(h.query_by_label("Rename…").is_some());
+    h.press_key(egui::Key::Escape);
+    h.run_steps(3);
+
+    // The context menu remains an additional route.
+    click_preset_action(h, &preset_row(h, "Card Look"), "Rename…");
+    assert!(h.query_by_label("Name in My Presets").is_some());
+}
+
 fn open_export_dialog(h: &mut Harness<'_, App>) {
     click(h, "MAIN");
-    if h.query_by_label("Export…").is_none() {
+    if h.query_by_label("Open export settings…").is_none() {
         click(h, "Export options");
     }
-    export_action(h);
+    export_action(h, "Open export settings…");
     assert!(h.state().export_dialog.is_open());
 }
 

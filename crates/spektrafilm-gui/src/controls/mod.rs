@@ -166,13 +166,38 @@ pub(crate) fn section_header<R>(
         add_contents(ui, filter);
         return;
     }
-    egui::CollapsingHeader::new(
+    let response = egui::CollapsingHeader::new(
         egui::RichText::new(title)
             .color(theme::FG)
             .size(theme::SIZE_TITLE)
             .strong(),
     )
     .show(ui, |ui| add_contents(ui, filter));
+    // A closed sub-section states what it holds, so a page of collapsed
+    // headers still names its controls. Display-only: it reads no value.
+    if response.openness <= 0.0
+        && let Some(summary) = section_summary(title)
+    {
+        ui.label(egui::RichText::new(summary).color(theme::FG_MUTED).small());
+    }
+}
+
+/// What a closed sub-section holds, in one line naming its own controls.
+///
+/// Keyed by the header title the sub-section renders, so the wording stays with
+/// the section that owns it. A sub-section without an entry shows its header
+/// alone.
+fn section_summary(title: &str) -> Option<&'static str> {
+    match title {
+        "Base" => Some("Base density: scale and per-channel masks"),
+        "Print viewing glare" => Some("Print viewing glare: percent, roughness, blur"),
+        "Input gamut compress" => Some("Input gamut compression: algorithm, knee, hull detail"),
+        "Output gamut compress" => Some("Output gamut compression: algorithm, knee"),
+        "Spectral upsampling" => Some("Spectral reconstruction: method, adaptation, blur"),
+        "Input" => Some("Input decoding: color space and cctf"),
+        "Crop and upscale" => Some("Geometry: crop toggle, center, size, upscale factor"),
+        _ => None,
+    }
 }
 
 pub(crate) fn show(
@@ -185,6 +210,7 @@ pub(crate) fn show(
     cache: &mut SectionLabelCache,
 ) -> ChangeFlags {
     let mut flags = ChangeFlags::default();
+    let _row_scope = row_modified::install(ui.ctx(), section, params, extras);
     let mut filter = ControlFilter::new(filter, cache);
     ui.push_id(("supplemental_controls", section), |ui| {
         render_sections(
@@ -201,7 +227,7 @@ pub(crate) fn show(
     flags
 }
 
-fn render_sections(
+pub(crate) fn render_sections(
     ui: &mut Ui,
     params: &mut RuntimeParams,
     extras: &mut Value,
@@ -237,6 +263,105 @@ pub(crate) use filter::{
     ControlFilter, SectionLabelCache, cached_labels_match, filter_matches, filter_matches_any,
     label_matches,
 };
+pub(crate) mod row_modified;
+/// One item of a page's control panel, in the order the page renders it.
+///
+/// The table is the single source of a page's layout: the panel renders from
+/// it and the cross-page search index derives the searchable sections from it,
+/// so a section added to a page is searchable on the same change.
+pub(crate) enum PanelItem {
+    /// A parameter section, rendered by `ui::App::parameter_section`.
+    Section(&'static str),
+    /// The chemistry section of one medium: film or print.
+    Chemistry { film: bool },
+    /// One intake surface: false is RGB, true is RAW.
+    Import { raw: bool },
+    /// The profile selectors of the main page.
+    Profiles,
+    /// The export actions of the main page.
+    ExportOptions,
+    /// The diagnostics readout of the configuration page.
+    Diagnostics,
+    /// The GUI parameter toolbar of the configuration page.
+    GuiParameters,
+    /// The display settings of the configuration page.
+    DisplaySettings,
+}
+
+impl PanelItem {
+    /// The parameter section this item renders, when it renders one.
+    ///
+    /// The Display item renders its parameter section inside its own
+    /// collapsible, so it owns one as well; the import surface's RAW editor is
+    /// excluded by the caller.
+    pub(crate) fn section(&self) -> Option<&'static str> {
+        match self {
+            Self::Section(section) => Some(section),
+            Self::Chemistry { film: true } => Some("Film chemistry"),
+            Self::Chemistry { film: false } => Some("Print chemistry"),
+            Self::Import { raw: true } => Some("Import Raw"),
+            Self::DisplaySettings => Some("Display"),
+            _ => None,
+        }
+    }
+}
+
+/// Every page, with the items its control panel renders and in which order.
+pub(crate) const PAGE_LAYOUT: &[(crate::ui::GuiTab, &[PanelItem])] = &[
+    (
+        crate::ui::GuiTab::Main,
+        &[
+            PanelItem::Import { raw: false },
+            PanelItem::Import { raw: true },
+            PanelItem::Section("Crop and upscale"),
+            PanelItem::Section("Input"),
+            PanelItem::Section("Camera"),
+            PanelItem::Profiles,
+            PanelItem::Section("Enlarger"),
+            PanelItem::Section("Scanner"),
+            PanelItem::Section("Output"),
+            PanelItem::ExportOptions,
+        ],
+    ),
+    (
+        crate::ui::GuiTab::Film,
+        &[
+            PanelItem::Chemistry { film: true },
+            PanelItem::Section("Film base"),
+            PanelItem::Section("Halation"),
+            PanelItem::Section("Couplers"),
+            PanelItem::Section("Grain"),
+            PanelItem::Section("Camera diffusion"),
+            PanelItem::Section("Convert"),
+        ],
+    ),
+    (
+        crate::ui::GuiTab::Print,
+        &[
+            PanelItem::Chemistry { film: false },
+            PanelItem::Section("Print base"),
+            PanelItem::Section("Glare"),
+            PanelItem::Section("Enlarger diffusion"),
+            PanelItem::Section("Magazine finish color"),
+        ],
+    ),
+    (
+        crate::ui::GuiTab::Advanced,
+        &[
+            PanelItem::Section("Spectral upsampling"),
+            PanelItem::Section("Input gamut compress"),
+            PanelItem::Section("Output gamut compress"),
+        ],
+    ),
+    (
+        crate::ui::GuiTab::Config,
+        &[
+            PanelItem::Diagnostics,
+            PanelItem::GuiParameters,
+            PanelItem::DisplaySettings,
+        ],
+    ),
+];
 mod gamut;
 mod glare;
 mod grain;
@@ -244,8 +369,10 @@ mod halation;
 mod magazine;
 mod output;
 mod scanner;
+mod search;
 mod upsampling;
 mod widgets;
+pub(crate) use search::SearchIndex;
 pub(crate) use widgets::*;
 
 // Every control editor reads presentation tokens; re-export so a control file

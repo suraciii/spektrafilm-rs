@@ -301,6 +301,22 @@ impl GuiState {
     pub fn display_profile(&self) -> Option<&str> {
         self.sections["rust"]["display_profile"].as_str()
     }
+    /// Select the viewer's ICC display profile. An absent or empty selection
+    /// keeps the platform discovery and the encoded-sRGB fallback, so the
+    /// carrier stays optional in the persisted document.
+    pub fn set_display_profile(&mut self, selection: Option<&str>) {
+        if !self.sections["rust"].is_object() {
+            self.sections["rust"] = json!({"version": 3});
+        }
+        match selection.filter(|path| !path.is_empty()) {
+            Some(path) => self.sections["rust"]["display_profile"] = json!(path),
+            None => {
+                if let Some(extension) = self.sections["rust"].as_object_mut() {
+                    extension.remove("display_profile");
+                }
+            }
+        }
+    }
     pub fn saving_color_space(&self) -> &str {
         self.sections["simulation"]["saving_color_space"]
             .as_str()

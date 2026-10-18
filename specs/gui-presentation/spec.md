@@ -1,4 +1,7 @@
 # GUI presentation
+## Language authority
+
+Visible labels and help text follow [GUI product language](../gui-language/spec.md). The product-surface direction and discoverability boundaries follow [GUI product design](../gui-product-design/spec.md). Physical and scanner terms remain owned by [`CONTEXT.md`](../../CONTEXT.md) and the [film-chain specification](../film-chain/spec.md).
 
 ## Authority
 
@@ -25,8 +28,8 @@ The presentation layer in `crates/spektrafilm-gui` owns the token set, the contr
 
 - A section header presents a disclosure control and the section title.
 - A section presents its reset action on its header, and nowhere else. [GUI workflow](../gui-workflow/spec.md#section-reset) owns which sections carry a reset and what it restores.
-- A parameter row whose value differs from the value that its section reset restores is marked as modified.
-- A section header presents the modified state of its rows.
+- A parameter row whose value differs from the value that its section reset restores is marked as modified. The marker must provide a non-color cue and must not change the row's accessible label. Numeric, tuple, optional, extra, and boolean rows use the same declared section-reset scope.
+- A section header presents the modified state of its rows. Row-level markers use exact-bit comparison against the factory projection, including leaf-specific Camera and Enlarger reset scopes.
 
 ## Markers
 

@@ -131,7 +131,7 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
     click(h, "Couplers");
     let couplers_active = h.state().params.film_render.dir_couplers.active;
     click(h, "Enable DIR couplers");
-    edit(h, "amount", "1.5");
+    edit(h, "inhibition amount", "1.5");
     edit(h, "inhibition samelayer", "0.75");
     assert_eq!(
         h.state().params.film_render.dir_couplers.active,
@@ -335,8 +335,8 @@ fn advanced_and_print_page_spectral_magazine_and_gamut_controls_accept_edits_and
     click(h, "Input gamut compress");
     let compress_active = h.state().params.io.input_gamut_compress.active;
     click(h, "Enable input gamut compress");
-    edit(h, "knee 0", "0.75");
-    edit(h, "knee 2", "1.5");
+    edit(h, "knee threshold", "0.75");
+    edit(h, "knee power", "1.5");
     edit(h, "hull detail", "12");
     assert_eq!(
         h.state().params.io.input_gamut_compress.active,
@@ -348,8 +348,8 @@ fn advanced_and_print_page_spectral_magazine_and_gamut_controls_accept_edits_and
     click(h, "Input gamut compress");
 
     click(h, "Output gamut compress");
-    edit(h, "knee 0", "0.5");
-    edit(h, "knee 2", "4.5");
+    edit(h, "knee threshold", "0.5");
+    edit(h, "knee power", "4.5");
     assert_eq!(h.state().params.io.output_gamut_compress.knee[0], 0.5);
     assert_eq!(h.state().params.io.output_gamut_compress.knee[2], 4.5);
     click(h, "Output gamut compress");
@@ -427,10 +427,10 @@ fn camera_enlarger_crop_upscale_and_magazine_print_controls_edit_accepted_params
     assert_eq!(h.state().params.enlarger.preflash_m_filter_shift, -0.75);
 
     click(h, "Crop and upscale");
-    edit(h, "crop center 0", "0.25");
-    edit(h, "crop center 1", "0.5");
-    edit(h, "crop size 0", "0.5");
-    edit(h, "crop size 1", "0.5");
+    edit(h, "crop center x", "0.25");
+    edit(h, "crop center y", "0.5");
+    edit(h, "crop size x", "0.5");
+    edit(h, "crop size y", "0.5");
     click(h, "crop");
     assert!(h.state().params.io.crop);
     assert_eq!(h.state().params.io.crop_center, [0.25, 0.5]);
@@ -442,7 +442,7 @@ fn camera_enlarger_crop_upscale_and_magazine_print_controls_edit_accepted_params
     assert_eq!(h.state().params.workflow.route, "input");
     let left = render(h, "SCAN");
     assert_eq!((left.width, left.height), (80, 80));
-    edit(h, "crop center 0", "0.75");
+    edit(h, "crop center x", "0.75");
     assert_eq!(h.state().params.io.crop_center, [0.75, 0.5]);
     let right = render(h, "SCAN");
     assert_eq!((right.width, right.height), (80, 80));
@@ -679,6 +679,45 @@ fn control_search_reveals_a_collapsed_section_and_restores_it_when_cleared() {
     assert!(h.query_by_label("halo warmth").is_none());
 }
 
+// specs/gui-product-design/spec.md#control-panel-product-surface: the clear
+// action makes clearing the transient filter discoverable without touching
+// parameters or persisted sections, and the no-match message reports the
+// entered text rather than implying the parameters changed.
+#[test]
+fn control_search_clear_action_and_no_match_state_report_the_entered_filter() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let params_before = h.state().params.clone();
+    let sections_before = h.state().gui_state.sections.clone();
+
+    // Without a filter there is nothing to clear, so the action stays absent.
+    assert!(h.query_by_label("clear filter").is_none());
+
+    search(h, "no-such-control-label");
+    assert!(
+        h.query_by_label_contains("No control matches “no-such-control-label”.")
+            .is_some(),
+        "the no-match message uses the entered text"
+    );
+
+    search(h, "upscale");
+    assert!(h.query_by_label("clear filter").is_some());
+    let clear = h.get_by_role_and_label(egui::accesskit::Role::Button, "clear filter");
+    clear.focus();
+    h.step();
+    h.press_key(egui::Key::Enter);
+    h.run_steps(5);
+    assert!(
+        h.state().filter.is_empty(),
+        "clear action must clear transient filter state"
+    );
+    assert!(h.query_by_label("clear filter").is_none());
+    assert!(h.query_by_label("exposure compensation ev").is_some());
+    assert!(h.query_by_label_contains("No control matches").is_none());
+    assert_eq!(h.state().params, params_before);
+    assert_eq!(h.state().gui_state.sections, sections_before);
+}
+
 // specs/gui-workflow/spec.md#control-search: a control inside a collapsed
 // sub-section of a revealed section is found by its own label and does not
 // require the sub-section to be opened first.
@@ -730,11 +769,11 @@ fn an_unselected_grain_engine_group_is_read_only() {
     click(h, "FILM");
     // The selected engine's group is the only open one, so the shared field
     // appears once until another engine's group is expanded.
-    assert_eq!(h.query_all_by_label("rms granularity 0").count(), 1);
+    assert_eq!(h.query_all_by_label("rms granularity R").count(), 1);
 
     click(h, "Dye");
     h.run_steps(10);
-    let fields: Vec<_> = h.query_all_by_label("rms granularity 0").collect();
+    let fields: Vec<_> = h.query_all_by_label("rms granularity R").collect();
     assert_eq!(fields.len(), 2, "both engine groups show the shared field");
     assert_eq!(
         fields
@@ -888,4 +927,181 @@ fn the_chemistry_enable_toggle_is_reachable_by_its_own_label() {
         h.query_by_label("Enable print density curves").is_none(),
         "the medium-agnostic label must not match the print toggle"
     );
+}
+
+/// specs/gui-workflow/spec.md#control-search: a control another page owns is
+/// reachable from the search, the result names the page and the section that
+/// own it, and selecting it switches the page and reveals the control. The
+/// filter stays transient and no parameter value moves.
+#[test]
+fn control_search_reaches_a_control_on_another_page_and_navigates_to_it() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let params_before = h.state().params.clone();
+    let sections_before = h.state().gui_state.sections.clone();
+    // The MAIN page does not own halation; the search reports it elsewhere.
+    assert!(h.query_by_label("halation amount").is_none());
+
+    search(h, "halation amount");
+    let result = h
+        .query_all_by_label("FILM · Halation")
+        .next()
+        .expect("the search must report the owning page and section");
+    result.simulate_click();
+    h.run_steps(5);
+
+    assert_eq!(
+        h.state().gui_tab,
+        crate::ui::GuiTab::Film,
+        "selecting a result must switch to the owning page"
+    );
+    assert!(
+        h.query_by_label("halation amount").is_some(),
+        "the owning page must reveal the control the filter matches"
+    );
+    assert_eq!(
+        h.state().filter,
+        "halation amount",
+        "the filter must stay transient and keep its text after the switch"
+    );
+    assert_eq!(h.state().params, params_before);
+    assert_eq!(h.state().gui_state.sections, sections_before);
+}
+
+/// specs/gui-workflow/spec.md#control-search: the results list is not a second
+/// navigation surface for the pages. It exists only while a filter is non-empty
+/// and lists no page that has no matching control.
+#[test]
+fn the_search_results_are_transient_and_never_list_a_page_without_a_match() {
+    let mut s = session();
+    let h = &mut s.harness;
+    // Without a filter the results surface is absent entirely.
+    assert!(h.query_by_label("Also on other pages").is_none());
+
+    search(h, "gamma factor");
+    // Film chemistry and Print chemistry both own a matching control, and the
+    // current page (MAIN) does not.
+    assert!(
+        h.query_by_label("No control on MAIN matches.").is_some(),
+        "a page without a match must say so instead of listing itself"
+    );
+    let rows: Vec<String> = h
+        .query_all_by_label_contains(" · ")
+        .filter_map(|node| node.label())
+        .collect();
+    assert!(
+        rows.iter().any(|row| row.starts_with("FILM · ")),
+        "the owning page must be named, got {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.starts_with("PRINT · ")),
+        "every owning page must be named, got {rows:?}"
+    );
+
+    search(h, "");
+    assert!(
+        h.query_by_label("Also on other pages").is_none(),
+        "clearing the filter must drop the results list"
+    );
+}
+
+/// specs/gui-workflow/spec.md#control-search: a filter that matches nothing
+/// anywhere says so, and the panel keeps its other surfaces in place.
+#[test]
+fn the_search_states_clearly_when_no_control_matches() {
+    let mut s = session();
+    let h = &mut s.harness;
+    search(h, "no-such-control-label");
+    assert!(
+        h.query_by_label_contains("No control matches").is_some(),
+        "a filter with no match anywhere must state that"
+    );
+    // The import surface and the page tabs keep their normal layout.
+    assert!(h.query_all_by_label("workflow").next().is_some());
+    assert!(h.query_by_label("MAIN").is_some());
+
+    search(h, "");
+    assert!(h.query_by_label_contains("No control matches").is_none());
+}
+
+/// specs/gui-presentation/spec.md#section-headers: a collapsed section states
+/// what it holds, so a page of bare headers still names its controls. The
+/// summary is display-only: it writes no value and stores no open state.
+#[test]
+fn collapsed_sections_state_what_they_hold() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let params_before = h.state().params.clone();
+    let sections_before = h.state().gui_state.sections.clone();
+
+    // PRINT: Print base, Glare and Enlarger diffusion are collapsed by default,
+    // and both chemistry sections are too.
+    click(h, "PRINT");
+    assert!(
+        h.query_by_label_contains("Base density: scale and per-channel masks")
+            .is_some(),
+        "Print base must state what it holds while collapsed"
+    );
+    assert!(
+        h.query_by_label_contains("Print viewing glare: percent, roughness, blur")
+            .is_some(),
+        "Glare must state what it holds while collapsed"
+    );
+    assert!(
+        h.query_by_label_contains("Enlarger diffusion: core, tail, and warmth")
+            .is_some(),
+        "Enlarger diffusion must state what it holds while collapsed"
+    );
+    assert!(
+        h.query_by_label_contains("Density curves: development time")
+            .is_some(),
+        "the chemistry section must state what it holds while collapsed"
+    );
+
+    // ADVANCED: every section on the page is collapsed by default.
+    click(h, "ADVANCED");
+    assert!(
+        h.query_by_label_contains("Spectral reconstruction: method, adaptation, blur")
+            .is_some(),
+        "Spectral upsampling must state what it holds while collapsed"
+    );
+    assert!(
+        h.query_by_label_contains("Input gamut compression: algorithm, knee, hull detail")
+            .is_some(),
+        "Input gamut compress must state what it holds while collapsed"
+    );
+    assert!(
+        h.query_by_label_contains("Output gamut compression: algorithm, knee")
+            .is_some(),
+        "Output gamut compress must state what it holds while collapsed"
+    );
+
+    // FILM: the material sections are collapsed by default.
+    click(h, "FILM");
+    assert!(
+        h.query_by_label_contains("Base density: scale, tilt, and per-channel masks")
+            .is_some(),
+        "Film base must state what it holds while collapsed"
+    );
+    assert!(
+        h.query_by_label_contains("Highlight glow: halation, in-emulsion scatter, boost")
+            .is_some(),
+        "Halation must state what it holds while collapsed"
+    );
+    assert!(
+        h.query_by_label_contains("DIR couplers: inhibition and interlayer response")
+            .is_some(),
+        "Couplers must state what it holds while collapsed"
+    );
+    assert!(
+        h.query_by_label_contains("Convert-film calibration: base, matrix, controller actions")
+            .is_some(),
+        "Convert must state what it holds while collapsed"
+    );
+
+    // An open section shows its controls, not its summary, and no section was
+    // opened by rendering the summaries.
+    assert!(h.query_by_label("halation amount").is_none());
+    assert_eq!(h.state().params, params_before);
+    assert_eq!(h.state().gui_state.sections, sections_before);
 }

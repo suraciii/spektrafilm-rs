@@ -455,14 +455,16 @@ class X11:
         if label in ('Open', 'Export'):
             self.scroll(True)
             _, _, lines = self.read()
-            actual = 'Select file' if label == 'Open' else label
+            # The two intake sections now name their own action, so the
+            # scenario's `Open` maps to whichever section is expanded.
+            actual = 'Select RGB image' if label == 'Open' else label
             if label == 'Export':
-                # The Export… button lives inside the collapsible Export options
+                # The export opener lives inside the collapsible Export options
                 # section, whose header carries the same word; the button
                 # renders below the header, so expand the section when only the
                 # header is visible.
                 header = self.match(lines, 'Export options')
-                if header and not [point for point in self.match(lines, 'Export')
+                if header and not [point for point in self.match(lines, 'Open export settings')
                                    if point[1] > header[0][1] + 10]:
                     self.xd('mousemove', '--window', self.window, int(header[0][0]), int(header[0][1]))
                     self.xd('click', 1)
@@ -474,6 +476,12 @@ class X11:
                 self.xd('mousemove', '--window', self.window, int(x), int(y))
                 self.xd('click', 1)
                 time.sleep(.15)
+                # The RAW section names its action differently, so read back
+                # which intake action the expanded section now presents.
+                if label == 'Open':
+                    _, _, opened = self.read()
+                    if self.match(opened, 'Select RAW file', right):
+                        actual = 'Select RAW file'
             label = actual
         def locate():
             image, _, lines = self.read()
@@ -486,6 +494,12 @@ class X11:
                     below = [point for point in matches if point[1] > header[0][1] + 10]
                     if below:
                         matches = below
+                else:
+                    # Without the header on screen, the opener's own label is
+                    # unambiguous, so prefer it over the section header word.
+                    own = self.match(lines, 'Open export settings')
+                    if own:
+                        matches = own
             if not matches and label == 'Cancel':
                 return None
             if matches:
@@ -838,7 +852,7 @@ class X11:
                 data = self.ocr.image_to_data(prepare(button), config='--psm 7',
                                               output_type=self.ocr.Output.DICT, timeout=15)
                 words = [i for i, text in enumerate(data['text']) if text.strip()]
-                if len(words) == 1 and re.sub(r'[^a-z0-9]', '', data['text'][words[0]].lower()) == 'export':
+                if len(words) == 1 and re.sub(r'[^a-z0-9]', '', data['text'][words[0]].lower()) == 'openexportsettings':
                     i = words[0]
                     return (x0 + (data['left'][i] + data['width'][i] / 2) / 3,
                             y0 + (data['top'][i] + data['height'][i] / 2) / 3)
@@ -1082,10 +1096,10 @@ class X11:
             result = modal_read()
             if result is None:
                 return None
-            image, _, lines = result
+            image, lines = result
             cancels = [(x, y) for x, y in self.match(lines, 'Cancel')
                        if x < self.right_control_x]
-            candidates = [(x, y) for x, y in self.match(lines, 'Export')
+            candidates = [(x, y) for x, y in self.match(lines, 'Export file')
                           if any(x < cx and abs(y - cy) < 12 for cx, cy in cancels)]
             if candidates:
                 self.snap('export-options-confirmed', image, lines)
@@ -1104,7 +1118,7 @@ class X11:
                 data = self.ocr.image_to_data(prepared.resize((crop.width * 3, crop.height * 3)),
                                               config='--psm 7', output_type=self.ocr.Output.DICT)
                 for i, text in enumerate(data['text']):
-                    if re.findall(r'[a-z0-9]+', text.lower()) == ['export']:
+                    if re.findall(r'[a-z0-9]+', text.lower()) == ['export', 'file']:
                         self.snap('export-options-confirmed', image, lines)
                         return (box[0] + data['left'][i] / 3 + data['width'][i] / 6,
                                 box[1] + data['top'][i] / 3 + data['height'][i] / 6)

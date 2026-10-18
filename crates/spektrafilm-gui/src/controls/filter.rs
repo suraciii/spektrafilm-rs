@@ -30,6 +30,13 @@ impl SectionLabelCache {
     fn complete_for_search(&self) -> bool {
         self.search_rendered && !self.labels.is_empty()
     }
+
+    /// The control labels this cache recorded, and whether the render that
+    /// recorded them ran with a non-empty filter. The cross-page search index
+    /// reads them to decide which sections own a matching control.
+    pub(crate) fn labels(&self) -> Option<&[&'static str]> {
+        self.search_rendered.then_some(self.labels.as_slice())
+    }
 }
 
 /// Whether a section's cached control labels include a match for `filter`. A

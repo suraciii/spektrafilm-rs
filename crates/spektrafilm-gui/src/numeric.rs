@@ -46,7 +46,21 @@ struct NumericEditState {
 ///
 /// Core owns the unit vocabulary, so the GUI reads it rather than keeping a
 /// second table. The result is cached because `describe_field` walks JSON.
+///
+/// A handful of rows display an abbreviated suffix so the row stays on one
+/// line inside the fixed-width panel. The abbreviation is display-only: the
+/// tooltip and core discovery keep the full unit.
 pub(crate) fn unit_suffix(path: &str) -> Option<&'static str> {
+    static DISPLAY_SUFFIXES: std::sync::LazyLock<std::collections::HashMap<String, &'static str>> =
+        std::sync::LazyLock::new(|| {
+            let mut suffixes: std::collections::HashMap<String, &'static str> =
+                std::collections::HashMap::new();
+            // "linear exposure multiplier" is the longest unit in the core
+            // vocabulary; the abbreviated form keeps the row single-line
+            // without truncating the label.
+            suffixes.insert("enlarger.preflash_exposure".to_owned(), "exposure ×");
+            suffixes
+        });
     static UNITS: std::sync::LazyLock<std::collections::HashMap<String, Option<String>>> =
         std::sync::LazyLock::new(|| {
             let mut units: std::collections::HashMap<String, Option<String>> =
@@ -70,6 +84,9 @@ pub(crate) fn unit_suffix(path: &str) -> Option<&'static str> {
             units.insert("extras.load_raw.tint".to_owned(), Some("CC".to_owned()));
             units
         });
+    if let Some(display) = DISPLAY_SUFFIXES.get(path) {
+        return Some(display);
+    }
     UNITS
         .get(path)
         .and_then(|unit| unit.as_deref())
@@ -109,10 +126,7 @@ fn parse_value<T: egui::emath::Numeric>(text: &str, min: f64, max: f64) -> Optio
     Some(parsed)
 }
 
-/// One parameter row: the label on the left, the value on the right of the
-/// same line, and the slider on the line below.
-///
-/// The value stays the row's editor; the slider only moves it.
+/// One parameter row with an optional modified marker.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn numeric<T: egui::emath::Numeric>(
     ui: &mut Ui,
@@ -126,24 +140,56 @@ pub(crate) fn numeric<T: egui::emath::Numeric>(
     unit: Option<&str>,
     experimental: bool,
 ) -> bool {
+    numeric_marked(
+        ui,
+        label,
+        value,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        unit,
+        experimental,
+        crate::controls::row_modified::RowMark::NONE,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn numeric_marked<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    tooltip: &str,
+    unit: Option<&str>,
+    experimental: bool,
+    mark: crate::controls::row_modified::RowMark,
+) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        let label_response =
-            crate::controls::row_label(ui, label, experimental).on_hover_text(tooltip);
+        let label_response = crate::controls::row_label(ui, label, experimental);
+        label_response.clone().on_hover_text(tooltip);
+        mark.paint(ui, &label_response);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= numeric_field(
-                ui,
-                label,
-                label,
-                value,
-                min,
-                max,
-                step,
-                decimals,
-                tooltip,
-                unit,
-                Some(label_response.id),
-            );
+            changed |= mark.gold(ui, |ui| {
+                numeric_field(
+                    ui,
+                    label,
+                    label,
+                    value,
+                    min,
+                    max,
+                    step,
+                    decimals,
+                    tooltip,
+                    unit,
+                    Some(label_response.id),
+                )
+            });
         });
     });
     changed |= row_slider(ui, label, value, min, max, step);

@@ -112,3 +112,31 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
     assert!(h.state().params.scanner.black_correction);
     assert!(!h.state().params.print_render.glare.active);
 }
+
+#[test]
+fn loaded_state_reports_scanner_normalization_in_header_status() {
+    let mut s = session();
+    let h = &mut s.harness;
+    choose(h, "workflow", "Finished RGB");
+    let mut state = h.state().current_state().unwrap();
+    let path = s.directory.path().join("normalized-state.json");
+    state.sections["simulation"]["route"] = "input > film > scan".into();
+    state.sections["scanner"]["finish_strength"] = 0.75.into();
+    state.save(&path).unwrap();
+    click(h, "CONFIG");
+    if h.query_by_label("Load from file").is_none() {
+        click(h, "GUI parameters");
+    }
+    script(h, chooser::ChooserResult::Scripted(path));
+    click(h, "Load from file");
+    assert!(
+        h.state().status.contains("normalized scanner controls"),
+        "{}",
+        h.state().status
+    );
+    assert!(
+        h.state().status.contains("finish strength"),
+        "{}",
+        h.state().status
+    );
+}

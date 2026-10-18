@@ -244,6 +244,51 @@ pub fn is_modified(section: &str, live: &RuntimeParams, extras: &Value) -> bool 
     false
 }
 
+/// Whether one rendered runtime or extras leaf differs from the value its section reset restores.
+///
+/// The row path must be the leaf exposed by the control. A section scope may
+/// name an ancestor object, while Camera and Enlarger deliberately name their
+/// individual leaves; both forms use the same exact-bit comparison as the
+/// section header and reset operation.
+pub(crate) fn leaf_modified(
+    section: &str,
+    path: &str,
+    live_root: &Value,
+    live_extras: &Value,
+) -> bool {
+    if let Some(paths) = section_paths(section) {
+        for scope in paths {
+            let is_child = path == *scope
+                || (path.starts_with(scope) && path.as_bytes().get(scope.len()) == Some(&b'.'));
+            if is_child {
+                let Some(live) = value_at(live_root, path) else {
+                    continue;
+                };
+                let Some(factory) = value_at(&FACTORY_ROOT, path) else {
+                    continue;
+                };
+                return !same_bits(&live, &factory);
+            }
+        }
+    }
+    if let Some(paths) = section_extras(section) {
+        for scope in paths {
+            let is_child = path == *scope
+                || (path.starts_with(scope) && path.as_bytes().get(scope.len()) == Some(&b'.'));
+            if is_child {
+                let Some(live) = document_value(live_extras, path) else {
+                    continue;
+                };
+                let Some(factory) = document_value(&FACTORY_EXTRAS, path) else {
+                    continue;
+                };
+                return !same_bits(&live, &factory);
+            }
+        }
+    }
+    false
+}
+
 /// Restore one section's parameters to the projected factory state.
 ///
 /// Only the section's own paths are restored, so neighbouring sections keep

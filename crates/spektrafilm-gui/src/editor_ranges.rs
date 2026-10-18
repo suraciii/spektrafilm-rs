@@ -275,7 +275,7 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.dir_couplers.inhibition_samelayer" => Some((0.0, 10.0, 0.05, 2)),
         "film_render.dir_couplers.inhibition_interlayer" => Some((0.0, 10.0, 0.05, 2)),
         "film_render.dir_couplers.diffusion_size_um" => Some((0.0, 50.0, 5.0, 2)),
-        "film_render.dir_couplers.diffusion_tail_um" => Some((0.0, 50.0, 10.0, 2)),
+        "film_render.dir_couplers.diffusion_tail_um" => Some((0.0, 500.0, 10.0, 2)),
         "film_render.dir_couplers.diffusion_tail_weight" => Some((0.0, 1.0, 0.01, 2)),
         "film_render.dir_couplers.gamma_samelayer_rgb" => Some((0.0, 1000000.0, 0.02, 2)),
         "film_render.dir_couplers.gamma_interlayer_r_to_gb" => Some((0.0, 1000000.0, 0.02, 2)),
@@ -512,5 +512,64 @@ mod tests {
             editor_range("camera.film_format_mm"),
             Some((1.0, 1000.0, 0.5, 2))
         );
+    }
+
+    /// Every declared editor range must contain the parameter's documented
+    /// default, so a factory value the GUI cannot reach is caught here instead
+    /// of at the first frame that draws the row. The defaults come from core
+    /// parameter discovery, so the test follows the core defaults rather than
+    /// a second copy of them.
+    #[test]
+    fn every_range_contains_the_core_default() {
+        // GUI-only paths outside the parameter document, so core discovery has
+        // no default for them.
+        const GUI_ONLY_PATHS: &[&str] = &[
+            "extras.load_raw.temperature",
+            "extras.load_raw.tint",
+            "extras.special.film_channel_swap",
+            "extras.special.print_channel_swap",
+            "display.white_padding",
+        ];
+        for path in ALL_PATHS {
+            if GUI_ONLY_PATHS.contains(path) {
+                continue;
+            }
+            let field = spektrafilm_core::params::sources::describe_field(path)
+                .unwrap_or_else(|error| panic!("{path}: discovery failed: {error}"));
+            let default = field
+                .get("default")
+                .unwrap_or_else(|| panic!("{path}: discovery declares no default"));
+            let Some((min, max, _, _)) = editor_range(path) else {
+                panic!("{path}: no editor range");
+            };
+            // A tuple row's declared range covers every component, so every
+            // component of the default must be inside it.
+            let defaults: Vec<f64> = if let Some(default) = default.as_f64() {
+                vec![default]
+            } else if let Some(components) = default.as_array() {
+                components
+                    .iter()
+                    .map(|component| {
+                        component.as_f64().unwrap_or_else(|| {
+                            panic!("{path}: component default {component} is not a number")
+                        })
+                    })
+                    .collect()
+            } else {
+                // A nullable leaf's unset default is null; the GUI row shows
+                // the resolved value, which is not the core default.
+                assert!(
+                    default.is_null() && field["nullable"] == true,
+                    "{path}: default {default} is neither a number nor a null nullable"
+                );
+                continue;
+            };
+            for default in defaults {
+                assert!(
+                    (min..=max).contains(&default),
+                    "{path}: editor range ({min}, {max}) excludes the documented default {default}"
+                );
+            }
+        }
     }
 }

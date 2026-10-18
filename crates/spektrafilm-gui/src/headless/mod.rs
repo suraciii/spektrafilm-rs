@@ -196,10 +196,6 @@ fn empty_session() -> Session {
 }
 
 fn click(h: &mut Harness<'_, App>, label: &str) {
-    // A page's controls are taller than the viewport, so a controls-panel
-    // label can resolve to a node sitting below the fold; the click would then
-    // land on whatever the scroll area shows at that offset. Nodes elsewhere
-    // (viewer, footer) are not in the scroll area and need no scroll.
     scroll_controls_into_view(h, label);
     h.get_by_label(label).simulate_click();
     h.run_steps(3);
@@ -238,31 +234,33 @@ fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
 }
 
 /// Click an export action. The sidebar button that opens the modal and the
-/// modal's own submit share one label; the sidebar action is disabled while
-/// the modal is open, so the single enabled node is the actionable one.
-fn export_action(h: &mut Harness<'_, App>) {
-    scroll_controls_into_view(h, "Export…");
+/// modal's own submit now carry distinct labels, so the caller names the step
+/// it wants. The sidebar action is disabled while the modal is open, so an
+/// enabled-step query resolves the actionable node either way.
+fn export_action(h: &mut Harness<'_, App>, step: &str) {
+    scroll_controls_into_view(h, step);
     let buttons: Vec<_> = h
-        .query_all_by_label("Export…")
+        .query_all_by_label(step)
         .filter(|node| !node.node().is_disabled())
         .collect();
-    assert_eq!(buttons.len(), 1, "expected one enabled export action");
+    assert_eq!(buttons.len(), 1, "expected one enabled {step} action");
     buttons[0].simulate_click();
     h.run_steps(3);
 }
 
-/// Click the import button of one section. Both import sections expose a
-/// `select file` button, so the section's position in the tree disambiguates.
+/// Click the import button of one section. Each import section now names its
+/// own action, so the section is disambiguated by its label alone.
 fn import_file(h: &mut Harness<'_, App>, raw: bool) {
     click(h, "MAIN");
     click(h, if raw { "Import Raw" } else { "Import RGB" });
-    let buttons: Vec<_> = h.query_all_by_label("select file").collect();
-    let index = if raw { buttons.len() - 1 } else { 0 };
-    assert!(
-        !buttons.is_empty(),
-        "no import action found after expanding the section"
-    );
-    buttons[index].simulate_click();
+    let label = if raw {
+        "Select RAW file…"
+    } else {
+        "Select RGB image…"
+    };
+    let buttons: Vec<_> = h.query_all_by_label(label).collect();
+    assert_eq!(buttons.len(), 1, "one import action per section: {label}");
+    buttons[0].simulate_click();
     h.run_steps(3);
 }
 
@@ -565,9 +563,9 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(h.state().params.scanner.conversion_brightness_ev, 1.0);
     let brighter = render(h, "PREVIEW");
     assert!(mean(&brighter) > mean(&positive) + 0.01);
-    edit(h, "balance 0", "0.25");
-    edit(h, "balance 1", "-0.125");
-    edit(h, "balance 2", "0.5");
+    edit(h, "balance R", "0.25");
+    edit(h, "balance G", "-0.125");
+    edit(h, "balance B", "0.5");
     assert_eq!(
         h.state().params.scanner.conversion_balance_ev,
         [0.25, -0.125, 0.5]
@@ -667,7 +665,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     scroll_controls_down(h);
     click(h, "Export options");
     scroll_controls_down(h);
-    click(h, "Export…");
+    click(h, "Open export settings…");
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
@@ -878,7 +876,7 @@ mod layout_snapshots {
         let mut s = session();
         let h = &mut s.harness;
         click(h, "Export options");
-        click(h, "Export…");
+        click(h, "Open export settings…");
         choose(h, "Format", "TIFF");
         assert!(
             h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Compression")
@@ -913,12 +911,12 @@ mod layout_snapshots {
             "Compression",
             "Saving color space",
             "Apply saving CCTF encoding",
-            "Export…",
+            "Export file…",
             "Cancel",
         ] {
             let role = match label {
                 "Apply saving CCTF encoding" => egui::accesskit::Role::CheckBox,
-                "Export…" | "Cancel" => egui::accesskit::Role::Button,
+                "Export file…" | "Cancel" => egui::accesskit::Role::Button,
                 _ => egui::accesskit::Role::ComboBox,
             };
             let bounds = modal
@@ -942,7 +940,7 @@ mod layout_snapshots {
                 region_colors.len() > 2,
                 "{label} must have visible offscreen pixels"
             );
-            if !matches!(label, "Export…" | "Cancel") {
+            if !matches!(label, "Export file…" | "Cancel") {
                 rows.push((label, bounds));
             }
         }
@@ -1044,7 +1042,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         "receiver profile",
         "scanner auto setup",
         "brightness",
-        "balance 0",
+        "balance R",
         "contrast",
         "maximum density",
         "film-scan black point R",
@@ -1061,8 +1059,8 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     edit(h, "Reference exposure EV", "1");
     let brighter = render(h, "PREVIEW");
     assert!(mean(&brighter) > mean(&neutral));
-    edit(h, "Reference balance EV 0", "0.25");
-    edit(h, "Reference balance EV 1", "-0.125");
+    edit(h, "Reference balance EV R", "0.25");
+    edit(h, "Reference balance EV G", "-0.125");
     let balanced = render(h, "PREVIEW");
     assert_ne!(balanced.data, brighter.data);
     let accepted = h.state().current_state().unwrap();

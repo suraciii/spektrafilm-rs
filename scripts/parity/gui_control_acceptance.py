@@ -155,7 +155,8 @@ def export_controls(driver):
         image, _, lines = driver.read()
         text = '\n'.join(' '.join(word[0] for word in line) for line in lines)
         require('Export backend' not in text and 'Save bit depth' not in text
-                and not driver.locate('Export', exact=True)
+                and not driver.locate('Open export settings', exact=True)
+                and not driver.locate('Export file', exact=True)
                 and not driver.locate('Cancel', exact=True),
                 f'{section} contains duplicate export controls')
         require(not any(re.fullmatch(r'Save(?:\.{3}|…)?', word[0])
@@ -165,18 +166,20 @@ def export_controls(driver):
         driver.section(section)
     driver.section('Output')
     require(driver.locate('Export options'), 'Output lacks export extension')
-    require(not driver.locate('Export', exact=True), 'Export extension initially expanded')
+    require(not driver.locate('Open export settings', exact=True),
+            'Export extension initially expanded')
     driver.section('Export options')
     driver.scroll(True)
     driver.snap('opened-output-export-options')
-    require(driver.locate('Export', exact=True), 'Output lacks Export action')
+    require(driver.locate('Open export settings', exact=True),
+            'Output lacks export action')
     require(not driver.locate('Export backend') and not driver.locate('Save bit depth'),
             'Modal settings duplicated in Output')
     driver.snap('output-export-options')
 
 
 def export_image(driver, path):
-    driver.click('Export', exact=True)
+    driver.click('Open export settings', exact=True)
     driver.export_options(path)
     driver.dialog(path, save=True)
     driver.exported(path, 'cpu-export-completed')
@@ -227,23 +230,23 @@ def cancel_export(driver, source, destination):
     driver.tab('MAIN')
     driver.scroll(False)
     driver.section('Import RGB')
-    driver.click('Select file')
+    driver.click('Select RGB image')
     driver.dialog(source)
     driver.wait_text(r'Loaded', 'large-import')
     driver.section('Import RGB')
     driver.section('Output')
     driver.scroll(True)
-    if not driver.locate('Export', exact=True):
+    if not driver.locate('Open export settings', exact=True):
         driver.section('Export options')
         driver.scroll(True)
     from PIL import ImageOps
     image, _, lines = driver.read()
-    action = driver.locate('Export', exact=True)
+    action = driver.locate('Open export settings', exact=True)
     require(action, 'Export action missing before cancellation')
     button_word = min((word for line in lines for word in line),
                       key=lambda word: abs(word[1] + word[3] / 2 - action[0]) + abs(word[2] + word[4] / 2 - action[1]))
     left, top, _, height = button_word[1:]
-    driver.click('Export', exact=True)
+    driver.click('Open export settings', exact=True)
     driver.export_options(destination)
     driver.dialog(destination, save=True)
     def cancel_visible():
