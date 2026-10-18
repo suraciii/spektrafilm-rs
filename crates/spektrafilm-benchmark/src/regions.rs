@@ -51,6 +51,7 @@ fn valid_identifier(id: &str) -> bool {
 ///
 /// The output is published only after the generated document passes the same
 /// shape and local-dependency validation used by authored regions documents.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_grid(
     id: &str,
     rows: u64,

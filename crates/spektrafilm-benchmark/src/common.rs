@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -370,12 +370,15 @@ pub fn create_destination(path: &Path) -> Result<()> {
 }
 
 /// Availability vocabulary shared by the appearance and reference evidence
-/// builders; both publish these exact snake_case spellings.
-#[derive(Serialize)]
+/// builders; both publish these exact snake_case spellings. The generated
+/// evidence reader reuses this same vocabulary, so the builders and the
+/// validator cannot disagree about a published row.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Availability {
     Available,
     Unavailable,
+    NotApplicable,
 }
 
 /// Terminal state vocabulary shared by every evidence builder manifest.

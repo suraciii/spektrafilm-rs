@@ -65,16 +65,8 @@ pub fn xyz_to_rgb_cat16_f64(
     let src_white = [x / y, 1.0, (1.0 - x - y) / y];
     let dst_white = space.whitepoint_xyz();
     let adapt = colorspace::chromatic_adaptation_matrix_cat16_f64(src_white, dst_white);
-    let adapted = apply_matrix_f64(&adapt, xyz);
-    Ok(apply_matrix_f64(&space.matrix_xyz_to_rgb, adapted))
-}
-
-fn apply_matrix_f64(m: &[[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
-    [
-        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
-        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
-        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
-    ]
+    let adapted = crate::math::mat_vec(&adapt, xyz);
+    Ok(crate::math::mat_vec(&space.matrix_xyz_to_rgb, adapted))
 }
 
 /// Measured reflectance under a scene illuminant → linear RGB.

@@ -394,16 +394,6 @@ pub const MALLETT2019_BASIS: [[f64; 3]; 81] = [
 /// Midgray reference reflectance (upstream uses 0.184).
 const MIDGRAY: f64 = 0.184;
 
-fn matmul3(a: [[f64; 3]; 3], b: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    let mut out = [[0.0f64; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            out[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
-        }
-    }
-    out
-}
-
 /// Core matrix mapping linear-sRGB RGB to film raw (green-midgray normalised).
 ///
 /// `core[m][k] = (Σ_λ basis[λ][k] · illuminant[λ] · sensitivity[λ][m]) / midgray_g`,
@@ -451,17 +441,13 @@ pub fn input_cs_to_srgb(color_space: &str) -> [[f64; 3]; 3] {
 
 /// Full per-pixel matrix `core · M_cs` mapping input-colour-space RGB to raw.
 pub fn film_matrix(core: &[[f64; 3]; 3], color_space: &str) -> [[f64; 3]; 3] {
-    matmul3(*core, input_cs_to_srgb(color_space))
+    crate::math::mat_mul(core, &input_cs_to_srgb(color_space))
 }
 
 /// Apply a 3×3 raw matrix to one RGB triple: `raw = m · rgb`.
 #[inline]
 pub fn apply(m: &[[f64; 3]; 3], rgb: [f64; 3]) -> [f64; 3] {
-    [
-        m[0][0] * rgb[0] + m[0][1] * rgb[1] + m[0][2] * rgb[2],
-        m[1][0] * rgb[0] + m[1][1] * rgb[1] + m[1][2] * rgb[2],
-        m[2][0] * rgb[0] + m[2][1] * rgb[1] + m[2][2] * rgb[2],
-    ]
+    crate::math::mat_vec(m, rgb)
 }
 
 #[cfg(test)]

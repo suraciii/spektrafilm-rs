@@ -9,6 +9,13 @@ The `spektrafilm-lab` instrument renders immutable evidence, compares versions, 
 
 The agent prepares the evidence and reads the measurements. The reviewer opens `index.html` to inspect full images and native crops. Baseline selection and calibrated policy budgets remain explicit decisions.
 
+```bash
+./target/release/spektrafilm-lab regions grid \
+    --id chart-regions --rows 6 --columns 4 \
+    --origin 0,0 --patch-size 8x8 --gap 2,2 \
+    --out /tmp/spektrafilm-benchmark-regions.json
+```
+
 ## Generate and compare suite evidence
 
 Build the instrument. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.

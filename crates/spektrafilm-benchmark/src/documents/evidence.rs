@@ -2,20 +2,13 @@ use super::{
     err, finite, identifier, load_json_document, obj, req, safe_artifact_path, text, unique,
     validate_schema,
 };
-use crate::common::{Result, digest, sha256_file};
+use crate::common::{Availability, Result, digest, sha256_file};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Availability {
-    Available,
-    Unavailable,
-    NotApplicable,
-}
 #[derive(Debug, Deserialize)]
 pub struct MeasurementRecord {
     pub case_id: String,
