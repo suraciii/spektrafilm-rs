@@ -31,6 +31,7 @@ fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         super::ScanMedium::Negative,
         "",
         &mut Default::default(),
+        "D65",
     );
 }
 
@@ -43,6 +44,7 @@ fn enlarger(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         super::ScanMedium::Negative,
         "",
         &mut Default::default(),
+        "D65",
     );
 }
 

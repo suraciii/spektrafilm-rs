@@ -113,7 +113,8 @@ fn startup_default_and_factory_restore_stay_in_session_directory() {
     let browser = directory.join("restarted-browser.json");
     s.harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
-        .build_eframe(move |_| {
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
             App::new_with_browser_path(Arc::new(CpuBackend), image, None, None, browser, data_dir())
         });
     let h = &mut s.harness;

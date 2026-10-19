@@ -644,9 +644,12 @@ mod tests {
             },
         );
         if amount.is_null() {
-            // A captured `None` is omitted, so write the null explicitly to keep
-            // the carrier rule the test asserts.
-            preset.parameters.film_render.grain.v2_amount = None;
+            preset
+                .look_parameters_mut()
+                .expect("captured look preset")
+                .film_render
+                .grain
+                .v2_amount = None;
             let object = serde_json::to_value(&preset).unwrap();
             let mut map = object.as_object().unwrap().clone();
             map["parameters"]["film_render"]["grain"]

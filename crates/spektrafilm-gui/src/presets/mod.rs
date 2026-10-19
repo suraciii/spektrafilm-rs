@@ -4,7 +4,9 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use spektrafilm_core::{
     params::RuntimeParams,
-    presets::{LibraryEntry, Preset, PresetGroup, PresetLibrary, Provenance, validate_name},
+    presets::{
+        LibraryEntry, Preset, PresetGroup, PresetKind, PresetLibrary, Provenance, validate_name,
+    },
 };
 use std::path::{Path, PathBuf};
 
@@ -83,6 +85,7 @@ pub fn marker(
         .iter()
         .find(|e| e.group == applied.group && e.name == applied.name)
         .and_then(|e| e.preset.as_ref())
+        .filter(|p| p.kind() == Ok(PresetKind::Look))
     else {
         return Marker::Missing;
     };
@@ -94,7 +97,9 @@ pub fn marker(
             .print_profile
             .as_ref()
             .is_some_and(|p| p.stock == print)
-        && preset.look_parameters().matches(params)
+        && preset
+            .look_parameters()
+            .is_some_and(|look| look.matches(params))
     {
         Marker::Applied
     } else {

@@ -606,6 +606,10 @@ impl App {
         self.rotate_input_image(false);
     }
     fn parameter_section(&mut self, ui: &mut egui::Ui, section: &str) {
+        let reveal = self.pending_scroll.as_deref() == Some(section);
+        if reveal {
+            self.pending_scroll = None;
+        }
         // Sections that own their own header rather than rendering one inside
         // the controls, with the state the header opens in.
         let collapsible = match section {
@@ -640,6 +644,9 @@ impl App {
                 });
             }
             self.parameter_section_controls(ui, section);
+            if reveal {
+                ui.scroll_to_rect(ui.min_rect(), Some(egui::Align::Center));
+            }
             return;
         }
         if let Some((label, default_open)) = collapsible {
@@ -647,7 +654,7 @@ impl App {
             let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
                 ui.make_persistent_id(("section", section)),
-                default_open,
+                default_open || reveal,
             )
             .show_header(ui, |ui| {
                 label_clicked = ui
@@ -663,6 +670,9 @@ impl App {
                     .clicked();
                 self.section_reset_controls(ui, section);
             });
+            if reveal {
+                header.set_open(true);
+            }
             if label_clicked {
                 header.toggle();
             }
@@ -670,6 +680,9 @@ impl App {
             header.body(|ui| self.parameter_section_controls(ui, section));
             if closed && let Some(summary) = section_summary(section) {
                 ui.label(egui::RichText::new(summary).color(theme::FG_MUTED).small());
+            }
+            if reveal {
+                ui.scroll_to_rect(ui.min_rect(), Some(egui::Align::Center));
             }
         } else {
             // A section without its own header renders one inside the controls,
@@ -680,6 +693,9 @@ impl App {
                 });
             }
             self.parameter_section_controls(ui, section);
+            if reveal {
+                ui.scroll_to_rect(ui.min_rect(), Some(egui::Align::Center));
+            }
         }
     }
 

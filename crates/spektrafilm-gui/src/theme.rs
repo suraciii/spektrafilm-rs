@@ -28,8 +28,8 @@ pub const BORDER_ACTIVE: Color32 = Color32::from_rgb(0x3d, 0x3d, 0x44);
 pub const FG: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xe8);
 /// Secondary text for labels and descriptions. The prototype's `--ink-2`.
 pub const FG_SECONDARY: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa2);
-/// Muted text for hints, units, and metadata. The prototype's `--ink-3`.
-pub const FG_MUTED: Color32 = Color32::from_rgb(0x63, 0x63, 0x6b);
+/// Muted text for hints, units, and metadata; readable on dark surfaces.
+pub const FG_MUTED: Color32 = Color32::from_rgb(0x8a, 0x8a, 0x92);
 /// Error red.
 pub const ERROR: Color32 = Color32::from_rgb(0xe0, 0x55, 0x55);
 /// Warning amber, for capability notices that are not errors.
@@ -162,7 +162,13 @@ pub fn stroke(color: Color32) -> Stroke {
 }
 
 /// Apply the dark warm-accent theme to an egui context.
+///
+/// Pin the theme preference to dark first: the context's default preference is
+/// [`egui::ThemePreference::System`], and a light system theme resolves the
+/// active style to the light one, which would discard the visuals set below
+/// until the next [`egui::Context::set_theme`] call.
 pub fn apply(ctx: &egui::Context) {
+    ctx.set_theme(egui::Theme::Dark);
     let mut visuals = Visuals::dark();
     visuals.override_text_color = Some(FG);
     visuals.panel_fill = SURFACE;

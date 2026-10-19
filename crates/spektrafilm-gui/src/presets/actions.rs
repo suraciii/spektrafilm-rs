@@ -2,61 +2,51 @@ use super::*;
 
 impl App {
     pub(crate) fn load_preset(&mut self, group: PresetGroup, name: &str) {
+        let mut current = self.params.clone();
+        if let Some((white, black, glare)) = self.scan_for_print_snapshot {
+            current.scanner.white_correction = white;
+            current.scanner.black_correction = black;
+            current.print_render.glare.active = glare;
+        }
+        let before_scanner = current.scanner.clone();
         let result = self.presets.library.load(group, name).and_then(|selected| {
-            let mut current = self.params.clone();
-            if let Some((white, black, glare)) = self.scan_for_print_snapshot {
-                current.scanner.white_correction = white;
-                current.scanner.black_correction = black;
-                current.print_render.glare.active = glare;
-            }
-            match selected.preset.kind()? {
-                PresetKind::Look => {
-                    let resolved = selected.preset.resolve(&self.data_dir, &current)?;
-                    self.film_medium = crate::scan_medium(&resolved.film);
-                    self.film_reference_illuminant =
-                        resolved.film.info.reference_illuminant.clone();
-                    self.film_name = resolved.film_name;
-                    self.print_name = resolved.print_name;
-                    self.params = resolved.params;
-                    self.film_dev_times = resolved.film.data.development_time;
-                    self.print_dev_times = resolved.print.data.development_time;
-                    self.presets.state.applied = Some(AppliedPreset {
-                        group,
-                        name: name.to_owned(),
-                    });
-                }
-                PresetKind::Section(_) => {
-                    let film = spektrafilm_core::profile::load_profile_by_name(
-                        &self.data_dir,
-                        &self.film_name,
-                    )
-                    .map_err(|error| error.to_string())?;
-                    self.params = selected.preset.apply_section(&current, &film)?;
-                    self.film_medium = crate::scan_medium(&film);
-                    self.film_reference_illuminant = film.info.reference_illuminant.clone();
-                }
-            }
+            let resolved = selected.preset.resolve(&self.data_dir, &current)?;
+            self.film_medium = crate::scan_medium(&resolved.film);
+            self.film_reference_illuminant = resolved.film.info.reference_illuminant.clone();
+            self.film_name = resolved.film_name;
+            self.print_name = resolved.print_name;
+            self.params = resolved.params;
+            self.film_dev_times = resolved.film.data.development_time;
+            self.print_dev_times = resolved.print.data.development_time;
+            self.presets.state.applied = Some(AppliedPreset {
+                group,
+                name: name.to_owned(),
+            });
             self.invalidate_look_render();
             Ok(())
         });
         self.status = match result {
-            Ok(()) => format!("Applied preset '{name}'"),
+            Ok(()) => {
+                let cause = format!("Applied preset '{name}'");
+                App::normalization_status(
+                    &before_scanner,
+                    &self.params.scanner,
+                    self.film_medium,
+                    &self.params.workflow.route,
+                    &cause,
+                )
+            }
             Err(e) => format!("Preset error: {e}"),
         };
     }
-    pub(crate) fn save_preset_as(&mut self, section: Option<Section>) {
-        let result = match section {
-            Some(section) => {
-                Preset::capture_section("New preset", section, &self.params, provenance())
-            }
-            None => Ok(Preset::capture(
-                "New preset",
-                &self.film_name,
-                &self.print_name,
-                &self.params,
-                provenance(),
-            )),
-        };
+    pub(crate) fn save_preset_as(&mut self) {
+        let result = Ok(Preset::capture(
+            "New preset",
+            &self.film_name,
+            &self.print_name,
+            &self.params,
+            provenance(),
+        ));
         match result {
             Ok(preset) => {
                 self.presets.name_dialog = Some(NameDialog {

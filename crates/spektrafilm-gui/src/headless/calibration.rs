@@ -33,6 +33,10 @@ fn drain(h: &mut Harness<'_, App>) {
 /// `update` — so after this call a freshly started worker is observed in
 /// flight with certainty: no poll has run since the job was created.
 fn press(h: &mut Harness<'_, App>, label: &str) {
+    // Convert is below the expanded Halation controls; make the button hittable
+    // before queuing the three-event mouse click. No worker exists yet, so the
+    // scroll frames cannot consume the operation this click is about to start.
+    scroll_controls_into_view(h, label);
     h.get_by_label(label).simulate_click();
     h.step();
 }
@@ -77,7 +81,8 @@ fn session_without_image() -> Session {
     let browser_path = directory.path().join("browser.json");
     let harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
-        .build_eframe(move |_| {
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
             App::new_with_browser_path(
                 Arc::new(CpuBackend),
                 None,
