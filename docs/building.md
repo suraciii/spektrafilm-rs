@@ -31,6 +31,9 @@ cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektraf
 
 # Optional RAW decoding helper using the shared native decoder
 cargo build --release -p spektrafilm-cli --bin decode_raw_gui
+
+# benchmark CLI — offline visual reports from authored manifests
+cargo build --release -p spektrafilm-benchmark
 ```
 
 This produces:
@@ -40,6 +43,7 @@ This produces:
 - `target/release/spektrafilm-f64` — CPU reference exporter.
 - `target/release/spektrafilm-lab` — the instrument command surface (f64 reference precision; shipped in packages).
 - `target/release/decode_raw_gui` — standalone RAW decoding helper.
+- `target/release/spektrafilm-bench` — benchmark-owned offline visual reports, for example `report photos`.
 
 The `just` command surface also covers packaging and per-user installation:
 

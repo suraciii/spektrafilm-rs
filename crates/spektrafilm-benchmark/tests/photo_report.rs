@@ -1113,6 +1113,188 @@ fn the_report_carries_no_metric_or_network_dependency() {
     }
 }
 
+/// The fragment keys the viewer writes for one mode, mirroring its `currentHash`.
+/// This exists so the test can assert the write/read round trip per mode without
+/// executing the browser script.
+fn write_fragment(mode: &str, layout: &str, with_roi: bool) -> Vec<String> {
+    let mut keys = Vec::new();
+    if mode == "requested_comparisons" {
+        keys.push("pair".to_owned());
+    }
+    if mode == "single_photo" {
+        keys.push("photo".to_owned());
+    }
+    if with_roi {
+        keys.push("roi".to_owned());
+    }
+    if mode != "single_photo" {
+        keys.push("layout".to_owned());
+    }
+    keys.push("zoom".to_owned());
+    if mode != "single_photo" && layout == "blink" {
+        keys.push("blink".to_owned());
+    }
+    keys
+}
+
+/// The published viewer keeps the offline, mode-boundary, and state contracts
+/// the page relies on. These are read from the generated `viewer.js` so a
+/// regression in the asset fails the command's own acceptance, not only a
+/// manual browser check.
+#[test]
+fn the_published_viewer_keeps_its_offline_and_state_contracts() {
+    let work = Workspace::new();
+    write_png(&work.path("scan.png"), 8, 6, [12, 20, 240]);
+    write_png(&work.path("sim.png"), 6, 8, [240, 20, 12]);
+    let manifest = work.write_manifest(&manifest_with(
+        vec![
+            json!({
+                "id": "scan",
+                "path": "scan.png",
+                "label": "Original scan",
+                "rois": [{"id": "face", "label": "Face", "rect": [1, 1, 4, 3]}]
+            }),
+            json!({
+                "id": "sim",
+                "path": "sim.png",
+                "label": "Simulation output",
+                "rois": [{"id": "face", "label": "Face", "rect": [0, 2, 3, 5]}]
+            }),
+        ],
+        None,
+    ));
+    let report = work.publish(&manifest);
+    let viewer = fs::read_to_string(work.report().join("viewer.js")).unwrap();
+
+    // The viewer is a self-contained local asset: no network client exists.
+    for needle in [
+        "fetch(",
+        "XMLHttpRequest",
+        "WebSocket",
+        "import(",
+        "http://",
+        "https://",
+    ] {
+        assert!(
+            !viewer.contains(needle),
+            "the published viewer must not use {needle}"
+        );
+    }
+
+    // Fragment recovery and mode boundaries: every mode's fragment key table is
+    // closed, and single-photo mode has no pair, layout, or blink keys.
+    // A single-photo URL produced by normal state must reload validly: the
+    // writer must never emit a key that the mode's table rejects. Driving the
+    // writer over every mode/layout/roi combination proves the round trip
+    // instead of trusting the source text.
+    const KEY_TABLES: [(&str, &[&str]); 3] = [
+        ("single_photo", &["photo", "roi", "zoom"]),
+        ("two_photo", &["roi", "layout", "zoom", "blink"]),
+        (
+            "requested_comparisons",
+            &["pair", "roi", "layout", "zoom", "blink"],
+        ),
+    ];
+    for (mode, allowed) in KEY_TABLES {
+        for layout in ["side", "blink"] {
+            for with_roi in [false, true] {
+                let written = write_fragment(mode, layout, with_roi);
+                for key in &written {
+                    assert!(
+                        allowed.contains(&key.as_str()),
+                        "mode {mode} writes the key {key}, which its own table rejects: \
+                         the generated URL would fail to reload"
+                    );
+                }
+            }
+        }
+    }
+    // The published key tables must match the ones this test drives.
+    for (mode, allowed) in KEY_TABLES {
+        let table = allowed
+            .iter()
+            .map(|key| format!("'{key}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(
+            viewer.contains(&format!("{mode}: [{table}]")),
+            "the published viewer must keep mode {mode} on its closed key table"
+        );
+    }
+    assert!(
+        viewer.contains("function applyHash()"),
+        "an unknown or malformed fragment must be validated, not silently ignored"
+    );
+
+    // Blink sizing uses the rendered factor and the maximum width/height so the
+    // canvas encompasses both photos instead of only the left one.
+    assert!(
+        viewer.contains("Math.max(left.width, right ? right.width : 0)")
+            && viewer.contains("Math.max(left.height, right ? right.height : 0)"),
+        "the blink canvas must be sized from both photos"
+    );
+    assert!(
+        viewer.contains("fitFactor(blinkViewport, width, height)"),
+        "the blink fit factor must use the encompassing dimensions"
+    );
+
+    // The ROI description is rendered, not accepted and dropped.
+    let pane = viewer
+        .split("function makeViewportPane(")
+        .nth(1)
+        .expect("the viewer builds its panes")
+        .split("function makeUnavailablePane(")
+        .next()
+        .unwrap();
+    assert!(
+        pane.contains("small.textContent = rectDescription;"),
+        "the pane caption must render rectDescription"
+    );
+    assert!(
+        viewer.contains("function roiDimensionsText(") && viewer.contains("关注区域原生尺寸"),
+        "the ROI view must state the side's native ROI dimensions"
+    );
+
+    // Dynamic role=img viewports carry an accessible name.
+    let viewport = viewer
+        .split("viewport.setAttribute('role', 'img');")
+        .nth(1)
+        .expect("the viewer creates role=img viewports")
+        .split("enablePan(viewport);")
+        .next()
+        .unwrap();
+    assert!(
+        viewport.contains("viewport.setAttribute('aria-label'"),
+        "a role=img viewport must have an accessible name"
+    );
+
+    // Fit rendering actually sets the state the stylesheet selects on.
+    assert!(
+        viewer.contains("viewer.dataset.zoomMode = state.zoom === 'fit' ? 'fit' : 'native';"),
+        "the fit state must be written to the DOM"
+    );
+    assert!(
+        viewer.contains("applyZoomMode();"),
+        "renderAll must apply the zoom mode"
+    );
+    let html = fs::read_to_string(work.report().join("index.html")).unwrap();
+    assert!(
+        html.contains("[data-zoom-mode=fit] .canvas img"),
+        "the stylesheet selects the fit state for image rendering"
+    );
+    // The viewer chrome is Chinese, so the document language must say so; an
+    // `en` declaration makes a screen reader read every label with an English
+    // voice. The sibling offline viewers declare zh-CN for the same reason.
+    assert!(
+        html.contains("<html lang=\"zh-CN\">"),
+        "the generated page must declare the viewer's own UI language"
+    );
+
+    // The published report is a real offline artifact.
+    assert_eq!(report["mode"], "two_photo");
+    assert_published_artifacts(&report, &work.report(), 2);
+}
+
 /// Acceptance 14: hostile authored text is carried as data, never as markup,
 /// and cannot terminate the embedded payload element.
 #[test]
@@ -1435,4 +1617,94 @@ fn a_successful_result_is_one_machine_json_object_on_stdout() {
     // One JSON document on stdout: a trailing second document would not parse.
     let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(parsed["command"], "report photos");
+}
+
+/// The documented command form `spektrafilm-bench report photos --manifest
+/// FILE --out DIRECTORY` publishes the documented artifact set and the
+/// documented terminal record. `docs/benchmark.md` and `README.md` both name
+/// this form, so the two documented claims stay executable.
+#[test]
+fn the_documented_command_form_publishes_the_documented_artifact_set() {
+    let work = Workspace::new();
+    write_png(&work.path("scan.png"), 8, 8, [180, 120, 60]);
+    write_png(&work.path("sim.png"), 8, 8, [60, 120, 180]);
+    let manifest = work.write_manifest(&manifest_with(
+        vec![
+            json!({"id":"scan","path":"scan.png","label":"Original scan"}),
+            json!({"id":"simulation","path":"sim.png","label":"Simulation output"}),
+        ],
+        None,
+    ));
+    let out = work.path("photo-report");
+    let (output, result) = work.run(&manifest, &out);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "the documented form must publish: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(result["command"], "report photos");
+    assert_eq!(result["source"], "photo_manifest");
+    assert_eq!(result["mode"], "two_photo");
+    // The documented shareable artifact set.
+    for relative in ["index.html", "report.json", "viewer.js"] {
+        assert!(
+            out.join(relative).is_file(),
+            "the published directory must contain {relative}"
+        );
+    }
+    assert_eq!(
+        fs::read_dir(out.join("images")).unwrap().count(),
+        2,
+        "one display image per photo, not one per pair"
+    );
+    // The documented terminal record.
+    let report = read_json(&out.join("report.json"));
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["command"], "report photos");
+    assert_eq!(report["source"], "photo_manifest");
+    assert_eq!(report["mode"], "two_photo");
+    assert_eq!(report["title"], "800T outdoor comparison");
+    let ids: Vec<&str> = report["photos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|photo| photo["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["scan", "simulation"],
+        "authored order is preserved"
+    );
+    assert_eq!(
+        report["comparisons"].as_array().unwrap().len(),
+        1,
+        "two photos generate exactly one pair"
+    );
+    for photo in report["photos"].as_array().unwrap() {
+        assert!(photo["source"]["sha256"].is_string());
+        assert!(photo["source"]["path"].is_string());
+        assert!(photo["width"].is_number());
+        assert!(photo["height"].is_number());
+        assert_eq!(photo["display"]["carrier"], "png");
+        assert_eq!(photo["display"]["bit_depth"], 16);
+    }
+    let roles: Vec<&str> = report["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|artifact| artifact["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        roles,
+        [
+            "display_image",
+            "display_image",
+            "viewer_script",
+            "report_page"
+        ]
+    );
+    for artifact in report["artifacts"].as_array().unwrap() {
+        assert!(artifact["sha256"].is_string());
+    }
 }

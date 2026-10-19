@@ -149,9 +149,11 @@
     if (data.mode === 'requested_comparisons' && state.pair) push('pair', state.pair);
     if (data.mode === 'single_photo' && state.photo) push('photo', state.photo);
     if (state.roi) push('roi', state.roi);
-    push('layout', state.layout);
+    // 单照片模式的片段键只有 photo/roi/zoom；写入 layout 会因模式键表拒绝而
+    // 让“正常状态生成的链接”重载后落入无效片段错误，因此绝不为它写入 layout。
+    if (data.mode !== 'single_photo') push('layout', state.layout);
     push('zoom', state.zoom);
-    if (state.layout === 'blink' && data.mode !== 'single_photo') push('blink', state.blink);
+    if (data.mode !== 'single_photo' && state.layout === 'blink') push('blink', state.blink);
     return `#${parts.join('&')}`;
   }
   function syncHash() {
@@ -385,6 +387,9 @@
     caption.appendChild(strong);
     const small = document.createElement('span');
     small.className = 'small';
+    // rectDescription 是生成器写入的可见元数据（矩形与原生尺寸）；
+    // 必须真正渲染出来，而不是只作为形参被丢弃。
+    small.textContent = rectDescription;
     caption.appendChild(small);
     pane.appendChild(caption);
     const viewport = document.createElement('div');
@@ -392,6 +397,9 @@
     viewport.tabIndex = 0;
     viewport.dataset.viewport = side;
     viewport.setAttribute('role', 'img');
+    // role=img 元素必须自带可访问名称；否则读屏软件只会念出空节点，
+    // 而图像本身是页面唯一的视觉证据。
+    viewport.setAttribute('aria-label', `${aria}视图：${labelText}`);
     enablePan(viewport);
     const canvas = document.createElement('div');
     canvas.className = 'canvas crop';
@@ -441,13 +449,24 @@
     pane.appendChild(unavailable);
     return pane;
   }
+  function roiDimensionsText(stateOf) {
+    const dims = stateOf.dimensions;
+    if (Array.isArray(dims) && dims.length >= 2 && dims.every(value => typeof value === 'number')) {
+      return `${dims[0]}×${dims[1]} 像素`;
+    }
+    const rect = data.mode === 'single_photo' ? stateOf.roi.rect : stateOf.rect;
+    return `${rect[2]}×${rect[3]} 像素`;
+  }
   function sidePane(side, stateOf, roiId, ariaSide) {
     if (!stateOf.available) {
       return makeUnavailablePane(side, `${sideName(side)}：不可用`, stateOf.reason);
     }
     const rect = data.mode === 'single_photo' ? stateOf.roi.rect : stateOf.rect;
     const label = `${roiLabel(roiId, side)}（${roiId}） · ${photoTitle(stateOf.photo)}`;
-    return makeViewportPane(side, label, `${rectText(rect)} · 原图 ${dimensionText(stateOf.photo)}`, true, ariaSide);
+    // 矩形坐标与该侧声明的原生尺寸并列展示，两侧矩形可以不同；
+    // 绝不为了“看起来一致”而缩放、裁剪或对齐任一侧。
+    const rectDescription = `${rectText(rect)} · 关注区域原生尺寸 ${roiDimensionsText(stateOf)} · 原图 ${dimensionText(stateOf.photo)}`;
+    return makeViewportPane(side, label, rectDescription, true, ariaSide);
   }
   function roiLabel(id, side) {
     const entry = roiEntry(id);
@@ -487,6 +506,13 @@
     if (box.w <= 0 || box.h <= 0) return null;
     return Math.min(box.w / w, box.h / h);
   }
+  // 缩放模式必须真正写入 DOM：CSS 用 `.viewer[data-zoom-mode=fit]` 切换
+  // image-rendering。若从不设置该状态，默认的 pixelated 会一路生效，
+  // “适应窗口”下经过缩放的显示副本会被浏览器以最近邻方式显示成锯齿。
+  function applyZoomMode() {
+    if (!viewer) return;
+    viewer.dataset.zoomMode = state.zoom === 'fit' ? 'fit' : 'native';
+  }
   function setImage(img, photo, factor) {
     if (img.getAttribute('src') !== photo.src) img.src = photo.src;
     img.style.width = `${photo.width * factor}px`;
@@ -498,15 +524,20 @@
     const sides = [left, right].filter(Boolean);
     if (!sides.length) return;
     if (state.layout === 'blink' && data.mode !== 'single_photo') {
-      const factor = fitFactor(blinkViewport, left.width, left.height);
+      // 画布尺寸同时容纳两侧；适应窗口时按两侧最大宽高计算，较大的一侧也能完整可见。
+      const width = Math.max(left.width, right ? right.width : 0);
+      const height = Math.max(left.height, right ? right.height : 0);
+      const factor = fitFactor(blinkViewport, width, height);
       if (factor === null) return;
       for (const side of ['left', 'right']) {
         const photo = side === 'left' ? left : right;
         setImage(blinkImages[side], photo, factor);
         blinkImages[side].alt = `${sideName(side)}整图：${photoTitle(photo)}`;
       }
-      blinkCanvas.style.width = `${left.width * factor}px`;
-      blinkCanvas.style.height = `${left.height * factor}px`;
+      // 画布必须同时容纳两侧照片：并排与交替都从同一画布裁切，
+      // 用两侧的最大宽高决定画布尺寸，任何一侧都不被裁掉。
+      blinkCanvas.style.width = `${width * factor}px`;
+      blinkCanvas.style.height = `${height * factor}px`;
       applyBlink();
       zoomLabel.textContent = zoomDescription(factor);
       return;
@@ -698,6 +729,7 @@
     renderProvenance();
     zoomSelect.value = state.zoom;
     pairSelect.value = currentPair() ? currentPair().id : '';
+    applyZoomMode();
     layoutWhole();
     layoutRoi();
     syncHash();

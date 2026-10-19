@@ -5,6 +5,7 @@ The `spektrafilm-lab` instrument renders immutable evidence, compares versions, 
 - Compare versions: generate one bundle, run baseline and candidate targets, then use `compare`, `inspect`, and `report comparison --comparison DIRECTORY --out DIRECTORY`.
 - Generate measurement geometry independently: use `spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WIDTHxHEIGHT --gap X,Y --out REGIONS.json`. It does not read images or create a visual report.
 - Prepared-image visual review, if used, is benchmark-owned. It is not registered as an instrument document and is not accepted by lab `sample`, `compare`, `inspect`, or `report comparison`.
+- Review a small set of photos visually: build one offline page with `spektrafilm-bench report photos --manifest FILE --out DIRECTORY`. It shows no measurements, no scores, and no baseline, candidate, or reference judgment. See [Review a small set of photos](#review-a-small-set-of-photos).
 - Check a new configuration: use `run --dry-run` before rendering. Read its grouped errors and retained renderer logs before changing the configuration.
 
 The agent prepares the evidence and reads the measurements. The reviewer opens `index.html` to inspect full images and native crops. Baseline selection and calibrated policy budgets remain explicit decisions.
@@ -219,6 +220,76 @@ Case, pair, and region links preserve exact identities in the report fragment, f
 Prepared-image visual review is benchmark-owned. Its image inventory, pair selection, display conversion, captions, and browser state are not instrument documents and are not accepted by lab measurement or retained-comparison endpoints.
 
 The benchmark may retain a separate viewer implementation during migration. Its command and validator are benchmark-owned; do not pass its manifest to lab `sample`, `compare`, `inspect`, or `report comparison`.
+
+## Review a small set of photos
+
+Use `spektrafilm-bench report photos --manifest FILE --out DIRECTORY` to build one offline visual report from a small photo manifest. The command is benchmark-owned. It is not a `spektrafilm-lab` endpoint, and the manifest is not an instrument document. Photo Report shows photographs and authored rectangular regions of interest (ROIs). It does not measure, score, rank, or recommend. It never labels one side a baseline, candidate, or reference.
+
+Build the binary first:
+
+```bash
+cargo build --release -p spektrafilm-benchmark
+```
+
+Author a UTF-8 JSON manifest with `schema_version: 1`. It needs a nonempty `title`, a nonempty `photos` array, and for each photo a unique `id`, a relative `path`, and a nonempty `label`. `description`, `note`, `color_space`, `cctf_decoding`, and `rois` are optional. A photo `path` is relative to the manifest file, must not be absolute, and must not resolve outside the manifest directory through `..` or a symlink. The command rejects unknown fields, duplicate JSON keys, duplicate photo or ROI IDs, unsafe paths, unsupported color declarations, and ROI rectangles outside the decoded photo.
+
+Each ROI is one named rectangle in the photo's native pixel coordinates: a unique `id`, a nonempty `label`, and `rect` as `[x, y, width, height]`. ROI IDs are scoped to their photo. A ROI is a detail view, not a measurement region, and it does not register one photo against another.
+
+Declare `color_space` and `cctf_decoding` when a source is not encoded sRGB. Omitted declarations select the fixed display default `sRGB` with `cctf_decoding: true`, and the report shows that default. The supported values are `sRGB`, `Display P3`, `DCI-P3`, `Adobe RGB (1998)`, `ProPhoto RGB`, `ITU-R BT.2020`, `ACEScg`, and `ACES2065-1`. The generator reads only the manifest declaration and never a neighboring sidecar.
+
+The number of photos selects the report mode. One photo produces a single-photo report. Two photos produce one comparison pair in manifest order. Three or more photos require a nonempty `comparisons` array, and each entry names two different photo IDs with `left` and `right`. A manifest with one or two photos must not provide `comparisons`. The generator creates only the declared pairs.
+
+Publish the report to a new directory:
+
+```bash
+./target/release/spektrafilm-bench report photos \
+    --manifest /tmp/photos/manifest.json \
+    --out /tmp/photo-report
+```
+
+The published directory contains `index.html`, `report.json`, `viewer.js`, and one 16-bit sRGB display PNG per photo under `images/`. Open `index.html` to review the report. The complete directory is the shareable artifact, and the page works from the local filesystem, from static hosting, and after the original photos are removed. The page makes no network request. An existing destination is rejected without modification.
+
+The command emits one JSON result on stdout. Progress and diagnostics use stderr. Status `2` reports an argument syntax error, status `1` reports a validation, decoding, conversion, publication, or source-integrity failure, and status `0` reports successful publication.
+
+This example manifest declares one comparison pair with one shared ROI identity and one one-sided ROI:
+
+```json
+{
+  "schema_version": 1,
+  "title": "800T outdoor comparison",
+  "description": "Original scan and simulation output.",
+  "photos": [
+    {
+      "id": "scan",
+      "path": "scan.jpg",
+      "label": "Original scan",
+      "note": "No additional sharpening.",
+      "color_space": "sRGB",
+      "cctf_decoding": true,
+      "rois": [
+        {"id": "face", "label": "Face", "rect": [100, 120, 200, 280], "note": "Face and forehead."}
+      ]
+    },
+    {
+      "id": "simulation",
+      "path": "simulation.png",
+      "label": "Simulation output",
+      "note": "800T, seed 0.",
+      "rois": [
+        {"id": "face", "label": "Face", "rect": [90, 110, 190, 270]},
+        {"id": "sky", "label": "Sky", "rect": [0, 0, 640, 240]}
+      ]
+    }
+  ]
+}
+```
+
+The page shows the full-image pair in manifest order with side-by-side and A/B alternation, plus fit, native-pixel, zoom, and fullscreen controls. For the selected pair it lists the union of both photos' ROI IDs in deterministic input order. An ROI identity declared on both photos is shared and shows two-sided crops; the report matches ROIs only by identity, never by label, rectangle, size, position, or filename. An identity declared on one photo only shows the available crop and an explicit `unavailable` counterpart. A shared ROI keeps each side's own rectangle and native dimensions, and the report never resizes, crops, registers, or exposure- or color-matches either photo. Selecting one ROI keeps the full-image view, the other pair, and the other ROIs available.
+
+A single-photo report shows the full photo, its ROI list and selected crop when it declares ROIs, and no comparison, swap, or A/B controls. A multi-pair report adds a selector for exactly the declared pairs, and changing the pair replaces the complete pair view. The page keeps its current photo, pair, and ROI in a URL fragment, restores that state after reload, and shows an accessible error with a recovery action for an unknown or malformed location instead of displaying an unrelated photo or pair. All photo, pair, and ROI selectors are reachable from the keyboard, and narrow layouts need no horizontal scrolling.
+
+`report.json` is the terminal machine-readable record. It identifies the report `mode` (`single_photo`, `two_photo`, or `requested_comparisons`), the photos in authored order, the generated pairs in authored or derived order, resolved ROI availability per pair, source path and SHA-256, decoded dimensions, the color and display declarations, and every output artifact with its SHA-256.
+
 ## Read command results and gates
 
 Each parsed command emits one JSON result on stdout. Diagnostic messages use stderr. Status `2` indicates argument syntax errors; status `1` indicates validation, execution, publication, or requested gate failure. Use `schema --kind suite|target|policy|run|comparison` to discover carriers. `compare --policy FILE --gate` publishes the comparison before returning failure for a non-pass evaluation. The supplied exploratory policy must not qualify acceptance. A calibrated policy must bind the digest emitted by suite validation and supply reviewed calibration evidence.
@@ -236,6 +307,7 @@ The generated complete suite adds `final_appearance`, which renders the chart wi
 ## See also
 
 - [Benchmark specification](../specs/benchmark/spec.md)
+- [Photo Report specification](../specs/benchmark/photo-report/spec.md)
 - [Building](building.md)
 - [CLI](cli.md)
 - [RAW input](raw.md)

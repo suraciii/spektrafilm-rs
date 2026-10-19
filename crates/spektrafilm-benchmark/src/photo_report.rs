@@ -181,6 +181,49 @@ fn identifier(value: &str, kind: &str) -> Result<()> {
 fn parse_manifest(value: &Value) -> Result<PhotoManifest> {
     let manifest: PhotoManifest = serde_json::from_value(value.clone())
         .map_err(|e| err("schema_validation", e.to_string()))?;
+    let reject_null = |object: &Map<String, Value>, key: &str, owner: &str| {
+        if object.get(key).is_some_and(Value::is_null) {
+            Err(err(
+                "schema_validation",
+                format!("{owner} field {key} must not be null"),
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    let root = value
+        .as_object()
+        .ok_or_else(|| err("schema_validation", "photo manifest must be an object"))?;
+    reject_null(root, "description", "manifest")?;
+    reject_null(root, "comparisons", "manifest")?;
+    let raw_photos = root
+        .get("photos")
+        .and_then(Value::as_array)
+        .ok_or_else(|| err("schema_validation", "photos must be an array"))?;
+    for (index, photo) in raw_photos.iter().enumerate() {
+        let object = photo.as_object().ok_or_else(|| {
+            err(
+                "schema_validation",
+                format!("photo {index} must be an object"),
+            )
+        })?;
+        for key in ["note", "color_space", "cctf_decoding", "rois"] {
+            reject_null(object, key, &format!("photo {index}"))?;
+        }
+    }
+    if let Some(comparisons) = root.get("comparisons").and_then(Value::as_array) {
+        for (index, comparison) in comparisons.iter().enumerate() {
+            let object = comparison.as_object().ok_or_else(|| {
+                err(
+                    "schema_validation",
+                    format!("comparison {index} must be an object"),
+                )
+            })?;
+            for key in ["id", "label", "note"] {
+                reject_null(object, key, &format!("comparison {index}"))?;
+            }
+        }
+    }
     if manifest.schema_version != 1 {
         return Err(err(
             "unsupported_schema",
@@ -279,7 +322,8 @@ fn supported_source(path: &Path, shown: &str) -> Result<()> {
 }
 
 /// Resolve one authored path relative to the manifest, rejecting absolute and
-/// parent-traversing paths, and confirm it names a supported regular raster.
+/// parent-traversing paths and any symlink that escapes the manifest
+/// directory, and confirm it names a supported regular raster.
 fn source_path(photo: &Map<String, Value>, manifest: &Path, id: &str) -> Result<PathBuf> {
     let value = text(photo, "path").map_err(|_| {
         err(
@@ -403,10 +447,23 @@ fn resolve_mode(manifest: &PhotoManifest) -> Result<(Mode, Vec<ComparisonRequest
     }
 }
 
+/// Escape one authored identity so it can never contain the pair separator:
+/// `.` doubles and `_` becomes `._`, which leaves every `_` in the escaped text
+/// preceded by `.`. Escaped text therefore never contains `__`.
+fn escape_identity(value: &str) -> String {
+    value.replace('.', "..").replace('_', "._")
+}
+
 /// Stable identity for a comparison whose `id` the manifest omits: the ordered
 /// pair, joined without changing left/right order.
+///
+/// Authored photo ids may themselves contain `_`, so joining the pair with a
+/// bare separator would let two different ordered pairs derive the same
+/// identity: `a__b` with `c` and `a` with `b__c` would both read `a__b__c`.
+/// Escaping both sides first keeps every distinct ordered pair distinct, and
+/// leaves ordinary ids readable.
 fn comparison_id(left: &str, right: &str) -> String {
-    format!("{left}__{right}")
+    format!("{}__{}", escape_identity(left), escape_identity(right))
 }
 
 /// Resolve the ROI union of one pair: the left photo's ROI order, then the
@@ -544,19 +601,45 @@ fn validate_roi_bounds(photo: &DecodedPhoto) -> Result<()> {
 /// Compare every authored path against the hash observed from its snapshot. A
 /// source that changed during generation fails before publication can claim a
 /// completed report.
-fn verify_source_hashes(sources: &[PathBuf], observed: &[String]) -> Result<()> {
+fn verify_source_hashes(sources: &[PathBuf], observed: &[String], when: &str) -> Result<()> {
     for (source, expected) in sources.iter().zip(observed) {
         if sha256_file(source)? != *expected {
             return Err(err(
                 "hash_mismatch",
-                format!(
-                    "photo source changed during generation: {}",
-                    source.display()
-                ),
+                format!("photo source changed during {when}: {}", source.display()),
             ));
         }
     }
     Ok(())
+}
+
+/// The terminal integrity boundary for the report's inputs.
+///
+/// The manifest and every source are re-hashed and compared with what the
+/// report was built from. It runs immediately before the completed directory
+/// is published and again after publication, so a mutation that lands between
+/// the two can no longer be reported as a completed report. `when` names the
+/// phase so a failure says when the input changed.
+///
+/// A hash read of a concurrently rewritten file is the residual exposure this
+/// design cannot close: an open descriptor keeps one read self-consistent, so
+/// the reported hash is always of a single version of the file, never a
+/// mixture. A source that is replaced and replaced again with the original
+/// bytes is indistinguishable from a source that never changed.
+fn verify_inputs(
+    when: &str,
+    manifest: &Path,
+    manifest_sha256: &str,
+    sources: &[PathBuf],
+    observed: &[String],
+) -> Result<()> {
+    if sha256_file(manifest)? != manifest_sha256 {
+        return Err(err(
+            "hash_mismatch",
+            format!("photo manifest changed during {when}"),
+        ));
+    }
+    verify_source_hashes(sources, observed, when)
 }
 
 /// The sanitized payload shared by `report.json` and the embedded page data.
@@ -656,10 +739,12 @@ fn escape_payload(data: &str) -> String {
 }
 
 /// The static shell around the viewer assets: inlined CSS, the authored title as
-/// text, the embedded payload, and the local viewer script.
+/// text, the embedded payload, and the local viewer script. The document
+/// language is the viewer's own UI language, so a screen reader selects a
+/// Chinese voice for the chrome text instead of an English one.
 fn html_shell(title: &str, embedded: &str) -> String {
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><title>{title}</title><style>{CSS}</style></head><body>{BODY}<script type=\"application/json\" id=\"photo-report-data\">{embedded}</script><script src=\"viewer.js\"></script></body></html>",
+        "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><title>{title}</title><style>{CSS}</style></head><body>{BODY}<script type=\"application/json\" id=\"photo-report-data\">{embedded}</script><script src=\"viewer.js\"></script></body></html>",
     )
 }
 
@@ -688,9 +773,11 @@ fn verify_artifacts(out: &Path, artifacts: &[Value]) -> Result<()> {
 /// Build the offline photo report and return the standard command result.
 ///
 /// Manifest validation and source resolution precede destination creation. All
-/// photos are decoded and all ROI bounds are checked in a private sibling
+/// photos are decoded and all ROI bounds are checked in a private staging
 /// directory first, so validation failures do not leave a report directory.
-/// The manifest and its sources are never modified.
+/// The completed staging directory becomes the destination in one atomic
+/// rename, so a reader sees either no destination or a complete report. The
+/// manifest and its sources are never modified.
 pub fn build_report(manifest: &Path, out: &Path) -> Result<Value> {
     let root = documents::normalize_path(out)?;
     if fs::symlink_metadata(&root).is_ok() {
@@ -719,17 +806,35 @@ fn staging_directory(root: &Path) -> Result<PathBuf> {
     ))
 }
 
+/// Publish the completed staging directory as the report destination.
+///
+/// The whole directory becomes the report in one atomic rename, so a reader
+/// either sees no destination or a complete report: a partially populated
+/// destination is never observable. The destination is re-checked after a
+/// failed rename because a concurrent creator can win the race between the
+/// caller's pre-check and the rename; publishing over an existing destination
+/// is never attempted, so that case stays a rejected destination.
+///
+/// A directory rename onto an existing *empty* directory succeeds on Unix.
+/// That residual race can only consume an empty directory, which carries no
+/// reader-visible content, and the post-publication artifact verification
+/// still confirms the published tree is the completed report.
 fn publish_staging(stage: &Path, root: &Path) -> Result<()> {
-    common::create_destination(root)?;
-    for name in ["images", "viewer.js", "index.html", "report.json"] {
-        fs::rename(stage.join(name), root.join(name)).map_err(|error| {
-            err(
-                "publication_failure",
-                format!("could not publish {name}: {error}"),
-            )
-        })?;
+    if fs::symlink_metadata(root).is_ok() {
+        return Err(common::destination_exists(root));
     }
-    Ok(())
+    match fs::rename(stage, root) {
+        Ok(()) => Ok(()),
+        // A concurrent creator won the race between the caller's pre-check and
+        // the rename. Publishing over an existing destination is never
+        // attempted, so this stays a rejected destination.
+        Err(_) if fs::symlink_metadata(root).is_ok() => Err(common::destination_exists(root)),
+        Err(error) => Err(err(
+            "publication_failure",
+            format!("could not publish the completed report: {error}"),
+        )
+        .at(root.display().to_string())),
+    }
 }
 
 fn build_report_impl(manifest: &Path, root: &Path) -> Result<Value> {
@@ -790,14 +895,16 @@ fn build_report_impl(manifest: &Path, root: &Path) -> Result<Value> {
             .iter()
             .map(|request| resolve_pair(request, &decoded))
             .collect();
-        if sha256_file(&manifest_path)? != manifest_sha256 {
-            return Err(err(
-                "hash_mismatch",
-                "photo manifest changed during generation",
-            ));
-        }
+        // Decoding is complete, so the report can no longer change: the inputs
+        // must still be what the report was built from.
         let observed: Vec<String> = decoded.iter().map(|p| p.source_sha256.clone()).collect();
-        verify_source_hashes(&sources, &observed)?;
+        verify_inputs(
+            "generation",
+            &manifest_path,
+            &manifest_sha256,
+            &sources,
+            &observed,
+        )?;
 
         fs::remove_dir_all(&work)?;
         fs::write(stage.join("viewer.js"), JS)?;
@@ -833,7 +940,32 @@ fn build_report_impl(manifest: &Path, root: &Path) -> Result<Value> {
         payload["artifacts"] = json!(artifacts);
         dump(&stage.join("report.json"), &payload)?;
         verify_artifacts(&stage, &artifacts)?;
+        // Every generated artifact is verified and the report is complete in
+        // the staging directory. The inputs must still match what the report
+        // was built from before the completed directory is published.
+        verify_inputs(
+            "publication",
+            &manifest_path,
+            &manifest_sha256,
+            &sources,
+            &observed,
+        )?;
         publish_staging(&stage, root)?;
+        // The rename is atomic, so the published directory is the verified
+        // staging directory. Re-check the inputs once more: a mutation that
+        // landed between the verification above and the rename can no longer
+        // be reported as a completed report, because a failed re-check
+        // withdraws the published directory before the result is returned.
+        verify_inputs(
+            "publication",
+            &manifest_path,
+            &manifest_sha256,
+            &sources,
+            &observed,
+        )
+        .inspect_err(|_| {
+            let _ = fs::remove_dir_all(root);
+        })?;
         Ok(json!({
             "schema_version": 1,
             "command": "report photos",
@@ -1081,6 +1213,206 @@ mod tests {
         assert_eq!(comparisons[1]["right"], "c");
     }
 
+    /// The derived identity of an omitted `id` must separate ordered pairs
+    /// whose photo ids themselves contain the pair separator. Under the old
+    /// bare join, (`a__b`, `c`) and (`a`, `b__c`) both derived `a__b__c` and
+    /// the second valid pair was rejected as a duplicate.
+    #[test]
+    fn derived_ids_stay_distinct_when_photo_ids_contain_the_separator() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["a.png", "a__b.png", "b__c.png", "c.png"] {
+            png(&dir.path().join(name), 8, 8);
+        }
+        let photos = [
+            photo("a", "a.png", "A"),
+            photo("a__b", "a__b.png", "AB"),
+            photo("b__c", "b__c.png", "BC"),
+            photo("c", "c.png", "C"),
+        ];
+        let authored = manifest(
+            dir.path(),
+            &format!(
+                r#"{{"schema_version":1,"title":"多图","photos":[{}],"comparisons":[{{"left":"a__b","right":"c"}},{{"left":"a","right":"b__c"}}]}}"#,
+                photos.join(",")
+            ),
+        );
+        let out = dir.path().join("out");
+        let result = build_report(&authored, &out).unwrap();
+        assert_eq!(result["comparison_count"], 2);
+        let report = report_of(&out);
+        let ids: Vec<&str> = report["comparisons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids.len(), 2, "both ordered pairs must be published");
+        assert_ne!(
+            ids[0], ids[1],
+            "distinct ordered pairs must derive distinct identities"
+        );
+
+        // An explicit id that collides with a derived identity is still a
+        // duplicate, and an authored id is never rewritten.
+        let collide = manifest(
+            dir.path(),
+            &format!(
+                r#"{{"schema_version":1,"title":"多图","photos":[{}],"comparisons":[{{"left":"a","right":"b__c"}},{{"left":"a","right":"c","id":"a__b._._c"}}]}}"#,
+                photos.join(",")
+            ),
+        );
+        let error = build_report(&collide, &dir.path().join("out-collide")).unwrap_err();
+        assert_eq!(error.code, "duplicate_id");
+
+        let explicit = manifest(
+            dir.path(),
+            &format!(
+                r#"{{"schema_version":1,"title":"多图","photos":[{}],"comparisons":[{{"left":"a","right":"b__c","id":"pair.one"}},{{"left":"b__c","right":"c","id":"pair.two"}}]}}"#,
+                photos.join(",")
+            ),
+        );
+        build_report(&explicit, &dir.path().join("out-explicit")).unwrap();
+        let report = report_of(&dir.path().join("out-explicit"));
+        let ids: Vec<&str> = report["comparisons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["pair.one", "pair.two"]);
+    }
+
+    /// A photo source reached through a symlink that escapes the manifest
+    /// directory is rejected, while a real directory and a real subdirectory
+    /// file still resolve.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlink_escaping_the_manifest_directory_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        png(&outside.path().join("secret.png"), 8, 8);
+        png(&dir.path().join("a.png"), 8, 8);
+        fs::create_dir_all(dir.path().join("sub")).unwrap();
+        png(&dir.path().join("sub/a.png"), 8, 8);
+
+        // A symlinked file that points outside.
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.png"),
+            dir.path().join("escape.png"),
+        )
+        .unwrap();
+        let escaping = manifest(dir.path(), &single(&photo("a", "escape.png", "A")));
+        let error = build_report(&escaping, &dir.path().join("out-escape")).unwrap_err();
+        assert_eq!(error.code, "invalid_path");
+        assert!(!dir.path().join("out-escape").exists());
+
+        // A symlinked directory that points outside.
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("link")).unwrap();
+        let escaped = manifest(dir.path(), &single(&photo("a", "link/secret.png", "A")));
+        let error = build_report(&escaped, &dir.path().join("out-link")).unwrap_err();
+        assert_eq!(error.code, "invalid_path");
+        assert!(!dir.path().join("out-link").exists());
+
+        // Safe relative lexical paths still work: a real file beside the
+        // manifest and a real file in a real subdirectory.
+        let inside = manifest(dir.path(), &single(&photo("a", "sub/a.png", "A")));
+        let out = dir.path().join("out-inside");
+        build_report(&inside, &out).unwrap();
+        assert_eq!(report_of(&out)["photos"][0]["source"]["path"], "sub/a.png");
+    }
+
+    /// The completed report appears at the destination only as a whole
+    /// directory: publication is one atomic rename, never a sequence of
+    /// per-file renames into a reader-visible destination.
+    #[test]
+    fn publication_appears_atomically_and_never_leaves_a_partial_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        png(&dir.path().join("a.png"), 8, 8);
+        let manifest_path = manifest(dir.path(), &single(&photo("a", "a.png", "A")));
+        let out = dir.path().join("out");
+
+        build_report(&manifest_path, &out).unwrap();
+        // The destination is the complete report, and no staging residue is
+        // left beside it.
+        assert!(out.join("report.json").is_file());
+        assert!(out.join("index.html").is_file());
+        assert!(out.join("viewer.js").is_file());
+        assert!(out.join("images/0000.png").is_file());
+        assert!(
+            !out.join(".photo-report-work").exists(),
+            "the private work directory must not be published"
+        );
+        let residues: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| {
+                let name = entry.unwrap().file_name().to_string_lossy().to_string();
+                name.starts_with(".photo-report-").then_some(name)
+            })
+            .collect();
+        assert!(
+            residues.is_empty(),
+            "no staging directory may survive publication: {residues:?}"
+        );
+
+        // A failed generation leaves no destination at all, so a reader can
+        // never see a partially populated report directory.
+        let broken = manifest(
+            dir.path(),
+            &single(&photo_with_rois(
+                "a",
+                "a.png",
+                "扫描",
+                &[roi("outside", [6, 6, 8, 8])],
+            )),
+        );
+        let out_broken = dir.path().join("out-broken");
+        assert_eq!(
+            build_report(&broken, &out_broken).unwrap_err().code,
+            "invalid_bounds"
+        );
+        assert!(!out_broken.exists());
+        assert!(
+            fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|entry| {
+                    let name = entry.unwrap().file_name().to_string_lossy().to_string();
+                    name.starts_with(".photo-report-").then_some(name)
+                })
+                .next()
+                .is_none(),
+            "a failed report must not leave a staging directory behind"
+        );
+    }
+
+    /// A destination created concurrently with the report is rejected rather
+    /// than published over, and the existing destination is untouched.
+    #[test]
+    fn a_destination_that_appears_during_generation_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        png(&dir.path().join("a.png"), 8, 8);
+        let manifest_path = manifest(dir.path(), &single(&photo("a", "a.png", "A")));
+        let out = dir.path().join("out");
+        // Pre-create the destination to hold a sentinel; publication must not
+        // replace it.
+        fs::create_dir_all(&out).unwrap();
+        fs::write(out.join("keep.txt"), b"keep").unwrap();
+        let error = build_report(&manifest_path, &out).unwrap_err();
+        assert_eq!(error.code, "destination_exists");
+        assert_eq!(fs::read(out.join("keep.txt")).unwrap(), b"keep");
+        assert!(!out.join("report.json").exists());
+        assert!(
+            fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|entry| {
+                    let name = entry.unwrap().file_name().to_string_lossy().to_string();
+                    name.starts_with(".photo-report-").then_some(name)
+                })
+                .next()
+                .is_none(),
+            "a rejected destination must not leave a staging directory behind"
+        );
+    }
+
     #[test]
     fn three_photos_without_comparisons_fail_before_publication() {
         let dir = tempfile::tempdir().unwrap();
@@ -1302,6 +1634,24 @@ mod tests {
     }
 
     #[test]
+    fn explicit_null_declarations_are_not_treated_as_omitted() {
+        let dir = tempfile::tempdir().unwrap();
+        png(&dir.path().join("a.png"), 8, 8);
+        let cases = [
+            r#"{"schema_version":1,"title":"标题","photos":[{"id":"a","path":"a.png","label":"A","color_space":null}]}"#,
+            r#"{"schema_version":1,"title":"标题","photos":[{"id":"a","path":"a.png","label":"A","cctf_decoding":null}]}"#,
+            r#"{"schema_version":1,"title":"标题","photos":[{"id":"a","path":"a.png","label":"A","rois":null}]}"#,
+            r#"{"schema_version":1,"title":"标题","photos":[{"id":"a","path":"a.png","label":"A"}],"comparisons":null}"#,
+        ];
+        for (index, content) in cases.iter().enumerate() {
+            let manifest = manifest(dir.path(), content);
+            let error =
+                build_report(&manifest, &dir.path().join(format!("out-null-{index}"))).unwrap_err();
+            assert_eq!(error.code, "schema_validation");
+        }
+    }
+
+    #[test]
     fn hostile_authored_text_cannot_execute_in_the_page() {
         let dir = tempfile::tempdir().unwrap();
         png(&dir.path().join("a.png"), 8, 8);
@@ -1394,9 +1744,23 @@ mod tests {
         let snapshot = dir.path().join("snapshot.png");
         fs::copy(&source, &snapshot).unwrap();
         let observed = vec![sha256_file(&snapshot).unwrap()];
-        verify_source_hashes(std::slice::from_ref(&source), &observed).unwrap();
+        verify_inputs(
+            "generation",
+            &snapshot,
+            &sha256_file(&snapshot).unwrap(),
+            std::slice::from_ref(&source),
+            &observed,
+        )
+        .unwrap();
         png(&source, 4, 4);
-        let error = verify_source_hashes(std::slice::from_ref(&source), &observed).unwrap_err();
+        let error = verify_inputs(
+            "publication",
+            &snapshot,
+            &sha256_file(&snapshot).unwrap(),
+            std::slice::from_ref(&source),
+            &observed,
+        )
+        .unwrap_err();
         assert_eq!(error.code, "hash_mismatch");
     }
 
