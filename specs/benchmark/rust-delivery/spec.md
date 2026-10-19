@@ -27,6 +27,7 @@ The instrument must support historical renderer executables and retained results
 The implementation must use typed internal records for documents, measurements, artifact roles, availability, and terminal states. JSON remains the public carrier. Typed records must preserve the interface's different rules for authored and generated documents. Runtime validation remains responsible for hashes, paths, geometry, populations, and cross-document identities.
 
 Metric adapters must return structured evidence. A report must consume that evidence without recomputing measurements. Browser JavaScript may remain embedded in the generated offline report. Browser JavaScript is not a benchmark runtime dependency.
+The delivered benchmark may include the benchmark-owned Photo Report builder defined by [Photo Report](../photo-report/spec.md). It must use the existing image decoding and display-conversion boundaries, must not add a renderer dependency, and must remain a static offline artifact producer.
 
 ## Numerical implementation
 

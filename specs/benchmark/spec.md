@@ -136,6 +136,8 @@ The benchmark may accept a collection of prepared images, grouped into sets, for
 The prepared-image viewer may retain its own manifest format for image inventory, set membership, captions, default pair, and per-image visual geometry. That manifest is owned by the benchmark viewer. It is not an instrument document kind, is not accepted by `spektrafilm-lab`, and must not be passed to `sample`, `compare`, `inspect`, or `report comparison`. Geometry used for measurement must be authored or generated as a standalone `regions` document.
 
 The viewer's image declarations, grid arithmetic, explicit-region rules, display conversion, offline packaging, and browser interaction remain benchmark concerns. They must not be duplicated in the lab command grammar. A benchmark command may preserve the legacy prepared-image manifest during migration, but it must use its own validator and report builder and must not rely on lab schema discovery or lab `regions grid`.
+The simpler flat-photo input and explicit-pair report is defined by the [Photo Report specification](photo-report/spec.md). It is a benchmark-owned visual report and does not replace this prepared-image viewer contract.
+
 ## Human review
 
 A review report must work offline with relative local artifact links. Report generation must not render images or recompute comparison measurements.
