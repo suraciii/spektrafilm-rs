@@ -176,6 +176,7 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
             presets.extend(args.chain.preset.iter().cloned());
             presets
         },
+        feature_profiles: Vec::new(),
         scan_film: false,
         timings: false,
         diagnostics: None,
@@ -977,6 +978,7 @@ fn resolve_chain(
             presets: &presets,
             params_file: params_file.as_deref(),
             sources: &set_sources,
+            feature_profiles: &[],
             route,
             scan_film: false,
             scan_output,

@@ -430,6 +430,67 @@ fn fixed_input_precedence_and_winning_edit_feedback_are_observable() {
     );
     assert!(!f.0.join("output.tif").exists());
 }
+#[test]
+fn feature_profiles_report_typed_values_precedence_and_inactive_status() {
+    let f = Fixture::new();
+    let report = f.report(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--feature-profile",
+        "grain.procedural=35mm50",
+        "--feature-profile",
+        "grain.procedural=35mm250",
+        "--feature-profile",
+        "halation=still_weak",
+        "--set",
+        "film_render.halation.active=false",
+        "--set",
+        "film_render.grain.v2_amount=25",
+        "--dry-run",
+    ]);
+    let profiles = report["feature_profiles"].as_array().unwrap();
+    assert_eq!(profiles.len(), 3);
+    assert_eq!(profiles[0]["status"], "overridden");
+    assert_eq!(profiles[1]["status"], "overridden");
+    assert_eq!(
+        profiles[1]["requested"]["film_render.grain.v2_profile"],
+        "35mm250"
+    );
+    assert_eq!(
+        profiles[1]["requested"]["film_render.grain.v2_amount"],
+        Value::Null
+    );
+    assert_eq!(
+        profiles[1]["resolved"]["film_render.grain.v2_profile"],
+        "35mm250"
+    );
+    assert_eq!(profiles[2]["status"], "inactive");
+    assert_eq!(
+        report["parameters"]["film_render"]["grain"]["v2_amount"],
+        25.0
+    );
+}
+
+#[test]
+fn feature_profiles_reject_malformed_family_and_name_without_output() {
+    let f = Fixture::new();
+    for value in ["grain=reference", "grain.dye", "grain.dye=unknown"] {
+        let result = f.run_without_output(&[
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--feature-profile",
+            value,
+            "--dry-run",
+        ]);
+        assert!(!result.status.success(), "accepted {value}");
+        assert!(!String::from_utf8_lossy(&result.stderr).is_empty());
+        assert!(!f.0.join("output.tif").exists());
+    }
+}
 
 #[test]
 fn route_conflicts_and_dry_run_format_fail_before_rendering() {

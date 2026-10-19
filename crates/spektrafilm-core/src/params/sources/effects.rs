@@ -296,7 +296,7 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
     }
     out
 }
-pub(crate) fn inactive_reason(
+pub fn inactive_reason(
     path: &str,
     params: &RuntimeParams,
     film: &Profile,

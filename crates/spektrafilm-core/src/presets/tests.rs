@@ -804,6 +804,7 @@ fn look_resolution_preserves_default_lab_scan_strength_on_explicit_film_scan_rou
             presets: &presets,
             params_file: None,
             sources: &["scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan".into()],
+            feature_profiles: &[],
             route: Some("input > film > scan"),
             scan_film: true,
             scan_output: Some("negative_to_positive"),

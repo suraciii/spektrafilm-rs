@@ -21,28 +21,17 @@ use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
 use crate::params::{PrintExposureEvTracking, RuntimeParams};
 use crate::profile::Profile;
-
-type HalationPreset = ((&'static str, &'static str), ([f64; 3], [f64; 3]));
+type HalationPreset = ((&'static str, &'static str), &'static str);
 
 /// Halation low-level presets keyed by `(use, antihalation)`. Mirrors
-/// upstream `_HALATION_PRESETS`: `sigma_h` follows the base material
-/// (still → triacetate ~65 µm, cine → PET ~50 µm), the strength follows
-/// the antihalation undercoat. The user-facing knobs
-/// (`scatter_amount`, `halation_amount`, …) stay at 1.0 so these seeds
-/// define the physical baseline.
+/// upstream `_HALATION_PRESETS`; `HALATION_PROFILES` owns the numeric rows.
 const HALATION_PRESETS: &[HalationPreset] = &[
-    (
-        ("still", "strong"),
-        ([65.0, 65.0, 65.0], [0.015, 0.005, 0.0]),
-    ),
-    (("still", "weak"), ([65.0, 65.0, 65.0], [0.08, 0.02, 0.0])),
-    (("still", "no"), ([65.0, 65.0, 65.0], [0.30, 0.10, 0.015])),
-    (
-        ("cine", "strong"),
-        ([50.0, 50.0, 50.0], [0.015, 0.005, 0.0]),
-    ),
-    (("cine", "weak"), ([50.0, 50.0, 50.0], [0.08, 0.02, 0.0])),
-    (("cine", "no"), ([50.0, 50.0, 50.0], [0.30, 0.10, 0.015])),
+    (("still", "strong"), "still_strong"),
+    (("still", "weak"), "still_weak"),
+    (("still", "no"), "still_no"),
+    (("cine", "strong"), "cine_strong"),
+    (("cine", "weak"), "cine_weak"),
+    (("cine", "no"), "cine_no"),
 ];
 
 /// Digest the params to prepare for use in the runtime pipeline.
@@ -361,13 +350,13 @@ fn apply_halation_preset(params: &mut RuntimeParams, film: &Profile) {
         return;
     }
     let key = (film.info.usage.as_str(), film.info.antihalation.as_str());
-    if let Some((sigma_h, strength)) = HALATION_PRESETS
-        .iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, v)| v)
-    {
-        params.film_render.halation.halation_first_sigma_um = *sigma_h;
-        params.film_render.halation.halation_strength = *strength;
+    if let Some((_, name)) = HALATION_PRESETS.iter().find(|(k, _)| *k == key) {
+        let profile = crate::feature_profiles::HALATION_PROFILES
+            .iter()
+            .find(|profile| profile.name == *name)
+            .expect("stock halation preset name must exist in the shared catalog");
+        params.film_render.halation.halation_first_sigma_um = profile.first_sigma_um;
+        params.film_render.halation.halation_strength = profile.strength;
     }
 }
 

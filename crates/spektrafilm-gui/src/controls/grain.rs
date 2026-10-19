@@ -100,6 +100,62 @@ fn engine_group(
     });
 }
 
+fn feature_profile_selector(
+    ui: &mut Ui,
+    params: &mut RuntimeParams,
+    filter: &mut ControlFilter<'_>,
+    flags: &mut ChangeFlags,
+    family: FeatureProfileFamily,
+    label: &'static str,
+    applicable: bool,
+    reason: &'static str,
+) {
+    if !filter_matches(filter, label) {
+        return;
+    }
+    let current = feature_profiles::effective_name(family, params);
+    let mut selected = current.to_owned();
+    let choices = feature_profiles::names(family)
+        .iter()
+        .copied()
+        .map(|name| (name, name))
+        .chain(std::iter::once(("custom", "Custom")));
+    if !applicable {
+        ui.label(
+            egui::RichText::new(format!("{label}: {reason}; stored values retained."))
+                .color(theme::FG_MUTED),
+        );
+        ui.add_enabled_ui(false, |ui| {
+            choice_tip_entries(
+                ui,
+                label,
+                &mut selected,
+                choices.clone(),
+                "Built-in feature profile; selecting it changes only the declared profile scope.",
+            );
+        });
+        return;
+    }
+    if choice_tip_entries(
+        ui,
+        label,
+        &mut selected,
+        choices,
+        "Built-in feature profile; selecting it changes only the declared profile scope.",
+    ) {
+        let mut candidate = params.clone();
+        match apply_feature_profile(&mut candidate, family, &selected) {
+            Ok(()) => {
+                *params = candidate;
+                flags.runtime_changed = true;
+            }
+            Err(error) => {
+                ui.label(egui::RichText::new(error).color(theme::FG_MUTED));
+            }
+        }
+    }
+}
+
 /// One `show()` section group, split out of the dispatcher for readability.
 pub(crate) fn sections(
     ui: &mut Ui,
@@ -109,6 +165,26 @@ pub(crate) fn sections(
     filter: &mut ControlFilter<'_>,
 ) {
     if section == "Grain" {
+        feature_profile_selector(
+            ui,
+            params,
+            filter,
+            flags,
+            FeatureProfileFamily::GrainProcedural,
+            "Procedural Grain Profiles",
+            params.film_render.grain.engine == GrainEngine::Procedural,
+            "available only when the Procedural engine is selected",
+        );
+        feature_profile_selector(
+            ui,
+            params,
+            filter,
+            flags,
+            FeatureProfileFamily::GrainDye,
+            "Dye Grain Profiles",
+            params.film_render.grain.engine == GrainEngine::Dye,
+            "available only when the Dye engine is selected",
+        );
         ui.scope(|ui| {
             let grain = &mut params.film_render.grain;
             if filter_matches(filter, "enable grain") {
@@ -209,17 +285,6 @@ pub(crate) fn sections(
                 }
             });
             engine_group(ui, filter, engine, GrainEngine::Procedural, |ui, filter| {
-                if filter_matches(filter, "grain profiles") {
-                    let mut profile = grain.v2_profile.clone();
-                    egui::ComboBox::from_label("Grain Profiles").selected_text(&profile).show_ui(ui, |ui| {
-                        for name in PROFILE_NAMES { ui.selectable_value(&mut profile, (*name).to_owned(), name); }
-                        ui.selectable_value(&mut profile, "custom".to_owned(), "Custom");
-                    });
-                    if profile != grain.v2_profile {
-                        if profile == "custom" { grain.select_custom_grain_v2(); } else { grain.v2_profile = profile; grain.v2_amount = None; }
-                        flags.runtime_changed = true;
-                    }
-                }
                 if grain.v2_profile == "custom" {
                     if filter_matches(filter, "film type") {
                         flags.runtime_changed |= enum_choice(ui, "Film Type", &mut grain.v2_film_type, &[

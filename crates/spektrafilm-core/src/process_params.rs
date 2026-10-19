@@ -49,6 +49,18 @@ pub enum EditStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct FeatureProfileFeedback {
+    pub family: String,
+    pub name: String,
+    pub source: DeclarationSource,
+    pub scope: Vec<String>,
+    pub effective: String,
+    pub status: EditStatus,
+    pub reason: Option<String>,
+    pub resolved: Value,
+    pub requested: Value,
+}
+#[derive(Debug, Clone, Serialize)]
 pub struct EditFeedback {
     pub path: String,
     pub requested: Value,
@@ -64,6 +76,7 @@ pub struct ProcessParamsRequest<'a> {
     pub presets: &'a [presets::Preset],
     pub params_file: Option<&'a Path>,
     pub sources: &'a [String],
+    pub feature_profiles: &'a [crate::feature_profiles::FeatureProfileSelection<'a>],
     pub route: Option<&'a str>,
     pub scan_film: bool,
     pub scan_output: Option<&'a str>,
@@ -82,6 +95,7 @@ pub struct ResolvedProcessParams {
     pub params: RuntimeParams,
     pub input_declaration: InputDeclaration,
     pub edits: Vec<EditFeedback>,
+    pub feature_profiles: Vec<FeatureProfileFeedback>,
 }
 
 fn equal_control_values(path: &str, requested: &Value, effective: &Value) -> bool {
@@ -164,6 +178,7 @@ fn resolve_with_preview_mode(
         params.validate()?;
     }
     let added_sources = !request.presets.is_empty() || !request.sources.is_empty();
+    let profile_sources = !request.feature_profiles.is_empty();
     let mut resolved_profiles = None;
     if supplies_film {
         for preset in request.presets {
@@ -223,12 +238,35 @@ fn resolve_with_preview_mode(
                 "print profile {print_name:?}: incompatible support/stage; expected paper/printing or film/printing"
             ));
         }
-        if added_sources && request.digest_mode == DigestMode::ApplyStockSpecifics {
+        if (added_sources || profile_sources)
+            && request.digest_mode == DigestMode::ApplyStockSpecifics
+        {
             apply_film_specifics(&mut params, &film);
         }
         (film, print, name.to_owned(), print_name)
     };
 
+    let mut feature_profile_feedback = Vec::new();
+    if !request.feature_profiles.is_empty() {
+        let baseline = params.clone();
+        let (candidate, requested_values) =
+            crate::feature_profiles::apply_with_requests(&baseline, request.feature_profiles)?;
+        params = candidate;
+        for (selection, requested) in request.feature_profiles.iter().zip(requested_values) {
+            let origin = DeclarationSource {
+                kind: "feature_profile".into(),
+                option: Some("--feature-profile".into()),
+                index: Some(selection.position),
+                path: None,
+            };
+            for path in crate::feature_profiles::scope(selection.family) {
+                if let Some(value) = requested.get(*path) {
+                    winning.insert((*path).to_owned(), (value.clone(), origin.clone()));
+                }
+            }
+            feature_profile_feedback.push((selection, requested, origin));
+        }
+    }
     if added_sources {
         for (index, source) in request.sources.iter().enumerate() {
             let edits =
@@ -275,7 +313,6 @@ fn resolve_with_preview_mode(
                     .validate_raw_input()
                     .map_err(|e| format!("{option}: {e}"))?;
             }
-            // Apply again after sparse sources below; the legacy branch has no sources.
             edits.apply(&mut params)?;
             declarations.insert(
                 path.into(),
@@ -295,8 +332,7 @@ fn resolve_with_preview_mode(
     {
         return Err("raster input requires both io.input_color_space and io.input_cctf_decoding; declare both with --input-color-space and --input-cctf-decoding, supplied --params leaves, or --set".into());
     }
-
-    if !added_sources {
+    if !added_sources && !profile_sources {
         // Keep the legacy decoder, route/scan relationship and digest ordering.
         choose_workflow(&mut params, request.route, request.scan_film);
         params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan
@@ -334,7 +370,6 @@ fn resolve_with_preview_mode(
                 }
             }
         }
-        // Dedicated input flags override source leaves after all source composition.
         if let Some(value) = request.input_color_space {
             params.io.input_color_space = value.into();
         }
@@ -352,7 +387,6 @@ fn resolve_with_preview_mode(
         if let Some(mode) = preview_mode {
             params.settings.preview_mode = mode;
         }
-        // Cross-field checks precede destructive preview/debug constraints.
         validate_finite(&params)?;
         params.validate()?;
         crate::pipeline_calibration::validate_scan_output(&params, &film)?;
@@ -369,6 +403,7 @@ fn resolve_with_preview_mode(
         validate_finite(&params)?;
         params.validate()?;
     }
+
     normalize_runtime_topology(&film, &mut params);
     crate::pipeline_calibration::validate_scan_output(&params, &film)?;
     let raw_source = DeclarationSource {
@@ -403,6 +438,61 @@ fn resolve_with_preview_mode(
         },
     };
     let effective_params = serde_json::to_value(&params).map_err(|e| e.to_string())?;
+    let feature_profiles = feature_profile_feedback
+        .into_iter()
+        .map(|(selection, requested, source)| {
+            let scope = crate::feature_profiles::scope(selection.family);
+            let effective = crate::feature_profiles::effective_values(selection.family, &params);
+            let superseded = request.feature_profiles.iter().any(|other| {
+                other.family == selection.family && other.position > selection.position
+            });
+            let overridden_path = scope.iter().find(|path| {
+                winning.get(**path).is_some_and(|(_, winner)| {
+                    winner.kind != "feature_profile" || winner.index != source.index
+                })
+            });
+            let constrained_path = scope.iter().find(|path| {
+                let requested_value = requested.get(*path).unwrap_or(&Value::Null);
+                let effective_value = lookup(&effective_params, path).unwrap_or(&Value::Null);
+                !equal_control_values(path, requested_value, effective_value)
+            });
+            let inactive_reason = scope.iter().find_map(|path| {
+                crate::params::sources::inactive_reason(path, &params, &film, &print)
+            });
+            let (status, reason) = if superseded {
+                (
+                    EditStatus::Overridden,
+                    Some("replaced by a later --feature-profile selection".into()),
+                )
+            } else if let Some(path) = overridden_path {
+                (
+                    EditStatus::Overridden,
+                    Some(format!("scope leaf {path} was replaced by a later source")),
+                )
+            } else if let Some(path) = constrained_path {
+                (
+                    EditStatus::Constrained,
+                    Some(format!("runtime preparation changed scope leaf {path}")),
+                )
+            } else if let Some(reason) = inactive_reason {
+                (EditStatus::Inactive, Some(reason))
+            } else {
+                (EditStatus::Active, None)
+            };
+            FeatureProfileFeedback {
+                family: selection.family.id().into(),
+                name: selection.name.into(),
+                source,
+                scope: scope.iter().map(|path| (*path).into()).collect(),
+                effective: crate::feature_profiles::effective_name(selection.family, &params)
+                    .into(),
+                status,
+                reason,
+                resolved: effective,
+                requested,
+            }
+        })
+        .collect();
     let edits = winning.into_iter().map(|(path, (requested, source))| {
         let effective = lookup(&effective_params, &path).cloned().unwrap_or(Value::Null);
         let override_option = match path.as_str() {
@@ -419,9 +509,7 @@ fn resolve_with_preview_mode(
             if params.debug.lut_mode { causes.push("debug.lut_mode"); }
             if params.debug.deactivate_spatial_effects { causes.push("debug.deactivate_spatial_effects"); }
             if params.debug.deactivate_stochastic_effects { causes.push("debug.deactivate_stochastic_effects"); }
-            let reason = if causes.is_empty() {
-                "runtime preparation changed the requested value for derived profile topology".into()
-            } else { format!("runtime preparation changed the requested value with {} enabled; disable the applicable constraint to retain it", causes.join(", ")) };
+            let reason = if causes.is_empty() { "runtime preparation changed the requested value for derived profile topology".into() } else { format!("runtime preparation changed the requested value with {} enabled; disable the applicable constraint to retain it", causes.join(", ")) };
             (EditStatus::Constrained, Some(reason))
         } else if let Some(reason) = crate::params::sources::inactive_reason(&path, &params, &film, &print) {
             (EditStatus::Inactive, Some(reason))
@@ -436,6 +524,7 @@ fn resolve_with_preview_mode(
         params,
         input_declaration,
         edits,
+        feature_profiles,
     })
 }
 
