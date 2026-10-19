@@ -286,7 +286,9 @@ impl PresetLibrary {
     }
     fn validate_write(preset: &Preset, data_dir: &Path) -> Result<(), String> {
         preset.validate()?;
-        preset.resolve(data_dir, &RuntimeParams::default())?;
+        if matches!(preset.parameters, PresetParameters::Look(_)) {
+            preset.resolve(data_dir, &RuntimeParams::default())?;
+        }
         Ok(())
     }
     fn user_path(&self, name: &str) -> Result<PathBuf, String> {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::DigestMode;
 use crate::test_support::data_dir;
 fn request(sources: &[String]) -> ProcessParamsRequest<'_> {
     ProcessParamsRequest {
@@ -7,6 +8,7 @@ fn request(sources: &[String]) -> ProcessParamsRequest<'_> {
         presets: &[],
         params_file: None,
         sources,
+        feature_profiles: &[],
         route: None,
         scan_film: false,
         scan_output: None,
@@ -437,6 +439,40 @@ fn added_sources_accept_vision3_printing_film_target() {
         assert_eq!(scanned.print_name, name);
         assert!(scanned.params.io.scan_film);
     }
+}
+#[test]
+fn feature_profile_precedes_sources_and_reports_winning_scope() {
+    let sources = vec!["film_render.grain.v2_amount=25,film_render.grain.engine=procedural".into()];
+    let selection = crate::feature_profiles::parse_selection("grain.procedural=8mm50", 1).unwrap();
+    let selections = [selection];
+    let mut req = public_request(&sources);
+    req.feature_profiles = &selections;
+    let result = resolve(req, &data_dir()).unwrap();
+    assert_eq!(result.params.film_render.grain.v2_profile, "8mm50");
+    assert_eq!(result.params.film_render.grain.v2_amount, Some(25.0));
+    let profile_edit = result
+        .edits
+        .iter()
+        .find(|edit| edit.path == "film_render.grain.v2_profile")
+        .unwrap();
+    assert_eq!(profile_edit.source.kind, "feature_profile");
+    let amount_edit = result
+        .edits
+        .iter()
+        .find(|edit| edit.path == "film_render.grain.v2_amount")
+        .unwrap();
+    assert_eq!(amount_edit.source.kind, "set");
+    assert_eq!(amount_edit.source.index, Some(1));
+    assert_eq!(result.feature_profiles.len(), 1);
+    assert_eq!(result.feature_profiles[0].status, EditStatus::Overridden);
+    assert_eq!(
+        result.feature_profiles[0].requested["film_render.grain.v2_profile"],
+        "8mm50"
+    );
+    assert_eq!(
+        result.feature_profiles[0].resolved["film_render.grain.v2_profile"],
+        "8mm50"
+    );
 }
 
 fn public_request(sources: &[String]) -> ProcessParamsRequest<'_> {

@@ -1,6 +1,8 @@
 //! Editors for the pinned experimental GUI sections.
+use crate::theme;
 use egui::Ui;
 use serde_json::Value;
+use spektrafilm_core::feature_profiles::{self, FeatureProfileFamily, FeatureProfileSelection};
 use spektrafilm_core::params::{
     NegativeConversionMethod, PrintCurvesMorphParams, PrintExposureEvTracking, PrintExposureMode,
     ReceiverProfile, RuntimeParams, ScannerAutoSetup, ScannerFinish,
@@ -155,6 +157,19 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
         widgets::name_choice(ui, label);
     });
     prev != *value
+}
+
+pub(crate) fn apply_feature_profile(
+    params: &mut RuntimeParams,
+    family: FeatureProfileFamily,
+    name: &str,
+) -> Result<(), String> {
+    let selection = FeatureProfileSelection {
+        family,
+        name,
+        position: 0,
+    };
+    feature_profiles::apply(params, &[selection])
 }
 
 /// A section or sub-section header. During a control search the body is
@@ -394,6 +409,7 @@ mod grain;
 mod halation;
 mod magazine;
 mod output;
+pub(crate) mod row_modified;
 mod scanner;
 mod search;
 mod upsampling;
@@ -915,6 +931,43 @@ mod tests {
         }
         assert!(has_text(&selected, "RMS density"));
         assert!(!has_text(&selected, "Dye support (µm)"));
+    }
+    #[test]
+    fn feature_profile_selector_preserves_inactive_engine_values() {
+        let ctx = egui::Context::default();
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Spektra;
+        params.film_render.grain.v3_dye_support_um = 7.0;
+        let mut cache = SectionLabelCache::default();
+        let mut flags = ChangeFlags::default();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 1600.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    flags = show(
+                        ui,
+                        &mut params,
+                        &mut serde_json::json!({}),
+                        "Grain",
+                        ScanMedium::Negative,
+                        "Dye Grain Profiles",
+                        &mut cache,
+                        "D55",
+                    );
+                });
+            },
+        );
+        assert!(has_text(
+            &output,
+            "available only when the Dye engine is selected"
+        ));
+        assert_eq!(params.film_render.grain.v3_dye_support_um, 7.0);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 mod discovery;
 mod effects;
 mod metadata;
-pub(crate) use effects::inactive_reason;
+pub use effects::inactive_reason;
 
 use discovery::schema_value;
 pub use discovery::{
