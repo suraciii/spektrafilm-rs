@@ -15,6 +15,7 @@ This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolp
 - **Choose a grain engine.** Spektra, Procedural (Dehancer-derived), Dye and Fotufilm Film are selectable, each with its own controls and defaults. See [grain engines](docs/grain.md).
 - **Deliver LUTs for a camera.** Bake deterministic bundles for Panasonic V-Log with CUBE, 3DL, Hald, OCIO and QA artifacts. See [LUT delivery](docs/luts.md).
 - **Review retained comparisons.** Use `spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY` for an offline report. Prepared-image visual review is benchmark-owned and is not a lab document or input.
+- **Review a small set of photos.** Use `spektrafilm-bench report photos --manifest FILE --out DIRECTORY` for an offline visual report with authored ROIs and explicit comparison pairs. It shows no measurements, no scores, and no baseline, candidate, or reference judgment. See [the appearance benchmark](docs/benchmark.md#review-a-small-set-of-photos).
 - **Decode camera RAW.** `decode_raw_gui` shares the native LibRaw and Lensfun path with the pipeline and writes linear ACES2065-1 TIFF. See [RAW decoding](docs/raw.md).
 
 ## Build

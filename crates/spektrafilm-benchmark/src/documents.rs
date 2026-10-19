@@ -240,6 +240,76 @@ pub fn resolve_path(value: &str, document: &Path) -> Result<PathBuf> {
     }
     normalize_path(&full)
 }
+
+/// Resolve an authored asset path relative to a document without allowing an
+/// absolute path, a parent component, or a symlink to escape the document
+/// directory.
+///
+/// The lexical check keeps a safe authored relative path usable, so
+/// `link/photo.png` where `link` is a real directory still resolves normally.
+/// Physical confinement is then confirmed by comparing the resolved path's
+/// canonical (symlink-free) prefix with the document directory's canonical
+/// prefix, so a symlink anywhere along the authored path cannot point outside
+/// the manifest directory. A missing final component still resolves: the
+/// caller's own read of the path reports the dependency.
+pub fn resolve_relative_asset_path(value: &str, document: &Path) -> Result<PathBuf> {
+    if value.is_empty() || value.contains('\0') {
+        return Err(err(
+            "invalid_path",
+            "asset path must be a nonempty relative path without NUL",
+        ));
+    }
+    let path = Path::new(value);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(err(
+            "invalid_path",
+            "asset path must stay below the manifest directory",
+        ));
+    }
+    let base = document
+        .parent()
+        .ok_or_else(|| err("invalid_path", "manifest has no parent directory"))?;
+    let joined = base.join(path);
+    let boundary = match base.canonicalize() {
+        Ok(boundary) => boundary,
+        // The manifest directory itself is not resolvable; the caller's read
+        // of the asset reports the dependency failure.
+        Err(_) => return Ok(joined),
+    };
+    let confined = match joined.canonicalize() {
+        Ok(physical) => physical.starts_with(&boundary),
+        // A component on the path is missing or is a symlink loop. Walk the
+        // existing prefix so an escaping symlink is still reported instead of
+        // surfacing later as a confusing read failure.
+        Err(_) => {
+            let mut existing = boundary.clone();
+            let mut confined = true;
+            for component in path.components() {
+                existing.push(component.as_os_str());
+                let Ok(physical) = existing.canonicalize() else {
+                    break;
+                };
+                if !physical.starts_with(&boundary) {
+                    confined = false;
+                    break;
+                }
+                existing = physical;
+            }
+            confined
+        }
+    };
+    if !confined {
+        return Err(err(
+            "invalid_path",
+            "asset path must stay below the manifest directory",
+        ));
+    }
+    Ok(joined)
+}
 pub fn safe_artifact_path(root: &Path, value: &str) -> Result<PathBuf> {
     if value.is_empty()
         || value.contains('\0')
@@ -833,19 +903,18 @@ pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
         for r in c["regions"].as_array().into_iter().flatten() {
             consumer_geometry(&r["geometry"])?;
         }
-        if let Some(reference) = c.get("reference") {
-            if reference["scope"] == "aligned_scene" {
-                if let Some(review) = reference.get("correspondence_review") {
-                    let review_path = resolve_path(review["path"].as_str().unwrap(), path)?;
-                    let review_document = load_json_document(&review_path)?;
-                    for exclusion in review_document["excluded_regions"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                    {
-                        consumer_geometry(&exclusion["geometry"])?;
-                    }
-                }
+        if let Some(reference) = c.get("reference")
+            && reference["scope"] == "aligned_scene"
+            && let Some(review) = reference.get("correspondence_review")
+        {
+            let review_path = resolve_path(review["path"].as_str().unwrap(), path)?;
+            let review_document = load_json_document(&review_path)?;
+            for exclusion in review_document["excluded_regions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                consumer_geometry(&exclusion["geometry"])?;
             }
         }
     }
