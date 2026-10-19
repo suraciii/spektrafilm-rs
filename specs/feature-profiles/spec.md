@@ -27,9 +27,10 @@ Version 1 provides these families:
 | Family identifier | Product label | Profile scope | Availability |
 | --- | --- | --- | --- |
 | `grain.procedural` | Procedural grain profile | The named Procedural grain profile values | When the Procedural grain controls are available; selecting it does not change `film_render.grain.engine` |
+| `grain.dye` | Dye grain profile | `film_render.grain.v3_dye_support_um`, `film_render.grain.v3_event_area_um2`, and `film_render.grain.channel_correlation` | When the Dye grain controls are available; selecting it does not change `film_render.grain.engine` |
 | `halation` | Halation profile | `film_render.halation.halation_first_sigma_um` and `film_render.halation.halation_strength` | Whenever Halation controls are editable; inactive route conditions retain the values |
 
-There is no universal profile that maps one parameter set across Spektra, Procedural, Dye, and Fotufilm Film. The four grain engines retain their independent domains and controls under [Film grain](../film-grain/spec.md). Additional engine-specific families require their own parameter scope and acceptance evidence.
+There is no universal profile that maps one parameter set across Spektra, Procedural, Dye, and Fotufilm Film. The four grain engines retain their independent domains and controls under [Film grain](../film-grain/spec.md). Procedural and Dye have separate feature profile families; additional engine-specific families require their own parameter scope and acceptance evidence.
 
 ### Procedural grain profile family
 
@@ -57,6 +58,28 @@ Applying a named Procedural profile must set `v2_profile` to that name and clear
 Selecting `custom` must preserve the currently resolved Procedural values and expose them as explicit custom controls. It must not select an engine or change the mode, film type, resolution implementation, or timer. The existing `custom` and `v2_profile` compatibility rules remain authoritative for serialized documents and direct parameter edits.
 
 The catalog shape and values are retained from SpektraFilm's existing Dehancer-derived Procedural model. They are SpektraFilm built-in values, not imported Dehancer files and not a claim of pixel parity with Dehancer. The algorithm and post-scan boundary remain those defined by [Procedural grain](../film-grain/v2/spec.md).
+
+### Dye grain profile family
+
+The Dye family provides named appearance parameter sets for the self-developed film-coordinate dye-field engine. It does not select `film_render.grain.engine`; the caller must select `dye` through the existing engine control. The family does not replace stock-resolved `rms_granularity`, `particle_scale_sublayers`, `density_min`, or `uniformity`, because those values belong to film chemistry and the existing stock granularity resolution.
+
+The initial catalog contains one built-in profile:
+
+| Name | Display label | `v3_dye_support_um` | `v3_event_area_um2` | `channel_correlation` |
+| --- | --- | ---: | ---: | ---: |
+| `reference` | Reference | 3.5 | 1.28 | 0.0 |
+
+`reference` uses the existing Dye parameter defaults. Those defaults were validated on the `kodak_portra_800` reference condition, but the profile is not a stock selector and does not infer or change the active film profile. It is the only built-in Dye appearance row in version 1 because the repository contains no measured alternative combination for these three controls.
+
+The three controls have distinct meanings in the Dye model: support controls the spatial operator, event area controls statistical strength, and channel correlation controls the shared count component. A future built-in row must provide evidence for the complete combination and must not be introduced by copying values from Procedural grain, Spektra grain, or a film stock's unrelated granularity controls.
+
+This profile is a SpektraFilm appearance control, not stock calibration. It does not claim Portra, CineStill, or Dehancer equivalence. The Dye contract remains responsible for film-coordinate formation, conditional Poisson counts, three-sublayer allocation, stock granularity, film-format scaling, and the supported route.
+
+Applying a named Dye profile must replace only the three profile-scope leaves in its row. It must preserve `active`, `engine`, all other grain controls, the resolved stock values, `camera.film_format_mm`, route, workflow, and seed. It must not change `rms_granularity`, `particle_scale_sublayers`, `density_min`, `uniformity`, or any film profile reference.
+
+`custom` is the effective name when the three scoped values do not exactly match the `reference` row. Selecting `custom` preserves the current values. Matching uses exact declared f32/f64 values; no tolerance is used for profile identity.
+
+The existing accepted range for `channel_correlation` remains `[0, 0.45]`; the `reference` profile keeps the existing default `0.0`. The [Dye grain contract](../film-grain/v3/spec.md#channel-correlation) remains authoritative for the meaning and evidence limits of this control.
 
 ### Halation profile family
 
@@ -95,7 +118,7 @@ Selecting an entry must update only its profile scope and mark the feature secti
 --feature-profile FAMILY=NAME
 ```
 
-`FAMILY` must be `grain.procedural` or `halation`. `NAME` must be a built-in name from this document or `custom`. The option must be rejected for malformed assignments, unknown families, and unknown names. It must not fall back to a parameter path or a look preset name.
+`FAMILY` must be `grain.procedural`, `grain.dye`, or `halation`. `NAME` must be a built-in name from this document or `custom`. The option must be rejected for malformed assignments, unknown families, and unknown names. It must not fall back to a parameter path or a look preset name.
 
 Feature profile options apply in command-line appearance order before `--set` sources. A later profile selection for the same family replaces the earlier selection. `--set` sources then apply in their existing appearance order and may override the profile's scoped values. A direct `--set` edit must not change the meaning of another family or select a workflow.
 
@@ -115,16 +138,16 @@ Resolution must use this order:
 
 A GUI feature-profile action has the same position as step 2 relative to an already applied look and later direct edits. Applying a look after a feature profile may replace the look-owned values, as existing look application requires.
 
-Look and section preset capture must write the resolved parameter leaves. A selected Halation profile must therefore round-trip as its two arrays, without a Dehancer-specific profile field. A selected Procedural profile keeps the existing `v2_profile` value and existing optional-field rules. Loading an old document must not require a feature profile catalog entry.
+Look and section preset capture must write the resolved parameter leaves. A selected Dye profile must therefore round-trip as its three existing leaves, a selected Halation profile as its two arrays, and a selected Procedural profile with its existing `v2_profile` value and optional-field rules. Loading an old document must not require a feature profile catalog entry.
 
 Feature profile values must remain valid when the selected profile or route makes the feature inactive. Inactive values remain stored and become effective if the caller later selects a compatible route or engine. A feature profile must never alter route eligibility by itself.
 
 ## Compatibility and acceptance
 
-1. Every built-in family and name in this document resolves to the exact scope values in its table. `35mm250` remains the Procedural default.
+1. Every built-in family and name in this document resolves to the exact scope values in its table. The Dye family has exactly one built-in name, `reference`; `35mm250` remains the Procedural default.
 2. An unknown family or name fails before render publication and leaves active controls unchanged.
 3. Applying a profile changes only its declared scope. A test must retain a sentinel value in every out-of-scope control, including `active`, route, workflow, engine, and seed.
-4. A direct scope edit reports `custom` for Halation and preserves the existing Procedural `v2_profile` and optional override semantics.
+4. A direct scope edit reports `custom` for Dye and Halation and preserves the existing Procedural `v2_profile` and optional override semantics.
 5. CLI and GUI selection resolve identical values. A feature-profile run and an equivalent direct-leaf `--set` run produce identical output for the same executable, backend, seed, and input.
 6. Feature profile selections do not create a second preset library, do not add profile references to look documents, and do not add Dehancer-specific fields to any carrier.
 7. Existing look presets, section presets, sparse parameter files, GUI state, `v2_profile` values, Halation stock defaults, CPU execution, GPU execution, and inactive-value behavior remain compatible when no feature profile is selected.
