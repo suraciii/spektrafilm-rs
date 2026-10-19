@@ -385,14 +385,13 @@
     caption.appendChild(strong);
     const small = document.createElement('span');
     small.className = 'small';
-    small.textContent = rectDescription;
     caption.appendChild(small);
     pane.appendChild(caption);
     const viewport = document.createElement('div');
     viewport.className = 'viewport';
     viewport.tabIndex = 0;
     viewport.dataset.viewport = side;
-    viewport.setAttribute('aria-label', `${aria}视口：${labelText}；可拖动或滚动查看`);
+    viewport.setAttribute('role', 'img');
     enablePan(viewport);
     const canvas = document.createElement('div');
     canvas.className = 'canvas crop';

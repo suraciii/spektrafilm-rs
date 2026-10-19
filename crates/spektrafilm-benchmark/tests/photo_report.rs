@@ -57,7 +57,7 @@ fn copy_report(source: &Path, target: &Path) {
         if path.is_dir() {
             copy_report(&path, &target.join(entry.file_name()));
         } else {
-            fs::copy(&path, &target.join(entry.file_name())).unwrap();
+            fs::copy(&path, target.join(entry.file_name())).unwrap();
         }
     }
 }
@@ -938,10 +938,10 @@ fn generation_never_modifies_the_manifest_or_the_sources() {
         None,
     ));
     let manifest_before = fs::read(&manifest).unwrap();
-    let source_before = fs::read(&work.path("scan.png")).unwrap();
+    let source_before = fs::read(work.path("scan.png")).unwrap();
     let report = work.publish(&manifest);
     assert_eq!(fs::read(&manifest).unwrap(), manifest_before);
-    assert_eq!(fs::read(&work.path("scan.png")).unwrap(), source_before);
+    assert_eq!(fs::read(work.path("scan.png")).unwrap(), source_before);
     assert_eq!(
         photo(&report, "scan")["source"]["sha256"],
         common::sha256_file(&work.path("scan.png")).unwrap()
