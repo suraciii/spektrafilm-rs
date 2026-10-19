@@ -211,7 +211,10 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
         let mut harness = Harness::builder()
             .with_size(egui::vec2(1500.0, 1400.0))
             .with_pixels_per_point(dpi)
-            .build_eframe(move |_| app(state_path, image_path, browser_path));
+            .build_eframe(move |cc| {
+                theme::apply(&cc.egui_ctx);
+                app(state_path, image_path, browser_path)
+            });
         let h = &mut harness;
         click(h, "Input");
         let mut time = 20.0;

@@ -5,9 +5,169 @@
 //! machine range. The editor range must be contained within the
 //! validator's accepted range and must be wide enough to reach the
 //! parameter's documented usable values.
+//!
+//! [`ALL_PATHS`] is the single enumeration of the table. The range match and
+//! every consumer that needs the path list read it, so no second list can
+//! drift from the table.
 
 /// Editor range for a numeric parameter: (min, max, step, decimals).
 pub type EditorRange = (f64, f64, f64, usize);
+
+/// Every parameter path the editor range table declares.
+pub static ALL_PATHS: &[&str] = &[
+    "camera.exposure_compensation_ev",
+    "camera.film_format_mm",
+    "enlarger.print_exposure",
+    "enlarger.preflash_exposure",
+    "enlarger.y_filter_shift",
+    "enlarger.m_filter_shift",
+    "enlarger.preflash_y_filter_shift",
+    "enlarger.preflash_m_filter_shift",
+    "magazine_print_color.strength",
+    "camera.diffusion_filter.strength",
+    "camera.diffusion_filter.spatial_scale",
+    "camera.diffusion_filter.halo_warmth",
+    "camera.diffusion_filter.core_intensity",
+    "camera.diffusion_filter.core_size",
+    "camera.diffusion_filter.halo_intensity",
+    "camera.diffusion_filter.halo_size",
+    "camera.diffusion_filter.bloom_intensity",
+    "camera.diffusion_filter.bloom_size",
+    "enlarger.diffusion_filter.strength",
+    "enlarger.diffusion_filter.spatial_scale",
+    "enlarger.diffusion_filter.halo_warmth",
+    "enlarger.diffusion_filter.core_intensity",
+    "enlarger.diffusion_filter.core_size",
+    "enlarger.diffusion_filter.halo_intensity",
+    "enlarger.diffusion_filter.halo_size",
+    "enlarger.diffusion_filter.bloom_intensity",
+    "enlarger.diffusion_filter.bloom_size",
+    "film_render.base.scale",
+    "film_render.base.tilt",
+    "film_render.base.cyan",
+    "film_render.base.magenta",
+    "film_render.base.yellow",
+    "film_render.chemistry.gamma_factor",
+    "film_render.density_curve_gamma",
+    "film_render.chemistry.gamma_factor_fast",
+    "film_render.chemistry.gamma_factor_slow",
+    "film_render.chemistry.gamma_factor_red",
+    "film_render.chemistry.gamma_factor_green",
+    "film_render.chemistry.gamma_factor_blue",
+    "film_render.chemistry.developer_exhaustion",
+    "film_render.convert.base_percentile",
+    "film_render.convert.exposure_compensation_ev",
+    "film_render.grain.v2_size",
+    "film_render.grain.v2_shadows",
+    "film_render.grain.v2_midtones",
+    "film_render.grain.v2_highlights",
+    "film_render.grain.v2_resolution_factor",
+    "film_render.grain.v2_chroma",
+    "film_render.grain.v2_amount",
+    "film_render.grain.v2_resolution_type",
+    "film_render.grain.v2_timer",
+    "film_render.grain.v3_dye_support_um",
+    "film_render.grain.v3_event_area_um2",
+    "film_render.grain.channel_correlation",
+    "film_render.grain.rms_granularity",
+    "film_render.grain.particle_scale_sublayers",
+    "film_render.grain.density_min",
+    "film_render.grain.uniformity",
+    "film_render.grain.blur",
+    "film_render.grain.blur_dye_clouds_um",
+    "film_render.grain.mult_usm_amount",
+    "film_render.grain.mult_usm_sigma",
+    "film_render.grain.micro_structure",
+    "film_render.grain.particle_area_um2",
+    "film_render.grain.particle_scale",
+    "film_render.grain.n_sub_layers",
+    "film_render.grain.fotufilm.amount",
+    "film_render.grain.fotufilm.size",
+    "film_render.grain.fotufilm.softness",
+    "film_render.grain.fotufilm.color",
+    "film_render.grain.fotufilm.layers",
+    "film_render.grain.fotufilm.rms_density",
+    "film_render.grain.fotufilm.clump_radius_um",
+    "film_render.grain.fotufilm.layer_weights",
+    "film_render.grain.fotufilm.layer_size_ratio",
+    "film_render.grain.fotufilm.radius_span",
+    "film_render.grain.fotufilm.sublayer_shares",
+    "film_render.grain.fotufilm.coating_density_scale",
+    "film_render.grain.fotufilm.fog_density",
+    "film_render.dir_couplers.amount",
+    "film_render.dir_couplers.inhibition_samelayer",
+    "film_render.dir_couplers.inhibition_interlayer",
+    "film_render.dir_couplers.diffusion_size_um",
+    "film_render.dir_couplers.diffusion_tail_um",
+    "film_render.dir_couplers.diffusion_tail_weight",
+    "film_render.dir_couplers.gamma_samelayer_rgb",
+    "film_render.dir_couplers.gamma_interlayer_r_to_gb",
+    "film_render.dir_couplers.gamma_interlayer_g_to_rb",
+    "film_render.dir_couplers.gamma_interlayer_b_to_rg",
+    "film_render.dir_couplers.langmuir_donor_k_rgb",
+    "film_render.dir_couplers.langmuir_receiver_k_rgb",
+    "film_render.halation.halation_amount",
+    "film_render.halation.source_compression",
+    "film_render.halation.halation_bounce_decay",
+    "film_render.halation.halation_n_bounces",
+    "film_render.halation.boost_ev",
+    "film_render.halation.boost_range",
+    "film_render.halation.protect_ev",
+    "film_render.halation.scatter_amount",
+    "film_render.halation.scatter_spatial_scale",
+    "film_render.halation.scatter_core_um",
+    "film_render.halation.scatter_tail_um",
+    "film_render.halation.scatter_tail_weight",
+    "film_render.halation.halation_strength",
+    "film_render.halation.halation_first_sigma_um",
+    "io.input_gamut_compress.hull_detail",
+    "io.upscale_factor",
+    "io.input_gamut_compress.knee",
+    "io.output_gamut_compress.knee",
+    "io.crop_center",
+    "io.crop_size",
+    "output_mix.amount",
+    "print_render.base.scale",
+    "print_render.base.cyan",
+    "print_render.base.magenta",
+    "print_render.base.yellow",
+    "print_render.density_curve_gamma",
+    "print_render.density_curves_morph.gamma_factor",
+    "print_render.density_curves_morph.gamma_factor_fast",
+    "print_render.density_curves_morph.gamma_factor_slow",
+    "print_render.density_curves_morph.gamma_factor_red",
+    "print_render.density_curves_morph.gamma_factor_green",
+    "print_render.density_curves_morph.gamma_factor_blue",
+    "print_render.density_curves_morph.developer_exhaustion",
+    "print_render.glare.percent",
+    "print_render.glare.roughness",
+    "print_render.glare.blur",
+    "scanner.lens_blur",
+    "scanner.white_level",
+    "scanner.black_level",
+    "scanner.finish_strength",
+    "scanner.reference_exposure_ev",
+    "scanner.conversion_brightness_ev",
+    "scanner.conversion_contrast",
+    "scanner.conversion_dmax",
+    "scanner.black_point",
+    "scanner.white_point",
+    "scanner.reference_balance_ev",
+    "scanner.conversion_balance_ev",
+    "scanner.unsharp_mask",
+    "settings.preview_max_size",
+    "settings.spectral_gaussian_blur",
+    "extras.load_raw.temperature",
+    "extras.load_raw.tint",
+    "extras.special.film_channel_swap",
+    "extras.special.print_channel_swap",
+    "display.white_padding",
+];
+
+/// Iterate every parameter path the editor range table declares.
+pub fn paths() -> impl Iterator<Item = &'static str> {
+    ALL_PATHS.iter().copied()
+}
 
 /// Look up the editor range for a parameter path.
 ///
@@ -130,7 +290,7 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.dir_couplers.inhibition_samelayer" => Some((0.0, 10.0, 0.05, 2)),
         "film_render.dir_couplers.inhibition_interlayer" => Some((0.0, 10.0, 0.05, 2)),
         "film_render.dir_couplers.diffusion_size_um" => Some((0.0, 50.0, 5.0, 2)),
-        "film_render.dir_couplers.diffusion_tail_um" => Some((0.0, 50.0, 10.0, 2)),
+        "film_render.dir_couplers.diffusion_tail_um" => Some((0.0, 500.0, 10.0, 2)),
         "film_render.dir_couplers.diffusion_tail_weight" => Some((0.0, 1.0, 0.01, 2)),
         "film_render.dir_couplers.gamma_samelayer_rgb" => Some((0.0, 1000000.0, 0.02, 2)),
         "film_render.dir_couplers.gamma_interlayer_r_to_gb" => Some((0.0, 1000000.0, 0.02, 2)),
@@ -144,7 +304,6 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.halation.source_compression" => Some((0.0, 0.999999, 0.05, 3)),
         "film_render.halation.halation_bounce_decay" => Some((0.0, 1.0, 0.05, 2)),
         "film_render.halation.halation_n_bounces" => Some((1.0, 5.0, 1.0, 2)),
-        "film_render.halation.halation_spatial_scale" => Some((0.0, 100.0, 0.1, 2)),
         "film_render.halation.boost_ev" => Some((0.0, 5.0, 0.5, 2)),
         "film_render.halation.boost_range" => Some((0.0, 1.0, 0.05, 2)),
         "film_render.halation.protect_ev" => Some((0.0, 5.0, 0.5, 2)),
@@ -223,156 +382,6 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
 #[cfg(test)]
 mod tests {
 
-    /// All known numeric parameter paths.
-    pub const ALL_PATHS: &[&str] = &[
-        "camera.exposure_compensation_ev",
-        "camera.film_format_mm",
-        "enlarger.print_exposure",
-        "enlarger.preflash_exposure",
-        "enlarger.y_filter_shift",
-        "enlarger.m_filter_shift",
-        "enlarger.preflash_y_filter_shift",
-        "enlarger.preflash_m_filter_shift",
-        "magazine_print_color.strength",
-        "camera.diffusion_filter.strength",
-        "camera.diffusion_filter.spatial_scale",
-        "camera.diffusion_filter.halo_warmth",
-        "camera.diffusion_filter.core_intensity",
-        "camera.diffusion_filter.core_size",
-        "camera.diffusion_filter.halo_intensity",
-        "camera.diffusion_filter.halo_size",
-        "camera.diffusion_filter.bloom_intensity",
-        "camera.diffusion_filter.bloom_size",
-        "enlarger.diffusion_filter.strength",
-        "enlarger.diffusion_filter.spatial_scale",
-        "enlarger.diffusion_filter.halo_warmth",
-        "enlarger.diffusion_filter.core_intensity",
-        "enlarger.diffusion_filter.core_size",
-        "enlarger.diffusion_filter.halo_intensity",
-        "enlarger.diffusion_filter.halo_size",
-        "enlarger.diffusion_filter.bloom_intensity",
-        "enlarger.diffusion_filter.bloom_size",
-        "film_render.base.scale",
-        "film_render.base.tilt",
-        "film_render.base.cyan",
-        "film_render.base.magenta",
-        "film_render.base.yellow",
-        "film_render.chemistry.gamma_factor",
-        "film_render.chemistry.gamma_factor_fast",
-        "film_render.chemistry.gamma_factor_slow",
-        "film_render.chemistry.gamma_factor_red",
-        "film_render.chemistry.gamma_factor_green",
-        "film_render.chemistry.gamma_factor_blue",
-        "film_render.chemistry.developer_exhaustion",
-        "film_render.density_curve_gamma",
-        "film_render.convert.base_percentile",
-        "film_render.convert.exposure_compensation_ev",
-        "film_render.grain.v2_size",
-        "film_render.grain.v2_shadows",
-        "film_render.grain.v2_midtones",
-        "film_render.grain.v2_highlights",
-        "film_render.grain.v2_resolution_factor",
-        "film_render.grain.v2_chroma",
-        "film_render.grain.v2_amount",
-        "film_render.grain.v2_resolution_type",
-        "film_render.grain.v2_timer",
-        "film_render.grain.v3_dye_support_um",
-        "film_render.grain.v3_event_area_um2",
-        "film_render.grain.channel_correlation",
-        "film_render.grain.rms_granularity",
-        "film_render.grain.particle_scale_sublayers",
-        "film_render.grain.density_min",
-        "film_render.grain.uniformity",
-        "film_render.grain.blur",
-        "film_render.grain.blur_dye_clouds_um",
-        "film_render.grain.mult_usm_amount",
-        "film_render.grain.mult_usm_sigma",
-        "film_render.grain.micro_structure",
-        "film_render.grain.particle_area_um2",
-        "film_render.grain.particle_scale",
-        "film_render.grain.n_sub_layers",
-        "film_render.grain.fotufilm.amount",
-        "film_render.grain.fotufilm.size",
-        "film_render.grain.fotufilm.softness",
-        "film_render.grain.fotufilm.color",
-        "film_render.grain.fotufilm.layers",
-        "film_render.grain.fotufilm.rms_density",
-        "film_render.grain.fotufilm.clump_radius_um",
-        "film_render.grain.fotufilm.layer_weights",
-        "film_render.grain.fotufilm.layer_size_ratio",
-        "film_render.grain.fotufilm.radius_span",
-        "film_render.grain.fotufilm.sublayer_shares",
-        "film_render.grain.fotufilm.coating_density_scale",
-        "film_render.grain.fotufilm.fog_density",
-        "film_render.dir_couplers.amount",
-        "film_render.dir_couplers.inhibition_samelayer",
-        "film_render.dir_couplers.inhibition_interlayer",
-        "film_render.dir_couplers.diffusion_size_um",
-        "film_render.dir_couplers.diffusion_tail_um",
-        "film_render.dir_couplers.diffusion_tail_weight",
-        "film_render.dir_couplers.gamma_samelayer_rgb",
-        "film_render.dir_couplers.gamma_interlayer_r_to_gb",
-        "film_render.dir_couplers.gamma_interlayer_g_to_rb",
-        "film_render.dir_couplers.gamma_interlayer_b_to_rg",
-        "film_render.dir_couplers.langmuir_donor_k_rgb",
-        "film_render.dir_couplers.langmuir_receiver_k_rgb",
-        "film_render.halation.halation_amount",
-        "film_render.halation.source_compression",
-        "film_render.halation.halation_n_bounces",
-        "film_render.halation.halation_spatial_scale",
-        "film_render.halation.boost_ev",
-        "film_render.halation.boost_range",
-        "film_render.halation.protect_ev",
-        "film_render.halation.scatter_amount",
-        "film_render.halation.scatter_spatial_scale",
-        "film_render.halation.scatter_core_um",
-        "film_render.halation.scatter_tail_um",
-        "film_render.halation.scatter_tail_weight",
-        "film_render.halation.halation_strength",
-        "film_render.halation.halation_first_sigma_um",
-        "io.input_gamut_compress.hull_detail",
-        "io.upscale_factor",
-        "io.input_gamut_compress.knee",
-        "io.output_gamut_compress.knee",
-        "io.crop_center",
-        "io.crop_size",
-        "output_mix.amount",
-        "print_render.base.scale",
-        "print_render.base.cyan",
-        "print_render.base.magenta",
-        "print_render.base.yellow",
-        "print_render.density_curves_morph.gamma_factor",
-        "print_render.density_curves_morph.gamma_factor_fast",
-        "print_render.density_curves_morph.gamma_factor_slow",
-        "print_render.density_curves_morph.gamma_factor_red",
-        "print_render.density_curves_morph.gamma_factor_green",
-        "print_render.density_curves_morph.gamma_factor_blue",
-        "print_render.density_curves_morph.developer_exhaustion",
-        "print_render.density_curve_gamma",
-        "print_render.glare.percent",
-        "print_render.glare.roughness",
-        "print_render.glare.blur",
-        "scanner.lens_blur",
-        "scanner.white_level",
-        "scanner.black_level",
-        "scanner.finish_strength",
-        "scanner.reference_exposure_ev",
-        "scanner.conversion_brightness_ev",
-        "scanner.conversion_contrast",
-        "scanner.conversion_dmax",
-        "scanner.black_point",
-        "scanner.white_point",
-        "scanner.reference_balance_ev",
-        "scanner.conversion_balance_ev",
-        "scanner.unsharp_mask",
-        "settings.preview_max_size",
-        "settings.spectral_gaussian_blur",
-        "extras.load_raw.temperature",
-        "extras.load_raw.tint",
-        "extras.special.film_channel_swap",
-        "extras.special.print_channel_swap",
-        "display.white_padding",
-    ];
     use super::*;
 
     /// String literal contents of `source`, ignoring comments and char literals.
@@ -519,5 +528,64 @@ mod tests {
             editor_range("camera.film_format_mm"),
             Some((1.0, 1000.0, 0.5, 2))
         );
+    }
+
+    /// Every declared editor range must contain the parameter's documented
+    /// default, so a factory value the GUI cannot reach is caught here instead
+    /// of at the first frame that draws the row. The defaults come from core
+    /// parameter discovery, so the test follows the core defaults rather than
+    /// a second copy of them.
+    #[test]
+    fn every_range_contains_the_core_default() {
+        // GUI-only paths outside the parameter document, so core discovery has
+        // no default for them.
+        const GUI_ONLY_PATHS: &[&str] = &[
+            "extras.load_raw.temperature",
+            "extras.load_raw.tint",
+            "extras.special.film_channel_swap",
+            "extras.special.print_channel_swap",
+            "display.white_padding",
+        ];
+        for path in ALL_PATHS {
+            if GUI_ONLY_PATHS.contains(path) {
+                continue;
+            }
+            let field = spektrafilm_core::params::sources::describe_field(path)
+                .unwrap_or_else(|error| panic!("{path}: discovery failed: {error}"));
+            let default = field
+                .get("default")
+                .unwrap_or_else(|| panic!("{path}: discovery declares no default"));
+            let Some((min, max, _, _)) = editor_range(path) else {
+                panic!("{path}: no editor range");
+            };
+            // A tuple row's declared range covers every component, so every
+            // component of the default must be inside it.
+            let defaults: Vec<f64> = if let Some(default) = default.as_f64() {
+                vec![default]
+            } else if let Some(components) = default.as_array() {
+                components
+                    .iter()
+                    .map(|component| {
+                        component.as_f64().unwrap_or_else(|| {
+                            panic!("{path}: component default {component} is not a number")
+                        })
+                    })
+                    .collect()
+            } else {
+                // A nullable leaf's unset default is null; the GUI row shows
+                // the resolved value, which is not the core default.
+                assert!(
+                    default.is_null() && field["nullable"] == true,
+                    "{path}: default {default} is neither a number nor a null nullable"
+                );
+                continue;
+            };
+            for default in defaults {
+                assert!(
+                    (min..=max).contains(&default),
+                    "{path}: editor range ({min}, {max}) excludes the documented default {default}"
+                );
+            }
+        }
     }
 }

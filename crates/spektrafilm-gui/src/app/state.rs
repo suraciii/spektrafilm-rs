@@ -53,6 +53,7 @@ pub(crate) struct App {
     pub(crate) output_color_space: String,
     pub(crate) output_cctf_encoding: bool,
     pub(crate) status: String,
+    pub(crate) last_state_normalization: Option<String>,
     pub(crate) last_export_error: Option<String>,
     /// Controls changed since the latest submitted render snapshot.
     pub(crate) dirty: bool,
@@ -73,11 +74,22 @@ pub(crate) struct App {
     pub(crate) export_job: Option<ExportJob>,
     /// Transient control-search filter. Not persisted.
     pub(crate) filter: String,
+    /// Restore-factory-default confirmation is open. Transient, never
+    /// persisted: it exists only between the trigger click and the choice.
+    pub(crate) factory_reset_confirm: bool,
     /// Labels the control sections rendered last, keyed by section name. The
     /// control search hides a section whose cache was recorded by a filtered
     /// render and does not match.
     pub(crate) section_labels:
         std::collections::HashMap<String, crate::controls::SectionLabelCache>,
+    /// Which pages and sections hold a control matching `filter`, from the
+    /// last indexed render. Transient, rebuilt when the filter, the parameter
+    /// revision or the scan medium changes.
+    pub(crate) search_index: crate::controls::SearchIndex,
+    /// Section the panel reveals next, set when a search result is selected.
+    /// Consumed by that section's header, so the panel scrolls to it and the
+    /// state does not outlive the frame it was set in.
+    pub(crate) pending_scroll: Option<String>,
     /// In-flight Convert controller action. The epoch drops results made stale
     /// by later parameter edits or a newer action.
     pub(crate) calibration_job: Option<CalibrationJob>,
@@ -235,7 +247,11 @@ impl App {
             compare_active: false,
             compare_split: 0.5,
             filter: String::new(),
+            factory_reset_confirm: false,
             section_labels: std::collections::HashMap::new(),
+            last_state_normalization: None,
+            search_index: crate::controls::SearchIndex::default(),
+            pending_scroll: None,
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
@@ -287,13 +303,21 @@ impl App {
     }
 
     pub(crate) fn apply_state(&mut self, state: state::GuiState) -> Result<()> {
+        self.last_state_normalization = None;
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         let film_medium = scan_medium(&film);
         let film_reference_illuminant = film.info.reference_illuminant.clone();
+        let before_scanner = params.scanner.clone();
         normalize_scanner_selections(&mut params, film_medium);
+        self.last_state_normalization = App::scanner_normalization_detail(
+            &before_scanner,
+            &params.scanner,
+            film_medium,
+            &params.workflow.route,
+        );
         self.film_name = state.film().to_owned();
         self.film_reference_illuminant = film_reference_illuminant;
         self.film_medium = film_medium;

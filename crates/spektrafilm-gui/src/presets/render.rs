@@ -149,7 +149,7 @@ impl App {
                                 active,
                                 egui::RichText::new(format!("{}{suffix}", entry.name))
                                     .color(if active {
-                                        theme::FG
+                                        theme::CONTRAST_ON_ACCENT
                                     } else {
                                         theme::FG_SECONDARY
                                     })

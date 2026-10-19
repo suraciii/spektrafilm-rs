@@ -151,7 +151,10 @@ fn session_fixture() -> Session {
     let browser_path = directory.path().join("browser.json");
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
-        .build_eframe(move |_| app(state_path, image_path, browser_path));
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            app(state_path, image_path, browser_path)
+        });
     assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
     click(&mut harness, "◀");
     Session { harness, directory }
@@ -167,7 +170,10 @@ fn snapshot_session() -> Session {
     let harness = Harness::builder()
         .with_size(egui::vec2(1460.0, 980.0))
         .wgpu()
-        .build_eframe(move |_| app(state_path, image_path, browser_path));
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            app(state_path, image_path, browser_path)
+        });
     assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
     Session { harness, directory }
 }
@@ -181,7 +187,8 @@ fn empty_session() -> Session {
     let browser_path = directory.path().join("browser.json");
     let harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
-        .build_eframe(move |_| {
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
             App::new_with_browser_path(
                 Arc::new(CpuBackend),
                 None,
@@ -196,33 +203,85 @@ fn empty_session() -> Session {
 }
 
 fn click(h: &mut Harness<'_, App>, label: &str) {
+    scroll_controls_into_view(h, label);
     h.get_by_label(label).simulate_click();
     h.run_steps(3);
 }
 
-/// Click the enabled export action after its section has been opened.
-fn export_action(h: &mut Harness<'_, App>) {
+/// Scroll the controls panel until every node carrying `label` that lives in
+/// that panel sits inside the visible band.
+///
+/// The panel reserves `theme::HEIGHT_ACTION_BAR_RESERVE` at its bottom so the
+/// action bar never sits under the screen edge, so the usable band ends that
+/// much above the screen bottom rather than at the screen edge.
+fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
+    let screen = h.ctx.screen_rect();
+    // The band starts below the panel's own top padding, and ends above the
+    // reserve the panel keeps clear for its action bar. The bounds kittest
+    // reports are f64, so the whole band is compared in f64.
+    let band_top = 40.0_f64;
+    let band_bottom = f64::from(screen.bottom()) - f64::from(theme::HEIGHT_ACTION_BAR_RESERVE);
+    let panel_left = f64::from(screen.right()) - f64::from(theme::WIDTH_CONTROL_PANEL);
+    /// How many scrolls a target may need before the helper gives up. A page's
+    /// controls are taller than the viewport by a bounded amount, so a handful
+    /// of full-height scrolls always reaches the bottom.
+    const SCROLL_ATTEMPTS: usize = 16;
+    for _ in 0..SCROLL_ATTEMPTS {
+        let needs_scroll = h
+            .query_all_by_label(label)
+            .filter_map(|node| node.node().raw_bounds())
+            // Only nodes inside the controls panel are scrollable.
+            .filter(|bounds| bounds.x0 >= panel_left)
+            .any(|bounds| bounds.y0 <= band_top || bounds.y1 >= band_bottom);
+        if !needs_scroll {
+            return;
+        }
+        scroll_controls_down(h);
+    }
+}
+
+/// Scroll the controls panel down so elements below the fold come into view.
+fn scroll_controls_down(h: &mut Harness<'_, App>) {
+    let screen = h.ctx.screen_rect();
+    let pointer = egui::pos2(screen.right() - 160.0, screen.center().y);
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(pointer));
+    h.input_mut().events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -600.0),
+        modifiers: Default::default(),
+    });
+    h.run_steps(10);
+}
+/// Click an export action. The sidebar button that opens the modal and the
+/// modal's own submit now carry distinct labels, so the caller names the step
+/// it wants. The sidebar action is disabled while the modal is open, so an
+/// enabled-step query resolves the actionable node either way.
+fn export_action(h: &mut Harness<'_, App>, step: &str) {
+    scroll_controls_into_view(h, step);
     let buttons: Vec<_> = h
-        .query_all_by_label("Export…")
+        .query_all_by_label(step)
         .filter(|node| !node.node().is_disabled())
         .collect();
-    assert_eq!(buttons.len(), 1, "expected one enabled export action");
+    assert_eq!(buttons.len(), 1, "expected one enabled {step} action");
     buttons[0].simulate_click();
     h.run_steps(3);
 }
 
-/// Click the import button of one section. Both import sections expose a
-/// `select file` button, so the section's position in the tree disambiguates.
+/// Click the import button of one section. Each import section now names its
+/// own action, so the section is disambiguated by its label alone.
 fn import_file(h: &mut Harness<'_, App>, raw: bool) {
     click(h, "MAIN");
     click(h, if raw { "Import Raw" } else { "Import RGB" });
-    let buttons: Vec<_> = h.query_all_by_label("select file").collect();
-    let index = if raw { buttons.len() - 1 } else { 0 };
-    assert!(
-        !buttons.is_empty(),
-        "no import action found after expanding the section"
-    );
-    buttons[index].simulate_click();
+    let label = if raw {
+        "Select RAW file…"
+    } else {
+        "Select RGB image…"
+    };
+    let buttons: Vec<_> = h.query_all_by_label(label).collect();
+    assert_eq!(buttons.len(), 1, "one import action per section: {label}");
+    buttons[0].simulate_click();
     h.run_steps(3);
 }
 /// Pick `option` from the combo labeled `label`.
@@ -502,15 +561,15 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(h.state().params.scanner.conversion_brightness_ev, 1.0);
     let brighter = render(h, "PREVIEW");
     assert!(mean(&brighter) > mean(&positive) + 0.01);
-    edit(h, "balance 0", "0.25");
-    edit(h, "balance 1", "-0.125");
-    edit(h, "balance 2", "0.5");
+    edit(h, "balance R", "0.25");
+    edit(h, "balance G", "-0.125");
+    edit(h, "balance B", "0.5");
     assert_eq!(
         h.state().params.scanner.conversion_balance_ev,
         [0.25, -0.125, 0.5]
     );
-    edit(h, "film-scan white point 0", "0.95");
-    edit(h, "film-scan black point 0", "0.025");
+    edit(h, "film-scan white point R", "0.95");
+    edit(h, "film-scan black point R", "0.025");
     assert_eq!(h.state().params.scanner.white_point, [0.95, 1.0, 1.0]);
     assert_eq!(h.state().params.scanner.black_point, [0.025, 0.0, 0.0]);
     edit(h, "brightness", "not-a-number");
@@ -519,43 +578,11 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         h.get_by_label("brightness").value().as_deref(),
         Some("1.000")
     );
-    let preset = spektrafilm_core::presets::Preset::capture_section(
-        "Negative conversion",
-        spektrafilm_core::presets::Section::Scanner,
-        &h.state().params,
-        spektrafilm_core::presets::Provenance {
-            implementation_version: env!("CARGO_PKG_VERSION").into(),
-            model_version: "spektrafilm".into(),
-            scanner: None,
-        },
-    )
-    .unwrap();
-    spektrafilm_core::presets::PresetLibrary::new(s.directory.path().join("presets"))
-        .save_new(&preset, &data_dir())
-        .unwrap();
-    click(h, "▶");
-    click(h, "Refresh");
-    click(h, "◀");
     choose(h, "scan output", "Preserve medium polarity");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    let scanner_header = h.get_by_label("Scanner").raw_bounds().unwrap();
-    h.get(
-        egui_kittest::kittest::by()
-            .label("Preset: custom")
-            .predicate(|node| {
-                node.raw_bounds().is_some_and(|bounds| {
-                    bounds.y0 < scanner_header.y1 && bounds.y1 > scanner_header.y0
-                })
-            }),
-    )
-    .simulate_click();
-    h.run_steps(3);
-    click(h, "Negative conversion");
-    assert!(
-        h.state().status.starts_with("Applied preset"),
-        "{}",
-        h.state().status
-    );
+    // The rest of this test exercises the negative-capture scanner path, so
+    // select it through the real control rather than writing the parameter.
+    choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     let preview = render(h, "PREVIEW");
     let accepted = h.state().current_state().unwrap();
@@ -629,11 +656,14 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!((scan.width, scan.height), (160, 80));
     // Export must ignore the most recently retained preview's reduced resolution.
     render(h, "PREVIEW");
-    // The scanner section remains expanded after the scan controls above;
-    // collapse it before opening the export section below the controls.
-    click(h, "Scanner");
+    // The controls panel is taller than the viewport now that every numeric
+    // row carries a slider line, so bring the action bar into view before
+    // clicking it.
+    scroll_controls_down(h);
     click(h, "Export options");
-    export_action(h);
+    scroll_controls_down(h);
+    click(h, "Open export settings…");
+    assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
     choose(h, "Backend", ExportBackend::Gpu.label());
@@ -753,7 +783,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
     choose(h, "workflow", "input > film > scan");
     click(h, "FILM");
     if !h.state().params.film_render.grain.active {
-        click(h, "active");
+        click(h, "Enable grain");
     }
     assert!(h.state().params.film_render.grain.active);
     assert_eq!(
@@ -843,7 +873,7 @@ mod layout_snapshots {
         let mut s = session();
         let h = &mut s.harness;
         click(h, "Export options");
-        click(h, "Export…");
+        click(h, "Open export settings…");
         choose(h, "Format", "TIFF");
         assert!(
             h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Compression")
@@ -863,6 +893,7 @@ mod layout_snapshots {
             .wgpu()
             .build_state(
                 |ctx, dialog: &mut ExportDialog| {
+                    theme::apply(ctx);
                     dialog.show(ctx, dimensions);
                 },
                 std::mem::take(&mut h.state_mut().export_dialog),
@@ -878,12 +909,12 @@ mod layout_snapshots {
             "Compression",
             "Saving color space",
             "Apply saving CCTF encoding",
-            "Export…",
+            "Export file…",
             "Cancel",
         ] {
             let role = match label {
                 "Apply saving CCTF encoding" => egui::accesskit::Role::CheckBox,
-                "Export…" | "Cancel" => egui::accesskit::Role::Button,
+                "Export file…" | "Cancel" => egui::accesskit::Role::Button,
                 _ => egui::accesskit::Role::ComboBox,
             };
             let bounds = modal
@@ -907,7 +938,7 @@ mod layout_snapshots {
                 region_colors.len() > 2,
                 "{label} must have visible offscreen pixels"
             );
-            if !matches!(label, "Export…" | "Cancel") {
+            if !matches!(label, "Export file…" | "Cancel") {
                 rows.push((label, bounds));
             }
         }
@@ -980,7 +1011,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     choose(h, "scanner auto setup", "per_frame");
     edit(h, "brightness", "1");
     edit(h, "contrast", "1.5");
-    edit(h, "film-scan black point 0", "0.05");
+    edit(h, "film-scan black point R", "0.05");
     choose(
         h,
         "Negative conversion method",
@@ -1009,11 +1040,11 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         "receiver profile",
         "scanner auto setup",
         "brightness",
-        "balance 0",
+        "balance R",
         "contrast",
         "maximum density",
-        "film-scan black point 0",
-        "film-scan white point 0",
+        "film-scan black point R",
+        "film-scan white point R",
     ] {
         assert!(
             h.query_by_label(label).is_none(),
@@ -1026,8 +1057,8 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     edit(h, "Reference exposure EV", "1");
     let brighter = render(h, "PREVIEW");
     assert!(mean(&brighter) > mean(&neutral));
-    edit(h, "Reference balance EV 0", "0.25");
-    edit(h, "Reference balance EV 1", "-0.125");
+    edit(h, "Reference balance EV R", "0.25");
+    edit(h, "Reference balance EV G", "-0.125");
     let balanced = render(h, "PREVIEW");
     assert_ne!(balanced.data, brighter.data);
     let accepted = h.state().current_state().unwrap();

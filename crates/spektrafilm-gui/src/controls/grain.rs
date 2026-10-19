@@ -216,7 +216,7 @@ pub(crate) fn sections(
                             "Spektra controls; inactive until the Spektra engine is selected, stored values are retained.",
                         )
                         .small()
-                        .color(egui::Color32::GRAY),
+                        .color(theme::FG_MUTED),
                     );
                 }
                 if filter_matches(filter, "sublayers active") {

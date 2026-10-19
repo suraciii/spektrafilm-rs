@@ -715,7 +715,8 @@ fn empty_session_for_guards() -> Session {
     let browser_path = directory.path().join("browser.json");
     let harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
-        .build_eframe(move |_| {
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
             App::new_with_browser_path(
                 Arc::new(CpuBackend),
                 None,
