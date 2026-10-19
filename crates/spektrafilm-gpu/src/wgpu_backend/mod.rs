@@ -22,13 +22,13 @@ mod film_chain;
 #[cfg(feature = "wgpu-backend")]
 use cache::{CachedPipelineRef, PipelineCache};
 #[cfg(feature = "wgpu-backend")]
-mod pipe;
-#[cfg(feature = "wgpu-backend")]
-use pipe::GpuPipe;
-#[cfg(feature = "wgpu-backend")]
 mod params;
 #[cfg(feature = "wgpu-backend")]
-use params::{DensityParams, FrontParams, ScanParams};
+mod pipe;
+#[cfg(feature = "wgpu-backend")]
+use params::{CctfParams, DensityParams, FrontParams, ScanParams};
+#[cfg(feature = "wgpu-backend")]
+use pipe::GpuPipe;
 
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a
@@ -346,7 +346,6 @@ impl GpuBuffer {
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 #[cfg(feature = "wgpu-backend")]
 mod compute_backend;
 

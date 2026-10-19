@@ -1,5 +1,5 @@
 use crate::color_readouts;
-use crate::common::{Error, Result};
+use crate::common::{Result, err};
 use crate::image_data::{self, ImageData};
 use serde_json::{Value, json};
 use std::{
@@ -19,9 +19,6 @@ pub use math::{count, luminance, mean, median, number, quantile, selected, spell
 
 pub const METRIC_VERSION: &str = "spektrafilm-appearance-spatial-v3";
 pub const COLOR_TRANSFORM: &str = "colour-science-CAT02-srgb-D65-2deg-v1";
-fn err(code: &str, message: impl Into<String>) -> Error {
-    Error::new(code, message.into())
-}
 fn populations(regions: &[Value], protocol: &Value) -> Vec<Value> {
     let mut result = vec![
         json!({"id":"full_image","measurements":protocol.get("measurements").cloned().unwrap_or(json!(["numeric","color","tone"]))}),

@@ -42,6 +42,15 @@ pub(crate) struct FrontParams {
     pub(super) col1: [f32; 4],
     pub(super) col2: [f32; 4],
 }
+/// Uniform parameters for the shared sRGB transfer-function shader.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct CctfParams {
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) mode: u32,
+    pub(super) _pad: u32,
+}
 
 /// Uniform parameters for `halation/add_scaled.wgsl`: accumulate `scale * src`
 /// into `dst`, clearing `dst` first when `clear_first` is set. Owned here so the

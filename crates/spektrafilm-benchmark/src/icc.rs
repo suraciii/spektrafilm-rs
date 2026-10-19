@@ -1,4 +1,4 @@
-use crate::common::{Error, Result};
+use crate::common::{Result, err};
 use crate::image_data::ImageData;
 use sha2::{Digest, Sha256};
 use std::{ffi::c_void, fs, path::Path};
@@ -75,9 +75,6 @@ pub fn icc_version() -> Result<u32> {
     Ok(unsafe { (cms.version)() })
 }
 const RGB_DBL: u32 = (1 << 22) | (4 << 16) | (3 << 3);
-fn err(c: &str, m: impl Into<String>) -> Error {
-    Error::new(c, m.into())
-}
 
 fn embedded(path: &Path) -> Option<Vec<u8>> {
     let bytes = fs::read(path).ok()?;

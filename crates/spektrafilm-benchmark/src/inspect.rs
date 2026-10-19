@@ -2,6 +2,7 @@
 use crate::{
     common::{Error, Result},
     documents::{load_json_document, safe_artifact_path, validate_generated_document},
+    report::rows,
 };
 use serde_json::{Map, Value, json};
 use std::{
@@ -9,9 +10,6 @@ use std::{
     path::Path,
 };
 
-fn rows(value: &Value) -> &[Value] {
-    value.as_array().map(Vec::as_slice).unwrap_or(&[])
-}
 fn selected(filters: &[String], value: &Value) -> bool {
     filters.is_empty()
         || value

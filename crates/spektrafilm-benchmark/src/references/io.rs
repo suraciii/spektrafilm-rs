@@ -1,4 +1,4 @@
-use crate::common::{Error, Result};
+use crate::common::Result;
 use crate::image_data::ImageData;
 use crate::{documents, image_data};
 use serde_json::{Value, json};
@@ -7,9 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn err(code: &str, message: impl Into<String>) -> Error {
-    Error::new(code, message.into())
-}
+pub(crate) use crate::common::err;
 pub fn field<'a>(v: &'a Value, key: &str) -> Result<&'a Value> {
     v.get(key)
         .ok_or_else(|| err("invalid_reference_evidence", format!("Missing {key}")))

@@ -1,4 +1,4 @@
-use crate::common::{Error, Result};
+use crate::common::{Result, err};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -35,10 +35,6 @@ impl ImageData {
     pub fn dimensions(&self) -> [usize; 2] {
         [self.width, self.height]
     }
-}
-
-pub(crate) fn err(c: &str, m: impl Into<String>) -> Error {
-    Error::new(c, m.into())
 }
 
 pub fn load_image(source: &Value) -> Result<ImageData> {

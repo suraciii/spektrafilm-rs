@@ -222,7 +222,7 @@ fn inspect(input: &Path) -> Result<Value> {
     };
     Ok(json!({
         "path": input,
-        "format": format_name(format),
+        "format": format.name(),
         "width": loaded.image.width,
         "height": loaded.image.height,
         "precisionBits": precision_bits,
@@ -231,15 +231,6 @@ fn inspect(input: &Path) -> Result<Value> {
         "metadata": {"read": loaded.metadata.is_some()},
         "inspection": "read-only",
     }))
-}
-
-fn format_name(format: image_io::ImageFormat) -> &'static str {
-    match format {
-        image_io::ImageFormat::Jpeg => "jpeg",
-        image_io::ImageFormat::Png => "png",
-        image_io::ImageFormat::Tiff => "tiff",
-        image_io::ImageFormat::Exr => "exr",
-    }
 }
 
 fn tiff_precision_bits(path: &Path) -> Result<u8> {
