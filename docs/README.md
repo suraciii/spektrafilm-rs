@@ -17,7 +17,7 @@ Contracts live in [../specs/](../specs/). Domain terms live in [../CONTEXT.md](.
 - [Profile fitting](profile-fitting.md) — deriving surface terms and conversion tone from reference patch data.
 - [Measurement](measurement.md) — the instrument's stimulus documents, point-wise readings, reading comparison, and verification.
 - [LUT delivery](luts.md) — the bundle format, the LUT baker, OCIO output and QA artifacts.
-- [Appearance benchmark](benchmark.md) — rendering version-comparison evidence and the offline review.
+- [Appearance benchmark](benchmark.md) — rendering version-comparison evidence, the offline review, and the benchmark-owned photo report.
 - [Parity and backends](parity.md) — the pinned Python target, measurement budgets, and backend/fallback behavior.
 - [Attribution](attribution.md) — upstream sources, third-party components, and their license terms.
 

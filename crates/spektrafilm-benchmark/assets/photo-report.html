@@ -1,0 +1,88 @@
+<header class="report-header">
+  <h1 id="photo-report-title">照片报告</h1>
+  <p class="report-description" id="photo-report-description"></p>
+  <p class="small">离线目视检查：每张照片一个显示副本（sRGB 16 位 PNG）。关注区域按声明的矩形固定裁切，不做缩放对齐、颜色拟合、测量或评分。</p>
+</header>
+<div id="photo-report-error" role="alert" hidden>
+  <p class="hash-error" id="photo-report-error-text"></p>
+  <button type="button" id="photo-report-recovery">恢复默认视图</button>
+</div>
+<main>
+  <section class="card" aria-labelledby="pair-heading">
+    <h2 id="pair-heading">照片</h2>
+    <div class="controls">
+      <label class="field" id="pair-select-field" hidden>选择对照
+        <select id="pair-select"></select>
+      </label>
+      <button type="button" id="swap-button" hidden>交换左右</button>
+    </div>
+    <div class="meta-grid" id="meta-grid"></div>
+    <p class="small" id="pair-note"></p>
+  </section>
+
+  <section class="card viewer" aria-labelledby="view-heading">
+    <h2 id="view-heading">查看</h2>
+    <div class="controls">
+      <div class="button-group" role="group" aria-label="整图排布方式" id="layout-group" hidden>
+        <button type="button" data-layout="side" aria-pressed="true">并排</button>
+        <button type="button" data-layout="blink" aria-pressed="false">交替</button>
+      </div>
+      <label class="field" id="zoom-field">缩放
+        <select id="zoom-select">
+          <option value="fit">适应窗口</option>
+          <option value="native">原始像素</option>
+          <option value="x2">2 倍</option>
+          <option value="x4">4 倍</option>
+        </select>
+      </label>
+      <button type="button" id="fullscreen-button">全屏</button>
+    </div>
+    <p class="small zoom-label" id="zoom-label"></p>
+
+    <div id="side-panel">
+      <div class="panes" id="side-panes"></div>
+      <p class="small" id="whole-note"></p>
+    </div>
+
+    <div id="blink-panel" hidden>
+      <div class="controls">
+        <button type="button" id="blink-button">交替显示</button>
+        <span class="small" id="blink-label"></span>
+      </div>
+      <div class="viewport" id="blink-viewport" tabindex="0" aria-label="交替对照视口；可拖动或滚动查看">
+        <div class="canvas" id="blink-canvas">
+          <img id="blink-image-left" alt="">
+          <img id="blink-image-right" alt="">
+        </div>
+      </div>
+    </div>
+
+    <section aria-labelledby="roi-heading" id="roi-panel">
+      <h3 id="roi-heading">关注区域</h3>
+      <p class="small" id="roi-hint"></p>
+      <div class="controls">
+        <label class="field" id="roi-select-field">关注区域
+          <select id="roi-select"></select>
+        </label>
+        <button type="button" id="roi-clear-button" hidden>查看整图</button>
+      </div>
+      <div class="panes" id="roi-panes"></div>
+      <p class="warning" id="roi-warning" hidden></p>
+    </section>
+  </section>
+
+  <section class="card" aria-labelledby="provenance-heading">
+    <details>
+      <summary id="provenance-heading">来源与显示</summary>
+      <p class="small">报告数据以 <a href="report.json">report.json</a> 为准；本页图像均为发布目录内的显示副本，颜色与像素以源文件为准。显示副本不做二次颜色转换。</p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>照片</th><th>源路径</th><th>源 SHA-256</th><th>解码尺寸</th><th>颜色声明</th><th>显示副本</th></tr>
+          </thead>
+          <tbody id="provenance-body"></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+</main>

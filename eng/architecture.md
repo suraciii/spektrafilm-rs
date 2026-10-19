@@ -14,7 +14,7 @@ crates/
   spektrafilm-cli/        `spektrafilm`, `spektrafilm-f64`, `spektrafilm-lab`, `decode_raw_gui` and `lut`
   spektrafilm-gui/        egui/eframe preview window
   spektrafilm-raw/        LibRaw white balance and Lensfun correction
-  spektrafilm-benchmark/  evaluation library: metrics, documents, comparison, fixture generation, offline review
+  spektrafilm-benchmark/  evaluation library: metrics, documents, comparison, fixture generation, offline review, and the `spektrafilm-bench` photo report binary
 data/
   profiles/               film and paper JSON profiles
   luts/                   Hanatos2025 spectral basis and observer data

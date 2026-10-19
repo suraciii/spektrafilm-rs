@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 build = "build.rs"
+default-run = "spektrafilm-bench"
+
+[[bin]]
+name = "spektrafilm-bench"
+path = "src/bin/bench.rs"
 
 [dependencies]
 spektrafilm-math.workspace = true
