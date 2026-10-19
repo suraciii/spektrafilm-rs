@@ -84,7 +84,9 @@ The manifest must contain:
 
 `description` and `note` are optional plain-text fields. They must not be interpreted as HTML, CSS, JavaScript, Markdown, or a path.
 
-A photo `path` resolves relative to the manifest file. It must identify a regular supported raster file. The manifest must not use a file extension to infer color interpretation. `color_space` and `cctf_decoding` are optional explicit declarations. If omitted, they select the fixed display default `sRGB` with `cctf_decoding: true`; the generated report must show that default. A non-sRGB or linear source must declare its interpretation explicitly.
+A photo `path` must be relative to the manifest file. It must not be absolute and must not escape the manifest directory through `..` components. It must identify a regular supported raster file. The manifest must not use a file extension to infer color interpretation. `color_space` and `cctf_decoding` are optional explicit declarations. If omitted, they select the fixed display default `sRGB` with `cctf_decoding: true`; the generated report must show that default. A non-sRGB or linear source must declare its interpretation explicitly.
+
+The supported explicit `color_space` values are `sRGB`, `Display P3`, `DCI-P3`, `Adobe RGB (1998)`, `ProPhoto RGB`, `ITU-R BT.2020`, `ACEScg`, and `ACES2065-1`. `cctf_decoding` must be a boolean. The generator must pass only the manifest declaration to image decoding and must not consume a neighboring sidecar.
 
 A photo ROI is optional. Each ROI must contain a unique `id`, a nonempty `label`, and `rect` with four nonnegative integers in `[x, y, width, height]` form. Width and height must be positive. An ROI must lie fully within the decoded photo. ROI IDs are scoped to their photo.
 

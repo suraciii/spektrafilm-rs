@@ -86,7 +86,9 @@ The model must distinguish authored fields from observed fields:
 
 ## Validation and source integrity
 
-Validation must complete before final publication. It must use strict JSON loading with duplicate-key and unknown-field rejection. It must resolve authored paths relative to the manifest, reject absolute and parent-traversing artifact paths, and verify that each source is a supported regular raster file.
+Validation must complete before final publication. It must use strict JSON loading with duplicate-key and unknown-field rejection. It must resolve authored paths relative to the manifest, reject absolute and parent-traversing paths, and verify that each source is a supported regular raster file. The validator must accept only the closed color-space vocabulary in the product specification and must apply the fixed default declaration when fields are omitted.
+
+The generator must pass a source snapshot and an explicit declaration object to image decoding. It must not read a neighboring sidecar or infer source interpretation from a file extension.
 
 The generator must snapshot each source before decoding, using an isolated temporary file or equivalent immutable read boundary. It must hash the snapshot and compare it with a hash taken from the authored path before publication. A source change during generation must fail with `hash_mismatch`. A neighboring sidecar must not override the explicit manifest color declaration.
 

@@ -240,6 +240,32 @@ pub fn resolve_path(value: &str, document: &Path) -> Result<PathBuf> {
     }
     normalize_path(&full)
 }
+
+/// Resolve an authored asset path relative to a document without allowing an
+/// absolute path or a parent component to escape the document directory.
+pub fn resolve_relative_asset_path(value: &str, document: &Path) -> Result<PathBuf> {
+    if value.is_empty() || value.contains('\0') {
+        return Err(err(
+            "invalid_path",
+            "asset path must be a nonempty relative path without NUL",
+        ));
+    }
+    let path = Path::new(value);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(err(
+            "invalid_path",
+            "asset path must stay below the manifest directory",
+        ));
+    }
+    let base = document
+        .parent()
+        .ok_or_else(|| err("invalid_path", "manifest has no parent directory"))?;
+    Ok(base.join(path))
+}
 pub fn safe_artifact_path(root: &Path, value: &str) -> Result<PathBuf> {
     if value.is_empty()
         || value.contains('\0')
