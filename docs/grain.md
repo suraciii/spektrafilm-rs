@@ -8,7 +8,7 @@ Use this page to select a grain engine and configure its controls. It also descr
 
 - Spektra is the default upstream experimental original.
 - Procedural derives from Dehancer. It provides Analogue/Noise grain with twelve format/speed profiles. Its controls include Size, Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution. Pixel parity with Dehancer is not claimed.
-- Dye is a self-developed experimental film-coordinate dye field. It is opt-in. `v3_dye_support_um`, `v3_event_area_um2`, and `channel_correlation` control it.
+- Dye is a self-developed experimental film-coordinate dye field. It is opt-in. `v3_dye_support_um`, `v3_event_area_um2`, and `channel_correlation` control it, and named [Dye grain profiles](#dye-grain-profiles) set the three together.
 - Fotufilm Film is an adapted appearance population model fitted to resolved film curves. It is opt-in. `film_render.grain.fotufilm.*` controls it.
 
 ## Spektra
@@ -78,6 +78,23 @@ Dye realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c
 The channel scale is `k_c = (rms_granularity_c / 6)²`. Here, `6` is the preset of the reference stock `kodak_portra_800`. This scale is the only per-channel strength input. Dye does not read Spektra's `particle_area_um2` or `particle_scale`. Their blue-heavy default would double a coarser blue record.
 
 `channel_correlation` defaults to `0.0`. It accepts `[0, 0.45]`: the structural domain is `[0, 1)`, but an enabled value must stay inside the measured inter-record coherence band, so validation rejects anything above `0.45`. It is the fraction of one emulsion layer's per-channel event rate that the layer's active channels share; the shared part correlates those channels while every channel keeps its own marginal count rate, so strength, support, and readout do not move. The configured value is an upper bound on realized correlation, because a layer whose channels have unequal rates shares only the smallest of them. Zero leaves the independent per-channel realization exactly as it was. Correlation of this kind is off by default: the available measurements do not separate the film's own record correlation from the scanner's, and a lab scan's strong coherence belongs to the scanner.
+
+### Dye grain profiles
+
+`--feature-profile grain.dye=NAME` and the GUI **Dye Grain Profiles** selector apply a named Dye profile. The selector is available when `film_render.grain.engine` is `dye`; a profile selection never changes the engine. Each profile writes only the three Dye controls. Stock controls, route, film format, and the other grain controls stay unchanged.
+
+The six names and their support, event area, and correlation values are:
+
+- `reference` — 3.5, 1.28, 0.0. The existing defaults.
+- `fine` — 1.0, 1.28, 0.0. The finest support.
+- `coarse` — 8.0, 1.28, 0.0. The widest support.
+- `subtle` — 3.5, 0.32, 0.0. The weakest event area.
+- `strong` — 3.5, 5.12, 0.0. The strongest event area.
+- `correlated` — 3.5, 1.28, 0.45. Correlation at the accepted ceiling.
+
+Support and event area do different jobs, and support is not only a size control. At the one measured condition, event area moved the 48-micrometer high-pass standard deviation by the square-root law (`subtle` 0.503×, `strong` 1.964×) with the support unchanged. Support moved the correlation length and the amplitude together (`fine` 2.157×, `coarse` 0.402×). `coarse` is softer than the measured real film at that condition, not an improvement. `fine` has an apparent scale that the output pitch limits, and its field-cell pitch is the finest in the catalog. `correlated` sits at the evidence ceiling, and the configured value is an upper bound on the realized correlation.
+
+The support/event-area measurements above use one fixed CPU scan condition (film `kodak_ultramax_400`, route `input > film > scan`, `camera.film_format_mm = 8.96`, seed `20261013`). The `correlated` row was exercised separately in the CPU/GPU Dye acceptance matrix at the accepted correlation ceiling. These are appearance selections under declared evidence conditions, not stock calibrations; they are not validated for the `kodak_portra_800` reference condition and do not claim Portra, CineStill, or Dehancer equivalence. See [the Dye catalog specification](../specs/feature-profiles/spec.md#measurement-condition-and-evidence-caveats) for the full condition and evidence caveats.
 
 ### Film geometry and routes
 

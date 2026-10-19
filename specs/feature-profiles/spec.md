@@ -63,23 +63,38 @@ The catalog shape and values are retained from SpektraFilm's existing Dehancer-d
 
 The Dye family provides named appearance parameter sets for the self-developed film-coordinate dye-field engine. It does not select `film_render.grain.engine`; the caller must select `dye` through the existing engine control. The family does not replace stock-resolved `rms_granularity`, `particle_scale_sublayers`, `density_min`, or `uniformity`, because those values belong to film chemistry and the existing stock granularity resolution.
 
-The initial catalog contains one built-in profile:
+The catalog contains six built-in profiles in stable name order:
 
 | Name | Display label | `v3_dye_support_um` | `v3_event_area_um2` | `channel_correlation` |
 | --- | --- | ---: | ---: | ---: |
 | `reference` | Reference | 3.5 | 1.28 | 0.0 |
+| `fine` | Fine | 1.0 | 1.28 | 0.0 |
+| `coarse` | Coarse | 8.0 | 1.28 | 0.0 |
+| `subtle` | Subtle | 3.5 | 0.32 | 0.0 |
+| `strong` | Strong | 3.5 | 5.12 | 0.0 |
+| `correlated` | Correlated | 3.5 | 1.28 | 0.45 |
 
-`reference` uses the existing Dye parameter defaults. Those defaults were validated on the `kodak_portra_800` reference condition, but the profile is not a stock selector and does not infer or change the active film profile. It is the only built-in Dye appearance row in version 1 because the repository contains no measured alternative combination for these three controls.
+`reference` uses the existing Dye parameter defaults. Those defaults were validated on the `kodak_portra_800` reference condition, but the profile is not a stock selector and does not infer or change the active film profile. The other five rows keep the `reference` default for the two controls they do not vary. The catalog has one size axis (`reference`, `fine`, `coarse`) and one strength axis (`reference`, `subtle`, `strong`), plus the one accepted correlation point. This shape is a catalog layout choice; the values come from the local Dye knob measurements, not from any other product's profile table.
 
-The three controls have distinct meanings in the Dye model: support controls the spatial operator, event area controls statistical strength, and channel correlation controls the shared count component. A future built-in row must provide evidence for the complete combination and must not be introduced by copying values from Procedural grain, Spektra grain, or a film stock's unrelated granularity controls.
+The three controls have distinct meanings in the Dye model: support controls the spatial operator, event area controls statistical strength, and channel correlation controls the shared count component. A built-in row must provide evidence for the complete combination and must not be introduced by copying values from Procedural grain, Spektra grain, or a film stock's unrelated granularity controls.
 
-This profile is a SpektraFilm appearance control, not stock calibration. It does not claim Portra, CineStill, or Dehancer equivalence. The Dye contract remains responsible for film-coordinate formation, conditional Poisson counts, three-sublayer allocation, stock granularity, film-format scaling, and the supported route.
+#### Measurement condition and evidence caveats
+
+The support/event-area measurements for `reference`, `fine`, `coarse`, `subtle`, and `strong` use one fixed CPU scan condition: the release CLI on the CPU backend, film `kodak_ultramax_400`, route `input > film > scan`, scan output `negative_to_positive`, seed `20261013`, `camera.film_format_mm = 8.96` (1400 px at 6.4 µm), stock granularity `rms_granularity = [8, 8, 8]`, a flat mid-gray input, and one metrics window. The `correlated` row uses the accepted `channel_correlation` ceiling and was exercised separately in the CPU/GPU Dye acceptance matrix. The reference row's own validation remains the `kodak_portra_800` reference condition defined by the Dye contract.
+
+A measured outcome is not a general parameter claim. At the support/event-area measurement condition, event area moved the 48-micrometer high-pass standard deviation by the square-root law (`subtle` 0.503×, `strong` 1.964×) with the support unchanged, and support moved both the correlation length and the amplitude (`fine` 2.157×, `coarse` 0.402×). The separate correlated-row evidence exercises the accepted 0.45 setting; it does not turn that setting into stock calibration. Three rows carry explicit caveats:
+
+- `fine` has an apparent scale that the output pitch limits. Its 6.4 µm correlation length is one output pixel of that measurement, so the measurement establishes the sampling, not a film-space correlation length. Its field-cell pitch is also the finest in the catalog.
+- `coarse` is softer than the measured real film at that condition, not an improvement over it.
+- `correlated` sits at the accepted evidence ceiling of `channel_correlation`. The configured value is an upper bound on the realized correlation, and the appearance contract continues to forbid imitating scanner chroma processing.
+
+The rows are appearance selections under these declared evidence conditions. They are not validated for the `kodak_portra_800` reference condition, are not stock calibrations, and do not claim Portra, CineStill, or Dehancer equivalence. The [Dye grain contract](../film-grain/v3/spec.md) remains responsible for film-coordinate formation, conditional Poisson counts, three-sublayer allocation, stock granularity, film-format scaling, the supported route, and the meaning and evidence limits of `channel_correlation`.
 
 Applying a named Dye profile must replace only the three profile-scope leaves in its row. It must preserve `active`, `engine`, all other grain controls, the resolved stock values, `camera.film_format_mm`, route, workflow, and seed. It must not change `rms_granularity`, `particle_scale_sublayers`, `density_min`, `uniformity`, or any film profile reference.
 
-`custom` is the effective name when the three scoped values do not exactly match the `reference` row. Selecting `custom` preserves the current values. Matching uses exact declared f32/f64 values; no tolerance is used for profile identity.
+`custom` is the effective name when the three scoped values do not exactly match any catalog row. Selecting `custom` preserves the current values. Matching uses exact declared f32/f64 values; no tolerance is used for profile identity.
 
-The existing accepted range for `channel_correlation` remains `[0, 0.45]`; the `reference` profile keeps the existing default `0.0`. The [Dye grain contract](../film-grain/v3/spec.md#channel-correlation) remains authoritative for the meaning and evidence limits of this control.
+The existing accepted range for `channel_correlation` remains `[0, 0.45]`. The `reference` and `correlated` rows hold the two ends of that range. The [Dye grain contract](../film-grain/v3/spec.md#channel-correlation) remains authoritative for the meaning and evidence limits of this control.
 
 ### Halation profile family
 
@@ -144,14 +159,14 @@ Feature profile values must remain valid when the selected profile or route make
 
 ## Compatibility and acceptance
 
-1. Every built-in family and name in this document resolves to the exact scope values in its table. The Dye family has exactly one built-in name, `reference`; `35mm250` remains the Procedural default.
+1. Every built-in family and name in this document resolves to the exact scope values in its table. The Dye family has exactly six built-in names — `reference`, `fine`, `coarse`, `subtle`, `strong`, and `correlated` — each resolving to its exact declared triple; `35mm250` remains the Procedural default.
 2. An unknown family or name fails before render publication and leaves active controls unchanged.
 3. Applying a profile changes only its declared scope. A test must retain a sentinel value in every out-of-scope control, including `active`, route, workflow, engine, and seed.
 4. A direct scope edit reports `custom` for Dye and Halation and preserves the existing Procedural `v2_profile` and optional override semantics.
 5. CLI and GUI selection resolve identical values. A feature-profile run and an equivalent direct-leaf `--set` run produce identical output for the same executable, backend, seed, and input.
 6. Feature profile selections do not create a second preset library, do not add profile references to look documents, and do not add Dehancer-specific fields to any carrier.
 7. Existing look presets, section presets, sparse parameter files, GUI state, `v2_profile` values, Halation stock defaults, CPU execution, GPU execution, and inactive-value behavior remain compatible when no feature profile is selected.
-8. Standard catalog changes require an explicit model or product revision and must not reinterpret stored resolved Halation values or old Procedural profile identifiers.
+8. Standard catalog changes require an explicit model or product revision and must not reinterpret stored resolved Halation values or old Procedural profile identifiers. A new Dye row must not reinterpret a stored document: the document keeps its three resolved leaves, and only the derived `custom` display state can change when those leaves newly match a built-in row.
 
 ## Reference basis
 

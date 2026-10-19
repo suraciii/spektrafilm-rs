@@ -6,7 +6,7 @@ Feature profiles are a selection layer over existing runtime parameter groups. T
 
 The feature profile resolver owns family identifiers, built-in catalog entries, scope extraction, exact value application, `custom` matching, and selector validation. The existing parameter model owns field types, numeric ranges, serialization, and execution semantics. The preset resolver owns preset documents and profile references. The CLI parser owns option syntax but must call the shared feature profile resolver.
 
-The first implementation should reuse the existing Procedural profile table and `HALATION_PRESETS` values. The Dye family owns a one-row catalog whose `reference` values are the existing model defaults; it must not create speculative alternatives. It must not duplicate any authoritative table in GUI or CLI code. The authoritative product catalog is this specification; code tables must be checked against it.
+The first implementation should reuse the existing Procedural profile table and `HALATION_PRESETS` values. The Dye family owns a measured six-row catalog whose `reference` row holds the existing model defaults; it must not create speculative alternatives. It must not duplicate any authoritative table in GUI or CLI code. The authoritative product catalog is this specification; code tables must be checked against it.
 
 ## Options considered
 
@@ -98,13 +98,15 @@ The procedural family is intentionally narrower than all grain parameters. `clus
 
 The Dye family owns only the three appearance controls that the Dye model itself consumes directly: support sigma, base event area, and channel correlation. It must not own stock-resolved `rms_granularity`, `particle_scale_sublayers`, `density_min`, or `uniformity`; those values are derived from the selected film and its chemistry. It must not own `camera.film_format_mm`, because film format is a shared camera control and the Dye contract requires one global source.
 
-The initial catalog contains one typed row, `reference`, with the existing validated values `3.5`, `1.28`, and `0.0`. The resolver must preserve the existing field boundaries: `v3_dye_support_um` is `f32`, while `v3_event_area_um2` and `channel_correlation` are `f64`. This is deliberately not a stock selector. Repository presets provide the same two default values for the reference condition, but no measured alternative combination exists for these three feature leaves. The resolver must not invent `fine`, `strong`, or correlated rows from unrelated Procedural or Spektra controls.
+The initial catalog contains six typed rows: `reference` (`3.5`, `1.28`, `0.0`), `fine` (`1.0`, `1.28`, `0.0`), `coarse` (`8.0`, `1.28`, `0.0`), `subtle` (`3.5`, `0.32`, `0.0`), `strong` (`3.5`, `5.12`, `0.0`), and `correlated` (`3.5`, `1.28`, `0.45`). The resolver must preserve the existing field boundaries: `v3_dye_support_um` is `f32`, while `v3_event_area_um2` and `channel_correlation` are `f64`. This is deliberately not a stock selector. The `reference` row is the validated anchor: it is the existing model default triple, the `k_c = 1` anchor of the stock granularity scale, and the anchor of the parameter editor ranges, so its values must not change. Repository presets provide the same two default values for the reference condition.
 
-The three leaves retain their model meanings: support controls the spatial operator, event area controls statistical strength, and channel correlation controls the shared count component. A future Dye row requires evidence for the complete combination and must remain within the existing validator range. No row changes the engine, route, film format, or stock resolution.
+The `fine`, `coarse`, `subtle`, and `strong` rows come from the local Dye knob measurements under one fixed CPU scan condition, recorded in the [product specification](spec.md#measurement-condition-and-evidence-caveats). The `correlated` row is backed by the separate CPU/GPU Dye acceptance matrix at the accepted correlation ceiling. A row is a measured Dye control combination; the resolver must not invent `fine`, `coarse`, `subtle`, `strong`, or correlated rows from unrelated Procedural or Spektra controls, from a film stock's granularity controls, or from another product's profile table. The catalog order is the table order in the product specification, not alphabetical order, so code and specification agree.
+
+The three leaves retain their model meanings: support controls the spatial operator, event area controls statistical strength, and channel correlation controls the shared count component. A Dye row requires evidence for the complete combination and must remain within the existing validator range. No row changes the engine, route, film format, or stock resolution.
 
 The Dye profile scope is deliberately narrower than the full Dye control surface. `rms_granularity`, `particle_scale_sublayers`, `density_min`, and `uniformity` remain editable where their existing GUI and CLI surfaces expose them, but their values belong to stock resolution and are not standard feature-profile catalog entries. A user-authored combination of those controls must use the existing grain section preset.
 
-Exact matching compares the three declared values without tolerance. A direct edit to any one of them makes the effective profile `custom` unless all three values equal the `reference` row. The resolver must not normalize, clamp, or retune a value to make it match.
+Exact matching compares the three declared values without tolerance. A direct edit to any one of them makes the effective profile `custom` unless all three values equal one built-in row. The resolver must not normalize, clamp, or retune a value to make it match.
 
 ### Halation
 
@@ -144,7 +146,7 @@ No feature-profile selection is serialized as a new top-level or nested field in
 
 The existing Procedural `v2_profile` string remains accepted with the same twelve names and `custom`; no alias is introduced. Existing Dye documents continue to carry the three leaves only, and existing Halation documents continue to carry arrays only. An old document must not fail because a named Dye or Halation profile is absent from a future catalog revision, since those documents do not carry feature-profile names.
 
-Catalog revisions must be versioned by the owning model/product revision when values change. A changed standard row must not silently reinterpret an existing serialized `v2_profile` selection in a way that changes old renders without a declared compatibility decision. The initial implementation therefore keeps the existing table values unchanged.
+Catalog revisions must be versioned by the owning model/product revision when values change. A changed standard row must not silently reinterpret an existing serialized `v2_profile` selection in a way that changes old renders without a declared compatibility decision. The initial implementation keeps the existing `reference` row and all serialized runtime values unchanged.
 
 ## Verification design
 
@@ -152,10 +154,10 @@ The implementation must add focused tests for:
 
 - family-local name validation and exact catalog counts;
 - every Procedural row resolving to the existing `GrainV2Params` values;
-- the single Dye `reference` row resolving to `3.5`, `1.28`, and `0.0`, with the normal validator accepting it;
+- each of the six Dye rows resolving to its exact declared triple, with the normal validator accepting it;
 - every Halation row resolving to the exact f64 arrays;
 - scope isolation with sentinels for active, engine, mode, film type, route, workflow, seed, stock granularity, film format, and unrelated controls;
-- `custom` matching and non-matching behavior;
+- `custom` matching and non-matching behavior, including that a direct edit to one Dye leaf of a named row reports `custom` and that no tolerance is applied;
 - CLI option composition, repeated-family precedence, malformed values, dry-run reporting, and direct-leaf override;
 - round-trip through existing preset and parameter carriers without a feature-profile field.
 
