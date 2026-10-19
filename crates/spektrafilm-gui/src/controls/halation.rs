@@ -11,11 +11,42 @@ pub(crate) fn sections(
 ) {
     if section == "Halation" {
         ui.scope(|ui| {
+            let halation_active = params.film_render.halation.active;
             ui.label(
                 egui::RichText::new("Key controls: halation amount (strength) · halation spatial scale (size) · scatter amount (highlight glow)")
                     .small()
                     .color(theme::FG_MUTED),
             );
+            if filter_matches(filter, "Halation Profiles") {
+                if !halation_active {
+                    ui.label(egui::RichText::new("Halation is inactive; stored profile values retained and available when enabled.").color(theme::FG_MUTED));
+                }
+                let current = feature_profiles::effective_name(FeatureProfileFamily::Halation, params);
+                let mut selected = current.to_owned();
+                let choices = feature_profiles::names(FeatureProfileFamily::Halation)
+                    .iter()
+                    .copied()
+                    .map(|name| (name, name))
+                    .chain(std::iter::once(("custom", "Custom")));
+                if choice_tip_entries(
+                    ui,
+                    "Halation Profiles",
+                    &mut selected,
+                    choices,
+                    "Built-in feature profile; selecting it changes only Halation profile leaves.",
+                ) {
+                    let mut candidate = params.clone();
+                    match apply_feature_profile(&mut candidate, FeatureProfileFamily::Halation, &selected) {
+                        Ok(()) => {
+                            *params = candidate;
+                            flags.runtime_changed = true;
+                        }
+                        Err(error) => {
+                            ui.label(egui::RichText::new(error).color(theme::FG_MUTED));
+                        }
+                    }
+                }
+            }
             if filter_matches(filter, "enable halation") {
                 flags.runtime_changed |= toggle(
                     ui,

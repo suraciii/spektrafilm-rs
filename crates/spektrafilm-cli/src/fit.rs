@@ -186,6 +186,7 @@ pub fn cmd_fit_with_result(args: &FitArgs, matches: &clap::ArgMatches) -> Result
             presets: &presets,
             params_file: None,
             sources: &args.sources,
+            feature_profiles: &[],
             route: args.route.as_deref(),
             scan_film: false,
             scan_output: Some(args.scan_output.as_str()),

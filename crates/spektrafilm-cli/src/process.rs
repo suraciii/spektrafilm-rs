@@ -87,11 +87,13 @@ pub struct ProcessArgs {
     /// Legacy RuntimeParams JSON snapshot used as the parameter baseline.
     #[arg(long, help_heading = "Look and workflow")]
     pub(crate) params: Option<PathBuf>,
+    /// Apply a built-in feature profile; repeatable FAMILY=NAME.
+    #[arg(long = "feature-profile", value_name = "FAMILY=NAME", action = clap::ArgAction::Append, help_heading = "Look and workflow")]
+    pub(crate) feature_profiles: Vec<String>,
     /// Apply PATH=VALUE assignments or a sparse .toml/.json file in order.
     /// Strings need no JSON quotes; arrays use [1,2,3]; null clears optional values.
     #[arg(long = "set", value_name = "PATH=VALUE|FILE", action = clap::ArgAction::Append, help_heading = "Look and workflow")]
     pub(crate) sources: Vec<String>,
-    /// Validate and print effective configuration without decoding or rendering.
     #[arg(long, help_heading = "Execution and diagnostics")]
     pub(crate) dry_run: bool,
     /// Dry-run presentation: json or text; requires --dry-run.
@@ -174,6 +176,7 @@ impl Default for ProcessArgs {
             diagnostics: None,
             gpu_timings: false,
             params: None,
+            feature_profiles: Vec::new(),
             sources: Vec::new(),
             dry_run: false,
             dry_run_format: None,
@@ -560,6 +563,15 @@ fn cmd_process(
     let scan_film = args.scan_film;
     let show_timings = args.timings;
     let params_file = args.params.as_deref();
+    let feature_profile_values = args
+        .feature_profiles
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            spektrafilm_core::feature_profiles::parse_selection(value, index + 1)
+                .map_err(anyhow::Error::msg)
+        })
+        .collect::<Result<Vec<_>>>()?;
     let sources = &args.sources;
     let dry_run = args.dry_run;
     let raw_out = args.raw_out.as_deref();
@@ -641,6 +653,7 @@ fn cmd_process(
                 presets: &presets,
                 params_file,
                 sources,
+                feature_profiles: &feature_profile_values,
                 route: workflow.route.as_deref(),
                 scan_film,
                 scan_output: workflow.scan_output.as_deref(),
@@ -813,7 +826,9 @@ fn cmd_process(
             "status": if capture_active { "active" } else { "inactive" },
             "reason": (!capture_active).then_some("route computes no film exposure from scene RGB")
         });
+        let feature_profile_report = serde_json::to_value(&resolved.feature_profiles)?;
         let report = json!({
+            "feature_profiles": feature_profile_report,
             "data": {
                 "path": data.path,
                 "source": data.source,

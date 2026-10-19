@@ -303,6 +303,7 @@ fn resolve_chain(args: &EvaluateArgs, data_dir: &Path) -> Result<ResolvedChain> 
             presets: &presets,
             params_file: None,
             sources: &args.sources,
+            feature_profiles: &[],
             route: None,
             scan_film: false,
             scan_output: None,

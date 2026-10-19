@@ -286,7 +286,9 @@ impl PresetLibrary {
     }
     fn validate_write(preset: &Preset, data_dir: &Path) -> Result<(), String> {
         preset.validate()?;
-        preset.resolve(data_dir, &RuntimeParams::default())?;
+        if matches!(preset.parameters, PresetParameters::Look(_)) {
+            preset.resolve(data_dir, &RuntimeParams::default())?;
+        }
         Ok(())
     }
     fn user_path(&self, name: &str) -> Result<PathBuf, String> {
@@ -646,7 +648,10 @@ mod tests {
         if amount.is_null() {
             // A captured `None` is omitted, so write the null explicitly to keep
             // the carrier rule the test asserts.
-            preset.parameters.film_render.grain.v2_amount = None;
+            let PresetParameters::Look(look) = &mut preset.parameters else {
+                panic!("captured preset must be a look");
+            };
+            look.film_render.grain.v2_amount = None;
             let object = serde_json::to_value(&preset).unwrap();
             let mut map = object.as_object().unwrap().clone();
             map["parameters"]["film_render"]["grain"]
