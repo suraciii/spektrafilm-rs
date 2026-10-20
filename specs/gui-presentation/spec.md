@@ -15,8 +15,8 @@ material stage  →  parameter workbench  →  retained image  →  delivery
 Every interactive presentation decision must identify the material or workflow stage, the value or state under inspection, the action owner, and what remains unchanged while work is pending or unavailable.
 
 The interface is process-first, material-aware, layered, quiet, explicit, precise, reversible, and native. It presents film simulation as a material process, treats the viewer as an inspection surface, keeps the control panel as the parameter workbench, uses a restrained warm accent for selection and action, and explains route capability and retained values in product language.
-Industry systems are background research only. Material Design, Fluent, Carbon, Spectrum, and Apple guidance may inform review of token naming, explicit states, contrast, and keyboard access, but none is a normative dependency of SpektraFilm's visual language.
-### Semantic role vocabulary
+
+## Semantic role vocabulary
 
 The native token vocabulary belongs to SpektraFilm:
 
