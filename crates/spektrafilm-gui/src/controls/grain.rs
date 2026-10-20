@@ -107,8 +107,7 @@ fn feature_profile_selector(
     flags: &mut ChangeFlags,
     family: FeatureProfileFamily,
     label: &'static str,
-    applicable: bool,
-    reason: &'static str,
+    unavailable_reason: Option<&'static str>,
 ) {
     if !filter_matches(filter, label) {
         return;
@@ -120,7 +119,7 @@ fn feature_profile_selector(
         .copied()
         .map(|name| (name, name))
         .chain(std::iter::once(("custom", "Custom")));
-    if !applicable {
+    if let Some(reason) = unavailable_reason {
         ui.label(
             egui::RichText::new(format!("{label}: {reason}; stored values retained."))
                 .color(theme::FG_MUTED),
@@ -172,8 +171,8 @@ pub(crate) fn sections(
             flags,
             FeatureProfileFamily::GrainProcedural,
             "Procedural Grain Profiles",
-            params.film_render.grain.engine == GrainEngine::Procedural,
-            "available only when the Procedural engine is selected",
+            (params.film_render.grain.engine != GrainEngine::Procedural)
+                .then_some("available only when the Procedural engine is selected"),
         );
         feature_profile_selector(
             ui,
@@ -182,8 +181,8 @@ pub(crate) fn sections(
             flags,
             FeatureProfileFamily::GrainDye,
             "Dye Grain Profiles",
-            params.film_render.grain.engine == GrainEngine::Dye,
-            "available only when the Dye engine is selected",
+            (params.film_render.grain.engine != GrainEngine::Dye)
+                .then_some("available only when the Dye engine is selected"),
         );
         ui.scope(|ui| {
             let grain = &mut params.film_render.grain;
