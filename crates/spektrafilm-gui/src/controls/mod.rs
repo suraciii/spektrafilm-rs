@@ -9,7 +9,6 @@ use spektrafilm_core::params::{
     grain::{FotufilmMaterial, GrainEngine, GrainV2FilmType, GrainV2Mode},
 };
 use spektrafilm_core::profile::Profile;
-use spektrafilm_model::grain::v2::PROFILE_NAMES;
 
 const COLOR_SPACES: &[&str] = &[
     "sRGB",
@@ -409,7 +408,6 @@ mod grain;
 mod halation;
 mod magazine;
 mod output;
-pub(crate) mod row_modified;
 mod scanner;
 mod search;
 mod upsampling;
@@ -419,7 +417,6 @@ pub(crate) use widgets::*;
 
 // Every control editor reads presentation tokens; re-export so a control file
 // does not each add its own import.
-pub(crate) use crate::theme;
 
 #[cfg(test)]
 #[path = "controls_acceptance.rs"]
