@@ -4,7 +4,7 @@ Dye is an opt-in engine. This specification defines its support and the referenc
 
 ## Goal
 
-Dye must simulate the grain texture of real color-negative film as closely as the model allows. Real film scans are the reference for its texture and for its relation to subject detail, tone, and color.
+Dye must simulate the grain texture of supported color film as closely as the model allows. Real film scans are the reference for its texture and for its relation to subject detail, tone, and color.
 
 Dye must correct the reported Spektra defects: dirty color variation, blurred grain, and damaged skin texture.
 
@@ -22,17 +22,17 @@ The output pixel is a readout sample. It is not a grain-generation unit. At a vi
 
 ## Supported condition
 
-Dye supports still and cine color-negative film profiles (`info.type = "negative"`, `info.support = "film"`, `info.stage = "filming"`, `info.channel_model = "color"`) at the resolved global `camera.film_format_mm` film long edge. The profile usage label must not restrict Dye. Dye must consume this parameter as the only film-format source and must not impose a second format whitelist.
+Dye supports still and cine color filming profiles (`info.type = "negative"` or `"positive"`, `info.support = "film"`, `info.stage = "filming"`, `info.channel_model = "color"`) at the resolved global `camera.film_format_mm` film long edge. The profile usage label must not restrict Dye. Dye must consume this parameter as the only film-format source and must not impose a second format whitelist.
 
 Changing film format must keep the requested output raster dimensions. It may change visible grain through the physical sampling defined in the [film geometry](design.md#film-geometry). Dye must not compensate this change with an automatic grain-size or strength adjustment.
 
 The reference validation condition is a 36 mm long edge on the print route `input > film > print > scan` with `io.scan_film = false`. The film forms the grain. The existing enlarger, print paper, and print scan read it. The reference stock and the default controls are validated on this route. The 36 mm value is a validation reference, not a Dye format restriction.
 
-Dye must also run on the film-scan route `input > film > scan` with `io.scan_film = true`, for `scanner.scan_output = negative_to_positive` and `direct_scan`. This route is a diagnostic condition. It must not be described as photographically accepted until it passes the [spectral readout gate](design.md#readout-and-detail) and the acceptance procedure below. A negative capture must not be compared with a positive reference without recording the interpretation.
+Dye must also run on the film-scan route `input > film > scan` with `io.scan_film = true`, for `scanner.scan_output = direct_scan` on both negative and positive film, and `negative_to_positive` on negative film. This route is a diagnostic condition. It must not be described as photographically accepted until it passes the [spectral readout gate](design.md#readout-and-detail) and the acceptance procedure below. A negative capture must not be compared with a positive reference without recording the interpretation.
 
 Each stock must resolve its grain through its granularity preset, so that a coarser stock renders stronger grain than a finer one at the same density. The reference stock `kodak_portra_800` keeps the absolute event area validated for it. Other stocks move relative to that anchor.
 
-Cine profiles must use the existing Dye model and their resolved stock controls without a separate engine or retuned defaults. Cine availability does not establish stock-specific photographic calibration or a passed spectral readout gate. The known optical approximation limits are recorded in the [design](design.md#evidence-and-limits).
+Cine profiles must use the existing Dye model and their resolved stock controls without a separate engine or retuned defaults. Positive and negative profiles use the same field, with film polarity carried by the resolved density-curve lookup. Availability does not establish stock-specific photographic calibration or a passed spectral readout gate. The known optical approximation limits are recorded in the [design](design.md#evidence-and-limits).
 
 Active Dye on another film chemistry, the convert-film route, or the passthrough route must fail with an actionable unsupported-condition error. A different `camera.film_format_mm` value must not fail only because it differs from 36 mm. Each additional format requires numerical, resource, and photographic evidence before it is described as validated support.
 

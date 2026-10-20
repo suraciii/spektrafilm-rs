@@ -292,6 +292,6 @@ The format change must retain the existing 36 mm realization for the same source
 
 ## Evidence and limits
 
-Unknown reference provenance and the supported output range remain explicit acceptance limits. Film-scan optical accuracy and cine photographic calibration remain unverified.
+Unknown reference provenance and the supported output range remain explicit acceptance limits. The density-average readout is an approximation on both negative and positive film routes; direct positive-film scan execution is supported by the model and route contract, but its stock-specific photographic calibration remains unverified. Film-scan optical accuracy and cine photographic calibration remain unverified.
 
 The [feature-profile Dye catalog](../feature-profiles/spec.md#measurement-condition-and-evidence-caveats) lists the measured support/event-area/correlation combinations. The support/event-area rows use one fixed CPU scan condition; the `correlated` row is backed by separate CPU/GPU acceptance evidence. Neither evidence condition is the reference condition, so those rows are appearance selections rather than photographic acceptance. A larger support moves both covariance shape and mean transfer and is not a free improvement in grain size. The smallest measured support has an apparent scale that a coarse output pitch limits. Only the reference row's defaults carry the reference-condition validation.
