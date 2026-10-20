@@ -487,10 +487,17 @@ fn config_display_profile_selection_clear_persistence_and_viewer_only_effect() {
         None,
         "the selection clears"
     );
+    #[cfg(windows)]
+    assert_ne!(
+        h.state().viewer.output_display_profile(),
+        Some(profile.as_path()),
+        "clearing the selection uses the platform fallback rather than the explicit profile"
+    );
+    #[cfg(not(windows))]
     assert_eq!(
         h.state().viewer.output_display_profile(),
         None,
-        "the cleared viewing raster has no explicit profile"
+        "clearing the selection removes the explicit profile on non-Windows platforms"
     );
     let cleared = h.state().current_state().unwrap();
     assert_eq!(cleared.display_profile(), None);
