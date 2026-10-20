@@ -960,10 +960,20 @@ mod tests {
                 });
             },
         );
-        assert!(has_text(
-            &output,
-            "available only when the Dye engine is selected"
-        ));
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(shape) => Some(shape.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.contains("available only when the Dye engine is selected")),
+            "TEXTS: {texts:?}"
+        );
         assert_eq!(params.film_render.grain.v3_dye_support_um, 7.0);
     }
 
