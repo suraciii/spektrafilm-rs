@@ -81,6 +81,21 @@ Saving color flags control writer conversion independently of scanner `io.output
 
 Recipe `seed` values are admitted in the unsigned 32-bit range (`0..=4_294_967_295`).
 
+### Feature profiles
+
+`--feature-profile FAMILY=NAME` applies a built-in feature profile. The option is repeatable, and a later selection for the same family replaces the earlier one. Profile selections apply in appearance order before every `--set` source, so a later `--set` assignment can still override a profile's own leaves. `FAMILY` is `grain.procedural`, `grain.dye`, or `halation`. An unknown family or name fails before rendering. The [feature profile contract](../specs/feature-profiles/spec.md) owns the families, names, and scope values.
+
+```bash
+# Select the Dye engine and apply the `strong` Dye profile
+./target/release/spektrafilm-f64 process input.png -o output.tif \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --film kodak_ultramax_400 --backend cpu \
+    --feature-profile grain.dye=strong \
+    --set 'film_render.grain.engine="dye"' --data-dir data
+```
+
+The Dye profile writes only `v3_dye_support_um`, `v3_event_area_um2`, and `channel_correlation`. It never changes the engine, the film or print reference, the route, the film format, or the stock-resolved grain controls. See [grain engines](grain.md#dye-grain-profiles) for the Dye names and their measured effects.
+
 ## Geometry and auto-exposure
 
 In JSON, set `io.crop`, `io.crop_center: [x, y]`, `io.crop_size: [width, height]`, and `io.upscale_factor`.

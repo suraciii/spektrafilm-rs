@@ -27,6 +27,7 @@ OPTIONS may include:
   --input-color-space NAME   raster source primaries; discover with describe --field io.input_color_space
   --input-cctf-decoding true|false  whether raster samples require transfer decoding
   --seed UINT32         deterministic stochastic seed; default: 0
+  --feature-profile FAMILY=NAME  repeatable; apply a built-in feature profile before --set sources; see [feature profiles](./feature-profiles/spec.md#cli)
   --stage-evidence DIRECTORY  publish a native stage-evidence bundle; CPU reference execution only
 ```
 

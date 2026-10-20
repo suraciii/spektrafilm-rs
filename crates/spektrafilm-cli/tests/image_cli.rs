@@ -493,6 +493,55 @@ fn feature_profiles_reject_malformed_family_and_name_without_output() {
 }
 
 #[test]
+fn feature_profiles_accept_every_dye_name_and_write_only_the_dye_leaves() {
+    let expected: [(&str, f64, f64, f64); 6] = [
+        ("reference", 3.5, 1.28, 0.0),
+        ("fine", 1.0, 1.28, 0.0),
+        ("coarse", 8.0, 1.28, 0.0),
+        ("subtle", 3.5, 0.32, 0.0),
+        ("strong", 3.5, 5.12, 0.0),
+        ("correlated", 3.5, 1.28, 0.45),
+    ];
+    for (name, support, area, correlation) in expected {
+        let f = Fixture::new();
+        let token = format!("grain.dye={name}");
+        let report = f.report_without_output(&[
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--feature-profile",
+            &token,
+            "--set",
+            "film_render.grain.engine=dye",
+            "--set",
+            "film_render.grain.rms_granularity=[9,9,9]",
+            "--dry-run",
+        ]);
+        let grain = &report["parameters"]["film_render"]["grain"];
+        assert_eq!(grain["v3_dye_support_um"], support, "{name}");
+        assert_eq!(grain["v3_event_area_um2"], area, "{name}");
+        assert_eq!(grain["channel_correlation"], correlation, "{name}");
+        // The profile never changes the engine or the stock-resolved leaves;
+        // the engine stays the caller's `--set` value.
+        assert_eq!(grain["engine"], "dye");
+        assert_eq!(grain["rms_granularity"], serde_json::json!([9.0, 9.0, 9.0]));
+        let profiles = report["feature_profiles"].as_array().unwrap();
+        assert_eq!(profiles.len(), 1, "{name}");
+        assert_eq!(
+            profiles[0]["requested"]["film_render.grain.v3_dye_support_um"],
+            support
+        );
+        assert_eq!(
+            profiles[0]["resolved"]["film_render.grain.v3_event_area_um2"],
+            area
+        );
+        assert_eq!(profiles[0]["status"], "active", "{name}");
+        assert_eq!(profiles[0]["effective"], name, "{name}");
+    }
+}
+
+#[test]
 fn route_conflicts_and_dry_run_format_fail_before_rendering() {
     let f = Fixture::new();
     for args in [

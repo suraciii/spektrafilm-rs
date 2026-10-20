@@ -62,6 +62,10 @@ The optional finishing treatment applies a bundled RGB appearance to any support
 
 The `Finished RGB` workflow color-manages an already rendered image to the output space. Film and print profile selections do not affect it. See the [film-chain specification](../specs/film-chain/spec.md) for the workflow contract.
 
+### Grain profiles
+
+**FILM → Grain** holds two profile selectors beside the engine selector: **Procedural Grain Profiles** and **Dye Grain Profiles**. The Dye selector is available only while the engine is `dye`, and selecting a profile never changes the engine. A Dye profile writes only `v3_dye_support_um`, `v3_event_area_um2`, and `channel_correlation`; the stock-resolved grain controls, the film and print references, the route, and the film format stay unchanged. The selector lists the six built-in Dye names plus `custom`, which shows when the three values match no built-in row. See [grain engines](grain.md#dye-grain-profiles) for the names, their values, and their measured effects.
+
 ## Preview and Scan
 
 **Preview** renders a bounded image using the configured preview long-edge limit and current runtime controls. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active. Explicitly update it when auto-preview is disabled.
