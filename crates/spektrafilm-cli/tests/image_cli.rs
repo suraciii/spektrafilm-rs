@@ -56,10 +56,11 @@ impl Fixture {
     fn run_without_output(&self, extra: &[&str]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
         command.arg("process").arg(self.0.join("input.png"));
-        if !extra
-            .windows(2)
-            .any(|pair| pair == ["--engine", "fotufilm"])
-        {
+        let has_film = extra.windows(2).any(|pair| pair.first() == Some(&"--film"))
+            || extra
+                .windows(2)
+                .any(|pair| pair == ["--engine", "fotufilm"]);
+        if !has_film {
             command.args(["--film", "kodak_portra_400"]);
         }
         command
@@ -383,6 +384,39 @@ fn dye_dry_run_does_not_claim_an_unchecked_executor() {
             .contains(&serde_json::json!("compute_device"))
     );
     assert!(!f.0.join("output.tif").exists());
+}
+#[test]
+fn dye_positive_films_accept_direct_scan_and_preserve_native_polarity() {
+    let f = Fixture::new();
+    for film in ["fujifilm_provia_100f", "fujifilm_velvia_100"] {
+        let result = f.run_without_output(&[
+            "--film",
+            film,
+            "--scan-film",
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--set",
+            "film_render.grain.engine=dye",
+            "--dry-run",
+        ]);
+        assert!(
+            result.status.success(),
+            "{film}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(report["film_grain_dye"]["active"], true);
+        assert_eq!(
+            report["parameters"]["workflow"]["route"],
+            "input > film > scan"
+        );
+        assert_eq!(
+            report["parameters"]["scanner"]["scan_output"],
+            "direct_scan"
+        );
+    }
 }
 
 #[test]

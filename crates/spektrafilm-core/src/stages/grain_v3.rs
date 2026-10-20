@@ -282,7 +282,7 @@ pub fn active(params: &RuntimeParams) -> bool {
 }
 
 /// Fail before any work when Dye is selected outside its supported
-/// condition: color-negative filming stocks and film-scan or print routes
+/// condition: color filming stocks and film-scan or print routes
 /// (spec §Supported condition).
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
     if !active(params) {
@@ -295,13 +295,16 @@ pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), 
         _ => false,
     };
     let info = &film.info;
-    let stock_supported = film.is_negative() && film.is_filming() && film.is_color();
+    let stock_supported = film.is_film()
+        && film.is_filming()
+        && film.is_color()
+        && (film.is_negative() || film.is_positive());
     if stock_supported && route_supported {
         return Ok(());
     }
     Err(format!(
         "film grain Dye: unsupported condition — this implementation supports \
-         color-negative filming stocks on the `{PRINT_ROUTE}` route with io.scan_film = false \
+         color filming stocks on the `{PRINT_ROUTE}` route with io.scan_film = false \
          or the `{FILM_SCAN_ROUTE}` route with io.scan_film = true, but got stock {:?} \
          (type {:?}, use {:?}, support {:?}, stage {:?}, channel model {:?}), \
          workflow.route {route:?}, io.scan_film {}; select a supported film and route, or set \
@@ -1073,7 +1076,7 @@ mod tests {
         validate_supported(&film, &params).unwrap();
         resolve(&film, &params).unwrap();
 
-        // Still and cine color-negative stocks share the same model boundary.
+        // Still and cine color filming stocks share the same model boundary.
         for stock in [
             "kodak_portra_400",
             "kodak_ultramax_400",
@@ -1103,16 +1106,34 @@ mod tests {
             }
         }
 
-        // Other chemistry stays outside the support.
-        for stock in ["kodak_ektachrome_100", "kodak_doublex"] {
-            let other = load(stock);
-            let error = validate_supported(&other, &params).unwrap_err();
-            assert!(
-                error.contains("unsupported condition") && error.contains(stock),
-                "{error}"
-            );
-        }
+        // Non-color or non-filming chemistry stays outside the support.
+        let other = load("kodak_doublex");
+        let error = validate_supported(&other, &params).unwrap_err();
+        assert!(
+            error.contains("unsupported condition") && error.contains("kodak_doublex"),
+            "{error}"
+        );
 
+        // Positive color filming stocks use the same field with the polarity
+        // carried into the composite lookup axis.
+        for stock in ["fujifilm_provia_100f", "fujifilm_velvia_100"] {
+            let other = load(stock);
+            let mut stock_params = params.clone();
+            stock_params.workflow.route = PRINT_ROUTE.into();
+            stock_params.io.scan_film = false;
+            validate_supported(&other, &stock_params).unwrap();
+            let resolved = resolve(&other, &stock_params).unwrap();
+            assert!(
+                resolved.positive_film,
+                "{stock} must resolve positive polarity"
+            );
+
+            stock_params.workflow.route = FILM_SCAN_ROUTE.into();
+            stock_params.io.scan_film = true;
+            stock_params.scanner.scan_output = "direct_scan".into();
+            validate_supported(&other, &stock_params).unwrap();
+            assert!(resolve(&other, &stock_params).unwrap().positive_film);
+        }
         // Print stocks share `type = "negative"` and `use = "still"` but are
         // not filming emulsions.
         for stock in ["kodak_portra_endura", "fujifilm_crystal_archive_typeii"] {
