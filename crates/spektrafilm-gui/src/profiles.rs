@@ -146,8 +146,8 @@ pub(super) fn profile_combo(
     salt: &str,
     label: &str,
     entries: &[ProfileEntry],
-    selected_stock: &mut String,
-) -> bool {
+    selected_stock: &str,
+) -> Option<String> {
     let tooltip = if salt == "film" {
         "Film stock to simulate"
     } else {
@@ -155,13 +155,13 @@ pub(super) fn profile_combo(
     };
     let label_response = ui.label(label).on_hover_text(tooltip);
     let display = selected_display(entries, selected_stock);
-    let prev = selected_stock.clone();
+    let mut candidate = selected_stock.to_owned();
     egui::ComboBox::from_id_salt(salt)
         .selected_text(&display)
         .width(ui.available_width().min(280.0))
         .show_ui(ui, |ui| {
             for entry in entries {
-                ui.selectable_value(selected_stock, entry.stock.clone(), &entry.display);
+                ui.selectable_value(&mut candidate, entry.stock.clone(), &entry.display);
             }
         })
         .response
@@ -175,7 +175,7 @@ pub(super) fn profile_combo(
         ui.ctx()
             .accesskit_node_builder(id, |node| node.clear_label());
     }
-    prev != *selected_stock
+    (candidate != selected_stock).then_some(candidate)
 }
 
 #[cfg(test)]
@@ -197,7 +197,9 @@ mod headless {
         ];
         let mut harness = Harness::new_ui_state(
             |ui, state: &mut (String, Option<f64>)| {
-                profile_combo(ui, "film", "Film", &entries, &mut state.0);
+                if let Some(candidate) = profile_combo(ui, "film", "Film", &entries, &state.0) {
+                    state.0 = candidate;
+                }
                 dev_time_combo(
                     ui,
                     "film-dev",

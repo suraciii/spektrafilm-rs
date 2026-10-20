@@ -7,8 +7,12 @@ impl App {
     /// Save the latest accepted float output using current saving color settings.
     /// The typed extension selects the format; this never rerenders.
     pub(crate) fn save_dialog(&mut self) {
-        if self.output_image.is_none() {
-            self.status = "Nothing to save yet — load an image first.".into();
+        if !self.retained_output_is_fresh() {
+            self.status = if self.output_image.is_some() {
+                "Nothing fresh to save — run Preview or Scan first.".into()
+            } else {
+                "Nothing to save yet — load an image first.".into()
+            };
             return;
         }
         let default_name = match &self.image_path {
@@ -33,8 +37,12 @@ impl App {
 
     /// Save the retained output; `path` is the native chooser's confirmed result.
     pub(crate) fn save_to_path(&mut self, path: &Path) {
-        if self.output_image.is_none() {
-            self.status = "Nothing to save yet — load an image first.".into();
+        if !self.retained_output_is_fresh() {
+            self.status = if self.output_image.is_some() {
+                "Nothing fresh to save — run Preview or Scan first.".into()
+            } else {
+                "Nothing to save yet — load an image first.".into()
+            };
             return;
         }
         let mut operation = Operation::new(OperationKind::Save, self.diagnostics.mode);

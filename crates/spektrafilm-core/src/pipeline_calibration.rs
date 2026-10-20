@@ -317,12 +317,47 @@ pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<()
     Ok(())
 }
 
+/// Validate a selected GUI/CLI print profile independent of route topology.
+pub fn validate_print_profile(print: &Profile) -> Result<(), String> {
+    if print.is_print_stock() {
+        Ok(())
+    } else {
+        Err(
+            "print profile must be a photographic printing-stage stock (paper or print film)"
+                .into(),
+        )
+    }
+}
+
+/// Validate the profile roles required by the selected runtime topology.
+///
+/// A direct film scan does not use the print argument: callers commonly pass
+/// the selected film in both runtime slots. Convert-film scan routes likewise
+/// have no print stage. Only routes with a print stage require a photographic
+/// print stock.
+pub fn validate_runtime_profiles(
+    params: &RuntimeParams,
+    film: &Profile,
+    print: &Profile,
+) -> Result<(), String> {
+    let route = params.workflow.route_enum();
+    if route != WorkflowRoute::Input && (!film.is_film() || !film.is_filming()) {
+        return Err("film profile must be a filming-stage film stock".into());
+    }
+    if route.prints() {
+        validate_print_profile(print)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn build(
     film: Profile,
     print: Profile,
     mut params: RuntimeParams,
     data_dir: &Path,
 ) -> Result<CalibrationResult, String> {
+    // Reject malformed profile roles before any calibration or output stage.
+    validate_runtime_profiles(&params, &film, &print)?;
     // Reject malformed params (e.g. an unknown diffusion-filter family)
     // up front — Python raises ValueError mid-run, which also aborts
     // before any artifact; failing at construction keeps the error
@@ -671,5 +706,26 @@ mod tests {
         let error = validate_scan_output(&params, &film).unwrap_err();
         assert!(error.contains("finite density curves"));
         assert!(error.contains("channel 2"));
+    }
+
+    #[test]
+    fn runtime_profile_roles_follow_route_print_stage() {
+        let film = profile("negative", "film", "filming");
+        let paper = profile("positive", "paper", "printing");
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > print > scan".into();
+        assert!(super::validate_runtime_profiles(&params, &film, &paper).is_ok());
+        assert!(super::validate_runtime_profiles(&params, &film, &film).is_err());
+
+        params.workflow.route = "input > film > scan".into();
+        assert!(super::validate_runtime_profiles(&params, &film, &film).is_ok());
+        params.workflow.route = "input > convert-film > scan".into();
+        assert!(super::validate_runtime_profiles(&params, &film, &film).is_ok());
+
+        params.workflow.route = "input".into();
+        assert!(super::validate_runtime_profiles(&params, &film, &film).is_ok());
+
+        params.workflow.route = "input > film > print > scan".into();
+        assert!(super::validate_runtime_profiles(&params, &paper, &paper).is_err());
     }
 }

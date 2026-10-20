@@ -18,13 +18,13 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 ## Input and controls
 
-**Select RGB image…** loads a standard image. **Select RAW file…** loads and processes a camera RAW file with LibRaw. RAW processing uses as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction. RAW enters the runtime as linear ACES2065-1. See [RAW input](raw.md) for white balance details.
+**Select RGB image…** loads a standard image. Its declared input color space and sample interpretation remain explicit GUI settings (`input_color_space` plus `input_cctf_decoding`) and are shown in **MAIN → Import RGB**. The factory declaration remains `ProPhoto RGB` with linear samples; the GUI does not infer a declaration from metadata or image content. RAW processing uses as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction. RAW enters the runtime as linear ACES2065-1. See [RAW input](raw.md) for white balance details.
 
-The viewer also accepts a dropped image file. Dropping a supported RGB image or camera RAW file uses the same import path as the corresponding `Select …` action; an unsupported or unreadable drop leaves the accepted image and parameters unchanged. This affordance is documented here rather than adding a second editable input surface.
+The viewer also accepts a dropped image file. Dropping a supported RGB image or camera RAW file uses the same import path as the corresponding **Select …** action; unsupported files report an import error without changing the retained input.
 
-**Input image / Profiles** selects the input/output color workflow, film stock, and print paper. Selecting a film keeps the current paper; applying a look preset selects the paper that the look resolves.
+**Input image / Profiles** selects the input/output color workflow, film stock, and print paper. Selecting a film or print stock validates the candidate before committing it; a failed selection leaves the active profile, parameters, retained output, and revisions unchanged. Selecting a film keeps the current paper; applying a look preset selects the paper that the look resolves.
 
-**Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value. The text resets when focus leaves the field. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
+**MAIN → Camera → capture illuminant** shows the requested value and its effective value. An unset request inherits the selected film profile's reference illuminant; changing the film profile updates the displayed inherited value. Profile selectors validate stock roles against the active route before committing a candidate.
 
 Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. A modified row shows a gold marker and value; the marker uses the same section-reset baseline as the section `modified` chip. Tuple, optional, extra, and boolean rows use the same marker rule. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
 
@@ -68,7 +68,7 @@ The `Finished RGB` workflow color-manages an already rendered image to the outpu
 
 ## Preview and Scan
 
-**Preview** renders a bounded image using the configured preview long-edge limit and current runtime controls. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active. Explicitly update it when auto-preview is disabled.
+**Preview** renders a bounded image using the configured preview long-edge limit and current runtime controls. The header is the only operation-status surface: it reports queued, running, complete, superseded, failed, or cancelled Preview/Scan work. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active. Explicitly update it when auto-preview is disabled.
 
 New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates skip the development animation; explicit Preview and Scan retain it.
 
@@ -126,13 +126,13 @@ The GUI warns that JPEG remains lossy even at quality 100. 4:2:0 can soften colo
 
 ## Save retained output
 
-**Save…** saves the latest retained floating output without rerendering. It uses the current simulation saving color space and transfer encoding. The filename extension selects the format. `.jpg` is the default.
+**Save…** saves the latest retained floating output without rerendering. Save is available only when that output is fresh for the current input and parameter revisions and no render is queued or running. After an input or parameter change, run Preview or Scan first; Save then writes the accepted retained output. It uses the current simulation saving color space and transfer encoding. The filename extension selects the format. `.jpg` is the default.
 
 - JPEG/PNG use 8-bit integer samples.
 - TIFF uses 16-bit integer samples with ZIP compression.
 - OpenEXR uses 16-bit half samples.
 
-Save uses upstream OpenImageIO JPEG defaults rather than Export's quality/subsampling settings. Neither TIFF nor EXR forces ACES or linear encoding. Viewer borders, watermark, and display ICC transforms stay out of saved pixels. See the [shared writer contract](cli.md) for output format details.
+Save uses upstream OpenImageIO JPEG defaults rather than Export's quality/subsampling settings. Neither TIFF nor EXR forces ACES or linear encoding. Viewer borders, watermark, and display ICC transforms stay out of saved pixels. See [the shared writer contract](cli.md) for output format details.
 
 ## State and defaults
 
@@ -140,7 +140,7 @@ Save uses upstream OpenImageIO JPEG defaults rather than Export's quality/subsam
 
 **Save current as default** persists the current controls. **Restore factory default** confirms before it applies, then restores Kodak Gold 200 + Kodak Supra Endura, RMS granularity `[5,5,5]`, and upscale factor `1.0`. The confirmation states that the action replaces the current controls and session settings and removes the saved startup default; cancelling keeps both. Saved user values, including zero RMS, survive startup and state loading.
 
-Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust settings use `rust.version = 2`. File-dialog directories persist separately.
+Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust settings use the current accepted `rust.version = 3` schema. File-dialog directories persist separately.
 
 Legacy states without an explicit export format preserve 8-bit as PNG and 16/32-bit as TIFF before defaults and validation. Recipe values and viewer state remain intact. Explicitly incompatible format/depth combinations remain errors.
 

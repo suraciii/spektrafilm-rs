@@ -562,6 +562,32 @@ mod tests {
         assert!(error.contains("positive_scan"));
     }
 
+    #[test]
+    fn runtime_rejects_filming_profile_in_print_slot_on_print_route() {
+        let data = data_dir();
+        let film = profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let print = film.clone();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > print > scan".into();
+        let result = Runtime::new(film, print, params, &data);
+        let error = match result {
+            Ok(_) => panic!("filming profile must not enter a print route"),
+            Err(error) => error,
+        };
+        assert!(error.contains("print profile"), "{error}");
+    }
+
+    #[test]
+    fn runtime_accepts_film_clone_in_print_slot_on_direct_film_scan() {
+        let data = data_dir();
+        let film = profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        assert!(Runtime::new(film.clone(), film, params, &data).is_ok());
+    }
+
     fn scanner_params() -> RuntimeParams {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();

@@ -147,6 +147,24 @@ pub(crate) fn assert_float_images_equal(before: &Path, after: &Path) {
 }
 
 #[test]
+fn save_rejects_retained_output_after_parameter_change_until_rendered_again() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let _ = render(h, "PREVIEW");
+    assert!(h.state().retained_output_is_fresh());
+    h.state_mut().params.output_mix.amount *= 0.5;
+    h.state_mut().mark_parameters_changed();
+    assert!(!h.state().retained_output_is_fresh());
+    let destination = s.directory.path().join("stale-save.png");
+    h.state_mut().save_to_path(&destination);
+    assert!(!destination.exists());
+    assert_eq!(
+        h.state().status,
+        "Nothing fresh to save — run Preview or Scan first."
+    );
+}
+
+#[test]
 fn compare_split_selects_before_and_after_pixels_and_never_changes_saved_or_exported_output() {
     let mut s = session();
     let h = &mut s.harness;

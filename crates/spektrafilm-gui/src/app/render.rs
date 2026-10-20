@@ -62,12 +62,11 @@ impl App {
                 return;
             }
         };
-        // Report the Dye field's effective path next to the selected backend.
-        let backend_name = effective_backend_name(&*self.backend, &params);
         let parameter_revision = self.parameter_revision;
         let snapshot = self
             .render_snapshot(params)
             .with_cancellation(Some(Arc::new(AtomicBool::new(false))));
+        let worker_wait = operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image);
         let request = RenderRequest {
             job: RenderJob {
                 input_epoch,
@@ -77,7 +76,6 @@ impl App {
                 animate: self.force_preview
                     || self.full_scan_requested
                     || self.output_image.is_none(),
-                backend_name,
                 collection_mode: operation.mode(),
             },
             image,
@@ -86,12 +84,22 @@ impl App {
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
             ctx: ctx.clone(),
-            worker_wait: operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image),
             operation,
+            worker_wait,
         };
         let (job, replaced) = self.render_worker.submit(request);
         if let Some(operation) = replaced {
             self.diagnostics.finish(operation, Outcome::Superseded);
+            self.status = format!("{} queued; previous render superseded…", kind.label());
+        } else if self
+            .render_worker
+            .active
+            .try_lock()
+            .is_none_or(|active| active.is_some())
+        {
+            self.status = format!("{} queued…", kind.label());
+        } else {
+            self.status = format!("{} running…", kind.label());
         }
         self.render_job = Some(job);
         self.full_scan_requested = false;
@@ -99,7 +107,7 @@ impl App {
 
     pub(crate) fn poll_render_job(&mut self, ctx: &egui::Context) {
         loop {
-            let (response_job, operation, result) = match self.render_worker.rx.try_recv() {
+            let (response_job, mut operation, result) = match self.render_worker.rx.try_recv() {
                 Ok(response) => response,
                 Err(mpsc::TryRecvError::Empty) => return,
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -125,7 +133,6 @@ impl App {
             }
             self.render_job = None;
             let kind = response_job.kind;
-            let backend_name = response_job.backend_name;
             match result {
                 Ok(r) => {
                     let handoff = operation.scope(
@@ -163,9 +170,8 @@ impl App {
                         self.gui_state.display_profile().map(Path::new),
                     );
                     self.status = format!(
-                        "{} · {} · {} × {} ({:.1} MP)",
+                        "{} · {} × {} ({:.1} MP)",
                         kind.label(),
-                        backend_name,
                         r.output.width,
                         r.output.height,
                         r.output.pixel_count() as f64 / 1e6
@@ -185,8 +191,15 @@ impl App {
                 }
                 Err(msg) => {
                     eprintln!("[spektrafilm] render error: {msg}");
-                    self.status = format!("Render error: {msg}");
-                    self.diagnostics.finish(operation, Outcome::Failed);
+                    let outcome = if msg == "operation cancelled" {
+                        self.status = format!("{} cancelled.", kind.label());
+                        operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
+                        Outcome::Cancelled
+                    } else {
+                        self.status = format!("{} failed: {msg}", kind.label());
+                        Outcome::Failed
+                    };
+                    self.diagnostics.finish(operation, outcome);
                 }
             }
         }
