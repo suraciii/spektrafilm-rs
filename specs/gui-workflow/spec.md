@@ -1,4 +1,7 @@
 # GUI workflow
+## Presentation language
+
+The [GUI presentation specification](../gui-presentation/spec.md) owns visual hierarchy, semantic tokens, component states, layout rhythm, feedback, and accessibility presentation rules. This specification remains authoritative for workflow behavior, page ownership, control inventory, editing behavior, persisted-state behavior, and viewer semantics. Visible labels and help text follow [GUI product language](../gui-language/spec.md).
 
 ## Contract
 
@@ -130,7 +133,7 @@ An empty or absent output must present an explicit empty state instead of a blan
 
 ## Experimental controls
 
-The following controls carry an `(experimental)` label suffix. The suffix is a UI hint; it does not change the parameter's behavior or validation.
+The following controls carry an experimental marker. The marker is a presentation cue; it does not change the parameter's behavior or validation.
 
 - `print illuminant` selector — MAIN → Enlarger
 - Input gamut-compression algorithm selector — ADVANCED → Input gamut compress
