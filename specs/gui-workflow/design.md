@@ -1,4 +1,7 @@
 # GUI workflow design
+## Presentation language
+
+The [GUI presentation design](../gui-presentation/design.md) owns reusable presentation decisions. This design specification remains authoritative for runtime boundaries, surface ownership, worker behavior, and rendering invariants.
 
 - The GUI is an adapter over `core::runtime`; it does not implement a second film pipeline or color model.
 - UI edits serialize to the runtime parameter model. Preview and Scan use the same model with different geometry limits.

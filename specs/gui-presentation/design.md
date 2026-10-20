@@ -1,5 +1,11 @@
 # GUI presentation design
 
+## Design language boundary
+
+This design is the implementation boundary for the SpektraFilm presentation language. It translates the semantic roles in the [GUI presentation specification](spec.md) into one native token set and one implementation per control kind.
+
+Presentation must preserve the product vocabulary from [GUI product language](../gui-language/spec.md), the product direction from [GUI product design](../gui-product-design/spec.md), and the workflow ownership from [GUI workflow design](../gui-workflow/design.md). It must not create a second language, token set, page model, or state model.
+
 - Presentation must not change parameter meaning, accepted values, editor bounds, validation, section ownership, or persisted state.
 - Region and control ownership follow the [GUI workflow design](../gui-workflow/design.md). Presentation assigns each region its surface level and moves no control between regions.
 - One token set owns spacing, corner radius, type roles, and color roles. A module must not declare its own spacing, radius, font size, or literal color.
