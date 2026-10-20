@@ -71,6 +71,11 @@ pub(crate) fn sections(
                         CAPTURE_ILLUMINANTS,
                         &format!("Scene illuminant for the filming front pass; unset inherits the selected film profile reference illuminant ({capture_reference_illuminant}). Distinct from film sensitivity calibration, scan and enlarger illuminants, and output white point."),
                     );
+                    let (effective, source) = match params.camera.capture_illuminant.as_deref() {
+                        Some(value) => (value, "explicit camera declaration"),
+                        None => (capture_reference_illuminant, "film profile reference"),
+                    };
+                    ui.label(format!("Effective capture illuminant: {effective} · {source}"));
                 });
             }
         });

@@ -20,7 +20,9 @@ pub mod params;
 pub mod params_builder;
 pub mod pipeline;
 mod pipeline_calibration;
-pub use pipeline_calibration::validate_scan_output;
+pub use pipeline_calibration::{
+    validate_print_profile, validate_runtime_profiles, validate_scan_output,
+};
 pub mod digital_reference;
 pub mod feature_profiles;
 pub mod presets;

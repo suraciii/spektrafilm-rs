@@ -1,5 +1,7 @@
 use super::*;
 use crate::state;
+use std::sync::Arc;
+
 fn test_app(label: &str) -> (App, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("spektrafilm-gui-{label}-{}", std::process::id()));
@@ -81,6 +83,109 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         assert_eq!(app.params.output_mix.amount, 0.25);
         assert_eq!(app.force_preview, force_preview);
     }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn failed_film_profile_selection_preserves_application_state() {
+    let (mut app, directory) = test_app("failed-profile-selection");
+    let params = app.params.clone();
+    let film = app.film_name.clone();
+    let print = app.print_name.clone();
+    let revision = app.parameter_revision;
+    let status = app.status.clone();
+    app.select_film_profile("missing-profile".into());
+    assert!(app.status.starts_with("Profile selection error:"));
+    assert_eq!(app.params, params);
+    assert_eq!(app.film_name, film);
+    assert_eq!(app.print_name, print);
+    assert_eq!(app.parameter_revision, revision);
+    assert_ne!(app.status, status);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn failed_print_profile_selection_preserves_application_state() {
+    let (mut app, directory) = test_app("failed-print-profile-selection");
+    let params = app.params.clone();
+    let film = app.film_name.clone();
+    let print = app.print_name.clone();
+    let revision = app.parameter_revision;
+    let dev_times = app.print_dev_times.clone();
+    let status = app.status.clone();
+    app.select_print_profile("missing-print-profile".into());
+    assert!(app.status.starts_with("Profile selection error:"));
+    assert_eq!(app.params, params);
+    assert_eq!(app.film_name, film);
+    assert_eq!(app.print_name, print);
+    assert_eq!(app.print_dev_times, dev_times);
+    assert_eq!(app.parameter_revision, revision);
+    assert!(app.output_image.is_none());
+    assert!(app.source_render.is_none());
+    assert_ne!(app.status, status);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn failed_print_role_selection_preserves_application_state() {
+    let (mut app, directory) = test_app("failed-print-role-selection-role");
+    app.output_image = Some(Arc::new(spektrafilm_math::image::ImageBuf::from_data(
+        1,
+        1,
+        vec![0.25, 0.5, 0.75],
+    )));
+    app.source_render = Some(spektrafilm_core::telemetry::SourceRender::new(
+        41,
+        Some(app.input_epoch),
+        Some(app.parameter_revision),
+        1,
+        1,
+        false,
+        spektrafilm_core::telemetry::ColorSpaceRole::Srgb,
+        true,
+    ));
+    let params = app.params.clone();
+    let film = app.film_name.clone();
+    let print = app.print_name.clone();
+    let dev_times = app.print_dev_times.clone();
+    let revision = app.parameter_revision;
+    let output_ptr = app.output_image.as_ref().map(Arc::as_ptr);
+    let source = app.source_render.clone();
+    app.select_print_profile("kodak_portra_400".into());
+    assert!(app.status.starts_with("Profile selection error:"));
+    assert_eq!(app.params, params);
+    assert_eq!(app.film_name, film);
+    assert_eq!(app.print_name, print);
+    assert_eq!(app.print_dev_times, dev_times);
+    assert_eq!(app.parameter_revision, revision);
+    assert_eq!(app.output_image.as_ref().map(Arc::as_ptr), output_ptr);
+    assert_eq!(app.source_render, source);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn invalid_print_role_state_preserves_application_state() {
+    let (mut app, directory) = test_app("invalid-print-role-state");
+    let mut invalid = app.current_state().unwrap();
+    invalid.sections["simulation"]["print_paper"] = serde_json::json!("kodak_portra_400");
+    let params = app.params.clone();
+    let film = app.film_name.clone();
+    let print = app.print_name.clone();
+    let film_times = app.film_dev_times.clone();
+    let print_times = app.print_dev_times.clone();
+    let revision = app.parameter_revision;
+    let output_ptr = app.output_image.as_ref().map(Arc::as_ptr);
+    let source = app.source_render.clone();
+    let error = app.apply_state(invalid).unwrap_err();
+    assert!(error.to_string().contains("print profile"), "{error:#}");
+    assert_eq!(app.params, params);
+    assert_eq!(app.film_name, film);
+    assert_eq!(app.print_name, print);
+    assert_eq!(app.film_dev_times, film_times);
+    assert_eq!(app.print_dev_times, print_times);
+    assert_eq!(app.parameter_revision, revision);
+    assert_eq!(app.output_image.as_ref().map(Arc::as_ptr), output_ptr);
+    assert_eq!(app.source_render, source);
     std::fs::remove_dir_all(directory).unwrap();
 }
 

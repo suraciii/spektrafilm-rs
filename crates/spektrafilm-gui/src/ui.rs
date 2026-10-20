@@ -274,24 +274,28 @@ impl App {
             let ready = self.image.is_some() && !busy;
             if ui
                 .add_enabled(ready, egui::Button::new("PREVIEW"))
-                .on_hover_text("Render the bounded preview with the current runtime controls, at the preview max size, and retain it as the viewer's output. Preview disables the spatial and stochastic effects covered by the preview contract, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active.")
+                .on_hover_text("Render the bounded preview with the current runtime controls and retain it as the viewer's output.")
                 .clicked()
             {
                 self.dirty = true;
                 self.force_preview = true;
                 self.full_scan_requested = false;
             }
-            if ui.add_enabled(ready, egui::Button::new("SCAN")).on_hover_text("Render the original working resolution with the current runtime controls and retain it as the viewer's output. Spatial and stochastic effects follow their current accepted controls, including any explicit deactivation settings.").clicked() {
+            if ui
+                .add_enabled(ready, egui::Button::new("SCAN"))
+                .on_hover_text("Render the original working resolution and retain it as the viewer's output.")
+                .clicked()
+            {
                 self.dirty = true;
                 self.force_preview = true;
                 self.full_scan_requested = true;
             }
             if ui
                 .add_enabled(
-                    self.output_image.is_some() && !busy,
+                    self.retained_output_is_fresh() && !busy,
                     egui::Button::new("SAVE"),
                 )
-                .on_hover_text("Write the retained output to an image file without rerendering: the pixels are the latest Preview or Scan result, converted to the saving color space and transfer encoding. Export renders and writes independently.")
+                .on_hover_text("Write the fresh retained output without rerendering. Run Preview or Scan after input or parameter changes; Export renders independently.")
                 .clicked()
             {
                 self.save_dialog();
@@ -437,15 +441,30 @@ impl App {
                 return;
             }
         };
+        let mut candidate = self.params.clone();
+        candidate.workflow.route = workflow_default(&film);
+        candidate.io.scan_film = film.is_positive();
+        candidate.scanner.scan_output = "direct_scan".into();
+        normalize_scanner_selections(&mut candidate, scan_medium(&film));
+        let print = match profile::load_profile_by_name(&self.data_dir, &self.print_name) {
+            Ok(print) => print,
+            Err(error) => {
+                self.status = format!("Profile selection error: {error:#}");
+                return;
+            }
+        };
+        if let Err(error) = spektrafilm_core::validate_runtime_profiles(&candidate, &film, &print)
+            .and_then(|()| spektrafilm_core::validate_scan_output(&candidate, &film))
+        {
+            self.status = format!("Profile selection error: {error}");
+            return;
+        }
+        let before = self.params.scanner.clone();
         self.film_name = selected;
         self.film_reference_illuminant = film.info.reference_illuminant.clone();
         self.film_dev_times = film.data.development_time.clone();
         self.film_medium = scan_medium(&film);
-        let before = self.params.scanner.clone();
-        self.params.workflow.route = workflow_default(&film);
-        self.params.io.scan_film = film.is_positive();
-        self.params.scanner.scan_output = "direct_scan".into();
-        normalize_scanner_selections(&mut self.params, self.film_medium);
+        self.params = candidate;
         self.status = Self::normalization_status(
             &before,
             &self.params.scanner,
@@ -458,19 +477,33 @@ impl App {
 
     pub(super) fn select_print_profile(&mut self, selected: String) {
         let print = match profile::load_profile_by_name(&self.data_dir, &selected) {
-            Ok(profile) if profile.is_print_stock() => profile,
-            Ok(_) => {
-                self.status =
-                    format!("Profile selection error: '{selected}' is not a print profile");
-                return;
+            Ok(profile) => {
+                if let Err(error) = spektrafilm_core::validate_print_profile(&profile) {
+                    self.status = format!("Profile selection error: {error}");
+                    return;
+                }
+                profile
             }
             Err(error) => {
                 self.status = format!("Profile selection error: {error:#}");
                 return;
             }
         };
+        let film = match profile::load_profile_by_name(&self.data_dir, &self.film_name) {
+            Ok(film) => film,
+            Err(error) => {
+                self.status = format!("Profile selection error: {error:#}");
+                return;
+            }
+        };
+        if let Err(error) = spektrafilm_core::validate_runtime_profiles(&self.params, &film, &print)
+        {
+            self.status = format!("Profile selection error: {error}");
+            return;
+        }
         self.print_name = selected;
         self.print_dev_times = print.data.development_time.clone();
+        self.params.print_render.development_time = None;
         self.invalidate_look_render();
     }
 
@@ -883,9 +916,22 @@ impl App {
             }
             if raw {
                 self.parameter_section(ui, "Import Raw");
+            } else {
+                ui.label(format!(
+                    "Input declaration: {} · {} · explicit GUI setting",
+                    self.params.io.input_color_space,
+                    if self.params.io.input_cctf_decoding {
+                        "encoded CCTF"
+                    } else {
+                        "linear samples"
+                    }
+                ));
             }
             if let Some(p) = &self.image_path {
-                ui.label(egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("" )).small());
+                ui.label(
+                    egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or(""))
+                        .small(),
+                );
             }
             ui.add_space(theme::SPACE_BLOCK);
         });
@@ -1060,20 +1106,14 @@ impl App {
                              input to the output space.",
                         );
                     }
-                    if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
-                        let selected = self.film_name.clone();
-                        self.params.film_render.development_time = None;
+                    if let Some(selected) =
+                        profile_combo(ui, "film", "film profile", &self.films, &self.film_name)
+                    {
                         self.select_film_profile(selected);
                     }
-                    if profile_combo(
-                        ui,
-                        "paper",
-                        "print profile",
-                        &self.papers,
-                        &mut self.print_name,
-                    ) {
-                        let selected = self.print_name.clone();
-                        self.params.print_render.development_time = None;
+                    if let Some(selected) =
+                        profile_combo(ui, "paper", "print profile", &self.papers, &self.print_name)
+                    {
                         self.select_print_profile(selected);
                     }
                 });

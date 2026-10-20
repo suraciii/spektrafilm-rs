@@ -152,6 +152,45 @@ fn on_exit_cancels_and_joins_staged_export_without_publication() {
 }
 
 #[test]
+fn render_status_names_queued_running_and_completed_operation() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let ctx = h.ctx.clone();
+    h.state_mut().dispatch_render(&ctx);
+    assert!(h.state().status.contains("running") || h.state().status.contains("queued"));
+    wait_until(h, |app| {
+        app.render_job.is_none() && app.output_image.is_some()
+    });
+    assert!(h.state().status.starts_with("Preview ·"));
+}
+
+#[test]
+fn cancelled_render_reports_cancelled_outcome() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let ctx = h.ctx.clone();
+    h.state_mut().diagnostics.mode = CollectionMode::Summary;
+    let active = h.state().render_worker.active.clone();
+    let guard = active.lock();
+    h.state_mut().dispatch_render(&ctx);
+    h.state().render_worker.cancel_active();
+    drop(guard);
+    let deadline = Instant::now() + WAIT_DEADLINE;
+    while h.state().render_job.is_some() {
+        assert!(Instant::now() < deadline, "cancelled render did not finish");
+        h.step();
+        wait_tick();
+    }
+    h.run_steps(3);
+    assert_eq!(h.state().status, "Preview cancelled.");
+    let report_path = s.directory.path().join("cancelled-render-report.json");
+    h.state().diagnostics.save_selected(&report_path).unwrap();
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+    assert_eq!(report["operation"]["outcome"], "cancelled");
+    assert_eq!(report["operation"]["kind"], "preview");
+}
+#[test]
 fn on_exit_joins_active_render_and_discards_queued_results() {
     let mut s = session();
     let h = &mut s.harness;

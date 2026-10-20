@@ -37,7 +37,6 @@ pub(super) struct RenderJob {
     pub(super) request_id: u64,
     pub(super) kind: RenderKind,
     pub(super) animate: bool,
-    pub(super) backend_name: String,
     pub(super) collection_mode: CollectionMode,
 }
 

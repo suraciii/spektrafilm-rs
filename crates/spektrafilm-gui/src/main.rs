@@ -50,7 +50,6 @@ use app::App;
 use backend::{gui_backend, gui_renderer};
 use calibration::CalibrationJob;
 use controls::{normalize_scanner_selections, scan_medium};
-use diagnostics::effective_backend_name;
 #[cfg(test)]
 use export::ExportBackend;
 use export::{ExportDialog, ExportOptions};
@@ -497,7 +496,6 @@ mod telemetry_lifecycle_tests {
             request_id,
             kind: RenderKind::Preview,
             animate: false,
-            backend_name: "CPU".into(),
             collection_mode: CollectionMode::Summary,
         }
     }

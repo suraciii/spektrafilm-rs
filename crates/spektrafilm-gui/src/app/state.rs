@@ -145,6 +145,9 @@ impl App {
             // state with a visible reason instead of failing at construction.
             let params = state.runtime_params()?;
             let film = profile::load_profile_by_name(&data_dir, state.film())?;
+            let print = profile::load_profile_by_name(&data_dir, state.paper())?;
+            spektrafilm_core::validate_runtime_profiles(&params, &film, &print)
+                .map_err(anyhow::Error::msg)?;
             spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
             Ok(state)
         })
@@ -292,6 +295,16 @@ impl App {
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
     }
 
+    pub(crate) fn retained_output_is_fresh(&self) -> bool {
+        self.output_image.is_some()
+            && self.source_render.as_ref().is_some_and(|source| {
+                source.input_revision == Some(self.input_epoch)
+                    && source.parameter_revision == Some(self.parameter_revision)
+            })
+            && !self.dirty
+            && self.render_job.is_none()
+    }
+
     pub(crate) fn mark_parameters_changed(&mut self) {
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
         self.dirty = true;
@@ -306,7 +319,9 @@ impl App {
         self.last_state_normalization = None;
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
-        profile::load_profile_by_name(&self.data_dir, state.paper())?;
+        let print = profile::load_profile_by_name(&self.data_dir, state.paper())?;
+        spektrafilm_core::validate_runtime_profiles(&params, &film, &print)
+            .map_err(anyhow::Error::msg)?;
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         let film_medium = scan_medium(&film);
         let film_reference_illuminant = film.info.reference_illuminant.clone();
@@ -319,6 +334,7 @@ impl App {
             &params.workflow.route,
         );
         self.film_name = state.film().to_owned();
+        self.print_name = state.paper().to_owned();
         self.film_reference_illuminant = film_reference_illuminant;
         self.film_medium = film_medium;
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);

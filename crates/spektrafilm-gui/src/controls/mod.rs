@@ -653,11 +653,13 @@ mod tests {
     fn camera_capture_illuminant_control_sets_and_clears_the_option() {
         let ctx = egui::Context::default();
         let mut params = RuntimeParams::default();
-        // The control renders inside the Camera section, not Scanner/Convert.
         let (_, output) = camera_frame(&ctx, &mut params, vec![]);
         assert!(has_text(&output, "inherit (film profile)"));
+        assert!(has_text(
+            &output,
+            "Effective capture illuminant: D55 · film profile reference"
+        ));
         assert_eq!(params.camera.capture_illuminant, None);
-        /// `option` inside the popup.
         fn select(
             ctx: &egui::Context,
             params: &mut RuntimeParams,

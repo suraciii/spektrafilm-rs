@@ -290,6 +290,7 @@ fn import_file(h: &mut Harness<'_, App>, raw: bool) {
 /// `CollapsingHeader` whose title carries the engine's label, so a plain
 /// label query would match both the header and the popup option.
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
+    scroll_controls_into_view(h, label);
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .simulate_click();
     h.run_steps(3);
@@ -1152,8 +1153,14 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     let unfinished = render(h, "PREVIEW");
     assert_eq!(unfinished.data, balanced.data);
     choose(h, "scanner finish", "neutral");
+    let _fresh = render(h, "PREVIEW");
     let save_path = s.directory.path().join("reference-preview.png");
     h.state_mut().save_to_path(&save_path);
+    assert!(
+        h.state().status.starts_with("Saved reference-preview.png"),
+        "{}",
+        h.state().status
+    );
     let expected = image_io::convert_image(
         &balanced,
         &h.state().output_color_space,

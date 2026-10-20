@@ -114,6 +114,7 @@ impl RenderSnapshot {
                 }
             }
         }
+        spektrafilm_core::validate_runtime_profiles(&params, &film, &print)?;
         Runtime::new_observed(film, print, params, &self.data_dir, context)
             .map_err(|e| format!("runtime build: {e}"))
     }
