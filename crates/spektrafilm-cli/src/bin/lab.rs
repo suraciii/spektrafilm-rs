@@ -302,7 +302,7 @@ fn execute(
         LabCommands::Run { command } => match command {
             RunCommand::Suite(args) => execute_run_suite(args),
             RunCommand::Image(args) => execute_run_image(args),
-            RunCommand::Flat(args) => execute_run_legacy(args, matches),
+            RunCommand::Flat(args) => execute_run_legacy(*args, matches),
         },
         LabCommands::Measure { command } => match command {
             MeasureCommand::Run(args) => {

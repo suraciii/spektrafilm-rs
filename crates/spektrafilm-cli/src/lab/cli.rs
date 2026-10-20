@@ -236,7 +236,7 @@ pub enum RunCommand {
     Image(RunImageArgs),
     /// Compatibility alias target inserted by the argv normalizer.
     #[command(hide = true)]
-    Flat(EvaluationRunArgs),
+    Flat(Box<EvaluationRunArgs>),
 }
 
 #[derive(Subcommand)]
