@@ -102,11 +102,11 @@ The field belongs to film coordinates. The pipeline develops the full frame. The
 
 Overlapping full-frame and cropped CMY reads agree within the design's **1e-5** (f32) and **1e-10** (f64) tolerances. A rounded output grid may change footprints. Only that sampling is then comparable.
 
-Dye supports still and cine color-negative filming profiles. It uses the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`. It is not a roll-width designation.
+Dye supports still and cine color filming profiles, including both negative and positive color film. It uses the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`. It is not a roll-width designation.
 
 The reference validation remains a 36 mm long edge on `input > film > print > scan` with `io.scan_film = false`. Format changes alter physical footprints and workload. Crop/resize determine output dimensions. Support and event area remain in film units. Large requests can fail an explicit resource bound.
 
-The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` also runs for `negative_to_positive` and `direct_scan`. Another chemistry or an unsupported route fails with an actionable unsupported-condition error.
+The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` runs with `direct_scan` for both negative and positive film, and with `negative_to_positive` for negative film. Positive film retains its native polarity; Dye uses the profile's positive density-curve direction rather than selecting a separate grain model. Another chemistry or an unsupported route fails with an actionable unsupported-condition error.
 
 When downstream spatial processing is active, Dye extends the output grid to cover the full film before those stages. It extracts the requested crop afterward. Physical optical controls use the actual output pitch. Scanner blur and unsharp masking remain pixel controls. See [film geometry](../specs/film-grain/v3/design.md#film-geometry) for rounded and anisotropic output limits.
 
