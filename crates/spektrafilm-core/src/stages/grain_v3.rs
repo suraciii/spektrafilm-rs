@@ -76,9 +76,9 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
             "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
         ));
     }
-    if params.scanner.auto_setup == crate::params::ScannerAutoSetup::PerFrame {
+    if params.scanner.auto_setup != crate::params::ScannerAutoSetup::Off {
         return Err(format!(
-            "{CELL_SPECTRAL_ENV} does not support per_frame scanner setup"
+            "{CELL_SPECTRAL_ENV} does not support frame-derived scanner setup"
         ));
     }
     if params.settings.use_enlarger_lut || params.settings.use_scanner_lut {

@@ -717,13 +717,13 @@ fn scanner_finish_feedback_and_text_report_follow_effective_mode() {
 }
 
 #[test]
-fn scanner_setup_uses_selected_seed_for_film_grain_measurement() {
+fn scanner_setup_is_independent_of_film_grain_seed() {
     use spektrafilm_backend::cpu_backend::CpuBackend;
     use spektrafilm_core::{image_io, params::RuntimeParams, runtime::Runtime};
     use spektrafilm_math::precision::to_f64;
 
     let f = Fixture::new();
-    let settings = "camera.auto_exposure=false,camera.film_format_mm=0.1,film_render.halation.active=false,film_render.dir_couplers.active=false,print_render.glare.active=false,film_render.grain.engine=spektra,film_render.grain.sublayers_active=false,film_render.grain.particle_area_um2=2,scanner.auto_setup=per_frame,io.output_gamut_compress.algorithm=off,scanner.unsharp_mask=[0,0],settings.use_enlarger_lut=false,settings.use_scanner_lut=false";
+    let settings = "camera.auto_exposure=false,camera.film_format_mm=0.1,film_render.halation.active=false,film_render.dir_couplers.active=false,print_render.glare.active=false,film_render.grain.engine=spektra,film_render.grain.sublayers_active=false,film_render.grain.particle_area_um2=2,scanner.auto_setup=full,io.output_gamut_compress.algorithm=off,scanner.unsharp_mask=[0,0],settings.use_enlarger_lut=false,settings.use_scanner_lut=false";
     let args = [
         "--input-color-space",
         "sRGB",
@@ -757,7 +757,7 @@ fn scanner_setup_uses_selected_seed_for_film_grain_measurement() {
     wrong_seed.random_seed = 0;
     let wrong =
         Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", wrong_seed, &data).unwrap();
-    assert_ne!(setup, wrong.prepare_scanner_setup(&input).unwrap());
+    assert_eq!(setup, wrong.prepare_scanner_setup(&input).unwrap());
     let expected = runtime
         .with_scanner_setup(setup)
         .process(input, &CpuBackend)

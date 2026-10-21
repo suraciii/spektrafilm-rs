@@ -216,7 +216,7 @@ fn scanner_transitions_preserve_points_and_reset_illegal_output() {
     app.params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
     app.params.scanner.negative_conversion_method =
         spektrafilm_core::params::NegativeConversionMethod::Coupled;
-    app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
+    app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::Full;
     app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
     app.params.scanner.finish_strength = 0.75;
     app.params.scanner.reference_exposure_ev = 1.0;
@@ -273,7 +273,7 @@ fn scanner_transitions_preserve_points_and_reset_illegal_output() {
     app.params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
     app.params.scanner.negative_conversion_method =
         spektrafilm_core::params::NegativeConversionMethod::Coupled;
-    app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
+    app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::Full;
     app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
     app.select_film_profile("kodak_ektachrome_100".into());
     assert_eq!(app.film_medium, crate::controls::ScanMedium::Slide);

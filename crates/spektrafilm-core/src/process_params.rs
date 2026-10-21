@@ -405,6 +405,7 @@ fn resolve_with_preview_mode(
     }
 
     normalize_runtime_topology(&film, &mut params);
+    crate::scanner_setup::validate_route(&film, &params)?;
     crate::pipeline_calibration::validate_scan_output(&params, &film)?;
     let raw_source = DeclarationSource {
         kind: "raw".into(),

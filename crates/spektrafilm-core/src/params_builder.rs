@@ -99,6 +99,9 @@ fn apply_preview_constraints(params: &mut RuntimeParams) {
 
 fn apply_debug_constraints(params: &mut RuntimeParams) {
     if params.debug.lut_mode {
+        // LUT mode has no frame-derived context; force the modeled scanner
+        // setup off before the rest of the static LUT constraints apply.
+        params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
         // LUT-sampling regime: force the pipeline into a deterministic
         // per-pixel transform. Enabling lut_mode promotes spatial and
         // stochastic deactivation and disables image-aware adjustments.
@@ -109,12 +112,6 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         params.camera.exposure_compensation_ev = 0.0;
         params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Never;
         params.enlarger.print_exposure = 1.0;
-        // Highlight boost normalizes by the image-wide max (np.max(x)), so it
-        // is an image-global transform — the same input value maps to
-        // different outputs depending on the rest of the frame. That cannot
-        // be represented by a static 3D LUT (a bake would freeze in the cube
-        // grid's max), so it must be off in lut_mode, exactly like
-        // auto_exposure above.
         params.film_render.halation.boost_ev = 0.0;
         params.scanner.white_correction = false;
         params.scanner.black_correction = false;

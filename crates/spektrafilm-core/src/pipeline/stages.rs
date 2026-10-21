@@ -98,11 +98,12 @@ impl Pipeline {
                     let out = crate::stages::scanning::process_prepared(
                         &image,
                         &self.film,
-                        &self.scan_params(),
+                        &self.params,
                         backend,
                         color_ref,
                         &self.output_gamut,
                         self.digital_reference.as_deref(),
+                        self.scanner_setup.as_ref(),
                     )?;
                     print_stage_timing(print_timings, "scanning", t);
                     record_stage_timing(stage_timings, "scanning", t);
@@ -148,6 +149,7 @@ impl Pipeline {
                     backend,
                     color_ref,
                     &self.output_gamut,
+                    self.scanner_setup.as_ref(),
                 )?;
                 print_stage_timing(print_timings, "scanning", t);
                 record_stage_timing(stage_timings, "scanning", t);

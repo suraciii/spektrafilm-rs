@@ -5,7 +5,6 @@
 ///   2. Process virtual gray card through filming to get midgray spectral density
 ///   3. Compute print exposure normalization factor from midgray spectral density
 ///   4. Pass all calibration data to the pipeline stages
-use crate::WorkflowRoute;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{
@@ -102,7 +101,7 @@ pub struct Pipeline {
     /// when a sensitivity-affecting control changes instead of reusing a
     /// stale one.
     data_dir: Option<std::path::PathBuf>,
-    scanner_setup: Option<crate::stages::scanning::ScannerSetup>,
+    scanner_setup: Option<crate::scanner_setup::ScannerSetup>,
     digital_reference: Option<Arc<crate::digital_reference::DigitalReference>>,
     /// Original film reference captured before calibration mutates the render profile.
     original_film: Arc<Profile>,
@@ -110,16 +109,20 @@ pub struct Pipeline {
     cancellation: Option<Arc<AtomicBool>>,
 }
 impl Pipeline {
-    pub(crate) fn with_scanner_setup(
-        mut self,
-        setup: crate::stages::scanning::ScannerSetup,
-    ) -> Self {
+    pub(crate) fn with_scanner_setup(mut self, setup: crate::scanner_setup::ScannerSetup) -> Self {
         self.scanner_setup = Some(setup);
         self
     }
-
     pub(crate) fn has_scanner_setup(&self) -> bool {
         self.scanner_setup.is_some()
+    }
+    pub(crate) fn scanner_setup_provenance(
+        &self,
+        input_identity: crate::scanner_setup::ScannerInputIdentity,
+    ) -> Option<crate::scanner_setup::ScannerSetupProvenance> {
+        self.scanner_setup
+            .as_ref()
+            .map(|setup| setup.provenance(&self.film, input_identity))
     }
     pub(crate) fn reference_provenance(
         &self,
@@ -132,41 +135,11 @@ impl Pipeline {
     pub(crate) fn prepare_scanner_setup(
         &self,
         full_input: &ImageBuf,
-    ) -> Result<crate::stages::scanning::ScannerSetup, String> {
+    ) -> Result<crate::scanner_setup::ScannerSetup, String> {
         if self.params.scanner.auto_setup == crate::params::ScannerAutoSetup::Off {
-            return Ok(crate::stages::scanning::ScannerSetup::IDENTITY);
+            return Ok(crate::scanner_setup::ScannerSetup::IDENTITY);
         }
-        crate::stages::grain_v3::validate_cell_spectral(&self.params)?;
-        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-        let mut measurement = self.clone();
-        measurement.params.io.crop = false;
-        measurement.params.io.upscale_factor = 1.0;
-        measurement.params.settings.preview_mode = false;
-        measurement.params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
-        measurement.scanner_setup = None;
-        let color_ref = measurement.color_reference(&backend);
-        let converting = self.params.workflow.route_enum() == WorkflowRoute::ConvertFilmScan;
-        let density = if converting {
-            crate::stages::converting::process(full_input, &measurement.film, &measurement.params)?
-        } else {
-            measurement.run_from(
-                full_input.clone(),
-                Tap::RgbIn,
-                Tap::CmyFilm,
-                &backend,
-                &color_ref,
-                None,
-                None,
-                None,
-            )?
-        };
-        crate::stages::scanning::prepare_setup(
-            &density,
-            &measurement.film,
-            &measurement.params,
-            &color_ref,
-            converting.then_some(self.params.film_render.convert.scan_illuminant.as_str()),
-        )
+        crate::scanner_setup::ScannerSetup::from_image(full_input, &self.params)
     }
 
     fn scan_params(&self) -> std::borrow::Cow<'_, RuntimeParams> {
@@ -212,6 +185,7 @@ impl Pipeline {
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
         let mut params = params;
         crate::params_builder::normalize_runtime_topology(&self.film, &mut params);
+        crate::scanner_setup::validate_route(&self.film, &params)?;
         params.validate()?;
         params.validate_color()?;
         crate::pipeline_calibration::validate_scan_output(&params, &self.film)?;
@@ -314,16 +288,18 @@ impl Pipeline {
             &original_film,
             params.film_render.development_time,
         );
+        params.validate().expect("invalid runtime parameters");
         params
             .validate_color()
             .expect("invalid colour configuration");
         // B&W profiles must be resolved on every construction path —
-        // an unresolved family would read development-time columns as
         // R/G/B channels.
         let mut film =
             crate::profile::resolve_for_render(film, params.film_render.development_time);
         let mut params = params;
         crate::params_builder::normalize_runtime_topology(&film, &mut params);
+        crate::scanner_setup::validate_route(&film, &params)
+            .expect("invalid scanner auto setup route");
         crate::pipeline_calibration::validate_scan_output(&params, &film)
             .expect("invalid scan output mode");
         let mut print =

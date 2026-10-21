@@ -345,6 +345,7 @@ mod tests {
                 &spektrafilm_backend::cpu_backend::CpuBackend,
                 &correction,
                 &crate::gamut_compression::OutputGamutCompress::identity(),
+                None,
             )
             .unwrap();
             for channel in 0..3 {

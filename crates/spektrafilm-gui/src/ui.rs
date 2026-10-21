@@ -833,10 +833,16 @@ impl App {
                 ScannerAutoSetup::Off => {
                     ui.label("Scanner setup: disabled");
                 }
-                ScannerAutoSetup::PerFrame if self.image.is_none() => {
+                ScannerAutoSetup::Density
+                | ScannerAutoSetup::DensityColor
+                | ScannerAutoSetup::Full
+                    if self.image.is_none() =>
+                {
                     ui.label("Scanner setup: awaiting input");
                 }
-                ScannerAutoSetup::PerFrame => {
+                ScannerAutoSetup::Density
+                | ScannerAutoSetup::DensityColor
+                | ScannerAutoSetup::Full => {
                     let key = (self.input_epoch, self.parameter_revision);
                     match self
                         .scanner_setup

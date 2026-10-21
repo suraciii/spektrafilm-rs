@@ -18,8 +18,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
   `negative_to_positive`. Labels must follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance). Exposure reconstruction additionally shows brightness,
   three-channel balance, contrast, maximum density, and negative conversion
   method. Conversion control display names must follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). A slide film scan and a reconstructed negative film scan show
-  the per-channel black and white points. Film scans show receiver profile,
-  scanner finish, finish strength, and the `off` or `per_frame` setup mode where eligible.
+  the per-channel black and white points. Film scans show receiver profile, scanner finish, finish strength, and the `off`, `density`, `density_color`, or `full` setup mode where eligible. The legacy `per_frame` spelling is accepted only when loading compatible state and is serialized canonically as `full`.
   The GUI identifies approximate receiver profiles as approximate. A route or
   film profile change that makes the selected mode ineligible resets it to
   `direct_scan` and clears ineligible scanner controls.

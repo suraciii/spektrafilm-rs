@@ -213,17 +213,35 @@ impl NegativeConversionMethod {
 pub enum ScannerAutoSetup {
     #[default]
     Off,
-    PerFrame,
+    Density,
+    DensityColor,
+    #[serde(alias = "per_frame")]
+    Full,
 }
 impl ScannerAutoSetup {
+    pub const fn includes_density(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+    pub const fn includes_color(self) -> bool {
+        matches!(self, Self::DensityColor | Self::Full)
+    }
+    pub const fn includes_contrast(self) -> bool {
+        matches!(self, Self::Full)
+    }
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Off => "off",
-            Self::PerFrame => "per_frame",
+            Self::Density => "density",
+            Self::DensityColor => "density_color",
+            Self::Full => "full",
         }
     }
 }
-
+impl std::fmt::Display for ScannerAutoSetup {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScannerFinish {
@@ -1115,7 +1133,10 @@ mod tests {
                 "scanner.negative_conversion_method",
                 &["density", "separable", "coupled", "digital_reference"][..],
             ),
-            ("scanner.auto_setup", &["off", "per_frame"][..]),
+            (
+                "scanner.auto_setup",
+                &["off", "density", "density_color", "full"][..],
+            ),
             ("scanner.finish", &["neutral", "lab_scan"][..]),
             ("enlarger.print_exposure_mode", &["manual", "auto"][..]),
             (
@@ -1141,6 +1162,21 @@ mod tests {
         );
         let settings = serde_json::to_value(super::SettingsParams::default()).unwrap();
         assert_eq!(settings["print_exposure_ev_tracking"], "follow_mode");
+    }
+    #[test]
+    fn direct_scan_rejects_conversion_controls() {
+        let mut params = RuntimeParams::default();
+        params.scanner.scan_output = "direct_scan".into();
+        params.scanner.negative_conversion_method = super::NegativeConversionMethod::Coupled;
+        let error = params.validate().unwrap_err();
+        assert!(error.contains("scanner.negative_conversion_method=coupled"));
+        assert!(error.contains("negative_to_positive"));
+
+        params.scanner.negative_conversion_method = super::NegativeConversionMethod::Density;
+        params.scanner.finish = super::ScannerFinish::LabScan;
+        let error = params.validate().unwrap_err();
+        assert!(error.contains("scanner.finish=lab_scan"));
+        assert!(error.contains("negative_to_positive"));
     }
 
     #[test]

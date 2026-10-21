@@ -197,7 +197,7 @@ mod telemetry_lifecycle_tests {
         app.params.workflow.route = "input > film > scan".into();
         app.params.io.scan_film = true;
         app.params.scanner.scan_output = "negative_to_positive".into();
-        app.params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
+        app.params.scanner.auto_setup = ScannerAutoSetup::Full;
         app.params.scanner.white_correction = false;
         app.params.scanner.black_correction = false;
         app.params.film_render.grain.active = false;
@@ -401,25 +401,20 @@ mod telemetry_lifecycle_tests {
     fn app_real_negative_setup_ignores_virtual_camera_metering() {
         let mut app = scanner_app();
         app.params.workflow.route = "input > convert-film > scan".into();
+        app.params.scanner.scan_output = "negative_to_positive".into();
+        app.params.scanner.auto_setup = ScannerAutoSetup::Off;
+        app.params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Separable;
         let context = ObservationContext::default();
         let input = app.image.as_ref().unwrap().clone();
         app.params.camera.auto_exposure = false;
         let first = app.render_snapshot(app.params.clone());
-        let expected = first.prepare_scanner_setup(&input, &context).unwrap();
         app.parameter_revision = app.parameter_revision.wrapping_add(1);
         app.params.camera.auto_exposure = true;
         app.params.camera.exposure_compensation_ev += 3.0;
         let changed = app.render_snapshot(app.params.clone());
-        assert_eq!(
-            changed.prepare_scanner_setup(&input, &context).unwrap(),
-            expected
-        );
-        let first_runtime = build_runtime_observed(&first, false, &context)
-            .unwrap()
-            .with_scanner_setup(expected.unwrap());
-        let changed_runtime = build_runtime_observed(&changed, false, &context)
-            .unwrap()
-            .with_scanner_setup(expected.unwrap());
+        let first_runtime = build_runtime_observed(&first, false, &context).unwrap();
+        let changed_runtime = build_runtime_observed(&changed, false, &context).unwrap();
         let first_output = first_runtime
             .process((*input).clone(), app.backend.as_ref())
             .unwrap();
@@ -472,7 +467,7 @@ mod telemetry_lifecycle_tests {
         let mut invalid = app.current_state().unwrap();
         invalid.sections["simulation"]["film_stock"] = "fujifilm_provia_100f".into();
         invalid.sections["scanner"]["negative_conversion_method"] = "coupled".into();
-        invalid.sections["scanner"]["auto_setup"] = "per_frame".into();
+        invalid.sections["scanner"]["auto_setup"] = "full".into();
         invalid.sections["scanner"]["finish"] = "lab_scan".into();
         let error = app.apply_state(invalid).unwrap_err();
         assert!(
@@ -487,7 +482,7 @@ mod telemetry_lifecycle_tests {
         let valid = app.current_state().unwrap();
         app.apply_state(valid).unwrap();
         assert_eq!(app.params.scanner.scan_output, "negative_to_positive");
-        assert_eq!(app.params.scanner.auto_setup, ScannerAutoSetup::PerFrame);
+        assert_eq!(app.params.scanner.auto_setup, ScannerAutoSetup::Full);
     }
 
     fn job(request_id: u64) -> RenderJob {

@@ -123,7 +123,7 @@ impl RenderSnapshot {
         full_input: &ImageBuf,
         context: &ObservationContext,
     ) -> Result<Option<ScannerSetup>, String> {
-        if self.params.scanner.auto_setup != ScannerAutoSetup::PerFrame {
+        if self.params.scanner.auto_setup == ScannerAutoSetup::Off {
             return Ok(None);
         }
         if let Some(setup) = self.scanner_setup.get() {
@@ -342,7 +342,7 @@ mod tests {
             .unwrap();
 
         let mut failed_setup = snapshot.clone();
-        failed_setup.params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
+        failed_setup.params.scanner.auto_setup = ScannerAutoSetup::Full;
         failed_setup.scanner_setup = Arc::new(OnceLock::new());
         failed_setup
             .scanner_setup
