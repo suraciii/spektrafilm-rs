@@ -475,6 +475,9 @@ struct Channel {
     min: f64,
     /// Uniformity control of this channel.
     uniformity: f64,
+    /// Sign applied to the composite query before the bracket lookup
+    /// (`-1` for positive films, `1` for negative).
+    lookup_sign: f64,
     /// Composite-axis knots with the positive-film sign applied.
     knots: Vec<f64>,
     /// Inverse knot spacing (`0` for duplicate knots).
@@ -486,8 +489,10 @@ struct Channel {
 impl Channel {
     /// Bracket lookup with the composite-to-layer convention of
     /// `spektrafilm_model::density_curves::interp_density_cmy_layers`:
-    /// endpoint clamping plus `searchsorted(side='right') - 1`.
+    /// endpoint clamping plus `searchsorted(side='right') - 1`. The knots
+    /// carry the positive-film sign, so the query is signed first.
     fn bracket(&self, x: f64) -> (usize, f64) {
+        let x = x * self.lookup_sign;
         let k = self.knots.len();
         if x <= self.knots[0] {
             (0, 0.0)
@@ -522,6 +527,9 @@ pub struct ChannelTable<'a> {
     pub min: f64,
     /// Uniformity control of this channel.
     pub uniformity: f64,
+    /// Sign applied to the composite query before the bracket lookup
+    /// (`-1` for positive films, `1` for negative).
+    pub lookup_sign: f64,
     /// Composite-axis knots with the positive-film sign applied.
     pub knots: &'a [f64],
     /// Inverse knot spacing (`0` for duplicate knots).
@@ -542,6 +550,7 @@ impl Model {
                 area: channel.area,
                 min: channel.min,
                 uniformity: channel.uniformity,
+                lookup_sign: channel.lookup_sign,
                 knots: &channel.knots,
                 inv_dx: &channel.inv_dx,
                 layers: [&channel.layers[0], &channel.layers[1], &channel.layers[2]],
@@ -863,6 +872,7 @@ impl Channel {
             area,
             min,
             uniformity,
+            lookup_sign: sign,
             knots,
             inv_dx,
             layers,

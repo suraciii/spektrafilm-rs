@@ -765,7 +765,7 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
 }
 
 /// Spatial deactivation must bypass Dye before its field parameters are
-/// resolved (spec film-grain/v3 §Controls and compatibility), exactly
+/// resolved (spec film-grain/v3 §Controls and resolved inputs), exactly
 /// like the per-stage route: no density fence is assembled, so the
 /// resident route renders the grain-free reference.
 #[test]

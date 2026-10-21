@@ -22,6 +22,7 @@ pub mod pipeline;
 mod pipeline_calibration;
 pub use pipeline_calibration::validate_scan_output;
 pub mod digital_reference;
+pub mod dye_measurement;
 pub mod feature_profiles;
 pub mod presets;
 pub mod print_morph;

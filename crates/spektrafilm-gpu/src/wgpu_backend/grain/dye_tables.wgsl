@@ -1,5 +1,6 @@
 // Packed image-independent channel coefficients shared by G2 and G4.
-// Explicit padding on Rust side follows vec4 alignment (80 bytes/channel).
+// Explicit padding on Rust side follows vec4 alignment (80 bytes/channel);
+// the final slot carries the sign the bracket applies to its query.
 struct Table {
     min: f32,
     cap_total: f32,
@@ -9,5 +10,5 @@ struct Table {
     uniformity: f32,
     knot_count: u32,
     offset: u32,
-    padding: u32,
+    lookup_sign: f32,
 }
