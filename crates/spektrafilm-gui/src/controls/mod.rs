@@ -531,7 +531,7 @@ mod tests {
             ("legacy colorimetric", "lab scan (approximate)"),
             ("density", "separable"),
             ("separable", "coupled"),
-            ("off", "per_frame"),
+            ("off", "full"),
             ("neutral", "lab_scan"),
         ] {
             let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
@@ -574,7 +574,7 @@ mod tests {
             params.scanner.negative_conversion_method,
             NegativeConversionMethod::Coupled
         );
-        assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::PerFrame);
+        assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::Full);
         assert_eq!(params.scanner.finish, ScannerFinish::LabScan);
     }
 
@@ -584,7 +584,7 @@ mod tests {
         params.workflow.route = "input > film > scan".into();
         params.scanner.receiver_profile = ReceiverProfile::LabScanApprox;
         params.scanner.negative_conversion_method = NegativeConversionMethod::Coupled;
-        params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
+        params.scanner.auto_setup = ScannerAutoSetup::Full;
         params.scanner.finish = ScannerFinish::LabScan;
         params.scanner.finish_strength = 0.0;
         normalize_scanner_selections(&mut params, ScanMedium::Negative);

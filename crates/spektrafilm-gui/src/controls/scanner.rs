@@ -191,7 +191,9 @@ pub(crate) fn sections(
                     if filter_matches(filter, vocabulary::SCANNER_AUTO_SETUP) {
                         flags.runtime_changed |= enum_choice(ui, vocabulary::SCANNER_AUTO_SETUP, &mut params.scanner.auto_setup, &[
                             (ScannerAutoSetup::Off, "off"),
-                            (ScannerAutoSetup::PerFrame, "per_frame"),
+                            (ScannerAutoSetup::Density, "density"),
+                            (ScannerAutoSetup::DensityColor, "density_color"),
+                            (ScannerAutoSetup::Full, "full"),
                         ], vocabulary::SCANNER_AUTO_SETUP_HELP);
                     }
                 }

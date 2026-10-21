@@ -510,7 +510,7 @@ mod tests {
         p.scanner.negative_conversion_method = NegativeConversionMethod::Density;
         variants.push(p);
         let mut p = params.clone();
-        p.scanner.auto_setup = crate::params::ScannerAutoSetup::PerFrame;
+        p.scanner.auto_setup = crate::params::ScannerAutoSetup::Full;
         variants.push(p);
         let mut p = params.clone();
         p.scanner.black_point = [0.1; 3];

@@ -2,7 +2,7 @@
 use crate::params::{RuntimeParams, Tap};
 use crate::pipeline::Pipeline;
 use crate::profile;
-pub use crate::stages::scanning::ScannerSetup;
+pub use crate::scanner_setup::ScannerSetup;
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_backend::telemetry::{ObservationContext, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
@@ -377,6 +377,12 @@ impl Runtime {
     pub fn reference_provenance(&self) -> Option<&crate::digital_reference::ReferenceProvenance> {
         self.pipeline.reference_provenance()
     }
+    pub fn scanner_setup_provenance(
+        &self,
+        input_identity: crate::scanner_setup::ScannerInputIdentity,
+    ) -> Option<crate::scanner_setup::ScannerSetupProvenance> {
+        self.pipeline.scanner_setup_provenance(input_identity)
+    }
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
@@ -572,7 +578,9 @@ mod tests {
         params.film_render.dir_couplers.active = false;
         params.film_render.glare.active = false;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.auto_setup = crate::params::ScannerAutoSetup::PerFrame;
+        params.scanner.negative_conversion_method =
+            crate::params::NegativeConversionMethod::Density;
+        params.scanner.auto_setup = crate::params::ScannerAutoSetup::Full;
         params
     }
 
@@ -625,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn per_frame_setup_accepts_small_valid_positive_density() {
+    fn full_setup_accepts_small_valid_positive_density() {
         let mut params = scanner_params();
         params.scanner.conversion_dmax = 1e-18;
         let runtime = Runtime::from_stocks(
@@ -655,6 +663,8 @@ mod tests {
     fn explicit_rgb_input_overrides_persisted_diagnostic_inject_for_setup() {
         let mut params = scanner_params();
         params.taps.inject = Some("log_e_film".into());
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.auto_setup = crate::params::ScannerAutoSetup::Full;
         let runtime = Runtime::from_stocks(
             "kodak_portra_400",
             "kodak_portra_endura",
@@ -666,7 +676,7 @@ mod tests {
         let image = scanner_image();
         assert_eq!(
             runtime.process(image.clone(), &backend).unwrap_err(),
-            "per_frame scanner setup requires the full rgb_in input"
+            "scanner.auto_setup=full is not valid for tap route; use off or the complete-frame rgb_in→rgb_out route"
         );
         let explicit = runtime
             .process_with_taps(image.clone(), &backend, Some(Tap::RgbIn), Some(Tap::RgbOut))

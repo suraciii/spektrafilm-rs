@@ -96,15 +96,14 @@ fn render_recipe(
         params,
         data_dir: data_dir.to_owned(),
     };
-    let canonical_photo = if photo.params.scanner.auto_setup
-        == spektrafilm_core::params::ScannerAutoSetup::PerFrame
-    {
-        let mut canonical = photo.clone();
-        canonical.params.settings.preview_mode = false;
-        Some(canonical)
-    } else {
-        None
-    };
+    let canonical_photo =
+        if photo.params.scanner.auto_setup != spektrafilm_core::params::ScannerAutoSetup::Off {
+            let mut canonical = photo.clone();
+            canonical.params.settings.preview_mode = false;
+            Some(canonical)
+        } else {
+            None
+        };
     let runtime = invocation.phase(
         "runtime_prepare",
         IssueCategory::Configuration,

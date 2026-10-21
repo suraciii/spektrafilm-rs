@@ -20,7 +20,7 @@ The following command bypasses printing. It selects the receiver, inverse, autom
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
     --set scanner.receiver_profile=lab_scan_approx,scanner.negative_conversion_method=coupled \
-    --set scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.75 \
+    --set scanner.auto_setup=full,scanner.finish=lab_scan,scanner.finish_strength=0.75 \
     --scan-output negative_to_positive --data-dir data
 
 # Inspect effective scanner selections without decoding or writing output

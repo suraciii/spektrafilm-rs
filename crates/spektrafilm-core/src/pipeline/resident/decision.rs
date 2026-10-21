@@ -3,6 +3,7 @@ use super::super::Pipeline;
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ResidentFallbackReason {
     WorkflowRoute,
+    ScannerSetup,
     /// Active Dye needs a film-coordinate readout the resident chain's
     /// fixed-size density buffer cannot express (a crop or upscale, or the
     /// env-gated certification readouts); the field resolves on the
@@ -36,6 +37,9 @@ impl ResidentDecision {
 impl Pipeline {
     pub(super) fn resident_decision(&self) -> ResidentDecision {
         let mut reasons = Vec::new();
+        if self.scanner_setup.is_some() {
+            reasons.push(ResidentFallbackReason::ScannerSetup);
+        }
         // The Mallett shader has no numerically equivalent route through
         // CPU display-domain grain and optics; retain the per-stage path.
         if self.params.settings.rgb_to_raw_method == "mallett2019" {
