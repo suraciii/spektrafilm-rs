@@ -89,6 +89,7 @@ Recipe `seed` values are admitted in the unsigned 32-bit range (`0..=4_294_967_2
 # Select a procedural grain profile
 ./target/release/spektrafilm-f64 process input.png -o output.tif \
     --input-color-space sRGB --input-cctf-decoding true \
+    --film fujifilm_provia_100f --scan-film \
     --feature-profile grain.procedural=35mm250 --data-dir data
 ```
 

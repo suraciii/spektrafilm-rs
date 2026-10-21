@@ -212,16 +212,53 @@ pub struct DyeMeasurementProtocol {
     pub reference_density: Option<[f64; 3]>,
 }
 
-/// One fixed CMY realization sampled at the aperture positions.
+/// One fixed CMY realization sampled at the declared aperture positions.
+///
+/// The geometry is retained with the samples so a population cannot be
+/// relabeled with a different aperture or output footprint after sampling.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DyeRealization {
+    /// Seed that generated this realization.
+    pub seed: u64,
+    /// Positions corresponding one-to-one with `samples`, in µm.
+    pub offsets_um: Vec<[f64; 2]>,
+    /// Output footprint represented by these samples, in µm.
+    pub footprint_um: [f64; 2],
+    /// CMY density values at the declared aperture positions.
     pub samples: Vec<[f64; 3]>,
 }
 
 impl DyeRealization {
-    pub fn new(samples: Vec<[f64; 3]>) -> Self {
-        Self { samples }
+    pub fn new(
+        seed: u64,
+        offsets_um: Vec<[f64; 2]>,
+        footprint_um: [f64; 2],
+        samples: Vec<[f64; 3]>,
+    ) -> Self {
+        Self {
+            seed,
+            offsets_um,
+            footprint_um,
+            samples,
+        }
     }
+}
+
+fn validate_realization_geometry(
+    realization: &DyeRealization,
+    protocol: &DyeMeasurementProtocol,
+) -> Result<(), String> {
+    if realization.offsets_um != protocol.aperture.offsets_um {
+        return Err(
+            "Dye measurement realization aperture positions do not match the protocol".into(),
+        );
+    }
+    if realization.footprint_um != protocol.output_footprint_um {
+        return Err(
+            "Dye measurement realization output footprint does not match the protocol".into(),
+        );
+    }
+    Ok(())
 }
 
 /// Summary of one measurement population.
@@ -261,8 +298,8 @@ impl DyeOpticalOracle {
         &self.protocol
     }
 
-    /// Read one aperture realization.
     pub fn read_realization(&self, realization: &DyeRealization) -> Result<[f64; 3], String> {
+        validate_realization_geometry(realization, &self.protocol)?;
         if realization.samples.len() != self.protocol.aperture.weights.len() {
             return Err(format!(
                 "Dye measurement realization has {} aperture samples; expected {}",
@@ -312,6 +349,14 @@ impl DyeOpticalOracle {
             if !unique.insert(seed) {
                 return Err(format!(
                     "Dye measurement seed population repeats seed {seed}"
+                ));
+            }
+        }
+        for (index, realization) in realizations.iter().enumerate() {
+            if realization.seed != self.protocol.seed_population[index] {
+                return Err(format!(
+                    "Dye measurement realization {index} has seed {}; expected {}",
+                    realization.seed, self.protocol.seed_population[index]
                 ));
             }
         }
@@ -557,12 +602,24 @@ mod tests {
         }
     }
 
+    fn realization(
+        protocol: &DyeMeasurementProtocol,
+        seed: u64,
+        samples: Vec<[f64; 3]>,
+    ) -> DyeRealization {
+        DyeRealization::new(
+            seed,
+            protocol.aperture.offsets_um.clone(),
+            protocol.output_footprint_um,
+            samples,
+        )
+    }
     #[test]
     fn constant_field_is_positive_and_transmission_first() {
         let aperture = DyeApertureKernel::new(vec![[0.0, 0.0]], vec![4.0]).unwrap();
         let oracle = DyeOpticalOracle::new(protocol(aperture, None)).unwrap();
         let reading = oracle
-            .read_realization(&DyeRealization::new(vec![[0.4, 0.6, 0.0]]))
+            .read_realization(&realization(oracle.protocol(), 1, vec![[0.4, 0.6, 0.0]]))
             .unwrap();
         // The two spectral transmissions are 10^-0.4 and 10^-0.6. Their
         // receiver average is converted only after the spectral integration.
@@ -578,7 +635,11 @@ mod tests {
         assert_eq!(aperture.weights, vec![0.25, 0.75]);
         let oracle = DyeOpticalOracle::new(protocol(aperture, None)).unwrap();
         let reading = oracle
-            .read_realization(&DyeRealization::new(vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]))
+            .read_realization(&realization(
+                oracle.protocol(),
+                1,
+                vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            ))
             .unwrap();
         let expected_capture = 0.25 * 1.0 + 0.75 * (0.5 * 10.0f64.powf(-1.0) + 0.5);
         assert!((reading[0] + expected_capture.log10()).abs() < 1e-12);
@@ -590,8 +651,8 @@ mod tests {
         let oracle = DyeOpticalOracle::new(protocol(aperture, Some([0.25; 3]))).unwrap();
         let record = oracle
             .measure(&[
-                DyeRealization::new(vec![[0.0, 0.0, 0.0]]),
-                DyeRealization::new(vec![[1.0, 1.0, 1.0]]),
+                realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0]]),
+                realization(oracle.protocol(), 2, vec![[1.0, 1.0, 1.0]]),
             ])
             .unwrap();
         assert_eq!(record.realization_count, 2);
@@ -632,6 +693,22 @@ mod tests {
     }
 
     #[test]
+    fn realization_geometry_must_match_the_protocol() {
+        let aperture =
+            DyeApertureKernel::new(vec![[0.0, 0.0], [1.0, 0.0]], vec![1.0, 1.0]).unwrap();
+        let oracle = DyeOpticalOracle::new(protocol(aperture, None)).unwrap();
+        let mut wrong_positions =
+            realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
+        wrong_positions.offsets_um[1] = [2.0, 0.0];
+        assert!(oracle.read_realization(&wrong_positions).is_err());
+
+        let mut wrong_footprint =
+            realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
+        wrong_footprint.footprint_um[0] = 2.0;
+        assert!(oracle.read_realization(&wrong_footprint).is_err());
+    }
+
+    #[test]
     fn invalid_aperture_and_seed_population_fail_before_measurement() {
         assert!(DyeApertureKernel::new(vec![[0.0, 0.0]], vec![0.0]).is_err());
         let aperture = DyeApertureKernel::new(vec![[0.0, 0.0]], vec![1.0]).unwrap();
@@ -641,8 +718,22 @@ mod tests {
         assert!(
             oracle
                 .measure(&[
-                    DyeRealization::new(vec![[0.0, 0.0, 0.0]]),
-                    DyeRealization::new(vec![[0.0, 0.0, 0.0]]),
+                    realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0]]),
+                    realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0]]),
+                ])
+                .is_err()
+        );
+
+        let valid = protocol(
+            DyeApertureKernel::new(vec![[0.0, 0.0]], vec![1.0]).unwrap(),
+            None,
+        );
+        let oracle = DyeOpticalOracle::new(valid).unwrap();
+        assert!(
+            oracle
+                .measure(&[
+                    realization(oracle.protocol(), 2, vec![[0.0, 0.0, 0.0]]),
+                    realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0]]),
                 ])
                 .is_err()
         );
