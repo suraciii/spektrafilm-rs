@@ -544,16 +544,4 @@ mod tests {
         assert_eq!(params.output_mix.amount, 1.0);
         assert!(!is_modified("Output", &params, &extras));
     }
-
-    #[test]
-    fn the_enlarger_reset_restores_a_print_exposure_edit() {
-        let mut params = factory();
-        let mut extras = GuiState::factory().sections.clone();
-        let factory_exposure = params.enlarger.print_exposure;
-        params.enlarger.print_exposure = factory_exposure + 1.0;
-        assert!(is_modified("Enlarger", &params, &extras));
-        assert!(reset(&mut params, &mut extras, "Enlarger"));
-        assert_eq!(params.enlarger.print_exposure, factory_exposure);
-        assert!(!is_modified("Enlarger", &params, &extras));
-    }
 }

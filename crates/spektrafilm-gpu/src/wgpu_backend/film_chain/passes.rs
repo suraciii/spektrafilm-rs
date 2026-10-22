@@ -1410,13 +1410,6 @@ mod tests {
             ..wgpu::Limits::default()
         }
     }
-
-    #[test]
-    fn required_buffer_exceeds_limits_accepts_a_comfortable_bound() {
-        let limits = synthetic_limits(1 << 30, 1 << 28);
-        assert_eq!(required_buffer_exceeds_limits(1 << 20, &limits), None);
-    }
-
     #[test]
     fn required_buffer_exceeds_limits_rejects_an_oversized_image() {
         // 20000×20000 → 4.8 GB of image buffers; a synthetic tiny

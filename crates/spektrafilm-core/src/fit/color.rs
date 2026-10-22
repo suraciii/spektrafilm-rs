@@ -124,6 +124,9 @@ mod tests {
         assert!(differences.de[0] > 0.0);
     }
 
+    /// The even-count branch averages the two middle values; it is reached by
+    /// the cross-validation held-out half (18 patches) and no other test
+    /// drives `median` with an even count.
     #[test]
     fn median_averages_the_two_middle_values() {
         assert_eq!(median(&[3.0, 1.0, 2.0]), 2.0);

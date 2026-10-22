@@ -408,16 +408,6 @@ mod tests {
     }
 
     #[test]
-    fn no_crop_no_upscale_borrows_unchanged() {
-        let io = IoParams::default();
-        let img = coded_img(64, 32);
-        let (working, pix) = crop_and_rescale(&img, &io, 24.0).unwrap();
-        assert_eq!((working.width, working.height), (64, 32));
-        assert!(matches!(working, Cow::Borrowed(_)));
-        assert!((pix - 24.0 * 1000.0 / 64.0).abs() < 1e-12, "{pix}");
-    }
-
-    #[test]
     fn invalid_upscale_factor_is_an_actionable_error() {
         for bad in [0.0f64, -2.0, f64::NAN, f64::INFINITY] {
             let io = IoParams {

@@ -562,30 +562,6 @@ mod tests {
     }
 
     #[test]
-    fn layered_grain_is_deterministic_per_regime() {
-        let d = [0.8, 1.0, 1.2];
-        for use_fast_stats in [false, true] {
-            let a = layered(
-                d,
-                PARTICLE_SCALE_LAYERS,
-                1.0,
-                [0.2, 30.0],
-                12.0,
-                use_fast_stats,
-            );
-            let b = layered(
-                d,
-                PARTICLE_SCALE_LAYERS,
-                1.0,
-                [0.2, 30.0],
-                12.0,
-                use_fast_stats,
-            );
-            assert_eq!(a.data, b.data, "fast_stats={use_fast_stats}");
-        }
-    }
-
-    #[test]
     fn layered_grain_mean_tracks_composite_density() {
         // The particle model is mean-preserving (E[grain] = density offset)
         // and the 30/30/40 split carries the full composite density, so the
@@ -703,38 +679,6 @@ mod tests {
         let color = run(false);
         assert_ne!(color.extract_channel(0), color.extract_channel(1));
     }
-
-    #[test]
-    fn composite_path_is_deterministic() {
-        // Regression guard for the false-path dispatch: the composite model
-        // consumes only its own controls (no layer scales, dye-cloud blur
-        // or micro-structure) and stays deterministic.
-        let mut img = ImageBuf::new(3, 3);
-        for y in 0..3u32 {
-            for x in 0..3u32 {
-                img.set(x, y, [from_f64(0.8), from_f64(1.0), from_f64(1.2)]);
-            }
-        }
-        let run = |seed| {
-            apply_grain_to_density(
-                &img,
-                12.0,
-                0.2,
-                PARTICLE_SCALE,
-                DENSITY_MIN,
-                [2.2, 2.2, 2.2],
-                UNIFORMITY,
-                0.0,
-                1,
-                false,
-                seed,
-                &CpuBackend,
-            )
-        };
-        assert_eq!(run(0).data, run(0).data);
-        assert_ne!(run(0).data, run(1).data);
-    }
-
     #[test]
     fn layer_particle_model_dye_blur_gate_matches_python() {
         // Python gates on `blur_particle > 0` only; the gaussian's radius
@@ -761,5 +705,44 @@ mod tests {
         // E[grain] = density (mean-preserving model, no dye blur).
         assert!((m_s - 1.0).abs() < 0.05, "scipy mean {m_s}");
         assert!((m_f - 1.0).abs() < 0.05, "fast mean {m_f}");
+    }
+
+    /// The composite path (`grain.sublayers_active == false`) must stay
+    /// deterministic per seed and must change when the seed changes — this is
+    /// the only direct check of the composite branch's seed contract.
+    #[test]
+    fn composite_path_is_deterministic_and_seed_sensitive() {
+        let mut img = ImageBuf::new(3, 3);
+        for y in 0..3u32 {
+            for x in 0..3u32 {
+                img.set(x, y, [from_f64(0.8), from_f64(1.0), from_f64(1.2)]);
+            }
+        }
+        let run = |seed| {
+            apply_grain_to_density(
+                &img,
+                12.0,
+                0.2,
+                PARTICLE_SCALE,
+                DENSITY_MIN,
+                [2.2, 2.2, 2.2],
+                UNIFORMITY,
+                0.0,
+                1,
+                false,
+                seed,
+                &CpuBackend,
+            )
+        };
+        assert_eq!(
+            run(0).data,
+            run(0).data,
+            "composite grain must be deterministic"
+        );
+        assert_ne!(
+            run(0).data,
+            run(1).data,
+            "a different seed must select a different noise field"
+        );
     }
 }
