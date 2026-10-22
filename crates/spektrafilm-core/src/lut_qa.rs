@@ -212,11 +212,11 @@ pub fn run(
 }
 
 fn effective_lut(bundle: &Bundle, print: &str) -> Result<Lut, String> {
-    let magazine = bundle.meta.provenance.contains_key("magazine_print_color");
+    let cmyk = bundle.meta.provenance.contains_key("cmyk_ink_v1");
     let mut chain = Vec::new();
     for (index, stage) in bundle.meta.topology.stages().iter().enumerate() {
         let stock = if stage.shared { None } else { Some(print) };
-        let expected_role = stage.effective_role(magazine);
+        let expected_role = stage.effective_role(cmyk);
         let candidates: Vec<_> = bundle
             .meta
             .luts
@@ -1690,11 +1690,11 @@ mod tests {
     use super::*;
     use crate::test_support::data_dir;
     #[test]
-    fn magazine_roles_follow_provenance_on_any_route() {
+    fn cmyk_roles_follow_provenance_on_any_route() {
         let mut bundle: Bundle = serde_json::from_value(json!({
             "spec": {"film_profile":"kodak_portra_400","print_profiles":["kodak_portra_endura"],"input_color_space":"sRGB","output_color_space":"sRGB","topology":"1lut"},
-            "luts": [["magazine.cube", {"resolution":2,"title":"magazine","table":grid(2)}]],
-            "meta": {"schema_version":1,"name":"magazine","topology":"1lut","resolution":2,"provenance":{},"stocks":{"film":"kodak_portra_400","prints":["kodak_portra_endura"]},"color_spaces":{"input":{"name":"sRGB","cctf":true},"output":{"name":"sRGB","cctf":true}},"wires":{},"luts":[{"role":"magazine_combined","path":"magazine.cube","domain":"input_rgb","range":"output_rgb","print_profile":"kodak_portra_endura"}],"input_exposure":null,"params_snapshot":{}}
+            "luts": [["cmyk.cube", {"resolution":2,"title":"cmyk","table":grid(2)}]],
+            "meta": {"schema_version":1,"name":"cmyk","topology":"1lut","resolution":2,"provenance":{},"stocks":{"film":"kodak_portra_400","prints":["kodak_portra_endura"]},"color_spaces":{"input":{"name":"sRGB","cctf":true},"output":{"name":"sRGB","cctf":true}},"wires":{},"luts":[{"role":"cmyk_combined","path":"cmyk.cube","domain":"input_rgb","range":"output_rgb","print_profile":"kodak_portra_endura"}],"input_exposure":null,"params_snapshot":{}}
         }))
         .unwrap();
         for route in [
@@ -1706,12 +1706,12 @@ mod tests {
             bundle
                 .meta
                 .provenance
-                .insert("magazine_print_color".into(), "included".into());
+                .insert("cmyk_ink_v1".into(), "included".into());
             assert_eq!(
                 effective_lut(&bundle, "kodak_portra_endura").unwrap().table,
                 grid(2)
             );
-            bundle.meta.provenance.remove("magazine_print_color");
+            bundle.meta.provenance.remove("cmyk_ink_v1");
             assert!(
                 effective_lut(&bundle, "kodak_portra_endura")
                     .unwrap_err()

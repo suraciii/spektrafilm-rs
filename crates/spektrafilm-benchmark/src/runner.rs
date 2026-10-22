@@ -411,7 +411,7 @@ fn source_render_command(command: &[String], folder: &Path) -> Result<Vec<String
         .ok_or_else(|| Error::new("source_evidence", "Missing output option"))?;
     source_command[output_index + 1] = folder.join("source.tif").to_string_lossy().into();
     source_command.extend([
-        "--set".into(), "io.output_color_space=ACES2065-1,io.output_cctf_encoding=false,magazine_print_color.active=false,film_render.grain.active=false,taps.inject=rgb_in,taps.collect=rgb_out".into(),
+        "--set".into(), "io.output_color_space=ACES2065-1,io.output_cctf_encoding=false,cmyk.active=false,film_render.grain.active=false,taps.inject=rgb_in,taps.collect=rgb_out".into(),
         "--raw-out".into(), folder.join("source.f64").to_string_lossy().into(),
         "--diagnostics".into(), folder.join("source-diagnostics.json").to_string_lossy().into(),
     ]);
@@ -441,13 +441,13 @@ fn resolve_source_configuration(
     if source_resolved["parameters"]["workflow"]["route"] != "input"
         || source_resolved["parameters"]["io"]["output_color_space"] != "ACES2065-1"
         || source_resolved["parameters"]["io"]["output_cctf_encoding"] != false
-        || source_resolved["parameters"]["magazine_print_color"]["active"] != false
+        || source_resolved["parameters"]["cmyk"]["active"] != false
         || source_resolved["parameters"]["taps"]["inject"] != "rgb_in"
         || source_resolved["parameters"]["taps"]["collect"] != "rgb_out"
     {
         return Err(Error::new(
             "source_configuration",
-            "Source route must resolve to input with linear ACES2065-1, magazine disabled, and RGB input/output taps",
+            "Source route must resolve to input with linear ACES2065-1, CMYK disabled, and RGB input/output taps",
         ));
     }
     common::dump(&folder.join("source-resolved.json"), &source_resolved)?;
@@ -795,6 +795,7 @@ fn unobserved_stage_context(reason: &str) -> Value {
     json!({
         "exposure": {"availability":"unavailable","reason":format!("{reason}; exposure unobserved")},
         "print_normalization": {"availability":"unavailable","reason":format!("{reason}; print normalization unobserved")},
+        "terminal_cmyk": {"availability":"not_applicable","reason":"not_recorded_on_route"},
         "stages": documents::STAGE_IDS.iter().map(|id| json!({"id":id,"availability":"unavailable","reason":format!("{reason}; stage {id} unobserved")})).collect::<Vec<_>>(),
     })
 }

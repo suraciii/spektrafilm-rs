@@ -25,6 +25,14 @@
 //!   bundle `execution_status: "failed"`.
 //! - Capture never mutates the render: it writes copies of boundary buffers
 //!   and fails visibly instead of substituting values.
+//!
+//! The terminal CMYK ink style appearance is not a spectral stage: it runs
+//! after `rgb_out` collection, before output mix and publication, on the same
+//! three-channel RGB buffer. Its evidence is therefore an independent
+//! `terminal_cmyk` manifest record, not a seventh [`StageId`] and not a
+//! seventh tap boundary. The record names the canonical `style`/`model`/
+//! `strength` and the explicit post-`rgb_out` boundary, and is published only
+//! when the runtime actually executed the stage.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -198,6 +206,13 @@ struct Statics {
     output_cctf_encoding: bool,
 }
 
+/// The canonical fixed model of the terminal CMYK ink style appearance.
+pub const CMYK_MODEL: &str = "cmyk_ink_v1";
+/// The canonical style name of the terminal CMYK ink appearance.
+pub const CMYK_STYLE: &str = "ink";
+/// The explicit post-`rgb_out` boundary the appearance runs on.
+pub const CMYK_BOUNDARY: &str = "post_rgb_out";
+
 /// In-memory recorder for one captured render; buffers are written as the
 /// boundaries are reached and [`StageCapture::publish`] writes the terminal
 /// manifest.
@@ -209,7 +224,21 @@ pub struct StageCapture {
     boundaries: BTreeMap<StageId, Boundary>,
     exposure_source: Option<ExposureSource>,
     compensation_applied: Option<f64>,
+    terminal_cmyk: Option<TerminalCmyk>,
     errors: Vec<String>,
+}
+
+/// The terminal CMYK ink style appearance as actually executed, or as
+/// explicitly not executed. Recorded after `rgb_out` collection; never a
+/// spectral stage and never carries a buffer. A skipped record keeps its
+/// identity through the stable reason code and carries no strength claim.
+#[derive(Debug, Clone)]
+struct TerminalCmyk {
+    executed: bool,
+    strength: f64,
+    output_color_space: String,
+    output_cctf_encoding: bool,
+    reason: &'static str,
 }
 
 impl StageCapture {
@@ -223,6 +252,7 @@ impl StageCapture {
             boundaries: BTreeMap::new(),
             exposure_source: None,
             compensation_applied: None,
+            terminal_cmyk: None,
             errors: Vec::new(),
         }
     }
@@ -259,6 +289,7 @@ impl StageCapture {
         self.boundaries.clear();
         self.exposure_source = None;
         self.compensation_applied = None;
+        self.terminal_cmyk = None;
         self.errors.clear();
         if let Some(id) = StageId::of_tap(inject) {
             let space = match inject {
@@ -326,6 +357,29 @@ impl StageCapture {
     /// multiplied into the film exposure.
     pub(crate) fn record_compensation(&mut self, ev: f64) {
         self.compensation_applied = Some(ev);
+    }
+
+    /// Record the terminal CMYK ink style appearance from the executed
+    /// render's actual parameters. The appearance is applied only when the
+    /// canonical group is active with positive strength; disabled and
+    /// strength-zero runs are explicitly `not_applicable` with a stable
+    /// reason, never a strength claim. The record reflects the terminal
+    /// RGB appearance, never a spectral stage.
+    pub(crate) fn record_terminal_cmyk_params(&mut self, params: &RuntimeParams) {
+        let strength = params.cmyk.strength.clamp(0.0, 1.0);
+        let executed = params.cmyk.active && params.cmyk.strength > 0.0;
+        let reason = if !params.cmyk.active {
+            "cmyk_not_active"
+        } else {
+            "cmyk_strength_zero"
+        };
+        self.terminal_cmyk = Some(TerminalCmyk {
+            executed,
+            strength,
+            output_color_space: params.io.output_color_space.clone(),
+            output_cctf_encoding: params.io.output_cctf_encoding,
+            reason,
+        });
     }
 
     /// Write the terminal manifest atomically and report whether the bundle
@@ -481,6 +535,22 @@ impl StageCapture {
             normalization_mode: "profile_prepared",
             exposure,
             print_normalization,
+            terminal_cmyk: match &self.terminal_cmyk {
+                Some(record) if record.executed => TerminalCmykRecord::Available {
+                    style: CMYK_STYLE,
+                    model: CMYK_MODEL,
+                    strength: record.strength.clamp(0.0, 1.0),
+                    boundary: CMYK_BOUNDARY,
+                    color_space: record.output_color_space.clone(),
+                    cctf_encoding: record.output_cctf_encoding,
+                },
+                Some(record) => TerminalCmykRecord::NotApplicable {
+                    reason: record.reason.to_string(),
+                },
+                None => TerminalCmykRecord::NotApplicable {
+                    reason: "not_recorded_on_route".to_string(),
+                },
+            },
             stages,
             errors,
         }
@@ -588,6 +658,7 @@ struct Manifest {
     normalization_mode: &'static str,
     exposure: ExposureRecord,
     print_normalization: PrintNormalizationRecord,
+    terminal_cmyk: TerminalCmykRecord,
     stages: Vec<StageRecord>,
     errors: Vec<String>,
 }
@@ -615,6 +686,26 @@ enum ExposureRecord {
 enum PrintNormalizationRecord {
     Available { value: f64, mode: &'static str },
     NotApplicable { reason: String },
+}
+
+/// The terminal CMYK ink style appearance as the executed render applied it,
+/// after `rgb_out` collection and before output mix. It is an appearance on
+/// the same three-channel RGB buffer, not a spectral stage: no buffer, no
+/// seventh [`StageId`], no CMY channel claim.
+#[derive(Serialize)]
+#[serde(tag = "availability", rename_all = "snake_case")]
+enum TerminalCmykRecord {
+    Available {
+        style: &'static str,
+        model: &'static str,
+        strength: f64,
+        boundary: &'static str,
+        color_space: String,
+        cctf_encoding: bool,
+    },
+    NotApplicable {
+        reason: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -791,6 +882,106 @@ mod tests {
         assert_eq!(exposure["applied_ev"], 1.75);
         assert_eq!(exposure["source_dimensions"], serde_json::json!([4, 3]));
         assert_eq!(manifest["print_normalization"]["value"], 2.5);
+    }
+
+    fn publish_captured(dir: &Path, record: Option<TerminalCmyk>) -> serde_json::Value {
+        let mut capture = StageCapture::new(dir);
+        capture.begin(
+            &capture_params(),
+            1.0,
+            Tap::RgbIn,
+            Tap::RgbOut,
+            &image(2, 2),
+        );
+        capture.record_boundary(StageId::LogEFilm, &image(2, 2), CoordinateSpace::Working);
+        capture.record_boundary(StageId::CmyFilm, &image(2, 2), CoordinateSpace::Working);
+        capture.record_boundary(StageId::LogEPrint, &image(2, 2), CoordinateSpace::Working);
+        capture.record_boundary(StageId::CmyPrint, &image(2, 2), CoordinateSpace::Working);
+        capture.record_boundary(StageId::RgbOut, &image(2, 2), CoordinateSpace::Output);
+        if let Some(record) = record {
+            capture.terminal_cmyk = Some(record);
+        }
+        capture.publish().unwrap();
+        manifest(dir)
+    }
+
+    fn terminal_cmyk(executed: bool, strength: f64, reason: &'static str) -> TerminalCmyk {
+        TerminalCmyk {
+            executed,
+            strength,
+            output_color_space: "sRGB".into(),
+            output_cctf_encoding: true,
+            reason,
+        }
+    }
+
+    #[test]
+    fn executed_terminal_cmyk_carries_canonical_identity_and_no_spectral_stage() {
+        // The appearance is a terminal RGB record, never a seventh StageId:
+        // the stage list stays at the six named boundaries.
+        let dir = temp_dir("terminal-cmyk-executed");
+        let manifest = publish_captured(&dir, Some(terminal_cmyk(true, 0.75, "cmyk_not_active")));
+        let terminal = &manifest["terminal_cmyk"];
+        assert_eq!(terminal["availability"], "available");
+        assert_eq!(terminal["style"], "ink");
+        assert_eq!(terminal["model"], "cmyk_ink_v1");
+        assert_eq!(terminal["strength"], 0.75);
+        assert_eq!(terminal["boundary"], "post_rgb_out");
+        assert_eq!(terminal["color_space"], "sRGB");
+        assert_eq!(terminal["cctf_encoding"], true);
+        // No buffer path is ever attached to the terminal appearance.
+        assert!(terminal.get("path").is_none());
+        assert!(terminal.get("layout").is_none());
+        assert!(terminal.get("sha256").is_none());
+        let stages = manifest["stages"].as_array().unwrap();
+        assert_eq!(stages.len(), 6);
+    }
+
+    #[test]
+    fn strength_is_clamped_into_the_declared_unit_interval() {
+        let dir = temp_dir("terminal-cmyk-clamped");
+        let manifest = publish_captured(&dir, Some(terminal_cmyk(true, 1.5, "cmyk_not_active")));
+        assert_eq!(manifest["terminal_cmyk"]["strength"], 1.0);
+        let manifest = publish_captured(&dir, Some(terminal_cmyk(true, -1.0, "cmyk_not_active")));
+        assert_eq!(manifest["terminal_cmyk"]["strength"], 0.0);
+    }
+
+    #[test]
+    fn inactive_terminal_cmyk_is_not_applicable_with_a_stable_reason() {
+        let dir = temp_dir("terminal-cmyk-disabled");
+        let manifest = publish_captured(&dir, Some(terminal_cmyk(false, 1.0, "cmyk_not_active")));
+        let terminal = &manifest["terminal_cmyk"];
+        assert_eq!(terminal["availability"], "not_applicable");
+        assert_eq!(terminal["reason"], "cmyk_not_active");
+        // A skipped record never claims a strength or a color interpretation.
+        assert!(terminal.get("strength").is_none());
+        assert!(terminal.get("style").is_none());
+        assert!(terminal.get("model").is_none());
+        assert!(terminal.get("boundary").is_none());
+        assert_eq!(manifest["execution_status"], "completed");
+    }
+
+    #[test]
+    fn strength_zero_terminal_cmyk_is_not_applicable_with_a_stable_reason() {
+        let dir = temp_dir("terminal-cmyk-zero");
+        let manifest =
+            publish_captured(&dir, Some(terminal_cmyk(false, 0.0, "cmyk_strength_zero")));
+        let terminal = &manifest["terminal_cmyk"];
+        assert_eq!(terminal["availability"], "not_applicable");
+        assert_eq!(terminal["reason"], "cmyk_strength_zero");
+        assert!(terminal.get("strength").is_none());
+        assert_eq!(manifest["execution_status"], "completed");
+    }
+
+    #[test]
+    fn missing_terminal_cmyk_record_stays_not_applicable_without_failing_the_bundle() {
+        let dir = temp_dir("terminal-cmyk-missing");
+        let manifest = publish_captured(&dir, None);
+        let terminal = &manifest["terminal_cmyk"];
+        assert_eq!(terminal["availability"], "not_applicable");
+        assert_eq!(terminal["reason"], "not_recorded_on_route");
+        assert_eq!(manifest["execution_status"], "completed");
+        assert!(manifest["errors"].as_array().unwrap().is_empty());
     }
 
     #[test]

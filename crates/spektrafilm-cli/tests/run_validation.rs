@@ -107,6 +107,7 @@ fn stage_bundle(bundle: &Path) -> Value {
         "normalization_mode": "profile_prepared",
         "exposure": {"availability":"available","auto_enabled":true,"method":"center_weighted","source_dimensions":[4,4],"metered_ev":0.5,"metered_ev_source":"measured","compensation_ev":0.25,"applied_ev":0.75,"gain":1.681792830507429},
         "print_normalization": {"availability":"available","value":1.0,"mode":"profile_prepared"},
+        "terminal_cmyk": {"availability":"not_applicable","reason":"cmyk_not_active"},
         "stages": stages,
         "errors": [],
     });
@@ -247,6 +248,7 @@ fn complete_run(root: &Path, capture: bool) {
             "normalization_mode",
             "exposure",
             "print_normalization",
+            "terminal_cmyk",
             "stages",
             "errors",
         ] {

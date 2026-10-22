@@ -111,7 +111,7 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
         ],
         &[],
     ),
-    ("Magazine finish color", &["magazine_print_color"], &[]),
+    ("CMYK ink style", &["cmyk"], &[]),
     (
         "Crop and upscale",
         &[

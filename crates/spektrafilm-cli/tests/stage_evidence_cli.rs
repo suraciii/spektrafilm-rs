@@ -113,6 +113,12 @@ fn stage_evidence_bundle_matches_raw_out_and_capture_off_output() {
     assert_eq!(manifest["execution_status"], "completed");
     assert_eq!(manifest["normalization_mode"], "profile_prepared");
     assert!(manifest["errors"].as_array().unwrap().is_empty());
+
+    let terminal = &manifest["terminal_cmyk"];
+    assert_eq!(terminal["availability"], "not_applicable");
+    assert_eq!(terminal["reason"], "cmyk_not_active");
+    assert!(terminal.get("strength").is_none());
+    assert!(terminal.get("path").is_none());
     for id in [
         "rgb_in",
         "log_e_film",

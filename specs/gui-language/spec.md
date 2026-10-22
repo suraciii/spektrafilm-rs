@@ -97,6 +97,8 @@ The GUI must distinguish these boundaries:
 
 The GUI must keep `CCTF` when it names the transfer-function setting. The first relevant help text must expand it as `color component transfer function`. The GUI must not replace it with a phrase that hides whether the samples are encoded or linear.
 
+The GUI must call the terminal modeled appearance `CMYK ink style`. Its help must state that the result remains three-channel RGB and is not a press proof or a separation. `Strength` is reserved for `cmyk.strength`; the control must not expose paper, ink, TAC, GCR, UCR, halftone, texture, or registration parameters.
+
 The GUI must keep `Simulation blend` as the name of the full-result/prepared-source mix. It must not rename it to opacity, intensity, saturation, or strength.
 
 The GUI must keep `Print viewing glare`, `Lens blur (readout optics)`, `Unsharp mask (digital sharpening)`, material grain, and Procedural post-scan grain distinct. Similar visual effects must not share a label that implies the same physical stage.

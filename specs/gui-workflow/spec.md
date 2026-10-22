@@ -36,7 +36,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 - A numeric editor must offer a usable range and step, and must not accept a value the parameter validator rejects. [Numeric editor ranges](#numeric-editor-ranges) owns both rules.
 - Preview computation and viewer composition run outside the UI thread. Queued requests retain only the latest snapshot. Results from older requests, input images, or parameter revisions must not replace current output.
 - The viewer retains the last completed frame while new composition runs. The development animation is fixed viewer behaviour under [Viewer presentation](#viewer-presentation).
-- Base workflow selection and optional finishing controls must follow the [Magazine finishing enablement contract](../magazine-finishing/spec.md#enablement).
+- Base workflow selection and optional CMYK ink style controls must follow the [CMYK ink style enablement contract](../cmyk-style/spec.md#enablement).
 - The workflow selector must offer exactly the routes the workflow validator supports.
 - MAIN → Camera exposes `camera.capture_illuminant` as a single optional text or selector control that writes the canonical runtime leaf. Its semantics, inheritance, and validation follow the [capture illuminant contract](../image-input/spec.md#capture-illuminant). An unset value must be selectable and must display the inherited value — the selected film profile's `reference_illuminant` — as the effective value, so the control never hides which light the render assumes. The control must not offer a value the shared illuminant validator rejects and must not derive a value from image content or RAW metadata. It must be labeled with the product concept, for example `Capture illuminant`, and must be distinguished from the enlarger illuminant in MAIN → Enlarger and the scan illuminant in FILM → Convert. A route that computes no film exposure from scene RGB must state that the control is inactive and retain its stored value. The control and the canonical CLI `--set` path must share one type, validator, and effect conditions.
 - The capture illuminant control belongs to the Camera section. It must not be duplicated on another page, and no second surface may edit the same leaf.
@@ -82,8 +82,7 @@ The existing grain selector must retain its stable engine names and preset secti
 
 Each page owns one stage of the workflow. A visible section belongs to exactly one page.
 
-MAIN owns image intake and the delivered look. It holds Import RGB, Import Raw, Crop and upscale, Input, Camera, Profiles, Enlarger, Scanner, Output, and Export options.
-
+MAIN owns image intake and the delivered look. It holds Import RGB, Import Raw, Crop and upscale, Input, Camera, Profiles, Enlarger, Scanner, CMYK ink style, Output, and Export options.
 FILM owns the film material. It holds Chemistry for film, Film base, Halation, Couplers, Grain, Camera diffusion, and Convert.
 
 PRINT owns the print material. It holds Chemistry for print, Print base, Glare, and Enlarger diffusion.

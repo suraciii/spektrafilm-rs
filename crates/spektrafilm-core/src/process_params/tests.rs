@@ -661,6 +661,8 @@ fn current_params_reject_invalid_mix_and_retirement_before_overrides() {
     for value in [
         serde_json::json!({"output_mix":{"amount":1.1}}),
         serde_json::json!({"io":{"output_gamut_compress":{"algorithm":"off","lightness_compression":null}}}),
+        serde_json::json!({"magazine_print_color":{"active":true}}),
+        serde_json::json!({"workflow":{"route":"input > film > scan > magazine"}}),
     ] {
         let text = value.to_string();
         std::fs::write(&path, &text).unwrap();
@@ -671,6 +673,9 @@ fn current_params_reject_invalid_mix_and_retirement_before_overrides() {
         assert!(
             error.contains("output_mix.amount")
                 || error.contains("io.output_gamut_compress.lightness_compression")
+                || error.contains("magazine_print_color")
+                || error.contains("cmyk.active = true"),
+            "unexpected error: {error}"
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
     }

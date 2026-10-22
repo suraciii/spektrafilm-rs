@@ -1729,12 +1729,12 @@ fn output_transfer_decode_pipe_tail_matches_cpu() {
     );
 }
 
-/// The magazine appearance runs on the device as the last pipe-tail
+/// The cmyk appearance runs on the device as the last pipe-tail
 /// pass (pipe architecture, S4): the whole post-scan finishing is on
 /// the GPU, so GPU and CPU agree under the standard budget with the
-/// magazine active.
+/// cmyk active.
 #[test]
-fn magazine_pipe_tail_matches_cpu() {
+fn cmyk_pipe_tail_matches_cpu() {
     use spektrafilm_math::precision::from_f64;
 
     let gpu = spektrafilm_gpu::test_support::adapter();
@@ -1749,8 +1749,8 @@ fn magazine_pipe_tail_matches_cpu() {
     params.camera.auto_exposure = false;
     params.io.output_gamut_compress.algorithm = "off".into();
     params.film_render.grain.active = false;
-    params.magazine_print_color.active = true;
-    params.magazine_print_color.strength = 1.0;
+    params.cmyk.active = true;
+    params.cmyk.strength = 1.0;
 
     let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
     let (w, h) = (16u32, 16u32);
@@ -1772,19 +1772,19 @@ fn magazine_pipe_tail_matches_cpu() {
         sum += d;
     }
     let mean = sum / out_cpu.data.len() as f64;
-    assert!(mean < 5e-2, "magazine mean divergence: {mean}");
-    assert!(max_diff < 5e-1, "magazine max divergence: {max_diff}");
+    assert!(mean < 5e-2, "cmyk mean divergence: {mean}");
+    assert!(max_diff < 5e-1, "cmyk max divergence: {max_diff}");
 }
 
-/// Procedural grain, a linear export, and the magazine tail together.
-/// The CPU route applies the magazine in the encoded domain and decodes
-/// afterwards; the resident chain decodes before the magazine pass, so
+/// Procedural grain, a linear export, and the cmyk tail together.
+/// The CPU route applies the cmyk in the encoded domain and decodes
+/// afterwards; the resident chain decodes before the cmyk pass, so
 /// the two orders differ by the transfer round-trip only (measured mean
 /// 7e-6, max 4.9e-4 against the reference on lavapipe) and this
 /// combination must stay inside the same budget as the
 /// single-dimension tail tests.
 #[test]
-fn procedural_grain_linear_export_with_magazine_matches_cpu() {
+fn procedural_grain_linear_export_with_cmyk_matches_cpu() {
     use spektrafilm_math::precision::from_f64;
 
     let gpu = spektrafilm_gpu::test_support::adapter();
@@ -1800,8 +1800,8 @@ fn procedural_grain_linear_export_with_magazine_matches_cpu() {
     params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
     params.camera.auto_exposure = false;
     params.io.output_gamut_compress.algorithm = "off".into();
-    params.magazine_print_color.active = true;
-    params.magazine_print_color.strength = 1.0;
+    params.cmyk.active = true;
+    params.cmyk.strength = 1.0;
 
     let pipeline =
         Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir).unwrap();
@@ -1822,18 +1822,18 @@ fn procedural_grain_linear_export_with_magazine_matches_cpu() {
     let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
     assert!(
         mean < 5e-2 && max_diff < 5e-1,
-        "procedural linear magazine tail: mean={mean:.6} max={max_diff:.6}"
+        "procedural linear cmyk tail: mean={mean:.6} max={max_diff:.6}"
     );
 
-    // The magazine must be observable, so the comparison is not vacuous.
+    // The cmyk must be observable, so the comparison is not vacuous.
     let mut off = params;
-    off.magazine_print_color.active = false;
+    off.cmyk.active = false;
     let without = Pipeline::new_with_spectral(film, print, off, &dir).unwrap();
     let out_without = without
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (effect, _) = parity_metrics(&out_cpu, &out_without);
-    assert!(effect > 1e-3, "magazine had no effect: mean={effect:.6}");
+    assert!(effect > 1e-3, "cmyk had no effect: mean={effect:.6}");
 }
 
 #[test]

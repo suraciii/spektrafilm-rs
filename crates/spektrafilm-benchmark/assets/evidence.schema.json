@@ -48,8 +48,48 @@
         "required": ["id", "path", "sha256", "availability"],
         "additionalProperties": false
       }
+    },
+    "terminal_cmyk": {
+      "type": "object",
+      "description": "The terminal CMYK ink style appearance as the executed render applied it, after rgb_out collection and before output mix. It is an appearance on the same three-channel RGB buffer, never a spectral stage: no buffer, no seventh stage id, no CMY channel claim. Available only when the runtime actually executed the stage; disabled and strength-zero runs stay not_applicable with a stable reason and carry no strength claim.",
+      "properties": {
+        "availability": {
+          "type": "string",
+          "enum": ["available", "not_applicable"]
+        },
+        "style": {
+          "type": "string",
+          "enum": ["ink"]
+        },
+        "model": {
+          "type": "string",
+          "enum": ["cmyk_ink_v1"]
+        },
+        "strength": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "boundary": {
+          "type": "string",
+          "enum": ["post_rgb_out"]
+        },
+        "color_space": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cctf_encoding": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$"
+        }
+      },
+      "required": ["availability"],
+      "additionalProperties": false
     }
   },
-  "required": ["schema_version", "execution_status", "host_precision", "stages"],
+  "required": ["schema_version", "execution_status", "host_precision", "stages", "terminal_cmyk"],
   "additionalProperties": false
 }

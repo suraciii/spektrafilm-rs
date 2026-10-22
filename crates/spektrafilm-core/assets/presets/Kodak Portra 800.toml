@@ -1,4 +1,4 @@
-schema_version = 4
+schema_version = 5
 name = "Kodak Portra 800"
 author = "SpektraFilm"
 description = "SpektraFilm Portra 800 look; the hanatos2025 adaptation surface is fitted from Color Precision Portra 800 chart scans and the positive-scan timing is tuned on the default film-scan appearance"

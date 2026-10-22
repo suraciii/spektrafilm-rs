@@ -9,11 +9,12 @@ use std::path::Path;
 
 pub const IMPLEMENTATION: &str = "spektrafilm-rs";
 pub const ADAPTER_VERSION: &str = "spektrafilm-rs-adapter-1";
-pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-4";
+pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-5";
 const LEGACY_PARAMETER_SCHEMA_VERSIONS: &[&str] = &[
     "spektrafilm-rs-params-1",
     "spektrafilm-rs-params-2",
     "spektrafilm-rs-params-3",
+    "spektrafilm-rs-params-4",
 ];
 pub const FORK_REFERENCE: &str = "suraciii/spektrafilm-rs";
 pub const FINISHED_JPEG_QUALITY: u8 = 85;
@@ -252,7 +253,7 @@ pub fn describe() -> Value {
         "scanner",
         "film_render",
         "print_render",
-        "magazine_print_color",
+        "cmyk",
         "io",
         "settings",
         "debug",

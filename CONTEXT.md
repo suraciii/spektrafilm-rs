@@ -45,7 +45,12 @@ _Avoid_: Unprocessed film color, physical ground truth
 _Avoid_: Receiver calibration, film development
 
 **Scanner finishing**: An optional color and tone appearance applied after negative conversion.
+
 _Avoid_: Negative conversion, scan receiver
+
+**CMYK ink style**: A modeled RGB appearance that suggests a fixed ink-on-paper grade. It runs after scanner interpretation, scanner finishing, output gamut processing, unsharp masking, transfer encoding, and Procedural grain. It remains three-channel RGB and does not produce CMYK separations, press-ready output, or an ICC press workflow.
+
+_Avoid_: Magazine finish, Printing, photographic paper, press proof, physical print
 
 **Lab Scan**: A modeled minilab-style digital delivery of a simulated negative. Receiver acquisition, conversion, automatic scan setup, and scanner finishing are separate parts of that delivery.
 _Avoid_: Measured Frontier profile, measured Noritsu profile

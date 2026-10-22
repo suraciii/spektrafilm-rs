@@ -71,9 +71,9 @@ impl Stage {
             self.collect.name()
         }
     }
-    pub fn effective_role(&self, magazine: bool) -> std::borrow::Cow<'_, str> {
-        if magazine && self.collect == Tap::RgbOut {
-            std::borrow::Cow::Owned(format!("magazine_{}", self.role))
+    pub fn effective_role(&self, cmyk: bool) -> std::borrow::Cow<'_, str> {
+        if cmyk && self.collect == Tap::RgbOut {
+            std::borrow::Cow::Owned(format!("cmyk_{}", self.role))
         } else {
             std::borrow::Cow::Borrowed(self.role.as_ref())
         }

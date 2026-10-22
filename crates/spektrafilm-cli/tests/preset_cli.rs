@@ -944,7 +944,7 @@ fn dry_run_reports_runtime_route_and_monochrome_normalization() {
 }
 
 #[test]
-fn magazine_enabled_preserves_preset_profiles_and_selects_direct_scan_without_preset() {
+fn cmyk_enabled_preserves_preset_profiles_and_selects_direct_scan_without_preset() {
     let f = Fixture::new();
     for selector in [
         ["--film", "kodak_portra_400"],
@@ -956,14 +956,11 @@ fn magazine_enabled_preserves_preset_profiles_and_selects_direct_scan_without_pr
             "--route",
             "input > film > scan",
             "--set",
-            "magazine_print_color.active=true,magazine_print_color.strength=0.75",
+            "cmyk.active=true,cmyk.strength=0.75",
             "--dry-run",
         ]);
         assert_eq!(report["parameters"]["io"]["scan_film"], true);
-        assert_eq!(
-            report["parameters"]["magazine_print_color"]["strength"],
-            0.75
-        );
+        assert_eq!(report["parameters"]["cmyk"]["strength"], 0.75);
         assert_eq!(
             report["print_profile"],
             if selector[0] == "--preset" {
@@ -979,18 +976,18 @@ fn magazine_enabled_preserves_preset_profiles_and_selects_direct_scan_without_pr
         "--route",
         "input > film > scan",
         "--set",
-        "magazine_print_color.strength=1.1",
+        "cmyk.strength=1.1",
         "--set",
-        "magazine_print_color.strength=0.75",
+        "cmyk.strength=0.75",
         "--dry-run",
     ]);
     assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("magazine_print_color.strength"));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cmyk.strength"));
     assert!(!f.root.join("output.tif").exists());
 }
 
 #[test]
-fn finished_input_dry_run_preserves_profiles_with_independent_magazine() {
+fn finished_input_dry_run_preserves_profiles_with_independent_cmyk() {
     let f = Fixture::new();
     let report = f.report(&[
         "--film",
@@ -998,17 +995,14 @@ fn finished_input_dry_run_preserves_profiles_with_independent_magazine() {
         "--route",
         "input",
         "--set",
-        "magazine_print_color.active=true,magazine_print_color.strength=0.75",
+        "cmyk.active=true,cmyk.strength=0.75",
         "--dry-run",
     ]);
     assert_eq!(report["film_profile"], "kodak_portra_400");
     assert_eq!(report["print_profile"], "kodak_portra_endura");
     assert_eq!(report["parameters"]["workflow"]["route"], "input");
-    assert_eq!(report["parameters"]["magazine_print_color"]["active"], true);
-    assert_eq!(
-        report["parameters"]["magazine_print_color"]["strength"],
-        0.75
-    );
+    assert_eq!(report["parameters"]["cmyk"]["active"], true);
+    assert_eq!(report["parameters"]["cmyk"]["strength"], 0.75);
 }
 
 #[test]
@@ -1024,10 +1018,7 @@ fn removed_magazine_route_reports_migration_before_profiles_load() {
     assert!(!result.status.success());
     let error = String::from_utf8_lossy(&result.stderr);
     assert!(error.contains("input > film > scan"), "{error}");
-    assert!(
-        error.contains("magazine_print_color.active = true"),
-        "{error}"
-    );
+    assert!(error.contains("cmyk.active = true"), "{error}");
 }
 
 #[test]
@@ -1054,10 +1045,7 @@ fn saved_magazine_route_requires_migration_even_with_route_override() {
     assert!(!result.status.success());
     let error = String::from_utf8_lossy(&result.stderr);
     assert!(error.contains("input > film > scan"), "{error}");
-    assert!(
-        error.contains("magazine_print_color.active = true"),
-        "{error}"
-    );
+    assert!(error.contains("cmyk.active = true"), "{error}");
 }
 
 #[test]

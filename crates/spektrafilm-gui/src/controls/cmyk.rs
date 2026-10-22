@@ -9,16 +9,16 @@ pub(crate) fn sections(
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
 ) {
-    if section == "Magazine finish color" {
+    if section == "CMYK ink style" {
         section_header(ui, filter, section, |ui, filter| {
-            let magazine = &mut params.magazine_print_color;
+            let cmyk = &mut params.cmyk;
             if filter_matches(filter, "strength") {
                 flags.runtime_changed |= param_numeric(
                     ui,
                     "strength",
-                    &mut magazine.strength,
-                    "magazine_print_color.strength",
-                    "Magazine finish appearance strength.",
+                    &mut cmyk.strength,
+                    "cmyk.strength",
+                    "CMYK ink style appearance strength.",
                 );
             }
         });

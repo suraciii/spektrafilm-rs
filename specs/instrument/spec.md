@@ -403,7 +403,7 @@ Each case result must identify case identity, seed, terminal status, input and o
 
 Each completed case must retain the full executed simulation command, including numerical-output, diagnostics, and requested stage-evidence arguments. The source-only command must remain separate. Required source evidence must remain required even when both source-master fields are absent; a valid manifest digest does not establish semantic completeness.
 
-Completed runs must retain a floating `source_raw` with `source_raw_metadata` from the real renderer's input route, including source color interpretation and observed dimensions. The input route must use the same RAW decoding options and case-owned geometry as simulation, force output to linear ACES2065-1, disable the independent magazine finishing treatment, and force `taps.inject=rgb_in` and `taps.collect=rgb_out`. Source configuration and observed diagnostics must remain retained dependencies of an input comparison. Original source dimensions and preparation metadata must remain separately identified. Input output geometry must be checked before declaring pixelwise correspondence with simulation.
+Completed runs must retain a floating `source_raw` with `source_raw_metadata` from the real renderer's input route, including source color interpretation and observed dimensions. The input route must use the same RAW decoding options and case-owned geometry as simulation, force output to linear ACES2065-1, disable the independent CMYK ink style, and force `taps.inject=rgb_in` and `taps.collect=rgb_out`. Source configuration and observed diagnostics must remain retained dependencies of an input comparison. Original source dimensions and preparation metadata must remain separately identified. Input output geometry must be checked before declaring pixelwise correspondence with simulation.
 
 Completed case artifact references must be objects with an indexed `path`. A malformed required reference must return a structured command failure.
 
@@ -499,7 +499,7 @@ Both configuration objects must set `route` to `input > film > print > scan` and
   "camera.film_format_mm=35",
   "scanner.auto_setup=off",
   "scanner.finish=neutral",
-  "magazine_print_color.active=false",
+  "cmyk.active=false",
   "io.output_color_space=sRGB",
   "io.output_cctf_encoding=true",
   "io.crop=false",

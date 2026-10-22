@@ -1,4 +1,4 @@
-schema_version = 4
+schema_version = 5
 name = "Fujifilm Provia 100F"
 author = "SpektraFilm"
 description = "SpektraFilm classic stock look"

@@ -324,6 +324,72 @@ pub fn validate_stage_bundle(bundle_dir: &Path) -> Result<StageBundle> {
         }
     }
 
+    // Terminal CMYK ink style: the post-rgb_out RGB appearance, never a
+    // spectral stage. It carries no buffer and is available only when the
+    // runtime actually executed the stage; disabled and strength-zero runs
+    // keep their identity through a stable snake_case reason and no values.
+    let terminal_cmyk = obj(req(root, "terminal_cmyk")?)?;
+    let cmyk_availability = availability_of(&document["terminal_cmyk"], "terminal_cmyk")?;
+    if cmyk_availability == "available" {
+        if terminal_cmyk.get("reason").is_some() {
+            return Err(err(
+                "stage_evidence",
+                "terminal_cmyk available record must not carry a reason",
+            ));
+        }
+        if terminal_cmyk.get("style") != Some(&json!("ink"))
+            || terminal_cmyk.get("model") != Some(&json!("cmyk_ink_v1"))
+            || terminal_cmyk.get("boundary") != Some(&json!("post_rgb_out"))
+        {
+            return Err(err(
+                "stage_evidence",
+                "terminal_cmyk must declare the canonical style, model and post-rgb_out boundary",
+            ));
+        }
+        let strength = finite_number(&document["terminal_cmyk"], "terminal_cmyk", "strength")?;
+        if !(0.0..=1.0).contains(&strength) {
+            return Err(err(
+                "stage_evidence",
+                "terminal_cmyk.strength must be one finite number in 0..=1",
+            ));
+        }
+        if terminal_cmyk["color_space"]
+            .as_str()
+            .is_none_or(|space| space.is_empty())
+            || terminal_cmyk["cctf_encoding"].as_bool().is_none()
+        {
+            return Err(err(
+                "stage_evidence",
+                "terminal_cmyk must carry its output color interpretation",
+            ));
+        }
+    } else {
+        require_reason_only(
+            &document["terminal_cmyk"],
+            "terminal_cmyk",
+            &[
+                "style",
+                "model",
+                "strength",
+                "boundary",
+                "color_space",
+                "cctf_encoding",
+            ],
+        )?;
+        // Reasons are stable codes, not prose.
+        let reason = terminal_cmyk["reason"].as_str().unwrap();
+        if reason.is_empty()
+            || !reason
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        {
+            return Err(err(
+                "stage_evidence",
+                "terminal_cmyk requires a stable snake_case reason code",
+            ));
+        }
+    }
+
     // Stages: the six named boundaries in fixed order, each exactly once.
     let stages = root["stages"].as_array().ok_or_else(|| {
         err(
@@ -524,6 +590,7 @@ pub fn validate_stage_bundle(bundle_dir: &Path) -> Result<StageBundle> {
                 "normalization_mode",
                 "exposure",
                 "print_normalization",
+                "terminal_cmyk",
                 "stages",
                 "errors",
             ]

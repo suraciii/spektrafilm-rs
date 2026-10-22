@@ -29,8 +29,8 @@ pub(super) enum Condition {
     LabScanFinish,
     FilmScan,
     DigitalReference,
-    MagazineActive,
-    MagazineStrength,
+    CmykActive,
+    CmykStrength,
     FilmDevelopment,
     PrintDevelopment,
     Preflash,
@@ -79,8 +79,8 @@ impl Condition {
             Self::LabScanFinish => "scanner.finish = lab_scan",
             Self::FilmScan => "film-scan route",
             Self::DigitalReference => "scanner.negative_conversion_method = digital_reference",
-            Self::MagazineActive => "magazine_print_color.active = true",
-            Self::MagazineStrength => "magazine_print_color.strength > 0",
+            Self::CmykActive => "cmyk.active = true",
+            Self::CmykStrength => "cmyk.strength > 0",
             Self::FilmDevelopment => {
                 "actual Film development route; captured negatives and Finished RGB are not redeveloped"
             }
@@ -151,8 +151,8 @@ impl Condition {
                 p.scanner.negative_conversion_method
                     == crate::params::NegativeConversionMethod::DigitalReference
             }
-            Self::MagazineActive => p.magazine_print_color.active,
-            Self::MagazineStrength => p.magazine_print_color.strength > 0.0,
+            Self::CmykActive => p.cmyk.active,
+            Self::CmykStrength => p.cmyk.strength > 0.0,
             Self::FilmDevelopment => matches!(
                 p.workflow.route.as_str(),
                 "input > film > scan" | "input > film > print > scan"
@@ -287,12 +287,13 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         out.push(NegativeToPositive);
     } else if path == "camera.capture_illuminant" {
         out.push(CaptureIlluminant);
-    } else if path.starts_with("magazine_print_color.") {
-        out.push(if path.ends_with(".strength") {
-            MagazineActive
+    } else if path.starts_with("cmyk.") {
+        if path.ends_with(".strength") {
+            out.push(CmykActive);
+            out.push(CmykStrength);
         } else {
-            MagazineStrength
-        });
+            out.push(CmykActive);
+        }
     }
     out
 }

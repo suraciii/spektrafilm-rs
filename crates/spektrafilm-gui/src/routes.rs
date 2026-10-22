@@ -215,7 +215,7 @@ pub(crate) fn tooltip() -> &'static str {
             .collect::<Vec<_>>()
             .join(" ");
         format!(
-            "Which physical path the image takes through the pipeline: {routes} Magazine finish can be enabled independently for every workflow."
+            "Which physical path the image takes through the pipeline: {routes} CMYK ink style can be enabled independently for every workflow."
         )
     });
     &TOOLTIP

@@ -357,8 +357,8 @@ pub fn bundle_readme_text(meta: &BundleMeta) -> String {
         }
     }
     s.push_str("\n## Apply order\n\n");
-    if meta.provenance.contains_key("magazine_print_color") {
-        s.push_str("Apply the stages in the declared topology; the final `magazine_*` RGB LUT includes the bundled magazine print color appearance.\n");
+    if meta.provenance.contains_key("cmyk_ink_v1") {
+        s.push_str("Apply the stages in the declared topology; the final `cmyk_*` RGB LUT includes the bundled CMYK ink style appearance.\n");
     } else {
         s.push_str(match meta.topology {
             Topology::One => "Apply the combined LUT for the chosen print in the declared input and output encodings.\n",
@@ -515,7 +515,7 @@ mod tests {
         ))
     }
     #[test]
-    fn magazine_instructions_follow_provenance_on_any_route() {
+    fn cmyk_instructions_follow_provenance_on_any_route() {
         let mut meta = fixture(None).meta;
         for route in [
             "input",
@@ -524,10 +524,10 @@ mod tests {
         ] {
             meta.workflow_route = route.into();
             meta.provenance
-                .insert("magazine_print_color".into(), "included".into());
-            assert!(bundle_readme_text(&meta).contains("final `magazine_*` RGB LUT"));
-            meta.provenance.remove("magazine_print_color");
-            assert!(!bundle_readme_text(&meta).contains("final `magazine_*` RGB LUT"));
+                .insert("cmyk_ink_v1".into(), "included".into());
+            assert!(bundle_readme_text(&meta).contains("final `cmyk_*` RGB LUT"));
+            meta.provenance.remove("cmyk_ink_v1");
+            assert!(!bundle_readme_text(&meta).contains("final `cmyk_*` RGB LUT"));
         }
     }
     #[test]

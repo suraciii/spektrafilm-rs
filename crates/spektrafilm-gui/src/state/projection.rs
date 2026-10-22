@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 use spektrafilm_core::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams};
 
 use super::{
-    ENLARGER_SIMULATION_ALIASES, GuiState, canonicalize_grain_state, copy_fields, merge,
-    overlay_runtime, translate_legacy_print_exposure,
+    CURRENT_STATE_VERSION, ENLARGER_SIMULATION_ALIASES, GuiState, canonicalize_grain_state,
+    copy_fields, merge, overlay_runtime, translate_legacy_print_exposure,
 };
 
 const INPUT_IO: &[&str] = &[
@@ -47,10 +47,7 @@ impl GuiState {
         for group in ["camera", "scanner"] {
             merge(&mut runtime[group], &s[group]);
         }
-        merge(
-            &mut runtime["magazine_print_color"],
-            &s["magazine_print_color"],
-        );
+        merge(&mut runtime["cmyk"], &s["cmyk"]);
         for &(section, group, leaf) in RUNTIME_GROUPS {
             merge(&mut runtime[group][leaf], &s[section]);
         }
@@ -320,10 +317,7 @@ impl GuiState {
                 .as_str()
                 .unwrap_or("direct_scan")
         );
-        merge(
-            &mut s["magazine_print_color"],
-            &runtime["magazine_print_color"],
-        );
+        merge(&mut s["cmyk"], &runtime["cmyk"]);
         for &(section, group, leaf) in RUNTIME_GROUPS {
             merge(&mut s[section], &runtime[group][leaf]);
         }
@@ -377,7 +371,7 @@ impl GuiState {
                 }
             }
         }
-        s["rust"]["version"] = json!(3);
+        s["rust"]["version"] = json!(CURRENT_STATE_VERSION);
         s["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         s["rust"]["scanner_provenance"] = serde_json::to_value(

@@ -1034,10 +1034,9 @@ fn scan_with_reference(
             params.film_render.grain.engine,
             crate::params::grain::GrainEngine::Procedural
         );
-    // Magazine appearance is optional finishing, not a route: it applies to
+    // CMYK ink style is optional finishing, not a route: it applies to
     // any scanned base workflow after the scanner-domain effects.
-    let magazine_active =
-        params.magazine_print_color.active && params.magazine_print_color.strength > 0.0;
+    let cmyk_active = params.cmyk.active && params.cmyk.strength > 0.0;
     let encoded_domain = params.io.output_cctf_encoding || grain_v2_active;
     if encoded_domain {
         let _encoding = super::StageObservation::cpu(
@@ -1074,21 +1073,16 @@ fn scan_with_reference(
             spektrafilm_model::grain::v2::apply_cpu(&rgb, grain)
         });
     }
-    // Magazine color is the final post-scan appearance, after scanner-domain
+    // CMYK ink style is the final post-scan appearance, after scanner-domain
     // grain. A linear export uses the helper's finite transfer round-trip and
     // remains linear at the API boundary.
-    if magazine_active {
-        let _magazine = super::StageObservation::cpu(
+    if cmyk_active {
+        let _cmyk = super::StageObservation::cpu(
             backend,
-            "magazine_print_color",
+            "cmyk",
             spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
-        crate::magazine_print_color::apply(
-            &mut rgb,
-            &params.magazine_print_color,
-            output_space,
-            encoded_domain,
-        );
+        crate::cmyk::apply(&mut rgb, &params.cmyk, output_space, encoded_domain);
     }
     // Linear exports retain the same grain realization as encoded exports.
     // Decode only the transfer; the stored same-space matrix ran above once.

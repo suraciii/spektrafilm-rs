@@ -459,11 +459,11 @@ pub struct FilmChainParams<'a> {
     /// transfer; decode restores linear for a Procedural-grain output when
     /// the caller requested no encoding.
     pub output_transfer: Option<OutputTransferGpuParams>,
-    /// Optional magazine print appearance pass on the final buffer after
-    /// the output transfer (pipe architecture, S4). The residual host
-    /// finishing moves onto the device; the input state is encoded exactly
-    /// when the caller requested output encoding.
-    pub magazine: Option<MagazineGpuParams>,
+    /// Optional CMYK ink style pass on the final buffer after the output
+    /// transfer (pipe architecture, S4). The residual host finishing moves
+    /// onto the device; the input state is encoded exactly when the caller
+    /// requested output encoding.
+    pub cmyk: Option<CmykGpuParams>,
 }
 
 /// One pipe-tail transfer pass (pipe architecture, S4).
@@ -477,8 +477,8 @@ pub struct OutputTransferGpuParams {
     pub matrix: [[f32; 3]; 3],
 }
 
-/// One pipe-tail magazine appearance pass (pipe architecture, S4).
-pub struct MagazineGpuParams {
+/// One pipe-tail CMYK ink style pass (pipe architecture, S4).
+pub struct CmykGpuParams {
     /// Mix strength, clamped to 0..=1 by the caller.
     pub strength: f32,
     /// Input/output state: true when the buffer carries encoded samples.
@@ -490,12 +490,6 @@ pub struct MagazineGpuParams {
     pub to_lab: [[f32; 3]; 3],
     /// CIELAB D50 → destination RGB.
     pub from_lab: [[f32; 3]; 3],
-    /// Tone-curve input knots in CIELAB L*.
-    pub tone_in: [f32; 10],
-    /// Tone-curve output knots in CIELAB L*.
-    pub tone_out: [f32; 10],
-    /// Tone-curve Hermite slopes.
-    pub tone_slopes: [f32; 10],
 }
 
 impl FilmChainParams<'_> {

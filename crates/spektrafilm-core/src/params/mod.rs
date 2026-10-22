@@ -419,13 +419,13 @@ impl Default for ConvertFilmParams {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct MagazinePrintColorParams {
+pub struct CmykParams {
     #[serde(default)]
     pub active: bool,
     #[serde(default = "default_one_f64")]
     pub strength: f64,
 }
-impl Default for MagazinePrintColorParams {
+impl Default for CmykParams {
     fn default() -> Self {
         Self {
             active: false,
@@ -979,7 +979,7 @@ pub struct RuntimeParams {
     #[serde(default)]
     pub workflow: WorkflowParams,
     #[serde(default)]
-    pub magazine_print_color: MagazinePrintColorParams,
+    pub cmyk: CmykParams,
     #[serde(default)]
     pub output_mix: OutputMixParams,
     #[serde(default)]
@@ -1445,5 +1445,29 @@ mod tests {
                 assert_eq!(restored.film_render.grain.engine, engine);
             }
         }
+    }
+
+    #[test]
+    fn cmyk_params_default_and_roundtrip() {
+        let params = super::RuntimeParams::default();
+        assert!(!params.cmyk.active);
+        assert_eq!(params.cmyk.strength, 1.0);
+        // Serialization uses the canonical `cmyk` group name.
+        let value = serde_json::to_value(&params).unwrap();
+        assert_eq!(value["cmyk"]["active"], false);
+        assert_eq!(value["cmyk"]["strength"], 1.0);
+        assert!(value.get("magazine_print_color").is_none());
+        // Round-trip through JSON preserves the canonical fields.
+        let restored: super::RuntimeParams = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.cmyk, params.cmyk);
+        // Sparse edits address the canonical paths.
+        let mut edited = super::RuntimeParams::default();
+        super::sources::ParameterEdits::parse("cmyk.active=true,cmyk.strength=0.5")
+            .unwrap()
+            .apply(&mut edited)
+            .unwrap();
+        assert!(edited.cmyk.active);
+        assert_eq!(edited.cmyk.strength, 0.5);
+        edited.validate().unwrap();
     }
 }

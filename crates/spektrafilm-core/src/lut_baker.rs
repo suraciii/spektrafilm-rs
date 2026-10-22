@@ -132,8 +132,7 @@ impl BundleBuilder {
                 metas.push(meta);
             }
         }
-        let magazine_print_active = first.params().magazine_print_color.active
-            && first.params().magazine_print_color.strength > 0.0;
+        let cmyk_ink_active = first.params().cmyk.active && first.params().cmyk.strength > 0.0;
         let mut provenance = BTreeMap::from([
             ("spektrafilm_version".into(), "0.3.4".into()),
             ("lut_creator_version".into(), "0.3.4".into()),
@@ -151,11 +150,23 @@ impl BundleBuilder {
                 "Please cite the spektrafilm project and CITATION.cff.".into(),
             ),
         ]);
-        if magazine_print_active {
+        if cmyk_ink_active {
             provenance.insert(
-                "magazine_print_color".into(),
+                "cmyk_ink_v1".into(),
                 "included in the baked RGB final stage".into(),
             );
+            provenance.insert("cmyk_ink_v1.style".into(), "ink".into());
+            provenance.insert("cmyk_ink_v1.model".into(), "cmyk_ink_v1".into());
+            provenance.insert(
+                "cmyk_ink_v1.strength".into(),
+                first.params().cmyk.strength.to_string(),
+            );
+            provenance.insert(
+                "cmyk_ink_v1.output_color_space".into(),
+                output.primaries.to_string(),
+            );
+            provenance.insert("cmyk_ink_v1.transfer_state".into(), "baked".into());
+            provenance.insert("cmyk_ink_v1.included".into(), "true".into());
         }
         provenance.insert(
             "output_mix.amount".into(),
@@ -163,7 +174,7 @@ impl BundleBuilder {
         );
         provenance.insert("model_version".into(), crate::runtime::MODEL_VERSION.into());
         let meta = BundleMeta {
-            schema_version: 3,
+            schema_version: 4,
             name: spec.name.clone(),
             topology: spec.topology,
             resolution: spec.resolution,
@@ -282,9 +293,6 @@ pub(crate) fn bake_params(
     params.io.output_color_space = output.primaries.into();
     params.io.input_cctf_decoding = false;
     params.io.output_cctf_encoding = false;
-    if params.workflow.route_enum() == WorkflowRoute::Input {
-        params.workflow.route = "input > film > print > scan".into();
-    }
     params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan;
     params.taps.inject = None;
     params.taps.collect = None;
@@ -491,10 +499,9 @@ fn bake_recipe(
     output: &ColorSpaceEntry,
     backend: &dyn ComputeBackend,
 ) -> Result<(String, Lut, LutFileMeta), String> {
-    let magazine_active = pipeline.params().magazine_print_color.active
-        && pipeline.params().magazine_print_color.strength > 0.0;
+    let cmyk_ink_active = pipeline.params().cmyk.active && pipeline.params().cmyk.strength > 0.0;
     let stage = &recipe.stage;
-    let role = stage.effective_role(magazine_active);
+    let role = stage.effective_role(cmyk_ink_active);
     let image = lattice_image(spec.resolution, stage.inject, spec, wires, input)?;
     let raw =
         pipeline.process_with_taps(image, backend, Some(stage.inject), Some(stage.collect))?;
@@ -770,7 +777,7 @@ mod tests {
         assert_eq!(baked.io.input_gamut_compress.algorithm, "off");
         assert_eq!(baked.io.output_gamut_compress.algorithm, "off");
         assert_eq!(baked.film_render.density_curve_gamma, 1.3);
-        assert_eq!(baked.workflow.route, "input > film > print > scan");
+        assert_eq!(baked.workflow.route, "input");
         assert!(!baked.io.scan_film);
         assert!(!baked.settings.preview_mode);
         assert!(baked.taps.collect.is_none());
@@ -797,7 +804,7 @@ mod tests {
     }
 
     #[test]
-    fn magazine_params_use_scan_final_route_and_remain_in_snapshot_input() {
+    fn cmyk_params_use_scan_final_route_and_remain_in_snapshot_input() {
         let film: profile::Profile =
             serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
         let print = film.clone();
@@ -805,17 +812,147 @@ mod tests {
         let s = spec("srgb", "srgb");
         let input = lut_transport::resolve("srgb").unwrap();
         let mut base = RuntimeParams::default();
-        base.magazine_print_color.active = true;
-        base.magazine_print_color.strength = 0.75;
+        base.cmyk.active = true;
+        base.cmyk.strength = 0.75;
         base.workflow.route = "input > film > scan".into();
         let baked =
             bake_params(&s, input, input, &film, &print, &neutral, Some(&base), true).unwrap();
         assert_eq!(baked.workflow.route, "input > film > scan");
         assert!(baked.io.scan_film);
-        assert_eq!(baked.magazine_print_color.strength, 0.75);
+        assert_eq!(baked.cmyk.strength, 0.75);
         let json = serde_json::to_value(&baked).unwrap();
-        assert_eq!(json["magazine_print_color"]["active"], true);
-        assert_eq!(json["magazine_print_color"]["strength"], 0.75);
+        assert_eq!(json["cmyk"]["active"], true);
+        assert_eq!(json["cmyk"]["strength"], 0.75);
+    }
+
+    #[test]
+    #[cfg(feature = "precision-f64")]
+    fn cmyk_lut_provenance_names_the_model_and_preserves_the_input_route() {
+        let data = data_dir();
+        let backend = &spektrafilm_backend::cpu_backend::CpuBackend;
+        // A small lattice keeps the bake cheap while still exercising the
+        // whole `input` base route with the appearance enabled.
+        let mut spec = spec("srgb", "srgb");
+        spec.resolution = 4;
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input".into();
+        params.io.scan_film = true;
+        params.cmyk.active = true;
+        params.cmyk.strength = 0.75;
+        let bundle = BundleBuilder::with_params(spec, params)
+            .build(&data, backend)
+            .unwrap();
+
+        // Route preservation: baking must not silently turn the `input`
+        // base route into a film/print/scan route.
+        assert_eq!(bundle.meta.workflow_route, "input");
+        assert_eq!(
+            bundle.baked_params["kodak_portra_endura"].workflow.route,
+            "input"
+        );
+        // The final RGB stage carries the canonical `cmyk_` role name.
+        let final_stage = bundle
+            .meta
+            .luts
+            .iter()
+            .find(|lut| lut.range == "output_rgb")
+            .expect("a final RGB stage");
+        assert!(
+            final_stage.role.starts_with("cmyk_"),
+            "final RGB stage role must use canonical cmyk naming: {}",
+            final_stage.role
+        );
+
+        // Provenance: the style identifier, model revision, strength,
+        // output space, transfer state and inclusion flag are recorded
+        // independently of the base route.
+        let provenance = &bundle.meta.provenance;
+        assert_eq!(provenance["cmyk_ink_v1.style"], "ink");
+        assert_eq!(provenance["cmyk_ink_v1.model"], "cmyk_ink_v1");
+        assert_eq!(provenance["cmyk_ink_v1.strength"], "0.75");
+        assert_eq!(provenance["cmyk_ink_v1.output_color_space"], "sRGB");
+        assert_eq!(provenance["cmyk_ink_v1.transfer_state"], "baked");
+        assert_eq!(provenance["cmyk_ink_v1.included"], "true");
+        assert!(
+            provenance.contains_key("cmyk_ink_v1"),
+            "the final RGB stage must declare that it includes the appearance"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "precision-f64")]
+    fn cmyk_lut_applies_the_appearance_exactly_once() {
+        use crate::cmyk::CmykTransform;
+        let data = data_dir();
+        let backend = &spektrafilm_backend::cpu_backend::CpuBackend;
+        let mut enabled_spec = spec("srgb", "srgb");
+        enabled_spec.resolution = 5;
+        enabled_spec.stops_above_midgray = Some(0.0);
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input".into();
+        params.io.scan_film = true;
+        params.cmyk.active = true;
+        params.cmyk.strength = 1.0;
+        let bundle = BundleBuilder::with_params(enabled_spec, params)
+            .build(&data, backend)
+            .unwrap();
+        let (_, lut) = &bundle.luts[0];
+        let output_space = spektrafilm_math::colorspace::resolve("sRGB").unwrap();
+
+        // A collapsed complete transform must apply the appearance exactly
+        // once: evaluating the baked lattice must equal one reference
+        // application over the same route with the appearance disabled.
+        let mut disabled = RuntimeParams::default();
+        disabled.workflow.route = "input".into();
+        disabled.io.scan_film = true;
+        disabled.cmyk.active = false;
+        let mut base_spec = spec("srgb", "srgb");
+        base_spec.resolution = 5;
+        base_spec.stops_above_midgray = Some(0.0);
+        let base = BundleBuilder::with_params(base_spec, disabled)
+            .build(&data, backend)
+            .unwrap();
+        let (_, base_lut) = &base.luts[0];
+
+        let transform = CmykTransform::new(output_space);
+        let applied_once = crate::cmyk::appearance;
+        let cctf = output_space.cctf;
+        let n = lut.resolution;
+        let mut worst_sample = ([0usize; 3], [0.0; 3], [0.0; 3]);
+        let mut worst = 0.0f64;
+        for r in 0..n {
+            for g in 0..n {
+                for b in 0..n {
+                    let baked = lut.at(r, g, b);
+                    // The baked lattice is display-encoded, so the reference
+                    // application runs in the same encoded domain: decode,
+                    // apply the appearance once, re-encode.
+                    let baseline = base_lut.at(r, g, b);
+                    let linear =
+                        baseline.map(|v| spektrafilm_math::colorspace::cctf_decode(v, cctf));
+                    let mapped = transform.to_rgb(applied_once(transform.to_lab(linear)));
+                    let encoded = mapped.map(|v| {
+                        spektrafilm_math::colorspace::cctf_encode(v, cctf).clamp(0.0, 1.0)
+                    });
+                    for c in 0..3 {
+                        let error = (baked[c] - encoded[c]).abs();
+                        if error > worst {
+                            worst = error;
+                            worst_sample = ([r, g, b], baked, encoded);
+                        }
+                    }
+                }
+            }
+        }
+        // The baked lattice is a 5^3 trilinear approximation of a smooth
+        // point transform, so it must agree with a single reference
+        // application inside the lattice's own interpolation error — never
+        // twice, which would roughly double the chromatic deviation.
+        assert!(
+            worst < 5e-2,
+            "baked LUT must apply the appearance exactly once (worst {worst}, sample {:?})",
+            worst_sample
+        );
     }
 
     #[test]

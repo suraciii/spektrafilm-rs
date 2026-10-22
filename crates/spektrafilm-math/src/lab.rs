@@ -3,8 +3,7 @@
 //! The LUT QA metrics and the benchmark's difference maps compare the same
 //! perceptual quantities, so the conversion and the colour-difference formula
 //! live here once instead of being restated per crate. The D50 variants in
-//! `spektrafilm-core::magazine_print_color` are a different white point and
-//! stay separate.
+//! `spektrafilm-core::cmyk` use the same white point and stay separate.
 
 use crate::colorspace::{SRGB_TO_XYZ_F64, srgb_decode_f64};
 

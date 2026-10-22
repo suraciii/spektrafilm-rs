@@ -288,7 +288,7 @@ pub(crate) fn render_sections(
     grain::sections(ui, params, section, flags, filter);
     halation::sections(ui, params, section, flags, filter);
     couplers::sections(ui, params, section, flags, filter);
-    magazine::sections(ui, params, section, flags, filter);
+    cmyk::sections(ui, params, section, flags, filter);
     output::sections(ui, params, extras, section, flags, filter);
     display::sections(ui, params, extras, section, flags, filter);
 }
@@ -382,7 +382,7 @@ pub(crate) const PAGE_LAYOUT: &[(crate::ui::GuiTab, &[PanelItem])] = &[
             PanelItem::Section("Print base"),
             PanelItem::Section("Glare"),
             PanelItem::Section("Enlarger diffusion"),
-            PanelItem::Section("Magazine finish color"),
+            PanelItem::Section("CMYK ink style"),
         ],
     ),
     (
@@ -402,11 +402,11 @@ pub(crate) const PAGE_LAYOUT: &[(crate::ui::GuiTab, &[PanelItem])] = &[
         ],
     ),
 ];
+mod cmyk;
 mod gamut;
 mod glare;
 mod grain;
 mod halation;
-mod magazine;
 mod output;
 mod scanner;
 mod search;

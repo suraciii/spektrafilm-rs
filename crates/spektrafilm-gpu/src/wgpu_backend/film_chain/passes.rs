@@ -696,7 +696,7 @@ impl WgpuBackend {
     /// storage. Consecutive device passes share a command buffer; an
     /// assembled CPU fence (grain distribution, acquisition replacement,
     /// readout interpretation, optical diffusion, output transfer,
-    /// magazine) flushes the submission, runs the host stage, and the
+    /// CMYK ink style) flushes the submission, runs the host stage, and the
     /// remaining passes continue on the device.
     pub(super) fn run_film_chain_inner(
         &self,
@@ -1015,14 +1015,10 @@ impl WgpuBackend {
                 encode: Box::new(move |encoder| gs.encode_pass(encoder, n_pixels, &buf_b)),
             });
         }
-        // 6f. Output transfer (pipe architecture, S4): encode the native
-        //     destination RGB (same-space roundtrip matrix + the space's
-        //     encoding transfer), or restore linear for a Procedural-grain
-        //     output when the caller requested no encoding. Runs in place
-        //     on buf_b after every scanner effect, so the readback below
-        //     observes the finalized samples.
-        if let Some(tp) = p.output_transfer.as_ref() {
-            let buf_b = buf_b.clone();
+        // 6f. Output transfer is split around the terminal appearance. Encode
+        // before CMYK; decode is appended after CMYK for linear output.
+        let output_transfer_stage = |tp: &spektrafilm_backend::OutputTransferGpuParams,
+                                     buf_b: &wgpu::Buffer| {
             #[repr(C)]
             #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
             struct TransferParams {
@@ -1034,15 +1030,14 @@ impl WgpuBackend {
                 col1: [f32; 4],
                 col2: [f32; 4],
             }
-            let m = tp.matrix;
             let transfer_params = TransferParams {
                 n_pixels,
                 mode: if tp.decode { 1 } else { 0 },
                 cctf_kind: tp.cctf_kind,
                 _pad: 0,
-                col0: pack_matrix_columns(&m)[0],
-                col1: pack_matrix_columns(&m)[1],
-                col2: pack_matrix_columns(&m)[2],
+                col0: pack_matrix_columns(&tp.matrix)[0],
+                col1: pack_matrix_columns(&tp.matrix)[1],
+                col2: pack_matrix_columns(&tp.matrix)[2],
             };
             let params_buf = self
                 .device
@@ -1075,7 +1070,7 @@ impl WgpuBackend {
                     },
                 ],
             });
-            stages.push(super::super::pipe::ChainStage::Gpu {
+            super::super::pipe::ChainStage::Gpu {
                 name: "output_transfer",
                 encode: Box::new(move |encoder| {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1086,17 +1081,20 @@ impl WgpuBackend {
                     pass.set_bind_group(0, &bg, &[]);
                     dispatch_linear(&mut pass, n_pixels);
                 }),
-            });
+            }
+        };
+        if let Some(tp) = p.output_transfer.as_ref().filter(|tp| !tp.decode) {
+            stages.push(output_transfer_stage(tp, buf_b));
         }
-        // 6g. Magazine print appearance (pipe architecture, S4): the last
-        //     host finishing moves onto the device. Runs after the output
+        // 6g. CMYK ink style (pipe architecture, S4): the last host
+        //     finishing moves onto the device. Runs after the output
         //     transfer, so the buffer state is encoded exactly when the
         //     caller requested output encoding.
-        if let Some(mp) = p.magazine.as_ref() {
+        if let Some(cp) = p.cmyk.as_ref() {
             let buf_b = buf_b.clone();
             #[repr(C)]
             #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-            struct MagazineParams {
+            struct CmykParams {
                 n_pixels: u32,
                 cctf_kind: u32,
                 encoded: u32,
@@ -1108,61 +1106,31 @@ impl WgpuBackend {
                 from_col0: [f32; 4],
                 from_col1: [f32; 4],
                 from_col2: [f32; 4],
-                tin0: [f32; 4],
-                tin1: [f32; 4],
-                tin2: [f32; 4],
-                tout0: [f32; 4],
-                tout1: [f32; 4],
-                tout2: [f32; 4],
-                slo0: [f32; 4],
-                slo1: [f32; 4],
-                slo2: [f32; 4],
             }
-            let pack10 = |v: &[f32; 10]| {
-                [
-                    [v[0], v[1], v[2], v[3]],
-                    [v[4], v[5], v[6], v[7]],
-                    [v[8], v[9], 0.0, 0.0],
-                ]
-            };
-            let (tin, tout, slo) = (
-                pack10(&mp.tone_in),
-                pack10(&mp.tone_out),
-                pack10(&mp.tone_slopes),
-            );
-            let magazine_params = MagazineParams {
+            let cmyk_params = CmykParams {
                 n_pixels,
-                cctf_kind: mp.cctf_kind,
-                encoded: u32::from(mp.encoded),
+                cctf_kind: cp.cctf_kind,
+                encoded: u32::from(cp.encoded),
                 _pad0: 0,
-                strength_pad: [mp.strength, 0.0, 0.0, 0.0],
-                to_col0: pack_matrix_columns(&mp.to_lab)[0],
-                to_col1: pack_matrix_columns(&mp.to_lab)[1],
-                to_col2: pack_matrix_columns(&mp.to_lab)[2],
-                from_col0: pack_matrix_columns(&mp.from_lab)[0],
-                from_col1: pack_matrix_columns(&mp.from_lab)[1],
-                from_col2: pack_matrix_columns(&mp.from_lab)[2],
-                tin0: tin[0],
-                tin1: tin[1],
-                tin2: tin[2],
-                tout0: tout[0],
-                tout1: tout[1],
-                tout2: tout[2],
-                slo0: slo[0],
-                slo1: slo[1],
-                slo2: slo[2],
+                strength_pad: [cp.strength, 0.0, 0.0, 0.0],
+                to_col0: pack_matrix_columns(&cp.to_lab)[0],
+                to_col1: pack_matrix_columns(&cp.to_lab)[1],
+                to_col2: pack_matrix_columns(&cp.to_lab)[2],
+                from_col0: pack_matrix_columns(&cp.from_lab)[0],
+                from_col1: pack_matrix_columns(&cp.from_lab)[1],
+                from_col2: pack_matrix_columns(&cp.from_lab)[2],
             };
             let params_buf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("magazine_params"),
-                    contents: bytemuck::bytes_of(&magazine_params),
+                    label: Some("cmyk_params"),
+                    contents: bytemuck::bytes_of(&cmyk_params),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
             let pipe = self.cached_pipeline(
                 concat!(
                     include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
-                    include_str!("../../../../spektrafilm-shaders/wgsl/magazine.wgsl")
+                    include_str!("../../../../spektrafilm-shaders/wgsl/cmyk_ink.wgsl")
                 ),
                 &[
                     wgpu::BufferBindingType::Uniform,
@@ -1170,7 +1138,7 @@ impl WgpuBackend {
                 ],
             );
             let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("bg_magazine"),
+                label: Some("bg_cmyk"),
                 layout: &pipe.layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -1184,10 +1152,10 @@ impl WgpuBackend {
                 ],
             });
             stages.push(super::super::pipe::ChainStage::Gpu {
-                name: "magazine",
+                name: "cmyk",
                 encode: Box::new(move |encoder| {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("magazine"),
+                        label: Some("cmyk"),
                         timestamp_writes: None,
                     });
                     pass.set_pipeline(&pipe.pipeline);
@@ -1195,6 +1163,9 @@ impl WgpuBackend {
                     dispatch_linear(&mut pass, n_pixels);
                 }),
             });
+        }
+        if let Some(tp) = p.output_transfer.as_ref().filter(|tp| tp.decode) {
+            stages.push(output_transfer_stage(tp, buf_b));
         }
         // Zero-copy path: when buf_b is mappable, skip the blit and map it
         // directly below. Otherwise stage it into the MAP_READ readback
@@ -1252,7 +1223,7 @@ impl WgpuBackend {
 
 /// Conservative bound for the small fixed-size buffers the chain creates
 /// besides the image and lookup buffers: the std140 param uniforms
-/// (largest is the 272-byte `MagazineParams`), the FIR kernels (≤ 513
+/// (largest is the 128-byte `CmykParams`), the FIR kernels (≤ 513
 /// taps under `MAX_BLUR_RADIUS`), and the grain resolution-weight sets.
 ///
 /// The grain weights are the only config-sized entry in this bound. Validated
@@ -1425,7 +1396,7 @@ mod tests {
             print_acquisition_cpu_stage: None,
             camera_diffusion_cpu_stage: None,
             output_transfer: None,
-            magazine: None,
+            cmyk: None,
         }
     }
 

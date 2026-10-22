@@ -425,7 +425,7 @@ mod scan_semantics_tests {
         assert!(!any_darker, "glare darkened pixels — wrong sign");
     }
     #[test]
-    fn magazine_appearance_runs_after_v2_grain_and_preserves_transfer_state() {
+    fn cmyk_appearance_runs_after_v2_grain_and_preserves_transfer_state() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let backend = CpuBackend;
@@ -440,23 +440,18 @@ mod scan_semantics_tests {
             .process(flat_image(8), &backend)
             .unwrap();
         let mut active = disabled.clone();
-        active.magazine_print_color.active = true;
-        active.magazine_print_color.strength = 0.75;
+        active.cmyk.active = true;
+        active.cmyk.strength = 0.75;
         let output = Pipeline::new(film.clone(), film.clone(), active.clone())
             .process(flat_image(8), &backend)
             .unwrap();
         let mut expected = base.clone();
         let output_space =
             spektrafilm_math::colorspace::resolve(&active.io.output_color_space).unwrap();
-        crate::magazine_print_color::apply(
-            &mut expected,
-            &active.magazine_print_color,
-            output_space,
-            true,
-        );
+        crate::cmyk::apply(&mut expected, &active.cmyk, output_space, true);
         assert!(
             max_diff(&output, &expected) < 1e-6,
-            "magazine color must run after Procedural grain"
+            "cmyk color must run after Procedural grain"
         );
 
         disabled.io.output_cctf_encoding = false;
@@ -472,13 +467,13 @@ mod scan_semantics_tests {
                 .data
                 .iter()
                 .all(|value| to_f64(*value).is_finite()),
-            "linear magazine output must preserve finite headroom"
+            "linear cmyk output must preserve finite headroom"
         );
         assert!(max_diff(&linear_output, &linear_base) > 1e-5);
     }
 
     #[test]
-    fn finished_rgb_route_applies_magazine_appearance() {
+    fn finished_rgb_route_applies_cmyk_appearance() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let backend = CpuBackend;
@@ -490,23 +485,18 @@ mod scan_semantics_tests {
             .process(flat_image(8), &backend)
             .unwrap();
         let mut active = disabled.clone();
-        active.magazine_print_color.active = true;
-        active.magazine_print_color.strength = 0.75;
+        active.cmyk.active = true;
+        active.cmyk.strength = 0.75;
         let output = Pipeline::new(film.clone(), film, active.clone())
             .process(flat_image(8), &backend)
             .unwrap();
         let mut expected = base.clone();
         let output_space =
             spektrafilm_math::colorspace::resolve(&active.io.output_color_space).unwrap();
-        crate::magazine_print_color::apply(
-            &mut expected,
-            &active.magazine_print_color,
-            output_space,
-            true,
-        );
+        crate::cmyk::apply(&mut expected, &active.cmyk, output_space, true);
         assert!(
             max_diff(&output, &expected) < 1e-6,
-            "Finished RGB must run the shared magazine finishing"
+            "Finished RGB must run the shared cmyk finishing"
         );
         assert!(max_diff(&output, &base) > 1e-5);
     }
@@ -522,8 +512,8 @@ mod scan_semantics_tests {
         let mut params = quiet_params();
         params.workflow.route = "input".into();
         params.io.output_cctf_encoding = true;
-        params.magazine_print_color.active = true;
-        params.magazine_print_color.strength = 1.0;
+        params.cmyk.active = true;
+        params.cmyk.strength = 1.0;
 
         let portra_output = Pipeline::new(portra, endura, params.clone())
             .process(flat_image(8), &backend)

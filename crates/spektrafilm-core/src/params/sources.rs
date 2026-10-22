@@ -25,6 +25,11 @@ pub fn non_settable_leaves() -> &'static [(&'static str, &'static str)] {
 /// Normalize the runtime-parameter subtree of a versioned legacy complete document.
 /// Rejection leaves the supplied document unchanged. Current complete documents
 /// and sparse sources must use their strict boundary without normalization.
+///
+/// The migration is transactional: every conflict is detected before any
+/// mutation, so a rejected document stays byte-identical. It is idempotent:
+/// a migrated document carries only canonical `cmyk` fields and the canonical
+/// base route, and re-running the migration is a no-op.
 pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String> {
     // Reject the retired leaf before renaming anything so a rejected
     // document stays byte-identical.
@@ -34,6 +39,7 @@ pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String>
         None => false,
     };
     normalize_legacy_conversion_paths(value, true)?;
+    normalize_legacy_cmyk(value)?;
     if has_retired {
         value
             .pointer_mut("/io/output_gamut_compress")
@@ -41,6 +47,96 @@ pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String>
             .expect("retired field belongs to an object")
             .remove("lightness_compression");
     }
+    Ok(())
+}
+
+/// Migrate the retired `magazine_print_color` group and the retired
+/// `input > film > scan > magazine` route of a versioned legacy complete
+/// document onto the canonical `cmyk` group and base route.
+///
+/// The mapping is transactional (all conflicts detected before mutation),
+/// idempotent, and preserves unrelated fields. A document supplying both a
+/// legacy field and its new counterpart is rejected. A document naming the
+/// retired route migrates to `input > film > scan` with `cmyk.active = true`.
+pub(crate) fn normalize_legacy_cmyk(value: &mut Value) -> Result<(), String> {
+    const LEGACY_GROUP: &str = "magazine_print_color";
+    const NEW_GROUP: &str = "cmyk";
+    const RETIRED_ROUTE: &str = "input > film > scan > magazine";
+    const BASE_ROUTE: &str = "input > film > scan";
+
+    let Some(object) = value.as_object_mut() else {
+        return Ok(());
+    };
+
+    // Validate every conflict before mutating so a rejected document stays
+    // byte-identical.
+    if let Some(legacy) = object.get(LEGACY_GROUP) {
+        if !legacy.is_object() {
+            return Err(format!(
+                "legacy complete params carry a non-object {LEGACY_GROUP} group"
+            ));
+        }
+        if object.contains_key(NEW_GROUP) {
+            return Err(format!(
+                "legacy complete params carry both {LEGACY_GROUP} and {NEW_GROUP}; \
+                 keep exactly one spelling"
+            ));
+        }
+        for leaf in ["active", "strength"] {
+            if legacy.as_object().unwrap().contains_key(leaf)
+                && object
+                    .get(NEW_GROUP)
+                    .and_then(Value::as_object)
+                    .is_some_and(|new| new.contains_key(leaf))
+            {
+                return Err(format!(
+                    "legacy complete params carry both {LEGACY_GROUP}.{leaf} and \
+                     {NEW_GROUP}.{leaf}; keep exactly one spelling"
+                ));
+            }
+        }
+    }
+
+    let has_legacy_route = object
+        .get("workflow")
+        .and_then(Value::as_object)
+        .and_then(|w| w.get("route"))
+        .and_then(Value::as_str)
+        == Some(RETIRED_ROUTE);
+
+    // A legacy route and a legacy group together are a conflict: the route
+    // implies `cmyk.active = true`, which the group may contradict.
+    if has_legacy_route
+        && let Some(legacy) = object.get(LEGACY_GROUP).and_then(Value::as_object)
+        && legacy.contains_key("active")
+    {
+        return Err(format!(
+            "legacy complete params carry both the retired route {RETIRED_ROUTE} and \
+             {LEGACY_GROUP}.active; keep exactly one spelling"
+        ));
+    }
+
+    // Migrate the legacy group onto the canonical name.
+    if let Some(legacy) = object.remove(LEGACY_GROUP) {
+        object.insert(NEW_GROUP.to_owned(), legacy);
+    }
+
+    // Migrate the retired route onto the base route with cmyk active.
+    if has_legacy_route {
+        let workflow = object
+            .entry("workflow")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+            .as_object_mut()
+            .expect("workflow group is an object");
+        workflow.insert("route".to_owned(), BASE_ROUTE.into());
+        let cmyk = object
+            .entry(NEW_GROUP)
+            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+            .as_object_mut()
+            .expect("cmyk group is an object");
+        cmyk.insert("active".to_owned(), Value::Bool(true));
+    }
+
     Ok(())
 }
 
@@ -789,6 +885,11 @@ fn unknown_path(path: &str) -> String {
     if path == "io.output_gamut_compress.lightness_compression" {
         return retired_lightness_error();
     }
+    if let Some(replacement) = retired_cmyk_replacement(path) {
+        return format!(
+            "{path} was retired; use {replacement} instead; a versioned legacy complete document may migrate it, but current-schema documents and sparse sources must use the canonical path"
+        );
+    }
     if let Some((_, reason)) = non_settable_leaves().iter().find(|(leaf, _)| *leaf == path) {
         return format!(
             "{path} is a runtime field outside the settable parameter surface; {reason}"
@@ -801,6 +902,17 @@ fn unknown_path(path: &str) -> String {
             "use spektrafilm describe --module MODULE --format text to list fields, then --field PATH to describe one"
         )
     )
+}
+
+/// The canonical replacement for a retired `magazine_print_color` leaf, or
+/// `None` when the path is not a retired CMYK path.
+fn retired_cmyk_replacement(path: &str) -> Option<&'static str> {
+    match path {
+        "magazine_print_color.active" => Some("cmyk.active"),
+        "magazine_print_color.strength" => Some("cmyk.strength"),
+        "magazine_print_color" => Some("cmyk"),
+        _ => None,
+    }
 }
 
 /// One shared rejection for a value assigned to a parameter group.
@@ -1556,6 +1668,169 @@ mod tests {
         }
         assert!(
             ParameterEdits::parse("io.output_gamut_compress.lightness_compression=null").is_err()
+        );
+    }
+
+    #[test]
+    fn legacy_cmyk_migration_is_transactional_and_idempotent() {
+        // Legacy group migrates onto the canonical name.
+        let mut value = serde_json::json!({
+            "magazine_print_color": {"active": true, "strength": 0.75}
+        });
+        normalize_legacy_complete_params(&mut value).unwrap();
+        let params: RuntimeParams = serde_json::from_value(value.clone()).unwrap();
+        assert!(params.cmyk.active);
+        assert_eq!(params.cmyk.strength, 0.75);
+        assert!(value.get("magazine_print_color").is_none());
+        assert_eq!(value["cmyk"]["active"], true);
+        assert_eq!(value["cmyk"]["strength"], 0.75);
+
+        // Idempotent: re-running on the migrated document is a no-op.
+        let migrated = value.clone();
+        normalize_legacy_complete_params(&mut value).unwrap();
+        assert_eq!(value, migrated);
+
+        // Legacy route migrates onto the base route with cmyk active.
+        let mut value = serde_json::json!({
+            "workflow": {"route": "input > film > scan > magazine"}
+        });
+        normalize_legacy_complete_params(&mut value).unwrap();
+        let params: RuntimeParams = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(params.workflow.route, "input > film > scan");
+        assert!(params.cmyk.active);
+        assert_eq!(value["workflow"]["route"], "input > film > scan");
+        assert_eq!(value["cmyk"]["active"], true);
+
+        // Idempotent on the migrated route document.
+        let migrated = value.clone();
+        normalize_legacy_complete_params(&mut value).unwrap();
+        assert_eq!(value, migrated);
+
+        // Unrelated fields are preserved.
+        let mut value = serde_json::json!({
+            "magazine_print_color": {"active": true, "strength": 0.5},
+            "io": {"output_color_space": "ProPhoto RGB"},
+            "camera": {"film_format_mm": 120.0}
+        });
+        normalize_legacy_complete_params(&mut value).unwrap();
+        let params: RuntimeParams = serde_json::from_value(value).unwrap();
+        assert_eq!(params.io.output_color_space, "ProPhoto RGB");
+        assert_eq!(params.camera.film_format_mm, 120.0);
+        assert!(params.cmyk.active);
+        assert_eq!(params.cmyk.strength, 0.5);
+    }
+
+    #[test]
+    fn legacy_cmyk_conflicts_reject_atomically() {
+        // Both spellings together are a hard error.
+        let mut both = serde_json::json!({
+            "magazine_print_color": {"active": true, "strength": 0.75},
+            "cmyk": {"active": false, "strength": 1.0}
+        });
+        let original = both.clone();
+        let error = normalize_legacy_complete_params(&mut both).unwrap_err();
+        assert!(error.contains("magazine_print_color"), "{error}");
+        assert!(error.contains("cmyk"), "{error}");
+        assert_eq!(both, original);
+
+        // A legacy route and a legacy group with an explicit active leaf
+        // conflict: the route implies cmyk.active = true.
+        let mut conflict = serde_json::json!({
+            "workflow": {"route": "input > film > scan > magazine"},
+            "magazine_print_color": {"active": false}
+        });
+        let original = conflict.clone();
+        let error = normalize_legacy_complete_params(&mut conflict).unwrap_err();
+        assert!(error.contains("retired route"), "{error}");
+        assert_eq!(conflict, original);
+
+        // A non-object legacy group is rejected before mutation.
+        let mut bad = serde_json::json!({"magazine_print_color": 42});
+        let original = bad.clone();
+        assert!(normalize_legacy_complete_params(&mut bad).is_err());
+        assert_eq!(bad, original);
+    }
+
+    #[test]
+    fn current_schema_rejects_retired_cmyk_paths() {
+        // Sparse sources reject the retired spelling with an actionable
+        // replacement.
+        for (path, replacement) in [
+            ("magazine_print_color.active", "cmyk.active"),
+            ("magazine_print_color.strength", "cmyk.strength"),
+        ] {
+            let error = ParameterEdits::parse(&format!("{path}=true")).unwrap_err();
+            assert!(error.contains(path), "{error}");
+            assert!(error.contains(replacement), "{error}");
+            assert!(error.contains("was retired"), "{error}");
+        }
+        // Discovery rejects the retired group and leaves.
+        assert!(describe_field("magazine_print_color.active").is_err());
+        assert!(describe_field("magazine_print_color.strength").is_err());
+        assert!(describe_module("magazine_print_color").is_err());
+        // Current-schema documents reject the retired group.
+        assert!(
+            serde_json::from_value::<RuntimeParams>(serde_json::json!({
+                "magazine_print_color": {"active": true}
+            }))
+            .is_err()
+        );
+        // The retired route is not selectable.
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan > magazine".into();
+        let error = params.validate().unwrap_err();
+        assert!(error.contains("input > film > scan"), "{error}");
+        assert!(error.contains("cmyk.active = true"), "{error}");
+    }
+
+    #[test]
+    fn cmyk_discovery_exposes_canonical_fields() {
+        let active = describe_field("cmyk.active").unwrap();
+        assert_eq!(active["type"], "bool");
+        assert_eq!(active["default"], false);
+        let strength = describe_field("cmyk.strength").unwrap();
+        assert_eq!(strength["type"], "f64");
+        assert_eq!(strength["default"], 1.0);
+        assert_eq!(strength["minimum"], 0.0);
+        assert_eq!(strength["maximum"], 1.0);
+        let module = describe_module("cmyk").unwrap();
+        assert_eq!(module["module"], "cmyk");
+        let paths: Vec<_> = module["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["path"].as_str().unwrap())
+            .collect();
+        assert!(paths.contains(&"cmyk.active"));
+        assert!(paths.contains(&"cmyk.strength"));
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn cmyk_inactive_reason_reports_activation_condition() {
+        use crate::params::RuntimeParams;
+        use crate::profile::Profile;
+        let params = RuntimeParams::default();
+        let film: Profile = serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
+        let print = film.clone();
+        // Default is inactive: cmyk.active is false.
+        let reason = inactive_reason("cmyk.strength", &params, &film, &print);
+        assert_eq!(reason.as_deref(), Some("cmyk.active = true"));
+        // Active with strength > 0 has no inactive reason.
+        let mut active = params.clone();
+        active.cmyk.active = true;
+        active.cmyk.strength = 0.5;
+        assert_eq!(
+            inactive_reason("cmyk.strength", &active, &film, &print),
+            None
+        );
+        // Active with strength 0 reports the strength condition.
+        let mut zero = params.clone();
+        zero.cmyk.active = true;
+        zero.cmyk.strength = 0.0;
+        assert_eq!(
+            inactive_reason("cmyk.strength", &zero, &film, &print).as_deref(),
+            Some("cmyk.strength > 0")
         );
     }
 

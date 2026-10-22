@@ -23,7 +23,7 @@ pub static ALL_PATHS: &[&str] = &[
     "enlarger.m_filter_shift",
     "enlarger.preflash_y_filter_shift",
     "enlarger.preflash_m_filter_shift",
-    "magazine_print_color.strength",
+    "cmyk.strength",
     "camera.diffusion_filter.strength",
     "camera.diffusion_filter.spatial_scale",
     "camera.diffusion_filter.halo_warmth",
@@ -187,8 +187,8 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "enlarger.preflash_y_filter_shift" => Some((-100.0, 100.0, 1.0, 2)),
         "enlarger.preflash_m_filter_shift" => Some((-100.0, 100.0, 1.0, 2)),
 
-        // Magazine finish
-        "magazine_print_color.strength" => Some((0.0, 1.0, 0.01, 2)),
+        // CMYK ink style
+        "cmyk.strength" => Some((0.0, 1.0, 0.01, 2)),
 
         // Camera and enlarger diffusion filters
         "camera.diffusion_filter.strength" => Some((0.0, 2.0, 0.125, 2)),
@@ -461,7 +461,7 @@ mod tests {
             include_str!("controls/glare.rs"),
             include_str!("controls/grain.rs"),
             include_str!("controls/halation.rs"),
-            include_str!("controls/magazine.rs"),
+            include_str!("controls/cmyk.rs"),
             include_str!("controls/mod.rs"),
             include_str!("controls/output.rs"),
             include_str!("controls/scanner.rs"),

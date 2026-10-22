@@ -2,12 +2,12 @@
 
 ## Contract
 
-- Film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine finishing entry-point contract](../magazine-finishing/spec.md#enablement).
+- Film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [CMYK ink style entry-point contract](../cmyk-style/spec.md#enablement).
 - A photographic print route must provide a photographic print profile.
-- Optional magazine finishing must satisfy the [Magazine finishing](../magazine-finishing/spec.md) contract. It must not determine base workflow topology.
+- Optional CMYK ink style must satisfy the [CMYK ink style](../cmyk-style/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
-- The default film path is: source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → destination color transform and encoding → scanner-domain effects (including Procedural grain) → optional magazine finishing → output handoff.
-- [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
+- The default film path is: source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → scanner interpretation → scanner finishing → output gamut processing → unsharp masking → transfer encoding → Procedural grain → optional CMYK ink style → output mix → output handoff.
+- [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. CMYK ink style remains after all scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - A profile's `hanatos2025_adaptation_window_params` and `hanatos2025_adaptation_surface_params` are **conditional fields** of a filming-stage material. A `stage = printing` material — photographic paper and motion-picture print film — does not convert an encoded input to a film exposure, so it carries neither field and must not be selected as a film.
 - A filming-stage material whose `hanatos2025_adaptation_window_params` is absent runs the RGB-to-exposure conversion **without the sensitivity-adaptation window**. The conversion keeps white balance but models no ultraviolet or infrared cutoff, so that material's spectral response is idealized. The run must report the downgrade with the material identity instead of downgrading silently.
@@ -119,7 +119,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - One immutable per-frame setup must be shared by Preview, Scan, and Export for the same input and parameter revision. Changing the input, route, profile, or relevant scanner parameter must invalidate it.
 - Per-frame setup must not change film exposure, development, film-domain effects, camera exposure compensation, or the conversion solve. For a real negative capture, it must not apply virtual camera metering.
 - `scanner.finish` selects `neutral` or `lab_scan` for a converted negative image. `neutral` is the default. `scanner.finish_strength` ranges from 0 to 1 and defaults to 1 when `lab_scan` is selected.
-- Scanner finishing runs after negative conversion and before output gamut compression, unsharp masking, transfer encoding, and output handoff. It must not run on a direct negative output.
+- Scanner finishing runs after negative conversion and before output gamut compression, unsharp masking, transfer encoding, Procedural grain, and CMYK ink style. It must not run on a direct negative output.
 - Scanner finishing must be independently disableable from the receiver profile and negative conversion. Disabling it must return the converted image before scanner finishing, subject to the shared output stages.
 - Receiver profiles, negative conversion methods, per-frame setup, and scanner finishes must be serialized in complete GUI state and render recipes. Preset documents may carry only the scanner controls allowed by the [preset specification](../presets/spec.md#look-ownership), with receiver and finish provenance retained when present. An unavailable profile or invalid combination must fail before output publication.
 
@@ -191,7 +191,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - Scanner lens blur acts on transmitted light before the density reading, and on
   the capture before a capture interpretation. Optional scanner finishing runs
   after negative conversion. Output gamut compression, unsharp mask,
-  transfer encoding, and output handoff run after scanner finishing.
+  transfer encoding, Procedural grain, CMYK ink style, and output handoff run after scanner finishing.
 - `negative_to_positive` rejects scanner white/black correction and active Procedural grain.
   Its execution follows [GPU execution](../gpu-execution/spec.md#backend-selection); conversion selection must not force CPU.
 

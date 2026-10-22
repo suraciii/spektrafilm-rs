@@ -297,7 +297,7 @@
       1.6
     ]
   },
-  "magazine_print_color": {
+  "cmyk": {
     "active": false,
     "strength": 1.0
   },
@@ -341,7 +341,7 @@
     "output_interpolation": "spline36"
   },
   "rust": {
-    "version": 3,
+    "version": 4,
     "save_bit_depth": 8,
     "export_format": "png",
     "jpeg_quality": 95,

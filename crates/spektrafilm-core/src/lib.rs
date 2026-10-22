@@ -1,4 +1,5 @@
 pub mod chain_prep;
+pub mod cmyk;
 pub mod color_reference;
 pub mod config;
 pub mod enlarger;
@@ -13,7 +14,6 @@ pub mod lut_formats;
 pub mod lut_ocio;
 pub mod lut_qa;
 pub mod lut_transport;
-pub mod magazine_print_color;
 pub mod mallett;
 pub mod neutral_filters;
 pub mod params;

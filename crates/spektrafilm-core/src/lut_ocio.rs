@@ -187,13 +187,13 @@ fn chain_for_print<'a>(
     meta: &'a BundleMeta,
     print: &str,
 ) -> io::Result<Vec<&'a LutFileMeta>> {
-    let magazine = meta.provenance.contains_key("magazine_print_color");
+    let cmyk = meta.provenance.contains_key("cmyk_ink_v1");
     let mut chain = Vec::new();
     for stage in meta.topology.stages() {
         let role = stage.role.as_ref();
         let domain = stage.domain();
         let range = stage.range();
-        let expected_role = stage.effective_role(magazine);
+        let expected_role = stage.effective_role(cmyk);
         let candidates = meta
             .luts
             .iter()
@@ -416,11 +416,11 @@ mod tests {
         })).unwrap()
     }
     #[test]
-    fn magazine_roles_follow_provenance_on_any_route() {
+    fn cmyk_roles_follow_provenance_on_any_route() {
         let mut meta = fixture().meta;
         meta.topology = Topology::One;
         meta.luts.remove(0);
-        meta.luts[0].role = "magazine_combined".into();
+        meta.luts[0].role = "cmyk_combined".into();
         meta.luts[0].domain = "wrong".into();
         let root = Path::new(".");
         for route in [
@@ -430,14 +430,14 @@ mod tests {
         ] {
             meta.workflow_route = route.into();
             meta.provenance
-                .insert("magazine_print_color".into(), "included".into());
+                .insert("cmyk_ink_v1".into(), "included".into());
             assert!(
                 chain_for_print(root, &meta, "kodak_portra_endura")
                     .unwrap_err()
                     .to_string()
                     .contains("malformed combined wire")
             );
-            meta.provenance.remove("magazine_print_color");
+            meta.provenance.remove("cmyk_ink_v1");
             assert!(
                 chain_for_print(root, &meta, "kodak_portra_endura")
                     .unwrap_err()

@@ -257,11 +257,8 @@ impl App {
         });
         ui.horizontal(|ui| {
             if ui
-                .checkbox(
-                    &mut self.params.magazine_print_color.active,
-                    "Magazine finish",
-                )
-                .on_hover_text("Apply a magazine finish appearance after the selected workflow. It is a finishing appearance, not a print exposure or film development stage.")
+                .checkbox(&mut self.params.cmyk.active, "CMYK ink style")
+                .on_hover_text("Apply the CMYK ink style appearance after the selected workflow. The result remains three-channel RGB; it is not a press proof or a separation.")
                 .changed()
             {
                 self.mark_parameters_changed();
@@ -1101,7 +1098,7 @@ impl App {
                 for section in ["Print base", "Glare", "Enlarger diffusion"] {
                     self.parameter_section(ui, section);
                 }
-                self.parameter_section(ui, "Magazine finish color");
+                self.parameter_section(ui, "CMYK ink style");
             }
             GuiTab::Advanced => {
                 for section in [

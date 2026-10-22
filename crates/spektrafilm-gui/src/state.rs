@@ -11,6 +11,10 @@ pub use io::{default_path, reset_factory, startup};
 pub use spektrafilm_core::config::config_dir;
 use validation::{normalize_grain_section, validate_state_parameters};
 
+/// The current Rust GUI state extension version. A saved document carries the
+/// canonical `cmyk` group; a legacy spelling is rejected by strict validation.
+pub(crate) const CURRENT_STATE_VERSION: u64 = 4;
+
 /// Enlarger controls the upstream GUI also exposes under `simulation`
 /// aliases, as `(simulation key, enlarger key)`. Both directions of the
 /// state ⇄ runtime projection consume this one table, so an alias cannot be
@@ -153,7 +157,7 @@ impl GuiState {
             bail!("GUI state must be a JSON object");
         }
         let version = value["rust"].get("version").and_then(Value::as_u64);
-        if value.get("rust").is_some() && !matches!(version, Some(1..=3)) {
+        if value.get("rust").is_some() && !matches!(version, Some(1..=CURRENT_STATE_VERSION)) {
             bail!("Unsupported Rust GUI state extension version");
         }
         validate_state_parameters(&mut value, version)?;
@@ -252,7 +256,10 @@ impl GuiState {
         merge(&mut state.sections, &normalized);
         canonicalize_grain_state(&mut state.sections["grain"]);
         if let Some(extension) = normalized.get("rust") {
-            if !matches!(extension["version"].as_u64(), Some(1..=3)) {
+            if !matches!(
+                extension["version"].as_u64(),
+                Some(1..=CURRENT_STATE_VERSION)
+            ) {
                 bail!("Unsupported Rust GUI state extension version");
             }
             if let Some(fields) = extension.as_object() {
@@ -261,7 +268,7 @@ impl GuiState {
                 }
             }
         }
-        state.sections["rust"]["version"] = json!(3);
+        state.sections["rust"]["version"] = json!(CURRENT_STATE_VERSION);
         state.sections["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         let params = state.runtime_params()?;
         // Metadata is derived from the selected built-ins, never trusted from an import.
@@ -306,7 +313,7 @@ impl GuiState {
     /// carrier stays optional in the persisted document.
     pub fn set_display_profile(&mut self, selection: Option<&str>) {
         if !self.sections["rust"].is_object() {
-            self.sections["rust"] = json!({"version": 3});
+            self.sections["rust"] = json!({"version": CURRENT_STATE_VERSION});
         }
         match selection.filter(|path| !path.is_empty()) {
             Some(path) => self.sections["rust"]["display_profile"] = json!(path),

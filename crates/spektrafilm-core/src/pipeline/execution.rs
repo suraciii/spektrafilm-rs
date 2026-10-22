@@ -144,6 +144,11 @@ impl Pipeline {
                     &result,
                     crate::stage_evidence::CoordinateSpace::Output,
                 );
+                // The terminal CMYK ink style appearance already ran inside
+                // the scanned route's post-scan finishing; the record names
+                // that post-rgb_out terminal boundary with the executed
+                // parameters, never a spectral stage.
+                capture.record_terminal_cmyk_params(&self.params);
             }
             return Ok(result);
         }
@@ -173,6 +178,11 @@ impl Pipeline {
                 &result,
                 crate::stage_evidence::CoordinateSpace::Output,
             );
+            // The scanned route applied the terminal CMYK ink style
+            // appearance inside its post-scan finishing before collection;
+            // the record names that post-rgb_out terminal boundary with the
+            // executed parameters, never a spectral stage.
+            capture.record_terminal_cmyk_params(&self.params);
         }
         Ok(result)
     }
@@ -198,6 +208,14 @@ impl Pipeline {
         crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
+        if self.params.workflow.route_enum() == WorkflowRoute::Input
+            && backend.explicit_gpu_request()
+        {
+            return Err(
+                "explicit GPU request cannot run the complete Finished RGB route on WGPU; retry with an explicit CPU request"
+                    .into(),
+            );
+        }
         if self.params.workflow.route_enum() == WorkflowRoute::Input {
             if let Some(capture) = capture.as_deref_mut() {
                 use crate::stage_evidence::StageId;
@@ -246,12 +264,14 @@ impl Pipeline {
                     pixel[channel] = from_f64(rgb[channel]);
                 }
             });
-            // Finished RGB accepts the optional magazine finishing exactly like
-            // a scanned base workflow: after output color management, before
-            // the caller's image writer.
-            crate::magazine_print_color::apply(
+            // Finished RGB applies the shared terminal RGB CMYK ink style
+            // appearance after output color management and before output
+            // publication. The appearance is terminal RGB finishing, not a
+            // spectral stage: the caller records it as an independent
+            // post-rgb_out record with the actual executed parameters.
+            crate::cmyk::apply(
                 &mut output,
-                &self.params.magazine_print_color,
+                &self.params.cmyk,
                 destination,
                 self.params.io.output_cctf_encoding,
             );
@@ -287,6 +307,12 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
+        if backend.explicit_gpu_request() {
+            return Err(
+                "explicit GPU request cannot run the complete conversion route on WGPU; retry with an explicit CPU request"
+                    .into(),
+            );
+        }
         use crate::stage_evidence::{CoordinateSpace, StageId};
         if let Some(capture) = capture.as_deref_mut() {
             // Conversion maps the receiver capture back to film density: the
@@ -425,7 +451,7 @@ impl Pipeline {
                 self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)?
         {
             tracing::info!("pipeline: gpu-resident fast path complete");
-            // Post-scan finishing (output transfer + magazine) already ran
+            // Post-scan finishing (output transfer + cmyk) already ran
             // as pipe-tail passes; the readback is final (pipe
             // architecture, S4).
             return Ok(out);

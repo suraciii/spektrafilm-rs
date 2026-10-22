@@ -742,3 +742,123 @@ pub fn icc_profile(space: &str, encoded: bool) -> Option<&'static [u8]> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A disabled context keeps the preparation path identical to the
+    /// observed one while exercising the shared boundary.
+    fn context() -> ObservationContext {
+        ObservationContext::new(spektrafilm_backend::telemetry::CollectionMode::Off)
+    }
+
+    fn options() -> SaveOptions<'static> {
+        SaveOptions {
+            depth: BitDepth::Eight,
+            color_space: "sRGB",
+            cctf_encoding: true,
+            jpeg_quality: None,
+            jpeg_subsampling: None,
+            compression: None,
+        }
+    }
+
+    /// A retained CMYK result must survive the Save boundary as the same
+    /// three-channel RGB pixels: the saving-space conversion must not
+    /// re-encode, re-run the appearance, or drop signed headroom.
+    #[test]
+    fn saving_space_conversion_preserves_the_retained_rgb_result() {
+        // Same space and same transfer state is the pinned save guard:
+        // the retained result is returned unchanged, not re-encoded.
+        let image =
+            ImageBuf::from_data(2, 1, [-0.2, 0.4, 1.5, 0.9, 0.1, 0.3].map(from_f64).to_vec());
+        let same = convert_image(&image, "sRGB", true, "sRGB", true).unwrap();
+        assert_eq!(same.data, image.data);
+        assert_eq!(same.width, image.width);
+        assert_eq!(same.height, image.height);
+        // A different saving space still returns three-channel RGB with the
+        // headroom intact, so the writer — not this boundary — owns clipping.
+        let other = convert_image(&image, "sRGB", true, "ACES2065-1", false).unwrap();
+        assert_eq!(other.data.len(), image.data.len());
+        assert!(other.data.iter().all(|v| to_f64(*v).is_finite()));
+        assert!(other.data.iter().any(|v| to_f64(*v) > 1.0));
+    }
+
+    /// The Save path prepares a complete file without publishing it: a
+    /// failed or cancelled write must leave the destination untouched, and
+    /// a no-clobber publish must refuse to replace an existing file.
+    #[test]
+    fn prepared_save_never_touches_the_destination_until_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("retained.png");
+        let image = ImageBuf::from_data(1, 1, [0.25, 0.5, 0.75].map(from_f64).to_vec());
+        let context = context();
+
+        let prepared = prepare_save_observed(&destination, &image, options(), None, &context)
+            .expect("prepare a complete file");
+        // Preparing is not publishing: nothing reaches the destination yet.
+        assert!(!destination.exists());
+        // Dropping the prepared output removes only its temporary file and
+        // still leaves the destination absent.
+        drop(prepared);
+        assert!(!destination.exists());
+
+        // Publishing with replace=false creates the file, and a second
+        // no-clobber publish over an existing destination is refused, so a
+        // retained result can never be silently overwritten.
+        let prepared =
+            prepare_save_observed(&destination, &image, options(), None, &context).unwrap();
+        prepared.publish(false).unwrap();
+        assert!(destination.exists());
+        let before = std::fs::read(&destination).unwrap();
+        let second =
+            prepare_save_observed(&destination, &image, options(), None, &context).unwrap();
+        assert!(
+            second.publish(false).is_err(),
+            "a no-clobber publish must refuse an existing destination"
+        );
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            before,
+            "a refused publication must leave the retained file untouched"
+        );
+    }
+
+    /// The retained-result boundary must reject a writer-contract violation
+    /// before any file is created, so an invalid save never leaves a
+    /// partial artifact behind.
+    #[test]
+    fn invalid_save_options_are_rejected_before_any_file_is_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("retained.png");
+        let image = ImageBuf::from_data(1, 1, [0.25, 0.5, 0.75].map(from_f64).to_vec());
+        let context = context();
+        // PNG cannot carry linear samples.
+        let linear = SaveOptions {
+            cctf_encoding: false,
+            ..options()
+        };
+        assert!(
+            prepare_save_observed(&destination, &image, linear, None, &context).is_err(),
+            "a linear PNG must be rejected at the writer boundary"
+        );
+        assert!(!destination.exists());
+    }
+
+    /// The disabled (unobserved) and observed preparation share one
+    /// boundary, so the CMYK acceptance evidence never depends on telemetry
+    /// being enabled.
+    #[test]
+    fn unobserved_and_observed_preparation_share_one_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("retained.png");
+        let image = ImageBuf::from_data(1, 1, [0.25, 0.5, 0.75].map(from_f64).to_vec());
+        let context = context();
+        let prepared = prepare_save_observed(&destination, &image, options(), None, &context)
+            .expect("the disabled context prepares identically");
+        assert!(!destination.exists());
+        prepared.publish(false).unwrap();
+        assert!(destination.exists());
+    }
+}

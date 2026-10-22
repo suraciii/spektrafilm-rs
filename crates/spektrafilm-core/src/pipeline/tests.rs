@@ -101,7 +101,7 @@ fn input_route_preserves_requested_crop_pixels_without_exposure() {
     let mut pipeline = build();
     pipeline.params.workflow.route = "input".into();
     pipeline.params.film_render.grain.active = false;
-    pipeline.params.magazine_print_color.active = false;
+    pipeline.params.cmyk.active = false;
     pipeline.params.io.input_color_space = "ACES2065-1".into();
     pipeline.params.io.output_color_space = "ACES2065-1".into();
     pipeline.params.io.input_cctf_decoding = false;
@@ -1012,7 +1012,7 @@ fn output_mix_interpolates_complete_output_in_actual_linear_transport() {
         pipeline.params.film_render.grain.active = true;
         pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
         pipeline.params.random_seed = 37;
-        pipeline.params.magazine_print_color.active = true;
+        pipeline.params.cmyk.active = true;
         pipeline.params.io.output_color_space = "sRGB".into();
         pipeline.params.io.output_cctf_encoding = encoded;
         let complete = pipeline.process(image.clone(), &backend).unwrap();
@@ -1195,11 +1195,11 @@ fn output_mix_source_matches_deferred_field_crop_rounding() {
 }
 
 #[test]
-fn output_mix_finished_rgb_keeps_magazine_only_in_result_branch() {
+fn output_mix_finished_rgb_keeps_cmyk_only_in_result_branch() {
     let mut pipeline = build();
     pipeline.params.workflow.route = "input".into();
     pipeline.params.film_render.grain.active = false;
-    pipeline.params.magazine_print_color.active = true;
+    pipeline.params.cmyk.active = true;
     pipeline.params.io.input_color_space = "ACES2065-1".into();
     pipeline.params.io.output_color_space = "ACES2065-1".into();
     pipeline.params.io.input_cctf_decoding = false;
@@ -1311,7 +1311,7 @@ fn stage_capture_input_route_marks_film_and_print_stages_not_applicable() {
     let mut pipeline = build();
     pipeline.params.workflow.route = "input".into();
     pipeline.params.film_render.grain.active = false;
-    pipeline.params.magazine_print_color.active = false;
+    pipeline.params.cmyk.active = false;
     pipeline.params.io.input_color_space = "ACES2065-1".into();
     pipeline.params.io.output_color_space = "ACES2065-1".into();
     pipeline.params.io.input_cctf_decoding = false;
@@ -1439,4 +1439,100 @@ fn stage_capture_declares_film_frame_geometry_for_the_expanded_grain_grid() {
                 .unwrap(),
         "the film-frame grid must not be the delivered grid"
     );
+}
+
+/// CMYK ink style is optional finishing, not a route. The conversion
+/// routes are base workflows too, so they must run the shared terminal
+/// appearance exactly once, after their scanner-domain effects, with the
+/// same identity behavior as every other route.
+#[test]
+fn convert_routes_apply_the_shared_terminal_cmyk_appearance() {
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let image = ImageBuf::from_data(
+        8,
+        8,
+        (0..8 * 8 * 3)
+            .map(|i| {
+                let channel = i % 3;
+                from_f64(0.25 + 0.4 * channel as f64 / 2.0)
+            })
+            .collect(),
+    );
+    let output_space =
+        spektrafilm_math::colorspace::resolve("sRGB").expect("registered output space");
+    let full_strength = crate::params::CmykParams {
+        active: true,
+        strength: 1.0,
+    };
+    let render = |params: RuntimeParams| {
+        Pipeline::new_with_spectral(film.clone(), print.clone(), params, &dir)
+            .unwrap()
+            .process(image.clone(), &backend)
+            .unwrap()
+    };
+    for route in [
+        "input > convert-film > print > scan",
+        "input > convert-film > scan",
+        "input > convert-film > scan-minus-base",
+    ] {
+        let mut disabled = RuntimeParams::default();
+        disabled.workflow.route = route.into();
+        disabled.io.scan_film = !route.contains("print");
+        disabled.camera.auto_exposure = false;
+        disabled.film_render.grain.active = false;
+        disabled.film_render.halation.active = false;
+        disabled.film_render.dir_couplers.active = false;
+        disabled.io.output_cctf_encoding = true;
+        disabled.random_seed = 5;
+        let base = Pipeline::new_with_spectral(film.clone(), print.clone(), disabled.clone(), &dir)
+            .unwrap()
+            .process(image.clone(), &backend)
+            .unwrap();
+
+        // Disabled and active strength 0 are exact identities on every route.
+        for params in [
+            crate::params::CmykParams {
+                active: false,
+                strength: 1.0,
+            },
+            crate::params::CmykParams {
+                active: true,
+                strength: 0.0,
+            },
+        ] {
+            let mut toggled = disabled.clone();
+            toggled.cmyk = params;
+            let output = render(toggled);
+            assert_eq!(
+                output.data, base.data,
+                "{route}: inactive and strength-0 cmyk must be exact identities"
+            );
+        }
+
+        // Active strength 1 applies the shared terminal appearance once,
+        // matching the reference transform over the finished RGB result.
+        let mut active = disabled.clone();
+        active.cmyk = full_strength.clone();
+        let full = render(active);
+        assert_ne!(
+            full.data, base.data,
+            "{route}: active strength 1 must apply the appearance"
+        );
+        let mut reference = base.clone();
+        crate::cmyk::apply(&mut reference, &full_strength, output_space, true);
+        let diff = full
+            .data
+            .iter()
+            .zip(reference.data.iter())
+            .map(|(a, b)| (to_f64(*a) - to_f64(*b)).abs())
+            .fold(0.0, f64::max);
+        assert!(
+            diff < 1e-6,
+            "{route}: the terminal appearance must match the shared reference exactly once \
+             (max diff {diff})"
+        );
+    }
 }

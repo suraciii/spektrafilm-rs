@@ -3,7 +3,7 @@ mod library;
 mod sections;
 use crate::params::sources::{ParameterEdits, parse_carrier};
 use crate::params::{
-    DiffusionFilterParams, EnlargerParams, FilmRenderingParams, OutputMixParams,
+    CmykParams, DiffusionFilterParams, EnlargerParams, FilmRenderingParams, OutputMixParams,
     PrintRenderingParams, RuntimeParams, ScannerParams, SettingsParams,
 };
 use crate::params_builder::apply_film_specifics;
@@ -15,7 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub const PRESET_SCHEMA_VERSION: u32 = 4;
+pub const PRESET_SCHEMA_VERSION: u32 = 5;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRef {
@@ -43,6 +43,9 @@ pub struct LookParameters {
     pub print_render: PrintRenderingParams,
     pub camera_diffusion_filter: DiffusionFilterParams,
     pub output_mix: OutputMixParams,
+    /// Canonical CMYK ink style enablement and strength, replacing the retired
+    /// `magazine_print_color` spelling at the preset schema 5 boundary.
+    pub cmyk: CmykParams,
     /// Spectral-reconstruction switches that shape the rendered look. This is
     /// deliberately a subset of `SettingsParams`: preview limits, performance
     /// toggles, and the working wavelength grid are not look content.
@@ -65,6 +68,8 @@ struct LookParametersWire {
     print_render: PrintRenderingParams,
     camera_diffusion_filter: DiffusionFilterParams,
     output_mix: OutputMixParams,
+    #[serde(default)]
+    cmyk: CmykParams,
     #[serde(default)]
     settings: LookSettingsParams,
 }
@@ -132,6 +137,35 @@ pub(crate) fn reject_unowned_preset_fields(value: &Value) -> Result<(), String> 
     Ok(())
 }
 
+/// Canonical replacements for preset spellings retired before schema 5, so a
+/// current preset document naming one names its replacement instead of
+/// reporting a bare unknown field.
+const RETIRED_PRESET_FIELDS: &[(&str, &str)] = &[
+    ("magazine_print_color", "cmyk"),
+    ("magazine_print_color.active", "cmyk.active"),
+    ("magazine_print_color.strength", "cmyk.strength"),
+];
+
+pub(crate) fn reject_retired_preset_fields(value: &Value) -> Result<(), String> {
+    for &(retired, replacement) in RETIRED_PRESET_FIELDS {
+        let present = match retired.rsplit_once('.') {
+            Some((group, leaf)) => value
+                .get(group)
+                .and_then(Value::as_object)
+                .is_some_and(|object| object.contains_key(leaf)),
+            None => value.get(retired).is_some(),
+        };
+        if present {
+            return Err(format!(
+                "preset field {retired} was retired; use {replacement} instead; a versioned \
+                 legacy preset document may migrate it, but current-schema documents must use \
+                 the canonical field"
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl Serialize for LookParameters {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let wire = LookParametersWire {
@@ -143,6 +177,7 @@ impl Serialize for LookParameters {
             camera_diffusion_filter: self.camera_diffusion_filter.clone(),
             output_mix: self.output_mix.clone(),
             settings: self.settings.clone(),
+            cmyk: self.cmyk.clone(),
         };
         let mut value = serde_json::to_value(wire).map_err(serde::ser::Error::custom)?;
         remove_unowned_preset_fields(&mut value);
@@ -154,6 +189,7 @@ impl<'de> Deserialize<'de> for LookParameters {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = Value::deserialize(deserializer)?;
         reject_unowned_preset_fields(&value).map_err(serde::de::Error::custom)?;
+        reject_retired_preset_fields(&value).map_err(serde::de::Error::custom)?;
         let wire = serde_json::from_value::<LookParametersWire>(value)
             .map_err(serde::de::Error::custom)?;
         Ok(Self {
@@ -165,6 +201,7 @@ impl<'de> Deserialize<'de> for LookParameters {
             camera_diffusion_filter: wire.camera_diffusion_filter,
             output_mix: wire.output_mix,
             settings: wire.settings,
+            cmyk: wire.cmyk,
         })
     }
 }
@@ -293,6 +330,7 @@ impl LookParameters {
             print_render: params.print_render.clone(),
             camera_diffusion_filter: params.camera.diffusion_filter.clone(),
             output_mix: params.output_mix.clone(),
+            cmyk: params.cmyk.clone(),
             settings: LookSettingsParams {
                 apply_hanatos2025_adaptation_window: params
                     .settings
@@ -342,6 +380,7 @@ impl LookParameters {
         params.print_render = self.print_render.clone();
         params.camera.diffusion_filter = self.camera_diffusion_filter.clone();
         params.output_mix = self.output_mix.clone();
+        params.cmyk = self.cmyk.clone();
         self.settings.apply_to(&mut params.settings);
     }
     /// Compare only carried controls; legacy presets do not own exposure.
@@ -357,6 +396,7 @@ impl LookParameters {
             && expected.print_render == params.print_render
             && expected.camera.diffusion_filter == params.camera.diffusion_filter
             && expected.output_mix == params.output_mix
+            && expected.cmyk == params.cmyk
             && expected.settings == params.settings
     }
 }
@@ -403,7 +443,7 @@ impl Preset {
             parameters: Value,
             provenance: Provenance,
         }
-        if matches!(value["schema_version"].as_u64(), Some(1..=3)) {
+        if matches!(value["schema_version"].as_u64(), Some(1..=4)) {
             let version = value["schema_version"].as_u64().unwrap();
             let object = value.as_object_mut().ok_or("preset must be an object")?;
             if version == 1 {
@@ -416,7 +456,7 @@ impl Preset {
                     .is_some()
                 {
                     return Err(
-                        "legacy preset parameters.output_mix is unknown; use schema_version 4"
+                        "legacy preset parameters.output_mix is unknown; use schema_version 5"
                             .into(),
                     );
                 }
@@ -426,7 +466,7 @@ impl Preset {
                     .is_some()
                 {
                     return Err(
-                        "legacy preset parameters.camera is unknown; use schema_version 4".into(),
+                        "legacy preset parameters.camera is unknown; use schema_version 5".into(),
                     );
                 }
                 if object.get("film_profile").is_some_and(|v| !v.is_null())
@@ -443,10 +483,6 @@ impl Preset {
                     );
                 }
             }
-            // Version 3 to 4: rename the conversion-control paths. A look
-            // payload (multiple parameter groups) may carry the tracking
-            // setting for the legacy mixed states; a single-section payload
-            // may not and fails with an explicit error instead.
             if version <= 3 {
                 let settings_allowed = object
                     .get("parameters")
@@ -459,6 +495,16 @@ impl Preset {
                     parameters,
                     settings_allowed,
                 )?;
+            }
+            if version <= 4 {
+                // The retired `magazine_print_color` group belongs to every
+                // accepted legacy preset version. The pass also applies the
+                // output lightness retirement rule, so a retired gamut leaf
+                // aborts the whole migration transactionally.
+                let parameters = object
+                    .get_mut("parameters")
+                    .ok_or("preset parameters must be an object")?;
+                crate::params::sources::normalize_legacy_complete_params(parameters)?;
             }
             object.insert("schema_version".into(), PRESET_SCHEMA_VERSION.into());
         }

@@ -23,7 +23,7 @@ The scope must cover these production operations:
 - Camera and enlarger diffusion, highlight boost, per-channel halation, DIR including its exponential tails and non-default coefficients, scanner optics, print viewing glare, and unsharp masking.
 - All four grain engines in their declared domains, including Spektra composite and layered sampling, both Procedural modes and resolution models, Dye field readout, and Fotufilm population formation and readout.
 - Every supported receiver, direct scan, negative conversion method including Digital Reference, film points, scanner correction, per-frame setup, and scanner finishing.
-- Magazine appearance, complete-result output mixing, output transfer encoding, and independent saving color and sample conversion.
+- CMYK ink style, complete-result output mixing, output transfer encoding, and independent saving color and sample conversion.
 - GUI viewer resampling, display color and ICC transforms, and disposable viewer composition. These operations must not change retained or saved image samples.
 - Pointwise LUT lattice evaluation through the calibrated runtime, with the existing bake neutralization and delivery rules.
 

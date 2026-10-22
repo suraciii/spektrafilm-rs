@@ -24,7 +24,7 @@ The scanner optical cutover remains independently owned by [Film chain](./film-c
 
 Remove the standalone Output lightness parameter and its operation across runtime, discovery, GUI, shaders and serialization. Preserve existing chroma/gamut algorithms, scanner conversion and optional named appearances. Do not add a hidden compensation curve or rewrite a retired triplet into preflash, chemistry, or another control.
 
-All final RGB paths, including Finished RGB, resident execution and final diagnostic collection, use one composition boundary after scanner-domain effects, existing output gamut processing, and Magazine appearance. Prepare the source before simulated camera metering/exposure. Reuse input orientation, requested rotation, crop and resize geometry; viewer downsampling and display-ICC conversion are not valid source branches. RAW processing, decoding and requested lens correction are already part of the input. Convert that source to linear output primaries through existing color-management code without creative gamut or tone processing.
+All final RGB paths, including Finished RGB, resident execution and final diagnostic collection, use one composition boundary after scanner interpretation, scanner finishing, output gamut processing, unsharp masking, transfer encoding, Procedural grain, and CMYK ink style. Prepare the source before simulated camera metering/exposure. Reuse input orientation, requested rotation, crop and resize geometry; viewer downsampling and display-ICC conversion are not valid source branches. RAW processing, decoding and requested lens correction are already part of the input. Convert that source to linear output primaries through existing color-management code without creative gamut or tone processing.
 
 For `m = output_mix.amount`, compose `(1-m)*source + m*result` in linear output RGB. If the complete result is retained encoded at this boundary, decode it using the actual configured output transfer, blend, and restore the requested output transfer once. If output encoding is disabled, do not infer a transfer from the space name. Saving-space conversion remains later. Do not clip either branch merely to mix it.
 
@@ -40,7 +40,7 @@ Retired-field migration inspects explicit legacy presence before typed defaults 
 
 [LUT delivery](./lut-delivery/spec.md) owns topology and artifact provenance. Mix below 1 requires a complete source-to-output bake: each lattice input supplies the prepared source and the complete transformed result in the declared transport. A scan-stage lattice cannot reconstruct original source pixels. Reject segmented targets before writing artifacts. Spatial processing and image geometry retain existing bake neutralization rules; the bake must not advertise equivalence to active spatial rendering.
 
-Image and LUT provenance must identify the selected amount, model revision, optical order, and actual backend/precision through existing reporting structures. A declared stage or version is not a timing observation or numerical proof. Render once, retain the completed result, and save it without applying mix or Magazine a second time.
+Image and LUT provenance must identify the selected amount, model revision, optical order, and actual backend/precision through existing reporting structures. A declared stage or version is not a timing observation or numerical proof. Render once, retain the completed result, and save it without applying mix or CMYK ink style a second time.
 
 ## Numerical acceptance
 

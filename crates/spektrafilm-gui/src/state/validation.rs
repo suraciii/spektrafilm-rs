@@ -25,8 +25,79 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     // must fail unknown-field validation instead of being migrated.
     let legacy = version == Some(1);
     let legacy_conversion = matches!(version, Some(1 | 2));
+    // Versions 1..=3 are legacy complete documents for the CMYK cutover: they
+    // may carry the retired `magazine_print_color` group and the retired
+    // `input > film > scan > magazine` route, which migrate onto the canonical
+    // `cmyk` group and base route. Version 4 documents are current-schema and
+    // reject both spellings.
+    let legacy_cmyk = matches!(version, Some(1..=3));
+    const LEGACY_GROUP: &str = "magazine_print_color";
+    const RETIRED_ROUTE: &str = "input > film > scan > magazine";
     if value.get("output_mix").is_some() {
         bail!("output_mix belongs in rust.runtime.output_mix in GUI state");
+    }
+    if !legacy_cmyk {
+        if value.get(LEGACY_GROUP).is_some()
+            || value
+                .pointer("/rust/runtime/magazine_print_color")
+                .is_some()
+        {
+            bail!(
+                "current GUI state carries retired {LEGACY_GROUP}; use cmyk.active and cmyk.strength"
+            );
+        }
+        if value.pointer("/simulation/route").and_then(Value::as_str) == Some(RETIRED_ROUTE)
+            || value
+                .pointer("/rust/runtime/workflow/route")
+                .and_then(Value::as_str)
+                == Some(RETIRED_ROUTE)
+        {
+            bail!(
+                "current GUI state carries retired route {RETIRED_ROUTE}; use input > film > scan and cmyk.active = true"
+            );
+        }
+    }
+    let legacy_route =
+        value.pointer("/simulation/route").and_then(Value::as_str) == Some(RETIRED_ROUTE);
+    let legacy_group_has_active = value
+        .get(LEGACY_GROUP)
+        .and_then(Value::as_object)
+        .is_some_and(|group| group.contains_key("active"));
+    if legacy_cmyk && legacy_route && legacy_group_has_active {
+        bail!(
+            "legacy GUI state carries both the retired route input > film > scan > magazine and magazine_print_color.active; keep exactly one spelling"
+        );
+    }
+    // Migrate the retired CMYK group and route of a legacy complete document
+    // before any typed validation reads it. The mapping is transactional and
+    // idempotent, and a rejected document stays unchanged.
+    if legacy_cmyk {
+        if let Some(magazine) = value.get("magazine_print_color") {
+            if !magazine.is_object() {
+                bail!("legacy GUI state carries a non-object magazine_print_color group");
+            }
+            if value.get("cmyk").is_some() {
+                bail!(
+                    "legacy GUI state carries both magazine_print_color and cmyk; keep exactly one spelling"
+                );
+            }
+            let migrated = magazine.clone();
+            value
+                .as_object_mut()
+                .expect("state object")
+                .insert("cmyk".to_owned(), migrated);
+            value
+                .as_object_mut()
+                .expect("state object")
+                .remove("magazine_print_color");
+        }
+        if value.pointer("/simulation/route").and_then(Value::as_str) == Some(RETIRED_ROUTE) {
+            value["simulation"]["route"] = json!("input > film > scan");
+            if !value["cmyk"].is_object() {
+                value["cmyk"] = json!({});
+            }
+            value["cmyk"]["active"] = json!(true);
+        }
     }
     let mut explicit = value["rust"]["runtime"].clone();
     if explicit.is_null() {
@@ -68,6 +139,28 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     if legacy {
         spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut explicit)
             .map_err(anyhow::Error::msg)?;
+    } else if legacy_cmyk {
+        // The runtime carrier of a legacy complete document may also carry the
+        // retired group; migrate it onto the canonical name.
+        if let Some(magazine) = explicit.get("magazine_print_color") {
+            if !magazine.is_object() {
+                bail!("legacy GUI runtime carries a non-object magazine_print_color group");
+            }
+            if explicit.get("cmyk").is_some() {
+                bail!(
+                    "legacy GUI runtime carries both magazine_print_color and cmyk; keep exactly one spelling"
+                );
+            }
+            let migrated = magazine.clone();
+            explicit
+                .as_object_mut()
+                .expect("runtime object")
+                .insert("cmyk".to_owned(), migrated);
+            explicit
+                .as_object_mut()
+                .expect("runtime object")
+                .remove("magazine_print_color");
+        }
     }
     let _: RuntimeParams =
         serde_json::from_value(explicit.clone()).context("Invalid GUI Rust runtime parameters")?;
@@ -174,6 +267,49 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         if let Some(runtime) = value["rust"].get_mut("runtime") {
             spektrafilm_core::params::sources::normalize_legacy_complete_params(runtime)
                 .map_err(anyhow::Error::msg)?;
+        }
+    } else if legacy_cmyk {
+        // The persisted runtime carrier of a legacy complete document may also
+        // carry the retired group; migrate it onto the canonical name.
+        if let Some(magazine) = explicit.get("magazine_print_color") {
+            if !magazine.is_object() {
+                bail!("legacy GUI runtime carries a non-object magazine_print_color group");
+            }
+            if explicit.get("cmyk").is_some() {
+                bail!(
+                    "legacy GUI runtime carries both magazine_print_color and cmyk; keep exactly one spelling"
+                );
+            }
+            let migrated = magazine.clone();
+            explicit
+                .as_object_mut()
+                .expect("runtime object")
+                .insert("cmyk".to_owned(), migrated);
+            explicit
+                .as_object_mut()
+                .expect("runtime object")
+                .remove("magazine_print_color");
+        }
+        if let Some(runtime) = value["rust"].get_mut("runtime")
+            && let Some(magazine) = runtime.get("magazine_print_color")
+        {
+            if !magazine.is_object() {
+                bail!("legacy GUI runtime carries a non-object magazine_print_color group");
+            }
+            if runtime.get("cmyk").is_some() {
+                bail!(
+                    "legacy GUI runtime carries both magazine_print_color and cmyk; keep exactly one spelling"
+                );
+            }
+            let migrated = magazine.clone();
+            runtime
+                .as_object_mut()
+                .expect("runtime object")
+                .insert("cmyk".to_owned(), migrated);
+            runtime
+                .as_object_mut()
+                .expect("runtime object")
+                .remove("magazine_print_color");
         }
     }
     let _: RuntimeParams =

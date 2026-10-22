@@ -552,30 +552,22 @@ impl Pipeline {
         } else {
             None
         };
-        // Magazine print appearance (pipe architecture, S4): the last host
-        // finishing moves onto the device right after the transfer tail.
-        // The buffer state there is encoded exactly when the caller
-        // requested output encoding.
-        let magazine = if self.params.magazine_print_color.active
-            && self.params.magazine_print_color.strength > 0.0
-        {
+        // CMYK runs after the encoded grain domain when Procedural grain is
+        // active, even for a linear output; the final decode is appended
+        // after CMYK to match the CPU scanner order exactly.
+        let cmyk_encoded = grain_v2_active || self.params.io.output_cctf_encoding;
+        let cmyk = if self.params.cmyk.active && self.params.cmyk.strength > 0.0 {
             let (to_lab, from_lab) =
-                crate::magazine_print_color::MagazineTransform::new(scan_output_space)
-                    .gpu_matrices();
-            let (tone_in, tone_out, tone_slopes) = crate::magazine_print_color::gpu_tone_curve();
+                crate::cmyk::CmykTransform::new(scan_output_space).gpu_matrices();
             let f32m = |m: &[[f64; 3]; 3]| {
                 std::array::from_fn(|i| std::array::from_fn(|j| m[i][j] as f32))
             };
-            let f32a = |a: &[f64; 10]| std::array::from_fn(|i| a[i] as f32);
-            Some(spektrafilm_backend::MagazineGpuParams {
-                strength: self.params.magazine_print_color.strength.clamp(0.0, 1.0) as f32,
-                encoded: self.params.io.output_cctf_encoding,
+            Some(spektrafilm_backend::CmykGpuParams {
+                strength: self.params.cmyk.strength.clamp(0.0, 1.0) as f32,
+                encoded: cmyk_encoded,
                 cctf_kind,
                 to_lab: f32m(&to_lab),
                 from_lab: f32m(&from_lab),
-                tone_in: f32a(&tone_in),
-                tone_out: f32a(&tone_out),
-                tone_slopes: f32a(&tone_slopes),
             })
         } else {
             None
@@ -625,7 +617,7 @@ impl Pipeline {
             print_acquisition_cpu_stage,
             camera_diffusion_cpu_stage,
             output_transfer,
-            magazine,
+            cmyk,
         };
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {

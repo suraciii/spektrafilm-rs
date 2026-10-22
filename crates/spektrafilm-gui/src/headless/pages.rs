@@ -80,6 +80,15 @@ fn save_mutate_and_reload(
     );
     assert_eq!(s.harness.state().params, accepted);
 }
+/// Address a collapsible parameter section by its button role. Some sections
+/// share their visible title with a top-level workflow toggle, so a plain
+/// label query is intentionally not used here.
+fn click_section(h: &mut Harness<'_, App>, label: &str) {
+    scroll_controls_into_view(h, label);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, label)
+        .simulate_click();
+    h.run_steps(3);
+}
 
 // The FILM page keeps every material section expanded into the shared control
 // panel; driving one section at a time keeps their repeated labels ("active",
@@ -303,10 +312,10 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
     });
 }
 
-// ADVANCED + PRINT pages: spectral upsampling, Magazine finish strength and the
+// ADVANCED + PRINT pages: spectral upsampling, CMYK ink style strength and the
 // input/output gamut compression strengths (never their algorithm selectors).
 #[test]
-fn advanced_and_print_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_through_save_load()
+fn advanced_and_print_page_spectral_cmyk_and_gamut_controls_accept_edits_and_persist_through_save_load()
  {
     let mut s = session();
     let h = &mut s.harness;
@@ -355,32 +364,31 @@ fn advanced_and_print_page_spectral_magazine_and_gamut_controls_accept_edits_and
     click(h, "Output gamut compress");
 
     click(h, "PRINT");
-    click(h, "Magazine finish color");
+    click_section(h, "CMYK ink style");
     edit(h, "strength", "0.75");
-    assert_eq!(h.state().params.magazine_print_color.strength, 0.75);
-    click(h, "Magazine finish color");
+    assert_eq!(h.state().params.cmyk.strength, 0.75);
+    click_section(h, "CMYK ink style");
 
-    click(h, "Magazine finish color");
+    click_section(h, "CMYK ink style");
     let before_reject = h.state().params.clone();
     edit(h, "strength", "not-a-number");
     assert_eq!(h.state().params, before_reject);
     assert_eq!(h.get_by_label("strength").value().as_deref(), Some("0.75"));
-    click(h, "Magazine finish color");
+    click_section(h, "CMYK ink style");
 
     save_mutate_and_reload(&mut s, "advanced-page.json", |h| {
         click(h, "PRINT");
-        click(h, "Magazine finish color");
+        click_section(h, "CMYK ink style");
         edit(h, "strength", "0.25");
-        assert_eq!(h.state().params.magazine_print_color.strength, 0.25);
+        assert_eq!(h.state().params.cmyk.strength, 0.25);
     });
 }
 
-// MAIN page singles: Magazine finish, Camera film format and selectors, the
+// MAIN page singles: CMYK ink style, Camera film format and selectors, the
 // print-active Enlarger block including preflash, and Crop and upscale whose
 // normalized crop moves the source window before the upscale resamples it.
 #[test]
-fn camera_enlarger_crop_upscale_and_magazine_print_controls_edit_accepted_params_geometry_and_persist()
- {
+fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_accepted_params_geometry_and_persist() {
     let mut s = session();
     let h = &mut s.harness;
     choose(h, "workflow", "input > film > print > scan");
@@ -389,17 +397,11 @@ fn camera_enlarger_crop_upscale_and_magazine_print_controls_edit_accepted_params
         "input > film > print > scan"
     );
 
-    let magazine_active = h.state().params.magazine_print_color.active;
-    click(h, "Magazine finish");
-    assert_eq!(
-        h.state().params.magazine_print_color.active,
-        !magazine_active
-    );
-    click(h, "Magazine finish");
-    assert_eq!(
-        h.state().params.magazine_print_color.active,
-        magazine_active
-    );
+    let cmyk_active = h.state().params.cmyk.active;
+    click(h, "CMYK ink style");
+    assert_eq!(h.state().params.cmyk.active, !cmyk_active);
+    click(h, "CMYK ink style");
+    assert_eq!(h.state().params.cmyk.active, cmyk_active);
 
     edit(h, "film format mm", "56");
     choose(h, "auto exposure method", "matrix");
@@ -879,7 +881,7 @@ fn every_parameter_section_presents_a_reset() {
         "Halation",
         "Input",
         "Input gamut compress",
-        "Magazine finish color",
+        "CMYK ink style",
         "Output",
         "Output gamut compress",
         "Print base",

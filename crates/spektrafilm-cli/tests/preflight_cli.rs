@@ -58,7 +58,7 @@ if [ "$seed_sensitive" = true ] && [ "$seed" = 1 ]; then
     echo 'random_seed: seed 1 rejected by fixture' >&2
     exit 2
 fi
-printf '{"film_profile":"film","print_profile":"paper","parameters":{"random_seed":%s,"io":{"crop":%s,"output_color_space":"ACES2065-1","output_cctf_encoding":false},"workflow":{"route":"%s"},"settings":{"preview_mode":%s},"magazine_print_color":{"active":false},"taps":{"inject":"rgb_in","collect":"rgb_out"}}}\n' "$seed" "$crop" "$route" "$preview"
+printf '{"film_profile":"film","print_profile":"paper","parameters":{"random_seed":%s,"io":{"crop":%s,"output_color_space":"ACES2065-1","output_cctf_encoding":false},"workflow":{"route":"%s"},"settings":{"preview_mode":%s},"cmyk":{"active":false},"taps":{"inject":"rgb_in","collect":"rgb_out"}}}\n' "$seed" "$crop" "$route" "$preview"
 "#).unwrap();
     fs::set_permissions(&renderer, fs::Permissions::from_mode(0o755)).unwrap();
     let input = json!({"kind":"raster","path":"input.png","sha256":common::sha256_file(&root.join("input.png")).unwrap(),"color_space":"sRGB","cctf_decoding":true});

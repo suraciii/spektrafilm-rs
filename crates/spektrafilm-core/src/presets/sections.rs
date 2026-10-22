@@ -13,6 +13,7 @@ pub enum Section {
     EnlargerFilter,
     Enlarger,
     Scanner,
+    Cmyk,
     Print,
     OutputMix,
 }
@@ -34,6 +35,7 @@ pub const SECTIONS: &[Section] = &[
     Section::EnlargerFilter,
     Section::Enlarger,
     Section::Scanner,
+    Section::Cmyk,
     Section::Print,
     Section::OutputMix,
 ];
@@ -51,6 +53,7 @@ impl Section {
             Self::EnlargerFilter => "enlarger filter",
             Self::Enlarger => "enlarger",
             Self::Scanner => "scanner",
+            Self::Cmyk => "cmyk ink style",
             Self::Print => "print",
             Self::OutputMix => "output",
         }
@@ -77,6 +80,7 @@ impl Section {
             Self::EnlargerFilter => &["enlarger.diffusion_filter"],
             Self::Enlarger => &["enlarger"],
             Self::Scanner => &["scanner"],
+            Self::Cmyk => &["cmyk"],
             Self::Print => &["print_render"],
             Self::OutputMix => &["output_mix"],
         }

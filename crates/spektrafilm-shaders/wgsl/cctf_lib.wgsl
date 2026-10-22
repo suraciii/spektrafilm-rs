@@ -4,14 +4,20 @@
 // cctf_kind: 0 Linear, 1 ACEScct, 2 sRGB, 3 ProPhoto, 4 Rec2020,
 //            5 Adobe RGB (1998), 6 Gamma 2.6
 //
-// Negative handling mirrors the reference exactly: the piecewise spaces use
-// sign-preserving powers; the pure-power spaces produce NaN for negative
-// inputs, exactly like the CPU `powf`.
+// Negative handling mirrors the reference exactly: every space uses
+// sign-preserving powers (`spow`), so finite signed headroom stays finite.
+// The writer, not the transfer function, owns final clipping.
 //
 // Consumed via source concatenation (WGSL has no include mechanism):
 // concat!(include_str!(cctf_lib.wgsl), include_str!(<node>.wgsl)).
 
 fn spow(x: f32, p: f32) -> f32 {
+    if x != x {
+        return x;
+    }
+    if x == 0.0 {
+        return x;
+    }
     return sign(x) * pow(abs(x), p);
 }
 
@@ -44,9 +50,9 @@ fn encode_one(v: f32, kind: u32) -> f32 {
         return a * spow(v, 0.45) - (a - 1.0);
     }
     if kind == 5u {
-        return pow(v, 1.0 / (563.0 / 256.0));
+        return spow(v, 1.0 / (563.0 / 256.0));
     }
-    return pow(v, 1.0 / 2.6);
+    return spow(v, 1.0 / 2.6);
 }
 
 fn decode_one(v: f32, kind: u32) -> f32 {
@@ -78,7 +84,7 @@ fn decode_one(v: f32, kind: u32) -> f32 {
         return spow((v + (a - 1.0)) / a, 1.0 / 0.45);
     }
     if kind == 5u {
-        return pow(v, 563.0 / 256.0);
+        return spow(v, 563.0 / 256.0);
     }
-    return pow(v, 2.6);
+    return spow(v, 2.6);
 }

@@ -6,7 +6,7 @@ fn output_mix_state_roundtrip_and_legacy_retirement_are_atomic() {
     params.output_mix.amount = 0.25;
     let saved = GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
         .unwrap();
-    assert_eq!(saved.sections["rust"]["version"], 3);
+    assert_eq!(saved.sections["rust"]["version"], 4);
     let restored = GuiState::from_value(saved.sections.clone()).unwrap();
     assert_eq!(restored.runtime_params().unwrap().output_mix.amount, 0.25);
     for version in [1, 2] {
@@ -140,7 +140,7 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
         // upstream boolean mirror stays in step on save.
         let saved =
             GuiState::from_runtime(&params, state.film(), state.paper(), &state.sections).unwrap();
-        assert_eq!(saved.sections["rust"]["version"], json!(3));
+        assert_eq!(saved.sections["rust"]["version"], json!(4));
         let runtime = serde_json::to_string(&saved.sections["rust"]["runtime"]).unwrap();
         assert!(runtime.contains("negative_conversion_method"));
         assert!(!runtime.contains("positive_"));
@@ -159,12 +159,12 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
         let runtime = serde_json::to_string(&saved.sections["rust"]["runtime"]).unwrap();
         assert!(runtime.contains("\"print_exposure_mode\""));
         assert!(runtime.contains("negative_conversion_method"));
-        source["rust"]["version"] = json!(3);
+        source["rust"]["version"] = json!(4);
     }
     // The upstream compensation boolean projects onto the tracking
     // setting; the state-side key stays boolean.
     let upstream = GuiState::from_value(json!({
-        "rust": {"version": 3},
+        "rust": {"version": 4},
         "simulation": {"enlarger": {"print_exposure_compensation": false}}
     }))
     .unwrap();
@@ -178,10 +178,78 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
         "never"
     );
     // A current-version document must fail unknown-field validation.
-    let current = GuiState::from_value(json!({"rust": {"version": 3, "runtime": {
+    let current = GuiState::from_value(json!({"rust": {"version": 4, "runtime": {
         "scanner": {"positive_density_ev": 0.4}
     }}}));
     assert!(current.is_err());
+}
+
+#[test]
+fn legacy_cmyk_state_migration_is_transactional_and_idempotent() {
+    // A legacy complete document carrying the retired group migrates onto
+    // the canonical name, preserving active and strength.
+    for version in [1, 2, 3] {
+        let source = json!({
+            "rust": {"version": version},
+            "magazine_print_color": {"active": true, "strength": 0.75},
+        });
+        let state = GuiState::from_value(source).unwrap();
+        let params = state.runtime_params().unwrap();
+        assert!(params.cmyk.active);
+        assert_eq!(params.cmyk.strength, 0.75);
+        assert!(state.sections.get("magazine_print_color").is_none());
+        assert_eq!(state.sections["cmyk"]["active"], json!(true));
+        assert_eq!(state.sections["cmyk"]["strength"], json!(0.75));
+        assert_eq!(state.sections["rust"]["version"], json!(4));
+
+        // Re-serializing a migrated document emits only the canonical group.
+        let saved =
+            GuiState::from_runtime(&params, state.film(), state.paper(), &state.sections).unwrap();
+        let runtime = serde_json::to_string(&saved.sections).unwrap();
+        assert!(runtime.contains("\"cmyk\""));
+        assert!(!runtime.contains("magazine_print_color"));
+    }
+
+    // The retired route migrates onto the base route with cmyk active.
+    let source = json!({
+        "rust": {"version": 3},
+        "simulation": {"route": "input > film > scan > magazine"},
+    });
+    let state = GuiState::from_value(source).unwrap();
+    let params = state.runtime_params().unwrap();
+    assert_eq!(params.workflow.route, "input > film > scan");
+    assert!(params.cmyk.active);
+    assert_eq!(
+        state.sections["simulation"]["route"],
+        json!("input > film > scan")
+    );
+
+    // A legacy document carrying both spellings is rejected atomically.
+    let both = json!({
+        "rust": {"version": 3},
+        "magazine_print_color": {"active": true, "strength": 0.75},
+        "cmyk": {"active": false, "strength": 1.0},
+    });
+    let error = GuiState::from_value(both).unwrap_err();
+    assert!(
+        error.to_string().contains("magazine_print_color"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("cmyk"), "{error}");
+
+    // A current-version document rejects the retired group.
+    let current = json!({
+        "rust": {"version": 4},
+        "magazine_print_color": {"active": true, "strength": 0.75},
+    });
+    assert!(GuiState::from_value(current).is_err());
+
+    // A current-version document rejects the retired route.
+    let current_route = json!({
+        "rust": {"version": 4},
+        "simulation": {"route": "input > film > scan > magazine"},
+    });
+    assert!(GuiState::from_value(current_route).is_err());
 }
 
 #[test]
@@ -263,13 +331,13 @@ fn factory_matches_independently_generated_upstream_state() {
     }
     let factory = GuiState::factory();
     let mut shared = factory.sections.clone();
-    let magazine = shared
+    let cmyk = shared
         .as_object_mut()
-        .and_then(|sections| sections.remove("magazine_print_color"));
+        .and_then(|sections| sections.remove("cmyk"));
     assert_eq!(
-        magazine,
+        cmyk,
         Some(json!({"active": false, "strength": 1.0})),
-        "magazine print color factory defaults",
+        "cmyk factory defaults",
     );
     shared.as_object_mut().unwrap().remove("rust");
     // These controls belong to the Rust scanner extension, not the

@@ -12,8 +12,9 @@ pub(crate) const SUPPORTED_ROUTES: [&str; 6] = [
 ];
 
 /// The removed dedicated magazine workflow. Saved configurations that still
-/// name it must be migrated to a base workflow plus
-/// `magazine_print_color.active`; it is not a selectable route.
+/// name it must be migrated to a base workflow plus `cmyk.active`; it is not
+/// a selectable route. The constant name keeps the historical spelling of
+/// the retired route.
 pub(crate) const REMOVED_MAGAZINE_ROUTE: &str = "input > film > scan > magazine";
 
 /// Registered RGB-to-raw implementations. Parsing and construction share this
@@ -108,7 +109,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.halation.source_compression" => Some((0.0, Some(0.999999))),
         "camera.film_format_mm" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
-        "magazine_print_color.strength" => Some((0.0, Some(1.0))),
+        "cmyk.strength" => Some((0.0, Some(1.0))),
         "scanner.black_point" | "scanner.white_point" => Some((0.0, Some(1.0))),
         "scanner.finish_strength" => Some((0.0, Some(1.0))),
         "scanner.conversion_brightness_ev"
@@ -534,7 +535,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
         return Err(
             "workflow.route: the magazine route was removed; use input > film > scan and set \
-             magazine_print_color.active = true"
+             cmyk.active = true"
                 .into(),
         );
     }
@@ -823,10 +824,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         }
     }
     RgbToRawMethod::parse(&params.settings.rgb_to_raw_method)?;
-    let magazine = &params.magazine_print_color;
-    let (min, max) = leaf_numeric_bounds("magazine_print_color.strength").unwrap();
-    if !magazine.strength.is_finite() || !(min..=max.unwrap()).contains(&magazine.strength) {
-        return Err("magazine_print_color.strength: must be finite and in 0..=1".into());
+    let cmyk = &params.cmyk;
+    let (min, max) = leaf_numeric_bounds("cmyk.strength").unwrap();
+    if !cmyk.strength.is_finite() || !(min..=max.unwrap()).contains(&cmyk.strength) {
+        return Err("cmyk.strength: must be finite and in 0..=1".into());
     }
     if let Some(t) = params.taps.inject.as_deref() {
         Tap::parse(t).map_err(|e| format!("taps.inject: {e}"))?;
@@ -890,5 +891,32 @@ mod tests {
         let error = validate(&params).unwrap_err();
         assert!(error.starts_with("camera.auto_exposure_method:"));
         assert!(error.contains("average"));
+    }
+
+    #[test]
+    fn cmyk_strength_bounds_are_enforced() {
+        let mut params = RuntimeParams::default();
+        for strength in [0.0, 0.5, 1.0] {
+            params.cmyk.strength = strength;
+            validate(&params).unwrap();
+        }
+        for strength in [-0.01, 1.01, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            params.cmyk.strength = strength;
+            let error = validate(&params).unwrap_err();
+            assert!(
+                error.starts_with("cmyk.strength:"),
+                "unexpected error for {strength}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn removed_magazine_route_rejects_with_actionable_replacement() {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = REMOVED_MAGAZINE_ROUTE.to_owned();
+        let error = validate(&params).unwrap_err();
+        assert!(error.starts_with("workflow.route:"), "{error}");
+        assert!(error.contains("input > film > scan"), "{error}");
+        assert!(error.contains("cmyk.active = true"), "{error}");
     }
 }

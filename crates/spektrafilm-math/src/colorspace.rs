@@ -128,8 +128,8 @@ pub fn chromatic_adaptation_matrix_cat16_f64(
 }
 
 /// Bradford (Lam 1985) von Kries chromatic adaptation — the ICC/LittleCMS
-/// default adaptation transform. The magazine print appearance reference
-/// converts through LittleCMS, so its Lab round-trip uses Bradford.
+/// default adaptation transform used by the `cmyk_ink_v1` appearance.
+/// Its Lab round-trip uses Bradford.
 pub fn chromatic_adaptation_matrix_bradford_f64(
     src_white: [f64; 3],
     dst_white: [f64; 3],
@@ -208,10 +208,9 @@ pub enum Cctf {
     /// ITU-R BT.2020 OETF (colour-science's default 10-bit constants:
     /// α = 1.099, β = 0.018).
     Rec2020 = 5,
-    /// Adobe RGB (1998): pure power 563/256 (negative → NaN, matching
-    /// colour-science's `gamma_function`).
+    /// Adobe RGB (1998): pure power 563/256 with sign-preserving headroom.
     AdobeRgb1998 = 6,
-    /// DCI-P3: pure power 2.6 (negative → NaN, as above).
+    /// DCI-P3: pure power 2.6 with sign-preserving headroom.
     Gamma2_6 = 7,
 }
 
@@ -508,12 +507,17 @@ pub fn resolve(name: &str) -> Result<&'static RgbColorSpace, String> {
     }
 }
 
-/// Sign-preserving power — colour-science's `spow` (NaN where the base is
-/// negative and the exponent is fractional-but-integral... no: `spow` is
-/// sign-preserving by construction and only NaN on NaN input).
+/// Sign-preserving power used by RGB transfer functions at finite signed
+/// headroom. The writer, not the transfer function, owns final clipping.
 #[inline]
 pub fn spow(x: f64, p: f64) -> f64 {
-    x.signum() * x.abs().powf(p)
+    if x.is_nan() {
+        f64::NAN
+    } else if x == 0.0 {
+        x
+    } else {
+        x.signum() * x.abs().powf(p)
+    }
 }
 
 /// sRGB encoded → linear, exactly colour's `eotf_sRGB` (threshold computed
@@ -537,10 +541,8 @@ pub fn srgb_encode_f64(v: f64) -> f64 {
     }
 }
 
-/// Apply the space's decoding transfer function (encoded → linear).
-/// Mirrors colour-science exactly, including NaN for negative inputs in the
-/// pure-power spaces (`gamma_function`) and sign-preserving `spow` powers
-/// in the piecewise spaces.
+/// Apply the space's decoding transfer function (encoded → linear). Finite
+/// signed headroom remains finite for every registered RGB transfer.
 #[inline]
 pub fn cctf_decode(v: f64, cctf: Cctf) -> f64 {
     match cctf {
@@ -554,7 +556,6 @@ pub fn cctf_decode(v: f64, cctf: Cctf) -> f64 {
         }
         Cctf::Srgb => srgb_decode_f64(v),
         Cctf::ProPhoto => {
-            // E_t = 16^(1.8/(1-1.8)) = 1/512; linear below 16·E_t = 1/32.
             if v < 16.0 * (1.0 / 512.0) {
                 v / 16.0
             } else {
@@ -570,12 +571,13 @@ pub fn cctf_decode(v: f64, cctf: Cctf) -> f64 {
                 spow((v + (A - 1.0)) / A, 1.0 / 0.45)
             }
         }
-        Cctf::AdobeRgb1998 => v.powf(563.0 / 256.0),
-        Cctf::Gamma2_6 => v.powf(2.6),
+        Cctf::AdobeRgb1998 => spow(v, 563.0 / 256.0),
+        Cctf::Gamma2_6 => spow(v, 2.6),
     }
 }
 
-/// Apply the space's encoding transfer function (linear → encoded).
+/// Apply the space's encoding transfer function (linear → encoded). Finite
+/// signed headroom remains finite for every registered RGB transfer.
 #[inline]
 pub fn cctf_encode(v: f64, cctf: Cctf) -> f64 {
     match cctf {
@@ -589,7 +591,6 @@ pub fn cctf_encode(v: f64, cctf: Cctf) -> f64 {
         }
         Cctf::Srgb => srgb_encode_f64(v),
         Cctf::ProPhoto => {
-            // E_t = 1/512; linear when E_t > v, else gamma 1/1.8.
             if 1.0 / 512.0 > v {
                 v * 16.0
             } else {
@@ -605,8 +606,8 @@ pub fn cctf_encode(v: f64, cctf: Cctf) -> f64 {
                 A * spow(v, 0.45) - (A - 1.0)
             }
         }
-        Cctf::AdobeRgb1998 => v.powf(1.0 / (563.0 / 256.0)),
-        Cctf::Gamma2_6 => v.powf(1.0 / 2.6),
+        Cctf::AdobeRgb1998 => spow(v, 1.0 / (563.0 / 256.0)),
+        Cctf::Gamma2_6 => spow(v, 1.0 / 2.6),
     }
 }
 
@@ -729,8 +730,8 @@ mod tests {
                 assert!((cctf_decode(encoded_input[i], curve) - decoded[i]).abs() < 1e-12);
             }
         }
-        assert!(cctf_encode(-0.1, Cctf::AdobeRgb1998).is_nan());
-        assert!(cctf_decode(-0.1, Cctf::Gamma2_6).is_nan());
+        assert!(cctf_encode(-0.1, Cctf::AdobeRgb1998).is_finite());
+        assert!(cctf_decode(-0.1, Cctf::Gamma2_6).is_finite());
         assert_eq!(cctf_encode(2.0, Cctf::Linear), 2.0);
         assert!(encode_rgb([-0.1, 2.0, 0.18], &SRGB)[0] < 0.0);
         assert!(encode_rgb([-0.1, 2.0, 0.18], &SRGB)[1] > 1.0);
@@ -1303,7 +1304,13 @@ mod tests {
         ];
         let assert_reference = |actual: f64, expected: f64, label: &str| {
             if expected.is_nan() {
-                assert!(actual.is_nan(), "{label}: expected NaN, got {actual}");
+                // The old colour-science fixture used raw `powf` and recorded
+                // NaN for negative Adobe/DCI probes. The runtime contract
+                // deliberately preserves finite signed headroom instead.
+                assert!(
+                    actual.is_finite(),
+                    "{label}: signed headroom is non-finite: {actual}"
+                );
             } else {
                 assert!(
                     (actual - expected).abs() <= 2e-12 * expected.abs().max(1.0),

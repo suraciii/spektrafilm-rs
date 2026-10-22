@@ -91,7 +91,7 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
         || params.scanner.lens_blur > 0.0
         || params.scanner.unsharp_mask.iter().any(|&v| v > 0.0)
         || (params.print_render.glare.active && params.print_render.glare.percent > 0.0)
-        || (params.magazine_print_color.active && params.magazine_print_color.strength > 0.0)
+        || (params.cmyk.active && params.cmyk.strength > 0.0)
     {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} does not support spatial optics or finishing"

@@ -91,7 +91,7 @@ impl Drop for Temp {
 fn version_one_maps_name_and_materializes_controls() {
     let text = r#"{"schema_version":1,"id":"old","name":"Portable","film_profile":{"stock":"kodak_portra_400"},"print_profile":{"stock":"kodak_portra_endura"},"parameters":{"enlarger":{},"scanner":{},"film_render":{},"print_render":{},"camera_diffusion_filter":{}},"provenance":{"implementation_version":"test","model_version":"test"}}"#;
     let p = Preset::from_json_str(text).unwrap();
-    assert_eq!(p.schema_version, 4);
+    assert_eq!(p.schema_version, PRESET_SCHEMA_VERSION);
     assert_eq!(p.name, "Portable");
     assert!(!p.to_json().unwrap().contains("\"id\""));
     // The legacy document gains the material controls the migration supplies.
@@ -212,7 +212,7 @@ fn legacy_whole_looks_gain_full_mix_and_preserve_caller_io() {
         parameters.remove("output_mix");
         parameters.remove("camera");
         let migrated = Preset::from_json_str(&document.to_string()).unwrap();
-        assert_eq!(migrated.schema_version, 4);
+        assert_eq!(migrated.schema_version, PRESET_SCHEMA_VERSION);
         assert_eq!(migrated.look_parameters().unwrap().output_mix.amount, 1.0);
         let mut caller = RuntimeParams::default();
         caller.output_mix.amount = 0.25;
@@ -227,7 +227,7 @@ fn legacy_whole_looks_gain_full_mix_and_preserve_caller_io() {
         assert_eq!(resolved.params.io, caller.io);
         assert_eq!(resolved.params.output_mix.amount, 1.0);
         let exported = serde_json::from_str::<Value>(&migrated.to_json().unwrap()).unwrap();
-        assert_eq!(exported["schema_version"], 4);
+        assert_eq!(exported["schema_version"], PRESET_SCHEMA_VERSION);
         assert!(exported["parameters"].get("io").is_none());
         document["parameters"]["io"] = serde_json::json!({});
         assert!(Preset::from_json_str(&document.to_string()).is_err());
@@ -455,8 +455,8 @@ fn carrier_validation_and_precision() {
     assert_eq!(Preset::from_toml_str(&p.to_toml().unwrap()).unwrap(), p);
     assert_eq!(Preset::from_json_str(&p.to_json().unwrap()).unwrap(), p);
     let text = p.to_json().unwrap().replacen(
-        "\"schema_version\": 4",
-        "\"schema_version\": 4, \"schema_version\": 4",
+        "\"schema_version\": 5",
+        "\"schema_version\": 5, \"schema_version\": 5",
         1,
     );
     assert!(Preset::from_json_str(&text).is_err());
@@ -922,4 +922,278 @@ fn look_and_section_documents_reject_active_invalid_chemistry() {
         let text = serde_json::json!({"schema_version":2,"name":"Invalid chemistry","parameters":payload,"provenance":provenance()}).to_string();
         assert!(Preset::from_json_str(&text).is_err());
     }
+}
+
+/// A look document at a legacy preset version, carrying the required look
+/// groups from a built-in plus the supplied legacy extras. `settings` is
+/// dropped because look documents carry only the look settings subset, and
+/// `cmyk` is dropped because the caller supplies the legacy spelling.
+fn legacy_cmyk_look(version: u32, parameters: serde_json::Map<String, Value>) -> Value {
+    let mut value = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    let object = value.as_object_mut().unwrap();
+    object.insert("schema_version".into(), version.into());
+    let mut look = serde_json::Map::new();
+    for (key, value) in object["parameters"].as_object().unwrap() {
+        if !matches!(key.as_str(), "cmyk" | "settings") {
+            look.insert(key.clone(), value.clone());
+        }
+    }
+    // Camera and output mix postdate the v1/v2 whole-look surface.
+    if version <= 2 {
+        look.remove("camera");
+        look.remove("output_mix");
+    }
+    look.extend(parameters);
+    object.insert("parameters".into(), Value::Object(look));
+    value
+}
+
+#[test]
+fn legacy_looks_migrate_the_retired_magazine_group_onto_canonical_cmyk() {
+    for version in [1, 2, 3, 4] {
+        let legacy = serde_json::json!({
+            "magazine_print_color": {"active": true, "strength": 0.75}
+        });
+        let document = legacy_cmyk_look(version, legacy.as_object().unwrap().clone());
+        let imported = Preset::from_json_str(&document.to_string()).unwrap();
+        assert_eq!(imported.schema_version, PRESET_SCHEMA_VERSION);
+        let look = imported.look_parameters().unwrap();
+        assert!(look.cmyk.active);
+        assert_eq!(look.cmyk.strength, 0.75);
+        let exported = serde_json::from_str::<Value>(&imported.to_json().unwrap()).unwrap();
+        assert_eq!(exported["parameters"]["cmyk"]["active"], true);
+        assert_eq!(exported["parameters"]["cmyk"]["strength"], 0.75);
+        assert!(exported["parameters"].get("magazine_print_color").is_none());
+        // Resolving keeps the migrated ink style and the caller's io settings.
+        let mut caller = RuntimeParams::default();
+        caller.io.output_color_space = "ProPhoto RGB".into();
+        let resolved = imported.resolve(&data(), &caller).unwrap();
+        assert!(resolved.params.cmyk.active);
+        assert_eq!(resolved.params.cmyk.strength, 0.75);
+        assert_eq!(resolved.params.io.output_color_space, "ProPhoto RGB");
+        // Re-importing the exported document is stable.
+        let reimported = Preset::from_json_str(&imported.to_json().unwrap()).unwrap();
+        assert_eq!(reimported, imported);
+    }
+}
+
+#[test]
+fn looks_never_carry_the_retired_magazine_route() {
+    // Presets own look controls only; workflow routing is a caller setting, so
+    // a preset document cannot carry the retired route in any schema version.
+    // Complete runtime carriers migrate that route at their own boundary.
+    for version in [1, 2, 3, 4, 5] {
+        let mut value = legacy_cmyk_look(version, serde_json::Map::new());
+        value["parameters"]["workflow"] =
+            serde_json::json!({"route": "input > film > scan > magazine"});
+        let error = Preset::from_json_str(&value.to_string()).unwrap_err();
+        assert!(error.contains("workflow"), "{error}");
+    }
+    // The retired group migrates on every approved legacy version and the
+    // exported document carries no workflow routing of its own.
+    for version in [1, 2, 3, 4] {
+        let legacy =
+            serde_json::json!({"magazine_print_color": {"active": true, "strength": 0.75}});
+        let imported = Preset::from_json_str(
+            &legacy_cmyk_look(version, legacy.as_object().unwrap().clone()).to_string(),
+        )
+        .unwrap();
+        let exported = serde_json::from_str::<Value>(&imported.to_json().unwrap()).unwrap();
+        assert!(exported["parameters"].get("workflow").is_none());
+        assert_eq!(
+            exported["parameters"]["cmyk"]["active"], true,
+            "version {version}"
+        );
+        assert_eq!(exported["parameters"]["cmyk"]["strength"], 0.75);
+        let mut caller = RuntimeParams::default();
+        caller.io.scan_film = true;
+        let resolved = imported.resolve(&data(), &caller).unwrap();
+        assert!(resolved.params.cmyk.active);
+        assert_eq!(
+            resolved.params.workflow.route, caller.workflow.route,
+            "the preset must not select a workflow route"
+        );
+    }
+}
+
+#[test]
+fn legacy_looks_reject_a_magazine_spelling_beside_its_canonical_counterpart() {
+    for version in [1, 2, 3, 4] {
+        let mut value = legacy_cmyk_look(version, serde_json::Map::new());
+        let parameters = value["parameters"].as_object_mut().unwrap();
+        parameters.insert(
+            "cmyk".into(),
+            serde_json::json!({"active": true, "strength": 1.0}),
+        );
+        parameters.insert(
+            "magazine_print_color".into(),
+            serde_json::json!({"active": false, "strength": 0.75}),
+        );
+        let original = serde_json::to_string(&value).unwrap();
+        let error = Preset::from_json_str(&original).unwrap_err();
+        assert!(error.contains("magazine_print_color"), "{error}");
+        assert!(error.contains("cmyk"), "{error}");
+        // A rejected document stays byte-identical: nothing is rewritten.
+        assert_eq!(serde_json::to_string(&value).unwrap(), original);
+    }
+    // The retired route beside an explicit legacy active leaf is a conflict.
+    for version in [1, 2, 3, 4] {
+        let mut value = legacy_cmyk_look(version, serde_json::Map::new());
+        let parameters = value["parameters"].as_object_mut().unwrap();
+        parameters.insert(
+            "workflow".into(),
+            serde_json::json!({"route": "input > film > scan > magazine"}),
+        );
+        parameters.insert(
+            "magazine_print_color".into(),
+            serde_json::json!({"active": false}),
+        );
+        let error = Preset::from_json_str(&value.to_string()).unwrap_err();
+        assert!(error.contains("retired route"), "{error}");
+    }
+}
+
+#[test]
+fn schema_five_looks_reject_the_retired_magazine_spelling() {
+    let mut value = legacy_cmyk_look(5, serde_json::Map::new());
+    value["parameters"]["magazine_print_color"] =
+        serde_json::json!({"active": true, "strength": 0.75});
+    let error = Preset::from_json_str(&value.to_string()).unwrap_err();
+    assert!(error.contains("magazine_print_color"), "{error}");
+    assert!(error.contains("was retired"), "{error}");
+    assert!(error.contains("cmyk"), "{error}");
+    // A document that names no retired field still reports its own fault.
+    let clean = Preset::from_json_str(&legacy_cmyk_look(5, serde_json::Map::new()).to_string())
+        .unwrap()
+        .to_json()
+        .unwrap();
+    assert!(!clean.contains("magazine_print_color"));
+    // Versions beyond the current schema are rejected outright.
+    let mut future = serde_json::from_str::<Value>(&clean).unwrap();
+    future["schema_version"] = 6.into();
+    let error = Preset::from_json_str(&future.to_string()).unwrap_err();
+    assert!(
+        error.contains("unsupported preset schema version"),
+        "{error}"
+    );
+    // The retired route is not a current-schema spelling either.
+    let mut value = legacy_cmyk_look(5, serde_json::Map::new());
+    value["parameters"]["workflow"] =
+        serde_json::json!({"route": "input > film > scan > magazine"});
+    assert!(Preset::from_json_str(&value.to_string()).is_err());
+}
+
+#[test]
+fn migrated_legacy_ink_style_migration_is_idempotent_at_the_preset_boundary() {
+    let legacy = serde_json::json!({"magazine_print_color": {"active": true, "strength": 0.4}});
+    let document = legacy_cmyk_look(4, legacy.as_object().unwrap().clone());
+    let imported = Preset::from_json_str(&document.to_string()).unwrap();
+    let exported = serde_json::to_value(&imported).unwrap();
+    // Replaying the migrated document as schema 4 must be a no-op.
+    let mut replayed = exported.clone();
+    replayed["schema_version"] = 4.into();
+    let again = Preset::from_json_str(&replayed.to_string()).unwrap();
+    assert_eq!(serde_json::to_value(&again).unwrap(), exported);
+}
+
+#[test]
+fn builtin_schema_five_looks_decode_canonical_cmyk_fields_only() {
+    for preset in builtin_presets() {
+        assert_eq!(preset.schema_version, PRESET_SCHEMA_VERSION);
+        let exported = serde_json::to_value(&preset).unwrap();
+        let parameters = exported["parameters"].as_object().unwrap();
+        assert!(parameters.get("magazine_print_color").is_none());
+        let cmyk = parameters
+            .get("cmyk")
+            .unwrap_or_else(|| panic!("{} carries no cmyk group", preset.name));
+        assert!(cmyk.get("active").is_some(), "{}", preset.name);
+        assert!(cmyk.get("strength").is_some(), "{}", preset.name);
+        let reimported = Preset::from_json_str(&preset.to_json().unwrap()).unwrap();
+        assert_eq!(reimported, preset);
+    }
+}
+
+#[test]
+fn legacy_v1_v2_looks_gain_mix_and_migrate_ink_style_together() {
+    for version in [1, 2] {
+        let mut value = legacy_cmyk_look(
+            version,
+            serde_json::json!({"magazine_print_color": {"active": true, "strength": 0.75}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        // V1 carries the old id, which migration must discard.
+        if version == 1 {
+            value["id"] = "legacy-id".into();
+        }
+        let imported = Preset::from_json_str(&value.to_string()).unwrap();
+        let look = imported.look_parameters().unwrap();
+        // The whole-look migration still supplies the full mix.
+        assert_eq!(look.output_mix.amount, 1.0);
+        // The retired ink group lands on the canonical name in the same pass.
+        assert!(look.cmyk.active);
+        assert_eq!(look.cmyk.strength, 0.75);
+        // V1's id is gone and material controls survive the migration.
+        assert!(serde_json::to_value(&imported).unwrap().get("id").is_none());
+        let exported = serde_json::from_str::<Value>(&imported.to_json().unwrap()).unwrap();
+        assert_eq!(exported["parameters"]["output_mix"]["amount"], 1.0);
+        assert!(exported["parameters"].get("magazine_print_color").is_none());
+        assert_eq!(
+            exported["parameters"]["enlarger"]["print_exposure_mode"],
+            "auto"
+        );
+    }
+}
+
+#[test]
+fn cmyk_section_presets_carry_only_the_ink_style_leaves() {
+    let mut current = RuntimeParams::default();
+    current.cmyk.active = true;
+    current.cmyk.strength = 0.625;
+    let captured = Preset::capture_section("Ink", Section::Cmyk, &current, provenance()).unwrap();
+    assert_eq!(captured.kind().unwrap(), PresetKind::Section(Section::Cmyk));
+    let exported = serde_json::from_str::<Value>(&captured.to_json().unwrap()).unwrap();
+    assert_eq!(
+        exported["parameters"],
+        serde_json::json!({"cmyk": {"active": true, "strength": 0.625}})
+    );
+    let loaded = Preset::from_toml_str(&captured.to_toml().unwrap()).unwrap();
+    assert_eq!(loaded, captured);
+    // Applying replaces only the ink style and records its explicit paths.
+    let mut caller = RuntimeParams::default();
+    caller.cmyk.strength = 0.2;
+    caller.enlarger.print_exposure = 0.75;
+    let applied = loaded.apply_section(&caller, &test_film()).unwrap();
+    assert!(applied.cmyk.active);
+    assert_eq!(applied.cmyk.strength, 0.625);
+    assert_eq!(applied.enlarger.print_exposure, 0.75);
+    assert!(section_matches(&loaded, &applied).unwrap());
+    // A legacy section spelling migrates only for an approved legacy version.
+    let mut legacy = serde_json::to_value(&captured).unwrap();
+    legacy["schema_version"] = 4.into();
+    legacy["parameters"] =
+        serde_json::json!({"magazine_print_color": {"active": true, "strength": 0.625}});
+    let migrated = Preset::from_json_str(&legacy.to_string()).unwrap();
+    assert_eq!(migrated.kind().unwrap(), PresetKind::Section(Section::Cmyk));
+    let applied = migrated
+        .apply_section(&RuntimeParams::default(), &test_film())
+        .unwrap();
+    assert!(applied.cmyk.active);
+    assert_eq!(applied.cmyk.strength, 0.625);
+    // A current section document rejects the retired spelling.
+    let mut current_document = serde_json::to_value(&captured).unwrap();
+    current_document["parameters"] =
+        serde_json::json!({"magazine_print_color": {"active": true, "strength": 0.625}});
+    assert!(Preset::from_json_str(&current_document.to_string()).is_err());
+    // A legacy section that never carried the feature does not acquire `cmyk`.
+    let mut plain = serde_json::to_value(&captured).unwrap();
+    plain["schema_version"] = 4.into();
+    plain["parameters"] = serde_json::json!({"enlarger": {"print_exposure": 0.5}});
+    let untouched = Preset::from_json_str(&plain.to_string()).unwrap();
+    let applied = untouched
+        .apply_section(&RuntimeParams::default(), &test_film())
+        .unwrap();
+    assert!(!applied.cmyk.active);
+    assert_eq!(applied.cmyk.strength, 1.0);
 }
