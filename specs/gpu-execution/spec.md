@@ -18,7 +18,7 @@ The scope must cover these production operations:
 
 - RAW demosaicing, sensor corrections required by the selected decoder, camera orientation, selected white balance, lens correction, and transformation to normalized linear input.
 - Raster input transfer decoding and color interpretation, full-source exposure and scanner-setup measurements, crop, rotation, resize, antialiasing, and working pixel-pitch propagation.
-- All supported base workflows, including Finished RGB, film scan, film-print-scan, and every supported convert-film route.
+- All supported base workflows, including the `input` workflow, film scan, film-print-scan, and every supported convert-film route.
 - Both RGB-to-raw methods, selected input and output gamut operations, spectral integration, selected spectral-LUT evaluation, material exposure and development, independently filtered preflash, chemistry, and channel mapping.
 - Camera and enlarger diffusion, highlight boost, per-channel halation, DIR including its exponential tails and non-default coefficients, scanner optics, print viewing glare, and unsharp masking.
 - All four grain engines in their declared domains, including Spektra composite and layered sampling, both Procedural modes and resolution models, Dye field readout, and Fotufilm population formation and readout.

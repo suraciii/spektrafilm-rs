@@ -764,7 +764,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(restored.params.scanner.white_point, [0.95, 1.0, 1.0]);
     assert_eq!(restored.params.scanner.black_point, [0.025, 0.0, 0.0]);
     eframe::App::on_exit(&mut restored, None);
-    choose(h, "workflow", "Finished RGB");
+    choose(h, "workflow", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert!(h.query_by_label("brightness").is_none());
 }
@@ -817,7 +817,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
 fn real_worker_accepts_only_latest_request_and_current_revision() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "Finished RGB");
+    choose(h, "workflow", "input");
     let baseline = render(h, "PREVIEW");
     let ctx = h.ctx.clone();
     // Hold the worker's existing start marker while UI events change the
@@ -1227,7 +1227,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         "Negative conversion method",
         "Digital Reference (modeled)",
     );
-    choose(h, "workflow", "Finished RGB");
+    choose(h, "workflow", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert_eq!(
         h.state().params.scanner.negative_conversion_method,

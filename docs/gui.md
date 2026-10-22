@@ -56,11 +56,11 @@ The GUI has no standalone Output lightness-compression control. See [presets](pr
 ### CMYK ink style
 The **CMYK ink style** checkbox next to the workflow selector applies the fixed `ink` appearance to the selected workflow. **MAIN → CMYK ink style → Strength** sets Strength from 0 to 1. Strength 0 is a no-op. Photographic print controls remain separate.
 
-The optional appearance applies to any supported base workflow, including a scanned negative or a Finished RGB input. It runs after the base workflow and its scanner-domain effects, before output mix and writing. It is a modeled RGB appearance, not a press proof or physical-print guarantee.
+The optional appearance applies to any supported base workflow, including the `input` workflow and a scanned negative. It runs after the base workflow and its scanner-domain effects, before output mix and writing. It is a modeled RGB appearance, not a press proof or physical-print guarantee.
 
 `cmyk.active` and `cmyk.strength` enable the treatment independently of the base workflow. There is no CMYK route. The treatment remains three-channel RGB. It does not generate CMYK files, separations, plates, press-ready output, halftone, or paper texture.
 
-The `Finished RGB` workflow color-manages an already rendered image to the output space. Film and print profile selections do not affect it. See the [film-chain specification](../specs/film-chain/spec.md) and [CMYK ink style specification](../specs/cmyk-style/spec.md) for the workflow contracts.
+The `input` workflow color-manages an already rendered image to the output space. Film and print profile selections do not affect it. See the [film-chain specification](../specs/film-chain/spec.md) and [CMYK ink style specification](../specs/cmyk-style/spec.md) for the workflow contracts.
 
 ### Grain profiles
 

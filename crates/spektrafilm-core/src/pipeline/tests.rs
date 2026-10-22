@@ -1195,7 +1195,7 @@ fn output_mix_source_matches_deferred_field_crop_rounding() {
 }
 
 #[test]
-fn output_mix_finished_rgb_keeps_cmyk_only_in_result_branch() {
+fn output_mix_input_route_keeps_cmyk_only_in_result_branch() {
     let mut pipeline = build();
     pipeline.params.workflow.route = "input".into();
     pipeline.params.film_render.grain.active = false;
@@ -1513,7 +1513,7 @@ fn convert_routes_apply_the_shared_terminal_cmyk_appearance() {
         }
 
         // Active strength 1 applies the shared terminal appearance once,
-        // matching the reference transform over the finished RGB result.
+        // matching the reference transform over the completed RGB result.
         let mut active = disabled.clone();
         active.cmyk = full_strength.clone();
         let full = render(active);

@@ -438,9 +438,9 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_accepted_params_geometry_
     assert_eq!(h.state().params.io.crop_center, [0.25, 0.5]);
     assert_eq!(h.state().params.io.crop_size, [0.5, 0.5]);
 
-    // Finished RGB keeps the input ramp's polarity, so the crop window's
+    // The input route keeps the input ramp's polarity, so the crop window's
     // source region is observable in the output pixels.
-    choose(h, "workflow", "Finished RGB");
+    choose(h, "workflow", "input");
     assert_eq!(h.state().params.workflow.route, "input");
     let left = render(h, "SCAN");
     assert_eq!((left.width, left.height), (80, 80));

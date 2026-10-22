@@ -212,7 +212,7 @@ impl Pipeline {
             && backend.explicit_gpu_request()
         {
             return Err(
-                "explicit GPU request cannot run the complete Finished RGB route on WGPU; retry with an explicit CPU request"
+                "explicit GPU request cannot run the complete input route on WGPU; retry with an explicit CPU request"
                     .into(),
             );
         }
@@ -264,11 +264,10 @@ impl Pipeline {
                     pixel[channel] = from_f64(rgb[channel]);
                 }
             });
-            // Finished RGB applies the shared terminal RGB CMYK ink style
-            // appearance after output color management and before output
-            // publication. The appearance is terminal RGB finishing, not a
-            // spectral stage: the caller records it as an independent
-            // post-rgb_out record with the actual executed parameters.
+            // The input route applies the shared terminal RGB CMYK ink style
+            // appearance after output color management and before publication.
+            // The appearance is terminal RGB finishing, not a spectral stage:
+            // the caller records it as an independent post-rgb_out record.
             crate::cmyk::apply(
                 &mut output,
                 &self.params.cmyk,

@@ -100,7 +100,7 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
 fn startup_default_and_factory_restore_stay_in_session_directory() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "Finished RGB");
+    choose(h, "workflow", "input");
     let expected = h.state().params.clone();
     let image = h.state().image_path.clone();
     state_controls(h);
@@ -353,7 +353,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     let source = image_io::load(&path).unwrap();
     assert!(source.metadata.is_some());
     let h = &mut s.harness;
-    choose(h, "workflow", "Finished RGB");
+    choose(h, "workflow", "input");
     click(h, "Import RGB");
     script(h, chooser::ChooserResult::Scripted(path));
     click(h, "Select RGB image…");

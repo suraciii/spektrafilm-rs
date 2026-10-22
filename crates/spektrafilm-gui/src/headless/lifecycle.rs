@@ -155,7 +155,7 @@ fn on_exit_cancels_and_joins_staged_export_without_publication() {
 fn on_exit_joins_active_render_and_discards_queued_results() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "Finished RGB");
+    choose(h, "workflow", "input");
     let baseline = render(h, "PREVIEW");
     let ctx = h.ctx.clone();
     let active = h.state().render_worker.active.clone();

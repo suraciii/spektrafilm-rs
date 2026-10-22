@@ -136,7 +136,7 @@ pub(crate) mod vocabulary {
     }
 
     /// `input`: an already rendered RGB image reaches the output space.
-    pub(crate) const INPUT: &str = "Color-manage an already rendered RGB image.";
+    pub(crate) const INPUT: &str = "Color-manage the input RGB image.";
     /// `input > film > scan`: the selected film medium is exposed and scanned.
     pub(crate) const FILM_SCAN: &str = "Expose film and scan the selected film medium.";
     /// `input > film > print > scan`: the paper print is scanned, not the film.
@@ -163,7 +163,7 @@ pub(crate) struct RouteChoice {
 pub(crate) const CHOICES: [RouteChoice; 6] = [
     RouteChoice {
         value: "input",
-        label: "Finished RGB",
+        label: "input",
         description: vocabulary::INPUT,
     },
     RouteChoice {

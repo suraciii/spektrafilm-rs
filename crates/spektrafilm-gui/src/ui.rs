@@ -1053,7 +1053,7 @@ impl App {
                 ui.collapsing("Profiles", |ui| {
                     if self.params.workflow.route == "input" {
                         ui.weak(
-                            "Finished RGB ignores these profiles: it only colour-manages the \
+                            "The input route ignores these profiles: it only colour-manages the \
                              input to the output space.",
                         );
                     }

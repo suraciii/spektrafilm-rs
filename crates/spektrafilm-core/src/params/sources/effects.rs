@@ -82,7 +82,7 @@ impl Condition {
             Self::CmykActive => "cmyk.active = true",
             Self::CmykStrength => "cmyk.strength > 0",
             Self::FilmDevelopment => {
-                "actual Film development route; captured negatives and Finished RGB are not redeveloped"
+                "actual Film development route; captured negatives and the input route are not redeveloped"
             }
             Self::PrintDevelopment => {
                 "admitted print-development route, including recovered-negative printing"

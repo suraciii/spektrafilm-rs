@@ -473,7 +473,7 @@ mod scan_semantics_tests {
     }
 
     #[test]
-    fn finished_rgb_route_applies_cmyk_appearance() {
+    fn input_route_applies_cmyk_appearance() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let backend = CpuBackend;
@@ -496,13 +496,13 @@ mod scan_semantics_tests {
         crate::cmyk::apply(&mut expected, &active.cmyk, output_space, true);
         assert!(
             max_diff(&output, &expected) < 1e-6,
-            "Finished RGB must run the shared cmyk finishing"
+            "Input route must run the shared cmyk finishing"
         );
         assert!(max_diff(&output, &base) > 1e-5);
     }
 
     #[test]
-    fn finished_rgb_route_ignores_resolved_profiles() {
+    fn input_route_ignores_resolved_profiles() {
         let dir = data_dir();
         let portra = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let gold = profile::load_profile_by_name(&dir, "kodak_gold_200").unwrap();
@@ -524,7 +524,7 @@ mod scan_semantics_tests {
         assert_eq!(
             max_diff(&portra_output, &gold_output),
             0.0,
-            "Finished RGB output must not depend on the resolved film or print profile"
+            "Input route output must not depend on the resolved film or print profile"
         );
     }
 

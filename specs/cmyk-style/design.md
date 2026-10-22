@@ -2,13 +2,13 @@
 
 ## Ownership and boundary
 
-The [CMYK ink style specification](spec.md) owns the product contract and the `cmyk_ink_v1` color definition. The shared runtime owns one implementation for Finished RGB and scanned outputs. The GUI and CLI must not implement separate color transforms.
+The [CMYK ink style specification](spec.md) owns the product contract and the `cmyk_ink_v1` color definition. The shared runtime owns one implementation for the `input` workflow and scanned outputs. The GUI and CLI must not implement separate color transforms.
 
 CMYK ink style is a terminal RGB appearance boundary. It runs after all scanner-domain effects, including scanner finishing, output gamut processing, unsharp masking, transfer encoding, and Procedural grain, and before output mix and writing. It does not belong to the spectral film or photographic printing stages.
 
 The runtime parameter group is `cmyk`. It contains only `active` and `strength` for this release. No general effect graph, new workflow syntax, press profile, proof profile, or fourth spectral stage is introduced.
 
-Finished RGB must not use film, paper, spectral preparation, photographic print filters, metering, or film grain. Profile resolution may remain required by existing runtime construction, but changing resolved film or paper profiles must not change Finished RGB pixels. Input color primaries, white point, and transfer state remain explicit.
+The `input` workflow must not use film, paper, spectral preparation, photographic print filters, metering, or film grain. Profile resolution may remain required by existing runtime construction, but changing resolved film or paper profiles must not change `input` pixels. Input color primaries, white point, and transfer state remain explicit.
 
 CMYK is an internal appearance concept. The runtime image buffer and all published output remain three-channel RGB. No CMYK file, separation, plate, press-ready artifact, ICC press workflow, or physical proof is produced.
 
@@ -78,13 +78,13 @@ Pointwise CMYK ink style may be baked into a LUT. Halftone, texture, registratio
 
 The visible product name is `CMYK ink style`. Help must state that it is a modeled RGB appearance, that output remains RGB, and that it does not create separations or a press-ready file. `Printing` remains reserved for the real photographic printing operation. The retired Magazine label is not a product name for this feature.
 
-The GUI must display the feature next to base workflow controls, retain Strength while disabled, show Finished RGB as the film-free input workflow, and state that resolved film and print profiles do not affect Finished RGB pixels. It must not imply that CMYK ink style reverses a negative or selects photographic paper.
+The GUI must display the feature next to base workflow controls, retain Strength while disabled, show the `input` route as the film-free workflow, and state that resolved film and print profiles do not affect `input` pixels. It must not imply that CMYK ink style reverses a negative or selects photographic paper.
 
 ## Acceptance evidence
 
 Reference probes must cover encoded and linear output, neutral and chromatic samples, the smoothstep boundaries, strength endpoints, signed headroom, and multiple output color spaces. A fixed disabled and Strength-zero identity test must bypass conversion rather than merely compare approximate output.
 
-Behavior evidence must cover Finished RGB, every supported scan route, Preview, Scan, Export, CLI processing, resident and per-stage execution, and LUT evaluation. Migration evidence must cover legacy fields, old route, old/new conflicts, idempotence, unknown-field rejection, and failed-import retention.
+Behavior evidence must cover the `input` route, every supported scan route, Preview, Scan, Export, CLI processing, resident and per-stage execution, and LUT evaluation. Migration evidence must cover legacy fields, old route, old/new conflicts, idempotence, unknown-field rejection, and failed-import retention.
 
 Visual evidence must use the fixed research image plus neutral and chromatic photographic probes at declared working resolution. It may establish visual intent and regression behavior. It must not claim physical-print accuracy, FOGRA conformance, or ICC equivalence.
 

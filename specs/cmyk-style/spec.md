@@ -2,7 +2,7 @@
 
 ## Product model
 
-`CMYK ink style` is an optional modeled appearance for a completed RGB image. It is not a film stock, a photographic paper, a photographic printing operation, or a base workflow. `Finished RGB` means an output-referred image whose source rendering and exposure are already established.
+`CMYK ink style` is an optional modeled appearance for an RGB output. It is not a film stock, a photographic paper, a photographic printing operation, or a base workflow. The `input` workflow treats its source as already rendered RGB and applies input-to-output color management.
 
 The first style is the fixed `ink` style. It is a self-authored RGB appearance model informed by the CMYK research. It is not an ICC soft proof, a press simulation, a press certification, or a reproduction guarantee for a historical publication.
 
@@ -12,7 +12,7 @@ The product must describe this feature as a style simulation. It must not claim 
 
 - The GUI must expose a `CMYK ink style` checkbox next to the base workflow controls. It must be off in the factory state.
 - Enabling or disabling CMYK ink style must not change the base workflow, film stock, photographic paper, scan polarity, or source exposure.
-- The existing `input` workflow must be labeled `Finished RGB` for this use. It must perform source-to-output color management without film simulation, photographic printing, metering, or new film grain.
+- The existing `input` workflow must perform source-to-output color management without film simulation, photographic printing, metering, or new film grain.
 - CMYK ink style must accept the completed RGB output of every supported base workflow. It must not require a photographic print stage.
 - The GUI must show the resulting base workflow and enabled finishing treatment together before rendering.
 - A single `Strength` control must use the range 0 to 1. Its enabled default must be 1. Disabling the treatment must retain the selected Strength.
@@ -26,7 +26,7 @@ The product must describe this feature as a style simulation. It must not claim 
 
   `Scanning → scanner finishing → output gamut processing → unsharp masking → transfer encoding → Procedural grain → CMYK ink style → output mix → writer`
 
-- Existing material controls run at their eligible exposure and development stages before scanning. They must not alter CMYK ink style's definition, Strength, or enablement. Overall output mixing follows CMYK ink style in common linear output RGB. Material processing and CMYK ink style must each run once. Finished RGB runs CMYK ink style without film or print development.
+- Existing material controls run at their eligible exposure and development stages before scanning. They must not alter CMYK ink style's definition, Strength, or enablement. Overall output mixing follows CMYK ink style in common linear output RGB. Material processing and CMYK ink style must each run once. The `input` workflow runs CMYK ink style without film or print development.
 - The feature must preserve image dimensions and spatial detail positions. It must not re-run exposure, film development, or grain generation.
 - All pixels must use the same color rule. The feature must not detect faces or use manually selected image regions. The low-chroma behavior must not be described as guaranteed skin protection.
 - Strength must blend the base image and the full-strength `ink` appearance in one explicitly defined common linear RGB space. Disabled processing and Strength 0 must return the base result exactly.
@@ -111,7 +111,7 @@ The implementation must bump every complete-document schema that carries runtime
 - Active Strength 1 matches the frozen `cmyk_ink_v1` reference probes for encoded and linear output states.
 - The transform is finite on neutral, chromatic, boundary, negative-headroom, and super-white probes accepted by the existing image contract.
 - Neutral input remains neutral within the declared numerical budget, and the declared tone response remains monotone over the accepted display interval.
-- Finished RGB and every supported scan route apply the same terminal RGB transform without film or photographic-paper dependence for Finished RGB.
+- The `input` workflow and every supported scan route apply the same terminal RGB transform; the input route has no film or photographic-paper dependence.
 - Preview, Scan, Export, CLI process, resident execution, per-stage execution, and LUT evaluation use one definition and apply it at most once.
 - CPU f64, native f32, and GPU outputs satisfy budgets owned by the GPU execution contract. An explicit GPU request cannot silently use CPU image arithmetic.
 - Legacy field migration is transactional and idempotent. Legacy/new conflicts reject. Current-schema legacy paths reject. The retired route is not selectable.

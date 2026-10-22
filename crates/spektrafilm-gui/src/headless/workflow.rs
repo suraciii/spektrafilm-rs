@@ -106,7 +106,7 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
     assert!(h.state().params.scanner.black_correction);
     assert!(!h.state().params.print_render.glare.active);
     click(h, "white and black correction");
-    choose(h, "workflow", "Finished RGB");
+    choose(h, "workflow", "input");
     assert!(h.state().scan_for_print_snapshot.is_none());
     assert!(h.state().params.scanner.white_correction);
     assert!(h.state().params.scanner.black_correction);
@@ -117,7 +117,7 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
 fn loaded_state_reports_scanner_normalization_in_header_status() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "Finished RGB");
+    choose(h, "workflow", "input");
     let mut state = h.state().current_state().unwrap();
     let path = s.directory.path().join("normalized-state.json");
     state.sections["simulation"]["route"] = "input > film > scan".into();
