@@ -19,6 +19,8 @@ The [GUI presentation design](../gui-presentation/design.md) owns reusable prese
 - A render request, the pending UI job, and the worker result share one captured render identity. The worker must preserve its collection mode and animation intent.
 - The UI accepts pipeline output only when request, input, and parameter revisions match. It accepts composed frames only when the generation and viewport key match.
 - Pipeline and viewer workers share immutable image ownership in the selected execution domain. Prepared display samples use one cache identity rule: source allocation, display settings, and preview size must match.
+- Full-source viewing caches the display transform per source pixel under the same identity rule. Cached sampling and direct per-tap sampling must produce identical pixels.
+- Progress reporting observes work-unit boundaries for presentation only. It must not change routing, parameters, pixels, or telemetry. A frontend binds one progress sink per worker thread.
 - Persistent startup state and transient viewer state use separate stores and invalidation rules.
 - Export work runs outside the UI event loop. Completion, failure, and cancellation are explicit states; temporary output is never presented as completed output.
 - Numeric editors associate visible labels with their text inputs. Tuple editors identify each component. Profile and development-time selectors associate their visible labels with the selection control.

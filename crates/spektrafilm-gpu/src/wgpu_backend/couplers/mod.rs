@@ -554,13 +554,16 @@ mod tests {
             m_row2: [0.171, 0.225, 0.273, 0.0],
         };
         let input = b.pipe.upload_image(&density, 2);
-        let out = b.pipe.dispatch_device(
-            include_str!("dir_matmul.wgsl"),
-            &input,
-            &[GpuBuffer::uniform(bytemuck::bytes_of(&params))],
-            2,
-            "dir_matmul_test",
-        );
+        let out = b
+            .pipe
+            .dispatch_device(
+                include_str!("dir_matmul.wgsl"),
+                &input,
+                &[GpuBuffer::uniform(bytemuck::bytes_of(&params))],
+                2,
+                "dir_matmul_test",
+            )
+            .expect("test bindings fit the device");
         let got = b.pipe.readback_image(&out);
         // silver = dmax - density; correction = M^T silver.
         let dmax = [2.511998f32, 2.8034478, 2.810454];
@@ -622,13 +625,16 @@ mod tests {
             m_row2: [0.171, 0.225, 0.273, 0.0],
         };
         let input = b.pipe.upload_image(&density, 2);
-        let out = b.pipe.dispatch_device(
-            include_str!("dir_matmul.wgsl"),
-            &input,
-            &[GpuBuffer::uniform(bytemuck::bytes_of(&params))],
-            2,
-            "dir_matmul_donor_test",
-        );
+        let out = b
+            .pipe
+            .dispatch_device(
+                include_str!("dir_matmul.wgsl"),
+                &input,
+                &[GpuBuffer::uniform(bytemuck::bytes_of(&params))],
+                2,
+                "dir_matmul_donor_test",
+            )
+            .expect("test bindings fit the device");
         let got = b.pipe.readback_image(&out);
         let mut expected = Vec::new();
         for px in 0..2 {

@@ -65,6 +65,9 @@ pub struct Viewer {
     prepared_output: Option<PreparedDisplay>,
     /// Before/after split fraction (0..=1) of image width; `None` disables.
     compare_split: Option<f32>,
+    /// Active marquee selection in view coordinates `(start, current)`; a
+    /// Shift or secondary-button drag sets it and its release zooms to it.
+    marquee: Option<(Pos2, Pos2)>,
     revision: u64,
     worker: DisplayWorker,
     #[cfg(test)]
@@ -288,6 +291,32 @@ impl Viewer {
     pub fn zoom_percent(&self) -> Option<f32> {
         self.zoom_percent
     }
+    /// Zoom by `factor`, keeping the content at `at` fixed. Returns the
+    /// effective factor after the zoom bounds.
+    fn zoom_at(&mut self, at: Pos2, rect: Rect, factor: f32) -> f32 {
+        let effective = if let Some(percent) = self.zoom_percent {
+            let old = percent;
+            self.zoom_percent = Some((old * factor).clamp(0.1, 3200.0));
+            self.zoom_percent.expect("zoom percent set") / old
+        } else {
+            let old = self.zoom;
+            self.zoom = (old * factor).clamp(0.1, 32.0);
+            self.zoom / old
+        };
+        self.pan += (at - rect.center() - self.pan) * (1.0 - effective);
+        effective
+    }
+    /// Zoom so `selection` fills the view and its center lands at the center.
+    fn zoom_to_selection(&mut self, selection: Rect, rect: Rect) {
+        let selection = selection.intersect(rect);
+        if selection.width() < 1.0 || selection.height() < 1.0 {
+            return;
+        }
+        let factor = (rect.width() / selection.width()).min(rect.height() / selection.height());
+        let offset = selection.center() - rect.center() - self.pan;
+        let effective = self.zoom_at(selection.center(), rect, factor);
+        self.pan = -offset * effective;
+    }
     pub fn persistent_state(&self) -> Value {
         serde_json::json!({"settings":self.settings.to_json(),"zoom":self.zoom,"zoom_percent":self.zoom_percent,"pan":[self.pan.x,self.pan.y]})
     }
@@ -401,7 +430,7 @@ impl Viewer {
     #[cfg(test)]
     fn full_source_view(
         &self,
-        source: &ImageBuf,
+        source: &Arc<ImageBuf>,
         layer: ViewLayer,
         image_rect: Rect,
         rect: Rect,
@@ -415,6 +444,7 @@ impl Viewer {
             rect,
             size,
             interpolation,
+            &mut super::full_transform::TransformCache::default(),
         )
     }
 
@@ -432,6 +462,33 @@ impl Viewer {
         if self.zoom <= 0.0 {
             self.zoom = 1.0;
         }
+        // Viewer gestures change the retained view only. Wheel and pinch zoom
+        // at the pointer; the primary button pans; a Shift or secondary-button
+        // drag selects a region that fills the view on release; one click
+        // steps the zoom at the pointer; a double click resets the view.
+        let selecting = ui
+            .input(|i| i.modifiers.shift || i.pointer.button_down(egui::PointerButton::Secondary));
+        if response.drag_started()
+            && selecting
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            // The drag starts a frame after the press, so the selection
+            // begins where the press began.
+            let start = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
+            self.marquee = Some((start, pos));
+        }
+        let marquee_drag = response.dragged() && selecting;
+        if marquee_drag
+            && let Some(pos) = response.interact_pointer_pos()
+            && let Some((start, _)) = self.marquee
+        {
+            self.marquee = Some((start, pos));
+        }
+        let selection = if response.drag_stopped() {
+            self.marquee.take()
+        } else {
+            None
+        };
         if response.hovered() {
             let (pinch, scroll, cursor) = ui.input(|i| {
                 (
@@ -445,25 +502,25 @@ impl Viewer {
             } else {
                 (scroll * 0.0015).exp()
             };
-            if let Some(percent) = self.zoom_percent {
-                let old = percent;
-                self.zoom_percent = Some((old * factor).clamp(0.1, 3200.0));
-                if let Some(p) = cursor {
-                    self.pan += (p - rect.center() - self.pan) * (1.0 - factor);
-                }
-            } else {
-                let old = self.zoom;
-                self.zoom = (old * factor).clamp(0.1, 32.0);
-                if let Some(p) = cursor {
-                    self.pan += (p - rect.center() - self.pan) * (1.0 - self.zoom / old);
-                }
+            if (factor - 1.0).abs() > 0.0001 {
+                let at = cursor.unwrap_or_else(|| rect.center());
+                self.zoom_at(at, rect, factor);
             }
         }
-        if response.dragged() {
+        if response.dragged() && !marquee_drag && self.marquee.is_none() {
             self.pan += response.drag_delta();
         }
         if response.double_clicked() {
             self.reset_view();
+            self.marquee = None;
+        } else if response.clicked()
+            && selection.is_none()
+            && let Some(at) = response.interact_pointer_pos()
+        {
+            self.zoom_at(at, rect, 2.0);
+        }
+        if let Some((start, end)) = selection {
+            self.zoom_to_selection(Rect::from_two_pos(start, end), rect);
         }
         let bounds = normalized_world_size(self.input_size.or(self.output_size).unwrap_or([3, 2]));
         let padding = self.settings.white_padding.max(0.0);
@@ -671,6 +728,17 @@ impl Viewer {
                 Color32::WHITE,
             );
         }
+        if let Some((start, end)) = self.marquee {
+            let selection = Rect::from_two_pos(start, end).intersect(rect);
+            let painter = ui.painter_at(rect);
+            painter.rect_filled(selection, 0.0, Color32::from_white_alpha(24));
+            painter.rect_stroke(
+                selection,
+                0.0,
+                egui::Stroke::new(1.0_f32, Color32::WHITE),
+                egui::StrokeKind::Inside,
+            );
+        }
         if input_float.is_none() {
             let painter = ui.painter_at(rect);
             let message = "No image loaded\nDrop an image here, or use MAIN → Import";
@@ -717,7 +785,7 @@ impl Viewer {
             )
         } else {
             format!(
-                "{:?} · zoom {:.2}% · double-click to fit",
+                "{:?} · zoom {:.2}% · click: zoom · drag: pan · shift-drag: select · double-click: fit",
                 layer,
                 self.zoom_percent.unwrap_or(self.zoom * 100.0)
             )
@@ -805,14 +873,14 @@ mod tests {
 
     #[test]
     fn full_output_zoom_preserves_detail_and_transform_changes() {
-        let source = ImageBuf::from_data(
+        let source = Arc::new(ImageBuf::from_data(
             4,
             1,
             vec![
                 0.0 as _, 0.0 as _, 0.0 as _, 1.0 as _, 1.0 as _, 1.0 as _, 0.0 as _, 0.0 as _,
                 0.0 as _, 1.0 as _, 1.0 as _, 1.0 as _,
             ],
-        );
+        ));
         let mut viewer = Viewer::new();
         viewer.set_output_display_source("sRGB", true, false, None);
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(4.0, 1.0));
@@ -840,7 +908,11 @@ mod tests {
             .unwrap();
         assert_eq!(view.rgb[3], [0.0; 3]);
         assert_eq!(view.rgb[4], [1.0; 3]);
-        let source = ImageBuf::from_data(1, 1, vec![0.18 as _, 0.18 as _, 0.18 as _]);
+        let source = Arc::new(ImageBuf::from_data(
+            1,
+            1,
+            vec![0.18 as _, 0.18 as _, 0.18 as _],
+        ));
         let revision = viewer.revision;
         viewer.set_output_display_source("sRGB", false, true, None);
         assert_ne!(viewer.revision, revision);

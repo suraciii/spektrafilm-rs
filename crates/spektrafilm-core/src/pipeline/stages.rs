@@ -218,6 +218,19 @@ impl Pipeline {
                 collect, inject
             ));
         }
+        // An explicit GPU request must fail rather than silently run a
+        // stage on the CPU: reject an image the device cannot bind before
+        // any stage dispatch. The auto route declines such stages to their
+        // CPU implementations inside the backend.
+        if backend.is_gpu()
+            && backend.explicit_gpu_request()
+            && let Some(reason) = backend.image_binding_limit_reason(&image)
+        {
+            return Err(format!(
+                "explicit GPU request exceeds the device resource limits ({reason}); retry with an \
+                 explicit CPU request"
+            ));
+        }
         let aperture_factor = crate::stages::grain_v3::validate_aperture(&self.params)?;
         let cell_spectral = crate::stages::grain_v3::validate_cell_spectral(&self.params)?;
         Self::validate_grain_v3_taps(

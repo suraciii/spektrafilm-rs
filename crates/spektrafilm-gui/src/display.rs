@@ -4,6 +4,7 @@ use serde_json::Value;
 
 mod colortransform;
 mod decorations;
+mod full_transform;
 mod raster;
 mod viewer;
 mod worker;

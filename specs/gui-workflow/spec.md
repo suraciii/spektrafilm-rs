@@ -129,6 +129,18 @@ The readout must derive from the retained output. It must not require a second r
 
 An empty or absent output must present an explicit empty state instead of a blank or broken readout.
 
+## Viewer interaction
+
+Viewer gestures act on the viewer surface. They change the retained view and must not alter saved or exported pixels. They must not edit numeric fields and must not scroll the control panel.
+
+- The wheel and pinch zoom at the pointer.
+- A primary-button drag pans the view.
+- A Shift or secondary-button drag selects a rectangle. Its release zooms so the selection fills the viewer and its center lands at the viewer center.
+- One click zooms one step at the pointer.
+- A double click resets the view to the fit zoom and the centered pan.
+
+A gesture that arrives while a composition runs must keep the last completed frame until the current frame is ready.
+
 ## Experimental controls
 
 The following controls carry an experimental marker. The marker is a presentation cue; it does not change the parameter's behavior or validation.
@@ -160,7 +172,7 @@ The GUI must expose a search box at the top of the control panel. The search fil
 
 A label must name the current product concept. A label must not name a removed implementation, a development tool, or a file format of a former dependency.
 
-An operation status must appear on exactly one surface, the window header. It must be short and must describe the last accepted operation, under the [telemetry status rule](../telemetry/spec.md#local-surfaces).
+An operation status must appear on exactly one surface, the window header. It must be short, under the [telemetry status rule](../telemetry/spec.md#local-surfaces). While Preview or Scan runs, it names the operation and the work unit that executes now. An export reports its own operation status with its cancellation states. When no operation runs, it describes the last accepted operation.
 
 A control that changes a persisted value must be reachable from the GUI. A persisted value with no control, no pipeline consumer, and no owning specification must be removed from the document.
 

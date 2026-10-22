@@ -268,6 +268,121 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
 }
 
 #[test]
+fn click_steps_the_zoom_at_the_pointer_and_a_double_click_fits() {
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "Input");
+    let baseline = composed(h, 10.0);
+    let image = baseline.image_rect;
+    let at = image.center() + egui::vec2(24.0, -18.0);
+    let fraction = (at - image.min) / image.size();
+    pointer(h, at, true, 11.0);
+    pointer(h, at, false, 11.1);
+    let zoomed = composed(h, 12.0);
+    assert!((h.state().viewer.zoom - 2.0).abs() < 1e-6);
+    assert_eq!(h.state().viewer.zoom_percent, None);
+    assert!((zoomed.image_rect.size() - image.size() * 2.0).length() < 0.5);
+    // The clicked content stays under the pointer.
+    let landed = zoomed.image_rect.min + fraction * zoomed.image_rect.size();
+    assert!(
+        (landed - at).length() < 1.5,
+        "clicked content moved: {landed:?}"
+    );
+    // A double click fits the view again.
+    pointer(h, at, true, 13.0);
+    pointer(h, at, false, 13.1);
+    pointer(h, at, true, 13.2);
+    pointer(h, at, false, 13.3);
+    assert_eq!(h.state().viewer.zoom, 1.0);
+    assert_eq!(h.state().viewer.zoom_percent, None);
+    assert_eq!(h.state().viewer.pan, egui::Vec2::ZERO);
+}
+
+#[test]
+fn marquee_release_zooms_to_the_selection() {
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "Input");
+    let baseline = composed(h, 20.0);
+    let viewport = baseline.viewport;
+    let image = baseline.image_rect;
+    let size = egui::vec2(80.0, 50.0);
+    let start = image.min + image.size() * egui::vec2(0.3, 0.4);
+    let end = start + size;
+    assert!(image.contains_rect(egui::Rect::from_two_pos(start, end)));
+    let fraction = (start + size * 0.5 - image.min) / image.size();
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    // The harness input resets modifiers between frames, so each event batch
+    // carries the held Shift.
+    h.input_mut().modifiers = shift;
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(start),
+        egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: shift,
+        },
+    ]);
+    frame(h, 21.0);
+    h.input_mut().modifiers = shift;
+    h.input_mut().events.push(egui::Event::PointerMoved(end));
+    frame(h, 21.1);
+    h.input_mut().modifiers = shift;
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: end,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: shift,
+    });
+    frame(h, 21.2);
+    h.input_mut().modifiers = egui::Modifiers::default();
+    let zoomed = composed(h, 22.0);
+    let expected = (viewport.width() / size.x).min(viewport.height() / size.y);
+    assert!(
+        (h.state().viewer.zoom - expected).abs() < 1e-4,
+        "marquee zoom: {} expected {expected}",
+        h.state().viewer.zoom
+    );
+    // The selection center lands at the view center.
+    let landed = zoomed.image_rect.min + fraction * zoomed.image_rect.size();
+    assert!(
+        (landed - viewport.center()).length() < 1.5,
+        "selection center moved: {landed:?}"
+    );
+    // The secondary button selects without a modifier.
+    let before = h.state().viewer.zoom;
+    let start = image.center();
+    let end = start + egui::vec2(60.0, 40.0);
+    h.input_mut().events.extend([
+        egui::Event::PointerMoved(start),
+        egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        },
+    ]);
+    frame(h, 23.0);
+    h.input_mut().events.push(egui::Event::PointerMoved(end));
+    frame(h, 23.1);
+    h.input_mut().events.push(egui::Event::PointerButton {
+        pos: end,
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::default(),
+    });
+    frame(h, 23.2);
+    assert!(
+        h.state().viewer.zoom > before,
+        "secondary marquee must zoom further"
+    );
+}
+
+#[test]
 fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
     let mut s = session();
     let h = &mut s.harness;

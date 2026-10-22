@@ -853,6 +853,32 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
 }
 
 #[test]
+fn the_header_reports_the_running_stage_and_returns_to_the_last_operation() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let ctx = h.ctx.clone();
+    // Hold the worker's start marker so the in-flight state is stable.
+    let active = h.state().render_worker.active.clone();
+    let start_guard = active.lock();
+    h.state_mut().full_scan_requested = true;
+    h.state_mut().dispatch_render(&ctx);
+    assert!(h.state().render_job.is_some());
+    let pending = h.state().operation_status();
+    assert!(pending.starts_with("Scan"), "{pending}");
+    // The worker thread reports its work unit to the shared sink the header
+    // reads. Drive the sink the way the pipeline reports a stage.
+    let progress = Arc::clone(&h.state().render_progress);
+    spektrafilm_core::progress::ProgressSink::current(&*progress, Some("filming_develop"));
+    assert_eq!(h.state().operation_status(), "Scan · film development");
+    spektrafilm_core::progress::ProgressSink::current(&*progress, None);
+    assert_eq!(h.state().operation_status(), "Scan …");
+    drop(start_guard);
+    wait_until(h, |a| a.render_job.is_none());
+    // Without work in flight the header keeps the last accepted operation.
+    assert_eq!(h.state().operation_status(), h.state().status);
+}
+
+#[test]
 fn real_worker_accepts_only_latest_request_and_current_revision() {
     let mut s = session();
     let h = &mut s.harness;

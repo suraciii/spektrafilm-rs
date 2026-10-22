@@ -277,7 +277,7 @@ impl WgpuBackend {
         n_pixels: u32,
         output_idx: usize,
         name: &'static str,
-    ) -> Vec<f32> {
+    ) -> Option<Vec<f32>> {
         self.pipe
             .dispatch_host(shader_source, bindings, n_pixels, output_idx, name)
     }

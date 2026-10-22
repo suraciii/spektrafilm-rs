@@ -185,7 +185,18 @@ impl GpuPipe {
         n_pixels: u32,
         output_idx: usize,
         name: &'static str,
-    ) -> Vec<f32> {
+    ) -> Option<Vec<f32>> {
+        // Device-limit preflight: a binding the device cannot represent
+        // declines to the caller's CPU implementation instead of reaching
+        // wgpu's validation error, which is fatal by default.
+        if let Some(reason) = bindings_exceed_device_limits(bindings, &self.device.limits()) {
+            tracing::info!(
+                execution = "cpu",
+                %reason,
+                "using the CPU stage because a buffer exceeds the device resource limits"
+            );
+            return None;
+        }
         let binding_types: Vec<wgpu::BufferBindingType> =
             bindings.iter().map(|b| b.binding_type).collect();
         let (cached, hit) =
@@ -254,7 +265,7 @@ impl GpuPipe {
 
         let out = self.read_mapped_f32(&readback, output_size);
         self.return_readback(readback, output_size);
-        out
+        Some(out)
     }
 
     /// Upload host RGB f32 samples as a device image. One of the three pipe
@@ -288,7 +299,28 @@ impl GpuPipe {
         resources: &[GpuBuffer],
         n_pixels: u32,
         name: &'static str,
-    ) -> DeviceImage {
+    ) -> Option<DeviceImage> {
+        if let Some(reason) = bindings_exceed_device_limits(resources, &self.device.limits()) {
+            tracing::info!(
+                execution = "cpu",
+                %reason,
+                "using the CPU stage because a buffer exceeds the device resource limits"
+            );
+            return None;
+        }
+        for (label, bytes) in [("pipe_input", input.bytes), ("pipe_stage_out", input.bytes)] {
+            if let Some(reason) =
+                super::film_chain::required_buffer_exceeds_limits(bytes, &self.device.limits())
+            {
+                tracing::info!(
+                    execution = "cpu",
+                    binding = label,
+                    %reason,
+                    "using the CPU stage because a buffer exceeds the device resource limits"
+                );
+                return None;
+            }
+        }
         let mut binding_types: Vec<wgpu::BufferBindingType> =
             resources.iter().map(|b| b.binding_type).collect();
         binding_types.push(wgpu::BufferBindingType::Storage { read_only: true });
@@ -349,11 +381,11 @@ impl GpuPipe {
             dispatch_linear(&mut pass, n_pixels);
         }
         self.queue.submit(Some(encoder.finish()));
-        DeviceImage {
+        Some(DeviceImage {
             buf: out,
             n_pixels,
             bytes: input.bytes,
-        }
+        })
     }
 
     /// Fence: materialize the device image, run the CPU stage on host
@@ -494,6 +526,31 @@ impl GpuPipe {
     }
 }
 
+/// The device-limit preflight for one dispatch's bindings. Returns the reason
+/// of the first binding the device cannot represent, so a dispatch declines
+/// to its caller's CPU implementation instead of reaching wgpu's fatal
+/// validation error. The buffer-size limits follow the resident chain's
+/// [`super::film_chain::required_buffer_exceeds_limits`]; uniform bindings
+/// additionally observe the smaller uniform binding limit.
+fn bindings_exceed_device_limits(bindings: &[GpuBuffer], limits: &wgpu::Limits) -> Option<String> {
+    bindings.iter().enumerate().find_map(|(index, binding)| {
+        let bytes = binding.data.len() as u64;
+        let binding_limit = match binding.binding_type {
+            wgpu::BufferBindingType::Uniform => u64::from(limits.max_uniform_buffer_binding_size),
+            wgpu::BufferBindingType::Storage { .. } => {
+                u64::from(limits.max_storage_buffer_binding_size)
+            }
+        };
+        if bytes > binding_limit {
+            return Some(format!(
+                "binding {index} of {bytes} bytes exceeds the buffer binding size limit \
+                 ({binding_limit} bytes)"
+            ));
+        }
+        super::film_chain::required_buffer_exceeds_limits(bytes, limits)
+    })
+}
+
 #[cfg(all(test, feature = "wgpu-backend"))]
 mod tests {
     use super::*;
@@ -545,31 +602,56 @@ mod tests {
     }
 
     #[test]
+    fn bindings_over_the_device_limits_decline_instead_of_binding() {
+        let limits = wgpu::Limits {
+            max_storage_buffer_binding_size: 1024,
+            max_uniform_buffer_binding_size: 256,
+            max_buffer_size: 2048,
+            ..wgpu::Limits::default()
+        };
+        let fitting = [
+            GpuBuffer::uniform(&[0; 128]),
+            GpuBuffer::storage_ro(&[0; 512]),
+        ];
+        assert!(bindings_exceed_device_limits(&fitting, &limits).is_none());
+        let uniform_over = [GpuBuffer::uniform(&[0; 512])];
+        assert!(bindings_exceed_device_limits(&uniform_over, &limits).is_some());
+        let storage_over = [GpuBuffer::storage_ro(&[0; 2048])];
+        assert!(bindings_exceed_device_limits(&storage_over, &limits).is_some());
+    }
+
+    #[test]
     fn dispatch_device_matches_dispatch_host() {
         let Some(b) = backend() else {
             return;
         };
         let img = sample_image();
         let params = identity_params();
-        let host = b.pipe.dispatch_host(
-            COLORSPACE_SHADER,
-            &[
-                GpuBuffer::uniform(bytemuck::bytes_of(&params)),
-                GpuBuffer::storage_ro(bytemuck::cast_slice(&img)),
-                GpuBuffer::storage_rw(&vec![0u8; img.len() * 4]),
-            ],
-            16,
-            2,
-            "pipe_test_host",
-        );
+        let host = b
+            .pipe
+            .dispatch_host(
+                COLORSPACE_SHADER,
+                &[
+                    GpuBuffer::uniform(bytemuck::bytes_of(&params)),
+                    GpuBuffer::storage_ro(bytemuck::cast_slice(&img)),
+                    GpuBuffer::storage_rw(&vec![0u8; img.len() * 4]),
+                ],
+                16,
+                2,
+                "pipe_test_host",
+            )
+            .expect("test bindings fit the device");
         let dev = b.pipe.upload_image(&img, 16);
-        let out = b.pipe.dispatch_device(
-            COLORSPACE_SHADER,
-            &dev,
-            &[GpuBuffer::uniform(bytemuck::bytes_of(&params))],
-            16,
-            "pipe_test_device",
-        );
+        let out = b
+            .pipe
+            .dispatch_device(
+                COLORSPACE_SHADER,
+                &dev,
+                &[GpuBuffer::uniform(bytemuck::bytes_of(&params))],
+                16,
+                "pipe_test_device",
+            )
+            .expect("test bindings fit the device");
         assert_eq!(out.n_pixels, 16);
         assert_eq!(out.bytes, (img.len() * 4) as u64);
         let device_result = b.pipe.readback_image(&out);
