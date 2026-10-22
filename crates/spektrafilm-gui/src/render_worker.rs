@@ -88,7 +88,7 @@ pub(super) struct RenderResult {
 }
 
 impl RenderWorker {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(progress: Arc<crate::progress::RenderProgress>) -> Self {
         let state = Arc::new((Mutex::new(None::<RenderRequest>), Condvar::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
         let active = Arc::new(Mutex::new(None));
@@ -101,6 +101,9 @@ impl RenderWorker {
         let handle = std::thread::Builder::new()
             .name("spektrafilm-render".into())
             .spawn(move || {
+                // One operation at a time runs on this thread, so one scope
+                // reports every unit the render reaches.
+                let _progress = spektrafilm_core::progress::ProgressScope::new(progress);
                 let mut runtime_cache = RuntimeCache::default();
                 loop {
                     let request = {
@@ -125,6 +128,7 @@ impl RenderWorker {
                         Some((job.request_id, job.kind, job.collection_mode));
                     let ctx = request.ctx.clone();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let prepare_unit = spektrafilm_core::progress::report("input_prepare");
                         let pipeline_template = runtime_cache.prepare_observed(
                             &request.snapshot,
                             job.kind == RenderKind::Preview,
@@ -154,13 +158,17 @@ impl RenderWorker {
                             (*request.image).clone()
                         };
                         drop(input_prepare);
+                        drop(prepare_unit);
                         let simulation =
                             observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
-                        let processed = pipeline_template.process_observed(
-                            working_image,
-                            request.backend.as_ref(),
-                            simulation.context(),
-                        );
+                        let processed = {
+                            let _unit = spektrafilm_core::progress::report("simulation");
+                            pipeline_template.process_observed(
+                                working_image,
+                                request.backend.as_ref(),
+                                simulation.context(),
+                            )
+                        };
                         let output = observed_result(
                             simulation,
                             processed,
@@ -172,14 +180,17 @@ impl RenderWorker {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let display_result = display::output_display_raster(
-                            &output,
-                            &runtime_params.io.output_color_space,
-                            runtime_params.io.output_cctf_encoding,
-                            request.display_enabled,
-                            None,
-                            runtime_params.settings.preview_max_size as usize,
-                        );
+                        let display_result = {
+                            let _unit = spektrafilm_core::progress::report("display_prepare");
+                            display::output_display_raster(
+                                &output,
+                                &runtime_params.io.output_color_space,
+                                runtime_params.io.output_cctf_encoding,
+                                request.display_enabled,
+                                None,
+                                runtime_params.settings.preview_max_size as usize,
+                            )
+                        };
                         let (preview, display_status) = observed_result(
                             display_prepare,
                             display_result,

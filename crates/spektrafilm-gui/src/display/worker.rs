@@ -11,7 +11,8 @@ use std::thread::{self, JoinHandle};
 use super::ViewLayer;
 use super::colortransform::{input_display_raster, output_display_raster};
 use super::decorations::{PolaroidState, virtual_paper_back};
-use super::raster::{DisplayRaster, Interpolation, sample_image_with, sample_rect};
+use super::full_transform::{ProfileStamp, TransformCache, TransformIdentity};
+use super::raster::{DisplayRaster, Interpolation, sample_rect};
 #[derive(Clone)]
 pub(super) struct PreparedDisplay {
     pub(super) source: Arc<ImageBuf>,
@@ -72,6 +73,7 @@ struct CompositionCache {
     paper: Option<DisplayRaster>,
     polaroid: Option<(DisplayRaster, PolaroidState)>,
     fit: [Option<FitCacheEntry>; 2],
+    full: TransformCache,
 }
 
 pub(super) struct DisplayResponse {
@@ -176,14 +178,21 @@ impl Drop for DisplayWorker {
 impl DisplaySource {
     /// Draws only visible pixels into a bounded texture. Large source images and
     /// offscreen pans therefore cannot exceed the GPU texture dimension limit.
+    ///
+    /// Every source tap is transformed before interpolation. The transform is
+    /// pointwise in the source pixel, so [`TransformCache`] memoizes it per
+    /// source pixel and the sampled pixels stay identical to the direct
+    /// per-tap computation.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn full_source_view(
         &self,
-        source: &ImageBuf,
+        source: &Arc<ImageBuf>,
         layer: ViewLayer,
         image_rect: Rect,
         rect: Rect,
         texture_size: [usize; 2],
         interpolation: Interpolation,
+        cache: &mut TransformCache,
     ) -> Option<(DisplayRaster, Option<String>)> {
         if source.width == 0 || source.height == 0 {
             return None;
@@ -199,20 +208,30 @@ impl DisplaySource {
         let mut status = None;
         let profile = if layer == ViewLayer::Output && enabled {
             self.profile.as_deref().and_then(|path| {
-                use lcms2::{Intent, PixelFormat, Profile, Transform};
-                let result = Profile::new_file(path)
+                use lcms2::{
+                    DisallowCache, Flags, GlobalContext, Intent, PixelFormat, Profile, Transform,
+                };
+                // `NO_CACHE` makes the transform shareable across the
+                // composition threads. The disabled cache is a lookup
+                // optimization and does not change transformed pixels.
+                let built: Result<
+                    Transform<[u8; 3], [u8; 3], GlobalContext, DisallowCache>,
+                    String,
+                > = Profile::new_file(path)
                     .map_err(|error| error.to_string())
                     .and_then(|destination| {
-                        Transform::<[u8; 3], [u8; 3]>::new(
+                        Transform::new_flags_context(
+                            GlobalContext::new(),
                             &Profile::new_srgb(),
                             PixelFormat::RGB_8,
                             &destination,
                             PixelFormat::RGB_8,
                             Intent::Perceptual,
+                            Flags::NO_CACHE,
                         )
                         .map_err(|error| error.to_string())
                     });
-                match result {
+                match built {
                     Ok(transform) => Some(transform),
                     Err(e) => {
                         status = Some(format!(
@@ -225,37 +244,42 @@ impl DisplaySource {
         } else {
             None
         };
-        let mut rgb = Vec::with_capacity(texture_size[0] * texture_size[1]);
-        for y in 0..texture_size[1] {
-            for x in 0..texture_size[0] {
-                let p = Pos2::new(
-                    rect.min.x + (x as f32 + 0.5) * rect.width() / texture_size[0] as f32,
-                    rect.min.y + (y as f32 + 0.5) * rect.height() / texture_size[1] as f32,
-                );
-                rgb.push(if image_rect.contains(p) {
-                    sample_image_with(source, p, image_rect, interpolation, |raw| {
-                        let value = match space {
-                            Some(space) => spektrafilm_math::colorspace::display_rgb(
-                                raw.map(|v| v as f64),
-                                space,
-                                encoded,
-                            )
-                            .map(|v| v.clamp(0.0, 1.0) as f32),
-                            None => raw,
-                        };
-                        if let Some(transform) = profile.as_ref() {
-                            let mut pixel = [value.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)];
-                            transform.transform_in_place(&mut pixel);
-                            pixel[0].map(|v| v as f32 / 255.0)
-                        } else {
-                            value
-                        }
-                    })
-                } else {
-                    [0.0; 3]
-                });
+        let transform = |value: [f32; 3]| -> [f32; 3] {
+            let value = match space {
+                Some(space) => spektrafilm_math::colorspace::display_rgb(
+                    value.map(|v| v as f64),
+                    space,
+                    encoded,
+                )
+                .map(|v| v.clamp(0.0, 1.0) as f32),
+                None => value,
+            };
+            if let Some(transform) = profile.as_ref() {
+                let mut pixel = [value.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)];
+                transform.transform_in_place(&mut pixel);
+                pixel[0].map(|v| v as f32 / 255.0)
+            } else {
+                value
             }
-        }
+        };
+        let identity = TransformIdentity::new(
+            source,
+            name,
+            encoded,
+            enabled,
+            self.profile
+                .as_deref()
+                .map(|path| ProfileStamp::capture(path, profile.is_some())),
+        );
+        let rgb = cache.sample_view(
+            &identity,
+            source,
+            &transform,
+            image_rect,
+            rect,
+            texture_size,
+            interpolation,
+        );
         let raster = DisplayRaster::new(texture_size, rgb).ok()?;
         Some((raster, status))
     }
@@ -378,7 +402,15 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
     let raster = animation.as_ref().or(raster.as_ref());
     let full = if full_source {
         source.as_ref().and_then(|source| {
-            metadata.full_source_view(source, layer, image_rect, rect, texture_size, interpolation)
+            metadata.full_source_view(
+                source,
+                layer,
+                image_rect,
+                rect,
+                texture_size,
+                interpolation,
+                &mut cache.full,
+            )
         })
     } else {
         None
@@ -655,6 +687,40 @@ mod tests {
                 &prepared.raster.rgb,
                 &cache.fit[1].as_ref().unwrap().prepared.raster.rgb
             ));
+        }
+    }
+
+    #[test]
+    fn the_shared_icc_transform_matches_the_cached_one() {
+        // The composition threads share one transform created with
+        // `NO_CACHE`. The disabled cache is a lookup optimization: it must not
+        // change transformed pixels.
+        use lcms2::{DisallowCache, Flags, GlobalContext, Intent, PixelFormat, Profile, Transform};
+        let cached = Transform::<[u8; 3], [u8; 3]>::new(
+            &Profile::new_srgb(),
+            PixelFormat::RGB_8,
+            &Profile::new_srgb(),
+            PixelFormat::RGB_8,
+            Intent::Perceptual,
+        )
+        .unwrap();
+        let shared: Transform<[u8; 3], [u8; 3], GlobalContext, DisallowCache> =
+            Transform::new_flags_context(
+                GlobalContext::new(),
+                &Profile::new_srgb(),
+                PixelFormat::RGB_8,
+                &Profile::new_srgb(),
+                PixelFormat::RGB_8,
+                Intent::Perceptual,
+                Flags::NO_CACHE,
+            )
+            .unwrap();
+        for value in 0..=255u8 {
+            let mut was = [[value, 255 - value, value / 2]];
+            let mut now = was;
+            cached.transform_in_place(&mut was);
+            shared.transform_in_place(&mut now);
+            assert_eq!(was, now);
         }
     }
 

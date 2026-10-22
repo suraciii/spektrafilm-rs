@@ -12,6 +12,8 @@ use spektrafilm_math::precision::from_f64;
 pub(crate) struct StageObservation<'a> {
     bound: Option<Box<dyn spektrafilm_backend::ComputeBackend + 'a>>,
     scope: spektrafilm_backend::telemetry::ObservationScope,
+    // Kept for its drop: it restores the enclosing work unit.
+    _progress: crate::progress::ProgressToken,
 }
 
 impl<'a> StageObservation<'a> {
@@ -19,6 +21,9 @@ impl<'a> StageObservation<'a> {
         backend: &'a dyn spektrafilm_backend::ComputeBackend,
         name: &'static str,
     ) -> Self {
+        // Progress runs with telemetry off as well: a frontend's live status
+        // must not depend on collection.
+        let progress = crate::progress::report(name);
         let Some(context) = backend
             .observation_context()
             .filter(|context| context.enabled())
@@ -26,6 +31,7 @@ impl<'a> StageObservation<'a> {
             return Self {
                 bound: None,
                 scope: Default::default(),
+                _progress: progress,
             };
         };
         let scope = context.scope(
@@ -37,7 +43,11 @@ impl<'a> StageObservation<'a> {
             backend,
             scope.context().clone(),
         ));
-        Self { bound, scope }
+        Self {
+            bound,
+            scope,
+            _progress: progress,
+        }
     }
 
     pub(crate) fn cpu(

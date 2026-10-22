@@ -4,6 +4,23 @@ use crate::*;
 use super::state::App;
 
 impl App {
+    /// The one header status line: the work unit that executes now, or the
+    /// last accepted operation status when no render runs. A newer queued
+    /// job only names the status once its attempt starts.
+    pub(crate) fn operation_status(&self) -> String {
+        let active = *self.render_worker.active.lock();
+        let kind = active
+            .map(|(_, kind, _)| kind)
+            .or_else(|| self.render_job.as_ref().map(|job| job.kind));
+        let Some(kind) = kind else {
+            return self.status.clone();
+        };
+        match self.render_progress.unit() {
+            Some(unit) => format!("{} · {}", kind.label(), progress::stage_label(unit)),
+            None => format!("{} …", kind.label()),
+        }
+    }
+
     pub(crate) fn render_snapshot(&mut self, params: RuntimeParams) -> RenderSnapshot {
         let key = (self.input_epoch, self.parameter_revision);
         if self

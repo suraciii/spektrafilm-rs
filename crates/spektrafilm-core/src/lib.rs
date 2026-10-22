@@ -28,6 +28,7 @@ pub mod presets;
 pub mod print_morph;
 pub mod process_params;
 pub mod profile;
+pub mod progress;
 pub mod resizing;
 pub mod runtime;
 pub mod scan_receiver;

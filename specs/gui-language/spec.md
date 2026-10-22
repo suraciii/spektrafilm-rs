@@ -122,7 +122,10 @@ The viewer must distinguish:
 - `fit`: return to fitted zoom without changing pan;
 - `reset view`: return to fitted zoom and recenter pan;
 - exact zoom percentages: source-pixel-to-device-pixel scale;
-- `compare`: before/after viewer composition only.
+- `compare`: before/after viewer composition only;
+- `select`: the Shift or secondary-button drag rectangle that zooms to its region on release.
+
+Viewer hints must name the gestures in this vocabulary: click zooms at the pointer, primary-button drag pans, Shift or secondary-button drag selects, and double click fits. A hint must not claim an effect on saved or exported pixels.
 
 ## Action language
 
@@ -154,6 +157,8 @@ The header must show the selected film, selected print material, exact workflow 
 A future presentation may add a direct physical description beside the exact route. The description must translate the route without inventing a look category. For example, `Film → print → scan` may describe `input > film > print > scan`; `Film print look` must not replace it.
 
 Normal success status must describe the accepted operation and its dimensions or target. Backend and precision detail belongs in Diagnostics unless it explains an actionable limitation. A diagnostic label such as `f64 reference` must not be the only normal success message.
+
+A running render's status names the operation and the executing work unit in product language. Work-unit wording must name the physical operation, for example `Film development`, `Grain`, `Printing`, and `Scanning`. It must not expose serialized work-unit identifiers. A running render without a named work unit shows its name alone.
 
 A status that reports route or profile normalization must identify which stored controls became inactive or were cleared. It must not claim that a value was applied when the selected route cannot execute it.
 

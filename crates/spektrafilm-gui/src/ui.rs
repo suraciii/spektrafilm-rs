@@ -1193,7 +1193,7 @@ impl App {
                         ));
                     }
                     ui.separator();
-                    ui.label(egui::RichText::new(&self.status).small());
+                    ui.label(egui::RichText::new(self.operation_status()).small());
                 });
             });
     }
@@ -1201,6 +1201,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.render_progress.bind_context(ctx);
         // First-paint hook: tag the wgpu Metal layer's colorspace as sRGB.
         // Has to happen here (not in `App::new`) because the CAMetalLayer
         // isn't wired up at construction time.

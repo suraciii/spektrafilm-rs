@@ -67,6 +67,9 @@ pub(crate) struct App {
     /// Latest submitted render, including a request queued behind active work.
     pub(crate) render_job: Option<RenderJob>,
     pub(crate) render_worker: RenderWorker,
+    /// Innermost work unit of the in-flight render, shared with the render
+    /// worker thread.
+    pub(crate) render_progress: Arc<progress::RenderProgress>,
     /// In-flight export job. `Some` while the immutable snapshot is rendering;
     /// the `update()` loop polls the receiver each frame and
     /// surfaces success/failure in `status` when the worker thread
@@ -192,6 +195,7 @@ impl App {
             }
         }
 
+        let render_progress = Arc::new(progress::RenderProgress::default());
         let mut app = Self {
             backend,
             data_dir,
@@ -233,7 +237,8 @@ impl App {
             output_cctf_encoding: true,
             dirty_since: None,
             render_job: None,
-            render_worker: RenderWorker::new(),
+            render_worker: RenderWorker::new(render_progress.clone()),
+            render_progress,
             export_job: None,
             status: startup_error.unwrap_or_else(|| String::from("Load an image to start.")),
             last_export_error: None,

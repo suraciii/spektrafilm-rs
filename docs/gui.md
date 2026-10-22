@@ -86,6 +86,8 @@ See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the acti
 
 `100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. `fit` returns to the fitted zoom and keeps the pan; `reset view` also recentres it. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
 
+The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at the pointer. A primary-button drag pans. A Shift or secondary-button drag selects a rectangle and its release zooms so the selection fills the viewer. One click zooms one step at the pointer; a double click fits the view. Gestures change the retained view only and never saved or exported pixels.
+
 The `Paper back` layer is a viewer-only virtual rendering generated from paper texture, watermark, and noise. It is not an editable material stage and does not alter retained, saved, or exported pixels.
 
 The viewer footer groups its controls by target: rotation, view zoom, before/after comparison with its split position, and the current zoom as a read-only readout.
@@ -96,7 +98,7 @@ The viewer shows a tonal-distribution readout of the retained output. It is view
 
 The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel.
 
-The window header shows the current film profile, print profile, and workflow route as read-only text, with a direct physical description of the same route beside the exact serialized value. The operation status appears in the window header. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
+The window header shows the current film profile, print profile, and workflow route as read-only text, with a direct physical description of the same route beside the exact serialized value. The operation status appears in the window header. While Preview or Scan runs, it names the operation and the stage that executes now, for example `Scan · Film development`. With no work running it describes the last accepted operation; Export keeps its own status with elapsed time and cancellation state. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
 
 ### Display transform and ICC
 

@@ -36,7 +36,7 @@ impl Interpolation {
             Self::Blackman => "blackman",
         }
     }
-    fn radius(self) -> i32 {
+    pub(super) fn radius(self) -> i32 {
         match self {
             Self::Nearest | Self::Linear => 1,
             Self::Cubic | Self::Spline16 => 2,
@@ -124,7 +124,7 @@ impl DisplayRaster {
     }
 }
 
-fn sample_f32<F>(x: f32, y: f32, mode: Interpolation, mut pixel: F) -> [f32; 3]
+pub(super) fn sample_f32<F>(x: f32, y: f32, mode: Interpolation, mut pixel: F) -> [f32; 3]
 where
     F: FnMut(i32, i32) -> [f32; 3],
 {
@@ -167,6 +167,14 @@ pub(super) fn sample_rect(
     )
 }
 
+/// Source coordinates, in image pixels, of viewer position `p` mapped over
+/// `rect`. The shared mapping of full-source sampling; the `- 0.5` keeps a
+/// sampled position over the center of source pixel 0.
+pub(super) fn source_coords(p: Pos2, rect: Rect, width: u32, height: u32) -> (f32, f32) {
+    let uv = (p - rect.min) / rect.size();
+    (uv.x * width as f32 - 0.5, uv.y * height as f32 - 0.5)
+}
+
 pub(super) fn sample_image_with(
     image: &ImageBuf,
     p: Pos2,
@@ -174,9 +182,7 @@ pub(super) fn sample_image_with(
     mode: Interpolation,
     transform: impl Fn([f32; 3]) -> [f32; 3],
 ) -> [f32; 3] {
-    let uv = (p - rect.min) / rect.size();
-    let x = uv.x * image.width as f32 - 0.5;
-    let y = uv.y * image.height as f32 - 0.5;
+    let (x, y) = source_coords(p, rect, image.width, image.height);
     sample_f32(x, y, mode, |x, y| {
         transform(
             image
