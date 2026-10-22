@@ -323,6 +323,14 @@ pub trait ComputeBackend: Send + Sync {
         false
     }
 
+    /// A reason why a single-image binding for `img` would exceed the
+    /// device's buffer-binding limits, or `None` when the image fits. The
+    /// auto route declines such a stage to its CPU implementation; an
+    /// explicit GPU request fails the operation instead.
+    fn image_binding_limit_reason(&self, _img: &ImageBuf) -> Option<String> {
+        None
+    }
+
     /// Derive this backend as an explicit GPU request, sharing the device,
     /// queue, pipeline cache, and resident pipe, or `None` when this backend
     /// cannot serve a GPU request. A frontend that maps an explicit user

@@ -203,6 +203,62 @@ fn fotufilm_zero_amount_bypasses_geometry_and_cancelled_render_fails() {
             .contains("cancelled")
     );
 }
+/// A GPU stub whose device cannot represent any route image buffer.
+struct OvertaxedGpu {
+    explicit: bool,
+}
+
+impl spektrafilm_backend::ComputeBackend for OvertaxedGpu {
+    fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> ImageBuf {
+        spektrafilm_backend::cpu_backend::CpuBackend.colorspace_convert(img, matrix)
+    }
+    fn cctf_encode_srgb(&self, img: &ImageBuf) -> ImageBuf {
+        spektrafilm_backend::cpu_backend::CpuBackend.cctf_encode_srgb(img)
+    }
+    fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
+        spektrafilm_backend::cpu_backend::CpuBackend.cctf_decode_srgb(img)
+    }
+    fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
+        spektrafilm_backend::cpu_backend::CpuBackend.gaussian_blur(img, sigma)
+    }
+    fn table_lookup(&self, img: &ImageBuf, table_x: &[f32], table_y: &[[f32; 3]]) -> ImageBuf {
+        spektrafilm_backend::cpu_backend::CpuBackend.table_lookup(img, table_x, table_y)
+    }
+    fn lut3d_interp(&self, img: &ImageBuf, lut: &spektrafilm_backend::Lut3D) -> ImageBuf {
+        spektrafilm_backend::cpu_backend::CpuBackend.lut3d_interp(img, lut)
+    }
+    fn is_gpu(&self) -> bool {
+        true
+    }
+    fn explicit_gpu_request(&self) -> bool {
+        self.explicit
+    }
+    fn image_binding_limit_reason(&self, _img: &ImageBuf) -> Option<String> {
+        Some("the required buffer binding exceeds the synthetic test limit".into())
+    }
+    fn name(&self) -> &str {
+        "overtaxed-test-gpu"
+    }
+}
+
+#[test]
+fn explicit_gpu_request_fails_when_the_device_cannot_bind_the_route_image() {
+    let mut pipeline = build();
+    pipeline.params.film_render.grain.active = false;
+    let err = pipeline
+        .process(ImageBuf::new(8, 6), &OvertaxedGpu { explicit: true })
+        .unwrap_err();
+    assert!(
+        err.contains("explicit GPU request exceeds the device resource limits"),
+        "{err}"
+    );
+    // The auto route completes instead: the same stages run their CPU work.
+    let out = pipeline
+        .process(ImageBuf::new(8, 6), &OvertaxedGpu { explicit: false })
+        .unwrap();
+    assert_eq!((out.width, out.height), (8, 6));
+}
+
 #[test]
 fn fotufilm_reference_survives_amount_and_calibration_edits() {
     let base = build();

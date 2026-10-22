@@ -52,9 +52,6 @@ impl ComputeBackend for WgpuBackend {
         } else {
             None
         };
-        if let Some(s) = &scope {
-            s.context().record_executor(Executor::Gpu, None);
-        }
         let n_pixels = img.pixel_count() as u32;
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -97,6 +94,16 @@ impl ComputeBackend for WgpuBackend {
             2,
             "colorspace_convert",
         );
+        let Some(result) = result else {
+            if let Some(s) = &scope {
+                s.context()
+                    .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            }
+            return cpu_backend::CpuBackend.colorspace_convert(img, matrix);
+        };
+        if let Some(s) = &scope {
+            s.context().record_executor(Executor::Gpu, None);
+        }
         ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
     fn cctf_encode_srgb(&self, img: &ImageBuf) -> ImageBuf {
@@ -109,9 +116,6 @@ impl ComputeBackend for WgpuBackend {
         } else {
             None
         };
-        if let Some(s) = &scope {
-            s.context().record_executor(Executor::Gpu, None);
-        }
         let n_pixels = img.pixel_count() as u32;
         let params = CctfParams {
             width: img.width,
@@ -132,6 +136,16 @@ impl ComputeBackend for WgpuBackend {
             2,
             "cctf_encode_srgb",
         );
+        let Some(result) = result else {
+            if let Some(s) = &scope {
+                s.context()
+                    .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            }
+            return cpu_backend::CpuBackend.cctf_encode_srgb(img);
+        };
+        if let Some(s) = &scope {
+            s.context().record_executor(Executor::Gpu, None);
+        }
         ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
@@ -144,9 +158,6 @@ impl ComputeBackend for WgpuBackend {
         } else {
             None
         };
-        if let Some(s) = &scope {
-            s.context().record_executor(Executor::Gpu, None);
-        }
         let n_pixels = img.pixel_count() as u32;
         let params = CctfParams {
             width: img.width,
@@ -167,6 +178,16 @@ impl ComputeBackend for WgpuBackend {
             2,
             "cctf_decode_srgb",
         );
+        let Some(result) = result else {
+            if let Some(s) = &scope {
+                s.context()
+                    .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            }
+            return cpu_backend::CpuBackend.cctf_decode_srgb(img);
+        };
+        if let Some(s) = &scope {
+            s.context().record_executor(Executor::Gpu, None);
+        }
         ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
     fn grain_v2(
@@ -174,6 +195,18 @@ impl ComputeBackend for WgpuBackend {
         img: &ImageBuf,
         params: &spektrafilm_backend::GrainV2GpuParams,
     ) -> Option<ImageBuf> {
+        // An image the device cannot bind runs the caller's CPU stage.
+        if let Some(reason) = self.image_binding_limit_reason(img) {
+            tracing::info!(
+                execution = "cpu",
+                %reason,
+                "using the CPU stage because a buffer exceeds the device resource limits"
+            );
+            self.device
+                .context
+                .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            return None;
+        }
         Some(self.grain_v2_gpu(img, params))
     }
     fn dye_field(
@@ -183,7 +216,19 @@ impl ComputeBackend for WgpuBackend {
     ) -> Option<Result<ImageBuf, String>> {
         // The device entry point is the inherent `WgpuBackend::dye_field`;
         // this hook only marks the attempt so a backend without a device
-        // field path keeps the caller's host fallback.
+        // field path keeps the caller's host fallback. An image the device
+        // cannot bind keeps that host fallback too.
+        if let Some(reason) = self.image_binding_limit_reason(img) {
+            tracing::info!(
+                execution = "cpu",
+                %reason,
+                "using the CPU field because a buffer exceeds the device resource limits"
+            );
+            self.device
+                .context
+                .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            return None;
+        }
         Some(WgpuBackend::dye_field(self, img, params))
     }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
@@ -200,6 +245,18 @@ impl ComputeBackend for WgpuBackend {
                 Executor::Cpu,
                 Some(CpuReason::BlurRadiusExceedsBackendSupport),
             );
+            return cpu_backend::CpuBackend.gaussian_blur(img, sigma);
+        }
+        if let Some(reason) = self.image_binding_limit_reason(img) {
+            tracing::info!(
+                sigma,
+                execution = "cpu",
+                %reason,
+                "Gaussian blur falls back to CPU because a buffer exceeds the device resource limits"
+            );
+            self.device
+                .context
+                .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
             return cpu_backend::CpuBackend.gaussian_blur(img, sigma);
         }
         // For very small sigmas the FIR overhead dominates; CPU path is fine.
@@ -224,6 +281,18 @@ impl ComputeBackend for WgpuBackend {
             );
             return cpu_backend::CpuBackend.gaussian_blur_multi(img, sigmas);
         }
+        if let Some(reason) = self.image_binding_limit_reason(img) {
+            tracing::info!(
+                execution = "cpu",
+                %reason,
+                "Gaussian blur batch falls back to CPU because a buffer exceeds the device resource \
+                 limits"
+            );
+            self.device
+                .context
+                .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            return cpu_backend::CpuBackend.gaussian_blur_multi(img, sigmas);
+        }
         self.gaussian_blur_multi_gpu(img, sigmas)
     }
     fn table_lookup(&self, img: &ImageBuf, table_x: &[f32], table_y: &[[f32; 3]]) -> ImageBuf {
@@ -236,9 +305,6 @@ impl ComputeBackend for WgpuBackend {
         } else {
             None
         };
-        if let Some(s) = &scope {
-            s.context().record_executor(Executor::Gpu, None);
-        }
         let n_pixels = img.pixel_count() as u32;
         let k = table_x.len() as u32;
         #[repr(C)]
@@ -272,6 +338,16 @@ impl ComputeBackend for WgpuBackend {
             4,
             "table_lookup",
         );
+        let Some(result) = result else {
+            if let Some(s) = &scope {
+                s.context()
+                    .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            }
+            return cpu_backend::CpuBackend.table_lookup(img, table_x, table_y);
+        };
+        if let Some(s) = &scope {
+            s.context().record_executor(Executor::Gpu, None);
+        }
         ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
     fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> ImageBuf {
@@ -284,9 +360,6 @@ impl ComputeBackend for WgpuBackend {
         } else {
             None
         };
-        if let Some(s) = &scope {
-            s.context().record_executor(Executor::Gpu, None);
-        }
         let n_pixels = img.pixel_count() as u32;
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -317,6 +390,16 @@ impl ComputeBackend for WgpuBackend {
             3,
             "lut3d_interp",
         );
+        let Some(result) = result else {
+            if let Some(s) = &scope {
+                s.context()
+                    .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            }
+            return cpu_backend::CpuBackend.lut3d_interp(img, lut);
+        };
+        if let Some(s) = &scope {
+            s.context().record_executor(Executor::Gpu, None);
+        }
         ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
 
@@ -356,14 +439,16 @@ impl ComputeBackend for WgpuBackend {
             }
             out
         };
-        let xyz_to_rgb = &combined;
+        // Combined matrix for the GPU shader only; the CPU fallback needs the
+        // factors separately.
+        let combined_xyz_to_rgb = &combined;
         let n_wl = channel_density.len().min(illuminant.len());
         let n_pixels = density_cmy.pixel_count() as u32;
 
         // Pack uniform params — mat3x3 in WGSL std140 is 3 columns of vec4.
         // GPU shaders are f32-only: cast precision-preserved inputs at the shader boundary.
 
-        let columns = pack_matrix_columns_f64(xyz_to_rgb);
+        let columns = pack_matrix_columns_f64(combined_xyz_to_rgb);
         let params = ScanParams {
             width: density_cmy.width,
             height: density_cmy.height,
@@ -407,6 +492,20 @@ impl ComputeBackend for WgpuBackend {
             8, // output buffer index
             "scan_spectral",
         );
+        let Some(result) = result else {
+            self.device
+                .context
+                .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            return cpu_backend::CpuBackend.scan_spectral(
+                density_cmy,
+                channel_density,
+                base_density,
+                illuminant,
+                normalization,
+                cat,
+                xyz_to_rgb,
+            );
+        };
 
         ImageBuf::from_data(
             density_cmy.width,
@@ -487,6 +586,20 @@ impl ComputeBackend for WgpuBackend {
             6, // output buffer index
             "print_spectral",
         );
+        let Some(result) = result else {
+            self.device
+                .context
+                .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            return cpu_backend::CpuBackend.print_spectral(
+                density_cmy,
+                channel_density,
+                base_density,
+                illuminant,
+                sensitivity,
+                normalization_factor,
+                preflash,
+            );
+        };
 
         ImageBuf::from_data(
             density_cmy.width,
@@ -559,6 +672,18 @@ impl ComputeBackend for WgpuBackend {
             3, // output buffer index
             "front_transform",
         );
+        let Some(result) = result else {
+            self.device
+                .context
+                .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            return cpu_backend::CpuBackend.hanatos2025_rgb_to_raw(
+                image,
+                tc_lut,
+                color_space,
+                ref_illuminant,
+                cat16,
+            );
+        };
 
         ImageBuf::from_data(image.width, image.height, f32_to_scalars(result))
     }
@@ -616,6 +741,17 @@ impl ComputeBackend for WgpuBackend {
             4, // output buffer index
             "film_density",
         );
+        let Some(result) = result else {
+            self.device
+                .context
+                .record_executor(Executor::Cpu, Some(CpuReason::DeviceResourceLimits));
+            return cpu_backend::CpuBackend.density_curve_interp(
+                log_raw,
+                log_exposure,
+                density_curves,
+                gamma_factor,
+            );
+        };
 
         ImageBuf::from_data(log_raw.width, log_raw.height, f32_to_scalars(result))
     }
@@ -640,6 +776,9 @@ impl ComputeBackend for WgpuBackend {
                 reason = %reason,
                 "using per-stage path because a resident buffer exceeds the device resource limits"
             );
+            self.device
+                .context
+                .decline_resident(ResidentDeclineReason::DeviceResourceLimits);
             return Ok(None);
         }
         if !params.gpu_blurs_supported() {
@@ -661,6 +800,12 @@ impl ComputeBackend for WgpuBackend {
 
     fn explicit_gpu_request(&self) -> bool {
         self.explicit
+    }
+
+    fn image_binding_limit_reason(&self, img: &ImageBuf) -> Option<String> {
+        // Every image binding is the f32 RGB buffer of the image.
+        let bytes = img.pixel_count() as u64 * 3 * 4;
+        super::film_chain::required_buffer_exceeds_limits(bytes, &self.device.limits())
     }
 
     fn with_explicit_request(&self) -> Option<Box<dyn ComputeBackend>> {
