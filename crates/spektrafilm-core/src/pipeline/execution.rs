@@ -350,7 +350,7 @@ impl Pipeline {
         }
         let color_ref = self.color_reference(backend);
         if print_after_convert {
-            let mut printing = crate::stages::StageObservation::new(backend, "printing");
+            let printing = crate::stages::StageObservation::new(backend, "printing");
             let printing_backend = printing.backend(backend);
             let print_density = crate::stages::printing::expose_calibrated(
                 &film_density,

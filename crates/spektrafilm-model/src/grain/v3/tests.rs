@@ -1714,11 +1714,8 @@ fn a_zero_capacity_layer_receives_nothing() {
         let target = [x; 3];
         let layers = model.layer_targets(target);
         assert_conserved(target, &layers, &model);
-        for channel in 0..3 {
-            assert_eq!(
-                layers[channel][2], 0.0,
-                "zero-capacity layer took mass at {x}"
-            );
+        for channel in &layers {
+            assert_eq!(channel[2], 0.0, "zero-capacity layer took mass at {x}");
         }
     }
 }
@@ -1736,10 +1733,10 @@ fn a_single_active_layer_takes_the_whole_target() {
         let target = [x; 3];
         let layers = model.layer_targets(target);
         assert_conserved(target, &layers, &model);
-        for channel in 0..3 {
-            assert_eq!(layers[channel][1], 0.0);
-            assert_eq!(layers[channel][2], 0.0);
-            assert!((layers[channel][0] - (x + MIN_DENSITY).clamp(0.0, 0.21)).abs() < 1e-12);
+        for channel in &layers {
+            assert_eq!(channel[1], 0.0);
+            assert_eq!(channel[2], 0.0);
+            assert!((channel[0] - (x + MIN_DENSITY).clamp(0.0, 0.21)).abs() < 1e-12);
         }
     }
 }

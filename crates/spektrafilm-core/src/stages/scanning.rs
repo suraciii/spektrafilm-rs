@@ -769,6 +769,7 @@ fn scan_with_capture(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scan_with_reference(
     density_cmy: &ImageBuf,
     profile: &Profile,
@@ -1192,6 +1193,7 @@ pub fn process(
 }
 
 /// Runtime scan with immutable reference assets resolved during preparation.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn process_prepared(
     density: &ImageBuf,
     profile: &Profile,

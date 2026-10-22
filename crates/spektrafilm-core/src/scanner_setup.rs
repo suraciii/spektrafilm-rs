@@ -45,7 +45,7 @@ impl ScannerSetup {
         let cctf = params.io.input_cctf_decoding.then_some(space.cctf);
         let mut channels = [Vec::new(), Vec::new(), Vec::new()];
         let mut luma = Vec::new();
-        for pixel in image.data.chunks_exact(3) {
+        for pixel in image.data.as_chunks::<3>().0 {
             let mut rgb = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
             if !rgb.iter().all(|v| v.is_finite()) {
                 continue;
@@ -101,15 +101,21 @@ impl ScannerSetup {
         }
         Ok(Self {
             policy,
-            density_ev: policy.includes_density().then_some(density).unwrap_or(0.0),
-            balance_ev: policy
-                .includes_color()
-                .then_some(balance)
-                .unwrap_or([0.0; 3]),
-            contrast_scale: policy
-                .includes_contrast()
-                .then_some(contrast)
-                .unwrap_or(1.0),
+            density_ev: if policy.includes_density() {
+                density
+            } else {
+                0.0
+            },
+            balance_ev: if policy.includes_color() {
+                balance
+            } else {
+                [0.0; 3]
+            },
+            contrast_scale: if policy.includes_contrast() {
+                contrast
+            } else {
+                1.0
+            },
             valid_sample_count,
         })
     }
@@ -286,7 +292,7 @@ pub fn validate_route(film: &Profile, params: &RuntimeParams) -> Result<(), Stri
 mod tests {
     use super::*;
     use crate::params::RuntimeParams;
-    use spektrafilm_math::precision::{from_f64, to_f64};
+    use spektrafilm_math::precision::from_f64;
     fn params(policy: ScannerAutoSetup) -> RuntimeParams {
         let mut p = RuntimeParams::default();
         p.scanner.auto_setup = policy;

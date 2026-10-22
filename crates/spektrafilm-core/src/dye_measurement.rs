@@ -490,10 +490,11 @@ pub fn validate_protocol(protocol: &DyeMeasurementProtocol) -> Result<(), String
         )?;
     }
 
-    if let Some(reference) = protocol.reference_density {
-        if reference.iter().any(|&value| !value.is_finite()) {
-            return Err("Dye measurement reference density must be finite".into());
-        }
+    let invalid_reference = protocol
+        .reference_density
+        .is_some_and(|reference| reference.iter().any(|&value| !value.is_finite()));
+    if invalid_reference {
+        return Err("Dye measurement reference density must be finite".into());
     }
     Ok(())
 }
@@ -527,6 +528,7 @@ fn receiver_capture_validated(
         return Err("Dye measurement realization density must be finite".into());
     }
     let mut output = [0.0; 3];
+    #[allow(clippy::needless_range_loop)]
     for wavelength in 0..protocol.wavelengths_nm.len() {
         let mut total_density = protocol.base_density[wavelength];
         for channel in 0..3 {
@@ -535,6 +537,7 @@ fn receiver_capture_validated(
         let sample_transmission = transmission(total_density)
             .map_err(|error| format!("{error} at wavelength index {wavelength}"))?;
         let wavelength_weight = protocol.wavelength_weights[wavelength];
+        #[allow(clippy::needless_range_loop)]
         for channel in 0..3 {
             output[channel] += wavelength_weight
                 * protocol.receiver.response[wavelength][channel]
