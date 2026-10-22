@@ -74,6 +74,12 @@ impl ComputeBackend for ObservedBackend<'_> {
     fn explicit_gpu_request(&self) -> bool {
         self.backend.explicit_gpu_request()
     }
+    /// The route preflight reads the binding limits through this wrapper, so
+    /// a wrapped backend must report the same limits as the backend it
+    /// observes.
+    fn image_binding_limit_reason(&self, img: &ImageBuf) -> Option<String> {
+        self.backend.image_binding_limit_reason(img)
+    }
     fn colorspace_convert(&self, i: &ImageBuf, m: &[[f32; 3]; 3]) -> ImageBuf {
         self.cpu();
         self.backend.colorspace_convert(i, m)
