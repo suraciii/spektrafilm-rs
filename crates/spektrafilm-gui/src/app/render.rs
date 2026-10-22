@@ -8,10 +8,14 @@ impl App {
     /// last accepted operation status when no render runs. A newer queued
     /// job only names the status once its attempt starts.
     pub(crate) fn operation_status(&self) -> String {
-        let active = *self.render_worker.active.lock();
-        let kind = active
-            .map(|(_, kind, _)| kind)
-            .or_else(|| self.render_job.as_ref().map(|job| job.kind));
+        // Never block on the worker's start marker: fall back to the
+        // submitted job while the marker is held elsewhere.
+        let active_kind = self
+            .render_worker
+            .active
+            .try_lock()
+            .and_then(|active| (*active).map(|(_, kind, _)| kind));
+        let kind = active_kind.or_else(|| self.render_job.as_ref().map(|job| job.kind));
         let Some(kind) = kind else {
             return self.status.clone();
         };
