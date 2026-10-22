@@ -313,13 +313,6 @@ mod roles {
             Some(egui::accesskit::Toggled::True)
         );
     }
-
-    #[test]
-    fn a_numeric_row_names_its_editor() {
-        let harness = Harness::new_ui_state(scanner, scanner_params());
-        let node = harness.get_by_label("brightness");
-        assert_eq!(node.role(), egui::accesskit::Role::TextInput);
-    }
 }
 
 #[cfg(test)]

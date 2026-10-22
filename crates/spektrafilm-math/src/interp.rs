@@ -80,6 +80,8 @@ mod tests {
 
     #[test]
     fn test_interp_1d_exact() {
+        // An exact node hit takes the `binary_search` Ok branch and must
+        // return the node's value without interpolation.
         let x = vec![0.0, 1.0, 2.0, 3.0];
         let y = vec![0.0, 10.0, 20.0, 30.0];
         assert_eq!(interp_1d(&x, &y, 1.0), 10.0);

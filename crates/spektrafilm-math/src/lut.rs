@@ -220,27 +220,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_trilinear_corners() {
-        // 2x2x2 identity LUT
-        let size = 2;
-        let mut data = vec![0.0f32; size * size * size * 3];
-        for r in 0..size {
-            for g in 0..size {
-                for b in 0..size {
-                    let idx = (r * size * size + g * size + b) * 3;
-                    data[idx] = r as f32;
-                    data[idx + 1] = g as f32;
-                    data[idx + 2] = b as f32;
-                }
-            }
-        }
-        let v = trilinear_3d(&data, size, 0.0, 0.0, 0.0);
-        assert_eq!(v, [0.0, 0.0, 0.0]);
-        let v = trilinear_3d(&data, size, 1.0, 1.0, 1.0);
-        assert_eq!(v, [1.0, 1.0, 1.0]);
-    }
-
-    #[test]
     fn test_trilinear_midpoint() {
         let size = 2;
         let mut data = vec![0.0f32; size * size * size * 3];

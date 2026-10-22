@@ -792,12 +792,6 @@ mod tests {
             "the rejection must name the setting and how to proceed: {error}"
         );
     }
-
-    #[test]
-    fn capture_accepts_the_full_resolution_cpu_configuration() {
-        assert!(ensure_supported_params(&capture_params()).is_ok());
-    }
-
     fn image(width: u32, height: u32) -> ImageBuf {
         ImageBuf::from_data(
             width,

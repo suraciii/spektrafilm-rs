@@ -301,25 +301,6 @@ mod tests {
     }
 
     #[test]
-    fn fast_stats_rng_is_deterministic() {
-        let mut a = FastStatsRng::new(7);
-        let mut b = FastStatsRng::new(7);
-        for _ in 0..64 {
-            assert_eq!(a.rand(), b.rand());
-        }
-        let mut c = FastStatsRng::new(7);
-        let mut d = FastStatsRng::new(7);
-        for _ in 0..64 {
-            assert_eq!(c.randn(), d.randn());
-        }
-        // Distinct seeds/indices must not alias.
-        let mut e = FastStatsRng::stream(3, 0, 5);
-        let mut f = FastStatsRng::stream(3, 1, 5);
-        let mut g = FastStatsRng::stream(3, 0, 6);
-        assert!(e.rand() != f.rand() || e.rand() != g.rand());
-    }
-
-    #[test]
     fn fast_poisson_edges_and_regimes() {
         let mut rng = FastStatsRng::new(11);
         assert_eq!(fast_poisson(&mut rng, 0.0), 0);

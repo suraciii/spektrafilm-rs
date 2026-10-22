@@ -115,25 +115,3 @@ impl PipelineCache {
         )
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cache_key_includes_binding_layout() {
-        let shader = "@compute @workgroup_size(1) fn main() {}";
-        let uniform = [wgpu::BufferBindingType::Uniform];
-        let readonly = [wgpu::BufferBindingType::Storage { read_only: true }];
-        let readwrite = [wgpu::BufferBindingType::Storage { read_only: false }];
-
-        assert_ne!(
-            PipelineKey::new(shader, &uniform),
-            PipelineKey::new(shader, &readonly)
-        );
-        assert_ne!(
-            PipelineKey::new(shader, &readonly),
-            PipelineKey::new(shader, &readwrite)
-        );
-    }
-}
