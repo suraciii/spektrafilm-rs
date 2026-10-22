@@ -243,7 +243,13 @@ fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
 /// Scroll the controls panel down so elements below the fold come into view.
 fn scroll_controls_down(h: &mut Harness<'_, App>) {
     let screen = h.ctx.screen_rect();
-    let pointer = egui::pos2(screen.right() - 160.0, screen.center().y);
+    // Hover the panel's left margin, not its centre: a parameter row's numeric
+    // field covers the centre of a row, and a wheel over it steps that value
+    // and consumes the delta, so the panel never scrolls.
+    let pointer = egui::pos2(
+        screen.right() - theme::WIDTH_CONTROL_PANEL + 8.0,
+        screen.center().y,
+    );
     h.input_mut()
         .events
         .push(egui::Event::PointerMoved(pointer));
