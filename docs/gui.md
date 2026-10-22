@@ -64,7 +64,7 @@ The `Finished RGB` workflow color-manages an already rendered image to the outpu
 
 ### Grain profiles
 
-**FILM → Grain** holds two profile selectors beside the engine selector: **Procedural Grain Profiles** and **Dye Grain Profiles**. The Dye selector is available only while the engine is `dye`, and selecting a profile never changes the engine. A Dye profile writes only `v3_dye_support_um`, `v3_event_area_um2`, and `channel_correlation`; the stock-resolved grain controls, the film and print references, the route, and the film format stay unchanged. The selector lists the six built-in Dye names plus `custom`, which shows when the three values match no built-in row. See [grain engines](grain.md#dye-grain-profiles) for the names, their values, and their measured effects.
+**FILM → Grain** exposes the Procedural Grain Profiles selector beside the engine selector. See the [feature profile contract](../specs/feature-profiles/spec.md) for the shared catalog and scope rules.
 
 ## Preview and Scan
 

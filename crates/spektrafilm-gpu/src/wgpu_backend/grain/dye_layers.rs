@@ -142,6 +142,7 @@ impl WgpuBackend {
                 frac: [1.0 / 6.0, 1.0 / 3.0, 0.5],
                 area: [1.0; 3],
                 uniformity: 0.0,
+                lookup_sign: 1.0,
                 knots: &knots,
                 inv_dx: &inv_dx,
                 layers: if fallback {
@@ -259,6 +260,7 @@ mod tests {
                 frac: [1.0 / 6.0, 2.0 / 6.0, 0.5],
                 area: [1.0; 3],
                 uniformity: 0.0,
+                lookup_sign: 1.0,
                 knots: &knots,
                 inv_dx: &spacing,
                 layers: weights,
@@ -337,6 +339,7 @@ mod tests {
                 frac: [1.0 / 3.0; 3],
                 area: [1.0; 3],
                 uniformity: 0.0,
+                lookup_sign: 1.0,
                 knots: &knots,
                 inv_dx: &inv_dx,
                 layers: [&weights; 3],

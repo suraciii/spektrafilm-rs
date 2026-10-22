@@ -2,7 +2,7 @@ use super::*;
 
 /// Source pixel pitch used by these tests, in micrometers.
 const PITCH: f64 = 6.0;
-/// Default dye support (design §Parameters).
+/// Default dye support (design §Resolved parameter contract).
 const SIGMA: f64 = 3.5;
 /// Raw layer maxima `[layer]`, equal across channels.
 const MAXIMA: [f64; 3] = [0.18, 0.09, 0.03];
@@ -1458,5 +1458,419 @@ fn zero_capacity_layer_is_skipped() {
                 assert!(value[c].is_finite());
             }
         }
+    }
+}
+
+/// One layer-curve row with the same values in every channel.
+fn row(_composite: f64, layers: [f64; 3]) -> [[f64; 3]; 3] {
+    layers.map(|layer| [layer; 3])
+}
+
+/// Independently reproduce one channel's interpolated allocation weights.
+fn weight_proportions(
+    knots: &[f64],
+    rows: &[[[f64; 3]; 3]],
+    x: f64,
+    floor_share: [f64; 3],
+) -> [f64; 3] {
+    weight_proportions_channel(knots, rows, x, floor_share, 0)
+}
+
+fn weight_proportions_channel(
+    knots: &[f64],
+    rows: &[[[f64; 3]; 3]],
+    x: f64,
+    floor_share: [f64; 3],
+    channel: usize,
+) -> [f64; 3] {
+    let k = knots.len();
+    let (low, t) = if x <= knots[0] {
+        (0, 0.0)
+    } else if x >= knots[k - 1] {
+        (k - 2, 1.0)
+    } else {
+        let idx = knots.partition_point(|&v| v <= x);
+        let low = if idx > 0 { idx - 1 } else { 0 };
+        (low, (x - knots[low]) / (knots[low + 1] - knots[low]))
+    };
+    std::array::from_fn(|layer| {
+        let value = rows[low][layer][channel]
+            + t * (rows[low + 1][layer][channel] - rows[low][layer][channel]);
+        (value + floor_share[layer]).max(0.0)
+    })
+}
+
+/// Every channel allocation must conserve the clamped target `D + min`.
+/// `Model::layer_targets` is channel-major: `[channel][layer]`.
+fn assert_conserved(target: [f64; 3], layers: &[[f64; 3]; 3], model: &Model) {
+    for c in 0..3 {
+        let sum: f64 = layers[c].iter().sum();
+        let expected = (target[c] + model.channels[c].min).clamp(0.0, model.channels[c].cap_total);
+        assert!(
+            (sum - expected).abs() < 1e-12,
+            "target {target:?}, channel {c} allocated {sum} of {expected}"
+        );
+    }
+}
+
+/// Params with explicit composite knots, layer rows, and per-channel maxima.
+fn allocation_params(
+    knots: Vec<f64>,
+    rows: Vec<[[f64; 3]; 3]>,
+    maxima: [[f64; 3]; 3],
+    positive_film: bool,
+    density_min: [f64; 3],
+) -> GrainV3Params {
+    GrainV3Params {
+        composite_curves: knots.iter().map(|&k| [k; 3]).collect(),
+        layer_curves: rows,
+        layer_max: maxima,
+        positive_film,
+        density_min,
+        ..params(None, true, 0x51, 1.0)
+    }
+}
+
+/// A model with linearly increasing layer weights on the negative-film axis.
+fn linear_model(positive_film: bool) -> Model {
+    let knots = if positive_film {
+        vec![1.0, 0.5, 0.0]
+    } else {
+        vec![0.0, 0.5, 1.0]
+    };
+    let rows = vec![
+        row(0.0, [0.0; 3]),
+        row(0.5, [MAXIMA[0] / 2.0, MAXIMA[1] / 2.0, MAXIMA[2] / 2.0]),
+        row(1.0, MAXIMA),
+    ];
+    Model::new(
+        &allocation_params(
+            knots,
+            rows,
+            std::array::from_fn(|layer| [MAXIMA[layer]; 3]),
+            positive_film,
+            [MIN_DENSITY; 3],
+        ),
+        PITCH,
+    )
+    .expect("model")
+}
+
+/// A model with duplicate composite knots and flat layer weights.
+fn flat_model() -> Model {
+    let knots = vec![0.0, 0.5, 0.5, 1.0];
+    let rows = vec![
+        row(0.0, [0.06, 0.03, 0.01]),
+        row(0.5, [0.06, 0.03, 0.01]),
+        row(0.5, [0.06, 0.03, 0.01]),
+        row(1.0, [0.06, 0.03, 0.01]),
+    ];
+    Model::new(
+        &allocation_params(
+            knots,
+            rows,
+            std::array::from_fn(|layer| [MAXIMA[layer]; 3]),
+            false,
+            [MIN_DENSITY; 3],
+        ),
+        PITCH,
+    )
+    .expect("model")
+}
+
+#[test]
+fn interior_target_splits_by_the_interpolated_weights() {
+    let model = linear_model(false);
+    let knots = [0.0, 0.5, 1.0];
+    let rows = [
+        row(0.0, [0.0; 3]),
+        row(0.5, [MAXIMA[0] / 2.0, MAXIMA[1] / 2.0, MAXIMA[2] / 2.0]),
+        row(1.0, MAXIMA),
+    ];
+    let floor_share = [
+        MAXIMA[0] / 0.3 * MIN_DENSITY,
+        MAXIMA[1] / 0.3 * MIN_DENSITY,
+        MAXIMA[2] / 0.3 * MIN_DENSITY,
+    ];
+    for &x in &[0.125, 0.25] {
+        let target = [x; 3];
+        let layers = model.layer_targets(target);
+        assert_conserved(target, &layers, &model);
+        let weights = weight_proportions(&knots, &rows, x, floor_share);
+        let total = target[0] + MIN_DENSITY;
+        for layer in 0..3 {
+            let expected = total * weights[layer] / weights.iter().sum::<f64>();
+            assert!(
+                (layers[0][layer] - expected).abs() < 1e-12,
+                "query {x}: layer {layer} got {}, expected {expected}, weights {weights:?}",
+                layers[0][layer]
+            );
+        }
+    }
+}
+
+#[test]
+fn endpoint_queries_clamp_before_allocation() {
+    let model = linear_model(false);
+    let low = model.layer_targets([0.0; 3]);
+    let high = model.layer_targets([1.0; 3]);
+    assert!(low[0][0] < high[0][0], "endpoint clamp collapsed: {low:?}");
+    assert!((low[0][2] - MAXIMA[2] / 0.3 * MIN_DENSITY).abs() < 1e-12);
+    for channel in 0..3 {
+        assert_eq!(model.layer_targets([-0.25; 3])[channel], [0.0; 3]);
+        assert_eq!(
+            model.layer_targets([1.75; 3])[channel],
+            model.channels[channel].cap
+        );
+    }
+}
+
+#[test]
+fn duplicate_composite_knots_select_the_right_hand_bracket() {
+    let model = flat_model();
+    let weights = [
+        0.06 + MAXIMA[0] / 0.3 * MIN_DENSITY,
+        0.03 + MAXIMA[1] / 0.3 * MIN_DENSITY,
+        0.01 + MAXIMA[2] / 0.3 * MIN_DENSITY,
+    ];
+    let sum: f64 = weights.iter().sum();
+    for &x in &[0.0, 0.25, 0.5, 0.75, 1.0] {
+        let layers = model.layer_targets([x; 3]);
+        for layer in 0..3 {
+            let expected =
+                (x + MIN_DENSITY).clamp(0.0, model.channels[0].cap_total) * weights[layer] / sum;
+            assert!(
+                (layers[0][layer] - expected).abs() < 1e-12,
+                "x {x}, layer {layer}: got {}, expected {expected}, weights {weights:?}",
+                layers[0][layer]
+            );
+        }
+    }
+}
+#[test]
+fn saturated_layers_commit_capacity_and_redistribute_the_remainder() {
+    let rows = vec![
+        row(0.0, [MAXIMA[0], 0.0, 0.0]),
+        row(0.5, [MAXIMA[0], 0.0, 0.0]),
+        row(1.0, [MAXIMA[0], 0.0, 0.0]),
+    ];
+    let model = Model::new(
+        &allocation_params(
+            vec![0.0, 0.5, 1.0],
+            rows,
+            std::array::from_fn(|layer| [MAXIMA[layer]; 3]),
+            false,
+            [MIN_DENSITY; 3],
+        ),
+        PITCH,
+    )
+    .expect("model");
+    let target = [0.2; 3];
+    let layers = model.layer_targets(target);
+    assert_conserved(target, &layers, &model);
+    let cap0 = MAXIMA[0] + MAXIMA[0] / 0.3 * MIN_DENSITY;
+    assert!((layers[0][0] - cap0).abs() < 1e-12);
+    let weights = [
+        cap0,
+        MAXIMA[1] / 0.3 * MIN_DENSITY,
+        MAXIMA[2] / 0.3 * MIN_DENSITY,
+    ];
+    let remainder = target[0] + MIN_DENSITY - cap0;
+    let rest: f64 = weights[1..].iter().sum();
+    for layer in 1..3 {
+        let expected = remainder * weights[layer] / rest;
+        assert!((layers[0][layer] - expected).abs() < 1e-12);
+        assert!(layers[0][layer] < model.channels[0].cap[layer]);
+    }
+    let full = model.layer_targets([0.3; 3]);
+    assert_eq!(full[0], model.channels[0].cap);
+}
+
+#[test]
+fn all_zero_weights_fall_back_to_capacity_fractions() {
+    let rows = vec![row(0.0, [0.0; 3]), row(0.5, [0.0; 3]), row(1.0, [0.0; 3])];
+    let maxima = [[0.18, 0.18, 0.18], [0.09, 0.09, 0.09], [0.03, 0.03, 0.03]];
+    let model = Model::new(
+        &allocation_params(vec![0.0, 0.5, 1.0], rows, maxima, false, [0.0; 3]),
+        PITCH,
+    )
+    .expect("model");
+    let layers = model.layer_targets([0.2; 3]);
+    let total = 0.2;
+    for layer in 0..3 {
+        assert!((layers[0][layer] - total * maxima[layer][0] / 0.3).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn a_zero_capacity_layer_receives_nothing() {
+    let mut p = params(None, true, 0x52, 1.0);
+    p.layer_max = [[0.18, 0.18, 0.18], [0.09, 0.09, 0.09], [0.0, 0.0, 0.0]];
+    for row in p.layer_curves.iter_mut() {
+        row[2] = [0.0; 3];
+    }
+    let model = Model::new(&p, PITCH).expect("model");
+    for &x in &[0.0, 0.05, 0.12, 0.3] {
+        let target = [x; 3];
+        let layers = model.layer_targets(target);
+        assert_conserved(target, &layers, &model);
+        for channel in 0..3 {
+            assert_eq!(
+                layers[channel][2], 0.0,
+                "zero-capacity layer took mass at {x}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_single_active_layer_takes_the_whole_target() {
+    let mut p = params(None, true, 0x53, 1.0);
+    p.layer_max = [[0.18, 0.18, 0.18], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
+    for row in p.layer_curves.iter_mut() {
+        row[1] = [0.0; 3];
+        row[2] = [0.0; 3];
+    }
+    let model = Model::new(&p, PITCH).expect("model");
+    for &x in &[0.0, 0.05, 0.12, 0.21] {
+        let target = [x; 3];
+        let layers = model.layer_targets(target);
+        assert_conserved(target, &layers, &model);
+        for channel in 0..3 {
+            assert_eq!(layers[channel][1], 0.0);
+            assert_eq!(layers[channel][2], 0.0);
+            assert!((layers[channel][0] - (x + MIN_DENSITY).clamp(0.0, 0.21)).abs() < 1e-12);
+        }
+    }
+}
+
+#[test]
+fn zero_density_min_allocates_the_bare_target() {
+    let model = Model::new(
+        &allocation_params(
+            vec![0.0, 0.5, 1.0],
+            vec![
+                row(0.0, [0.0; 3]),
+                row(0.5, [MAXIMA[0] / 2.0, MAXIMA[1] / 2.0, MAXIMA[2] / 2.0]),
+                row(1.0, MAXIMA),
+            ],
+            std::array::from_fn(|layer| [MAXIMA[layer]; 3]),
+            false,
+            [0.0; 3],
+        ),
+        PITCH,
+    )
+    .expect("model");
+    let layers = model.layer_targets([0.12; 3]);
+    assert!((layers[0].iter().sum::<f64>() - 0.12).abs() < 1e-12);
+    let weights = [0.06, 0.03, 0.01];
+    let sum: f64 = weights.iter().sum();
+    for layer in 0..3 {
+        assert!((layers[0][layer] - 0.12 * weights[layer] / sum).abs() < 1e-12);
+    }
+    assert_eq!(model.layer_targets([0.0; 3]), [[0.0; 3]; 3]);
+}
+
+#[test]
+fn nonzero_density_min_adds_the_floor_share_to_every_weight() {
+    let floor = [0.02, 0.05, 0.08];
+    let rows = vec![
+        row(0.0, [0.0; 3]),
+        row(0.5, [MAXIMA[0] / 2.0, MAXIMA[1] / 2.0, MAXIMA[2] / 2.0]),
+        row(1.0, MAXIMA),
+    ];
+    let model = Model::new(
+        &allocation_params(
+            vec![0.0, 0.5, 1.0],
+            rows.clone(),
+            std::array::from_fn(|layer| [MAXIMA[layer]; 3]),
+            false,
+            floor,
+        ),
+        PITCH,
+    )
+    .expect("model");
+    let target = [0.12; 3];
+    let layers = model.layer_targets(target);
+    for channel in 0..3 {
+        let weights = weight_proportions_channel(
+            &[0.0, 0.5, 1.0],
+            &rows,
+            target[channel],
+            [
+                MAXIMA[0] / 0.3 * floor[channel],
+                MAXIMA[1] / 0.3 * floor[channel],
+                MAXIMA[2] / 0.3 * floor[channel],
+            ],
+            channel,
+        );
+        let sum: f64 = weights.iter().sum();
+        assert!(
+            (layers[channel].iter().sum::<f64>() - target[channel] - floor[channel]).abs() < 1e-12
+        );
+        for layer in 0..3 {
+            let expected = (target[channel] + floor[channel]) * weights[layer] / sum;
+            assert!((layers[channel][layer] - expected).abs() < 1e-12);
+        }
+    }
+}
+
+#[test]
+fn positive_film_flips_the_composite_lookup_axis() {
+    // Positive profile inputs decrease with exposure. The production path
+    // reverses the composite axis and negates the source query before lookup.
+    // Distinct layer ratios at each knot make a missing query sign observable.
+    let rows = vec![
+        row(1.0, [MAXIMA[0], 0.0, 0.0]),
+        row(0.5, [0.0, MAXIMA[1], 0.0]),
+        row(0.0, [0.0, 0.0, MAXIMA[2]]),
+    ];
+    let positive = Model::new(
+        &allocation_params(
+            vec![1.0, 0.5, 0.0],
+            rows.clone(),
+            std::array::from_fn(|layer| [MAXIMA[layer]; 3]),
+            true,
+            [MIN_DENSITY; 3],
+        ),
+        PITCH,
+    )
+    .expect("model");
+    let floor_share = [
+        MAXIMA[0] / 0.3 * MIN_DENSITY,
+        MAXIMA[1] / 0.3 * MIN_DENSITY,
+        MAXIMA[2] / 0.3 * MIN_DENSITY,
+    ];
+    let signed_knots = [-1.0, -0.5, 0.0];
+    // Keep the test targets below the smallest layer capacity so the expected
+    // proportions isolate lookup direction rather than water-fill saturation.
+    for &x in &[0.0125, 0.025] {
+        let target = [x; 3];
+        let actual = positive.layer_targets(target);
+        assert_conserved(target, &actual, &positive);
+        let weights = weight_proportions(&signed_knots, &rows, -x, floor_share);
+        let total = target[0] + MIN_DENSITY;
+        let sum: f64 = weights.iter().sum();
+        for layer in 0..3 {
+            let expected = total * weights[layer] / sum;
+            assert!(
+                (actual[0][layer] - expected).abs() < 1e-12,
+                "x {x}: layer {layer} got {}, expected {expected}, weights {weights:?}",
+                actual[0][layer]
+            );
+        }
+    }
+    let target = [0.0; 3];
+    let actual = positive.layer_targets(target);
+    let weights = weight_proportions(&signed_knots, &rows, 0.0, floor_share);
+    let total = MIN_DENSITY;
+    let sum: f64 = weights.iter().sum();
+    for layer in 0..3 {
+        let expected = total * weights[layer] / sum;
+        assert!(
+            (actual[0][layer] - expected).abs() < 1e-12,
+            "endpoint x 0: layer {layer} got {}, expected {expected}",
+            actual[0][layer]
+        );
     }
 }

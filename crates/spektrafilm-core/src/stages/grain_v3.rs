@@ -283,7 +283,7 @@ pub fn active(params: &RuntimeParams) -> bool {
 
 /// Fail before any work when Dye is selected outside its supported
 /// condition: color filming stocks and film-scan or print routes
-/// (spec §Supported condition).
+/// (spec §Supported product boundary).
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
     if !active(params) {
         return Ok(());
@@ -417,7 +417,7 @@ pub fn collapse_log_exposure(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, S
 }
 
 /// Per-channel event-area scale `k_c` resolved from the stock granularity
-/// preset (design §Parameters).
+/// preset (design §Resolved parameter contract).
 ///
 /// Readout variance is proportional to event area, so `(G_c / 6)^2` makes
 /// the readout RMS proportional to the preset at fixed density and support.
@@ -622,6 +622,7 @@ fn device_params(
         frac: tables[c].frac,
         area: tables[c].area,
         uniformity: tables[c].uniformity,
+        lookup_sign: tables[c].lookup_sign,
         knots: tables[c].knots,
         inv_dx: tables[c].inv_dx,
         layers: tables[c].layers,
@@ -880,63 +881,68 @@ mod tests {
     fn device_layer_targets_match_the_cpu_conditioning() {
         // G2: the device evaluates the same conditioning from the same tables.
         // Both sides read `Model::channel_tables`, so this compares two
-        // evaluations of one derivation instead of two derivations.
+        // evaluations of one derivation instead of two derivations. The
+        // positive stock flips the composite lookup axis, so the device must
+        // apply the table's sign to the query exactly as the CPU does.
         let backend = spektrafilm_gpu::test_support::adapter();
-        let film = load("kodak_portra_800");
-        let params = supported_params();
-        let resolved = resolve(&film, &params).unwrap();
-        let model = v3::Model::new(&resolved, 2.0).unwrap();
-        let tables = model.channel_tables();
-        let parts = std::array::from_fn(|c| spektrafilm_backend::dye_params::DyeChannelParts {
-            min: tables[c].min,
-            cap_total: tables[c].cap_total,
-            cap: tables[c].cap,
-            frac: tables[c].frac,
-            area: tables[c].area,
-            uniformity: tables[c].uniformity,
-            knots: tables[c].knots,
-            inv_dx: tables[c].inv_dx,
-            layers: tables[c].layers,
-        });
-        let packed = spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts);
-        // Cover each channel's own interval, including both clamps and the
-        // region where a layer saturates and the split redistributes.
-        let mut densities = Vec::new();
-        for i in 0..24usize {
-            for j in 0..24usize {
-                let x = i as f64 / 23.0;
-                let y = j as f64 / 23.0;
-                let z = (i + j) as f64 / 46.0;
-                densities.push([
-                    (1.2 * x * tables[0].cap_total) as f32,
-                    (1.2 * y * tables[1].cap_total) as f32,
-                    (1.2 * z * tables[2].cap_total) as f32,
-                ]);
-            }
-        }
-        let device = backend.dye_layer_targets(&densities, &packed);
-        assert_eq!(device.len(), densities.len());
-        let mut worst = 0.0f64;
-        for (index, density) in densities.iter().enumerate() {
-            let cpu = model.layer_targets([
-                f64::from(density[0]),
-                f64::from(density[1]),
-                f64::from(density[2]),
-            ]);
-            for channel in 0..3usize {
-                for layer in 0..3usize {
-                    let want = cpu[channel][layer];
-                    let got = f64::from(device[index][channel * 3 + layer]);
-                    let scale = want.abs().max(tables[channel].cap[layer]).max(1e-6);
-                    worst = worst.max((got - want).abs() / scale);
-                    assert!(
-                        (got - want).abs() <= 1e-4 * scale,
-                        "channel {channel} layer {layer} at {density:?}: device {got} vs CPU {want}"
-                    );
+        for stock in ["kodak_portra_800", "fujifilm_provia_100f"] {
+            let film = load(stock);
+            let params = supported_params();
+            let resolved = resolve(&film, &params).unwrap();
+            let model = v3::Model::new(&resolved, 2.0).unwrap();
+            let tables = model.channel_tables();
+            let parts = std::array::from_fn(|c| spektrafilm_backend::dye_params::DyeChannelParts {
+                min: tables[c].min,
+                cap_total: tables[c].cap_total,
+                cap: tables[c].cap,
+                frac: tables[c].frac,
+                area: tables[c].area,
+                uniformity: tables[c].uniformity,
+                lookup_sign: tables[c].lookup_sign,
+                knots: tables[c].knots,
+                inv_dx: tables[c].inv_dx,
+                layers: tables[c].layers,
+            });
+            let packed = spektrafilm_backend::dye_params::DyeChannelTablesGpu::pack(parts);
+            // Cover each channel's own interval, including both clamps and the
+            // region where a layer saturates and the split redistributes.
+            let mut densities = Vec::new();
+            for i in 0..24usize {
+                for j in 0..24usize {
+                    let x = i as f64 / 23.0;
+                    let y = j as f64 / 23.0;
+                    let z = (i + j) as f64 / 46.0;
+                    densities.push([
+                        (1.2 * x * tables[0].cap_total) as f32,
+                        (1.2 * y * tables[1].cap_total) as f32,
+                        (1.2 * z * tables[2].cap_total) as f32,
+                    ]);
                 }
             }
+            let device = backend.dye_layer_targets(&densities, &packed);
+            assert_eq!(device.len(), densities.len());
+            let mut worst = 0.0f64;
+            for (index, density) in densities.iter().enumerate() {
+                let cpu = model.layer_targets([
+                    f64::from(density[0]),
+                    f64::from(density[1]),
+                    f64::from(density[2]),
+                ]);
+                for channel in 0..3usize {
+                    for layer in 0..3usize {
+                        let want = cpu[channel][layer];
+                        let got = f64::from(device[index][channel * 3 + layer]);
+                        let scale = want.abs().max(tables[channel].cap[layer]).max(1e-6);
+                        worst = worst.max((got - want).abs() / scale);
+                        assert!(
+                            (got - want).abs() <= 1e-4 * scale,
+                            "{stock} channel {channel} layer {layer} at {density:?}: device {got} vs CPU {want}"
+                        );
+                    }
+                }
+            }
+            assert!(worst <= 1e-4, "{stock} worst relative error {worst}");
         }
-        assert!(worst <= 1e-4, "worst relative error {worst}");
     }
 
     /// Deterministic conditional means isolate conditioning, remap, formation,

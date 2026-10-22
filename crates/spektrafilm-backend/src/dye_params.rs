@@ -7,9 +7,11 @@
 /// One channel's device-side tables.
 ///
 /// The layout matches `Table` in `dye_tables.wgsl`, where the three `vec4`
-/// members force sixteen-byte alignment, so the padding is explicit rather than
-/// implied: a `#[repr(C)]` struct of four-byte members would otherwise put
-/// `cap` eight bytes earlier than the shader reads it.
+/// members force sixteen-byte alignment, so the padding is explicit rather
+/// than implied: a `#[repr(C)]` struct of four-byte members would otherwise
+/// put `cap` eight bytes earlier than the shader reads it. The final
+/// four-byte slot carries `lookup_sign`, the sign the bracket applies to its
+/// query, so the device reads the same sign the model derived.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct DyeChannelTableGpu {
@@ -22,7 +24,7 @@ pub struct DyeChannelTableGpu {
     pub uniformity: f32,
     pub knot_count: u32,
     pub offset: u32,
-    pub pad_b: u32,
+    pub lookup_sign: f32,
 }
 
 /// All three channels: the fixed tables plus the packed knot and curve data.
@@ -50,6 +52,8 @@ pub struct DyeChannelParts<'a> {
     pub frac: [f64; 3],
     pub area: [f64; 3],
     pub uniformity: f64,
+    /// Sign the bracket applies to its query (`-1` for positive films).
+    pub lookup_sign: f64,
     pub knots: &'a [f64],
     pub inv_dx: &'a [f64],
     pub layers: [&'a [f64]; 3],
@@ -108,7 +112,7 @@ impl DyeChannelTablesGpu {
                 uniformity: channel.uniformity as f32,
                 knot_count: channel.knots.len() as u32,
                 offset,
-                pad_b: 0,
+                lookup_sign: channel.lookup_sign as f32,
             }
         });
         Self { tables, curves }

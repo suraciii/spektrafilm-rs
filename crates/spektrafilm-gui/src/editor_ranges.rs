@@ -523,7 +523,8 @@ mod tests {
 
     #[test]
     fn film_format_mm_matches_spec() {
-        // The spec model: editor 1-1000, validator strictly positive
+        // The editor range table is the single source for this GUI bound;
+        // the film-geometry contract owns the accepted document range.
         assert_eq!(
             editor_range("camera.film_format_mm"),
             Some((1.0, 1000.0, 0.5, 2))

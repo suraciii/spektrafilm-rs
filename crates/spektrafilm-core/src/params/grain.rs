@@ -207,12 +207,12 @@ fn default_particle_scale_sublayers_f64() -> [f64; 3] {
     [1.0, 0.4, 0.25]
 }
 /// Default dye support selected with the default event area on the reference
-/// condition (`specs/film-grain/v3/design.md` §Parameters).
+/// condition (`specs/film-grain/v3/design.md` §Resolved parameter contract).
 fn default_v3_dye_support_um() -> f32 {
     3.5
 }
 /// Validated event area of the reference stock `kodak_portra_800`
-/// (`specs/film-grain/v3/design.md` §Parameters).
+/// (`specs/film-grain/v3/design.md` §Resolved parameter contract).
 fn default_v3_event_area_um2() -> f64 {
     1.28
 }
@@ -223,7 +223,8 @@ fn default_v3_event_area_um2() -> f64 {
 /// inter-record coherence at `0.0` to `0.45`; everything above that band that
 /// has been measured (`0.853` in a commercial film-simulation product) is
 /// coherence the evidence attributes to scanner processing, which
-/// `specs/film-grain/v3/design.md` forbids the records from imitating. The
+/// `specs/film-grain/v3/design.md` §Channel coupling forbids the records
+/// from imitating. The
 /// control stays legal on `[0, 1)` in principle -- the split only requires the
 /// independent remainder to be non-negative -- so this bound is an evidence
 /// bound, not a structural one, and it moves when better evidence replaces the
@@ -232,7 +233,7 @@ pub const MEASURED_CHANNEL_CORRELATION_CEILING: f64 = 0.45;
 
 /// Off by default: the independent-field realization stays the shipped
 /// behavior, and a recipe or preset that wants record correlation opts in
-/// (`specs/film-grain/v3/design.md` §Channel correlation).
+/// (`specs/film-grain/v3/design.md` §Channel coupling).
 fn default_channel_correlation() -> f64 {
     0.0
 }
