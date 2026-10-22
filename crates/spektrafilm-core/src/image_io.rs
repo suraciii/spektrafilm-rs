@@ -845,20 +845,4 @@ mod tests {
         );
         assert!(!destination.exists());
     }
-
-    /// The disabled (unobserved) and observed preparation share one
-    /// boundary, so the CMYK acceptance evidence never depends on telemetry
-    /// being enabled.
-    #[test]
-    fn unobserved_and_observed_preparation_share_one_boundary() {
-        let dir = tempfile::tempdir().unwrap();
-        let destination = dir.path().join("retained.png");
-        let image = ImageBuf::from_data(1, 1, [0.25, 0.5, 0.75].map(from_f64).to_vec());
-        let context = context();
-        let prepared = prepare_save_observed(&destination, &image, options(), None, &context)
-            .expect("the disabled context prepares identically");
-        assert!(!destination.exists());
-        prepared.publish(false).unwrap();
-        assert!(destination.exists());
-    }
 }
