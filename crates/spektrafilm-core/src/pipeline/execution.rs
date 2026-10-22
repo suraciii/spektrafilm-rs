@@ -49,30 +49,6 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbIn),
         };
-        if self.params.scanner.auto_setup == crate::params::ScannerAutoSetup::PerFrame
-            && self.scanner_setup.is_none()
-        {
-            if inject != Tap::RgbIn {
-                return Err("per_frame scanner setup requires the full rgb_in input".into());
-            }
-            let setup = self.prepare_scanner_setup(&image)?;
-            let mut prepared = self.clone();
-            prepared.scanner_setup = Some(setup);
-            return prepared.process_with_taps_timed(
-                image,
-                backend,
-                Some(inject),
-                collect,
-                timings,
-                capture,
-            );
-        }
-        // Negative-to-positive interpretation is part of the resident
-        // decision: the capture methods run as the assembled scanner readout
-        // fence and the density reading and Digital Reference replace the
-        // acquisition as the assembled acquisition fence (pipe
-        // architecture, capability class). `resident_decision` is the sole
-        // authority, so no whole-route demotion happens here.
         let collect = match collect {
             Some(tap) => tap,
             None => self
@@ -84,6 +60,35 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbOut),
         };
+        if self.params.scanner.auto_setup != crate::params::ScannerAutoSetup::Off
+            && (inject != Tap::RgbIn || collect != Tap::RgbOut)
+        {
+            return Err(format!(
+                "scanner.auto_setup={} is not valid for tap route; use off or the complete-frame rgb_in→rgb_out route",
+                self.params.scanner.auto_setup
+            ));
+        }
+        if self.params.scanner.auto_setup != crate::params::ScannerAutoSetup::Off
+            && self.scanner_setup.is_none()
+        {
+            let setup = self.prepare_scanner_setup(&image)?;
+            let mut prepared = self.clone();
+            prepared.scanner_setup = Some(setup);
+            return prepared.process_with_taps_timed(
+                image,
+                backend,
+                Some(inject),
+                Some(collect),
+                timings,
+                capture,
+            );
+        }
+        // Negative-to-positive interpretation is part of the resident
+        // decision: the capture methods run as the assembled scanner readout
+        // fence and the density reading and Digital Reference replace the
+        // acquisition as the assembled acquisition fence (pipe
+        // architecture, capability class). `resident_decision` is the sole
+        // authority, so no whole-route demotion happens here.
         if collect == Tap::RgbOut && self.params.output_mix.amount < 1.0 && inject != Tap::RgbIn {
             return Err(
                 "output_mix.amount below 1 requires rgb_in injection for final rgb_out collection"
@@ -359,23 +364,20 @@ impl Pipeline {
                 color_ref.printing_exposure_correction,
                 pixel_size_um,
             );
-            if let Some(capture) = capture.as_deref_mut() {
-                capture.record_boundary(
-                    StageId::LogEPrint,
-                    &print_density,
-                    CoordinateSpace::Working,
-                );
-            }
             let developed = crate::stages::printing::develop(
                 &print_density,
                 &self.print,
                 &self.params,
                 printing_backend,
             );
-            printing.set_complete(developed.is_ok());
             let print_density = developed?;
             drop(printing);
             if let Some(capture) = capture.as_deref_mut() {
+                capture.record_boundary(
+                    StageId::LogEPrint,
+                    &print_density,
+                    CoordinateSpace::Working,
+                );
                 capture.record_boundary(
                     StageId::CmyPrint,
                     &print_density,
@@ -391,6 +393,7 @@ impl Pipeline {
                 backend,
                 &color_ref,
                 &self.output_gamut,
+                self.scanner_setup.as_ref(),
             )?)
         } else {
             if let Some(capture) = capture {

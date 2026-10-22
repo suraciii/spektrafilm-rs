@@ -24,6 +24,7 @@ impl Pipeline {
                         use spektrafilm_backend::telemetry::ResidentDeclineReason as R;
                         let reason = match reason {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
+                            ResidentFallbackReason::ScannerSetup => R::ScannerReceiver,
                             ResidentFallbackReason::FilmGrainV3FieldCpu => R::GrainV3FieldCpu,
                             ResidentFallbackReason::FilmGrainFotufilmCpu => R::FotufilmFilmCpu,
                             ResidentFallbackReason::UnsupportedOutputGamut => {
@@ -58,6 +59,7 @@ impl Pipeline {
                             .is_some();
                     let capability_missing = reasons.iter().any(|r| match r {
                         ResidentFallbackReason::WorkflowRoute
+                        | ResidentFallbackReason::ScannerSetup
                         | ResidentFallbackReason::MissingResidentFrontPass
                         | ResidentFallbackReason::MallettExecutionParity
                         | ResidentFallbackReason::UnsupportedOutputGamut => false,

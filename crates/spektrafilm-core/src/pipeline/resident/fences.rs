@@ -63,7 +63,7 @@ impl super::super::Pipeline {
                     Some(closure)
                 }
                 // Spatial deactivation must bypass Dye before its field is
-                // resolved (spec film-grain/v3 §Controls and compatibility),
+                // resolved (spec film-grain/v3 §Controls and resolved inputs),
                 // exactly like the per-stage route: `grain_v3::active` is the
                 // one authoritative gate. The fence holds the host field only
                 // for a request the device cannot realize; a device-realized

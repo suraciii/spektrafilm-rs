@@ -114,10 +114,10 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - `separable` uses the per-channel monotone inverse defined by [Direct negative-film scan output](#direct-negative-film-scan-output).
 - `coupled` uses a three-channel inverse of the resolved film, receiver, and output response. It must be prepared once per render configuration and evaluated with bounded per-pixel work.
 - A coupled inverse must use the CPU f64 path as its reference. It must preserve finite endpoints, bounded output, and continuous behavior at the film toe, mid-range, and shoulder. It must not run an iterative solver per image pixel.
-- `scanner.auto_setup` selects `off` or `per_frame`. `off` is the default. `per_frame` derives scanner exposure, channel balance, and bounded contrast placement from the full input before crop and resize.
-- Per-frame setup may use image measurements to derive scanner controls. It must not derive or replace the receiver response, film profile, or positive calibration from image content.
-- One immutable per-frame setup must be shared by Preview, Scan, and Export for the same input and parameter revision. Changing the input, route, profile, or relevant scanner parameter must invalidate it.
-- Per-frame setup must not change film exposure, development, film-domain effects, camera exposure compensation, or the conversion solve. For a real negative capture, it must not apply virtual camera metering.
+- `scanner.auto_setup` selects `off`, `density`, `density_color`, or `full`. `off` is the default. `density` derives exposure placement, `density_color` additionally derives channel balance, and `full` additionally derives bounded contrast placement from the complete input frame before crop and resize. The legacy `per_frame` spelling is accepted only as a serialized input alias and is emitted as `full`.
+- Automatic setup may use image measurements to derive scanner controls. It must not derive or replace the receiver response, film profile, or positive calibration from image content.
+- One immutable setup must be shared by Preview, Scan, and Export for the same input and parameter revision. Changing the input, route, profile, or relevant scanner parameter must invalidate it.
+- Automatic setup must not change film exposure, development, film-domain effects, camera exposure compensation, or the conversion solve. For a real negative capture, it must not apply virtual camera metering.
 - `scanner.finish` selects `neutral` or `lab_scan` for a converted negative image. `neutral` is the default. `scanner.finish_strength` ranges from 0 to 1 and defaults to 1 when `lab_scan` is selected.
 - Scanner finishing runs after negative conversion and before output gamut compression, unsharp masking, transfer encoding, Procedural grain, and CMYK ink style. It must not run on a direct negative output.
 - Scanner finishing must be independently disableable from the receiver profile and negative conversion. Disabling it must return the converted image before scanner finishing, subject to the shared output stages.
@@ -220,7 +220,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - Capture-based negative conversion must use one receiver capture for calibration and image pixels. It must not rebuild spectral calibration per pixel.
 - `density` must not change its output when only `scanner.receiver_profile` changes, and it must not acquire a receiver capture. `separable` and `coupled` must change only through the capture the receiver profile produces.
 - `coupled` must produce finite, continuous output across the calibration range and finite tangent extrapolation outside it. It must not run an iterative solver per image pixel.
-- `per_frame` must measure the full input before crop and resize. Preview, Scan, and Export must produce the same scanner setup for the same input and parameter revision.
+- Automatic setup must measure the complete decoded input frame before crop, resize, preview geometry, tiling, or output processing. Preview, Scan, and Export must reuse the same accepted setup for one input and parameter revision.
 - Changing film exposure, development, grain, halation, print exposure, or camera exposure while holding scanner settings constant must not be an effect of receiver or scanner finish selection.
 - Disabling scanner finishing must expose the calibrated scan result before finishing, subject to the shared output stages.
 - Approximate receiver profiles must be labeled approximate in GUI, CLI diagnostics, and serialized provenance. A measured-device label requires measured response data and calibration provenance.

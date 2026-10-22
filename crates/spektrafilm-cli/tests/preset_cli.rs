@@ -794,7 +794,7 @@ fn film_scan_without_preset_keeps_legacy_print_selection() {
 #[test]
 fn scanner_selectors_report_approximation_and_reject_unsupported_routes_before_pixels() {
     let f = Fixture::new();
-    let report = f.report(&["--film", "kodak_portra_400", "--scan-film", "--scan-output", "negative_to_positive", "--set", "scanner.receiver_profile=lab_scan_approx,scanner.negative_conversion_method=coupled,scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.5", "--dry-run"]);
+    let report = f.report(&["--film", "kodak_portra_400", "--scan-film", "--scan-output", "negative_to_positive", "--set", "scanner.receiver_profile=lab_scan_approx,scanner.negative_conversion_method=coupled,scanner.auto_setup=full,scanner.finish=lab_scan,scanner.finish_strength=0.5", "--dry-run"]);
     assert_eq!(
         report["parameters"]["scanner"]["receiver_profile"],
         "lab_scan_approx"
@@ -803,7 +803,7 @@ fn scanner_selectors_report_approximation_and_reject_unsupported_routes_before_p
         report["parameters"]["scanner"]["negative_conversion_method"],
         "coupled"
     );
-    assert_eq!(report["parameters"]["scanner"]["auto_setup"], "per_frame");
+    assert_eq!(report["parameters"]["scanner"]["auto_setup"], "full");
     assert_eq!(
         report["scanner_provenance"]["receiver"]["calibration_status"],
         "approximate_uncalibrated"
@@ -811,7 +811,6 @@ fn scanner_selectors_report_approximation_and_reject_unsupported_routes_before_p
     std::fs::write(&f.input, b"invalid-pixels").unwrap();
     for selection in [
         "scanner.negative_conversion_method=coupled",
-        "scanner.auto_setup=per_frame",
         "scanner.finish=lab_scan",
         "scanner.receiver_profile=not_a_scanner",
     ] {
@@ -826,6 +825,68 @@ fn scanner_selectors_report_approximation_and_reject_unsupported_routes_before_p
             assert!(!f.root.join("output.tif").exists());
         }
     }
+}
+#[test]
+fn scanner_auto_setup_rejects_ineligible_routes_before_output() {
+    let f = Fixture::new();
+    let cases = [
+        (
+            "kodak_portra_400",
+            "input > film > scan",
+            "direct_scan",
+            "direct_faithful_scan",
+        ),
+        (
+            "kodak_portra_400",
+            "input > film > print > scan",
+            "direct_scan",
+            "print_output",
+        ),
+        (
+            "kodak_ektachrome_100",
+            "input > film > scan",
+            "direct_scan",
+            "direct_faithful_scan",
+        ),
+    ];
+    for (film, route, scan_output, expected) in cases {
+        for dry_run in [false, true] {
+            let mut args = vec![
+                "--film",
+                film,
+                "--route",
+                route,
+                "--scan-output",
+                scan_output,
+                "--set",
+                "scanner.auto_setup=full",
+            ];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let output = f.process(&args);
+            assert!(!output.status.success(), "accepted {film} / {route}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains(expected), "{stderr}");
+            assert!(!f.root.join("output.tif").exists());
+        }
+    }
+
+    let output = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--route",
+        "input > convert-film > scan",
+        "--scan-output",
+        "negative_to_positive",
+        "--set",
+        "scanner.auto_setup=full",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -2023,7 +2084,7 @@ fn digital_reference_explicit_carrier_renders_and_rejects_invalid_transactions()
     for invalid in [
         "scanner.receiver_profile=legacy_colorimetric",
         "scanner.negative_conversion_method=density",
-        "scanner.auto_setup=per_frame",
+        "scanner.auto_setup=full",
         "scanner.black_point=[0.1,0,0]",
         "scanner.white_point=[0.9,1,1]",
         "scanner.conversion_brightness_ev=1",

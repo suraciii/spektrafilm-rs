@@ -12,9 +12,8 @@ use crate::profile::Profile;
 mod coupled;
 mod finish;
 mod interpretation;
-mod setup;
 mod spectral;
-pub use setup::ScannerSetup;
+pub use crate::scanner_setup::ScannerSetup;
 use spectral::ForwardCapture;
 pub(crate) use spectral::scan_spectral_rgb;
 
@@ -418,15 +417,6 @@ impl ExposureCalibration {
         }
         Ok(values)
     }
-
-    /// Relative log exposure from record densities. Only the density
-    /// interpretation takes densities; the capture methods convert first.
-    fn estimate_density(&self, density: [f64; 3]) -> Result<[f64; 3], String> {
-        match self {
-            Self::Density(c) => c.estimate(density),
-            _ => Err("capture interpretation requires a scanner capture".into()),
-        }
-    }
 }
 
 fn prepare_exposure_calibration(
@@ -472,47 +462,6 @@ fn prepare_exposure_calibration(
             },
         )
     }
-}
-
-pub(crate) fn prepare_setup(
-    density: &ImageBuf,
-    profile: &Profile,
-    params: &RuntimeParams,
-    color_ref: &crate::color_reference::ColorReference,
-    illuminant: Option<&str>,
-) -> Result<ScannerSetup, String> {
-    let mut params = params.clone();
-    params.io.scan_film = true;
-    let prepared = crate::chain_prep::PreparedChain::for_scan(profile, &params, illuminant);
-    let dyes = crate::chain_prep::channel_density(profile);
-    let base = profile.data.base_density.as_slice();
-    let forward = ForwardCapture::prepare(profile, &params, &dyes, base, &prepared.scan, color_ref);
-    let calibration = prepare_exposure_calibration(
-        profile,
-        &params,
-        color_ref,
-        &prepared.scan,
-        &dyes,
-        base,
-        &forward,
-    )?;
-    let samples: Vec<[f64; 3]> = density
-        .data
-        .par_chunks_exact(3)
-        .map(|p| {
-            let values = [to_f64(p[0]), to_f64(p[1]), to_f64(p[2])];
-            match &calibration {
-                ExposureCalibration::Density(_) => calibration.estimate_density(values),
-                _ => calibration.estimate(forward.capture(values)),
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    ScannerSetup::from_samples(
-        &samples,
-        interpretation::camera_ev(&params),
-        calibration.range(),
-        &params.scanner,
-    )
 }
 
 fn interpret_coupled_capture(
@@ -820,7 +769,6 @@ fn scan_with_capture(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn scan_with_reference(
     density_cmy: &ImageBuf,
     profile: &Profile,
@@ -1222,11 +1170,19 @@ pub fn process(
     backend: &dyn ComputeBackend,
     color_ref: &crate::color_reference::ColorReference,
     gamut: &crate::gamut_compression::OutputGamutCompress,
+    scanner_setup: Option<&crate::scanner_setup::ScannerSetup>,
 ) -> Result<ImageBuf, String> {
+    let scan_params = if let Some(setup) = scanner_setup {
+        let mut params = params.clone();
+        setup.apply(&mut params);
+        params
+    } else {
+        params.clone()
+    };
     scan_with_options(
         density_cmy,
         profile,
-        params,
+        &scan_params,
         backend,
         color_ref,
         gamut,
@@ -1244,9 +1200,26 @@ pub(crate) fn process_prepared(
     color_ref: &crate::color_reference::ColorReference,
     gamut: &crate::gamut_compression::OutputGamutCompress,
     reference: Option<&crate::digital_reference::DigitalReference>,
+    scanner_setup: Option<&crate::scanner_setup::ScannerSetup>,
 ) -> Result<ImageBuf, String> {
+    let scan_params = if let Some(setup) = scanner_setup {
+        let mut params = params.clone();
+        setup.apply(&mut params);
+        params
+    } else {
+        params.clone()
+    };
     scan_with_reference(
-        density, profile, params, backend, color_ref, gamut, None, true, None, reference,
+        density,
+        profile,
+        &scan_params,
+        backend,
+        color_ref,
+        gamut,
+        None,
+        true,
+        None,
+        reference,
     )
 }
 
@@ -1589,6 +1562,7 @@ mod tests {
             &backend,
             &correction,
             &crate::gamut_compression::OutputGamutCompress::identity(),
+            None,
         )
         .unwrap();
         assert_eq!(actual.data, expected.data);
@@ -1661,6 +1635,7 @@ mod tests {
             &backend,
             &correction,
             &crate::gamut_compression::OutputGamutCompress::identity(),
+            None,
         )
         .unwrap();
         assert_eq!(actual.data, expected.data);
@@ -1705,6 +1680,7 @@ mod tests {
             &backend,
             &correction,
             &crate::gamut_compression::OutputGamutCompress::identity(),
+            None,
         )
         .unwrap();
         assert_eq!(actual.data, capture.data);
@@ -1721,11 +1697,28 @@ mod tests {
             let mut params = RuntimeParams::default();
             params.io.scan_film = scan_film;
             params.film_render.grain.active = false;
-            let baseline =
-                process(&input, &profile, &params, &backend, &correction, &gamut).unwrap();
+            let baseline = process(
+                &input,
+                &profile,
+                &params,
+                &backend,
+                &correction,
+                &gamut,
+                None,
+            )
+            .unwrap();
             params.scanner.black_point = [0.2; 3];
             params.scanner.white_point = [0.8; 3];
-            let active = process(&input, &profile, &params, &backend, &correction, &gamut).unwrap();
+            let active = process(
+                &input,
+                &profile,
+                &params,
+                &backend,
+                &correction,
+                &gamut,
+                None,
+            )
+            .unwrap();
             assert_eq!(active.data, baseline.data);
         }
     }
@@ -1744,6 +1737,7 @@ mod tests {
             &spektrafilm_backend::cpu_backend::CpuBackend,
             &crate::color_reference::ColorReference::identity(),
             &crate::gamut_compression::OutputGamutCompress::identity(),
+            None,
         );
         assert!(
             result
@@ -1767,6 +1761,7 @@ mod tests {
             &spektrafilm_backend::cpu_backend::CpuBackend,
             &crate::color_reference::ColorReference::identity(),
             &crate::gamut_compression::OutputGamutCompress::identity(),
+            None,
         );
         assert!(
             result

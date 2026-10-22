@@ -174,16 +174,6 @@ pub(crate) fn sections(
             (params.film_render.grain.engine != GrainEngine::Procedural)
                 .then_some("available only when the Procedural engine is selected"),
         );
-        feature_profile_selector(
-            ui,
-            params,
-            filter,
-            flags,
-            FeatureProfileFamily::GrainDye,
-            "Dye Grain Profiles",
-            (params.film_render.grain.engine != GrainEngine::Dye)
-                .then_some("available only when the Dye engine is selected"),
-        );
         ui.scope(|ui| {
             let grain = &mut params.film_render.grain;
             if filter_matches(filter, "enable grain") {

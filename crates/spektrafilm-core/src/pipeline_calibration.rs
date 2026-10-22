@@ -329,6 +329,7 @@ pub(crate) fn build(
     // actionable and artifact-free on every entry point.
     params.validate()?;
     crate::params_builder::normalize_runtime_topology(&film, &mut params);
+    crate::scanner_setup::validate_route(&film, &params)?;
     // Resolve development time and broadcast the profile's single channel
     // onto the 3-channel engine layout before reading the profile data.
     let mut film = crate::profile::resolve_for_render(film, params.film_render.development_time);

@@ -1,6 +1,6 @@
 # Film grain design
 
-- The shared grain parameter object selects one engine and carries its controls; fields for inactive engines are ignored. Dye's controls are defined in its [design](v3/design.md#parameters); Fotufilm Film's controls are defined in its [product contract](fotufilm/spec.md#parameters).
+- The shared grain parameter object selects one engine and carries its controls; fields for inactive engines are ignored. Dye's algorithm contract is defined in its [design](v3/design.md); Fotufilm Film's controls are defined in its [product contract](fotufilm/spec.md#parameters).
 - Profile resolution happens before rendering: named Procedural profiles provide defaults, and `custom` applies explicit overrides. Validation rejects unknown profiles, non-finite values, and out-of-range controls.
 - Spektra owns the density-domain sampler. Procedural owns the encoded-RGB procedural model. Neither engine calls the other or shares an approximation layer. Fotufilm Film owns the fitted-population residual that core applies at its own declared film-development boundary.
 - Backend selection and device residency follow [GPU execution](../gpu-execution/spec.md#backend-selection) and its [device-residency design](../gpu-execution/design.md#device-residency). Each engine must expose its declared model to both the CPU reference executor and GPU production executor; no engine-specific CPU-only route or approximation is allowed.

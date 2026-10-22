@@ -508,7 +508,7 @@ fn feature_profiles_report_typed_values_precedence_and_inactive_status() {
 }
 
 #[test]
-fn feature_profiles_reject_malformed_family_and_name_without_output() {
+fn feature_profiles_reject_removed_dye_family_without_output() {
     let f = Fixture::new();
     for value in ["grain=reference", "grain.dye", "grain.dye=unknown"] {
         let result = f.run_without_output(&[
@@ -523,55 +523,6 @@ fn feature_profiles_reject_malformed_family_and_name_without_output() {
         assert!(!result.status.success(), "accepted {value}");
         assert!(!String::from_utf8_lossy(&result.stderr).is_empty());
         assert!(!f.0.join("output.tif").exists());
-    }
-}
-
-#[test]
-fn feature_profiles_accept_every_dye_name_and_write_only_the_dye_leaves() {
-    let expected: [(&str, f64, f64, f64); 6] = [
-        ("reference", 3.5, 1.28, 0.0),
-        ("fine", 1.0, 1.28, 0.0),
-        ("coarse", 8.0, 1.28, 0.0),
-        ("subtle", 3.5, 0.32, 0.0),
-        ("strong", 3.5, 5.12, 0.0),
-        ("correlated", 3.5, 1.28, 0.45),
-    ];
-    for (name, support, area, correlation) in expected {
-        let f = Fixture::new();
-        let token = format!("grain.dye={name}");
-        let report = f.report_without_output(&[
-            "--input-color-space",
-            "sRGB",
-            "--input-cctf-decoding",
-            "true",
-            "--feature-profile",
-            &token,
-            "--set",
-            "film_render.grain.engine=dye",
-            "--set",
-            "film_render.grain.rms_granularity=[9,9,9]",
-            "--dry-run",
-        ]);
-        let grain = &report["parameters"]["film_render"]["grain"];
-        assert_eq!(grain["v3_dye_support_um"], support, "{name}");
-        assert_eq!(grain["v3_event_area_um2"], area, "{name}");
-        assert_eq!(grain["channel_correlation"], correlation, "{name}");
-        // The profile never changes the engine or the stock-resolved leaves;
-        // the engine stays the caller's `--set` value.
-        assert_eq!(grain["engine"], "dye");
-        assert_eq!(grain["rms_granularity"], serde_json::json!([9.0, 9.0, 9.0]));
-        let profiles = report["feature_profiles"].as_array().unwrap();
-        assert_eq!(profiles.len(), 1, "{name}");
-        assert_eq!(
-            profiles[0]["requested"]["film_render.grain.v3_dye_support_um"],
-            support
-        );
-        assert_eq!(
-            profiles[0]["resolved"]["film_render.grain.v3_event_area_um2"],
-            area
-        );
-        assert_eq!(profiles[0]["status"], "active", "{name}");
-        assert_eq!(profiles[0]["effective"], name, "{name}");
     }
 }
 
@@ -717,13 +668,13 @@ fn scanner_finish_feedback_and_text_report_follow_effective_mode() {
 }
 
 #[test]
-fn scanner_setup_uses_selected_seed_for_film_grain_measurement() {
+fn scanner_setup_is_independent_of_film_grain_seed() {
     use spektrafilm_backend::cpu_backend::CpuBackend;
     use spektrafilm_core::{image_io, params::RuntimeParams, runtime::Runtime};
     use spektrafilm_math::precision::to_f64;
 
     let f = Fixture::new();
-    let settings = "camera.auto_exposure=false,camera.film_format_mm=0.1,film_render.halation.active=false,film_render.dir_couplers.active=false,print_render.glare.active=false,film_render.grain.engine=spektra,film_render.grain.sublayers_active=false,film_render.grain.particle_area_um2=2,scanner.auto_setup=per_frame,io.output_gamut_compress.algorithm=off,scanner.unsharp_mask=[0,0],settings.use_enlarger_lut=false,settings.use_scanner_lut=false";
+    let settings = "camera.auto_exposure=false,camera.film_format_mm=0.1,film_render.halation.active=false,film_render.dir_couplers.active=false,print_render.glare.active=false,film_render.grain.engine=spektra,film_render.grain.sublayers_active=false,film_render.grain.particle_area_um2=2,scanner.auto_setup=full,io.output_gamut_compress.algorithm=off,scanner.unsharp_mask=[0,0],settings.use_enlarger_lut=false,settings.use_scanner_lut=false";
     let args = [
         "--input-color-space",
         "sRGB",
@@ -757,7 +708,7 @@ fn scanner_setup_uses_selected_seed_for_film_grain_measurement() {
     wrong_seed.random_seed = 0;
     let wrong =
         Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", wrong_seed, &data).unwrap();
-    assert_ne!(setup, wrong.prepare_scanner_setup(&input).unwrap());
+    assert_eq!(setup, wrong.prepare_scanner_setup(&input).unwrap());
     let expected = runtime
         .with_scanner_setup(setup)
         .process(input, &CpuBackend)

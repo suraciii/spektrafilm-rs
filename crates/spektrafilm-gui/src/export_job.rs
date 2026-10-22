@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -31,6 +31,8 @@ pub(super) struct ExportJob {
     pub(super) started_at: Instant,
     pub(super) configuration:
         Option<Arc<Mutex<Option<spektrafilm_core::telemetry::RenderConfiguration>>>>,
+    pub(super) sidecar_path: PathBuf,
+    pub(super) output_path: PathBuf,
     pub(super) backend: ExportBackend,
     pub(super) operation: Operation,
     #[cfg(test)]
@@ -64,6 +66,7 @@ pub(super) struct ExportResult {
     pub(super) backend_name: String,
     pub(super) size: [u32; 2],
     pub(super) staged: image_io::PreparedImageOutput,
+    pub(super) provenance: Option<spektrafilm_core::scanner_setup::ScannerSetupProvenance>,
 }
 
 impl App {
@@ -176,11 +179,13 @@ impl App {
             }
         };
         let snapshot = self.render_snapshot(params);
+        let source_path = self.image_path.clone();
         self.remember_dialog("export", &out_path);
-        self.export_options = options.clone();
+        let selected_backend = self.backend.clone();
         let metadata = self.source_metadata.clone();
         let export_backend = options.backend;
-        let selected_backend = self.backend.clone();
+        let sidecar_path = out_path.with_extension("scanner-setup.json");
+        let output_path = out_path.clone();
         let (tx, rx) = mpsc::channel();
         let ctx_for_worker = ctx.clone();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -197,7 +202,6 @@ impl App {
         #[cfg(test)]
         let worker_pause = pause.clone();
         let handle = std::thread::Builder::new()
-            .name("spektrafilm-export".into())
             .spawn(move || {
                 drop(worker_wait);
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
@@ -318,6 +322,17 @@ impl App {
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
+                        let provenance = if setup.is_some() {
+                            let path = source_path.as_deref().context(
+                                "GUI export input path unavailable for scanner setup provenance",
+                            )?;
+                            let identity =
+                                spektrafilm_core::scanner_setup::input_identity(path, &image)
+                                    .map_err(anyhow::Error::msg)?;
+                            pipeline.scanner_setup_provenance(identity)
+                        } else {
+                            None
+                        };
                         Ok(ExportResult {
                             elapsed: started_at.elapsed().as_secs_f32(),
                             filename: out_path
@@ -328,6 +343,7 @@ impl App {
                             backend_name: effective_backend_name(&*backend, pipeline.params()),
                             size: [output.width, output.height],
                             staged,
+                            provenance,
                         })
                     },
                 ))
@@ -353,6 +369,8 @@ impl App {
             backend: export_backend,
             operation,
             configuration,
+            sidecar_path,
+            output_path,
             #[cfg(test)]
             pause,
         });
@@ -445,21 +463,53 @@ impl App {
                 );
                 match published {
                     Ok(report) => {
-                        outcome = Outcome::Succeeded;
-                        self.last_export_error = None;
-                        operation.set_published_dimensions(result.size[0], result.size[1]);
-                        let mut status = format!(
-                            "Exported ({}) {} · {} × {} in {:.1} s",
-                            result.backend_name,
-                            result.filename,
-                            result.size[0],
-                            result.size[1],
-                            result.elapsed
-                        );
-                        if let Some(warning) = report.metadata_warning {
-                            status.push_str(&format!(" — Metadata warning: {warning}"));
+                        if let Some(provenance) = result.provenance {
+                            let sidecar = job.sidecar_path.clone();
+                            let sidecar_tmp = sidecar.with_extension("tmp");
+                            if let Err(error) = std::fs::write(
+                                &sidecar_tmp,
+                                serde_json::to_vec_pretty(&provenance).unwrap_or_default(),
+                            )
+                            .and_then(|_| std::fs::rename(&sidecar_tmp, &sidecar))
+                            {
+                                let _ = std::fs::remove_file(&sidecar_tmp);
+                                let _ = std::fs::remove_file(&sidecar);
+                                let _ = std::fs::remove_file(&job.output_path);
+                                outcome = Outcome::Failed;
+                                let msg = format!("Export provenance error: {error}");
+                                self.last_export_error = Some(msg.clone());
+                                msg
+                            } else {
+                                outcome = Outcome::Succeeded;
+                                self.last_export_error = None;
+                                operation.set_published_dimensions(result.size[0], result.size[1]);
+                                let mut status = format!(
+                                    "Exported ({}) {} · {} × {} in {:.1} s",
+                                    result.backend_name,
+                                    result.filename,
+                                    result.size[0],
+                                    result.size[1],
+                                    result.elapsed
+                                );
+                                if let Some(warning) = report.metadata_warning {
+                                    status.push_str(&format!(" — Metadata warning: {warning}"));
+                                }
+                                status
+                            }
+                        } else {
+                            let _ = std::fs::remove_file(&job.sidecar_path);
+                            outcome = Outcome::Succeeded;
+                            self.last_export_error = None;
+                            operation.set_published_dimensions(result.size[0], result.size[1]);
+                            format!(
+                                "Exported ({}) {} · {} × {} in {:.1} s",
+                                result.backend_name,
+                                result.filename,
+                                result.size[0],
+                                result.size[1],
+                                result.elapsed
+                            )
                         }
-                        status
                     }
                     Err(e) => {
                         let msg = format!("Export error: {e:#}");

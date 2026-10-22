@@ -45,13 +45,16 @@ fn layer_at(table: Table, layer: u32, index: u32) -> f32 {
     return curves[base + layer * table.knot_count + index];
 }
 
-/// `(low, t)` of the CPU's bracket lookup.
+/// `(low, t)` of the CPU's bracket lookup. The knots carry the
+/// positive-film sign, so the query is multiplied by the table's sign first,
+/// exactly as the CPU's `Channel::bracket` does.
 fn bracket(table: Table, x: f32) -> vec2<f32> {
+    let query = x * table.lookup_sign;
     let k = table.knot_count;
-    if (x <= knot_at(table, 0u)) {
+    if (query <= knot_at(table, 0u)) {
         return vec2<f32>(0.0, 0.0);
     }
-    if (x >= knot_at(table, k - 1u)) {
+    if (query >= knot_at(table, k - 1u)) {
         return vec2<f32>(f32(k - 2u), 1.0);
     }
     // Last index whose knot is `<= x` is `partition_point(..) - 1`.
@@ -60,9 +63,9 @@ fn bracket(table: Table, x: f32) -> vec2<f32> {
     loop {
         if (high - low <= 1u) { break; }
         let mid = (low + high) / 2u;
-        if (knot_at(table, mid) <= x) { low = mid; } else { high = mid; }
+        if (knot_at(table, mid) <= query) { low = mid; } else { high = mid; }
     }
-    return vec2<f32>(f32(low), (x - knot_at(table, low)) * inv_dx_at(table, low));
+    return vec2<f32>(f32(low), (query - knot_at(table, low)) * inv_dx_at(table, low));
 }
 
 // Retired layers retain their capacity; only still-active provisional offers

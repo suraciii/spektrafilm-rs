@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -679,17 +680,16 @@ fn cmd_process(
         .map_err(anyhow::Error::msg)
     };
     let resolved = resolve_params(false)?;
-    let canonical = if resolved.params.scanner.auto_setup
-        == spektrafilm_core::params::ScannerAutoSetup::PerFrame
-    {
-        let mut canonical = resolve_params(true)?;
-        canonical.params.random_seed = u64::from(args.seed.unwrap_or(0));
-        apply_channel_swap(&mut canonical.film, &workflow.film_channel_swap)?;
-        apply_channel_swap(&mut canonical.print, &workflow.print_channel_swap)?;
-        Some(canonical)
-    } else {
-        None
-    };
+    let canonical =
+        if resolved.params.scanner.auto_setup != spektrafilm_core::params::ScannerAutoSetup::Off {
+            let mut canonical = resolve_params(true)?;
+            canonical.params.random_seed = u64::from(args.seed.unwrap_or(0));
+            apply_channel_swap(&mut canonical.film, &workflow.film_channel_swap)?;
+            apply_channel_swap(&mut canonical.print, &workflow.print_channel_swap)?;
+            Some(canonical)
+        } else {
+            None
+        };
     let mut film = resolved.film;
     let mut print = resolved.print;
     apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
@@ -971,6 +971,14 @@ fn cmd_process(
     invocation
         .operation
         .set_input_dimensions(image.width, image.height);
+    let input_identity = if canonical.is_some() {
+        Some(
+            spektrafilm_core::scanner_setup::input_identity(input, &image)
+                .map_err(anyhow::Error::msg)?,
+        )
+    } else {
+        None
+    };
     let scanner_setup = if let Some(canonical) = canonical {
         Some(invocation.phase(
             "scanner_setup_prepare",
@@ -1029,6 +1037,11 @@ fn cmd_process(
 
     // Run the calibrated runtime — a missing spectral LUT is a hard error.
     let t = Instant::now();
+    let provenance_profile = if params.io.scan_film {
+        film.clone()
+    } else {
+        print.clone()
+    };
     let runtime = invocation.phase(
         "runtime_prepare",
         IssueCategory::Configuration,
@@ -1036,13 +1049,13 @@ fn cmd_process(
         &context,
         |prepare_context| {
             Runtime::new_observed(film, print, params, data_dir, prepare_context).map_err(|e| {
-        anyhow::anyhow!(
-            "spectral pipeline construction failed: {e} — the simplified no-LUT fallback was \
-             removed; check that the profiles/data directory contains the spectral LUTs \
-             (looked under {})",
-            data_dir.display()
-        )
-    })
+                anyhow::anyhow!(
+                    "spectral pipeline construction failed: {e} — the simplified no-LUT fallback \
+                     was removed; check that the profiles/data directory contains the spectral \
+                     LUTs (looked under {})",
+                    data_dir.display()
+                )
+            })
         },
     )?;
     let runtime = if let Some(setup) = scanner_setup {
@@ -1123,6 +1136,12 @@ fn cmd_process(
     let plan = plan.context("internal error: missing output plan for rendering")?;
     let output = output.context("internal error: missing output path for rendering")?;
 
+    let scanner_provenance = scanner_setup.as_ref().map(|setup| {
+        setup.provenance(
+            &provenance_profile,
+            input_identity.clone().expect("setup identity"),
+        )
+    });
     // Save output
     let t = Instant::now();
     invocation.operation.set_saved_attempt(output_attempt.get());
@@ -1149,13 +1168,13 @@ fn cmd_process(
             .map_err(anyhow::Error::from)
         },
     )?;
-    let report = invocation.phase(
+    let prepared_image = invocation.phase(
         "file_write",
         IssueCategory::Writing,
         IssueBoundary::FileWrite,
         &context,
         |write_context| {
-            image_io::save_observed(
+            image_io::prepare_save_observed(
                 output,
                 &saving_image,
                 options,
@@ -1165,6 +1184,34 @@ fn cmd_process(
             .with_context(|| format!("saving image: {}", output.display()))
         },
     )?;
+    let report = if let Some(provenance) = scanner_provenance {
+        let sidecar = output.with_extension("scanner-setup.json");
+        let sidecar_tmp = sidecar.with_extension("tmp");
+        fs::write(&sidecar_tmp, serde_json::to_vec_pretty(&provenance)?)
+            .with_context(|| format!("writing scanner setup record: {}", sidecar_tmp.display()))?;
+        let report = match prepared_image.publish(true) {
+            Ok(report) => report,
+            Err(error) => {
+                let _ = fs::remove_file(&sidecar_tmp);
+                return Err(anyhow::Error::msg(error.to_string())).context("publishing image");
+            }
+        };
+        if let Err(error) = fs::rename(&sidecar_tmp, &sidecar) {
+            let _ = fs::remove_file(output);
+            let _ = fs::remove_file(&sidecar_tmp);
+            return Err(error).with_context(|| {
+                format!("publishing scanner setup record: {}", sidecar.display())
+            });
+        }
+        eprintln!("Scanner setup: {}", sidecar.display());
+        report
+    } else {
+        let report = prepared_image
+            .publish(true)
+            .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+        let _ = fs::remove_file(output.with_extension("scanner-setup.json"));
+        report
+    };
     if let Some(warning) = report.metadata_warning {
         eprintln!("Warning: {warning}");
     }

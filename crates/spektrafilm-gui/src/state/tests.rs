@@ -913,7 +913,7 @@ fn negative_to_positive_convert_route_roundtrip() -> anyhow::Result<()> {
     params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
     params.scanner.negative_conversion_method =
         spektrafilm_core::params::NegativeConversionMethod::Coupled;
-    params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
+    params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::Full;
     params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
     params.scanner.finish_strength = 0.0;
     let saved =
@@ -979,16 +979,17 @@ fn legacy_runtime_extension_scan_output_survives_state_load() {
     );
     for (key, expected) in [
         ("receiver_profile", json!("lab_scan_approx")),
-        ("negative_conversion_method", json!("coupled")),
         ("auto_setup", json!("per_frame")),
         ("finish", json!("lab_scan")),
         ("finish_strength", json!(0.0)),
     ] {
         assert_eq!(state.sections["scanner"][key], expected);
-        assert_eq!(
-            serde_json::to_value(&params.scanner).unwrap()[key],
-            expected
-        );
+        let runtime_value = serde_json::to_value(&params.scanner).unwrap()[key].clone();
+        if key == "auto_setup" {
+            assert_eq!(runtime_value, json!("full"));
+        } else {
+            assert_eq!(runtime_value, expected);
+        }
     }
     // An explicit canonical selection takes precedence over the extension.
     let mut canonical = state.sections.clone();
@@ -1018,7 +1019,6 @@ fn scanner_defaults_and_invalid_combinations_use_runtime_contract() {
     for scanner in [
         json!({"receiver_profile": "lab_scan_approx"}),
         json!({"negative_conversion_method": "coupled"}),
-        json!({"auto_setup": "per_frame"}),
         json!({"finish": "lab_scan"}),
         json!({"finish_strength": -0.01}),
         json!({"finish_strength": 1.01}),

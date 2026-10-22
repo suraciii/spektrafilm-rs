@@ -315,7 +315,10 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
                 .map(|v| (*v).into())
                 .collect()
         }
-        "scanner.auto_setup" => ["off", "per_frame"].iter().map(|v| (*v).into()).collect(),
+        "scanner.auto_setup" => ["off", "density", "density_color", "full"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
         "scanner.finish" => ["neutral", "lab_scan"]
             .iter()
             .map(|v| (*v).into())
@@ -430,7 +433,7 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
             value,
             "density" | "separable" | "coupled" | "digital_reference"
         ),
-        "scanner.auto_setup" => matches!(value, "off" | "per_frame"),
+        "scanner.auto_setup" => matches!(value, "off" | "density" | "density_color" | "full"),
         "scanner.finish" => matches!(value, "neutral" | "lab_scan"),
         "scanner.scan_output" => matches!(value, "direct_scan" | "negative_to_positive"),
         "film_render.grain.engine" => {
@@ -671,7 +674,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         if scanner.scan_output != "negative_to_positive" {
             return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
         }
-        if scanner.auto_setup != super::ScannerAutoSetup::Off {
+        if reference && scanner.auto_setup != super::ScannerAutoSetup::Off {
             return Err(
                 "Digital Reference Reference Exposure requires scanner.auto_setup=off".into(),
             );
@@ -711,10 +714,6 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             (
                 "scanner.negative_conversion_method=coupled",
                 scanner.negative_conversion_method == super::NegativeConversionMethod::Coupled,
-            ),
-            (
-                "scanner.auto_setup=per_frame",
-                scanner.auto_setup == super::ScannerAutoSetup::PerFrame,
             ),
             (
                 "scanner.finish=lab_scan",

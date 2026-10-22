@@ -583,7 +583,12 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // The rest of this test exercises the negative-capture scanner path, so
     // select it through the real control rather than writing the parameter.
     choose(h, "scan output", "Negative to positive");
+    choose(h, "scanner auto setup", "full");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
+    assert_eq!(
+        h.state().params.scanner.auto_setup,
+        spektrafilm_core::params::ScannerAutoSetup::Full
+    );
     let preview = render(h, "PREVIEW");
     let accepted = h.state().current_state().unwrap();
     let accepted_params = h.state().params.clone();
@@ -695,8 +700,31 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     )
     .unwrap();
     assert_png(&export_path, &expected_export);
+    let sidecar_path = export_path.with_extension("scanner-setup.json");
+    assert!(sidecar_path.is_file(), "scanner setup sidecar missing");
+    let sidecar: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&sidecar_path).unwrap()).unwrap();
+    assert_eq!(sidecar["policy"], "full");
+    assert_eq!(sidecar["completeFrameMeasurement"], true);
+    assert_eq!(sidecar["interpretationOnly"], true);
+    assert_eq!(sidecar["acquisitionChangesModeled"], false);
+    assert_eq!(sidecar["inputIdentity"]["width"], 160);
+    assert_eq!(sidecar["inputIdentity"]["height"], 80);
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
-    assert_eq!(h.state().output_image.as_ref().unwrap().width, 128);
+    let mut off_state = h.state().current_state().unwrap();
+    off_state.sections["scanner"]["auto_setup"] = serde_json::json!("off");
+    h.state_mut().apply_state(off_state).unwrap();
+    let off_export = s.directory.path().join("off.png");
+    let off_options = h.state().export_options.clone();
+    h.state_mut()
+        .start_export_to_path(&ctx, off_options, &off_export);
+    wait_until(h, |a| a.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    assert!(!off_export.with_extension("scanner-setup.json").exists());
     // Extension correction must never silently overwrite an existing file.
     let before = std::fs::read(&export_path).unwrap();
     let options = h.state().export_options.clone();
@@ -712,6 +740,11 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
             .starts_with("Export destination already exists:")
     );
     assert_eq!(std::fs::read(&export_path).unwrap(), before);
+    h.state_mut().apply_state(accepted.clone()).unwrap();
+    assert_eq!(
+        h.state().params.scanner.auto_setup,
+        spektrafilm_core::params::ScannerAutoSetup::Full
+    );
     let mut float_options = h.state().export_options.clone();
     float_options.format = export::ExportFormat::Tiff;
     float_options.depth = BitDepth::ThirtyTwo;
@@ -1008,7 +1041,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     choose(h, "workflow", "input > film > scan");
     click(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
-    choose(h, "scanner auto setup", "per_frame");
+    choose(h, "scanner auto setup", "full");
     edit(h, "brightness", "1");
     edit(h, "contrast", "1.5");
     edit(h, "film-scan black point R", "0.05");
@@ -1069,7 +1102,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     let epoch = h.state().calibration_epoch;
     for (key, value) in [
         ("receiver_profile", serde_json::json!("legacy_colorimetric")),
-        ("auto_setup", serde_json::json!("per_frame")),
+        ("auto_setup", serde_json::json!("full")),
         ("black_point", serde_json::json!([0.1, 0.0, 0.0])),
         ("conversion_contrast", serde_json::json!(1.5)),
     ] {

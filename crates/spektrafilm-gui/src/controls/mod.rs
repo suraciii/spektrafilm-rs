@@ -531,7 +531,7 @@ mod tests {
             ("legacy colorimetric", "lab scan (approximate)"),
             ("density", "separable"),
             ("separable", "coupled"),
-            ("off", "per_frame"),
+            ("off", "full"),
             ("neutral", "lab_scan"),
         ] {
             let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
@@ -574,7 +574,7 @@ mod tests {
             params.scanner.negative_conversion_method,
             NegativeConversionMethod::Coupled
         );
-        assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::PerFrame);
+        assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::Full);
         assert_eq!(params.scanner.finish, ScannerFinish::LabScan);
     }
 
@@ -584,7 +584,7 @@ mod tests {
         params.workflow.route = "input > film > scan".into();
         params.scanner.receiver_profile = ReceiverProfile::LabScanApprox;
         params.scanner.negative_conversion_method = NegativeConversionMethod::Coupled;
-        params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
+        params.scanner.auto_setup = ScannerAutoSetup::Full;
         params.scanner.finish = ScannerFinish::LabScan;
         params.scanner.finish_strength = 0.0;
         normalize_scanner_selections(&mut params, ScanMedium::Negative);
@@ -928,53 +928,6 @@ mod tests {
         }
         assert!(has_text(&selected, "RMS density"));
         assert!(!has_text(&selected, "Dye support (µm)"));
-    }
-    #[test]
-    fn feature_profile_selector_preserves_inactive_engine_values() {
-        let ctx = egui::Context::default();
-        let mut params = RuntimeParams::default();
-        params.film_render.grain.engine = GrainEngine::Spektra;
-        params.film_render.grain.v3_dye_support_um = 7.0;
-        let mut cache = SectionLabelCache::default();
-        let mut flags = ChangeFlags::default();
-        let output = ctx.run(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(900.0, 1600.0),
-                )),
-                ..Default::default()
-            },
-            |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    flags = show(
-                        ui,
-                        &mut params,
-                        &mut serde_json::json!({}),
-                        "Grain",
-                        ScanMedium::Negative,
-                        "Dye Grain Profiles",
-                        &mut cache,
-                        "D55",
-                    );
-                });
-            },
-        );
-        let texts = output
-            .shapes
-            .iter()
-            .filter_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Text(shape) => Some(shape.galley.job.text.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            texts
-                .iter()
-                .any(|text| text.contains("available only when the Dye engine is selected")),
-            "TEXTS: {texts:?}"
-        );
-        assert_eq!(params.film_render.grain.v3_dye_support_um, 7.0);
     }
 
     #[test]
