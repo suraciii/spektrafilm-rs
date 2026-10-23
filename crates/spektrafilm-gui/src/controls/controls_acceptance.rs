@@ -241,14 +241,13 @@ mod layout_snapshots {
             let labels = [
                 "scan output",
                 "conversion style",
-                "scanner lamp",
                 "Lens blur (readout optics)",
                 "Unsharp mask (digital sharpening) sigma",
                 "Unsharp mask (digital sharpening) amount",
             ];
             let mut bounds = Vec::new();
             for label in labels {
-                let node = if matches!(label, "scan output" | "conversion style" | "scanner lamp") {
+                let node = if matches!(label, "scan output" | "conversion style") {
                     harness.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
                 } else {
                     harness.get_by_label(label)

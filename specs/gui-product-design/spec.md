@@ -51,6 +51,8 @@ Numeric controls must combine coarse pointer adjustment with precise entry. Ever
 
 Parameter search must find controls across all stages, including collapsed and inactive modules. Results for application settings and Export must open the actual owner, not duplicate its editors. Search and Only modified must not change render parameters.
 
+The Scan and Output stages must distinguish scan acquisition through the fixed product readout illuminant, scan output polarity and negative conversion, readout optics and digital sharpening, and downstream digital output.
+
 A row must offer help, its unit where applicable, and an individual factory reset. A module must offer its own factory reset. Factory differences must remain distinct from differences against the applied preset. A drag, reset, feature-profile selection, material selection, or preset application must be reversible under [Edit history](../gui-workflow/spec.md#edit-history).
 
 ### Inspect and deliver

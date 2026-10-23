@@ -4,13 +4,13 @@ This page explains the scan model, scan output modes, negative conversion, and f
 
 ## Neutral scan model
 
-A scan is one colorimetric capture. The scanner has one sensor, modeled on the CIE 1931 color-matching functions, and one light source: the scanner lamp. There is no receiver profile to choose, no scanner calibration matrix, and no automatic setup or scanner finish.
+A scan is one colorimetric capture. The scanner has one sensor, modeled on the CIE 1931 color-matching functions, and one readout light. There is no receiver profile to choose, no scanner calibration matrix, and no scanner finish.
 
-`scanner.lamp` names that light source. It accepts the shared illuminant vocabulary — `D50`, `D55`, `D65`, `T`, `TH-KG3`, `TH-KG3-L`, `K75P`, and a `BB<kelvin>` blackbody token — and defaults to `D55`. The lamp is the same vocabulary the enlarger illuminant uses, but the two are independent: changing the enlarger lamp does not change the scan, and changing the scanner lamp does not change the print.
+The readout light is a product constant selected by the material category: `BB5800` for colour cine print materials (ISO 2910:2018) and `D50` for every other material (ISO 3664). It is not a runtime parameter and not a profile field, so there is no `scanner.lamp` to set; a document that carries that field fails validation.
 
-The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white, and the scan chromatically adapts from that clear-film white to the output white. The scan matrix is the identity. Because the lamp is the only light in the acquisition, changing it changes the captured colors of a colored area while a clear area stays the output white.
+The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white, and the scan chromatically adapts from that clear-film white to the output white. The scan matrix is the identity. The readout light is part of the final colour transform, not an acquisition control.
 
-The scanner controls are `scanner.lamp`, `scanner.scan_output`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. White/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, automatic setup, scanner finish, and Digital Reference are removed; their field names fail validation at the current schema version.
+The scanner controls are `scanner.scan_output`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. White/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, automatic setup controls, scanner finish, and Digital Reference are removed; their field names fail validation at the current schema version.
 
 ## Experimental workflow routes and output modes
 
@@ -22,35 +22,40 @@ Runtime and GUI state accept passthrough, film-scan, film-print-scan, and the th
 
 ## Negative conversion
 
-The following command selects the scan output and lamp explicitly.
+The following command selects the scan output explicitly.
 
 ```bash
-# Negative conversion with an explicit scanner lamp
+# Negative conversion
 ./target/release/spektrafilm-f64 process input.tif -o positive.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
-    --set scanner.lamp=D55 \
     --scan-output negative_to_positive --data-dir data
 
 # Inspect effective scanner selections without decoding or writing output
 ./target/release/spektrafilm process input.tif -o positive.tif --film kodak_portra_400 --scan-film \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
-    --scan-output negative_to_positive --set scanner.lamp=D55 --dry-run --data-dir data
+    --scan-output negative_to_positive --dry-run --data-dir data
 ```
 
 `negative_to_positive` reads each dye record's density like a narrowband lab scanner. It inverts that density through the record's own profile density curve. It then passes through one logistic positive tone curve. A record never borrows density from the others, so saturated negatives do not clip one channel. The inverse is profile-derived and monotone. It has finite endpoint slopes beyond the curves. The tone keeps output within the paper range.
 
 There is one negative conversion interpretation. It has no selectable method. The tone curve's constants come from a declared conversion style, described below. Zero balance renders a gray lit by the film's reference illuminant neutral. Scanner lens blur acts on transmitted light before the density reading.
 
-Negative conversion applies to direct negative-film scans and the `input > convert-film > scan` route. Print-paper and scan-minus-base routes retain their existing route semantics. The displayed result interprets film density. It is not a measurement of the film or a match guarantee for a processed reference JPEG. Hold profile, exposure, white balance, scanner lamp, and scan settings fixed when comparing results.
+Negative conversion applies to direct negative-film scans and the `input > convert-film > scan` route. Print-paper and scan-minus-base routes retain their existing route semantics. The displayed result interprets film density. It is not a measurement of the film or a match guarantee for a processed reference JPEG. Hold profile, exposure, white balance, and scan settings fixed when comparing results.
 
-For a real negative scanner capture on `input > convert-film > scan`, disable virtual camera metering with `camera.auto_exposure=false`. Supply input transfer and color interpretation. Convert-film estimates the record densities that the negative converter reads.
+For a real negative scanner capture on `input > convert-film > scan`, disable virtual camera metering with `camera.auto_exposure=false`. Supply input transfer and color interpretation. Convert-film estimates the record densities that the negative converter reads. Set `film_render.convert.scan_illuminant` to the acquisition light (default `D55`). This is an imported-capture declaration, not a readout-light knob; final material readout remains fixed at D50 or BB5800.
 
 ## Conversion styles
 
-`scanner.conversion_style` names the stylization of the negative-to-positive tone. It defaults to `neutral`, which is the frozen reference tone and renders byte-identically to the conversion without a style slot. `neutral` needs no data directory.
+`scanner.conversion_style` defaults to `standard`. It measures the whole developed frame for automatic exposure and color balance, then applies the existing positive tone. It needs no data directory. `neutral` is an input-only migration alias; saved parameters report `standard`. This rename changes pixels because setup is now automatic.
 
-Any other name resolves to `data/scan-styles/<name>.json` in your data directory. No style ships with the product: with a stock data directory, only `neutral` resolves, and every other name fails with an error that lists the available styles.
+Standard setup uses a weighted mean/minimum/maximum density estimate and a partial exposure correction. Color correction compares the frame to the stock's neutral locus and reduces correction for dominant colors. These are declared product choices, not measured Frontier/Noritsu settings. Bright backgrounds can still darken a subject. No scene classifier or local tone mapper rescues it.
+
+Standard setup does not subtract simulated camera exposure compensation a second time. Fixed styles retain the historical camera compensation. Setup runs after scanner lens blur, before tone and output processing.
+
+A frame-dependent scan cannot be represented by a point-wise LUT. LUT baking and point-wise measurements that reach this setup fail and request a fixed style. Upstream density and exposure taps remain measurable.
+
+Any other name resolves to `data/scan-styles/<name>.json` in your data directory. No extra fixed style ships with the product. With a stock data directory, only `standard` is listed. A fixed style runs no automatic setup.
 
 A style file is user-authored declared data. It declares one tone triple per channel:
 
@@ -68,9 +73,9 @@ The three triples are what let a style carry a color tendency on top of the tone
 
 Every value must be finite, and `contrast` and `dmax` must be positive. A parse error names the offending field.
 
-A style parameterizes the constants of the same logistic curve family the `neutral` style uses, and it never adds a curve family. It is never fitted from a photograph or a chart, and it is not a measured or calibrated scanner response. The film's own tone stays visible under every style, and per-record independence and density monotonicity hold.
+A style parameterizes the constants of the same logistic curve family the built-in style uses, and it never adds a curve family. It is never fitted from a photograph or a chart, and it is not a measured or calibrated scanner response. The per-record reconstruction remains unchanged. Fixed styles preserve per-record independence; standard setup depends on the complete frame.
 
-A non-neutral style requires `scanner.scan_output = negative_to_positive`. A `direct_scan` does not read the style slot, so the style is inert there. Style names must not be empty and must not contain `/`, `\`, `..`, or `:`. The style resolves once when the pipeline is built.
+A custom fixed style requires `scanner.scan_output = negative_to_positive`. A `direct_scan` does not read the style slot, so the style is inert there. Style names must not be empty and must not contain `/`, `\`, `..`, or `:`. The style resolves once when the pipeline is built.
 
 ```bash
 # Write the style file into your data directory
@@ -92,7 +97,7 @@ JSON
     --scan-output negative_to_positive --data-dir data
 ```
 
-The resolved style appears in the effective configuration of the render report, alongside the scan output mode and the scanner lamp.
+The resolved style appears in the effective configuration of the render report, alongside the scan output mode and the resolved readout illuminant.
 
 ## Experimental CineStill 800T Cs41 material
 
@@ -135,3 +140,7 @@ The look's `negative_to_positive` tone assumes scene-linear input. Its tone valu
 - [Attribution](attribution.md)
 - [Film-chain specification](../specs/film-chain/spec.md)
 - [Project context](../CONTEXT.md)
+
+## Saved document cutover
+
+GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6` own the scanner cutover. Explicit older versions migrate `scanner.lamp` out of the readout controls. Complete captures preserve it as the Convert acquisition illuminant unless already declared. Current versions reject `scanner.lamp`. The built-in `neutral` spelling becomes `standard`; this migration intentionally changes the automatic scan output.

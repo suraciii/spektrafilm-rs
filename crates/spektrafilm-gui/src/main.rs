@@ -221,13 +221,13 @@ mod telemetry_lifecycle_tests {
         let mut app = scanner_app();
         let context = ObservationContext::default();
         let source = app.render_snapshot(app.params.clone());
-        app.params.scanner.lamp = "D65".into();
+        app.params.scanner.lens_blur = 2.5;
         app.parameter_revision = app.parameter_revision.wrapping_add(1);
         let edited = app.render_snapshot(app.params.clone());
         let source_runtime = build_runtime_observed(&source, false, &context).unwrap();
         let edited_runtime = build_runtime_observed(&edited, false, &context).unwrap();
-        assert_eq!(edited_runtime.params().scanner.lamp, "D65");
-        assert_eq!(source_runtime.params().scanner.lamp, "D55");
+        assert_eq!(edited_runtime.params().scanner.lens_blur, 2.5);
+        assert_eq!(source_runtime.params().scanner.lens_blur, 0.0);
         let input = app.image.as_ref().unwrap();
         let before = source_runtime
             .process((**input).clone(), app.backend.as_ref())
@@ -388,7 +388,7 @@ mod telemetry_lifecycle_tests {
         let valid = app.current_state().unwrap();
         app.apply_state(valid).unwrap();
         assert_eq!(app.params.scanner.scan_output, "direct_scan");
-        assert_eq!(app.params.scanner.lamp, "D55");
+        assert_eq!(app.params.scanner.lens_blur, 0.0);
     }
 
     fn job(request_id: u64) -> RenderJob {

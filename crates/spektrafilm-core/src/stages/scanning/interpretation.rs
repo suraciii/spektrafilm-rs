@@ -64,6 +64,20 @@ impl DensityAxis {
         Ok(Self { density, exposure })
     }
 
+    fn density_at(&self, exposure: f64) -> (f64, f64) {
+        let upper = self
+            .exposure
+            .partition_point(|&v| v < exposure)
+            .clamp(1, self.exposure.len() - 1);
+        let lower = upper - 1;
+        let gamma = (self.density[upper] - self.density[lower])
+            / (self.exposure[upper] - self.exposure[lower]);
+        (
+            self.density[lower] + (exposure - self.exposure[lower]) * gamma,
+            gamma,
+        )
+    }
+
     fn estimate(&self, density: f64) -> f64 {
         let upper = self
             .density
@@ -110,6 +124,18 @@ impl DensityCalibration {
         Ok(Self {
             axes: prepare_axes(profile)?,
         })
+    }
+
+    pub(super) fn neutral_density(&self, exposure: f64) -> [f64; 3] {
+        self.axes.each_ref().map(|axis| axis.density_at(exposure).0)
+    }
+
+    pub(super) fn neutral_gamma(&self, exposure: f64) -> f64 {
+        self.axes
+            .iter()
+            .map(|axis| axis.density_at(exposure).1)
+            .sum::<f64>()
+            / 3.0
     }
 
     pub(super) fn estimate(&self, density: [f64; 3]) -> Result<[f64; 3], String> {

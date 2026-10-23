@@ -871,7 +871,9 @@ impl App {
                 }
                 controls::ControlOwner::Export => {
                     self.export_return_focus = Some(egui::Id::new("control-search"));
-                    self.export_dialog.open(&self.export_options);
+                    if !self.export_dialog.is_open() {
+                        self.export_dialog.open(&self.export_options);
+                    }
                 }
                 controls::ControlOwner::Viewer => {
                     self.pending_scroll = None;
@@ -925,12 +927,10 @@ impl App {
                 }
                 self.status = format!("Display ICC profile: {}", path.display());
             }
-            if self.gui_state.display_profile().is_some()
-                && ui
-                    .button("clear")
-                    .on_hover_text("Stop using the selected ICC profile and fall back to the platform profile or sRGB. The retained, saved and exported pixels never used the profile, so they are unchanged.")
-                    .clicked()
-            {
+            let clear = ui.add_enabled(self.gui_state.display_profile().is_some(), egui::Button::new("clear"))
+                .on_hover_text("Stop using the selected ICC profile and fall back to the platform profile or sRGB. Retained, saved and exported pixels are unchanged.");
+            controls::locate_row(ui, "action.clear_display_profile", &clear);
+            if clear.clicked() {
                 self.gui_state.set_display_profile(None);
                 self.refresh_viewing_artifacts();
                 self.status = "Display ICC profile cleared".into();
@@ -1373,8 +1373,6 @@ impl eframe::App for App {
             }
         }
         self.begin_adjustment_frame(ctx);
-        self.sync_display_controls();
-        controls::begin_control_frame(ctx, &self.params, &self.gui_state.sections);
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
         self.poll_export_job(ctx);
@@ -1415,6 +1413,8 @@ impl eframe::App for App {
         self.window_header(ctx);
         self.factory_reset_confirmation(ctx);
         self.preset_panel(ctx);
+        self.sync_display_controls();
+        controls::begin_control_frame(ctx, &self.params, &self.gui_state.sections);
         // Fixed histogram, search, and stage jumps above one scrolling inspector.
         egui::SidePanel::right("controls")
             .resizable(true)

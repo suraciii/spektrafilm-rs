@@ -121,8 +121,8 @@ const BASE_CYAN: f64 = 1.227_020_666_902_410;
 const BASE_MAGENTA: f64 = 0.600_426_922_252_643;
 const BASE_YELLOW: f64 = 0.500_288_922_285_685;
 const BASE_EXPOSURE_EV: f64 = -0.902_427_051_824_104;
-const FILTER_M_SHIFT: f32 = -0.518_305_7;
-const FILTER_Y_SHIFT: f32 = -0.543_735_27;
+const FILTER_M_SHIFT: f32 = 0.101_127_781;
+const FILTER_Y_SHIFT: f32 = -0.180_145_949;
 
 /// The applied `detect base` result: fitted base densities with the scan
 /// exposure, the untouched scale/tilt, and the status reporting that EV.
@@ -156,6 +156,10 @@ fn detect_base_button_fits_the_film_base_and_scan_exposure_from_the_loaded_ramp(
     let h = &mut s.harness;
     drain(h);
     open_convert_controls(h);
+    choose(h, "scan illuminant", "D65");
+    assert_eq!(h.state().params.film_render.convert.scan_illuminant, "D65");
+    choose(h, "scan illuminant", "D55");
+    assert_eq!(h.state().params.film_render.convert.scan_illuminant, "D55");
     let before = calibration_outputs(h.state());
     let route = h.state().params.workflow.route.clone();
     let revision = h.state().parameter_revision;

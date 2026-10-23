@@ -168,22 +168,21 @@ impl Default for EnlargerParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
-    /// The scanner lamp — the single physical light source of a scan. A
-    /// reversal stock has no second viewing illuminant; the lamp is the only
-    /// light a scanner owns.
-    #[serde(default = "default_d55")]
-    pub lamp: String,
     /// Scan output polarity: `direct_scan` preserves the scanner capture;
     /// `negative_to_positive` interprets each negative dye record's density as a
     /// positive image.
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,
     /// Named positive-conversion style applied by the negative-to-positive
-    /// interpretation: `neutral` is the frozen reference tone; any other
+    /// interpretation: `standard` is the automatic built-in; any other
     /// name resolves to `data/scan-styles/<name>.json` (declared
     /// per-channel tone parameters, never fitted). Meaningful only with
     /// `scan_output = negative_to_positive`.
-    #[serde(default = "default_conversion_style")]
+    #[serde(
+        default = "default_conversion_style",
+        deserialize_with = "deserialize_conversion_style",
+        serialize_with = "serialize_conversion_style"
+    )]
     pub conversion_style: String,
     #[serde(default)]
     pub lens_blur: f32,
@@ -194,7 +193,6 @@ pub struct ScannerParams {
 impl Default for ScannerParams {
     fn default() -> Self {
         Self {
-            lamp: default_d55(),
             scan_output: default_direct_scan(),
             conversion_style: default_conversion_style(),
             lens_blur: 0.0,
@@ -204,7 +202,37 @@ impl Default for ScannerParams {
 }
 
 fn default_conversion_style() -> String {
-    "neutral".into()
+    "standard".into()
+}
+
+impl ScannerParams {
+    /// The built-in automatic style. `neutral` is an input-only migration alias.
+    pub fn uses_standard(&self) -> bool {
+        matches!(self.conversion_style.as_str(), "standard" | "neutral")
+    }
+
+    pub fn conversion_style_name(&self) -> &str {
+        if self.uses_standard() {
+            "standard"
+        } else {
+            &self.conversion_style
+        }
+    }
+}
+
+fn deserialize_conversion_style<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<String, D::Error> {
+    let name = String::deserialize(d)?;
+    Ok(if name == "neutral" {
+        "standard".into()
+    } else {
+        name
+    })
+}
+
+fn serialize_conversion_style<S: serde::Serializer>(name: &str, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(if name == "neutral" { "standard" } else { name })
 }
 
 fn default_one_f64() -> f64 {
@@ -269,6 +297,10 @@ impl Default for PrintBaseParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConvertFilmParams {
+    /// Illumination used to acquire the imported RGB capture. This belongs
+    /// to capture inversion, not the product readout illuminant.
+    #[serde(default = "default_convert_illuminant")]
+    pub scan_illuminant: String,
     #[serde(default)]
     pub exposure_compensation_ev: f64,
     #[serde(default = "default_99")]
@@ -276,9 +308,13 @@ pub struct ConvertFilmParams {
     #[serde(default = "default_calibration")]
     pub calibration: String,
 }
+fn default_convert_illuminant() -> String {
+    "D55".into()
+}
 impl Default for ConvertFilmParams {
     fn default() -> Self {
         Self {
+            scan_illuminant: default_convert_illuminant(),
             exposure_compensation_ev: 0.0,
             base_percentile: 99.0,
             calibration: default_calibration(),
@@ -935,9 +971,6 @@ fn default_17() -> u32 {
 fn default_640() -> u32 {
     640
 }
-fn default_d55() -> String {
-    "D55".into()
-}
 fn default_99() -> f64 {
     99.0
 }
@@ -952,17 +985,43 @@ fn default_route() -> String {
 mod tests {
     use super::{CameraParams, RuntimeParams};
     #[test]
+    fn standard_is_canonical_for_defaults_legacy_sources_and_snapshots() {
+        assert_eq!(super::ScannerParams::default().conversion_style, "standard");
+        let mut params: RuntimeParams = serde_json::from_value(serde_json::json!({
+            "scanner": {"conversion_style": "neutral"}
+        }))
+        .unwrap();
+        assert_eq!(params.scanner.conversion_style, "standard");
+        super::sources::ParameterEdits::parse("scanner.conversion_style=neutral")
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert_eq!(params.scanner.conversion_style, "standard");
+        params.scanner.conversion_style = "neutral".into();
+        assert_eq!(
+            serde_json::to_value(&params).unwrap()["scanner"]["conversion_style"],
+            "standard"
+        );
+        params.debug.lut_mode = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        assert!(params.validate().unwrap_err().contains("point-wise LUT"));
+        params.scanner.conversion_style = "fixed-probe".into();
+        params.validate().unwrap();
+        assert!(
+            serde_json::from_value::<super::ScannerParams>(
+                serde_json::json!({"conversion_style": null})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn scanner_defaults_and_sparse_edits_are_compatible() {
         let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();
-        assert_eq!(legacy.lamp, "D55");
         assert_eq!(legacy.scan_output, "direct_scan");
         assert_eq!(legacy.lens_blur, 0.0);
         assert_eq!(legacy.unsharp_mask, [0.7, 0.7]);
         for (path, allowed) in [
-            (
-                "scanner.lamp",
-                &["D50", "D55", "D65", "T", "TH-KG3", "K75P"][..],
-            ),
             (
                 "scanner.scan_output",
                 &["direct_scan", "negative_to_positive"][..],
@@ -979,7 +1038,6 @@ mod tests {
             assert!(super::sources::ParameterEdits::parse(&format!("{path}=unknown")).is_err());
         }
         let encoded = serde_json::to_value(&legacy).unwrap();
-        assert_eq!(encoded["lamp"], "D55");
         assert_eq!(encoded["scan_output"], "direct_scan");
         for removed in [
             "receiver_profile",
@@ -1000,16 +1058,6 @@ mod tests {
         let settings = serde_json::to_value(super::SettingsParams::default()).unwrap();
         assert_eq!(settings["print_exposure_ev_tracking"], "follow_mode");
     }
-    #[test]
-    fn scanner_lamp_rejects_unsupported_illuminants() {
-        let mut params = RuntimeParams::default();
-        params.scanner.lamp = "D55".into();
-        params.validate().unwrap();
-        params.scanner.lamp = "sunlit-window".into();
-        let error = params.validate().unwrap_err();
-        assert!(error.contains("scanner.lamp"));
-    }
-
     #[test]
     fn conversion_style_requires_negative_to_positive() {
         let mut params = RuntimeParams::default();

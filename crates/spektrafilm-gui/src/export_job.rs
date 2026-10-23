@@ -176,6 +176,9 @@ impl App {
             }
         };
         self.export_options = options.clone();
+        self.export_options
+            .write_state(&mut self.gui_state.sections);
+        self.search_index.reset();
         let snapshot = self.render_snapshot(params);
         self.remember_dialog("export", &out_path);
         let selected_backend = self.backend.clone();

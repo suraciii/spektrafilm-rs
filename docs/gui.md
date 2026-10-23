@@ -62,6 +62,8 @@ A boolean row is a switch that names the concept it enables. A choice row shows 
 
 **Only modified** filters against the factory baseline, independently of the applied preset. It can combine with search. The row marker, module `modified` chip, and this filter use the same factory comparison. The preset browser's applied/modified/missing marker has its own preset baseline.
 
+For Settings and Export, the filter compares accepted preferences with typed factory defaults. Unsubmitted Export drafts do not change these results.
+
 Each editable row offers **Reset**, with help naming `Reset <control> to factory`. It restores only that canonical leaf; a vector leaf resets its components together. A module header's **reset** restores only that module's controls. For example, resetting **Preflash** leaves main **Enlarger** exposure and filtration unchanged; resetting **Print viewing glare** leaves **Print chemistry** unchanged. **Reset film profile to factory** and **Reset print profile to factory** target their respective material selection. Factory reset values are not the current material's suggestions or the last applied preset. Photographic row and module resets are reversible adjustments and never rewrite a preset or startup-default file. Settings, viewer preferences, and an unsubmitted Export draft remain outside adjustment history, including resets on those surfaces. See [section reset](../specs/gui-workflow/spec.md#section-reset).
 
 A module's `Section preset: <name>` menu is a separate operation from its reset. Its serialized scope can cover more than the visible module; the menu states **Full preset scope** before its actions. **Save as…** saves that section. Direct `Apply Built-in / <name>` and `Apply My Presets / <name>` actions apply an entry without a hover-only submenu. Available management actions also name their entry and support keyboard or pointer use. A feature profile is distinct from a look: it changes only its declared feature controls, not materials, route, or unrelated parameters. Direct controls remain available under their applicability rules.
@@ -69,10 +71,13 @@ A module's `Section preset: <name>` menu is a separate operation from its reset.
 **Scan → Scanner** keeps its controls readable across routes and identifies whether the scanned medium is Paper, Slide, Negative, or Inactive:
 
 - The scan-output selector offers **Preserve medium polarity** and **Negative to positive**. It is editable only for eligible negative-scanning routes; other routes retain the visible, inactive selector.
-- Conversion style is editable only while the eligible **Negative to positive** interpretation is selected. Otherwise its stored value remains readable with an inactive explanation. `neutral` is the frozen reference tone; any other name is a declared style in `data/scan-styles/`.
-- Scanner lamp, **Lens blur (readout optics)**, and **Unsharp mask (digital sharpening)** describe illumination, readout optics, and digital sharpening. On a route without scanning, these controls remain readable but inactive, with stored values retained.
+- Conversion style is editable only while the eligible **Negative to positive** conversion is selected. Otherwise its stored value remains readable with an inactive explanation. `standard` is the built-in automatic style; other names are declared fixed styles in `data/scan-styles/`.
+- The readout illuminant is a fixed product value selected by the material category, not an editable scanner lamp.
+- **Lens blur (readout optics)** and **Unsharp mask (digital sharpening)** describe readout optics and digital sharpening. On a route without scanning, these controls remain readable but inactive, with stored values retained.
 
-Changing the route resets an ineligible scan polarity; leaving the negative interpretation resets the conversion style to `neutral`. See [scanning](scanning.md) for scanner mode semantics.
+Changing the route resets an ineligible scan polarity; leaving negative conversion resets the conversion style to `standard`. This style applies automatic exposure and color setup to the whole frame before the positive tone. `neutral` is accepted only as an input migration alias and is saved as `standard`; it does not preserve the former fixed-curve appearance. See [scanning](scanning.md) for scanner mode and style semantics.
+
+**Input and capture → Convert → scan illuminant** declares the acquisition light of an imported negative RGB image through `film_render.convert.scan_illuminant`. It defaults to `D55` and affects capture inversion and calibration only. Choose from the full shared illuminant catalog or enter a custom `BB<kelvin>` value accepted by the shared validator. It does not override the fixed product readout light. The control remains readable but inactive on routes without convert-film inversion.
 
 **Output → Output → Simulation blend** blends the complete result with the decoded, geometrically aligned source in linear output RGB. Amount `1` keeps the complete result. Amount `0` returns the prepared source before virtual camera exposure. A negative capture stays negative at zero. Preview, Scan, Export, and complete source-to-output LUTs share this operation. Segmented LUTs require amount `1`. See [the output mix specification](../specs/output-mix/spec.md#output-mix) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
 
@@ -150,6 +155,8 @@ On macOS, the Metal surface is tagged sRGB.
 ## Independent Export
 
 Header **Export** opens **Export options**. Choose **Backend**, **Format**, **Bit depth**, **Saving color space**, **Apply saving CCTF encoding**, and the applicable codec/compression settings, then **Export file…** to choose the destination. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, Escape, or closing **Export options** discards its unsubmitted draft without changing accepted adjustments or retained output.
+
+Locating another Export control while the dialog is open preserves its draft. The locator changes focus, not the selected delivery options.
 
 Export uses the in-memory input pixels with the simulation parameters. It runs at the build's precision; see [parity and backends](parity.md#backend-selection). GUI Export does not launch `spektrafilm-f64`; use that CLI separately for CPU f64 reference output. Output metadata uses the current orientation and dimensions.
 

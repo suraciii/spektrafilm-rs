@@ -28,10 +28,12 @@ A section must be a group of editable controls that a user can see and that can 
 - `camera filter`: `camera_diffusion_filter`. Primary menu anchor: Input and capture / Camera diffusion.
 - `enlarger filter`: `enlarger.diffusion_filter`. Primary menu anchor: Print / Enlarger diffusion.
 - `enlarger`: `enlarger` without `enlarger.diffusion_filter`. Primary menu anchor: Print / Enlarger.
-- `scanner`: `scanner.lamp`, `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`. Primary menu anchor: Scan / Scanner.
+- `scanner`: `scanner.scan_output`, `scanner.conversion_style`, `scanner.lens_blur`, `scanner.unsharp_mask`. Primary menu anchor: Scan / Scanner.
 - `cmyk ink style`: `cmyk`. Primary menu anchor: Output / CMYK ink style.
 - `print`: `print_render`. Primary menu anchor: Print / Chemistry.
 - `output mix`: `output_mix`. Primary menu anchor: Output / Simulation blend.
+
+The `convert` section includes the imported-capture acquisition light in `film_render.convert.scan_illuminant`. The fixed product readout illuminant is not preset-owned. Retired scanner lamp keys and the input-only `neutral` style alias follow the [lab scan migration contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration).
 
 - The browser lists look presets only. A section preset must not appear in it and must not be applicable from it.
 - A section preset loads from the menu of its own section. The menu must show the preset whose carried controls equal the section's current controls, or `custom`. The comparison must use the carried editable controls and never derived or prepared values, and equal matches must resolve deterministically by name order.

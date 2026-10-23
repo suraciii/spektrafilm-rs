@@ -1129,7 +1129,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
     the capture, chooser and diagnostic utilities in this module.
     """
     from experimental_gui import ExperimentalDesktop, parameter_state, parameters_equal
-    from gui_control_acceptance import cancel_export, enter_number, export_controls, export_image
+    from gui_control_acceptance import cancel_export, enter_number, export_controls, export_image, imported_scan_illuminant
     from gui_viewer_acceptance import accept_viewer, _hover_float
 
     class InstalledDesktop(ExperimentalDesktop, Desktop):
@@ -1203,6 +1203,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.surfaces()
         state = driver.state_action('Save current to file', root / 'baseline.json', save=True)
         factory = json.loads(json.dumps(state))
+        imported_scan_illuminant(driver, root)
         state['grain']['active'] = False
         state['halation']['active'] = False
         state['glare']['active'] = False

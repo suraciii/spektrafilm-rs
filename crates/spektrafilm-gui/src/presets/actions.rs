@@ -33,6 +33,8 @@ impl App {
             self.film_reference_illuminant = resolved.film.info.reference_illuminant.clone();
             self.film_name = resolved.film_name;
             self.print_name = resolved.print_name;
+            self.gui_state.sections["simulation"]["film_stock"] = self.film_name.clone().into();
+            self.gui_state.sections["simulation"]["print_paper"] = self.print_name.clone().into();
             self.params = resolved.params;
             self.film_dev_times = resolved.film.data.development_time;
             self.print_dev_times = resolved.print.data.development_time;

@@ -2395,3 +2395,49 @@ fn rejected_invocations_exit_two_and_failed_executions_exit_one() {
         String::from_utf8_lossy(&executed.stderr)
     );
 }
+
+#[test]
+fn automatic_standard_is_not_a_point_wise_measurement_but_density_taps_remain_available() {
+    let f = MeasureFixture::new();
+    for read in ["rgb_out", "cmy_film"] {
+        let out = f.root.join(format!("standard-{read}"));
+        let mut args = vec![
+            "run",
+            "--stimuli",
+            f.stimuli.to_str().unwrap(),
+            "--enter",
+            "rgb_in",
+            "--read",
+            read,
+            "--film",
+            "kodak_portra_400",
+            "--route",
+            "input > film > scan",
+            "--scan-output",
+            "negative_to_positive",
+            "--data-dir",
+            f.data.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ];
+        args.extend_from_slice(&POINT_WISE);
+        let result = f.lab(&args);
+        if read == "rgb_out" {
+            assert!(!result.status.success());
+            let error = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                error.contains("scanner.conversion_style=standard"),
+                "{error}"
+            );
+            assert!(error.contains("<fixed-style-name>"), "{error}");
+            assert!(!out.join("run.json").exists());
+        } else {
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(out.join("readings.csv").exists());
+        }
+    }
+}

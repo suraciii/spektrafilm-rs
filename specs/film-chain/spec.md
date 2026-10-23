@@ -24,13 +24,13 @@ Each light source in the chain has one owner, and the chain holds them separate.
 The capture illuminant MUST NOT change any of the following, and none of the following MAY change it:
 
 - film exposure, development, film-domain effects, or the developed negative;
-- `scanner.lamp`, the single light source of a scan, which belongs to scan acquisition;
+- the readout illuminant, a product constant selected by the material category;
 - `enlarger.illuminant` and the enlarger filter pack, which belong to print exposure;
 - the output white point and transfer encoding.
 
 Stage preparation resolves the capture illuminant once for the selected profile and controls, before the camera-side spectral conversion. A route that computes no film exposure from scene RGB — the `input` route and a real negative-capture `input > convert-film > ...` route — does not consume it. A zero-balance negative conversion renders a grey lit by the profile reference illuminant neutral, and that rule continues to describe the conversion, not the capture declaration.
 
-The scanner lamp is resolved through the same shared illuminant service. Its accepted values are the illuminant vocabulary of `enlarger.illuminant`. An invalid lamp name fails before output publication.
+The readout illuminant is a product constant: `BB5800` for colour cine print materials (ISO 2910:2018) and `D50` for every other material (ISO 3664). It is not a runtime parameter, a profile field, or a preset value.
 
 No Capture & Scan Setup document, universal camera or scanner registry, or automatic scene-light inference is part of this contract.
 
@@ -38,13 +38,13 @@ No Capture & Scan Setup document, universal camera or scanner registry, or autom
 
 Scanner terms follow the [Film simulation language](../../CONTEXT.md). A reversal-film scan and a photographic-paper scan already read positive images.
 
-The scan is one colorimetric capture made through the scanner lamp. `scanner.lamp` names that single physical light source; its accepted values are `D50`, `D55`, `D65`, `T`, `TH-KG3`, `TH-KG3-L`, `K75P`, and a blackbody temperature. `D55` is the default. The lamp belongs to scan acquisition and MUST NOT be derived from the capture illuminant, the enlarger illuminant, or image content.
+The scan is one colorimetric capture made through the readout illuminant. The readout illuminant is a product constant selected by the material category; it is not a control. It MUST NOT be derived from the capture illuminant, the enlarger illuminant, or image content. A document that carries `scanner.lamp` fails validation at the current schema version.
 
-The scan output value `negative_to_positive` selects negative conversion. Negative conversion has one interpretation: it reads each dye record's density through the selected film's response and applies a positive tone response from one curve family, whose constants a declared conversion style selects. It requires no automatic setup and no scanner finish.
+The scan output value `negative_to_positive` selects negative conversion. Negative conversion has one interpretation: it reads each dye record's density through the selected film's response and applies a positive tone response from one curve family, whose constants a declared conversion style selects. The built-in `standard` style uses automatic frame setup. It has no setup control and no scanner finish.
 
 Image correction and digital output must not select a different scanned medium or a photographic print route.
 
-`scanner.scan_output` accepts only `direct_scan` and `negative_to_positive`. The removed value `positive_scan` must fail validation in CLI options, runtime parameters, sparse sources, presets, render recipes, and imported GUI state. Readers must not alias it or silently reset it. Omitted scan output retains the `direct_scan` default. Existing schema versions and parameter field names remain unchanged.
+`scanner.scan_output` accepts only `direct_scan` and `negative_to_positive`. The removed value `positive_scan` must fail validation in CLI options, runtime parameters, sparse sources, presets, render recipes, and imported GUI state. Readers must not alias it or silently reset it. Omitted scan output retains the `direct_scan` default. The [lab scan cutover](lab-scan/spec.md#point-wise-consumers-and-migration) owns document-version migration.
 
 The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white; the chromatically adapted scan of any other area is expressed against that white.
 
@@ -61,13 +61,13 @@ The white reference of a scan is the clear film base of the scanned medium. A cl
 - The selected route determines the scanned medium. A film-scan route scans the film; a print route scans the photographic paper.
 - The scanned medium determines the scanner controls that apply.
 - A photographic-paper scan and a slide film scan read a positive image. A negative film scan reads the negative image on the film; `negative_to_positive` produces the positive image by negative conversion.
-- Every scan exposes the scanner lamp, scanner lens blur, scanner unsharp mask, and the scan output mode.
+- Every scan exposes scanner lens blur, scanner unsharp mask, and the scan output mode.
 - A negative film scan with `negative_to_positive` additionally exposes `scanner.conversion_style`, the declared stylization point of the conversion tone.
 - The scanner owns no white/black correction, no white/black levels, and no film-scan black or white points. Those controls are removed from the runtime model, discovery, presets, recipes, GUI state, and CLI options; their canonical names must fail unknown-field validation at the current schema version.
 - Negative conversion belongs to `negative_to_positive`. A photographic-paper scan and a slide film scan must not expose it. See [Direct negative-film scan output](#direct-negative-film-scan-output).
 - Existing exposure and development controls belong to their material stage. No appearance treatment is applied to a completed scan: scanner finishing is removed from the contract.
 - Scanner calibration, inverse curves, and correction references retain their existing dependencies on profile and development settings. Material controls must not add a second reference model or alter the real captured-negative recovery solve.
-- Scan provenance records one colorimetric sensor and the clear-film white reference. It must publish the resolved lamp, the output space white, and the identity matrix of the scan transform.
+- Scan provenance records one colorimetric sensor and the clear-film white reference. It must publish the resolved readout illuminant, the output space white, and the identity matrix of the scan transform.
 
 ## Scan optics and print viewing glare
 
@@ -98,36 +98,25 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 ## Neutral scan model
 
 - The scanner has one colorimetric sensor modeled on the CIE 1931 color-matching functions. No narrow-band, approximate, or measured-device receiver profile exists; the sensor is not selectable.
-- Scan acquisition is one spectral integration of the scanned medium under the scanner lamp. `scanner.lamp` resolves to one spectral power distribution through the shared illuminant service that `enlarger.illuminant` uses, so one service owns every light-source name.
+- Scan acquisition is one spectral integration of the scanned medium under the readout illuminant. The illuminant is resolved from the material category through the shared illuminant service, so one service owns every light-source name.
 - The white reference of a scan is the clear film base of the scanned medium. The scan chromatically adapts from that clear-film white to the output color space's white and emits output-space linear RGB. The scan matrix is the identity; no receiver calibration matrix is applied.
-- The clear film base must read as the output color space's white on every admitted route, for every accepted lamp, and for both scan output values.
-- The lamp changes the capture. Changing `scanner.lamp` must change the scanned pixels of a colored area, while a clear-film area remains the output white.
-- The lamp must not change film exposure, development, film-domain effects, print exposure, or the input camera exposure. It must not be derived from the capture illuminant or the enlarger illuminant, and it must not be inferred from image content.
-- `negative_to_positive` has one interpretation. It reads each dye record's density, as a narrowband scanner does, derives a per-record monotone inverse from the selected profile density curves, and applies a positive tone response from the same logistic curve family. One record's output must not depend on another record's density.
+- The clear film base must read as the output color space's white on every admitted route, for every material category, and for both scan output values.
+- The readout illuminant is part of the capture model. On a positive transmission or paper readout it changes the scanned pixels of a coloured area, while a clear-film area remains the output white. On a negative-to-positive readout it changes only the final colour transform; the reconstructed record exposure does not read it.
+- The readout illuminant must not change film exposure, development, film-domain effects, print exposure, or the input camera exposure. It must not be derived from the capture illuminant or the enlarger illuminant, and it must not be inferred from image content.
+- `negative_to_positive` has one interpretation. It reads each dye record's density, as a narrowband scanner does, derives a per-record monotone inverse from the selected profile density curves, and applies a positive tone response from the same logistic curve family. One record's reconstructed exposure must not depend on another record's density. Standard setup is a separate frame-level stage.
 - No selectable negative conversion method exists. The removed names `separable`, `coupled`, and `digital_reference`, and the leaf `scanner.negative_conversion_method`, must fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes.
-- The scanner owns no automatic setup and no finish. The removed leaves `scanner.auto_setup`, `scanner.finish`, `scanner.finish_strength`, `scanner.white_correction`, `scanner.black_correction`, `scanner.white_level`, `scanner.black_level`, `scanner.black_point`, `scanner.white_point`, `scanner.reference_exposure_ev`, and `scanner.reference_balance_ev` must fail unknown-field validation at the current schema version.
-- Conversion tone controls — brightness, RGB balance, contrast, and maximum density — are removed as selectable controls. The `neutral` style carries the frozen reference tone constants of that curve family; `scanner.conversion_style` selects a declared style that parameterizes the same curve family's constants per channel. No new curve family is introduced, and no style is fitted from image or chart data.
-- Scan provenance must serialize the neutral scan model identity: one colorimetric sensor, the clear-film white reference, the output space white, and the identity scan matrix.
+- The scanner exposes no automatic setup control and no finish. The removed leaves `scanner.auto_setup`, `scanner.finish`, `scanner.finish_strength`, `scanner.white_correction`, `scanner.black_correction`, `scanner.white_level`, `scanner.black_level`, `scanner.black_point`, `scanner.white_point`, `scanner.reference_exposure_ev`, and `scanner.reference_balance_ev` must fail unknown-field validation at the current schema version.
+- Conversion tone controls are not exposed as scalar knobs. The [lab scan contract](lab-scan/spec.md) owns style names, automatic setup, constants, and point-wise consumer behavior.
+- Scan provenance must identify the readout model, the colorimetric sensor, the clear-film white reference, the output space white, and the identity scan matrix.
 
 ## Direct negative-film scan output
 
-- `scanner.scan_output` is `direct_scan` by default. It preserves the selected medium's native scan polarity.
-- `negative_to_positive` is valid for a negative film profile on either the direct `input > film > scan` route or the real negative-capture `input > convert-film > scan` route. Paper profiles, print-paper routes, and `scan-minus-base` are not eligible.
-- Negative conversion input is record density. It reads each dye record's density, as a narrowband scanner does, and derives a per-record monotone inverse from the selected profile density curves. One record's output must not depend on another record's density. The simulated `input > film > scan` route hands it the film stage's record densities and inserts no synthetic capture.
-- Negative conversion estimates relative log exposure, subtracts camera exposure compensation only on the simulated `input > film > scan` route, applies the positive tone response selected by `scanner.conversion_style`, then emits output-space linear RGB. Zero balance renders a grey lit by the profile reference illuminant neutral.
-- `scanner.conversion_style` is the declared stylization point of negative conversion. It accepts a style name; `neutral` is the default and is byte-identical to the frozen reference conversion. Any other name resolves to `data/scan-styles/<name>.json`.
-- A style file declares one tone triple per channel — `brightness_ev`, `contrast`, and `dmax` — of the same logistic curve family the `neutral` style uses. The per-channel triples are what allow a color tendency; they do not add a curve family and do not change the record-density reading or its monotone inverse.
-- A style is declared data. It is never fitted from image or chart data, and it must not be described as a measured or calibrated scanner response. The film's own tone stays visible under every style.
-- No conversion style ships with the product. `neutral` is built in; every other style is a user-authored file in the data directory's `scan-styles/` folder. The product must not promise a built-in style catalog.
-- A style must keep per-record independence and density monotonicity. One record's output must not depend on another record's density under a non-neutral style.
-- `scanner.conversion_style` is resolved once at pipeline construction. A name that is not `neutral` requires a pipeline built from a data directory; an unknown style must fail with an error that lists the available styles. A parse error must name the offending field.
-- A style file must declare three finite channel triples with `contrast > 0` and `dmax > 0`. A missing channel, a non-finite value, or a non-positive contrast or dmax must fail before output publication.
-- A style name must not be empty and must not contain `/`, `\`, `..`, or `:`. An invalid name must fail before output publication.
-- A non-neutral style requires `scanner.scan_output = negative_to_positive`. A `direct_scan` must not read the style slot, so the style is inert on a direct scan.
-- `scanner.conversion_style` must be reported in the effective configuration under [Telemetry](../telemetry/metrics/spec.md#effective-configuration).
-- Densities outside the profile curves use finite endpoint tangent extrapolation; the tone curve keeps output finite and within the configured density range. Negative and above-clear scanner RGB remains representable until the normal writer; no log-of-clipped-RGB operation is permitted.
-- Scanner lens blur acts on transmitted light before the density reading. Output gamut compression, unsharp mask, transfer encoding, Procedural grain, CMYK ink style, and output handoff run after negative conversion.
-- `negative_to_positive` rejects active Procedural grain. Its execution follows [GPU execution](../gpu-execution/spec.md#backend-selection); conversion selection must not force CPU.
+- `scanner.scan_output` defaults to `direct_scan`. It preserves the selected medium's native polarity.
+- `negative_to_positive` accepts a negative film on `input > film > scan` or `input > convert-film > scan`. Paper, positive film, print-paper, and scan-minus-base routes remain ineligible.
+- The negative reconstruction reads developed record density over each record's own minimum. It inserts no synthetic scanner capture.
+- The [lab scan contract](lab-scan/spec.md) owns the inverse, frame setup, tone, `standard` default, `neutral` migration alias, and fixed file styles.
+- Scanner lens blur acts on transmitted light before density reconstruction. Output gamut compression, unsharp mask, encoding, CMYK ink style, and output handoff run after conversion.
+- `negative_to_positive` rejects active Procedural grain. Backend selection follows [GPU execution](../gpu-execution/spec.md#backend-selection).
 
 ## Print exposure mode
 
@@ -139,27 +128,27 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 
 ## Conversion control naming acceptance
 
-1. Discovery, CLI help, effective parameter reports, saved presets, recipes, and GUI state must emit the canonical paths `scanner.lamp`, `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`, and `enlarger.print_exposure_mode`.
-2. GUI display names must use the real operation words: scanner lamp, scan output, lens blur, unsharp mask, and print exposure mode.
+1. Discovery, CLI help, effective parameter reports, saved presets, recipes, and GUI state must emit the canonical paths `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`, and `enlarger.print_exposure_mode`.
+2. GUI display names must use the real operation words: scan output, lens blur, unsharp mask, and print exposure mode.
 3. Replacing a legacy path with its canonical path must preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls.
-4. The legacy `scanner.receiver_profile`, `scanner.negative_conversion_method`, `scanner.conversion_brightness_ev`, `scanner.conversion_balance_ev`, `scanner.conversion_contrast`, `scanner.conversion_dmax`, `scanner.auto_setup`, `scanner.finish`, `scanner.finish_strength`, `scanner.white_correction`, `scanner.black_correction`, `scanner.white_level`, `scanner.black_level`, `scanner.black_point`, `scanner.white_point`, `scanner.reference_exposure_ev`, and `scanner.reference_balance_ev` paths, the legacy `enlarger.normalize_print_exposure` and `enlarger.print_exposure_compensation` leaves, and the legacy `film_render.convert.scan_illuminant` leaf must fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes. Only the versioned preset migration and the versioned complete GUI state migration may map them.
+4. The legacy `scanner.receiver_profile`, `scanner.negative_conversion_method`, `scanner.conversion_brightness_ev`, `scanner.conversion_balance_ev`, `scanner.conversion_contrast`, `scanner.conversion_dmax`, `scanner.auto_setup`, `scanner.finish`, `scanner.finish_strength`, `scanner.white_correction`, `scanner.black_correction`, `scanner.white_level`, `scanner.black_level`, `scanner.black_point`, `scanner.white_point`, `scanner.reference_exposure_ev`, and `scanner.reference_balance_ev` paths, the legacy `enlarger.normalize_print_exposure` and `enlarger.print_exposure_compensation` leaves must fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes. Only the versioned preset migration and the versioned complete GUI state migration may map them.
 5. Rejection timing and failed-import retention follow [Scan output naming acceptance](#scan-output-naming-acceptance).
 6. The implementation must identify the rename in its render/model version. Readers must not alias legacy paths at the current schema version.
 
 ## Scanner acceptance
 
-- The clear film base of the scanned medium must read as the output color space's white on every admitted route, for every accepted lamp, and for both scan output values.
-- Changing `scanner.lamp` must change the scanned pixels of a colored area. A clear-film area must remain the output white under every lamp.
-- The lamp must not change film density, film-domain grain, halation, print exposure, or camera exposure. It must change only the scan acquisition.
+- The clear film base of the scanned medium must read as the output color space's white on every admitted route, for every material category, and for both scan output values.
+- The readout illuminant must follow the material category; no runtime control may override it. A clear-film area must remain the output white on every admitted route.
+- The readout illuminant must not change film density, film-domain grain, halation, print exposure, or camera exposure. It may change only the readout colour transform.
 - `direct_scan` must preserve the native polarity of the selected medium.
-- Negative conversion must read one record's density without depending on another record's density, and must not acquire a receiver capture.
+- Negative reconstruction must read each record independently and acquire no receiver capture. Frame setup may depend on all records and pixels.
 - Negative conversion must produce finite, continuous output across the calibration range and finite tangent extrapolation outside it.
-- `conversion_style = neutral` must render byte-identically to the frozen reference conversion and must not require a data directory.
-- A non-neutral style must change the converted pixels only through the per-channel tone constants of the same logistic curve family, and must keep per-record independence and density monotonicity.
-- A `direct_scan` must produce identical pixels for `conversion_style = neutral` and any other style, because the style slot is inert on a direct scan.
-- An unknown non-neutral style, an invalid style name, an unreadable style file, and a style file with a non-finite or non-positive value must fail before output publication and must list the available styles where the renderer can enumerate them.
-- Changing film exposure, development, grain, halation, print exposure, or camera exposure while holding scanner settings constant must not be an effect of lamp selection.
-- Scan provenance must identify the neutral scan model, the resolved lamp, the clear-film white reference, the output space white, and the identity scan matrix. An approximate or measured-device receiver label must not appear in GUI, CLI diagnostics, or serialized provenance.
+- `standard` must run the frame setup and fixed tone in the [lab scan contract](lab-scan/spec.md). `neutral` must act as an input-only alias, not a historical fixed-render mode.
+- A fixed file style must change the converted pixels only through the per-channel tone constants of the same logistic curve family, and must keep per-record independence and density monotonicity.
+- A `direct_scan` must produce identical pixels for the built-in style and any fixed style, because the style slot is inert on a direct scan.
+- An unknown fixed style, an invalid style name, an unreadable style file, and a style file with a non-finite or non-positive value must fail before output publication and must list the available styles where the renderer can enumerate them.
+- The product readout illuminant must not change film exposure, development, grain, halation, print exposure, or camera exposure.
+- Scan provenance must identify the readout model, the material-category readout illuminant, the clear-film white reference, the output space white, and the identity scan matrix. An approximate or measured-device receiver label must not appear in GUI, CLI diagnostics, or serialized provenance.
 - Scanner parameter combinations that the selected route or medium cannot support must fail before output publication and must produce the same validation result for GUI, CLI dry run, and rendering.
 - A nonuniform bright-edge capture and an active nonlinear downstream transform must distinguish blur-before-interpretation from blur-after-interpretation. Cover native negative, slide, print scan, and the negative conversion path. Zero blur must preserve the corresponding no-blur result; uniform fields must remain uniform with blur active.
 - Changing only print viewing glare must leave film and print density unchanged and alter the linear readout before downstream interpretation. With glare disabled, spatially varying glare must not leak into calibration or other routes.

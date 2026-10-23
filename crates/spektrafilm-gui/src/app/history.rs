@@ -492,6 +492,32 @@ mod tests {
     }
 
     #[test]
+    fn imported_acquisition_light_is_validated_and_reversible_without_scanner_edits() {
+        let (mut app, _directory, ctx) = app();
+        let original = app.params.film_render.convert.scan_illuminant.clone();
+        let scanner = app.params.scanner.clone();
+        app.begin_adjustment_frame(&ctx);
+        app.params.film_render.convert.scan_illuminant = "BB4321".into();
+        controls::record_edited_path(&ctx, "film_render.convert.scan_illuminant");
+        app.end_adjustment_frame(&ctx);
+        assert!(app.can_undo());
+        assert_eq!(app.params.scanner, scanner);
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params.film_render.convert.scan_illuminant, original);
+        assert!(app.redo_adjustment());
+        assert_eq!(app.params.film_render.convert.scan_illuminant, "BB4321");
+        let revision = app.parameter_revision;
+        app.begin_adjustment_frame(&ctx);
+        app.params.film_render.convert.scan_illuminant = "BB1000".into();
+        controls::record_edited_path(&ctx, "film_render.convert.scan_illuminant");
+        app.end_adjustment_frame(&ctx);
+        assert_eq!(app.params.film_render.convert.scan_illuminant, "BB4321");
+        assert_eq!(app.params.scanner, scanner);
+        assert_eq!(app.parameter_revision, revision);
+        assert!(app.status.starts_with("Adjustment rejected:"));
+    }
+
+    #[test]
     fn a_drag_commits_one_boundary_and_escape_restores_values_and_provenance() {
         let (mut app, _directory, ctx) = app();
         let original = app.params.clone();

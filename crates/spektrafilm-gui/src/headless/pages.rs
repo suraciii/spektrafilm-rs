@@ -769,9 +769,9 @@ fn scanner_search_reveals_independent_rows_on_an_inactive_route() {
     let h = &mut s.harness;
     set_route(h, "input");
     let params = h.state().params.clone();
-    reveal_control(h, "scanner.lamp");
+    reveal_control(h, "scanner.conversion_style");
     assert!(
-        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
             .node()
             .is_disabled()
     );
@@ -781,6 +781,7 @@ fn scanner_search_reveals_independent_rows_on_an_inactive_route() {
             .node()
             .is_disabled()
     );
+
     assert!(
         h.query_by_label("Unsharp mask (digital sharpening) sigma")
             .is_none()
@@ -900,6 +901,28 @@ fn global_search_locates_settings_and_export_without_mutation_or_filtering_the_d
 }
 
 #[test]
+fn locating_another_export_control_preserves_the_open_draft() {
+    let mut s = session();
+    let h = &mut s.harness;
+    reveal_control(h, "extras.rust.export_saving_color_space");
+    let committed = h.state().export_options.clone();
+    choose(h, "Format", "TIFF");
+    choose(h, "Saving color space", "ACES2065-1");
+    search_controls(h, "extras.rust.export_saving_color_space");
+    click(h, "Locate Export: Export options");
+    choose(h, "Bit depth", "32 bit");
+    let destination = s.directory.path().join("located-draft.tif");
+    script(h, chooser::Chooser::chooser_path(&destination));
+    export_action(h, "Export file…");
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(destination.is_file());
+    assert_eq!(h.state().export_options.format, export::ExportFormat::Tiff);
+    assert_eq!(h.state().export_options.saving_color_space, "ACES2065-1");
+    assert_eq!(h.state().params.io.output_color_space, "sRGB");
+    assert_ne!(h.state().export_options, committed);
+}
+
+#[test]
 fn collapsed_grain_subsections_remain_accessible_and_shared_fields_have_one_active_editor() {
     let mut s = session();
     let h = &mut s.harness;
@@ -946,6 +969,39 @@ fn film_material_selection_retains_the_independently_selected_print_material() {
     assert!(
         h.state().params.validate().is_ok(),
         "material defaulting must leave an admitted route and scanner configuration"
+    );
+}
+
+#[test]
+fn applied_look_materials_follow_factory_filtering_and_undo() {
+    let mut s = session();
+    let h = &mut s.harness;
+    if h.query_by_label("▶").is_some() {
+        click(h, "▶");
+    }
+    edit(h, "Search presets", "Kodak Portra 400");
+    click(h, "Kodak Portra 400");
+    assert_eq!(h.state().film_name, "kodak_portra_400");
+    search_controls(h, "extras.simulation.film_stock");
+    click(h, "Only modified");
+    assert!(h.query_by_label("Locate Film: Film material").is_some());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+            .is_some()
+    );
+    click(h, "Undo");
+    assert_eq!(h.state().film_name, state::GuiState::factory().film());
+    assert!(h.query_by_label("Locate Film: Film material").is_none());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+            .is_none()
+    );
+    click(h, "Redo");
+    assert_eq!(h.state().film_name, "kodak_portra_400");
+    assert!(h.query_by_label("Locate Film: Film material").is_some());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+            .is_some()
     );
 }
 

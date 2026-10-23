@@ -16,6 +16,37 @@ def saved(driver, root, name):
     return driver.state_action('Save current to file', root / (name + '.json'), save=True)
 
 
+def imported_scan_illuminant(driver, root):
+    """The real Convert owner persists acquisition light without scanner edits."""
+    before = saved(driver, root, 'before-acquisition-light')
+    driver.choose_route(5)
+    scanner = saved(driver, root, 'acquisition-route')['rust']['runtime']['scanner']
+    for light in ('D65', 'T'):
+        driver.reveal('film_render.convert.scan_illuminant', 'Input and capture', 'Convert')
+        driver.choose('scan illuminant', light)
+        actual = saved(driver, root, 'acquisition-light-' + light)
+        require(actual['convert']['scan_illuminant'] == light,
+                f'Convert acquisition light did not persist: {light}')
+        require(actual['rust']['runtime']['film_render']['convert']['scan_illuminant'] == light,
+                f'Runtime acquisition light differs from Convert: {light}')
+        require(actual['rust']['runtime']['scanner'] == scanner,
+                'Acquisition light edited the final readout scanner')
+        require('lamp' not in actual['scanner'] and 'lamp' not in scanner,
+                'Retired scanner lamp leaked into current GUI state')
+        path = root / ('acquisition-light-' + light + '.json')
+        driver.state_action('Load from file', path)
+        roundtrip = saved(driver, root, 'acquisition-light-roundtrip-' + light)
+        require(roundtrip['convert']['scan_illuminant'] == light,
+                f'Imported acquisition light was lost on state load: {light}')
+        driver.records.append({'canonical_control': 'film_render.convert.scan_illuminant',
+                               'owner': 'Input and capture', 'section': 'Convert',
+                               'acquisition_light': light, 'scanner_unchanged': True,
+                               'saved_state_roundtrip': True})
+    restore = root / 'before-acquisition-light.json'
+    driver.state_action('Load from file', restore)
+    return before
+
+
 def numeric_editor(driver, label):
     """Find the text value on a scalar row or the first tuple component row."""
     for _ in range(12):

@@ -330,6 +330,7 @@ fn validate_observation_name(observation: &Observation) -> Result<(), Validation
         "cmyk",
         "output_mix",
         "negative_to_positive",
+        "standard_setup",
         "input_transfer",
         "output_transfer",
         "rgb_to_raw",

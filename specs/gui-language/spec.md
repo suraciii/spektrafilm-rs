@@ -60,11 +60,13 @@ The GUI must display:
 |---|---|
 | `scanner.scan_output = direct_scan` | `Preserve medium polarity` |
 | `scanner.scan_output = negative_to_positive` | `Negative to positive` |
-| `scanner.lamp` | `Scanner lamp` |
 | `scanner.lens_blur` | `Lens blur (readout optics)` |
 | `scanner.unsharp_mask` | `Unsharp mask (digital sharpening)` |
+| `film_render.convert.scan_illuminant` | `Scan illuminant` in Input and capture → Convert |
 
-The GUI must explain that `Scanner lamp` names the single light source of the scan and that it does not change film exposure, development, film-domain effects, print exposure, or camera exposure.
+The GUI must not offer a scanner light control. The readout illuminant is a product constant selected by the material category.
+
+The Convert scan-illuminant help must identify the light used to acquire an imported RGB negative. It must distinguish that declaration from the fixed product readout illuminant and the Camera capture illuminant. Conversion-style choices must follow the [lab scan style-name contract](../film-chain/lab-scan/spec.md#tone-and-style-names). The GUI must not present `neutral` as a fixed built-in style or expose automatic setup as a separate control.
 
 The GUI must explain that `negative conversion` interprets a developed negative as a positive image through the film's own density response. It must not describe negative conversion as a file conversion, a scan finish, or a positive-scan alias.
 

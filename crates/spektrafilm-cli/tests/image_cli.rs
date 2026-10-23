@@ -668,3 +668,51 @@ fn explicit_gpu_request_fails_before_publication_and_automatic_still_renders() {
         "automatic render published no output"
     );
 }
+
+#[test]
+fn standard_alias_renders_identically_and_emits_only_the_canonical_style() {
+    let f = Fixture::new();
+    let common = [
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--scan-film",
+        "--scan-output",
+        "negative_to_positive",
+        "--set",
+        "camera.auto_exposure=false,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true",
+    ];
+    let mut args = common.to_vec();
+    args.extend_from_slice(&["--set", "scanner.conversion_style=standard"]);
+    let result = f.run("standard.png", &args);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    *args.last_mut().unwrap() = "scanner.conversion_style=neutral";
+    let result = f.run("alias.png", &args);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        image::open(f.0.join("standard.png")).unwrap().to_rgb8(),
+        image::open(f.0.join("alias.png")).unwrap().to_rgb8()
+    );
+    args.push("--dry-run");
+    let result = f.run("dry.png", &args);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(
+        report["parameters"]["scanner"]["conversion_style"],
+        "standard"
+    );
+    assert_eq!(report["scanner_provenance"]["model"], "lab_scan_v1");
+}

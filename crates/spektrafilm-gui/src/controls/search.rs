@@ -6,7 +6,7 @@ use super::{
 };
 use serde_json::Value;
 use spektrafilm_core::params::RuntimeParams;
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SearchResult {
@@ -26,22 +26,30 @@ impl SearchResult {
     }
 }
 
+#[cfg(test)]
 fn build_filtered(
     query: &str,
     params: &RuntimeParams,
     extras: &Value,
     only_modified: bool,
 ) -> Vec<SearchResult> {
-    if query.is_empty() && !only_modified {
+    let projection = only_modified.then(|| super::control_projection(params, extras));
+    build_with_projection(query, projection.as_ref())
+}
+
+fn build_with_projection(
+    query: &str,
+    projection: Option<&super::ControlProjection>,
+) -> Vec<SearchResult> {
+    if query.is_empty() && projection.is_none() {
         return Vec::new();
     }
-    let projection = only_modified.then(|| super::control_projection(params, extras));
     let query = query.to_lowercase();
     let mut results: Vec<SearchResult> = Vec::new();
     for entry in inventory() {
         if !entry.searchable()
             || !entry.matches(&query)
-            || projection.as_ref().is_some_and(|projection| {
+            || projection.is_some_and(|projection| {
                 !entry.is_modified(&projection.runtime, &projection.extras)
             })
         {
@@ -73,14 +81,17 @@ fn build_filtered(
     results
 }
 
-/// Revision keys are owned by accepted edits. Inactive controls remain in the
-/// result set: applicability describes availability, not inventory membership.
+/// Photographic edits own revision keys; modified-only results also compare
+/// session/viewer extras and preview size, which do not advance that revision.
+/// Inactive controls remain discoverable regardless of applicability.
 #[derive(Default)]
 pub(crate) struct SearchIndex {
     query: String,
     revision: u64,
     medium: Option<ScanMedium>,
     only_modified: bool,
+    modified_extras: Option<Arc<Value>>,
+    preview_max_size: u32,
     built: bool,
     results: Vec<SearchResult>,
 }
@@ -100,18 +111,26 @@ impl SearchIndex {
             self.reset();
             return &self.results;
         }
+        let projection = only_modified.then(|| super::control_projection(params, extras));
+        let preferences_changed = projection.as_ref().is_some_and(|projection| {
+            self.preview_max_size != params.settings.preview_max_size
+                || self.modified_extras.as_deref() != Some(projection.extras.as_ref())
+        });
         if !self.built
             || self.query != query
             || self.revision != revision
             || self.medium != Some(medium)
             || self.only_modified != only_modified
+            || preferences_changed
         {
             self.query.clear();
             self.query.push_str(query);
             self.revision = revision;
             self.medium = Some(medium);
             self.only_modified = only_modified;
-            self.results = build_filtered(query, params, extras, only_modified);
+            self.results = build_with_projection(query, projection.as_ref());
+            self.modified_extras = projection.map(|projection| projection.extras);
+            self.preview_max_size = params.settings.preview_max_size;
             self.built = true;
         }
         &self.results
@@ -121,6 +140,7 @@ impl SearchIndex {
         self.query.clear();
         self.results.clear();
         self.medium = None;
+        self.modified_extras = None;
         self.built = false;
     }
 }
@@ -218,6 +238,61 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].labels, ["halation amount"]);
         assert!(build_filtered("grain", &params, &extras, true).is_empty());
+    }
+
+    #[test]
+    fn modified_search_refreshes_session_preferences_without_a_photo_revision() {
+        let (mut params, mut extras) = factory();
+        let original_auto_preview = extras["simulation"]["auto_preview"].clone();
+        let original_preview_max_size = params.settings.preview_max_size;
+        let ctx = egui::Context::default();
+        let mut index = SearchIndex::default();
+        for (auto_modified, size_modified) in [
+            (false, false),
+            (true, false),
+            (true, true),
+            (false, true),
+            (false, false),
+        ] {
+            extras["simulation"]["auto_preview"] = if auto_modified {
+                Value::from(!original_auto_preview.as_bool().unwrap())
+            } else {
+                original_auto_preview.clone()
+            };
+            params.settings.preview_max_size = if size_modified {
+                original_preview_max_size + 1
+            } else {
+                original_preview_max_size
+            };
+            super::super::begin_control_frame(&ctx, &params, &extras);
+            let found = index.results_filtered(
+                "Session",
+                &params,
+                &extras,
+                ScanMedium::Negative,
+                7,
+                Path::new("."),
+                true,
+            );
+            if auto_modified || size_modified {
+                assert_eq!(found.len(), 1);
+                assert_eq!(found[0].owner, ControlOwner::Settings);
+                assert_eq!(
+                    found[0].labels.iter().any(|label| label == "auto preview"),
+                    auto_modified
+                );
+                assert_eq!(
+                    found[0]
+                        .labels
+                        .iter()
+                        .any(|label| label == "preview max size"),
+                    size_modified
+                );
+            } else {
+                assert!(found.is_empty());
+            }
+            super::super::end_control_frame();
+        }
     }
 
     #[test]

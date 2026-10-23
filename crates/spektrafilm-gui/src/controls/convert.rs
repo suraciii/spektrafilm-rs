@@ -17,6 +17,9 @@ pub(crate) fn sections(
                     .small()
                     .color(theme::FG_MUTED),
             );
+            if filter_matches(filter, "scan illuminant") {
+                flags.runtime_changed |= scan_illuminant(ui, &mut params.film_render.convert.scan_illuminant);
+            }
             if filter_matches(filter, "exposure compensation ev") {
                 flags.runtime_changed |= param_numeric(ui, "exposure compensation ev", &mut params.film_render.convert.exposure_compensation_ev, "film_render.convert.exposure_compensation_ev", "Aligns the scan's overall brightness to the model (gain = 2^ev). Brighter input -> less recovered film density.");
             }
@@ -66,6 +69,53 @@ pub(crate) fn sections(
             }
         });
     }
+}
+
+/// Imported RGB acquisition has its own light, independent of product readout.
+fn scan_illuminant(ui: &mut Ui, value: &mut String) -> bool {
+    static ILLUMINANTS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+        spektrafilm_core::spectral_service::available_illuminants()
+            .into_iter()
+            .filter(|name| spektrafilm_core::spectral_service::is_supported_illuminant(name))
+            .collect()
+    });
+    let mut changed = choice_tip_experimental(
+        ui,
+        "scan illuminant",
+        value,
+        &ILLUMINANTS,
+        "Light used to acquire the imported negative RGB. This only changes capture inversion, not the fixed product readout light.",
+    );
+    let draft_id = ui.make_persistent_id("scan-illuminant-draft");
+    let mut draft = ui
+        .ctx()
+        .data(|data| data.get_temp::<String>(draft_id))
+        .unwrap_or_else(|| value.clone());
+    let response = ui
+        .add(
+            egui::TextEdit::singleline(&mut draft)
+                .desired_width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
+                .hint_text("custom BB<kelvin>"),
+        )
+        .on_hover_text("Enter any shared catalog illuminant or BB<kelvin> (1667..=25000).");
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_label("custom scan illuminant"));
+    if response.changed()
+        && draft != *value
+        && spektrafilm_core::spectral_service::is_supported_illuminant(&draft)
+    {
+        value.clone_from(&draft);
+        changed = true;
+        record_label_edit(ui.ctx(), "scan illuminant");
+    }
+    let stored_draft = if response.lost_focus() || !response.has_focus() {
+        value.clone()
+    } else {
+        draft
+    };
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(draft_id, stored_draft));
+    changed
 }
 
 /// Serialize a 3x3 matrix to the calibration string format.
@@ -126,4 +176,63 @@ fn calibration_matrix(ui: &mut Ui, calibration: &mut String) -> bool {
         *calibration = calibration_to_string(&matrix);
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn canonical_acquisition_row_edits_shared_catalog_and_validates_custom_light() {
+        let entry = lookup("film_render.convert.scan_illuminant").unwrap();
+        assert_eq!(entry.owner, ControlOwner::Stage(Stage::Input));
+        assert_eq!(entry.section, "Convert");
+        assert_eq!(entry.editor, inventory::EditorKind::Choice);
+        assert_eq!(
+            entry.validation.as_ref().unwrap(),
+            &spektrafilm_core::params::sources::describe_field(&entry.path).unwrap()
+        );
+        assert!(lookup("scanner.lamp").is_none());
+        let params = crate::state::GuiState::factory().runtime_params().unwrap();
+        let scanner = params.scanner.clone();
+        let mut harness = Harness::new_ui_state(
+            |ui, params| {
+                show(
+                    ui,
+                    params,
+                    &mut serde_json::Value::Null,
+                    "Convert",
+                    ScanMedium::Negative,
+                    "film_render.convert.scan_illuminant",
+                    &mut SectionLabelCache::default(),
+                    "D55",
+                    &crate::profiles::pick_data_dir(),
+                );
+            },
+            params,
+        );
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::ComboBox, "scan illuminant")
+            .click();
+        harness.run();
+        harness.get_by_label("D65").click();
+        harness.run();
+        assert_eq!(harness.state().film_render.convert.scan_illuminant, "D65");
+        for (draft, expected) in [("BB4321", "BB4321"), ("BB1000", "BB4321")] {
+            harness.get_by_label("custom scan illuminant").focus();
+            harness.run();
+            harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness
+                .get_by_label("custom scan illuminant")
+                .type_text(draft);
+            harness.run();
+            assert_eq!(
+                harness.state().film_render.convert.scan_illuminant,
+                expected
+            );
+            assert_eq!(harness.state().scanner, scanner);
+            assert!(harness.state().validate().is_ok());
+        }
+    }
 }

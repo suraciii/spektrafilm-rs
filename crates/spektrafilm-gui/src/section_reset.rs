@@ -190,6 +190,25 @@ fn extras_value(extras: &Value, path: &str) -> Option<Value> {
         Some(Value::from(
             crate::display::DisplaySettings::from_json(&extras["display"]).white_padding,
         ))
+    } else if path == "rust.display_profile" {
+        Some(
+            extras["rust"]["display_profile"]
+                .as_str()
+                .filter(|selection| !selection.is_empty())
+                .map_or(Value::Null, |selection| Value::from(selection.to_owned())),
+        )
+    } else if document_value(extras, path).is_none()
+        && matches!(
+            path,
+            "rust.export_saving_color_space" | "rust.export_saving_cctf_encoding"
+        )
+    {
+        let options = crate::export::ExportOptions::from_state(extras);
+        Some(if path == "rust.export_saving_color_space" {
+            Value::from(options.saving_color_space)
+        } else {
+            Value::from(options.saving_cctf_encoding)
+        })
     } else {
         document_value(extras, path)
     }
@@ -290,6 +309,8 @@ static FACTORY_ROOT: std::sync::LazyLock<Value> =
 /// are read from the document the factory projects.
 static FACTORY_EXTRAS: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
     let mut sections = GuiState::factory().sections;
+    crate::export::ExportOptions::from_state(&sections).write_state(&mut sections);
+    sections["rust"]["display_profile"] = Value::Null;
     let display = crate::display::DisplaySettings::from_json(&sections["display"]).to_json();
     for (key, value) in display
         .as_object()
@@ -537,6 +558,40 @@ mod tests {
     }
 
     #[test]
+    fn export_conversion_and_icc_modified_markers_use_typed_factory_defaults() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections;
+        let root = serde_json::to_value(&params).unwrap();
+        let paths = [
+            "extras.rust.export_saving_color_space",
+            "extras.rust.export_saving_cctf_encoding",
+            "extras.rust.display_profile",
+        ];
+        for path in paths {
+            assert!(factory_value(path).is_some(), "{path}");
+            assert!(!path_modified(path, &root, &extras), "{path}");
+        }
+        extras["rust"]["display_profile"] = Value::Null;
+        assert!(!path_modified(paths[2], &root, &extras));
+        let mut options = crate::export::ExportOptions::from_state(&extras);
+        options.format = crate::export::ExportFormat::Tiff;
+        options.saving_color_space = "ProPhoto RGB".into();
+        options.saving_cctf_encoding = !options.saving_cctf_encoding;
+        options.write_state(&mut extras);
+        extras["rust"]["display_profile"] = Value::from("selected-display.icc");
+        for path in paths {
+            assert!(path_modified(path, &root, &extras), "{path}");
+            assert!(reset_leaf(&mut params, &mut extras, path), "{path}");
+            assert!(!path_modified(path, &root, &extras), "{path}");
+        }
+        extras["rust"]
+            .as_object_mut()
+            .unwrap()
+            .remove("display_profile");
+        assert!(!path_modified(paths[2], &root, &extras));
+    }
+
+    #[test]
     fn leaf_and_module_resets_preserve_unrelated_explicit_preparation_ownership() {
         for module in [false, true] {
             let mut params = factory();
@@ -625,6 +680,31 @@ mod tests {
         extras["special"]["film_channel_swap"] = serde_json::json!([1, 0, 2]);
         assert!(is_modified("Convert", &params, &extras));
         assert!(reset(&mut params, &mut extras, "Convert"));
+        assert!(!is_modified("Convert", &params, &extras));
+    }
+
+    #[test]
+    fn imported_acquisition_light_resets_only_with_its_convert_owner() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections;
+        let factory_light = params.film_render.convert.scan_illuminant.clone();
+        params.film_render.convert.scan_illuminant = "BB4321".into();
+        assert!(is_modified("Convert", &params, &extras));
+        assert!(!is_modified("Scanner", &params, &extras));
+        params.scanner.lens_blur = 0.25;
+        assert!(reset(&mut params, &mut extras, "Scanner"));
+        assert_eq!(params.film_render.convert.scan_illuminant, "BB4321");
+        assert!(reset_leaf(
+            &mut params,
+            &mut extras,
+            "film_render.convert.scan_illuminant"
+        ));
+        assert_eq!(params.film_render.convert.scan_illuminant, factory_light);
+        params.film_render.convert.scan_illuminant = "T".into();
+        params.scanner.lens_blur = 0.5;
+        assert!(reset(&mut params, &mut extras, "Convert"));
+        assert_eq!(params.film_render.convert.scan_illuminant, factory_light);
+        assert_eq!(params.scanner.lens_blur, 0.5);
         assert!(!is_modified("Convert", &params, &extras));
     }
 
