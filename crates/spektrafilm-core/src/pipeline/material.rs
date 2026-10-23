@@ -194,20 +194,8 @@ impl Pipeline {
                 || params.scanner.unsharp_mask.iter().all(|&v| v > 0.0)
                 || (!params.io.scan_film && glare.active && glare.percent > 0.0);
             let print_spatial = printing && params.enlarger.diffusion_filter.active;
-            if params.workflow.route_enum().artifact_output().is_none()
-                && !scan_spatial
-                && !print_spatial
-                && !header.geometry.print_spatial_completed
-            {
-                density = crate::stages::grain_v3::crop_output(
-                    density,
-                    crate::stages::grain_v3::SourceRect {
-                        x,
-                        y,
-                        width,
-                        height,
-                    },
-                );
+            if !scan_spatial && !print_spatial && !header.geometry.print_spatial_completed {
+                density = crate::stages::grain_v3::crop_output(density, crate::stages::grain_v3::SourceRect { x,y,width,height });
                 header.geometry.pending_crop = None;
             }
         }
