@@ -2,6 +2,8 @@
 
 This page explains the desktop GUI controls, rendering actions, viewer, and saved state. It distinguishes retained Preview and Scan output from independent Export work.
 
+This guide describes the current page-based native interface. The [photo-first product specification](../specs/gui-product-design/spec.md) defines the target stage inspector, preset search, and adjustment history. Those target interactions are not yet native GUI capabilities.
+
 ## Launch
 
 ```bash
@@ -32,7 +34,7 @@ A boolean row is a switch that names the concept it enables. A choice row shows 
 
 The control filter searches every page. Results name the owning page and section and summarize matching controls; selecting a result changes the active page and reveals the matching section without changing parameters or persisted state. Clearing the filter restores the normal collapsed layout. While a filter is active, a `clear filter` action beside the box clears it, and a filter that matches nothing reports the entered text. Closed sections provide one-line summaries of the controls they contain.
 
-Pages and their section assignment follow [page ownership](../specs/gui-workflow/spec.md#page-ownership).
+The current interface uses MAIN, FILM, PRINT, ADVANCED, and CONFIG pages. The target replacement is defined by [stage and surface ownership](../specs/gui-workflow/spec.md#stage-and-surface-ownership).
 
 Page navigation is one segmented control above the control list; the current page is the selected segment.
 
@@ -163,7 +165,7 @@ Launching with `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` set to an existing directory pu
 
 ## Session configuration
 
-The CONFIG page holds the Diagnostics section, startup state management, and the viewer presentation settings. See [page ownership](../specs/gui-workflow/spec.md#page-ownership).
+The current CONFIG page holds Diagnostics, startup state management, and viewer presentation settings. The [target layout](../specs/gui-workflow/spec.md#stage-and-surface-ownership) moves these controls to application settings without changing their parameter or session scope.
 
 The viewer interpolation mode, canvas, white padding, and display transform affect the disposable viewer raster. See [Viewer](#viewer).
 

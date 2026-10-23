@@ -1,217 +1,123 @@
 # GUI product design
 
-## Purpose
+## Authority and scope
 
-This specification defines the product-facing GUI design direction for SpektraFilm. It improves comprehension and discoverability without replacing the physical film workflow, the five-page ownership model, or the existing retained-output and viewer boundaries.
+This specification defines the photo-first desktop workspace and its user flows. [GUI workflow](../gui-workflow/spec.md) owns control placement, editing, history, retained output, and persistence. [GUI presentation](../gui-presentation/spec.md) owns visual tokens and component states. [GUI product language](../gui-language/spec.md) owns labels and help. [The product design](design.md) defines the boundaries that implement these contracts.
 
-The design must make the following workflow legible:
+The GUI must reduce navigation and editing effort without removing supported controls. It must not replace independent parameters with a generic effect-strength slider. Folding a module must change its presentation only.
 
-```text
-source image → exposure → development → print or scan → digital output
-```
+This target replaces the MAIN, FILM, PRINT, ADVANCED, and CONFIG page navigation with a stage inspector and separate application settings. It does not change the film pipeline, canonical parameter paths, preset schemas, validation, or Save and Export pixel semantics.
 
-The GUI must not reduce this workflow to an undifferentiated look, effect, or filter.
+## Workspace
 
-## Product boundaries
+The workspace must keep three regions: a collapsible preset browser on the left, the retained-image viewer in the center, and the adjustment inspector on the right. The image must remain visible while a person chooses a preset or edits a photographic parameter.
 
-The GUI must retain these boundaries:
+The header must expose Open image, Undo, Redo, application settings, and independent Export. It must identify the current source, material pair, and physical workflow. Material and workflow summaries outside the inspector must be read-only. The header remains the single operation-status surface.
 
-- MAIN owns image intake, workflow selection, profiles, camera, enlarger, scanner, output, and export.
-- FILM owns film material and film-domain effects.
-- PRINT owns photographic-print material and print-domain effects.
-- ADVANCED owns processing controls that most sessions do not change.
-- CONFIG owns session, diagnostics, GUI, and display settings.
-- The viewer is the primary surface for retained input, output, and Paper back presentation.
-- The control panel is the only surface that edits parameter values.
-- The preset browser remains a separate collapsible region.
-- Operation status appears on one surface: the window header.
+Preview, Scan, and Save must remain reachable without opening a photographic module. They must retain their distinct names and operation scopes. Export may be the primary delivery action, but it must not replace Save.
 
-A product-design change must not add a second editable surface for an existing persisted value.
+The inspector must present Input and capture, Film, Print, Scan, and Output in that order. A stage jump strip must reveal and scroll to the corresponding heading in the same inspector. It must not switch between mutually exclusive pages. Several stages and modules must be able to remain open together.
 
-## Information hierarchy
+The inspector must keep search and stage navigation visible while its controls scroll. The tonal-distribution readout remains collapsible above them. Preset and inspector scrolling must not move or resize the photograph.
 
-The GUI must present information in this order:
+Application settings must contain session preferences, startup-state actions, display configuration, and diagnostics. Export options must remain in the independent Export dialog. Neither surface must become a destination for photographic controls merely because they are less common.
 
-1. current materials and physical workflow;
-2. retained image and viewer state;
-3. page and section ownership;
-4. current parameter values and factory-state differences;
-5. technical execution detail and diagnostics.
+## User flows
 
-The header must not force users to decode serialized route syntax before they know the selected workflow. The exact route must remain available, and the GUI may add a direct physical description beside it or in its help text.
+### Open and establish the workflow
 
-The control panel must not expose backend, precision, or internal cache terminology as the primary explanation of a normal photographic control.
+1. Open image must accept the supported RGB and RAW formats through their existing import paths. A supported drop must enter the same import operation.
+2. A successful import must show the accepted source and its current workflow. Failure must preserve the accepted image and controls and report the error.
+3. A person must be able to choose a complete look from the left browser or choose materials directly in their stages. Choosing a preset must not be required to edit a photograph.
+4. The person can adjust exposure in Input and capture before opening other modules.
 
-## Workflow presentation
+RAW decoding and reprocessing must remain distinguishable from simulated camera exposure. Changing a RAW setting must not imply that an accepted source has already been decoded with that setting. The reprocess action and its pending or failed state must be explicit.
 
-The workflow selector must offer exactly the routes accepted by the workflow validator. Each route choice must have:
+### Choose a look or a material
 
-- its exact serialized route value;
-- a direct physical description;
-- a tooltip that identifies the scanned medium and delivered polarity when those facts are conditional.
+A look preset selects the material pair and its owned controls under [Presets](../presets/spec.md#apply). The browser must support search and distinguish applied, modified, and missing states. Built-in presets remain read-only.
 
-A route description must not invent a creative category. It must describe process sequence.
+Choosing a film alone must retain the selected print material. Choosing a print material alone must retain the selected film. Workflow defaulting and scanner normalization must follow the existing [material-selection rules](../presets/spec.md#workflow-defaulting), not the browser prototype's behavior. The header must identify any resulting route or scanner normalization.
 
-Examples:
+A material selector must list only materials accepted for its role. Development-time choices must come from the selected material's family. A material without a selectable family must show its effective state without a one-choice selector.
 
-| Exact route | Direct description |
-|---|---|
-| `input` | Color-manage an already rendered RGB image. |
-| `input > film > scan` | Expose film and scan the selected film medium. |
-| `input > film > print > scan` | Expose film, print it photographically, then scan the paper. |
-| `input > convert-film > scan` | Convert the input to a negative capture, then scan the film. |
-| `input > convert-film > print > scan` | Convert the input to a negative capture, print it photographically, then scan the paper. |
-| `input > convert-film > scan-minus-base` | Convert the input and scan the film with its base removed. |
+A feature profile, a section preset, and a look preset must remain distinct operations. A feature profile must not change materials, route, enable state, or unrelated controls. A section preset must state its full scope when it spans more than one visible module.
 
-The selector must not silently change route terminology when a profile or stock changes. If a stock change resets an ineligible route or scanner selection, the header status must state what was normalized or cleared.
+### Refine the photograph
 
-## Scanner product surface
+A person must be able to open any module without changing the route, applying a preset, or enabling an effect. An inactive module must retain its values and explain what makes it inactive.
 
-The Scanner surface must follow the physical sequence from [`Film chain`](../film-chain/spec.md#scan-medium-and-scanner-controls):
+Numeric controls must combine coarse pointer adjustment with precise entry. Every editable vector component must remain accessible. A linked or aggregate control must not replace independent components.
 
-1. scanner acquisition through the scanner lamp;
-2. scan output polarity and negative conversion;
-3. readout optics and digital sharpening;
-4. downstream digital output.
+Parameter search must find controls across all stages, including collapsed and inactive modules. Results for application settings and Export must open the actual owner, not duplicate its editors. Search and Only modified must not change render parameters.
 
-This sequence may be explained with a short static help line. It must not create additional parameter groups or rename the canonical scanner controls.
+A row must offer help, its unit where applicable, and an individual factory reset. A module must offer its own factory reset. Factory differences must remain distinct from differences against the applied preset. A drag, reset, feature-profile selection, material selection, or preset application must be reversible under [Edit history](../gui-workflow/spec.md#edit-history).
 
-The surface must distinguish:
+### Inspect and deliver
 
-- scanner acquisition from negative conversion;
-- record density from scan capture;
-- lens blur from unsharp mask.
+Input, Output, and Paper back remain viewer layers. Zoom, pan, comparison, reveal, interpolation, display ICC, canvas, and paper-back presentation must not change retained, saved, or exported pixels.
 
-The surface must state that the white reference of a scan is the clear film base of the scanned medium and that it reads as the output color space's white.
+The viewer must retain the last accepted frame while work runs. It must identify when that frame does not represent the current controls. A delayed result must not appear to satisfy a newer edit.
 
-## Viewer product surface
+Save must write retained output without rerendering. Export must capture an independent full-resolution render request. Export must expose format, bit depth, encoding, compression, saving color space, and backend according to the [photo-export contract](../photo-export/spec.md). Canceling its settings must discard the draft; canceling an active export must use the existing worker cancellation path.
 
-The viewer must make the retained image boundary obvious:
+The GUI must not treat saving a preset, saving startup defaults, saving retained output, and exporting a photograph as interchangeable operations.
 
-- `Input` shows retained input.
-- `Output` shows retained output.
-- `Paper back` shows the viewer-only virtual paper-back rendering.
+Restore factory default must ask for confirmation that it replaces the current configuration and removes the saved startup default. Save current as default must report that it replaced startup controls. Neither action may claim that adjustment Undo reverses the file change.
 
-The viewer must explain that Paper back, display ICC, display transform, canvas, interpolation, zoom, comparison, and reveal affect viewer presentation only. They must not change retained, saved, or exported pixels.
+## Full controls with progressive disclosure
 
-The footer must group controls by target:
+The [stage and surface table](../gui-workflow/spec.md#stage-and-surface-ownership) is authoritative for placement. Every supported editable control must have one location. There is no basic-mode inventory and no separate expert-mode inventory.
 
-- rotation;
-- zoom and fit;
-- before/after comparison;
-- read-only zoom status.
+Closed module headings must name their contents with physical terms and expose their modified and inactive states without color alone. Enabling a module must not be required to discover its contents. Inactive values must remain readable.
 
-The GUI must not introduce pointer gestures that conflict with numeric-field editing or control-panel scrolling without a separate interaction specification and acceptance coverage.
+Default disclosure must put the source workflow and camera exposure within reach before detailed material controls. Other modules may start collapsed. Folding one module must not close another. A parameter edit, preview completion, or route change must not collapse the user's open modules or reset the inspector scroll position.
 
-## Control-panel product surface
+Halation must be a named Film module, not a hidden generic effect. It must retain the feature-profile action, scatter and back-reflection controls, source response, all editable RGB components, bounce controls, and normalization. A profile is a scoped starting configuration, not a substitute for these controls.
 
-Collapsed sections must state their contents using canonical terms. Summaries must name physical controls, not internal field paths.
+Preflash must be a named Print module beside the main enlarger exposure controls. Exposure, Yellow shift, and Magenta shift must all be available. Zero exposure disables flash and retains the filter values. The label and help must distinguish linear flash exposure from camera EV and main print exposure. Photographic-paper highlight behavior and its limitations follow [Preflash](../output-mix/spec.md#preflash).
 
-A section modified state and row modified state must use the section-reset factory baseline. The visible cue must not rely on color alone. The help must state that reset restores the section's factory values.
+Camera diffusion belongs to Input and capture. Enlarger diffusion belongs to Print. Print viewing glare belongs to Scan. Halation, these two diffusion stages, and viewing glare must not be combined into one Bloom or Glow module.
 
-The filter must remain a transient control-panel operation. It must report the owning page and section for cross-page results. It must not change parameters or persisted state. A clear action, placeholder, or broader search vocabulary requires an explicit implementation change to the control-search contract.
+The grain selector must keep all supported engines and their full parameter sets. Their shared location must not imply a common processing domain. Unselected engine values remain discoverable and retained; actual editability follows engine and feature-profile conditions.
 
-The GUI must not add a second page navigation surface. Search navigation may switch to the owning page because it reveals ownership rather than flattening the workflow.
+## Visual and accessibility constraints
 
-## Save, Export, and default-state actions
+The native application must reuse the [semantic token system](../gui-presentation/spec.md#semantic-role-vocabulary). A web prototype palette or dimension is not a new native token authority.
 
-The action surface must distinguish:
+The image must have the largest uninterrupted visual area at the supported desktop layout. Panels must use restrained surfaces, aligned labels and values, and a warm accent for action or selection. Dense technical explanations belong in help rather than between every ordinary control.
 
-- Preview: bounded retained render;
-- Scan: full-resolution retained render;
-- Save: write retained output without rerendering;
-- Export: independent full-resolution render and write;
-- Save current as default: replace the startup GUI state;
-- Restore factory default: replace current controls with factory state and remove the saved startup default.
+At 1460 × 980, the toolbar, stage navigation, and numeric editors must remain readable and operable without overlap or clipping. A narrower supported window must allow the preset browser to collapse and long control lists to scroll. Shrinking the window must not make a control permanently unreachable. This specification does not require a mobile-native GUI.
 
-Restore factory default is destructive to current session configuration. Before applying it, the GUI must state what it replaces. A confirmation is required unless the action is made reversible by an explicit undo contract.
-
-Save current as default must report that the startup state was replaced. It may proceed without confirmation when the operation is not destructive to the current session.
-
-Export settings must remain independent of Save settings. The UI must not imply that changing display ICC, viewer interpolation, Paper back, or viewer zoom changes either output path.
-
-## Preset browser
-
-A preset entry must expose its film and print stocks using the same visual stock identifiers used by the header and profile selectors. Applied, modified, and missing states must remain distinguishable without color alone.
-
-Existing preset management actions must be reachable by pointer and keyboard. Context menus may remain available, but they must not be the only route to update, revert, rename, duplicate, export, reveal, or delete an existing user preset.
-
-Preset thumbnails, favorites, search, sorting, and collections are outside this product-design scope.
-
-## Discoverability improvements
-
-The following improvements are part of the product-design target:
-
-1. add accurate help for route, scanner, display, CCTF, Save, Export, and viewer-only boundaries;
-2. expose route/profile normalization in the single header status surface;
-3. provide an explicit no-match state for control filtering;
-4. make filter clearing discoverable without changing its transient semantics;
-5. provide keyboard-reachable preset actions;
-6. document drag-and-drop image import if the existing behavior remains supported;
-7. consider canvas wheel zoom only after resolving its interaction with numeric fields and control-panel scrolling.
-
-The last item is not approved for implementation by this specification. It requires a separate interaction decision.
-
-## Visual design constraints
-
-The current three-region layout, token layer, spacing rhythm, right control panel width, and page ownership are retained. A language or discoverability change must not trigger a general visual redesign.
-
-The GUI must preserve:
-
-- one label column and one value column for parameter rows;
-- readable wrapped summaries for collapsed sections;
-- row alignment at the supported 1460 × 980 application layout;
-- visible action-bar controls without clipping;
-- accessible labels independent of decorative status text;
-- non-color state cues.
-
-A layout change must be verified with the real offscreen layout suite and a real GUI review.
-
-## Implementation slices
-
-### Slice A: language authority
-
-Add one GUI-owned presentation vocabulary map. It must draw domain definitions from `CONTEXT.md` and operation definitions from the owning specifications. It must separate visible labels, help text, serialized values, and diagnostics.
-
-### Slice B: safe presentation improvements
-
-Implement only changes that preserve physical meaning:
-
-- direct physical route descriptions beside exact route values;
-- accurate tooltips for scanner and display boundaries;
-- explicit Save and Export scope;
-- CCTF expansion at first use;
-- Paper back viewer-only explanation;
-- descriptive reset and modified help;
-- clear filter no-match feedback.
-
-### Slice C: destructive-action and preset discoverability
-
-Add factory-reset confirmation and keyboard-reachable preset actions. Preserve the one-surface status rule and existing preset ownership.
-
-### Slice D: interaction proposals
-
-Treat wheel zoom, new viewer layer names, and broader search matching as separate proposals. Do not implement them as incidental copy edits.
+All controls, module toggles, preset actions, search results, and dialogs must work by keyboard and pointer. Focus must remain visible. Numeric editing must not lose focus on each accepted value update. Closing a dialog must return focus to its invoking control. Labels and state cues must remain meaningful without hover or color alone.
 
 ## Non-goals
 
-This specification does not authorize:
+This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, live preset thumbnails, favorites, collections, batch processing, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls.
 
-- a new component framework or egui upgrade;
-- a new physical-process vocabulary;
-- Digital response, Reproduction, saturation, color-density, split-toning, or retired output-lightness controls;
-- route or parameter behavior changes;
-- silent migration aliases for scanner or output terminology;
-- changes to Save or Export pixels;
-- preset thumbnails, favorites, sorting, collections, or preset search;
-- prototype-only gestures without a decided interaction contract.
+The HTML design reference is not an engine implementation. Its sample values, parameter count, browser storage, image assets, and disabled engine actions are not native product contracts. Native acceptance must use actual source images, production controls, and real render and writer operations.
 
 ## Acceptance
 
-1. A person can identify the selected materials, physical route, retained viewer layer, and last operation without reading serialized parameter paths.
-2. Technical help preserves the exact physical operation, domain, stage, units, and calibration status.
-3. Scanner labels match the film-chain contracts and do not conflate acquisition, conversion, setup, finishing, or digital output.
-4. Save, Export, Preview, Scan, display transform, and viewer-only state remain distinct and testable.
-5. Route and profile normalization reports its effects without changing the intended runtime behavior.
-6. Factory reset, preset management, search feedback, and drag-and-drop affordances are keyboard-reachable or explicitly documented as not yet supported.
-7. Existing page ownership, persisted-state compatibility, headless behavior, layout behavior, and Save/Export pixel behavior remain unchanged unless a separate specification authorizes the change.
+| Scenario | Required observable result |
+| --- | --- |
+| Open RGB or RAW; attempt an invalid import | The supported input reaches its real import path; failure preserves the accepted source and controls. |
+| Choose a look, change exposure, undo | The look applies atomically; its modified state follows owned controls; undo restores the previous edit without rewriting the preset file. |
+| Change only the film | The print selection remains; route defaulting and scanner normalization follow their owners and are reported. |
+| Expand several modules; edit and wait for preview | Open state, scroll, and numeric focus remain usable; the image remains visible. |
+| Search a folded or inactive control by label or canonical path | The correct owner is revealed with its current value and applicability reason; no second editor or parameter change appears. |
+| Search an Export or display option | The result opens that dialog or setting; unrelated dialogs are not filtered by the inspector query. |
+| Use Only modified, reset a row, then undo | Filtering uses the factory baseline; reset changes only its owned scope; undo restores values and edit provenance. |
+| Drag a slider through several intermediate values | Its number updates consistently; the completed gesture creates one undo step. |
+| Apply a Halation profile; edit an RGB component | Only the feature profile's declared scope changes; the direct edit remains available and profile identity is recomputed. |
+| Set Preflash exposure and Y/M shifts; set exposure to zero | Flash stops while both filter values remain; a route without printing marks the group inactive without clearing it. |
+| Switch grain engines, then return | Every engine retains its controls; conditions and domains remain explicit; no generic slider replaces model controls. |
+| Save after changing viewer presentation; run independent Export | Save retains its input pixels and Export uses its captured full-resolution configuration; neither consumes a viewer raster. |
+| Reject a preset or state; undo while a render runs | Rejection commits nothing; obsolete worker results cannot overwrite the restored controls' accepted output. |
+| Use keyboard navigation and a narrow desktop window | All editing and preset actions remain reachable; no clipping or pointer-only action blocks the workflow. |
+
+Control completeness must also satisfy the executable inventory coverage in [Complete control access](../gui-workflow/spec.md#complete-control-access). A fixed prototype count is not completeness evidence.
+
+## Implementation status
+
+The native GUI still uses the page-based layout described in the [current GUI guide](../../docs/gui.md). The stage inspector, global locator behavior, preset search, and adjustment history in this specification are target requirements, not claims of delivered native behavior. Specification checks and the HTML interaction review do not satisfy native GUI, image, worker, or export acceptance.

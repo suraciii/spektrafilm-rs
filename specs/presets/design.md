@@ -7,6 +7,7 @@
 - Built-in preset documents are repository files in `crates/spektrafilm-core/assets/presets`. The build must compile them in, so built-in listing and name resolution must not require a data directory, and packaged data directories must not carry copies.
 - A document is a **look preset** (both profile references and every required look-owned group, with the optional camera group defined by the [preset file format rules](spec.md#file-formats)) or a **section preset** (exactly one section, no profile reference). The kind is derived from the carried scope, never declared by a field, and a built-in document may be either kind. A document that carries neither a whole look nor exactly one section must be rejected.
 - A section preset must pass the same value validators as a look preset for the paths it carries, and its payload must follow the parameter-file leaf discipline: only supplied leaves are edited, unknown fields and duplicate keys fail, and omitted values must not be filled from defaults. Applying it edits exactly its section and registers those values as explicit, so neither stock initialization nor database calibration rewrites them, and it must not clear explicit values outside its section.
+- GUI application of either kind must commit one transaction under [Edit history](../gui-workflow/spec.md#edit-history). The transaction must retain explicit-leaf provenance and dependent normalized values, not only the carried payload. Undo and Redo must not reverse library writes.
 - Writes, atomicity, rename, delete, duplicate, import, and export must treat both kinds through one code path. The resolver must reuse the parameter-file leaf-merge implementation for section presets instead of adding a second merge.
 - The library directory is `<config_dir>/presets`. The configuration directory policy is shared by the GUI and the CLI. `SPEKTRAFILM_CONFIG_DIR` must override it; there is no separate preset directory override. The library directory must not require a data directory.
 - Reusable combinations of controls that are already preset-owned belong in the existing look or section preset. They use the preset library, ownership table, strict validators, and shared resolver; there is no second cross-domain configuration document or selector.
@@ -17,26 +18,27 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 
 A section must be a group of editable controls that a user can see and that can change the render. A parity-only, never-read, derived, or control-less parameter must not own a section: `film_render.glare` is not preset-owned because the pipeline never reads it and no control surface edits it, `film_render.grain.monochrome` is derived from the film profile (`broadcast_monochrome_layout`) and `film_render.grain.micro_sublayers` is a no-op (`sources::effects` classifies it `NoOp`), `enlarger.lens_blur` is zeroed by digest and applied by no upstream stage, and the neutral enlarger filter anchors are database-calibration state rather than section-owned look controls. Print viewing glare remains in `print` through `print_render`; its [readout boundary](../film-chain/spec.md#scan-optics-and-print-viewing-glare) must not be inferred from that storage location.
 
-- `film`: `film_render.density_curve_gamma`, `film_render.development_time`, `film_render.chemistry`
-- `grain`: `film_render.grain`
-- `halation`: `film_render.halation`
-- `couplers`: `film_render.dir_couplers`
-- `base`: `film_render.base`
-- `convert`: `film_render.convert`
-- `camera`: `camera.exposure_compensation_ev`, `camera.auto_exposure`, `camera.auto_exposure_method`, `camera.capture_illuminant`
-- `camera filter`: `camera_diffusion_filter`
-- `enlarger filter`: `enlarger.diffusion_filter`
-- `enlarger`: `enlarger` without `enlarger.diffusion_filter`
-- `scanner`: `scanner.lamp`, `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`
-- `cmyk ink style`: `cmyk`
-- `print`: `print_render`
-- `output mix`: `output_mix`
+- `film`: `film_render.density_curve_gamma`, `film_render.development_time`, `film_render.chemistry`. Primary menu anchor: Film / Chemistry.
+- `grain`: `film_render.grain`. Primary menu anchor: Film / Grain.
+- `halation`: `film_render.halation`. Primary menu anchor: Film / Halation.
+- `couplers`: `film_render.dir_couplers`. Primary menu anchor: Film / Couplers.
+- `base`: `film_render.base`. Primary menu anchor: Film / Film base.
+- `convert`: `film_render.convert`. Primary menu anchor: Input and capture / Convert.
+- `camera`: `camera.exposure_compensation_ev`, `camera.auto_exposure`, `camera.auto_exposure_method`, `camera.capture_illuminant`. Primary menu anchor: Input and capture / Camera.
+- `camera filter`: `camera_diffusion_filter`. Primary menu anchor: Input and capture / Camera diffusion.
+- `enlarger filter`: `enlarger.diffusion_filter`. Primary menu anchor: Print / Enlarger diffusion.
+- `enlarger`: `enlarger` without `enlarger.diffusion_filter`. Primary menu anchor: Print / Enlarger.
+- `scanner`: `scanner.lamp`, `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`. Primary menu anchor: Scan / Scanner.
+- `cmyk ink style`: `cmyk`. Primary menu anchor: Output / CMYK ink style.
+- `print`: `print_render`. Primary menu anchor: Print / Chemistry.
+- `output mix`: `output_mix`. Primary menu anchor: Output / Simulation blend.
 
 - The browser lists look presets only. A section preset must not appear in it and must not be applicable from it.
 - A section preset loads from the menu of its own section. The menu must show the preset whose carried controls equal the section's current controls, or `custom`. The comparison must use the carried editable controls and never derived or prepared values, and equal matches must resolve deterministically by name order.
-- Every section in this table carries its menu, because Save as lives there. A section that spans several visible headers (for example `print`, which covers print chemistry, print base, print glare, and the print density-curve morph) carries one menu on its primary header, so a menu belongs to a section and never to a visible label. A menu whose list is empty must offer Save as for the section's current controls and must state that a preset file can also be placed in the library. The menu must not repeat a control that already exists inside the section.
+- Every section in this table must carry one menu at its named primary module anchor, because Save as lives there. The menu must state its full section scope when that scope spans modules or stages. The `enlarger` menu includes the Print / Preflash controls. The `print` menu includes print chemistry, print base, print density-curve controls, and Scan / Print viewing glare. Those placements must not split sections, add duplicate menus, or change schemas or canonical payload scopes. A menu whose list is empty must offer Save as for the section's current controls and must state that a preset file can also be placed in the library. The menu must not repeat a control that already exists inside the section.
 - The section menu owns load, Save as, Rename, Duplicate, Delete, Export, and Show file for its own documents; the browser keeps the same operations for look presets. Both must call the shared library implementation.
 - A section preset must not change a profile reference or the workflow.
+- Visible stage and module ownership follows [Stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership), not serialized group names. Module resets follow [Section reset](../gui-workflow/spec.md#section-reset); a section menu's wider payload must not expand a visible module's reset scope.
 
 ## Everyday flows
 
@@ -56,6 +58,8 @@ The flows a user actually runs must be short; every one below is two or three st
 - A name must be unique inside a group. Two built-in documents must not share a name, and two library documents must not share a name. The same name in both groups is valid.
 - Name comparison must be case-insensitive, because some file systems resolve names without case.
 - Browser rows and section menus must sort by name, case-insensitively, with a deterministic tie-break. A file-system scan order must never reach the UI, and one library must present one order.
+- Browser search must implement the [browser search contract](spec.md#browser-search) as a transient presentation filter over discovered look presets. It must match a case-insensitive substring of the preset name or referenced film or print stock names or identifiers. It must retain group/name identities, deterministic ordering, library faults, and applied/modified/missing context. It must not change exact name resolution or write to the library, GUI-state files, or preset documents.
+- A filtered browser with no matches must offer query clearing, not claim that the library is empty. An empty query must restore the unfiltered list and its existing order.
 - A name must be 1 to 64 characters. It must not contain `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, or control characters. It must not end with a period or with a carrier extension. It must not be a Windows reserved device name. These rules must hold on every platform, so a library can move between hosts.
 - A library document must be named `<name>.toml` or `<name>.json`. A document whose `name` differs from its file stem must be a fault of that document.
 
@@ -89,4 +93,4 @@ The flows a user actually runs must be short; every one below is two or three st
 - Built-in documents must stay read-only at run time. A user edit must produce a user document or no change. The `My Presets` group header must show the resolved library directory path, must offer to reveal it, and must offer to refresh discovery, so a document placed while the GUI runs becomes visible without a restart. Only user documents have a path.
 - Renaming the applied user preset must follow the marker to the new name. Deleting it must leave the look controls untouched and must show the remembered name as missing.
 - Restoring GUI state must restore the stored controls and must not re-apply the remembered preset document. The applied marker is recomputed against the restored controls.
-- Live thumbnails, favorites, search, sorting options, collections, per-scope preset memory, inheritance, remote distribution, and scanning directories other than the library directory are outside this boundary.
+- Live thumbnails, favorites, sorting options, collections, per-scope preset memory, inheritance, remote distribution, and scanning directories other than the library directory are outside this boundary.
