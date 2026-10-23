@@ -5,6 +5,8 @@ The [GUI presentation design](../gui-presentation/design.md) owns reusable prese
 
 The [GUI product design boundaries](../gui-product-design/design.md) own stage-inspector composition, control inventory integration, disclosure state, and adjustment-history integration. They must use the runtime and worker boundaries below.
 
+The [GUI language design](../gui-language/design.md) owns localized presentation and the independent application-language preference. English labels in GUI specifications identify concepts; the selected language presents those concepts without changing their canonical identities or runtime semantics.
+
 - The GUI is an adapter over `core::runtime`; it does not implement a second film pipeline or color model.
 - UI edits serialize to the runtime parameter model. Preview and Scan use the same model with different geometry limits.
 - Cached preview preparation and independent export preparation must share parameter digestion, scanned-medium selection, and channel-swap rules. Cache reuse and operation observation scopes remain separate.

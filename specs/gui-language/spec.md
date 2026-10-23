@@ -2,11 +2,74 @@
 
 ## Authority and boundary
 
-This specification owns the language that the GUI presents to a person. It owns visible labels, choice labels, help text, workflow descriptions, status wording, and the separation between product language and technical identifiers.
+This specification owns the language that the GUI presents to a person. It owns interface language selection, localized labels, choice labels, help text, workflow descriptions, status wording, and the separation between product language and technical identifiers. [The language design](design.md) owns localization identity, preference, and resource boundaries.
 
 [`CONTEXT.md`](../../CONTEXT.md) owns the domain glossary. [`Film chain`](../film-chain/spec.md) owns scanner operations, scanner stage boundaries, scan-output naming, and conversion-control naming. [`GUI workflow`](../gui-workflow/spec.md) owns control inventory, stage and surface ownership, editing behavior, and persisted-state behavior. [`GUI presentation`](../gui-presentation/spec.md) owns row and surface presentation.
 
 The GUI must use the domain glossary and the owning operation specification as its vocabulary source. This specification must not redefine physical terms with shorter synonyms.
+
+## Interface language
+
+The GUI must support English and Simplified Chinese. English labels in this specification name the English presentation; other supported languages must preserve their operation and meaning rather than display those labels literally. This does not permit translation of identifiers protected by [Serialized and diagnostic language](#serialized-and-diagnostic-language).
+
+### Selection and persistence
+
+The language selector must reside in **Settings → General**, or **设置 → 通用** in Simplified Chinese. Its label must always be **语言 / Language**. Its options must remain recognizable in either language: **跟随系统 / System**, **简体中文**, and **English**. General replaces the visible Session settings group; it retains that group's existing controls and scopes. GUI parameters, Display, Diagnostics, and independent Export keep their distinct owners. This change does not add an appearance setting or move photographic controls into Settings.
+
+The initial preference must be System. System must resolve the operating system's ordered interface-language preferences to a supported language at startup. Explicit Simplified Chinese script tags, including `zh-Hans`, and Chinese region tags for mainland China or Singapore without a conflicting script must resolve to Simplified Chinese. Traditional Chinese tags must not be treated as Simplified Chinese. English tags must resolve to English. Unqualified `zh` and unsupported or unavailable preferences must fall through to the next supported preference, or English when none remains. The selector must distinguish System from an explicit language even when they currently resolve to the same presentation.
+
+An explicit choice must override system detection and persist across application restarts. Switching to System must resolve the current system preference immediately. Continuous monitoring of system-language changes while the application is running is not required.
+
+Language must be an application preference, not a photograph adjustment. Applying a look or section preset, loading GUI state, saving or restoring startup controls, resetting a photographic module, and Undo/Redo must not change it. Language must not be carried by presets, photographic GUI-state files, render recipes, CLI parameters, or exported image metadata. Failure to save the preference must leave the selected language usable for the current run and report that persistence failed.
+
+### Live switching
+
+Language selection must update all open application-owned surfaces without a restart or a render. It must not change source pixels, accepted parameters, parameter revisions, edit provenance, history, retained output, or submitted work. Language must not affect render caching or Save/Export pixels.
+
+Switching language must preserve uncommitted numeric and RAW drafts, Export drafts, search text, module disclosure, and editor buffers and selection. It must not commit, cancel, or restart an edit or operation as a relabeling side effect. Selecting the language control may move focus normally; dialog return focus and keyboard commands must continue to address the same controls by identity after relabeling. Existing progress and history descriptions must use the current language without replacing their underlying operations.
+
+### Translation coverage
+
+Both languages must cover all application-owned workspace, inspector, viewer, preset-browser, Settings, Export, context-menu, and confirmation surfaces. Coverage includes control and option labels, accessible names and descriptions, tooltips, units' explanations, inactive and modified states, empty results, validation guidance, operation progress, success messages, and application-generated error explanations. Technical help must not remain English merely because it is long.
+
+Brand, material, and product names; film specification codes such as `35mm`, `120`, and `4×5`; standard color-space and illuminant names; file-format names; mathematical symbols; and unit tokens must retain their identity. User-authored preset names, descriptions, and paths must not be translated. Built-in descriptive text must be localized without renaming the underlying preset or profile. Recognized parameter choices may have translated display names, but their stored enum values must remain exact.
+
+Application errors must provide a localized explanation and any known recovery action without hiding the failing path, rejected value, or technical detail. Unmodified third-party and operating-system error text may appear as diagnostic detail. The application must not guess a translated failure category from arbitrary error prose. Native operating-system dialogs follow the operating system's language; switching the application language need not relabel an already-open native chooser.
+
+The Simplified Chinese presentation must use these core terms consistently. The table translates existing concepts; it does not redefine their physical boundaries.
+
+| English presentation | Simplified Chinese presentation |
+| --- | --- |
+| Settings / General | 设置 / 通用 |
+| Open / Undo / Redo | 打开 / 撤销 / 重做 |
+| Preview / Scan | 预览 / 扫描 |
+| Save / Export | 保存 / 导出 |
+| Presets / Search controls | 预设 / 搜索控件 |
+| Only modified | 仅显示已修改 |
+| Input and capture | 输入与拍摄 |
+| Film / Print / Output | 胶片 / 印相 / 输出 |
+| Film Format / Custom | 胶片规格 / 自定义 |
+| Frame Long Edge | 画面长边 |
+| Reset to factory | 恢复出厂值 |
+| Input / Output / Paper back | 输入 / 输出 / 相纸背面 |
+
+### Search and text entry
+
+Control search must match Simplified Chinese and English labels, module and destination names, and exact canonical paths in either interface language. Alternate visible labels, including Frame Long Edge, must remain searchable through their one canonical owner. Results must use the selected presentation language and retain technical paths as secondary detail. Localization must not create duplicate controls, parameter aliases, or translated paths. Pinyin and fuzzy transliteration search are outside this contract.
+
+Preset search must retain name and stock-name matching, including original English names. Localized built-in descriptions or display labels exposed as searchable names must not replace their original searchable identity.
+
+Search, preset naming, and editable text must support Simplified Chinese input methods, composition, selection, clipboard operations, and backspace. Intermediate IME composition must not submit a dialog or apply a photographic adjustment. Existing numeric parsing, decimal syntax, unit tokens, and serialized number formatting must not depend on interface language.
+
+### Typography and accessibility
+
+Installed packages must provide licensed fonts that render all shipped Simplified Chinese text and common Simplified Chinese user input without system-font installation or network access. Font licensing and attribution must ship with the package. English text, symbols, mixed Chinese/Latin strings, and paths must remain legible.
+
+Both languages must meet the existing desktop layout, keyboard, focus, and accessibility requirements. Translation must not make actions unreachable, obscure numeric values, or introduce label/value overlap. Ordinary labels must remain readable at supported window sizes and DPI settings; bounded truncation of long user data must preserve access to the complete value. Accessible names and state descriptions must follow the visible language. Clipboard content and user data must retain their original characters.
+
+### Scope
+
+This capability adds English and Simplified Chinese presentation only. It does not translate the CLI, documentation, reports, or serialized contracts. It does not add external language packs, a translation editor, runtime machine translation, or a new GUI framework.
 
 ## Language layers
 
@@ -126,7 +189,7 @@ Actions must use one stable verb and one explicit target:
 | `Open` | Open image intake choices without changing their RGB and RAW meanings. |
 | `Undo` | Restore the preceding accepted edit transaction. |
 | `Redo` | Reapply the next undone edit transaction. |
-| `Settings` | Open session, display, and diagnostics settings. |
+| `Settings` | Open general application, state-file, display, and diagnostics settings. |
 | `Export` | Open the independent Export dialog without starting a render. |
 | `Select RGB image…` | Choose and load a standard raster image. |
 | `Select RAW file…` | Choose and load a camera RAW file through the RAW path. |
@@ -201,3 +264,5 @@ Help text must not:
 4. Save, Export, retained output, and viewer-only state remain distinguishable in labels and help.
 5. A terminology review against `CONTEXT.md` rejects any rename that changes operation, domain, stage, or calibration meaning.
 6. Presentation-only language changes must preserve headless behavior, layout accessibility, Save/Export pixels, and persisted-state contracts.
+7. Both languages must provide the same editing, validation, search, history, and delivery behavior; a language preference must not participate in photographic state or pixel identity.
+8. Release acceptance must include native Simplified Chinese rendering and IME use, language-preference restart behavior, live relabeling with pending edits and work, and bilingual control discovery. English-only headless coverage or untranslated fallback labels must not establish Simplified Chinese support.

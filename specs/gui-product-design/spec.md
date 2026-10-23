@@ -20,7 +20,7 @@ The inspector must present Input and capture, Film, Print, Scan, and Output in t
 
 The inspector must keep search and stage navigation visible while its controls scroll. The tonal-distribution readout remains collapsible above them. Preset and inspector scrolling must not move or resize the photograph.
 
-Application settings must contain session preferences, startup-state actions, display configuration, and diagnostics. Export options must remain in the independent Export dialog. Neither surface must become a destination for photographic controls merely because they are less common.
+Application settings must contain general application preferences, startup-state actions, display configuration, and diagnostics. General replaces the visible Session group and includes the [interface language selector](../gui-language/spec.md#interface-language). Export options must remain in the independent Export dialog. Neither surface must become a destination for photographic controls merely because they are less common.
 
 ## User flows
 
