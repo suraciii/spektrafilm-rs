@@ -120,6 +120,10 @@ fn saved_record_excludes_pending_controls_and_reopens_the_accepted_endpoint() {
     app.gui_state.sections["load_raw"]["temperature"] = json!(6200.0);
     let record = directory.path().join("accepted.spektra-photo.json");
     app.save_photograph_record_to(&record).unwrap();
+    assert!(
+        !app.photograph_has_unsaved_changes(),
+        "record baseline covers accepted settings, not pending numeric or RAW drafts"
+    );
     let saved = PhotographRecord::load(&record).unwrap();
     assert_eq!(saved.settings.params.camera.exposure_compensation_ev, 0.5);
     assert_eq!(saved.settings.raw, accepted_raw);

@@ -1415,7 +1415,7 @@
   "photo_work.list.choose_scope": "Choose an adjustment scope…",
   "photo_work.list.scope_look": "Look (including materials)",
   "photo_work.list.scope_operator": "Operator correction",
-  "photo_work.list.copy_excluded": "Preserved at each destination: source interpretation, accepted RAW decode/settings, geometry, delivery settings, capture calibration (scan illuminant, calibration mode, base percentile), and record-save baseline. Prepared automatic frame setup is not copied. Look uses the existing look resolver; section scopes do not replace materials.",
+  "photo_work.list.copy_excluded": "Preserved at each destination: source interpretation, accepted RAW decode/settings, geometry, delivery settings, capture calibration (scan illuminant, calibration mode, base percentile), and record-save baseline. Prepared automatic frame setup is not copied. Look uses the existing look resolver; section and feature-profile scopes do not replace materials. Feature-profile scopes replace only their canonical family controls, including custom accepted overrides—not the entire section or its enable/engine switches.",
   "photo_work.list.replaced_controls": "Exact controls replaced",
   "photo_work.list.copy": "Copy scope to selected destinations",
   "photo_work.list.source_skipped": "Skipped: this entry is the copy source.",
@@ -1455,5 +1455,7 @@
   "controls.condition.queue_cancel": "Pending queue entry; locates the first eligible entry",
   "controls.condition.queue_retry": "Failed queue entry; locates the first eligible entry",
   "controls.condition.preset_favorites": "Favorites retain built-in or user group identity",
-  "controls.condition.preset_empty": "No matching presets"
+  "controls.condition.preset_empty": "No matching presets",
+  "photo_work.list.scope_feature_grain": "Feature profile: procedural grain (accepted profile and overrides)",
+  "photo_work.list.scope_feature_halation": "Feature profile: halation (accepted profile and overrides)"
 }

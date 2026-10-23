@@ -409,7 +409,11 @@ impl App {
 
     pub(crate) fn comparison_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            ui.strong(crate::i18n::text(ui.ctx(), "photo_work.compare.title"));
+            ui.label(
+                egui::RichText::new(crate::i18n::text(ui.ctx(), "photo_work.compare.title"))
+                    .strong()
+                    .color(crate::theme::FG),
+            );
             let capture = ui
                 .add_enabled(
                     self.image.is_some(),

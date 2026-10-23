@@ -264,6 +264,45 @@ impl App {
             applied: accepted.applied.clone(),
         }
     }
+
+    pub(crate) fn accepted_photograph_differs(
+        &self,
+        baseline: &crate::photograph::record::PhotographSettings,
+    ) -> bool {
+        let accepted = self.accepted_adjustment();
+        let a = &baseline.params;
+        let b = &accepted.params;
+        a.camera != b.camera
+            || a.enlarger != b.enlarger
+            || a.scanner != b.scanner
+            || a.film_render != b.film_render
+            || a.print_render != b.print_render
+            || a.io != b.io
+            || a.workflow != b.workflow
+            || a.cmyk != b.cmyk
+            || a.output_mix != b.output_mix
+            || a.random_seed != self.params.random_seed
+            || a.settings.spectral_shape != b.settings.spectral_shape
+            || a.settings.rgb_to_raw_method != b.settings.rgb_to_raw_method
+            || a.settings.apply_hanatos2025_adaptation_window
+                != b.settings.apply_hanatos2025_adaptation_window
+            || a.settings.apply_hanatos2025_adaptation_surface
+                != b.settings.apply_hanatos2025_adaptation_surface
+            || a.settings.spectral_gaussian_blur != b.settings.spectral_gaussian_blur
+            || a.settings.use_cat16 != b.settings.use_cat16
+            || a.settings.print_exposure_ev_tracking != b.settings.print_exposure_ev_tracking
+            || baseline.film != accepted.film_name
+            || baseline.print != accepted.print_name
+            || baseline.rotation != accepted.rotation
+            || baseline.special != accepted.special
+            || baseline.applied != accepted.applied
+            || baseline.raw
+                != *self
+                    .raw_applied_settings
+                    .as_ref()
+                    .unwrap_or(&accepted.raw_settings)
+            || baseline.preparation != b.render_preparation_state()
+    }
     /// A comparison adoption is one history transaction, independent of the
     /// preset library and independent of whether A has rendered yet.
     pub(super) fn adopt_adjustment(&mut self, target: Rc<AdjustmentState>) -> bool {

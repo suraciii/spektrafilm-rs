@@ -93,37 +93,7 @@ impl App {
         let Some(b) = &self.photograph.baseline else {
             return true;
         };
-        let p = &self.params;
-        let a = &b.params;
-        a.camera != p.camera
-            || a.enlarger != p.enlarger
-            || a.scanner != p.scanner
-            || a.film_render != p.film_render
-            || a.print_render != p.print_render
-            || a.io != p.io
-            || a.workflow != p.workflow
-            || a.cmyk != p.cmyk
-            || a.output_mix != p.output_mix
-            || a.random_seed != p.random_seed
-            || a.settings.spectral_shape != p.settings.spectral_shape
-            || a.settings.rgb_to_raw_method != p.settings.rgb_to_raw_method
-            || a.settings.apply_hanatos2025_adaptation_window
-                != p.settings.apply_hanatos2025_adaptation_window
-            || a.settings.apply_hanatos2025_adaptation_surface
-                != p.settings.apply_hanatos2025_adaptation_surface
-            || a.settings.spectral_gaussian_blur != p.settings.spectral_gaussian_blur
-            || a.settings.use_cat16 != p.settings.use_cat16
-            || a.settings.print_exposure_ev_tracking != p.settings.print_exposure_ev_tracking
-            || b.film != self.film_name
-            || b.print != self.print_name
-            || b.rotation != self.input_rotation
-            || b.special != self.gui_state.sections["special"]
-            || b.raw
-                != *self
-                    .raw_applied_settings
-                    .as_ref()
-                    .unwrap_or(&self.gui_state.sections["load_raw"])
-            || b.preparation != p.render_preparation_state()
+        self.accepted_photograph_differs(b)
     }
 
     pub(crate) fn prepare_photo_context(

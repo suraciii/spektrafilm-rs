@@ -1415,7 +1415,7 @@
   "photo_work.list.choose_scope": "选择调整范围…",
   "photo_work.list.scope_look": "外观（包含材料）",
   "photo_work.list.scope_operator": "操作员校正",
-  "photo_work.list.copy_excluded": "每个目标均保留：来源解释、已接受的 RAW 解码和设置、几何、交付设置、采集校准（扫描光源、校准模式、片基百分位）以及记录保存基线。不复制自动画面设置的计算结果。外观使用现有外观解析器；分区范围不替换材料。",
+  "photo_work.list.copy_excluded": "每个目标均保留：来源解释、已接受的 RAW 解码和设置、几何、交付设置、采集校准（扫描光源、校准模式、片基百分位）以及记录保存基线。不复制自动画面设置的计算结果。外观使用现有外观解析器；分区和特征配置范围不替换材料。特征配置范围仅替换对应族的规范控件，包括自定义的已接受覆盖值，而非整个分区及其启用或引擎开关。",
   "photo_work.list.replaced_controls": "将被替换的确切控件",
   "photo_work.list.copy": "将此范围复制到选定目标",
   "photo_work.list.source_skipped": "已跳过：此条目是复制来源。",
@@ -1455,5 +1455,7 @@
   "controls.condition.queue_cancel": "待处理的队列条目；定位首个符合条件的条目",
   "controls.condition.queue_retry": "失败的队列条目；定位首个符合条件的条目",
   "controls.condition.preset_favorites": "收藏保留内置或用户预设的分组身份",
-  "controls.condition.preset_empty": "没有匹配的预设"
+  "controls.condition.preset_empty": "没有匹配的预设",
+  "photo_work.list.scope_feature_grain": "特征配置：程序化颗粒（已接受的配置及覆盖值）",
+  "photo_work.list.scope_feature_halation": "特征配置：光晕（已接受的配置及覆盖值）"
 }
