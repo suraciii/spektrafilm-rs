@@ -160,14 +160,20 @@ fn copied_settings(
         }
         CopyScope::Feature(family) => {
             let values = feature_profiles::effective_values(family, &accepted_params(source));
-            let assignments = values.as_object().expect("canonical feature values").iter()
+            let assignments = values
+                .as_object()
+                .expect("canonical feature values")
+                .iter()
                 .map(|(path, value)| format!("{path}={value}"))
-                .collect::<Vec<_>>().join(",");
+                .collect::<Vec<_>>()
+                .join(",");
             let edits = ParameterEdits::parse(&assignments).map_err(anyhow::Error::msg)?;
             let mut params = current.clone();
             edits.apply_detailed(&mut params)?;
             let mut preparation = params.render_preparation_state();
-            preparation.explicit_section_paths.extend(edits.paths().map(str::to_owned));
+            preparation
+                .explicit_section_paths
+                .extend(edits.paths().map(str::to_owned));
             params.restore_render_preparation_state(&preparation);
             params
         }
@@ -251,7 +257,10 @@ fn flatten_paths(prefix: &str, value: &serde_json::Value, paths: &mut Vec<String
 
 fn scope_paths(source: &PhotographSettings, scope: CopyScope) -> Result<Vec<String>> {
     if let CopyScope::Feature(family) = scope {
-        return Ok(feature_profiles::scope(family).iter().map(|path| (*path).to_owned()).collect());
+        return Ok(feature_profiles::scope(family)
+            .iter()
+            .map(|path| (*path).to_owned())
+            .collect());
     }
     if scope == CopyScope::Operator {
         return Ok(["exposure_ev", "warmth_ev", "tint_ev", "contrast"]
@@ -845,7 +854,10 @@ impl App {
                                 scope_label(ctx, CopyScope::Section(section)),
                             );
                         }
-                        for family in [FeatureProfileFamily::GrainProcedural, FeatureProfileFamily::Halation] {
+                        for family in [
+                            FeatureProfileFamily::GrainProcedural,
+                            FeatureProfileFamily::Halation,
+                        ] {
                             ui.selectable_value(
                                 &mut work.scope,
                                 Some(CopyScope::Feature(family)),
@@ -976,10 +988,14 @@ fn scope_label(ctx: &egui::Context, scope: CopyScope) -> String {
             crate::i18n::text(ctx, "photo_work.list.scope_operator").into_owned()
         }
         CopyScope::Section(section) => crate::app::Message::control(section.name()).localized(ctx),
-        CopyScope::Feature(family) => crate::i18n::text(ctx, match family {
-            FeatureProfileFamily::GrainProcedural => "photo_work.list.scope_feature_grain",
-            FeatureProfileFamily::Halation => "photo_work.list.scope_feature_halation",
-        }).into_owned(),
+        CopyScope::Feature(family) => crate::i18n::text(
+            ctx,
+            match family {
+                FeatureProfileFamily::GrainProcedural => "photo_work.list.scope_feature_grain",
+                FeatureProfileFamily::Halation => "photo_work.list.scope_feature_halation",
+            },
+        )
+        .into_owned(),
     }
 }
 
@@ -1437,26 +1453,47 @@ mod tests {
         source.params.film_render.grain.v2_size = None;
         source.params.film_render.grain.v2_amount = Some(23.0);
         source.params.film_render.grain.active = !destination.params.film_render.grain.active;
-        source.params.film_render.grain.engine = spektrafilm_core::params::grain::GrainEngine::Procedural;
+        source.params.film_render.grain.engine =
+            spektrafilm_core::params::grain::GrainEngine::Procedural;
         source.params.film_render.grain.v2_resolution_type = 0;
         source.params.film_render.halation.halation_first_sigma_um = [41.0, 42.0, 43.0];
         source.params.film_render.halation.halation_strength = [0.11, 0.02, 0.001];
         source.params.film_render.halation.active = !destination.params.film_render.halation.active;
         source.params.film_render.halation.scatter_amount = 2.0;
         source.params.film_render.halation.halation_amount = 0.5;
-        for family in [FeatureProfileFamily::GrainProcedural, FeatureProfileFamily::Halation] {
+        for family in [
+            FeatureProfileFamily::GrainProcedural,
+            FeatureProfileFamily::Halation,
+        ] {
             let scope = CopyScope::Feature(family);
             let copied = copied_settings(&source, &destination, scope, &app.data_dir).unwrap();
-            assert_eq!(feature_profiles::effective_values(family, &copied.params), feature_profiles::effective_values(family, &source.params));
-            assert_eq!(scope_paths(&source, scope).unwrap(), feature_profiles::scope(family).iter().map(|path| (*path).to_owned()).collect::<Vec<_>>());
+            assert_eq!(
+                feature_profiles::effective_values(family, &copied.params),
+                feature_profiles::effective_values(family, &source.params)
+            );
+            assert_eq!(
+                scope_paths(&source, scope).unwrap(),
+                feature_profiles::scope(family)
+                    .iter()
+                    .map(|path| (*path).to_owned())
+                    .collect::<Vec<_>>()
+            );
             let owned = scope_paths(&source, scope).unwrap();
             let mut before = Vec::new();
-            flatten_paths("", &serde_json::to_value(&destination.params).unwrap(), &mut before);
+            flatten_paths(
+                "",
+                &serde_json::to_value(&destination.params).unwrap(),
+                &mut before,
+            );
             let destination_values = serde_json::to_value(&destination.params).unwrap();
             let copied_values = serde_json::to_value(&copied.params).unwrap();
             for path in before.into_iter().filter(|path| !owned.contains(path)) {
                 let pointer = format!("/{}", path.replace('.', "/"));
-                assert_eq!(copied_values.pointer(&pointer), destination_values.pointer(&pointer), "unowned feature path {path}");
+                assert_eq!(
+                    copied_values.pointer(&pointer),
+                    destination_values.pointer(&pointer),
+                    "unowned feature path {path}"
+                );
             }
             assert_eq!(copied.film, destination.film);
             assert_eq!(copied.print, destination.print);
@@ -1467,7 +1504,10 @@ mod tests {
 
     #[test]
     fn each_feature_scope_copy_is_one_immutable_reversible_destination_transaction() {
-        for family in [FeatureProfileFamily::GrainProcedural, FeatureProfileFamily::Halation] {
+        for family in [
+            FeatureProfileFamily::GrainProcedural,
+            FeatureProfileFamily::Halation,
+        ] {
             let (mut app, directory, ctx) = app();
             let second = source(directory.path(), "second.png");
             app.add_work_paths(vec![second]);
@@ -1487,15 +1527,24 @@ mod tests {
             app.end_adjustment_frame(&ctx);
             let captured = feature_profiles::effective_values(family, &app.params);
             app.select_work_destination(1, true);
-            app.copy_work_adjustments(CopyScope::Feature(family)).unwrap();
-            let expected = app.photograph.work_list.entries[1].context.as_ref().unwrap().settings.clone();
+            app.copy_work_adjustments(CopyScope::Feature(family))
+                .unwrap();
+            let expected = app.photograph.work_list.entries[1]
+                .context
+                .as_ref()
+                .unwrap()
+                .settings
+                .clone();
             app.begin_adjustment_frame(&ctx);
             app.params.film_render.grain.v2_amount = Some(72.0);
             app.params.film_render.halation.halation_strength = [0.2, 0.1, 0.05];
             app.mark_parameters_changed_invalidating_calibration();
             app.end_adjustment_frame(&ctx);
             app.perform_work_select(1).unwrap();
-            assert_eq!(feature_profiles::effective_values(family, &app.params), captured);
+            assert_eq!(
+                feature_profiles::effective_values(family, &app.params),
+                captured
+            );
             assert!(app.undo_adjustment());
             assert!(!app.can_undo());
             assert!(app.redo_adjustment());
