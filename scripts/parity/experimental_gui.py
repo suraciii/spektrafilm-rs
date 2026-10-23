@@ -313,12 +313,12 @@ class ExperimentalDesktop(X11):
         self.point_click((selected[1] + selected[3] / 2, selected[2] + selected[4] / 2))
         self.snap('choice-open-' + '-'.join(words(label)))
         for direction in (4, 5):
-            for _ in range(16):
+            for _ in range(16 if direction == 4 else 80):
                 frame, _, rows = self.read()
                 # Popup rows need their own text block: the retained viewer
                 # image and adjacent inspector headings otherwise merge them.
                 from PIL import ImageOps, ImageStat
-                left = max(0, int(min(word[1] for word in candidates)) - 12)
+                left = max(0, int(min(x, min(word[1] for word in candidates))) - 12)
                 top = max(0, int(y + 9))
                 crop = ImageOps.grayscale(frame.crop((left, top, frame.width,
                                                        min(frame.height, top + 430))))
@@ -340,8 +340,9 @@ class ExperimentalDesktop(X11):
                     self.snap('choice-' + '-'.join(words(option)), frame, rows)
                     self.point_click((line[0][1] + 8, line[0][2] + line[0][4] / 2))
                     return
-                self.xd('mousemove', '--window', self.window, int(x + 45), int(y + 70))
-                self.xd('click', direction)
+                self.xd('mousemove', '--window', self.window,
+                        int(selected[1] + selected[3] / 2), int(y + 70))
+                self.xd('click', '--repeat', 3, '--delay', 30, direction)
                 time.sleep(.15)
         self.snap('choice-missing-' + '-'.join(words(option)))
         raise RuntimeError(f'Native choice option not visible: {label}: {option}')
