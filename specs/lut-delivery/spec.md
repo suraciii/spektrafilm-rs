@@ -4,6 +4,7 @@
 
 - LUT delivery builds a deterministic transform from the selected base workflow, color settings, and runtime controls. Optional [CMYK ink style](../cmyk-style/spec.md) is a modeled RGB finishing behavior, not a photographic-print calibration claim.
 - A LUT bake contains no image-specific spatial effects or stochastic grain. The bundle records any controls neutralized for baking.
+- Automatic negative setup with `scanner.conversion_style = standard` is frame-dependent and must fail before baking. It must not be silently neutralized. A declared fixed style is the point-wise alternative under the [lab scan contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration).
 - The bundle may contain canonical LUT stages, contiguous collapsed sub-chains, machine-readable metadata, OCIO wiring, and QA results.
 - LUT domains, ranges, color spaces, stock selections, and wire constants are part of the bundle contract. A consumer must not cross-chain files from different bundles.
 - Target validation rejects unsupported inputs, outputs, topology, resolution, or artifact references before baking.

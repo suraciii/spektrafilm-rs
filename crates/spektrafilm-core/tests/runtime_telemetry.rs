@@ -16,7 +16,6 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
     params.workflow.route = "input > film > scan".into();
     params.io.scan_film = true;
     params.scanner.scan_output = "negative_to_positive".into();
-    params.scanner.lamp = "D65".into();
     let runtime =
         Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
     let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
@@ -35,6 +34,24 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
     drop(simulation);
     attempt.finish(Outcome::Succeeded);
     let report = operation.finish(Outcome::Succeeded).unwrap();
+    let mut historical: serde_json::Value =
+        serde_json::from_str(&report.to_json().unwrap()).unwrap();
+    let old_model = historical["configuration"]["render"]["scan_model"]
+        .as_object_mut()
+        .unwrap();
+    old_model.remove("readout_illuminant");
+    old_model.remove("readout_rule");
+    old_model.insert("lamp".into(), "D65".into());
+    let old = spektrafilm_core::telemetry::Report::from_json(&historical.to_string()).unwrap();
+    assert!(
+        old.configuration
+            .render
+            .unwrap()
+            .scan_model
+            .readout_illuminant
+            .is_empty(),
+        "historical reports must not invent a material-category readout fact"
+    );
     let decoded =
         spektrafilm_core::telemetry::Report::from_json(&report.to_json().unwrap()).unwrap();
     let actual = decoded.configuration.render.unwrap();
@@ -43,13 +60,14 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
         "negative_to_positive"
     );
     let scan_model = actual.scan_model;
-    assert_eq!(scan_model.model, "neutral_scan_v2");
+    assert_eq!(scan_model.model, "lab_scan_v1");
     assert_eq!(scan_model.sensor, "cie_1931_cmf");
     assert_eq!(scan_model.white_reference, "clear_film_base");
     assert_eq!(scan_model.output_white, "output_color_space_white");
     assert_eq!(scan_model.matrix, "identity");
-    assert_eq!(scan_model.lamp, "D65");
-    assert_eq!(actual.conversion_style, "neutral");
+    assert_eq!(scan_model.readout_illuminant, "D50");
+    assert_eq!(scan_model.readout_rule, "default");
+    assert_eq!(actual.conversion_style, "standard");
 }
 
 #[test]
@@ -158,6 +176,15 @@ fn negative_to_positive_cpu_override_preserves_stage_reports() {
         let report = operation.finish(Outcome::Succeeded).unwrap();
         report.validate().unwrap();
         assert_eq!(output.data, expected.data);
+        assert_eq!(
+            report
+                .stages
+                .iter()
+                .filter(|stage| stage.name == "standard_setup")
+                .count(),
+            1
+        );
+
         assert_eq!(
             report.execution.backend_selected,
             Some(if backend.is_gpu() {

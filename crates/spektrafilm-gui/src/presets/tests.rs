@@ -209,7 +209,7 @@ fn scanner_transitions_reset_the_scan_polarity() {
     let (mut app, directory) = test_app("scanner-transitions");
     app.params.workflow.route = "input > film > scan".into();
     app.params.scanner.scan_output = "negative_to_positive".into();
-    app.params.scanner.lamp = "D65".into();
+    app.params.scanner.lens_blur = 2.5;
     let revision = app.parameter_revision;
     app.params.workflow.route = "input > film > print > scan".into();
     app.finish_route_change();
@@ -219,7 +219,7 @@ fn scanner_transitions_reset_the_scan_polarity() {
         app.status
     );
     assert_eq!(app.params.scanner.scan_output, "direct_scan");
-    assert_eq!(app.params.scanner.lamp, "D65");
+    assert_eq!(app.params.scanner.lens_blur, 2.5);
     assert!(app.dirty);
     assert_eq!(app.parameter_revision, revision.wrapping_add(1));
     app.params.workflow.route = "input".into();
@@ -244,10 +244,8 @@ fn scanner_transitions_reset_the_scan_polarity() {
     app.select_film_profile("kodak_ektachrome_100".into());
     assert_eq!(app.film_medium, crate::controls::ScanMedium::Slide);
     assert_eq!(app.params.scanner.scan_output, "direct_scan");
-    assert_eq!(app.params.scanner.lamp, "D65");
+    assert_eq!(app.params.scanner.lens_blur, 2.5);
     let restored = app.current_state().unwrap().runtime_params().unwrap();
-    assert_eq!(restored.scanner.lamp, "D65");
-    assert_eq!(restored.scanner.lens_blur, 0.0);
     assert_eq!(restored.scanner.unsharp_mask, [0.7, 0.7]);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -257,7 +255,7 @@ fn preset_application_reports_scanner_normalization() {
     let (mut app, directory) = test_app("preset-scanner-normalization");
     app.params.workflow.route = "input > film > scan".into();
     app.params.scanner.scan_output = "negative_to_positive".into();
-    app.params.scanner.lamp = "D65".into();
+    app.params.scanner.lens_blur = 2.5;
     let entry = app
         .presets
         .entries
@@ -267,11 +265,6 @@ fn preset_application_reports_scanner_normalization() {
         .clone();
     app.load_preset(entry.group, &entry.name);
     assert!(app.status.contains("scanner controls"), "{}", app.status);
-    // The preset carries its own scanner parameters, so the lamp comes from it.
-    let applied = app.params.scanner.lamp.clone();
-    assert!(!applied.is_empty());
-    let state = app.current_state().unwrap();
-    assert_eq!(state.sections["scanner"]["lamp"], applied.as_str());
     std::fs::remove_dir_all(directory).unwrap();
 }
 

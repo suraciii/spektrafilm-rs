@@ -15,7 +15,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
   [Scan medium and scanner controls](../film-chain/spec.md#scan-medium-and-scanner-controls)
   assign to the scanned medium. For a negative film profile on the direct
   `input > film > scan` route or the real negative-capture `input > convert-film > scan` route, they offer `direct_scan` and
-  `negative_to_positive`. Labels must follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance). Every route shows the scanner lamp, lens blur, and unsharp mask. Conversion control display names must follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance).
+  `negative_to_positive`. Labels must follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance). Every route shows lens blur and unsharp mask; the readout illuminant is not a control. Conversion control display names must follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance).
   A route or film profile change that makes the selected mode ineligible resets it to
   `direct_scan` and clears ineligible scanner controls.
 - Imported states and presets must reject the removed mode as defined by [Scanner language](../film-chain/spec.md#scanner-language). A rejected import must not replace accepted parameters or the retained image.
@@ -25,7 +25,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 - The viewer retains the last completed frame while new composition runs. The development animation is fixed viewer behaviour under [Viewer presentation](#viewer-presentation).
 - Base workflow selection and optional CMYK ink style controls must follow the [CMYK ink style enablement contract](../cmyk-style/spec.md#enablement).
 - The workflow selector must offer exactly the routes the workflow validator supports.
-- MAIN → Camera exposes `camera.capture_illuminant` as a single optional text or selector control that writes the canonical runtime leaf. Its semantics, inheritance, and validation follow the [capture illuminant contract](../image-input/spec.md#capture-illuminant). An unset value must be selectable and must display the inherited value — the selected film profile's `reference_illuminant` — as the effective value, so the control never hides which light the render assumes. The control must not offer a value the shared illuminant validator rejects and must not derive a value from image content or RAW metadata. It must be labeled with the product concept, for example `Capture illuminant`, and must be distinguished from the enlarger illuminant in MAIN → Enlarger and the scan illuminant in FILM → Convert. A route that computes no film exposure from scene RGB must state that the control is inactive and retain its stored value. The control and the canonical CLI `--set` path must share one type, validator, and effect conditions.
+- MAIN → Camera exposes `camera.capture_illuminant` as a single optional text or selector control that writes the canonical runtime leaf. Its semantics, inheritance, and validation follow the [capture illuminant contract](../image-input/spec.md#capture-illuminant). An unset value must be selectable and must display the inherited value — the selected film profile's `reference_illuminant` — as the effective value, so the control never hides which light the render assumes. The control must not offer a value the shared illuminant validator rejects and must not derive a value from image content or RAW metadata. It must be labeled with the product concept, for example `Capture illuminant`, and must be distinguished from the enlarger illuminant in MAIN → Enlarger and the imported-capture scan illuminant in FILM → Convert. The product readout illuminant remains fixed. A route that computes no film exposure from scene RGB must state that the control is inactive and retain its stored value. The control and the canonical CLI `--set` path must share one type, validator, and effect conditions.
 - The capture illuminant control belongs to the Camera section. It must not be duplicated on another page, and no second surface may edit the same leaf.
 
 ## Material controls and output composition
@@ -168,3 +168,7 @@ Two controls that edit the same persisted value must not both be editable. When 
 
 Two different parameters that share a label must carry a qualifier that distinguishes them.
 
+
+## Scan state cutover
+
+The [lab scan contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration) owns GUI state version 5 migration, retired scanner lamp keys, and canonical conversion style names. This cutover changes scan pixels. The GUI must offer only `standard` as the built-in conversion style and must retain fixed styles from the shared data directory catalog.

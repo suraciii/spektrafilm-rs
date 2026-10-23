@@ -12,6 +12,7 @@ use spektrafilm_math::precision::{from_f64, to_f64};
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
 mod interpretation;
+mod setup;
 mod spectral;
 pub(crate) use spectral::scan_spectral_rgb;
 
@@ -27,15 +28,25 @@ fn developed_density_curves(profile: &Profile) -> Vec<[f64; 3]> {
 
 /// Fixed positive tone response of the negative interpretation: a logistic
 /// density curve in the same family for every style; the parameters come
-/// from the resolved [`style::ChannelTone`] triple (`style::NEUTRAL` is the
+/// from the resolved [`style::ChannelTone`] triple (`style::STANDARD` is the
 /// frozen historical reference).
 pub(crate) mod style;
 pub(crate) use style::ChannelTone;
 
+/// Installed fixed styles plus the automatic built-in (legacy aliases omitted).
+pub fn conversion_styles(data_dir: &std::path::Path) -> Vec<String> {
+    style::available(Some(data_dir))
+}
+
 fn positive_tone(log_e: f64, tone: &ChannelTone, params: &RuntimeParams) -> f64 {
     let denominator = -(-std::f64::consts::LN_10 * tone.dmax).exp_m1();
-    let e =
-        log_e / std::f64::consts::LOG10_2 - interpretation::camera_ev(params) + tone.brightness_ev;
+    let e = log_e / std::f64::consts::LOG10_2
+        - if params.scanner.uses_standard() {
+            0.0
+        } else {
+            interpretation::camera_ev(params)
+        }
+        + tone.brightness_ev;
     let z = tone.contrast * e;
     let t = if z >= 0.0 {
         1.0 / (1.0 + (-z).exp())
@@ -73,13 +84,19 @@ fn interpret_negative_density(
     } else {
         density_cmy.clone()
     };
+    let offset = if params.scanner.uses_standard() {
+        let _setup = super::StageObservation::new(backend, "standard_setup");
+        setup::FrameSetup::measure(&rgb, calibration)?.offset
+    } else {
+        [0.0; 3]
+    };
     rgb.data
         .par_chunks_exact_mut(3)
         .try_for_each(|px| -> Result<(), String> {
             let density = [to_f64(px[0]), to_f64(px[1]), to_f64(px[2])];
             let exposure = calibration.estimate(density)?;
             for channel in 0..3 {
-                px[channel] = from_f64(positive_tone(exposure[channel], &tones[channel], params));
+                px[channel] = from_f64(positive_tone(exposure[channel] + offset[channel], &tones[channel], params));
                 if !px[channel].is_finite() {
                     return Err(
                         "density interpretation output is not representable in the selected precision"
@@ -466,33 +483,27 @@ mod tests {
         for space in ["sRGB", "ProPhoto RGB", "Display P3"] {
             let mut params = params();
             params.io.output_color_space = space.into();
-            let rgb = scan(&[0.0; 3], &film, &style::NEUTRAL, &params);
+            let rgb = scan(&[0.0; 3], &film, &style::STANDARD, &params);
             for channel in &rgb {
                 assert!((channel - 1.0).abs() < 5e-3, "{space}: clear film {rgb:?}");
             }
             // The dense end reads dark and finite in every channel.
-            let dense = scan(&[3.0, 3.0, 3.0], &film, &style::NEUTRAL, &params);
+            let dense = scan(&[3.0, 3.0, 3.0], &film, &style::STANDARD, &params);
             assert!(dense.iter().all(|v| v.is_finite() && *v >= 0.0 && *v < 1.0));
         }
     }
 
-    /// The lamp must stay in play: swapping it changes a colored capture,
-    /// which the retired lamp-integral normalization cancelled out.
+    /// The readout light is a product constant selected by the material
+    /// category, not a runtime knob.
     #[test]
-    fn lamp_swap_changes_colored_captures() {
+    fn readout_illuminant_follows_the_material_category() {
         let data = data_dir();
-        let film = crate::profile::load_profile_by_name(&data, "kodak_kodachrome_64").unwrap();
-        let density = [0.512, 0.357, 0.095];
-        let mut daylight = params();
-        daylight.scanner.lamp = "D55".into();
-        let mut tungsten = params();
-        tungsten.scanner.lamp = "T".into();
-        let a = scan(&density, &film, &style::NEUTRAL, &daylight);
-        let b = scan(&density, &film, &style::NEUTRAL, &tungsten);
-        assert!(
-            a.iter().zip(&b).any(|(x, y)| (x - y).abs() > 1e-3),
-            "lamp swap must move the capture: {a:?} vs {b:?}"
-        );
+        let negative = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let cine_print = crate::profile::load_profile_by_name(&data, "kodak_2383").unwrap();
+        let bw_print = crate::profile::load_profile_by_name(&data, "kodak_2302").unwrap();
+        assert_eq!(negative.readout_illuminant(), "D50");
+        assert_eq!(cine_print.readout_illuminant(), "BB5800");
+        assert_eq!(bw_print.readout_illuminant(), "D50");
     }
 
     #[test]
@@ -504,7 +515,7 @@ mod tests {
         let values = scan(
             &[0.0, 0.0, 0.0, 1.2, 1.2, 1.2],
             &film,
-            &style::NEUTRAL,
+            &style::STANDARD,
             &params,
         );
         for channel in 0..3 {
@@ -518,16 +529,17 @@ mod tests {
     }
 
     #[test]
-    fn each_output_channel_reads_only_its_own_record() {
+    fn fixed_style_output_reads_only_its_own_record() {
         let data = data_dir();
         let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         let mut params = film_scan_params();
         params.scanner.scan_output = "negative_to_positive".into();
-        let base = scan(&[0.4, 0.4, 0.4], &film, &style::NEUTRAL, &params);
+        params.scanner.conversion_style = "fixed-probe".into();
+        let base = scan(&[0.4, 0.4, 0.4], &film, &style::STANDARD, &params);
         for channel in 0..3 {
             let mut density = [0.4; 3];
             density[channel] += 0.4;
-            let moved = scan(&density, &film, &style::NEUTRAL, &params);
+            let moved = scan(&density, &film, &style::STANDARD, &params);
             for other in 0..3 {
                 if other != channel {
                     assert!(
@@ -567,9 +579,10 @@ mod tests {
         ];
         let mut params = film_scan_params();
         params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.conversion_style = "fixed-probe".into();
 
         let density = [0.55, 0.45, 0.35];
-        let neutral = scan(&density, &film, &style::NEUTRAL, &params);
+        let neutral = scan(&density, &film, &style::STANDARD, &params);
         let styled = scan(&density, &film, &warm, &params);
         assert!(
             neutral
@@ -629,7 +642,7 @@ mod tests {
         ];
         let params = film_scan_params();
         let density = [0.512, 0.357, 0.095];
-        let a = scan(&density, &film, &style::NEUTRAL, &params);
+        let a = scan(&density, &film, &style::STANDARD, &params);
         let b = scan(&density, &film, &warm, &params);
         assert_eq!(a, b);
     }

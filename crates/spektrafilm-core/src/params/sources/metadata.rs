@@ -365,12 +365,9 @@ fn conditions(path: &str) -> Vec<String> {
     if path == "scanner.scan_output" {
         out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; active Grain Procedural is unsupported".into());
     }
-    if path == "scanner.lamp" {
-        out.push("the scanner's one light source; the clear-film white calibration keeps its spectral shape in play, and the declared infrared cut rides on it".into());
-    }
     if path == "scanner.conversion_style" {
         out.push(
-            "named positive-conversion tone for negative_to_positive; neutral is the frozen reference, other names resolve to data/scan-styles/<name>.json (declared per-channel tone parameters, never fitted)"
+            "named positive-conversion tone for negative_to_positive; standard measures the frame before the frozen tone; neutral is an input-only alias; other names resolve to data/scan-styles/<name>.json (declared per-channel tone parameters, never fitted)"
                 .into(),
         );
     }
@@ -406,8 +403,11 @@ fn description(path: &str) -> Option<&'static str> {
         "scanner.lens_blur" => Some(
             "Optical softness in linear scanner readout before interpretation, corrections, gamut processing and digital sharpening.",
         ),
+        "film_render.convert.scan_illuminant" => Some(
+            "Illumination of the imported RGB acquisition; used only by convert-film inversion, independent of the product readout light.",
+        ),
         "scanner.conversion_style" => Some(
-            "Named stylization of the negative-to-positive tone: neutral keeps the frozen reference tone; any other name applies the declared per-channel tone triple from data/scan-styles/<name>.json.",
+            "Named stylization of the negative-to-positive tone: standard applies automatic frame setup then the frozen tone; any other name applies the declared per-channel tone triple from data/scan-styles/<name>.json.",
         ),
         "scanner.unsharp_mask" => {
             Some("Digital scan sharpening after optical readout and output processing.")

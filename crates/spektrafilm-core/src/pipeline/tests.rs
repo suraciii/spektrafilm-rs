@@ -298,7 +298,7 @@ fn with_params_resolves_a_changed_conversion_style() {
     let neutral = edited.with_params(params).unwrap();
     assert_eq!(
         neutral.conversion_tones[0].brightness_ev,
-        crate::stages::scanning::style::NEUTRAL[0].brightness_ev
+        crate::stages::scanning::style::STANDARD[0].brightness_ev
     );
 }
 
@@ -1617,4 +1617,74 @@ fn convert_routes_apply_the_shared_terminal_cmyk_appearance() {
              (max diff {diff})"
         );
     }
+}
+
+#[test]
+fn standard_setup_reads_the_frame_without_rewriting_density_evidence() {
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.scanner.scan_output = "negative_to_positive".into();
+    params.camera.auto_exposure = false;
+    params.film_render.dir_couplers.active = false;
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = true;
+    params.scanner.unsharp_mask = [0.0; 2];
+    params.io.output_cctf_encoding = false;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let make = |ev: f64| {
+        ImageBuf::from_data(
+            8,
+            1,
+            (-3..5)
+                .flat_map(|i| [from_f64((i as f64 * 0.3 + ev) * std::f64::consts::LOG10_2); 3])
+                .collect(),
+        )
+    };
+    let mut means = Vec::new();
+    for ev in [-1.0, 0.0, 1.0] {
+        let input = make(ev);
+        let original = input.data.clone();
+        let density = pipeline
+            .process_with_taps(
+                input.clone(),
+                &backend,
+                Some(Tap::LogEFilm),
+                Some(Tap::CmyFilm),
+            )
+            .unwrap();
+        let rgb = pipeline
+            .process_with_taps(
+                input.clone(),
+                &backend,
+                Some(Tap::LogEFilm),
+                Some(Tap::RgbOut),
+            )
+            .unwrap();
+        let replay = pipeline
+            .process_with_taps(
+                density.clone(),
+                &backend,
+                Some(Tap::CmyFilm),
+                Some(Tap::RgbOut),
+            )
+            .unwrap();
+        assert_eq!(input.data, original);
+        assert_eq!(
+            rgb.data, replay.data,
+            "density tap must reproduce the same full-frame setup"
+        );
+        assert!(rgb.data.iter().all(|v| v.is_finite()));
+        means.push(rgb.data.iter().map(|v| to_f64(*v)).sum::<f64>() / rgb.data.len() as f64);
+        let repeated = pipeline
+            .process_with_taps(input, &backend, Some(Tap::LogEFilm), Some(Tap::RgbOut))
+            .unwrap();
+        assert_eq!(rgb.data, repeated.data);
+    }
+    assert!(means.windows(2).all(|w| w[0] < w[1]), "{means:?}");
 }
