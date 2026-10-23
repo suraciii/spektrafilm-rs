@@ -155,7 +155,8 @@ fn header_inspection_does_not_claim_unchecked_payload_integrity() {
 #[test]
 fn malformed_envelopes_and_missing_model_state_fail_before_payload_use() {
     let root = tempfile::tempdir().unwrap();
-    let cases: [(&str, fn(&mut Value)); 15] = [
+    type Mutation = fn(&mut Value);
+    let cases: [(&str, Mutation); 15] = [
         ("schema", |v| v["schema_version"] = json!(2)),
         ("representation", |v| v["representation_version"] = json!(2)),
         ("unknown", |v| v["surprise"] = json!(true)),
