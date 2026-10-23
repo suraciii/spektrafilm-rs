@@ -1,17 +1,12 @@
 use super::*;
 
-// Convert calibration worker actions: the `detect base`, `blind calibration`
-// and `neutralize print filters` buttons of the FILM tab's "Convert" section
-// (controls.rs) drive `App::start_calibration`, whose worker results
-// `poll_calibration_job` applies to `h.state().params`.
+// Convert calibration worker actions use the production Input and capture
+// inspector module and apply accepted worker results to App parameters.
 
-/// Open the FILM tab and expand the "Convert" section that holds the three
-/// calibration buttons.
+/// Reveal Convert through its canonical action without changing the workflow.
 fn open_convert_controls(h: &mut Harness<'_, App>) {
-    click(h, "FILM");
-    if h.query_by_label("detect base").is_none() {
-        click(h, "Convert");
-    }
+    reveal_control(h, "action.detect_base");
+    search_controls(h, "Convert");
 }
 
 /// Wait out any state-load preview so no worker is running before an action;
@@ -33,9 +28,8 @@ fn drain(h: &mut Harness<'_, App>) {
 /// `update` — so after this call a freshly started worker is observed in
 /// flight with certainty: no poll has run since the job was created.
 fn press(h: &mut Harness<'_, App>, label: &str) {
-    // Convert is below the expanded Halation controls; make the button hittable
-    // before queuing the three-event mouse click. No worker exists yet, so the
-    // scroll frames cannot consume the operation this click is about to start.
+    // Make the action hittable before queuing the pointer click. No worker
+    // exists yet, so scrolling cannot consume the operation about to start.
     scroll_controls_into_view(h, label);
     h.get_by_label(label).simulate_click();
     h.step();

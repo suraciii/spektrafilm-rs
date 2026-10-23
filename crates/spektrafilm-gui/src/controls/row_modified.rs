@@ -9,14 +9,75 @@ use crate::section_reset;
 pub(crate) const MARK_COLOR: egui::Color32 = crate::theme::ACCENT;
 const MARK_RADIUS: f32 = crate::theme::SPACE_1 * 0.75;
 
+fn section_id() -> egui::Id {
+    egui::Id::new("control_current_section")
+}
+
+pub(crate) fn current_section(ctx: &Context) -> Option<String> {
+    ctx.data(|data| data.get_temp::<String>(section_id()))
+}
+
+/// Every row uses the same canonical inventory and factory projection.
+pub(crate) fn offer_reset(ui: &mut Ui, label: &str, path: Option<&str>) {
+    let section = current_section(ui.ctx());
+    let entry = path.and_then(super::lookup).or_else(|| {
+        super::inventory().iter().find(|entry| {
+            Some(entry.section) == section.as_deref() && entry.label.eq_ignore_ascii_case(label)
+        })
+    });
+    let Some(entry) = entry else { return };
+    if section_reset::factory_value(&entry.path).is_none() {
+        return;
+    }
+    let action = format!("Reset {label} to factory");
+    let response = ui.small_button("Reset").on_hover_text(&action);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &action)
+    });
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_label(action.as_str()));
+    if response.clicked() {
+        ui.ctx().data_mut(|data| {
+            let paths =
+                data.get_temp_mut_or_default::<Vec<String>>(egui::Id::new("control_row_resets"));
+            if !paths.contains(&entry.path) {
+                paths.push(entry.path.clone());
+            }
+        });
+    }
+}
+
+pub(crate) fn take_resets(ctx: &Context) -> Vec<String> {
+    ctx.data_mut(|data| data.remove_temp::<Vec<String>>(egui::Id::new("control_row_resets")))
+        .unwrap_or_default()
+}
+
+/// Validate a changed row against the accepted runtime and shared typed validator.
+/// This runs only on an actual edit, not while painting or searching rows.
+pub(crate) fn accepts_value(ctx: &Context, path: &str, value: Value) -> bool {
+    if path.starts_with("extras.") {
+        return true;
+    }
+    let Some(RowScope::Modified { root, .. }) =
+        ctx.data(|data| data.get_temp::<RowScope>(scope_id()))
+    else {
+        return true;
+    };
+    let Ok(mut candidate) = serde_json::from_value::<RuntimeParams>((*root).clone()) else {
+        return false;
+    };
+    spektrafilm_core::params::sources::ParameterEdits::parse(&format!("{path}={value}"))
+        .and_then(|edits| edits.apply(&mut candidate))
+        .is_ok()
+}
 #[derive(Clone, Default)]
 enum RowScope {
     #[default]
     Unmodified,
     Modified {
         section: &'static str,
-        root: Value,
-        extras: Value,
+        root: std::sync::Arc<Value>,
+        extras: std::sync::Arc<Value>,
     },
 }
 
@@ -44,13 +105,15 @@ pub(crate) fn install(
     params: &RuntimeParams,
     extras: &Value,
 ) -> ScopeGuard {
+    ctx.data_mut(|data| data.insert_temp(section_id(), section.to_owned()));
     let section = section_reset::sections().find(|name| *name == section);
     let scope = match section {
-        Some(section) if section_reset::is_modified(section, params, extras) => {
+        Some(section) => {
+            let projection = super::control_projection(params, extras);
             RowScope::Modified {
                 section,
-                root: serde_json::to_value(params).unwrap_or(Value::Null),
-                extras: extras.clone(),
+                root: projection.runtime,
+                extras: projection.extras,
             }
         }
         _ => RowScope::Unmodified,
@@ -80,6 +143,9 @@ impl RowMark {
 
     pub(crate) fn resolve(ctx: &Context, path: Option<&str>) -> Self {
         let Some(path) = path else { return Self::NONE };
+        let canonical = current_section(ctx)
+            .and_then(|section| super::inventory::path_for_label(&section, path));
+        let path = canonical.unwrap_or(path);
         Self {
             marked: ctx
                 .data(|data| data.get_temp::<RowScope>(scope_id()))

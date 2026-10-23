@@ -8,6 +8,26 @@ impl App {
         }
         let before_scanner = current.scanner.clone();
         let result = self.presets.library.load(group, name).and_then(|selected| {
+            if let PresetKind::Section(section) = selected.preset.kind()? {
+                // Only the print payload owns the temporarily bypassed glare.
+                let mut section_current = self.params.clone();
+                if section == Section::Print {
+                    section_current.print_render.glare.active = current.print_render.glare.active;
+                }
+                let film = spektrafilm_core::profile::load_profile_by_name(
+                    &self.data_dir,
+                    &self.film_name,
+                )
+                .map_err(|error| error.to_string())?;
+                let candidate = selected.preset.apply_section(&section_current, &film)?;
+                self.params = candidate;
+                if section == Section::Print {
+                    self.scan_for_print_snapshot = None;
+                }
+                self.mark_parameters_changed_invalidating_calibration();
+                self.label_adjustment(&format!("Apply {} preset '{name}'", section.name()));
+                return Ok(());
+            }
             let resolved = selected.preset.resolve(&self.data_dir, &current)?;
             self.film_medium = crate::scan_medium(&resolved.film);
             self.film_reference_illuminant = resolved.film.info.reference_illuminant.clone();
@@ -21,6 +41,7 @@ impl App {
                 name: name.to_owned(),
             });
             self.invalidate_look_render();
+            self.label_adjustment(&format!("Apply look preset '{name}'"));
             Ok(())
         });
         self.status = match result {
@@ -36,6 +57,18 @@ impl App {
             }
             Err(e) => format!("Preset error: {e}"),
         };
+    }
+    pub(super) fn save_section_preset_as(&mut self, section: Section) {
+        match Preset::capture_section("New preset", section, &self.params, provenance()) {
+            Ok(preset) => {
+                self.presets.name_dialog = Some(NameDialog {
+                    action: NameAction::Save(preset),
+                    name: String::new(),
+                    error: None,
+                })
+            }
+            Err(error) => self.status = error,
+        }
     }
     pub(crate) fn save_preset_as(&mut self) {
         let result = Ok(Preset::capture(

@@ -11,7 +11,7 @@ pub(crate) fn sections(
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
 ) {
-    if section == "Display" {
+    if section == "Session" {
         if filter_matches(filter, "preview max size")
             && param_numeric(
                 ui,

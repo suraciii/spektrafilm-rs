@@ -32,21 +32,17 @@ pub(crate) fn sections(
                 filter,
                 &["detect base", "blind calibration", "neutralize print filters"],
             ) {
-                ui.horizontal(|ui| {
-                    if filter_matches(filter, "detect base")
-                        && ui.button("detect base").on_hover_text("Sample the clear/unexposed film from the brightest pixels of the current image (see Base percentile) and fit the film Base + exposure so the unexposed film maps to density 0. Run this first.").clicked()
-                    {
-                        flags.action = Some(CalibrationAction::DetectBase);
-                    }
-                    if filter_matches(filter, "blind calibration")
-                        && ui.button("blind calibration").on_hover_text("Fit the Calibration matrix from the CURRENT image and write it above. Works best on a vibrant, colour-filled frame (it aligns the scanned colours to the film's dye gamut); a flat/neutral frame gives a weak fit. Review/edit the values afterwards.").clicked()
-                    {
-                        flags.action = Some(CalibrationAction::BlindCalibration);
-                    }
-                    if filter_matches(filter, "neutralize print filters")
-                        && ui.button("neutralize print filters").on_hover_text("Solve the print enlarger M and Y filter shifts so the current film + base midgray prints neutral. Image-independent; run it after Detect base (a tuned base changes the print balance). Writes Print M/Y filter shift in Enlarger.").clicked()
-                    {
-                        flags.action = Some(CalibrationAction::NeutralizeFilters);
+                ui.horizontal_wrapped(|ui| {
+                    for (label, path, action, help) in [
+                        ("detect base", "action.detect_base", CalibrationAction::DetectBase, "Sample the brightest clear film and fit film Base plus exposure so unexposed film maps to density zero."),
+                        ("blind calibration", "action.blind_calibration", CalibrationAction::BlindCalibration, "Fit the correction matrix from the current vibrant image; review the fitted values afterwards."),
+                        ("neutralize print filters", "action.neutralize_filters", CalibrationAction::NeutralizeFilters, "Solve main enlarger M/Y shifts so the current film base midgray prints neutral. Writes the Enlarger controls."),
+                    ] {
+                        if filter_matches(filter, label) {
+                            let response = ui.button(label).on_hover_text(help);
+                            locate_row(ui, path, &response);
+                            if response.clicked() { flags.action = Some(action); }
+                        }
                     }
                 });
             }

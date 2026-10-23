@@ -175,6 +175,7 @@ impl App {
                 return;
             }
         };
+        self.export_options = options.clone();
         let snapshot = self.render_snapshot(params);
         self.remember_dialog("export", &out_path);
         let selected_backend = self.backend.clone();

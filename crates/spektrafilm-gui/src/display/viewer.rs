@@ -350,53 +350,23 @@ impl Viewer {
     pub fn layer_controls(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.settings.layer;
         ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut self.settings.layer, ViewLayer::Input, "Input")
+            let input = ui.selectable_value(&mut self.settings.layer, ViewLayer::Input, "Input")
                 .on_hover_text("Show the retained input, decoded from its input color space and transfer decoding. The viewer layer does not change the retained image itself.");
+            crate::controls::locate_row(ui, "viewer.layer.input", &input);
             ui.add_enabled_ui(self.output.is_some(), |ui| {
-                ui.selectable_value(&mut self.settings.layer, ViewLayer::Output, "Output")
-                    .on_hover_text("Show the retained output of the latest Preview or Scan. The viewer layer does not change the retained image itself.");
+                let output = ui.selectable_value(&mut self.settings.layer, ViewLayer::Output, "Output")
+                    .on_hover_text("Show the retained output of the latest Preview or Scan. The viewer layer does not change the retained image itself.")
+                    .on_disabled_hover_text("Run Preview or Scan to create a retained output before selecting the Output layer.");
+                crate::controls::locate_row(ui, "viewer.layer.output", &output);
             });
-            ui.selectable_value(&mut self.settings.layer, ViewLayer::PaperBack, "Paper back")
+            let paper_back = ui.selectable_value(&mut self.settings.layer, ViewLayer::PaperBack, "Paper back")
                 .on_hover_text("Viewer-only: show the virtual paper-back rendering generated from paper texture, watermark, and noise. It is not an editable material stage and changes no retained, saved or exported pixels.");
+            crate::controls::locate_row(ui, "viewer.layer.paper_back", &paper_back);
         });
         before != self.settings.layer
     }
-
-    pub fn controls(&mut self, ui: &mut egui::Ui) -> bool {
-        let before = (
-            self.settings.clone(),
-            self.zoom,
-            self.zoom_percent,
-            self.pan,
-        );
-        ui.checkbox(&mut self.settings.use_display_transform, "use display transform")
-            .on_hover_text("Apply the display transform and the selected display ICC profile to the viewer output only. Turning it off views the values in the output color space. Saved and exported pixels are unchanged either way.");
-        ui.checkbox(&mut self.settings.gray_18_canvas, "gray 18% canvas")
-            .on_hover_text(
-                "Use neutral 18% gray as the canvas behind the image to judge exposure and neutral colors. Canvas decoration only; retained, saved and exported pixels are unchanged.",
-            );
-        ui.checkbox(&mut self.settings.reveal, "reveal transition")
-            .on_hover_text("Animate a wipe reveal when switching from the input to the output view. Viewer presentation only; retained, saved and exported pixels are unchanged.");
-        ui.checkbox(&mut self.settings.crossfade, "crossfade transition")
-            .on_hover_text("Animate a crossfade between the previous and current output frame. Viewer presentation only; retained, saved and exported pixels are unchanged.");
-        let tooltip = "Expand the white border layer around the normalized preview frame, expressed as a fraction of the image long edge. Viewer presentation only; retained, saved and exported pixels are unchanged.";
-        crate::controls::param_numeric(
-            ui,
-            "white padding",
-            &mut self.settings.white_padding,
-            "display.white_padding",
-            tooltip,
-        );
-        before
-            != (
-                self.settings.clone(),
-                self.zoom,
-                self.zoom_percent,
-                self.pan,
-            )
-    }
     pub fn interpolation_control(&mut self, ui: &mut egui::Ui) {
-        egui::ComboBox::from_label("output interpolation")
+        let response = egui::ComboBox::from_label("output interpolation")
             .selected_text(self.settings.interpolation.name())
             .show_ui(ui, |ui| {
                 for name in INTERPOLATIONS {
@@ -409,6 +379,7 @@ impl Viewer {
             })
             .response
             .on_hover_text("Interpolation used to display the output layer in the viewer. It resamples viewer pixels only; retained, saved and exported pixels are unchanged. The input layer always uses nearest and the paper back always uses spline36.");
+        crate::controls::locate_row(ui, "extras.display.output_interpolation", &response);
     }
     fn display_source(&self, layer: ViewLayer) -> DisplaySource {
         if layer == ViewLayer::Input {
@@ -741,7 +712,7 @@ impl Viewer {
         }
         if input_float.is_none() {
             let painter = ui.painter_at(rect);
-            let message = "No image loaded\nDrop an image here, or use MAIN → Import";
+            let message = "No image loaded\nDrop an image here, or choose Open in the header";
             let galley = painter.layout(
                 message.to_string(),
                 egui::FontId::proportional(16.0),

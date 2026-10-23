@@ -1,9 +1,86 @@
+use std::collections::VecDeque;
 use std::hash::Hash;
 
 use egui::{TextEdit, Ui};
 use serde_json::Value;
 
 use crate::theme;
+
+/// Numeric interaction edges collected during a frame for adjustment history.
+///
+/// `active` means an edit is still in progress, not that a value changed. A
+/// wheel step (or a keyboard slider step) starts and completes in one frame.
+/// Cancellation takes precedence over completion and restores no history entry.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AdjustmentSignals {
+    pub started: bool,
+    pub active: bool,
+    pub completed: bool,
+    pub canceled: bool,
+    pub label: Option<String>,
+}
+
+#[derive(Clone, Default)]
+struct FrameAdjustmentSignals {
+    pass: u64,
+    signals: AdjustmentSignals,
+}
+
+/// Consume the numeric interaction signals after all controls have been drawn.
+/// The active text owner has a separate lifetime: draining an empty frame must
+/// not end a draft before its widget processes completion or cancellation.
+pub(crate) fn take_adjustment_signals(ctx: &egui::Context) -> AdjustmentSignals {
+    // `Context::run` advances the pass counter before callers can collect its
+    // result; permit that just-completed pass as well as collection in-frame.
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|data| {
+        data.remove_temp::<FrameAdjustmentSignals>(egui::Id::new("numeric-adjustment-signals"))
+            .filter(|frame| pass.saturating_sub(frame.pass) <= 1)
+            .map(|frame| frame.signals)
+            .unwrap_or_default()
+    })
+}
+
+fn signal_adjustment(ctx: &egui::Context, label: &str, signals: AdjustmentSignals) {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|data| {
+        let id = egui::Id::new("numeric-adjustment-signals");
+        let mut frame = data
+            .get_temp::<FrameAdjustmentSignals>(id)
+            .filter(|frame| frame.pass == pass)
+            .map(|frame| frame.signals)
+            .unwrap_or_default();
+        frame.started |= signals.started;
+        frame.active |= signals.active;
+        frame.completed |= signals.completed;
+        frame.canceled |= signals.canceled;
+        if frame.label.is_none() {
+            frame.label = Some(label.to_owned());
+        }
+        data.insert_temp(
+            id,
+            FrameAdjustmentSignals {
+                pass,
+                signals: frame,
+            },
+        );
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn signal_for_test(ctx: &egui::Context, label: &str, signals: AdjustmentSignals) {
+    signal_adjustment(ctx, label, signals);
+}
+
+fn adjustment_ended(ctx: &egui::Context) -> bool {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data(|data| {
+        data.get_temp::<FrameAdjustmentSignals>(egui::Id::new("numeric-adjustment-signals"))
+            .is_some_and(|frame| {
+                frame.pass == pass && (frame.signals.completed || frame.signals.canceled)
+            })
+    })
+}
 
 /// Whether a numeric row's slider spans its range linearly or logarithmically.
 ///
@@ -40,6 +117,15 @@ struct NumericEditState {
     last_value: f64,
     edit_start: f64,
     focused: bool,
+    editing: bool,
+    wheel_events: VecDeque<f32>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SliderEditState {
+    start: Option<f64>,
+    canceled: bool,
+    deferred: Option<f64>,
 }
 
 /// Unit suffix for a parameter path, from core parameter discovery.
@@ -220,16 +306,88 @@ fn row_slider<T: egui::emath::Numeric>(
     } else {
         min
     };
-    let mut slider = egui::Slider::new(value, T::from_f64(track_min)..=T::from_f64(max))
-        .show_value(false)
-        .clamping(egui::SliderClamping::Never);
-    if logarithmic {
-        slider = slider
-            .logarithmic(true)
-            .smallest_positive(step.max(f64::MIN_POSITIVE));
+    let before = *value;
+    let mut candidate = before;
+    let response = ui
+        .push_id(
+            ("numeric-slider", label, min.to_bits(), max.to_bits()),
+            |ui| {
+                let mut slider =
+                    egui::Slider::new(&mut candidate, T::from_f64(track_min)..=T::from_f64(max))
+                        .show_value(false)
+                        .clamping(egui::SliderClamping::Never);
+                if logarithmic {
+                    slider = slider
+                        .logarithmic(true)
+                        .smallest_positive(step.max(f64::MIN_POSITIVE));
+                }
+                ui.add(slider).on_hover_text(tooltip_for(label))
+            },
+        )
+        .inner;
+    let state_id = response.id.with("adjustment");
+    let mut state = ui
+        .ctx()
+        .data(|data| data.get_temp::<SliderEditState>(state_id))
+        .unwrap_or_default();
+    let pointer_active = response.is_pointer_button_down_on() || response.dragged();
+    if state.start.is_none()
+        && (adjustment_ended(ui.ctx())
+            || ui.ctx().data(|data| {
+                data.get_temp::<egui::Id>(egui::Id::new("numeric-active-text"))
+                    .is_some()
+            }))
+        && (pointer_active || response.changed())
+    {
+        // Let history close the preceding text edit before the slider's
+        // first mutation. Retain even a press-and-release in this frame.
+        state.deferred = Some(candidate.to_f64());
+        ui.ctx().data_mut(|data| data.insert_temp(state_id, state));
+        ui.ctx().request_repaint();
+        return false;
     }
-    let response = ui.add(slider).on_hover_text(tooltip_for(label));
-    response.changed()
+    let mut signals = AdjustmentSignals::default();
+    if state.start.is_none()
+        && (pointer_active
+            || response.drag_started()
+            || response.drag_stopped()
+            || state.deferred.is_some())
+    {
+        state.start = Some(before.to_f64());
+        signals.started = true;
+        if let Some(deferred) = state.deferred.take()
+            && !pointer_active
+        {
+            candidate = T::from_f64(deferred);
+        }
+    }
+    if let Some(start) = state.start {
+        if !state.canceled && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            candidate = T::from_f64(start);
+            state.canceled = true;
+            signals.canceled = true;
+            response.surrender_focus();
+        } else if state.canceled {
+            // egui keeps moving its slider until release; ignore those values
+            // after Escape instead of opening another history transaction.
+            candidate = before;
+        }
+        signals.active = pointer_active && !state.canceled;
+        if !pointer_active {
+            signals.completed = !state.canceled;
+            state = SliderEditState::default();
+        }
+    } else if response.changed() {
+        // Keyboard and accessibility steps are discrete accepted edits.
+        signals.started = true;
+        signals.completed = true;
+    }
+    *value = candidate;
+    ui.ctx().data_mut(|data| data.insert_temp(state_id, state));
+    if signals != AdjustmentSignals::default() {
+        signal_adjustment(ui.ctx(), label, signals);
+    }
+    *value != before
 }
 
 /// Tooltip text for a row slider: the value field carries the parameter's own
@@ -303,12 +461,13 @@ where
             last_value: current,
             edit_start: current,
             focused: false,
+            editing: false,
+            wheel_events: VecDeque::new(),
         });
 
-    if state.last_value.to_bits() != current.to_bits()
-        || (state.focused && !ui.memory(|memory| memory.has_focus(id)))
-    {
+    if !state.editing && state.last_value.to_bits() != current.to_bits() {
         state.text = format_value(current, T::INTEGRAL, decimals);
+        state.edit_start = current;
     }
 
     // Determine if the current text is invalid for visual feedback.
@@ -329,6 +488,7 @@ where
             text_edit = text_edit.text_color(theme::ERROR);
         }
         let mut response = ui.add(text_edit).on_hover_text(tooltip);
+        crate::controls::focus_response(ui, label, &response);
         // Name the editor itself, so assistive technology and the
         // accessibility tree's label lookup both find the field rather than a
         // separate label node, and declare the visible label as the field's
@@ -358,6 +518,7 @@ where
         value_row_events(
             ui,
             &response,
+            label,
             value,
             &mut state,
             id,
@@ -381,6 +542,7 @@ where
 fn value_row_events<T: egui::emath::Numeric>(
     ui: &Ui,
     response: &egui::Response,
+    label: &str,
     value: &mut T,
     state: &mut NumericEditState,
     id: egui::Id,
@@ -391,54 +553,108 @@ fn value_row_events<T: egui::emath::Numeric>(
     valid: impl Fn(T) -> bool,
     changed: &mut bool,
 ) {
-    if response.gained_focus() {
+    if response.gained_focus() || (!state.focused && response.has_focus()) {
         state.edit_start = value.to_f64();
     }
-    if response.changed()
-        && let Some(parsed) = parse_value::<T>(&state.text, min, max)
-    {
-        let next = T::from_f64(parsed);
-        if valid(next)
-            && (T::INTEGRAL || state.text.trim() != "0" || response.lost_focus())
-            && *value != next
-        {
-            *value = next;
+    let mut signals = AdjustmentSignals::default();
+    let escape = (state.focused || response.has_focus() || response.gained_focus())
+        && ui.input(|input| input.key_pressed(egui::Key::Escape));
+    if escape {
+        let start = T::from_f64(state.edit_start);
+        if state.editing && valid(start) && *value != start {
+            *value = start;
             *changed = true;
         }
-    }
-    let mut wheel_value = *value;
-    let wheel_changed =
-        wheel_adjust(ui, response, &mut wheel_value, min, max, step) && valid(wheel_value);
-    if wheel_changed {
-        *value = wheel_value;
+        signals.canceled = state.editing;
+        state.editing = false;
         state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
-        *changed = true;
-    }
-
-    if response.lost_focus() {
-        let final_value = parse_value::<T>(&state.text, min, max).map(T::from_f64);
-        let target = match final_value {
-            // Commit a valid draft deferred while focused (e.g. a bare "0").
-            Some(next) if valid(next) => Some(next),
-            // Roll back to the focus-start value only while it still passes
-            // validation; a paired field may have moved since focus started.
-            _ => {
-                let start = T::from_f64(state.edit_start);
-                valid(start).then_some(start)
+        response.surrender_focus();
+    } else {
+        if response.changed() {
+            if !state.editing {
+                state.editing = true;
+                signals.started = true;
             }
-        };
-        if let Some(next) = target
-            && *value != next
-        {
-            *value = next;
-            *changed = true;
+            if let Some(parsed) = parse_value::<T>(&state.text, min, max) {
+                let next = T::from_f64(parsed);
+                if valid(next)
+                    && (T::INTEGRAL || state.text.trim() != "0" || response.lost_focus())
+                    && *value != next
+                {
+                    *value = next;
+                    *changed = true;
+                }
+            }
         }
-        state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
+
+        collect_wheel_events(ui, response, &mut state.wheel_events);
+        let finish_for_wheel = state.editing && !state.wheel_events.is_empty();
+        if !state.editing
+            && !adjustment_ended(ui.ctx())
+            && ui.ctx().data(|data| {
+                data.get_temp::<egui::Id>(egui::Id::new("numeric-active-text"))
+                    .is_none_or(|active| active == id)
+            })
+            && let Some(delta) = state.wheel_events.pop_front()
+        {
+            let mut wheel_value = *value;
+            if apply_wheel_delta(&mut wheel_value, delta, min, max, step) && valid(wheel_value) {
+                *value = wheel_value;
+                state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
+                *changed = true;
+                signals.started = true;
+                signals.completed = true;
+                state.edit_start = value.to_f64();
+            }
+        }
+
+        if response.lost_focus() || (state.focused && !response.has_focus()) || finish_for_wheel {
+            let final_value = parse_value::<T>(&state.text, min, max).map(T::from_f64);
+            let target = match final_value {
+                // Commit a valid draft deferred while focused (e.g. a bare "0").
+                Some(next) if valid(next) => Some(next),
+                // Paired controls may have made the focus-start value invalid.
+                _ => {
+                    let start = T::from_f64(state.edit_start);
+                    valid(start).then_some(start)
+                }
+            };
+            if let Some(next) = target
+                && *value != next
+            {
+                *value = next;
+                *changed = true;
+            }
+            if state.editing {
+                if final_value.is_some_and(&valid) {
+                    signals.completed = true;
+                } else {
+                    signals.canceled = true;
+                }
+            }
+            state.editing = false;
+            state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
+            state.edit_start = value.to_f64();
+        }
+    }
+    if !state.wheel_events.is_empty() {
+        ui.ctx().request_repaint();
+    }
+    signals.active = state.editing;
+    if signals != AdjustmentSignals::default() {
+        signal_adjustment(ui.ctx(), label, signals);
     }
     state.last_value = value.to_f64();
-    state.focused = response.has_focus();
-    ui.ctx()
-        .data_mut(|data| data.insert_temp(id, state.clone()));
+    state.focused = response.has_focus() && !escape;
+    ui.ctx().data_mut(|data| {
+        let active_id = egui::Id::new("numeric-active-text");
+        if state.editing {
+            data.insert_temp(active_id, id);
+        } else if data.get_temp::<egui::Id>(active_id) == Some(id) {
+            data.remove::<egui::Id>(active_id);
+        }
+        data.insert_temp(id, state.clone());
+    });
 }
 
 fn apply_wheel_delta<T: egui::emath::Numeric>(
@@ -461,26 +677,25 @@ fn apply_wheel_delta<T: egui::emath::Numeric>(
     true
 }
 
-fn wheel_adjust<T: egui::emath::Numeric>(
-    ui: &Ui,
-    response: &egui::Response,
-    value: &mut T,
-    min: f64,
-    max: f64,
-    step: f64,
-) -> bool {
+fn collect_wheel_events(ui: &Ui, response: &egui::Response, pending: &mut VecDeque<f32>) {
     if !response.hovered() {
-        return false;
+        return;
     }
-    // Numeric steps follow physical wheel events, not egui's smoothing tail:
-    // one notch must not change the value again on later repaint frames.
-    let delta = ui.input(|input| input.raw_scroll_delta.y);
-    let changed = apply_wheel_delta(value, delta, min, max, step);
+    // Keep original events separate, including several events delivered in
+    // one frame. Process one per frame so each has its own history boundary.
+    // Never use egui's smooth scrolling residue as a new physical event.
     ui.input_mut(|input| {
+        for event in &mut input.events {
+            if let egui::Event::MouseWheel { delta, .. } = event
+                && delta.y != 0.0
+            {
+                pending.push_back(delta.y);
+                delta.y = 0.0;
+            }
+        }
         input.raw_scroll_delta.y = 0.0;
         input.smooth_scroll_delta.y = 0.0;
     });
-    changed
 }
 
 #[cfg(test)]
@@ -776,9 +991,12 @@ mod tests {
         run_numeric_frame(&ctx, replace_events("abc"), &mut value, &mut changed, &rect);
         assert!(!changed);
         assert_eq!(value, 0.25);
+        super::take_adjustment_signals(&ctx);
         run_numeric_frame(&ctx, enter_events(), &mut value, &mut changed, &rect);
         assert!(changed);
         assert_eq!(value, 0.5);
+        let canceled = super::take_adjustment_signals(&ctx);
+        assert!(canceled.canceled && !canceled.completed && !canceled.active);
     }
 
     #[test]
@@ -857,8 +1075,407 @@ mod tests {
         );
         assert!(!changed);
         assert_eq!(value, 0.1);
-        run(enter_events(), &mut value, &mut changed, &other, &rect);
+        super::take_adjustment_signals(&ctx);
+        run(escape_events(), &mut value, &mut changed, &other, &rect);
         assert!(!changed);
         assert_eq!(value, 0.1);
+        let canceled = super::take_adjustment_signals(&ctx);
+        assert!(canceled.canceled && !canceled.active && !canceled.completed);
+    }
+
+    #[test]
+    fn accepted_text_keeps_focus_and_draft_until_one_completion() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        for events in focus_events(rect.get().center()) {
+            run_numeric_frame(&ctx, events, &mut value, &mut changed, &rect);
+            assert_eq!(super::take_adjustment_signals(&ctx), Default::default());
+        }
+        run_numeric_frame(
+            &ctx,
+            replace_events("0.2500"),
+            &mut value,
+            &mut changed,
+            &rect,
+        );
+        assert_eq!(value, 0.25);
+        let started = super::take_adjustment_signals(&ctx);
+        assert!(started.started && started.active);
+        assert!(!started.completed && !started.canceled);
+        assert_eq!(started.label.as_deref(), Some("exposure"));
+
+        // Rebuilding the UI with the accepted value must not format away the
+        // focused text's trailing zeroes or discard keyboard focus.
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        let focused = ctx.memory(|memory| memory.focused()).unwrap();
+        let draft = ctx
+            .data(|data| data.get_temp::<super::NumericEditState>(focused))
+            .unwrap();
+        assert_eq!(draft.text, "0.2500");
+        let active = super::take_adjustment_signals(&ctx);
+        assert!(active.active && !active.started && !active.completed);
+
+        run_numeric_frame(&ctx, enter_events(), &mut value, &mut changed, &rect);
+        let completed = super::take_adjustment_signals(&ctx);
+        assert!(completed.completed && !completed.active && !completed.canceled);
+        assert_eq!(value, 0.25);
+        assert_eq!(super::take_adjustment_signals(&ctx), Default::default());
+    }
+
+    fn escape_events() -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    #[test]
+    fn escape_cancels_text_and_restores_focus_start() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        for events in focus_events(rect.get().center()) {
+            run_numeric_frame(&ctx, events, &mut value, &mut changed, &rect);
+        }
+        run_numeric_frame(
+            &ctx,
+            replace_events("0.25"),
+            &mut value,
+            &mut changed,
+            &rect,
+        );
+        super::take_adjustment_signals(&ctx);
+        run_numeric_frame(&ctx, replace_events("-"), &mut value, &mut changed, &rect);
+        assert_eq!(value, 0.25);
+        assert!(!changed);
+        assert!(super::take_adjustment_signals(&ctx).active);
+
+        run_numeric_frame(&ctx, escape_events(), &mut value, &mut changed, &rect);
+        assert!(changed);
+        assert_eq!(value, 0.5);
+        let canceled = super::take_adjustment_signals(&ctx);
+        assert!(canceled.canceled && !canceled.completed && !canceled.active);
+        assert!(ctx.memory(|memory| memory.focused()).is_none());
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        assert_eq!(super::take_adjustment_signals(&ctx), Default::default());
+    }
+
+    #[test]
+    fn wheel_edit_completes_once_without_smoothing_transactions() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        run_numeric_frame(
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(rect.get().center()),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: egui::vec2(0.0, 1.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            &mut value,
+            &mut changed,
+            &rect,
+        );
+        assert_eq!(value, 0.55);
+        let step = super::take_adjustment_signals(&ctx);
+        assert!(step.started && step.completed && !step.active && !step.canceled);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        assert_eq!(value, 0.55);
+        assert!(!changed);
+        assert_eq!(super::take_adjustment_signals(&ctx), Default::default());
+    }
+
+    fn run_slider_frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        value: &mut f64,
+    ) -> (egui::Rect, super::AdjustmentSignals) {
+        let mut rect = egui::Rect::NOTHING;
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(300.0, 200.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    rect = ui
+                        .scope(|ui| {
+                            super::row_slider(ui, "exposure", value, 0.0, 1.0, 0.05);
+                        })
+                        .response
+                        .rect;
+                });
+            },
+        );
+        (rect, super::take_adjustment_signals(ctx))
+    }
+
+    #[test]
+    fn slider_drag_has_one_start_and_one_completion() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let (rect, _) = run_slider_frame(&ctx, vec![], &mut value);
+        let position = rect.center();
+        let events = focus_events(position);
+        let (_, started) = run_slider_frame(&ctx, events[0].clone(), &mut value);
+        assert!(started.started && started.active && !started.completed);
+        let moved = egui::pos2(rect.right() - 5.0, position.y);
+        let (_, active) =
+            run_slider_frame(&ctx, vec![egui::Event::PointerMoved(moved)], &mut value);
+        assert!(active.active && !active.started && !active.completed);
+        assert!(value > 0.5);
+        let (_, completed) = run_slider_frame(&ctx, focus_events(moved)[1].clone(), &mut value);
+        assert!(completed.completed && !completed.active && !completed.started);
+    }
+
+    #[test]
+    fn slider_escape_restores_start_and_suppresses_until_release() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let (rect, _) = run_slider_frame(&ctx, vec![], &mut value);
+        let position = egui::pos2(rect.right() - 5.0, rect.center().y);
+        let events = focus_events(position);
+        run_slider_frame(&ctx, events[0].clone(), &mut value);
+        assert!(value > 0.5);
+        let (_, canceled) = run_slider_frame(&ctx, escape_events(), &mut value);
+        assert_eq!(value, 0.5);
+        assert!(canceled.canceled && !canceled.completed && !canceled.active);
+        let moved = egui::pos2(rect.left() + 5.0, position.y);
+        let (_, suppressed) =
+            run_slider_frame(&ctx, vec![egui::Event::PointerMoved(moved)], &mut value);
+        assert_eq!(value, 0.5);
+        assert_eq!(suppressed, Default::default());
+        let (_, released) = run_slider_frame(&ctx, focus_events(moved)[1].clone(), &mut value);
+        assert_eq!(value, 0.5);
+        assert_eq!(released, Default::default());
+    }
+
+    #[test]
+    fn wheel_after_typing_completes_separately_and_keeps_each_original_event() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        for events in focus_events(rect.get().center()) {
+            run_numeric_frame(&ctx, events, &mut value, &mut changed, &rect);
+        }
+        run_numeric_frame(
+            &ctx,
+            replace_events("0.25"),
+            &mut value,
+            &mut changed,
+            &rect,
+        );
+        assert!(super::take_adjustment_signals(&ctx).started);
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            modifiers: egui::Modifiers::NONE,
+        };
+        run_numeric_frame(
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(rect.get().center()),
+                wheel.clone(),
+                wheel,
+            ],
+            &mut value,
+            &mut changed,
+            &rect,
+        );
+        assert_eq!(value, 0.25);
+        let text = super::take_adjustment_signals(&ctx);
+        assert!(text.completed && !text.started && !text.active);
+        for expected in [0.30, 0.35] {
+            run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+            assert!((value - expected).abs() < 1e-12);
+            let step = super::take_adjustment_signals(&ctx);
+            assert!(step.started && step.completed && !step.active);
+        }
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        assert!(!changed);
+        assert_eq!(super::take_adjustment_signals(&ctx), Default::default());
+    }
+
+    #[test]
+    fn slider_waits_for_text_completion_before_first_mutation() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let (rect, _) = run_slider_frame(&ctx, vec![], &mut value);
+        super::signal_adjustment(
+            &ctx,
+            "other",
+            super::AdjustmentSignals {
+                completed: true,
+                ..Default::default()
+            },
+        );
+        let position = egui::pos2(rect.right() - 5.0, rect.center().y);
+        let events = focus_events(position);
+        let (_, completing_text) = run_slider_frame(&ctx, events[0].clone(), &mut value);
+        assert_eq!(value, 0.5);
+        assert!(completing_text.completed && !completing_text.started);
+        let (_, started_slider) = run_slider_frame(&ctx, vec![], &mut value);
+        assert!(value > 0.5);
+        assert!(started_slider.started && started_slider.active && !started_slider.completed);
+        let (_, completed_slider) = run_slider_frame(&ctx, events[1].clone(), &mut value);
+        assert!(completed_slider.completed && !completed_slider.active);
+    }
+
+    #[test]
+    fn focused_idle_field_reconciles_external_value_before_blur() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        for events in focus_events(rect.get().center()) {
+            run_numeric_frame(&ctx, events, &mut value, &mut changed, &rect);
+        }
+        value = 0.75;
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        assert!(!changed);
+        let focused = ctx.memory(|memory| memory.focused()).unwrap();
+        let state = ctx
+            .data(|data| data.get_temp::<super::NumericEditState>(focused))
+            .unwrap();
+        assert_eq!(state.text, "0.750");
+        assert_eq!(state.edit_start, 0.75);
+        run_numeric_frame(&ctx, enter_events(), &mut value, &mut changed, &rect);
+        assert!(!changed);
+        assert_eq!(value, 0.75);
+        assert_eq!(super::take_adjustment_signals(&ctx), Default::default());
+    }
+
+    #[test]
+    fn consuming_empty_signals_preserves_later_text_owner_before_slider() {
+        let ctx = egui::Context::default();
+        let mut slider_value = 0.5;
+        let mut text_value = 0.5;
+        let run = |events: Vec<egui::Event>, slider_value: &mut f64, text_value: &mut f64| {
+            let mut slider_rect = egui::Rect::NOTHING;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(300.0, 200.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    // History begins each frame by draining stale signals.
+                    assert_eq!(super::take_adjustment_signals(ctx), Default::default());
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        slider_rect = ui
+                            .scope(|ui| {
+                                super::row_slider(
+                                    ui,
+                                    "earlier slider",
+                                    slider_value,
+                                    0.0,
+                                    1.0,
+                                    0.05,
+                                );
+                            })
+                            .response
+                            .rect;
+                        let id = ui.make_persistent_id(("numeric-field", "later text"));
+                        if ctx.input(|input| {
+                            input
+                                .events
+                                .iter()
+                                .any(|event| matches!(event, egui::Event::Text(_)))
+                        }) {
+                            ctx.memory_mut(|memory| memory.request_focus(id));
+                        }
+                        numeric_field(
+                            ui,
+                            "later text",
+                            "later text",
+                            text_value,
+                            0.0,
+                            1.0,
+                            0.05,
+                            3,
+                            "tip",
+                            None,
+                            None,
+                        );
+                    });
+                },
+            );
+            (slider_rect, super::take_adjustment_signals(&ctx))
+        };
+        run(vec![], &mut slider_value, &mut text_value);
+        let (rect, editing) = run(replace_events("0.25"), &mut slider_value, &mut text_value);
+        assert!(editing.started && editing.active);
+        assert_eq!(text_value, 0.25);
+        // The next frame drains an empty signal object before drawing this
+        // slider, but the later field still owns the active text transaction.
+        let position = egui::pos2(rect.right() - 5.0, rect.center().y);
+        let (_, text_completed) = run(
+            focus_events(position)[0].clone(),
+            &mut slider_value,
+            &mut text_value,
+        );
+        assert_eq!(slider_value, 0.5);
+        assert!(text_completed.completed && !text_completed.started && !text_completed.active);
+        let (_, slider_started) = run(vec![], &mut slider_value, &mut text_value);
+        assert!(slider_value > 0.5);
+        assert!(slider_started.started && slider_started.active && !slider_started.completed);
+        let (_, canceled) = run(escape_events(), &mut slider_value, &mut text_value);
+        assert_eq!(slider_value, 0.5);
+        assert!(canceled.canceled && !canceled.completed && !canceled.active);
+    }
+
+    #[test]
+    fn standalone_wheel_events_do_not_require_history_signal_consumption() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        for (delta, expected) in [(1.0, 0.55), (-1.0, 0.5)] {
+            run_numeric_frame(
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(rect.get().center()),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Line,
+                        delta: egui::vec2(0.0, delta),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                &mut value,
+                &mut changed,
+                &rect,
+            );
+            assert!(changed);
+            assert!((value - expected).abs() < 1e-12);
+            // Standalone widgets have no History consumer at frame end.
+        }
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        assert!(!changed);
+        assert!((value - 0.5).abs() < 1e-12);
+        assert_eq!(super::take_adjustment_signals(&ctx), Default::default());
     }
 }

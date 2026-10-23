@@ -30,13 +30,6 @@ impl SectionLabelCache {
     fn complete_for_search(&self) -> bool {
         self.search_rendered && !self.labels.is_empty()
     }
-
-    /// The control labels this cache recorded, and whether the render that
-    /// recorded them ran with a non-empty filter. The cross-page search index
-    /// reads them to decide which sections own a matching control.
-    pub(crate) fn labels(&self) -> Option<&[&'static str]> {
-        self.search_rendered.then_some(self.labels.as_slice())
-    }
 }
 
 /// Whether a section's cached control labels include a match for `filter`. A
@@ -57,6 +50,7 @@ pub(crate) struct ControlFilter<'a> {
     filter: &'a str,
     reached: Vec<&'static str>,
     cache: &'a mut SectionLabelCache,
+    allowed_paths: Option<Vec<String>>,
 }
 
 impl<'a> ControlFilter<'a> {
@@ -65,7 +59,58 @@ impl<'a> ControlFilter<'a> {
             filter,
             reached: Vec::new(),
             cache,
+            allowed_paths: None,
         }
+    }
+
+    pub(crate) fn configure(
+        &mut self,
+        section: &str,
+        params: &spektrafilm_core::params::RuntimeParams,
+        extras: &serde_json::Value,
+        only_modified: bool,
+    ) {
+        if self.filter.is_empty() && !only_modified {
+            return;
+        }
+        let projection = only_modified.then(|| super::control_projection(params, extras));
+        let query = self.filter.to_lowercase();
+        self.allowed_paths = Some(
+            super::inventory()
+                .iter()
+                .filter(|entry| {
+                    entry.section == section
+                        && entry.searchable()
+                        && entry.matches(&query)
+                        && projection.as_ref().is_none_or(|projection| {
+                            entry.is_modified(&projection.runtime, &projection.extras)
+                        })
+                })
+                .map(|entry| entry.path.clone())
+                .collect(),
+        );
+    }
+
+    pub(crate) fn install_row_filter(&self, ctx: &egui::Context) {
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("control_allowed_paths"),
+                self.allowed_paths.clone().map(std::sync::Arc::new),
+            )
+        });
+    }
+
+    /// Query a group's actual canonical inventory entries without projecting
+    /// through labels shared by another engine.
+    pub(crate) fn any_matching_entry(
+        &self,
+        predicate: impl Fn(&super::inventory::ControlEntry) -> bool,
+    ) -> bool {
+        self.allowed_paths.as_ref().is_none_or(|paths| {
+            super::inventory()
+                .iter()
+                .any(|entry| paths.contains(&entry.path) && predicate(entry))
+        })
     }
 
     /// Store the labels this render reached as the section's label cache.
@@ -76,12 +121,15 @@ impl<'a> ControlFilter<'a> {
 
     /// Whether the control search is active.
     pub(crate) fn active(&self) -> bool {
-        !self.filter.is_empty()
+        !self.filter.is_empty() || self.allowed_paths.is_some()
     }
 
     /// Whether the filter matches a label the section rendered before.
     pub(crate) fn section_matches(&self) -> bool {
-        cached_labels_match(self.filter, Some(self.cache))
+        self.allowed_paths.as_ref().map_or_else(
+            || cached_labels_match(self.filter, Some(self.cache)),
+            |paths| !paths.is_empty(),
+        )
     }
 
     fn record(&mut self, label: &'static str) {
@@ -94,7 +142,19 @@ impl<'a> ControlFilter<'a> {
 /// Filter a control by its label, recording the label as reached.
 pub(crate) fn filter_matches(filter: &mut ControlFilter<'_>, label: &'static str) -> bool {
     filter.record(label);
-    label_matches(filter.filter, label)
+    filter.allowed_paths.as_ref().map_or_else(
+        || label_matches(filter.filter, label),
+        |paths| {
+            super::inventory().iter().any(|entry| {
+                paths.contains(&entry.path)
+                    && (entry.label.eq_ignore_ascii_case(label)
+                        || entry
+                            .components
+                            .iter()
+                            .any(|component| component.label.eq_ignore_ascii_case(label)))
+            })
+        },
+    )
 }
 
 /// Filter a group of labels that guard one control, recording every label.

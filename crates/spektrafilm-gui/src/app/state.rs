@@ -33,9 +33,11 @@ pub(crate) struct App {
     /// Original print-glare switch captured while Scan-for-print is active.
     /// This transient workflow state is deliberately excluded from persistence.
     pub(crate) scan_for_print_snapshot: Option<bool>,
+    pub(crate) adjustment_history: super::history::AdjustmentHistory,
     pub(crate) image_path: Option<PathBuf>,
     pub(crate) image: Option<Arc<ImageBuf>>,
     pub(crate) raw_lens_info: Option<String>,
+    pub(crate) raw_applied_settings: Option<serde_json::Value>,
     /// Quarter turns applied to the loaded source, used for the rotation status.
     pub(crate) input_rotation: i32,
     pub(crate) source_metadata: Option<ImageMetadata>,
@@ -48,7 +50,11 @@ pub(crate) struct App {
     pub(crate) source_render: Option<SourceRender>,
     pub(crate) diagnostics: diagnostics::Diagnostics,
     pub(crate) viewer: display::Viewer,
-    pub(crate) gui_tab: ui::GuiTab,
+    pub(crate) settings_open: bool,
+    pub(crate) only_modified: bool,
+    pub(crate) pending_stage: Option<controls::Stage>,
+    pub(crate) settings_return_focus: Option<egui::Id>,
+    pub(crate) export_return_focus: Option<egui::Id>,
     pub(crate) output_color_space: String,
     pub(crate) output_cctf_encoding: bool,
     pub(crate) status: String,
@@ -217,10 +223,12 @@ impl App {
             force_preview: false,
             full_scan_requested: false,
             scan_for_print_snapshot: None,
+            adjustment_history: super::history::AdjustmentHistory::default(),
             image_path: None,
             input_rotation: 0,
             image: None,
             raw_lens_info: None,
+            raw_applied_settings: None,
             source_metadata: None,
             export_options,
             export_dialog: ExportDialog::default(),
@@ -230,7 +238,11 @@ impl App {
             source_render: None,
             diagnostics: diagnostics::Diagnostics::default(),
             viewer: display::Viewer::new(),
-            gui_tab: ui::GuiTab::default(),
+            settings_open: false,
+            only_modified: false,
+            pending_stage: None,
+            settings_return_focus: None,
+            export_return_focus: None,
             output_color_space: "sRGB".into(),
             output_cctf_encoding: true,
             dirty_since: None,
@@ -271,6 +283,7 @@ impl App {
             .restore_state(&app.gui_state.sections["rust"]["viewer"]);
         app.histogram
             .restore_state(&app.gui_state.sections["rust"]["histogram"]);
+        app.reset_adjustment_history();
         app
     }
 
@@ -306,11 +319,47 @@ impl App {
     }
 
     pub(crate) fn apply_state(&mut self, state: state::GuiState) -> Result<()> {
-        self.last_state_normalization = None;
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
-        profile::load_profile_by_name(&self.data_dir, state.paper())?;
+        let print = profile::load_profile_by_name(&self.data_dir, state.paper())?;
+        if !film.is_film() || !film.is_filming() {
+            anyhow::bail!("simulation.film_stock: selected profile is not a filming film");
+        }
+        if !print.is_print_stock() {
+            anyhow::bail!("simulation.print_paper: selected profile is not a print stock");
+        }
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
+        // Decode the candidate source before replacing any accepted controls.
+        // A missing/corrupt source leaves both the state and history untouched.
+        let loaded = if let Some(path) = &self.image_path {
+            if image_io::is_raw(path) {
+                let settings = &state.sections["load_raw"];
+                let options = spektrafilm_raw::RawOptions {
+                    white_balance: match settings["white_balance"].as_str().unwrap_or("as_shot") {
+                        "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
+                        "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
+                        "custom" => spektrafilm_raw::WhiteBalance::Custom,
+                        _ => spektrafilm_raw::WhiteBalance::AsShot,
+                    },
+                    temperature: settings["temperature"].as_f64(),
+                    tint: settings["tint"].as_f64(),
+                    lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
+                };
+                let result = spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
+                params.io.input_color_space = "ACES2065-1".into();
+                params.io.input_cctf_decoding = false;
+                Some((
+                    result.image,
+                    image_io::read_metadata(path),
+                    Some(result.lens_info),
+                ))
+            } else {
+                let result = image_io::load(path)?;
+                Some((result.image, result.metadata, None))
+            }
+        } else {
+            None
+        };
         let film_medium = scan_medium(&film);
         let film_reference_illuminant = film.info.reference_illuminant.clone();
         let before_scanner = params.scanner.clone();
@@ -322,12 +371,13 @@ impl App {
             &params.workflow.route,
         );
         self.film_name = state.film().to_owned();
+        self.print_name = state.paper().to_owned();
         self.film_reference_illuminant = film_reference_illuminant;
         self.film_medium = film_medium;
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
-        self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
-        self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
+        self.film_dev_times = film.data.development_time;
+        self.print_dev_times = print.data.development_time;
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
         self.params = params;
         self.export_options = ExportOptions::from_state(&state.sections);
@@ -344,16 +394,32 @@ impl App {
         self.browser_state_changed_at = Some(Instant::now());
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
-        self.raw_lens_info = None;
         self.dirty = true;
+        self.dirty_since = Some(Instant::now());
         self.force_preview = true;
-        if let Some(path) = self.image_path.clone() {
-            self.load_image_from_path(&path);
+        self.full_scan_requested = false;
+        self.render_worker.cancel_active();
+        if let Some((image, metadata, lens_info)) = loaded {
+            self.image = Some(Arc::new(image));
+            self.source_metadata = metadata;
+            self.raw_lens_info = lens_info;
+            self.raw_applied_settings = self
+                .image_path
+                .as_ref()
+                .filter(|path| image_io::is_raw(path))
+                .map(|_| self.gui_state.sections["load_raw"].clone());
+            self.input_rotation = 0;
+            self.input_epoch = self.input_epoch.wrapping_add(1);
+            self.output_image = None;
+            self.output_metadata = None;
+            self.source_render = None;
+            self.refresh_input_viewer();
         }
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);
         self.histogram
             .restore_state(&self.gui_state.sections["rust"]["histogram"]);
+        self.reset_adjustment_history();
         Ok(())
     }
 

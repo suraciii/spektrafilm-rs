@@ -4,6 +4,14 @@ use crate::*;
 use super::state::App;
 
 impl App {
+    pub(crate) fn accepted_frame_is_stale(&self) -> bool {
+        self.output_image.is_some()
+            && self.source_render.as_ref().is_none_or(|render| {
+                render.input_revision != Some(self.input_epoch)
+                    || render.parameter_revision != Some(self.parameter_revision)
+            })
+    }
+
     /// The one header status line: the work unit that executes now, or the
     /// last accepted operation status when no render runs. A newer queued
     /// job only names the status once its attempt starts.

@@ -76,14 +76,11 @@ fn raw_import_through_the_app_sets_linear_aces_and_renders() {
     // Export the full-resolution RAW result through the production worker.
     // The default TIFF export is 8-bit; request the float depth explicitly so
     // the RAW samples survive without integer quantization.
-    let mut options = h.state().export_options.clone();
-    options.format = export::ExportFormat::Tiff;
-    options.depth = BitDepth::ThirtyTwo;
-    options.saving_cctf_encoding = false;
-    h.state_mut().export_options = options;
+    open_export(h);
+    choose(h, "Format", "TIFF");
+    choose(h, "Bit depth", "32 bit");
+    click(h, "Apply saving CCTF encoding");
     script(h, chooser::Chooser::chooser_path(&destination));
-    click(h, "Export options");
-    export_action(h, "Open export settings…");
     assert!(h.state().export_dialog.is_open(), "export modal opened");
     export_action(h, "Export file…");
     h.run_steps(5);

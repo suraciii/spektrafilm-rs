@@ -28,6 +28,15 @@ pub(crate) fn sections(
                     "xy: radial compression in CIE 1931 chromaticity toward the spectral locus / inscribed hull (ACES RGC family, preserves dominant wavelength). oklch: perceptual chroma reduction in OkLab. off: disable input gamut compression.",
                 );
             }
+            if filter_matches(filter, "boundary") {
+                flags.runtime_changed |= choice_tip(
+                    ui,
+                    "boundary",
+                    &mut params.io.input_gamut_compress.boundary,
+                    &["locus", "inscribed_hull"],
+                    "Use the visible spectral locus or its smoothed inscribed hull as the input gamut boundary.",
+                );
+            }
             if filter_matches(filter, "knee") {
                 flags.runtime_changed |= param_tuple(
                     ui,

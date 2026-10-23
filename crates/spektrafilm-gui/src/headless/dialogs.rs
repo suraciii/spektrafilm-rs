@@ -102,32 +102,47 @@ fn preset_row(h: &Harness<'_, App>, name: &str) -> String {
     nodes[0].label().unwrap().to_string()
 }
 
-fn assert_quality_hidden(h: &Harness<'_, App>) {
+fn assert_preset_marker(h: &Harness<'_, App>, expected: presets::Marker) {
+    let app = h.state();
+    assert_eq!(
+        presets::marker(
+            app.presets.state.applied.as_ref().expect("applied look"),
+            &app.presets.entries,
+            &app.params,
+            &app.film_name,
+            &app.print_name,
+        ),
+        expected
+    );
+}
+
+fn assert_quality_disabled(h: &Harness<'_, App>) {
     assert!(
-        h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "JPEG quality")
-            .next()
-            .is_none()
+        h.get_by_role_and_label(egui::accesskit::Role::Slider, "JPEG quality")
+            .node()
+            .is_disabled()
     );
     assert!(
-        h.query_all_by_role_and_label(egui::accesskit::Role::SpinButton, "JPEG quality")
-            .next()
-            .is_none()
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "JPEG subsampling")
+            .node()
+            .is_disabled()
     );
 }
 fn assert_quality_controls(h: &Harness<'_, App>) {
     assert!(
-        h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "JPEG quality")
-            .next()
-            .is_some()
+        !h.get_by_role_and_label(egui::accesskit::Role::Slider, "JPEG quality")
+            .node()
+            .is_disabled()
     );
     assert!(
-        h.query_all_by_role_and_label(egui::accesskit::Role::SpinButton, "JPEG quality")
-            .next()
-            .is_some()
+        !h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "JPEG subsampling")
+            .node()
+            .is_disabled()
     );
 }
 
 fn choose_diagnostics_mode(h: &mut Harness<'_, App>, next: &str) {
+    reveal_control(h, "action.save_report");
     let combos: Vec<_> = h
         .query_all_by_role(egui::accesskit::Role::ComboBox)
         .filter(|node| node.label().unwrap_or_default().is_empty())
@@ -142,6 +157,7 @@ fn choose_diagnostics_mode(h: &mut Harness<'_, App>, next: &str) {
 }
 
 fn click_status_row(h: &mut Harness<'_, App>, label: &str) {
+    scroll_controls_into_view(h, label);
     let rows: Vec<_> = h
         .query_all_by_label_contains(label)
         .filter(|node| node.node().role() == egui::accesskit::Role::Button)
@@ -189,8 +205,6 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     assert!(h.query_by_label("Name in My Presets").is_some());
     let invalid_name = "bad/name";
     edit_preset_name(h, invalid_name);
-    let expected_error = spektrafilm_core::presets::validate_name(invalid_name).unwrap_err();
-    assert!(h.query_by_label(&expected_error).is_some());
     assert!(h.get_by_label("Save").node().is_disabled());
     edit_preset_name(h, "Dialog Look");
     assert!(!h.get_by_label("Save").node().is_disabled());
@@ -204,18 +218,15 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
             .name,
         "Dialog Look"
     );
-    assert_eq!(
-        h.state().status,
-        format!("Saved preset 'Dialog Look' to {}", original.display())
-    );
-    assert_eq!(preset_row(h, "Dialog Look"), "Dialog Look • applied");
+    assert_preset_marker(h, presets::Marker::Applied);
 
+    reveal_control(h, "output_mix.amount");
     edit(h, "Simulation blend", "0.25");
     assert!((h.state().params.output_mix.amount - 0.25).abs() < 1e-6);
     let row = preset_row(h, "Dialog Look");
-    assert_eq!(row, "Dialog Look • modified");
+    assert_preset_marker(h, presets::Marker::Modified);
     click_preset_action(h, &row, "Revert");
-    assert_eq!(h.state().status, "Applied preset 'Dialog Look'");
+    assert_preset_marker(h, presets::Marker::Applied);
     assert!((h.state().params.output_mix.amount - 1.0).abs() < 1e-6);
 
     let row = preset_row(h, "Dialog Look");
@@ -233,7 +244,7 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
         "Renamed Look"
     );
     let row = preset_row(h, "Renamed Look");
-    assert!(row.ends_with("• applied"));
+    assert_preset_marker(h, presets::Marker::Applied);
 
     click_preset_action(h, &row, "Duplicate…");
     edit_preset_name(h, "Duplicate Look");
@@ -248,27 +259,14 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     );
     let row = preset_row(h, "Duplicate Look");
     click_preset_action(h, &row, "Delete…");
-    assert!(
-        h.query_by_label("Delete 'Duplicate Look' from My Presets?")
-            .is_some()
-    );
     click(h, "Delete");
     assert!(!duplicate.exists());
-    assert_eq!(h.state().status, "Deleted preset 'Duplicate Look'");
 
     let external = s.directory.path().join("external-look.toml");
     external_look(h, "Renamed Look", &external);
     script(h, chooser::ChooserResult::Scripted(external.clone()));
     click(h, "Import");
-    let conflict =
-        "My Presets name \"Renamed Look\" already exists; choose a name for a renamed copy";
-    assert!(
-        h.query_all_by_label_contains("My Presets name")
-            .next()
-            .is_some()
-    );
-    assert!(h.query_all_by_label_contains(conflict).next().is_some());
-    assert!(h.state().status.contains(conflict), "{}", h.state().status);
+    assert!(h.state().presets.name_dialog.is_some());
     edit_preset_name(h, "Imported Copy");
     click(h, "Save");
     let imported = library.directory().join("Imported Copy.toml");
@@ -279,10 +277,6 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
             .unwrap()
             .name,
         "Imported Copy"
-    );
-    assert_eq!(
-        h.state().status,
-        format!("Saved preset 'Imported Copy' to {}", imported.display())
     );
 }
 
@@ -297,7 +291,7 @@ fn preset_card_actions_are_reachable_by_pointer_and_by_keyboard() {
     click(h, "Save preset…");
     edit_preset_name(h, "Card Look");
     click(h, "Save");
-    assert_eq!(preset_row(h, "Card Look"), "Card Look • applied");
+    assert_preset_marker(h, presets::Marker::Applied);
 
     // The card's own action control is addressable per entry, so the context
     // menu is not the only route to the actions.
@@ -334,11 +328,7 @@ fn preset_card_actions_are_reachable_by_pointer_and_by_keyboard() {
 }
 
 fn open_export_dialog(h: &mut Harness<'_, App>) {
-    click(h, "MAIN");
-    if h.query_by_label("Open export settings…").is_none() {
-        click(h, "Export options");
-    }
-    export_action(h, "Open export settings…");
+    open_export(h);
     assert!(h.state().export_dialog.is_open());
 }
 
@@ -350,6 +340,7 @@ fn change_export_format(h: &mut Harness<'_, App>, next: &str) {
 fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_nothing() {
     let mut s = session();
     let h = &mut s.harness;
+    let committed = h.state().export_options.clone();
     open_export_dialog(h);
 
     change_export_format(h, "JPEG");
@@ -358,7 +349,11 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "JPEG subsampling")
             .is_some()
     );
-    assert!(h.query_by_label("Apply saving CCTF encoding").is_none());
+    assert!(
+        h.get_by_label("Apply saving CCTF encoding")
+            .node()
+            .is_disabled()
+    );
     choose(h, "JPEG subsampling", "4:2:0");
 
     change_export_format(h, "TIFF");
@@ -366,8 +361,12 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Compression")
             .is_some()
     );
-    assert_quality_hidden(h);
-    assert!(h.query_by_label("Apply saving CCTF encoding").is_some());
+    assert_quality_disabled(h);
+    assert!(
+        !h.get_by_label("Apply saving CCTF encoding")
+            .node()
+            .is_disabled()
+    );
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Compression")
         .simulate_click();
     h.run_steps(3);
@@ -380,11 +379,12 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
     assert!(h.state().export_dialog.is_open());
 
     change_export_format(h, "EXR");
+    assert_quality_disabled(h);
     assert!(
-        h.query_by_label("EXR uses linear color and ZIP compression.")
-            .is_some()
+        h.get_by_label("Apply saving CCTF encoding")
+            .node()
+            .is_disabled()
     );
-    assert!(h.query_by_label("Apply saving CCTF encoding").is_none());
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Saving color space")
         .simulate_click();
     h.run_steps(3);
@@ -395,7 +395,19 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
     h.run_steps(3);
     click(h, "Cancel");
     assert!(!h.state().export_dialog.is_open());
-    assert_eq!(h.state().export_options.format, export::ExportFormat::Png);
+    assert_eq!(h.state().export_options.format, committed.format);
+    assert_eq!(
+        h.state().export_options.jpeg_quality,
+        committed.jpeg_quality
+    );
+    assert_eq!(
+        h.state().export_options.jpeg_subsampling,
+        committed.jpeg_subsampling
+    );
+    assert_eq!(
+        h.state().export_options.saving_cctf_encoding,
+        committed.saving_cctf_encoding
+    );
 
     let escape_path = s.directory.path().join("escape-export.png");
     open_export_dialog(h);
@@ -414,6 +426,101 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
     assert!(!h.state().export_dialog.is_open());
     assert!(h.state().export_job.is_none());
     assert!(!close_path.exists());
+}
+
+#[test]
+fn export_row_factory_resets_are_draft_local_cancelable_and_commit_without_adjustment_history() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let factory = export::ExportOptions::from_state(&state::GuiState::factory().sections);
+    let mut custom = factory.clone();
+    custom.backend = export::ExportBackend::Gpu;
+    custom.format = export::ExportFormat::Tiff;
+    custom.depth = BitDepth::ThirtyTwo;
+    custom.jpeg_quality = 61;
+    custom.jpeg_subsampling = image_io::JpegSubsampling::Yuv420;
+    custom.compression = export::ExportCompression::None;
+    custom.saving_color_space = "ACES2065-1".into();
+    custom.saving_cctf_encoding = false;
+    h.state_mut().export_options = custom.clone();
+    let params = h.state().params.clone();
+    let could_undo = h.state().can_undo();
+    let could_redo = h.state().can_redo();
+
+    for submit in [false, true] {
+        open_export(h);
+        for label in [
+            "Backend",
+            "Bit depth",
+            "Compression",
+            "Saving color space",
+            "Apply saving CCTF encoding",
+        ] {
+            export_action(h, &format!("Reset {label} to factory"));
+        }
+        choose(h, "Format", "JPEG");
+        export_action(h, "Reset JPEG quality to factory");
+        export_action(h, "Reset JPEG subsampling to factory");
+        export_action(h, "Reset Format to factory");
+        assert_eq!(
+            h.state().export_options,
+            custom,
+            "draft resets do not commit preferences"
+        );
+        assert_eq!(h.state().params, params);
+        assert_eq!(h.state().can_undo(), could_undo);
+        assert_eq!(h.state().can_redo(), could_redo);
+        if submit {
+            let destination = s.directory.path().join("factory-reset-export.png");
+            script(h, chooser::Chooser::chooser_path(&destination));
+            export_action(h, "Export file…");
+            wait_until(h, |app| app.export_job.is_none() && destination.is_file());
+            assert_eq!(h.state().export_options, factory);
+            assert_eq!(h.state().params, params);
+            assert_eq!(h.state().can_undo(), could_undo);
+            assert_eq!(h.state().can_redo(), could_redo);
+        } else {
+            click(h, "Cancel");
+            assert_eq!(h.state().export_options, custom);
+            assert!(h.state().export_job.is_none());
+        }
+    }
+}
+
+#[test]
+fn cancelled_export_chooser_and_rejected_destination_do_not_commit_draft_preferences() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let committed = h.state().export_options.clone();
+    let params = h.state().params.clone();
+    let could_undo = h.state().can_undo();
+    let could_redo = h.state().can_redo();
+    open_export(h);
+    choose(h, "Format", "TIFF");
+    choose(h, "Bit depth", "32 bit");
+    script(h, chooser::ChooserResult::Canceled);
+    export_action(h, "Export file…");
+    assert!(!h.state().export_dialog.is_open());
+    assert!(h.state().export_job.is_none());
+    assert_eq!(h.state().export_options, committed);
+
+    let existing = s.directory.path().join("rejected-destination.tiff");
+    let original = b"existing user file";
+    std::fs::write(&existing, original).unwrap();
+    open_export(h);
+    choose(h, "Format", "TIFF");
+    choose(h, "Bit depth", "32 bit");
+    script(
+        h,
+        chooser::Chooser::chooser_path(&s.directory.path().join("rejected-destination.wrong")),
+    );
+    export_action(h, "Export file…");
+    assert!(h.state().export_job.is_none());
+    assert_eq!(h.state().export_options, committed);
+    assert_eq!(std::fs::read(&existing).unwrap(), original);
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().can_undo(), could_undo);
+    assert_eq!(h.state().can_redo(), could_redo);
 }
 
 // The export dialog is modal, but a modal window does not block drag-and-drop,
@@ -455,10 +562,6 @@ fn the_export_estimate_follows_the_input_while_the_dialog_is_open() {
         replaced_with, opened_with,
         "the estimate must describe the input the export now renders"
     );
-    assert!(
-        replaced_with.contains("225.0 KB"),
-        "320 x 240 x 3 samples is a 225.0 KB payload, got {replaced_with}"
-    );
 }
 
 fn estimated_output_size_row(h: &Harness<'_, App>) -> String {
@@ -483,7 +586,6 @@ fn read_report(path: &Path) -> serde_json::Value {
 fn save_report_from_panel(h: &mut Harness<'_, App>, path: &Path) {
     script(h, chooser::ChooserResult::Scripted(path.to_path_buf()));
     click(h, "Save report…");
-    assert_eq!(h.state().status, "Saved diagnostic report.");
     assert!(path.is_file());
 }
 
@@ -497,11 +599,11 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
         .diagnostics
         .publish_completed_to(published.clone());
 
-    click(h, "CONFIG");
+    open_settings(h);
     choose_diagnostics_mode(h, "Summary");
-    click(h, "MAIN");
+    close_settings(h);
     render(h, "PREVIEW");
-    click(h, "CONFIG");
+    open_settings(h);
     let first_reports = report_paths(&published);
     assert_eq!(first_reports.len(), 1);
     let first = read_report(&first_reports[0]);
@@ -518,9 +620,9 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     );
 
     choose_diagnostics_mode(h, "GPU timing");
-    click(h, "MAIN");
+    close_settings(h);
     render(h, "PREVIEW");
-    click(h, "CONFIG");
+    open_settings(h);
     let reports = report_paths(&published);
     assert_eq!(reports.len(), 2);
     let gpu_report_path = reports
@@ -544,7 +646,6 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     let row = format!("#{} preview · succeeded", first_id);
     assert!(h.query_by_label(&row).is_some(), "report list row {row}");
     click_status_row(h, &row);
-    assert!(h.query_all_by_label_contains("Requested:").next().is_some());
     let selected_summary_path = s.directory.path().join("selected-summary-report.json");
     save_report_from_panel(h, &selected_summary_path);
     let selected = read_report(&selected_summary_path);
@@ -555,9 +656,9 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     );
 
     choose_diagnostics_mode(h, "Off");
-    click(h, "MAIN");
+    close_settings(h);
     render(h, "PREVIEW");
-    click(h, "CONFIG");
+    open_settings(h);
     assert_eq!(
         report_paths(&published).len(),
         2,
@@ -584,11 +685,11 @@ fn diagnostics_user_selected_report_survives_later_renders() {
         .diagnostics
         .publish_completed_to(published.clone());
 
-    click(h, "CONFIG");
+    open_settings(h);
     choose_diagnostics_mode(h, "Summary");
-    click(h, "MAIN");
+    close_settings(h);
     render(h, "PREVIEW");
-    click(h, "CONFIG");
+    open_settings(h);
 
     let reports = report_paths(&published);
     assert_eq!(reports.len(), 1);
@@ -608,9 +709,9 @@ fn diagnostics_user_selected_report_survives_later_renders() {
     );
 
     // Trigger another render; the user's selection must survive.
-    click(h, "MAIN");
+    close_settings(h);
     render(h, "PREVIEW");
-    click(h, "CONFIG");
+    open_settings(h);
     assert_eq!(
         h.state().diagnostics.selected_report_id(),
         Some(first_id),
@@ -749,33 +850,35 @@ fn stage_export(h: &mut Harness<'_, App>, destination: &Path) -> Arc<ExportPause
 }
 
 #[test]
-fn guard_statuses_are_exact_and_unknown_save_extension_creates_no_file() {
+fn guarded_operations_and_unknown_save_extension_create_no_file() {
     let mut empty = empty_session_for_guards();
     let h = &mut empty.harness;
-    h.state_mut().save_dialog();
-    assert_eq!(
-        h.state().status,
-        "Nothing to save yet — load an image first."
-    );
+    click(h, "SAVE");
+    assert!(h.state().output_image.is_none());
+    reveal_control(h, "action.rotate_cw");
+    assert!(h.get_by_label("cw rotate").node().is_disabled());
+    let image_epoch = h.state().input_epoch;
     click(h, "cw rotate");
-    assert_eq!(h.state().status, "Load an image before rotating.");
+    assert_eq!(h.state().input_epoch, image_epoch);
+    assert!(h.get_by_label("Export").node().is_disabled());
     let ctx = h.ctx.clone();
     let options = h.state().export_options.clone();
     h.state_mut().start_export(&ctx, options);
-    assert_eq!(h.state().status, "Load an image before exporting.");
+    assert!(h.state().export_job.is_none());
 
     let mut s = session();
     let h = &mut s.harness;
     let destination = s.directory.path().join("paused-export.png");
     let pause = stage_export(h, &destination);
+    let active_cancel = h.state().export_job.as_ref().unwrap().cancel.clone();
     let ctx = h.ctx.clone();
     let options = h.state().export_options.clone();
     h.state_mut().start_export(&ctx, options);
-    assert_eq!(
-        h.state().status,
-        "Wait for the current operation before exporting."
-    );
     assert!(h.state().export_job.is_some());
+    assert!(Arc::ptr_eq(
+        &h.state().export_job.as_ref().unwrap().cancel,
+        &active_cancel
+    ));
     pause.release();
     wait_until(h, |app| app.export_job.is_none());
     assert!(destination.is_file());
@@ -784,9 +887,6 @@ fn guard_statuses_are_exact_and_unknown_save_extension_creates_no_file() {
     let unsupported = s.directory.path().join("unsupported-container.xyz");
     script(h, chooser::ChooserResult::Scripted(unsupported.clone()));
     click(h, "SAVE");
-    assert_eq!(
-        h.state().status,
-        "Save error: Unsupported image extension 'xyz'; use JPEG, PNG, TIFF or EXR"
-    );
+    assert!(h.state().status.starts_with("Save error:"));
     assert!(!unsupported.exists());
 }

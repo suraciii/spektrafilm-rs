@@ -120,4 +120,4 @@ Control completeness must also satisfy the executable inventory coverage in [Com
 
 ## Implementation status
 
-The native GUI still uses the page-based layout described in the [current GUI guide](../../docs/gui.md). The stage inspector, global locator behavior, preset search, and adjustment history in this specification are target requirements, not claims of delivered native behavior. Specification checks and the HTML interaction review do not satisfy native GUI, image, worker, or export acceptance.
+The native GUI implements the continuous stage inspector, global control locators, preset search, and source-local adjustment history described in the [GUI guide](../../docs/gui.md). Application settings and independent Export use separate dialogs. These implemented surfaces do not by themselves establish complete native acceptance. Acceptance must exercise production controls, actual source images, render workers, and file writers under the scenarios above. Specification checks and HTML interaction review do not establish native behavior or cross-platform acceptance.

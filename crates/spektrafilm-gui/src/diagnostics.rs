@@ -121,9 +121,10 @@ impl Diagnostics {
     ) -> bool {
         let mut save = false;
         egui::CollapsingHeader::new("Diagnostics").default_open(true).show(ui, |ui| {
-            egui::ComboBox::from_id_salt("diagnostics-mode").selected_text(mode_label(self.mode)).show_ui(ui, |ui| {
+            let mode_response = egui::ComboBox::from_id_salt("diagnostics-mode").selected_text(mode_label(self.mode)).show_ui(ui, |ui| {
                 for mode in [CollectionMode::Off, CollectionMode::Summary, CollectionMode::GpuTiming] { ui.selectable_value(&mut self.mode, mode, mode_label(mode)); }
-            });
+            }).response;
+            crate::controls::locate_row(ui, "diagnostics.collection_mode", &mode_response);
             ui.small("Session only. Changes apply to the next accepted operation; they do not render.");
             for (kind, mode) in render.into_iter().chain(export) { ui.label(format!("{kind} in flight · {} (captured)", mode_label(mode))); }
             if let Some((kind, mode)) = queued { ui.label(format!("{kind} queued · {} (captured)", mode_label(mode))); }
@@ -149,7 +150,9 @@ impl Diagnostics {
                 ui.collapsing("Stages and CPU reasons", |ui| { details(ui, &report.stages); });
                 ui.collapsing("Logical transfers and work counters", |ui| { ui.small("Logical bytes are not physical bus traffic. Host waits are not shader time."); details(ui, &report.measurements); });
                 ui.collapsing("GPU passes and measurement availability", |ui| { ui.small("Pass intervals are not operation GPU duration. Unavailable values are not zero."); details(ui, &report.gpu_batches); details(ui, &report.execution); details(ui, &report.coverage); details(ui, &report.diagnostic_issues); });
-                save = ui.button("Save report…").clicked();
+                let response = ui.button("Save report…");
+                crate::controls::locate_row(ui, "action.save_report", &response);
+                save = response.clicked();
             }
         });
         save

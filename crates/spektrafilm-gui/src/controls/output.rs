@@ -35,6 +35,14 @@ pub(crate) fn sections(
                 "Color space and transfer encoding of the runtime digital output. It describes what the simulation produces, which is distinct from the saving color space used for the file and from the display transform, which is viewer-only.",
             );
         }
+        if filter_matches(filter, "output cctf encoding") {
+            flags.runtime_changed |= toggle(
+                ui,
+                "output cctf encoding",
+                &mut params.io.output_cctf_encoding,
+                "Apply the output color space transfer encoding to runtime output. This is independent of retained Save encoding and display presentation.",
+            );
+        }
         if filter_matches(filter, "saving color space") {
             extra_choice(
                 ui,

@@ -36,12 +36,12 @@ fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
-fn enlarger(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+fn preflash(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     super::show(
         ui,
         params,
         &mut serde_json::Value::Null,
-        "Enlarger",
+        "Preflash",
         super::ScanMedium::Negative,
         "",
         &mut Default::default(),
@@ -75,7 +75,7 @@ mod headless {
         assert_eq!(harness.ctx.input(|input| input.raw_scroll_delta.y), 0.0);
         assert_eq!(harness.ctx.input(|input| input.smooth_scroll_delta.y), 0.0);
         let after_event = harness.state().scanner.clone();
-        harness.run();
+        harness.run_steps(10);
         assert_eq!(harness.state().scanner.lens_blur, after_event.lens_blur);
         assert_eq!(
             harness.state().scanner.unsharp_mask,
@@ -391,7 +391,7 @@ mod row_layout {
     fn the_longest_unit_row_stays_on_one_line() {
         let mut params = scanner_params();
         params.workflow.route = "input > film > print".into();
-        let harness = Harness::new_ui_state(enlarger, params);
+        let harness = Harness::new_ui_state(preflash, params);
         let node = harness.get_by_label("preflash exposure");
         let rect = node.raw_bounds().expect("row editor has no bounds");
         let label_rect = node

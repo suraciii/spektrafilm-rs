@@ -53,19 +53,6 @@ pub(crate) fn sections(
                     "Use the CAT16 chromatic adaptation transform for the input RGB to film-space adaptation that feeds the Hanatos spectral upsampling. Off selects CAT02, the pre-0.3.4 behavior.",
                 );
             }
-            if filter_matches(filter, "print exposure ev tracking") {
-                flags.runtime_changed |= enum_choice(
-                    ui,
-                    "print exposure ev tracking",
-                    &mut params.settings.print_exposure_ev_tracking,
-                    &[
-                        (PrintExposureEvTracking::FollowMode, "follow_mode"),
-                        (PrintExposureEvTracking::Never, "never"),
-                        (PrintExposureEvTracking::Always, "always"),
-                    ],
-                    "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual.",
-                );
-            }
         });
     }
 }
