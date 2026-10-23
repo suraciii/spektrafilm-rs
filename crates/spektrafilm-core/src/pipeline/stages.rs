@@ -320,7 +320,11 @@ impl Pipeline {
                         crate::stages::grain_v3::aperture_grid(&geometry, factor)?,
                         CoordinateSpace::GrainAperture,
                     )
-                } else if self.params.io.crop && (scan_spatial || print_spatial || (material_geometry.is_some() && collect == Tap::CmyFilm)) {
+                } else if self.params.io.crop
+                    && (scan_spatial
+                        || print_spatial
+                        || (material_geometry.is_some() && collect == Tap::CmyFilm))
+                {
                     let (grid, crop) = geometry.full_film_grid(&cur)?;
                     output_crop = Some(crop);
                     (grid, CoordinateSpace::FilmFrame)
@@ -431,14 +435,17 @@ impl Pipeline {
                 let print_spatial = !self.params.io.scan_film
                     && (collect != Tap::CmyFilm || material_geometry.is_some())
                     && self.params.enlarger.diffusion_filter.active;
-                let (grid, readout_space) =
-                    if self.params.io.crop && (scan_spatial || print_spatial || (material_geometry.is_some() && collect == Tap::CmyFilm)) {
-                        let (grid, crop) = geometry.full_film_grid(&cur)?;
-                        output_crop = Some(crop);
-                        (grid, CoordinateSpace::FilmFrame)
-                    } else {
-                        (geometry.grid(), CoordinateSpace::Output)
-                    };
+                let (grid, readout_space) = if self.params.io.crop
+                    && (scan_spatial
+                        || print_spatial
+                        || (material_geometry.is_some() && collect == Tap::CmyFilm))
+                {
+                    let (grid, crop) = geometry.full_film_grid(&cur)?;
+                    output_crop = Some(crop);
+                    (grid, CoordinateSpace::FilmFrame)
+                } else {
+                    (geometry.grid(), CoordinateSpace::Output)
+                };
                 let long_axis = usize::from(cur.height > cur.width);
                 cur = self.fotufilm_prepared.readout(
                     &cur,

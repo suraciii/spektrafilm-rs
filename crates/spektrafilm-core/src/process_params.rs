@@ -678,7 +678,10 @@ pub fn legacy_image_stage_route(path: &Path) -> Result<Option<WorkflowRoute>, St
         .map_err(|e| format!("opening params file {}: {e}", path.display()))?;
     let baseline = crate::params::sources::parse_carrier(&text, false)
         .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
-    let route = baseline.pointer("/workflow/route").and_then(Value::as_str).map(WorkflowRoute::parse);
+    let route = baseline
+        .pointer("/workflow/route")
+        .and_then(Value::as_str)
+        .map(WorkflowRoute::parse);
     Ok(route.filter(|route| route.artifact_output().is_some() && route.artifact_input().is_none()))
 }
 
