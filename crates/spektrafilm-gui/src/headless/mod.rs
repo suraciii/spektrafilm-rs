@@ -9,6 +9,7 @@ mod dialogs;
 mod files;
 mod history_ui;
 mod lifecycle;
+mod operator;
 mod pages;
 mod panels;
 mod raw;

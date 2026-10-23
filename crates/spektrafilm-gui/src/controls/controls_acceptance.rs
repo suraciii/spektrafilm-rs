@@ -9,6 +9,10 @@ fn scanner_params() -> RuntimeParams {
 }
 
 fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    scanner_changes(ui, params);
+}
+
+fn scanner_changes(ui: &mut egui::Ui, params: &mut RuntimeParams) -> super::ChangeFlags {
     super::show(
         ui,
         params,
@@ -19,7 +23,7 @@ fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         &mut Default::default(),
         "D55",
         &crate::profiles::pick_data_dir(),
-    );
+    )
 }
 
 fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
@@ -405,5 +409,272 @@ mod row_layout {
             "preflash exposure: label and value must share one line \
              (label {label_rect:?}, value {rect:?})"
         );
+    }
+}
+
+#[cfg(test)]
+mod operator_interactions {
+    use super::*;
+    use spektrafilm_core::params::ScanOperatorParams;
+
+    fn harness(params: RuntimeParams) -> Harness<'static, RuntimeParams> {
+        Harness::builder()
+            .with_size(egui::vec2(720.0, 1400.0))
+            .build_state(
+                |ctx, params| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        if scanner_changes(ui, params).runtime_changed {
+                            ctx.data_mut(|data| {
+                                *data.get_temp_mut_or_default::<usize>(egui::Id::new(
+                                    "operator_changes",
+                                )) += 1;
+                            });
+                        }
+                    });
+                },
+                params,
+            )
+    }
+
+    fn edit(h: &mut Harness<'_, RuntimeParams>, label: &str, value: &str) {
+        h.get_by_label(label).focus();
+        h.run();
+        h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.get_by_label(label).type_text(value);
+        h.run();
+        h.get_by_label(label)
+            .key_press(egui_kittest::kittest::Key::Enter);
+        h.run();
+    }
+
+    fn click(h: &mut Harness<'_, RuntimeParams>, label: &str) {
+        h.get_by_label(label).simulate_click();
+        h.run();
+    }
+
+    #[test]
+    fn operator_edit_reset_restore_and_copy_apply_only_four_values() {
+        let mut h = harness(scanner_params());
+        for (label, value) in [
+            ("Finished exposure", "1.25"),
+            ("Warmth", "0.35"),
+            ("Green–magenta tint", "-0.20"),
+            ("Contrast", "1.40"),
+        ] {
+            edit(&mut h, label, value);
+        }
+        let copied = h.state().scanner.operator;
+        assert_eq!(copied.exposure_ev, 1.25);
+        assert_eq!(copied.warmth_ev, 0.35);
+        assert_eq!(copied.tint_ev, -0.2);
+        assert_eq!(copied.contrast, 1.4);
+        edit(&mut h, "Finished exposure", "3.01");
+        assert_eq!(h.state().scanner.operator, copied);
+        click(&mut h, "Copy operator correction");
+        click(&mut h, "Restore automatic");
+        assert_eq!(h.state().scanner.operator, ScanOperatorParams::default());
+
+        // A new frame/state has its own upstream settings. The clipboard lives
+        // in the session context and must carry none of those settings.
+        let mut target = scanner_params();
+        target.camera.exposure_compensation_ev = -1.5;
+        target.film_render.convert.exposure_compensation_ev = 0.75;
+        target.scanner.lens_blur = 0.5;
+        *h.state_mut() = target;
+        h.run();
+        click(&mut h, "Paste operator correction");
+        assert_eq!(h.state().scanner.operator, copied);
+        assert_eq!(h.state().camera.exposure_compensation_ev, -1.5);
+        assert_eq!(h.state().film_render.convert.exposure_compensation_ev, 0.75);
+        assert_eq!(h.state().scanner.lens_blur, 0.5);
+        click(&mut h, "Reset Warmth to factory");
+        let mut reset = copied;
+        reset.warmth_ev = 0.0;
+        assert_eq!(h.state().scanner.operator, reset);
+    }
+
+    #[test]
+    fn operator_resets_and_paste_report_runtime_edits_without_session_history() {
+        let copied = ScanOperatorParams {
+            exposure_ev: 0.25,
+            warmth_ev: 0.35,
+            tint_ev: -0.2,
+            contrast: 1.4,
+        };
+        for (action, expected) in [
+            (
+                "Reset Finished exposure to factory",
+                ScanOperatorParams {
+                    exposure_ev: 0.0,
+                    ..copied
+                },
+            ),
+            (
+                "Reset Warmth to factory",
+                ScanOperatorParams {
+                    warmth_ev: 0.0,
+                    ..copied
+                },
+            ),
+            (
+                "Reset Green–magenta tint to factory",
+                ScanOperatorParams {
+                    tint_ev: 0.0,
+                    ..copied
+                },
+            ),
+            (
+                "Reset Contrast to factory",
+                ScanOperatorParams {
+                    contrast: 1.0,
+                    ..copied
+                },
+            ),
+            ("Restore automatic", ScanOperatorParams::default()),
+        ] {
+            let mut params = scanner_params();
+            params.scanner.operator = copied;
+            params.camera.exposure_compensation_ev = -1.5;
+            params.scanner.lens_blur = 0.5;
+            let mut h = harness(params);
+            click(&mut h, "Copy operator correction");
+            assert_eq!(runtime_changes(&h), 0, "copy is not an adjustment");
+            click(&mut h, action);
+            assert_eq!(h.state().scanner.operator, expected, "{action}");
+            assert_eq!(runtime_changes(&h), 1, "{action}");
+            let edited = super::super::take_edited_paths(&h.ctx);
+            for (path, before, after) in [
+                (
+                    "scanner.operator.exposure_ev",
+                    copied.exposure_ev,
+                    expected.exposure_ev,
+                ),
+                (
+                    "scanner.operator.warmth_ev",
+                    copied.warmth_ev,
+                    expected.warmth_ev,
+                ),
+                ("scanner.operator.tint_ev", copied.tint_ev, expected.tint_ev),
+                (
+                    "scanner.operator.contrast",
+                    copied.contrast,
+                    expected.contrast,
+                ),
+            ] {
+                assert_eq!(
+                    edited.iter().any(|edited| edited == path),
+                    before != after,
+                    "{action}: {path}"
+                );
+            }
+            click(&mut h, "Paste operator correction");
+            assert_eq!(h.state().scanner.operator, copied);
+            assert_eq!(runtime_changes(&h), 2, "paste is one runtime adjustment");
+            click(&mut h, "Paste operator correction");
+            assert_eq!(
+                runtime_changes(&h),
+                2,
+                "unchanged paste is not an adjustment"
+            );
+            assert_eq!(h.state().camera.exposure_compensation_ev, -1.5);
+            assert_eq!(h.state().scanner.lens_blur, 0.5);
+
+            let fresh = harness(h.state().clone());
+            assert_eq!(fresh.state().scanner.operator, copied);
+            assert!(
+                fresh
+                    .get_by_label("Paste operator correction")
+                    .node()
+                    .is_disabled()
+            );
+            assert!(fresh.query_by_label("Undo operator correction").is_none());
+            assert!(fresh.query_by_label("Redo operator correction").is_none());
+        }
+    }
+
+    fn runtime_changes(h: &Harness<'_, RuntimeParams>) -> usize {
+        h.ctx
+            .data(|data| data.get_temp::<usize>(egui::Id::new("operator_changes")))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn inactive_operator_values_remain_visible_disabled_and_return_unchanged() {
+        let mut params = scanner_params();
+        params.scanner.operator.exposure_ev = 0.75;
+        let mut h = harness(params);
+        for (route, output, style) in [
+            ("input", "direct_scan", "standard"),
+            ("input > film > scan", "direct_scan", "standard"),
+            ("input > film > print > scan", "direct_scan", "standard"),
+            ("input > film > scan", "negative_to_positive", "custom"),
+        ] {
+            h.state_mut().workflow.route = route.into();
+            h.state_mut().scanner.scan_output = output.into();
+            h.state_mut().scanner.conversion_style = style.into();
+            h.run();
+            assert!(h.get_by_label("Finished exposure").node().is_disabled());
+            assert!(
+                h.get_by_label("Paste operator correction")
+                    .node()
+                    .is_disabled()
+            );
+            assert_eq!(h.state().scanner.operator.exposure_ev, 0.75);
+        }
+        h.state_mut().scanner.conversion_style = "standard".into();
+        h.run();
+        assert!(!h.get_by_label("Finished exposure").node().is_disabled());
+        assert_eq!(h.state().scanner.operator.exposure_ev, 0.75);
+    }
+
+    #[test]
+    fn held_automatic_comparison_emits_transitions_without_editing_operator() {
+        let mut params = scanner_params();
+        params.scanner.operator.exposure_ev = 1.0;
+        let original = params.scanner.operator;
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(720.0, 1400.0))
+            .build_state(
+                |ctx, state: &mut (RuntimeParams, Vec<bool>)| {
+                    if super::super::release_operator_compare(ctx) {
+                        state.1.push(false);
+                    }
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let changes = super::super::show(
+                            ui,
+                            &mut state.0,
+                            &mut serde_json::Value::Null,
+                            "Scanner",
+                            super::super::ScanMedium::Negative,
+                            "",
+                            &mut Default::default(),
+                            "D55",
+                            &crate::profiles::pick_data_dir(),
+                        );
+                        assert!(
+                            !changes.runtime_changed,
+                            "comparison must not enter adjustment history"
+                        );
+                        if let Some(comparing) = changes.operator_compare {
+                            state.1.push(comparing);
+                        }
+                    });
+                },
+                (params, Vec::new()),
+            );
+        h.get_by_label("Hold automatic comparison").focus();
+        h.run();
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::Key {
+                key: egui::Key::Space,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.run();
+            assert_eq!(h.state().0.scanner.operator, original);
+        }
+        assert_eq!(h.state().1, [true, false]);
     }
 }

@@ -75,6 +75,7 @@ pub(crate) fn rgb_to_raw_names() -> [&'static str; 7] {
 pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
     match path {
         "output_mix.amount" => Some((0.0, Some(1.0))),
+        "scanner.operator.contrast" => Some((0.0, None)),
         "film_render.chemistry.developer_exhaustion"
         | "print_render.density_curves_morph.developer_exhaustion" => Some((0.0, Some(1.0))),
         "film_render.grain.fotufilm.amount" | "film_render.grain.fotufilm.layers" => {
@@ -458,6 +459,33 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
     }
 }
 
+/// One numeric rule shared by typed runtime and sparse parameter sources.
+pub(crate) fn validate_scan_operator_value(path: &str, value: f64) -> Result<(), String> {
+    if !value.is_finite() || (path == "scanner.operator.contrast" && value <= 0.0) {
+        let domain = if path == "scanner.operator.contrast" {
+            "finite and strictly positive"
+        } else {
+            "finite"
+        };
+        return Err(format!("{path}: must be {domain} (got {value})"));
+    }
+    Ok(())
+}
+
+impl super::ScanOperatorParams {
+    pub fn validate(&self) -> Result<(), String> {
+        for (path, value) in [
+            ("scanner.operator.exposure_ev", self.exposure_ev),
+            ("scanner.operator.warmth_ev", self.warmth_ev),
+            ("scanner.operator.tint_ev", self.tint_ev),
+            ("scanner.operator.contrast", self.contrast),
+        ] {
+            validate_scan_operator_value(path, value)?;
+        }
+        Ok(())
+    }
+}
+
 impl super::PrintCurvesMorphParams {
     pub(crate) fn validate(&self) -> Result<(), String> {
         if !self.active {
@@ -620,6 +648,13 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         &params.camera.auto_exposure_method,
     )?;
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
+    params.scanner.operator.validate()?;
+    if !params.scanner.operator.is_default() {
+        if params.scanner.scan_output != "negative_to_positive" || !params.scanner.uses_standard() {
+            return Err("scanner.operator: nondefault corrections require scanner.scan_output=negative_to_positive and scanner.conversion_style=standard".into());
+        }
+        crate::pipeline_calibration::validate_scan_output_route(params)?;
+    }
     if params.debug.lut_mode
         && params.scanner.scan_output == "negative_to_positive"
         && params.scanner.uses_standard()

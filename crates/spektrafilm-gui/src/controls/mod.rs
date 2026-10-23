@@ -96,6 +96,8 @@ pub struct ChangeFlags {
     pub preview_requested: bool,
     /// A real controller action was requested from the Convert panel.
     pub action: Option<CalibrationAction>,
+    /// Press/hold comparison changed; never changes the persisted operator values.
+    pub operator_compare: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -631,6 +633,8 @@ mod grain;
 mod halation;
 mod output;
 mod scanner;
+
+pub(crate) use scanner::release_operator_compare;
 mod search;
 mod upsampling;
 mod widgets;

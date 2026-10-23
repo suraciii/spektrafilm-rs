@@ -466,3 +466,74 @@ fn all_six_stage_routes_continue_actual_material_and_preserve_direct_scan_pixels
         }
     }
 }
+
+#[test]
+fn material_defers_operator_correction_until_the_continued_scan() {
+    const OPERATOR: &str = "camera.auto_exposure=false,scanner.scan_output=negative_to_positive,scanner.operator.exposure_ev=0.5,scanner.operator.warmth_ev=0.2,scanner.operator.tint_ev=-0.1,scanner.operator.contrast=1.2,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true,scanner.unsharp_mask=[0,0],io.output_cctf_encoding=false,io.output_gamut_compress.algorithm=off";
+    for bin in binaries() {
+        let fixture = fixture();
+        let root = fixture.path();
+        let flags = [IMAGE, &["--route", "input > film", "--set", OPERATOR]].concat();
+        let report = success(invoke(
+            bin,
+            root,
+            "input.png",
+            &[flags.as_slice(), &["--dry-run"]].concat(),
+        ));
+        let report: Value = serde_json::from_slice(&report.stdout).unwrap();
+        let exposure = report["edits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|edit| edit["path"] == "scanner.operator.exposure_ev")
+            .expect("the explicit exposure edit is reported");
+        assert_eq!(exposure["status"], "inactive");
+        success(invoke(
+            bin,
+            root,
+            "input.png",
+            &[flags.as_slice(), &["-o", "deferred.sfstage"]].concat(),
+        ));
+        success(invoke(
+            bin,
+            root,
+            "deferred.sfstage",
+            &[
+                "--route",
+                "film > scan",
+                "--set",
+                "scanner.operator.exposure_ev=0.75",
+                "-o",
+                "continued.tif",
+                "--raw-out",
+                "continued.raw",
+            ],
+        ));
+        success(invoke(
+            bin,
+            root,
+            "input.png",
+            &[
+                IMAGE,
+                &[
+                    "--route",
+                    "input > film > scan",
+                    "--set",
+                    OPERATOR,
+                    "--set",
+                    "scanner.operator.exposure_ev=0.75",
+                    "-o",
+                    "direct.tif",
+                    "--raw-out",
+                    "direct.raw",
+                ],
+            ]
+            .concat(),
+        ));
+        assert_eq!(
+            fs::read(root.join("continued.raw")).unwrap(),
+            fs::read(root.join("direct.raw")).unwrap(),
+            "a changed downstream correction must use the same uncorrected material and frame setup",
+        );
+    }
+}

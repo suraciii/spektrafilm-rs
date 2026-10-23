@@ -7,6 +7,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 
 - The GUI exposes controls for input, film, print, scanner, output, advanced color, and configuration.
 - Preview renders a bounded disposable image. Scan renders the original working resolution. Both use the current runtime controls.
+  `standard` negative-to-positive preview must prepare and finish the complete working frame before display reduction; its full-frame requirements follow the [scan preview contract](../film-chain/lab-scan/spec.md#exact-preview-and-prepared-baseline).
 - Save writes retained output. Export re-renders through the selected backend and exposes cancellation. Render, saving-conversion, and viewer execution follow [GPU execution](../gpu-execution/spec.md); selecting CPU does not imply a precision different from the actual build.
 - Startup controls may be saved and restored. Removing the startup default restores the factory profile.
 - Viewer-only state, such as zoom, interpolation, reveal, and canvas presentation, must not alter saved or exported pixels.
@@ -16,6 +17,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
   assign to the scanned medium. For a negative film profile on the direct
   `input > film > scan` route or the real negative-capture `input > convert-film > scan` route, they offer `direct_scan` and
   `negative_to_positive`. Labels must follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance). Every route shows lens blur and unsharp mask; the readout illuminant is not a control. Conversion control display names must follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance).
+  Eligible `standard` negative scans must expose operator correction and its reset, restore, copy/paste and held automatic-comparison actions under the [operator contract](../film-chain/lab-scan/spec.md#operator-correction). Operator edits use the workspace's adjustment history, not a second local Undo/Redo owner. Comparison must leave retained Save pixels and correction parameters unchanged. It activates only while the primary mouse button holds its control or focused Space is held; secondary and middle presses must not start comparison or invalidate the accepted render.
   A route or film profile change that makes the selected mode ineligible resets it to
   `direct_scan` and clears ineligible scanner controls.
 - Imported states and presets must reject the removed mode as defined by [Scanner language](../film-chain/spec.md#scanner-language). A rejected import must not replace accepted parameters or the retained image.
@@ -75,7 +77,7 @@ Each module has one editing owner. The inspector must contain these stages and m
 | Input and capture | Workflow selector; input color space and decoding; RAW white balance, temperature, tint, lens correction, and reprocess action; crop, upscale, and source rotation; Camera exposure, metering, film format, color filter, and capture illuminant; Camera diffusion; input gamut compression; spectral reconstruction and its applicable adaptation controls; Convert imported-capture scan illuminant, exposure, base estimation, calibration, channel swaps, and calibration actions. |
 | Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
-| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls, lens blur, unsharp mask; Print viewing glare. |
+| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; operator correction, reset, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare. |
 | Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
 | Application settings | Auto preview and preview limits; rendering preferences that are not photographic controls; startup state save/load/default actions; display transform, ICC selection, canvas, padding, and interpolation; Diagnostics and report actions. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |

@@ -72,6 +72,14 @@ impl DeviceBackend {
     pub fn backend(&self) -> &dyn crate::ComputeBackend {
         &self.backend
     }
+
+    /// Exercise an Arc-based consumer while retaining the device guard.
+    /// Shared owners must stay inside the callback; the cache may retain Weak handles.
+    pub fn with_shared_backend(self, run: impl FnOnce(&std::sync::Arc<dyn crate::ComputeBackend>)) {
+        let Self { backend, _guard } = self;
+        let shared: std::sync::Arc<dyn crate::ComputeBackend> = std::sync::Arc::new(backend);
+        run(&shared);
+    }
 }
 
 /// Wrap an already-built backend in the device lock. The lock is acquired by

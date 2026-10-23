@@ -682,6 +682,12 @@ fn enum_check(path: &str, value: &Value) -> Result<(), String> {
     Ok(())
 }
 fn range_check(path: &str, value: &Value) -> Result<(), String> {
+    if path.starts_with("scanner.operator.") {
+        return super::validation::validate_scan_operator_value(
+            path,
+            value.as_f64().expect("numeric operator leaf"),
+        );
+    }
     if super::validation::gamut_component_domains(path).is_some() {
         let values: [f32; 3] = serde_json::from_value(value.clone())
             .map_err(|e| format!("{path}: invalid gamut triplet: {e}"))?;
@@ -1083,6 +1089,32 @@ mod fotufilm_tests {
                 .len(),
             14
         );
+    }
+
+    #[test]
+    fn operator_sparse_sources_keep_f64_and_do_not_clamp_editor_ranges() {
+        let mut params = RuntimeParams::default();
+        ParameterEdits::parse("scanner.operator.exposure_ev=4.000000000001,scanner.operator.warmth_ev=-2,scanner.operator.tint_ev=2,scanner.operator.contrast=3")
+            .unwrap().apply(&mut params).unwrap();
+        assert_eq!(params.scanner.operator.exposure_ev, 4.000000000001);
+        assert_eq!(params.scanner.operator.contrast, 3.0);
+        for path in ["exposure_ev", "warmth_ev", "tint_ev", "contrast"] {
+            let record = describe_field(&format!("scanner.operator.{path}")).unwrap();
+            assert_eq!(record["type"], "f64");
+            assert_eq!(
+                record["unit"],
+                if path == "contrast" {
+                    "dimensionless"
+                } else {
+                    "EV"
+                }
+            );
+            assert!(record["maximum"].is_null());
+            assert!(ParameterEdits::parse(&format!("scanner.operator.{path}=inf")).is_err());
+        }
+        for value in ["0", "-0.5"] {
+            assert!(ParameterEdits::parse(&format!("scanner.operator.contrast={value}")).is_err());
+        }
     }
 
     #[test]

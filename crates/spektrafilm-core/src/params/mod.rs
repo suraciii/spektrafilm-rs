@@ -165,6 +165,34 @@ impl Default for EnlargerParams {
     }
 }
 
+/// Operator corrections after immutable standard frame setup and before tone.
+/// Color axes are differential EV, not temperature or scanner button steps.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ScanOperatorParams {
+    pub exposure_ev: f64,
+    pub warmth_ev: f64,
+    pub tint_ev: f64,
+    pub contrast: f64,
+}
+
+impl Default for ScanOperatorParams {
+    fn default() -> Self {
+        Self {
+            exposure_ev: 0.0,
+            warmth_ev: 0.0,
+            tint_ev: 0.0,
+            contrast: 1.0,
+        }
+    }
+}
+
+impl ScanOperatorParams {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
@@ -184,6 +212,9 @@ pub struct ScannerParams {
         serialize_with = "serialize_conversion_style"
     )]
     pub conversion_style: String,
+    /// Standard negative-to-positive corrections; inactive routes require defaults.
+    #[serde(default)]
+    pub operator: ScanOperatorParams,
     #[serde(default)]
     pub lens_blur: f32,
     #[serde(default = "default_unsharp")]
@@ -195,6 +226,7 @@ impl Default for ScannerParams {
         Self {
             scan_output: default_direct_scan(),
             conversion_style: default_conversion_style(),
+            operator: ScanOperatorParams::default(),
             lens_blur: 0.0,
             unsharp_mask: default_unsharp(),
         }
@@ -206,6 +238,11 @@ fn default_conversion_style() -> String {
 }
 
 impl ScannerParams {
+    /// Automatic standard setup must observe the complete working frame.
+    pub fn requires_full_frame(&self) -> bool {
+        self.scan_output == "negative_to_positive" && self.uses_standard()
+    }
+
     /// The built-in automatic style. `neutral` is an input-only migration alias.
     pub fn uses_standard(&self) -> bool {
         matches!(self.conversion_style.as_str(), "standard" | "neutral")
@@ -984,6 +1021,65 @@ fn default_route() -> String {
 #[cfg(test)]
 mod tests {
     use super::{CameraParams, RuntimeParams};
+    #[test]
+    fn operator_requires_finite_values_positive_contrast_and_standard_negative_route() {
+        use super::ScanOperatorParams;
+        let mut params = RuntimeParams::default();
+        assert!(params.scanner.operator.is_default());
+        assert!(!params.scanner.requires_full_frame());
+        params.scanner.operator.exposure_ev = 0.5;
+        assert!(params.validate().unwrap_err().contains("scanner.operator"));
+        params.scanner.scan_output = "negative_to_positive".into();
+        assert!(params.scanner.requires_full_frame());
+        assert!(
+            params
+                .validate()
+                .unwrap_err()
+                .contains("direct film scan route")
+        );
+        params.workflow.route = "input > film > scan".into();
+        params.validate().unwrap();
+        params.workflow.route = "input > convert-film > scan".into();
+        params.validate().unwrap();
+        params.scanner.conversion_style = "fixed-probe".into();
+        assert!(!params.scanner.requires_full_frame());
+        assert!(params.validate().unwrap_err().contains("scanner.operator"));
+        params.scanner.operator = ScanOperatorParams::default();
+        params.validate().unwrap();
+        for field in 0..4 {
+            for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let mut operator = ScanOperatorParams::default();
+                match field {
+                    0 => operator.exposure_ev = invalid,
+                    1 => operator.warmth_ev = invalid,
+                    2 => operator.tint_ev = invalid,
+                    _ => operator.contrast = invalid,
+                }
+                assert!(operator.validate().is_err());
+            }
+        }
+        for contrast in [0.0, -1.0] {
+            assert!(
+                ScanOperatorParams {
+                    contrast,
+                    ..ScanOperatorParams::default()
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert!(
+            ScanOperatorParams {
+                exposure_ev: 4.0,
+                warmth_ev: -2.0,
+                tint_ev: 2.0,
+                contrast: 3.0
+            }
+            .validate()
+            .is_ok()
+        );
+    }
+
     #[test]
     fn standard_is_canonical_for_defaults_legacy_sources_and_snapshots() {
         assert_eq!(super::ScannerParams::default().conversion_style, "standard");

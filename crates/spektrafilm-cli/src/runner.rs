@@ -137,7 +137,7 @@ fn render_recipe(
         IssueBoundary::InputPrepare,
         &context,
         |_| {
-            let image = if recipe.output.format == "png" {
+            let image = if recipe.output.format == "png" && !params.scanner.requires_full_frame() {
                 resize_for_preview(&loaded.image, params.settings.preview_max_size)
             } else {
                 loaded.image
@@ -163,6 +163,18 @@ fn render_recipe(
             .context("running spektrafilm-rs runtime")
     });
     let result = result?;
+    let result = if recipe.output.format == "png"
+        && params.scanner.requires_full_frame()
+        && params
+            .taps
+            .collect
+            .as_deref()
+            .is_none_or(|tap| tap == "rgb_out")
+    {
+        resize_for_preview(&result, params.settings.preview_max_size)
+    } else {
+        result
+    };
     invocation.operation.set_saved_attempt(attempt_id);
     invocation.boundary(IssueCategory::Writing, IssueBoundary::FileWrite);
     let parent = output

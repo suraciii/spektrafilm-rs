@@ -29,11 +29,15 @@ pub(super) enum Condition {
     PrintDevelopment,
     Preflash,
     CaptureIlluminant,
+    ScanOperator,
     Chemistry(bool),
 }
 impl Condition {
     pub(super) fn description(self) -> &'static str {
         match self {
+            Self::ScanOperator => {
+                "standard negative_to_positive on an eligible negative film scan route"
+            }
             Self::NoOp => "preserved upstream no-op",
             Self::Grain => "film_render.grain.active = true; stochastic effects enabled",
             Self::Spektra => "film_render.grain.engine = spektra",
@@ -91,6 +95,11 @@ impl Condition {
     fn holds(self, p: &RuntimeParams, film: &Profile) -> bool {
         let g = &p.film_render.grain;
         match self {
+            Self::ScanOperator => {
+                p.scanner.requires_full_frame()
+                    && p.workflow.route_enum().artifact_output().is_none()
+                    && crate::pipeline_calibration::validate_scan_output(p, film).is_ok()
+            }
             Self::NoOp => false,
             Self::Grain => g.active && !p.debug.deactivate_stochastic_effects,
             Self::Spektra => g.engine == GrainEngine::Spektra,
@@ -144,6 +153,9 @@ impl Condition {
 pub(super) fn conditions(path: &str) -> Vec<Condition> {
     use Condition::*;
     let mut out = Vec::new();
+    if path.starts_with("scanner.operator.") {
+        return vec![ScanOperator];
+    }
     if path.starts_with("enlarger.preflash_") {
         out.push(PrintDevelopment);
         if path != "enlarger.preflash_exposure" {

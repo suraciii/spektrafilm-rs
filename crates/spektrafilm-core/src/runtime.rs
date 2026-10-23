@@ -12,12 +12,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Numerical model revision shared by image, recipe and LUT provenance.
-/// `lab_scan_standard_v1` adds frame-level automatic negative setup and the
-/// material-category readout illuminant. Fixed styles retain their tone.
-pub const MODEL_VERSION: &str = "lab_scan_standard_v1";
+/// Operator controls follow full-frame standard setup. Negative tone has fixed
+/// linear-sRGB primaries before conversion to the selected output space.
+pub const MODEL_VERSION: &str = "lab_scan_operator_v1";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
+
+pub use crate::pipeline::scan_frame::ScanFrameCache;
 /// Selects whether profile-specific defaults are applied when building a runtime.
 ///
 /// GUI edits use `PreserveUserEdits`; batch and LUT construction use
@@ -242,6 +244,29 @@ impl Runtime {
         self.process_with_taps_observed(image, backend, None, None, context)
     }
 
+    /// Reuse an immutable full-workframe scan baseline for operator edits.
+    /// The input Arc identifies the loaded frame; no automatic offset crosses frames.
+    pub fn process_scan_cached_observed(
+        &self,
+        image: &Arc<ImageBuf>,
+        cache: &mut ScanFrameCache,
+        backend: &Arc<dyn ComputeBackend>,
+        context: &ObservationContext,
+    ) -> Result<ImageBuf, String> {
+        let started = Instant::now();
+        let result = if context.enabled() {
+            let _span = context.span().map(|span| span.enter());
+            let bound = spektrafilm_backend::bind_backend(backend.as_ref(), context.clone());
+            self.pipeline
+                .process_scan_cached(image, cache, bound.as_ref(), backend)
+        } else {
+            self.pipeline
+                .process_scan_cached(image, cache, backend.as_ref(), backend)
+        };
+        self.record_elapsed(started, None);
+        result
+    }
+
     pub fn process_with_taps_observed(
         &self,
         image: ImageBuf,
@@ -336,8 +361,23 @@ impl Runtime {
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
-        let preview = crate::params_builder::resize_for_preview(&image, max_size);
-        self.process(preview, backend)
+        if self.params().scanner.requires_full_frame() {
+            let output = self.process(image, backend)?;
+            if self
+                .params()
+                .taps
+                .collect
+                .as_deref()
+                .is_none_or(|tap| tap == "rgb_out")
+            {
+                Ok(crate::params_builder::resize_for_preview(&output, max_size))
+            } else {
+                Ok(output)
+            }
+        } else {
+            let preview = crate::params_builder::resize_for_preview(&image, max_size);
+            self.process(preview, backend)
+        }
     }
 
     /// Process using `settings.preview_max_size`, matching upstream
@@ -491,9 +531,29 @@ pub fn simulate_preview(
     digest_params_first: bool,
     print_timings: bool,
 ) -> Result<ImageBuf, String> {
-    let preview =
-        crate::params_builder::resize_for_preview(&image, photo.params.settings.preview_max_size);
-    simulate(preview, photo, backend, digest_params_first, print_timings)
+    if photo.params.scanner.requires_full_frame() {
+        let output = simulate(image, photo, backend, digest_params_first, print_timings)?;
+        if photo
+            .params
+            .taps
+            .collect
+            .as_deref()
+            .is_none_or(|tap| tap == "rgb_out")
+        {
+            Ok(crate::params_builder::resize_for_preview(
+                &output,
+                photo.params.settings.preview_max_size,
+            ))
+        } else {
+            Ok(output)
+        }
+    } else {
+        let preview = crate::params_builder::resize_for_preview(
+            &image,
+            photo.params.settings.preview_max_size,
+        );
+        simulate(preview, photo, backend, digest_params_first, print_timings)
+    }
 }
 
 /// Legacy ART compatibility name.
@@ -546,6 +606,309 @@ mod tests {
                 .flat_map(|i| [from_f64(0.08 + i as f64 * 0.02); 3])
                 .collect(),
         )
+    }
+
+    #[test]
+    fn operator_cache_matches_fresh_render_across_edits_and_frames() {
+        let mut params = scanner_params();
+        params.io.output_cctf_encoding = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.scanner.unsharp_mask = [0.0; 2];
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let backend: Arc<dyn ComputeBackend> = Arc::new(CpuBackend);
+        let image = Arc::new(scanner_image());
+        let mut cache = ScanFrameCache::default();
+        let render = |runtime: &Runtime, image: &Arc<ImageBuf>, cache: &mut ScanFrameCache| {
+            let cached = runtime
+                .process_scan_cached_observed(
+                    image,
+                    cache,
+                    &backend,
+                    &ObservationContext::default(),
+                )
+                .unwrap();
+            let fresh = runtime
+                .process(image.as_ref().clone(), backend.as_ref())
+                .unwrap();
+            assert_eq!(cached.data, fresh.data);
+        };
+        render(&runtime, &image, &mut cache);
+        let mut corrected = runtime.params().clone();
+        corrected.scanner.operator.exposure_ev = 0.5;
+        corrected.scanner.operator.warmth_ev = 0.25;
+        corrected.scanner.operator.contrast = 0.75;
+        let corrected = runtime.clone().with_params(corrected).unwrap();
+        render(&corrected, &image, &mut cache);
+        let mut upstream = corrected.params().clone();
+        upstream.camera.exposure_compensation_ev = 1.0;
+        let upstream = corrected.with_params(upstream).unwrap();
+        render(&upstream, &image, &mut cache);
+        let mut second = scanner_image();
+        second.data[..3].fill(from_f64(8.0));
+        render(&upstream, &Arc::new(second), &mut cache);
+    }
+
+    #[test]
+    fn cached_scan_matches_fresh_cpu_after_convert_geometry_mix_and_spatial_edits() {
+        for route in ["input > film > scan", "input > convert-film > scan"] {
+            let mut params = scanner_params();
+            params.workflow.route = route.into();
+            params.io.input_cctf_decoding = false;
+            params.io.output_cctf_encoding = false;
+            params.io.output_gamut_compress.algorithm = "off".into();
+            params.scanner.unsharp_mask = [0.0; 2];
+            params.io.crop = false;
+            let mut runtime = Runtime::from_stocks(
+                "kodak_portra_400",
+                "kodak_portra_endura",
+                params,
+                &data_dir(),
+            )
+            .unwrap();
+            let backend: Arc<dyn ComputeBackend> = Arc::new(CpuBackend);
+            let image = Arc::new(scanner_image());
+            let mut cache = ScanFrameCache::default();
+            let render = |runtime: &Runtime, cache: &mut ScanFrameCache, dimensions| {
+                let cached = runtime
+                    .process_scan_cached_observed(
+                        &image,
+                        cache,
+                        &backend,
+                        &ObservationContext::default(),
+                    )
+                    .unwrap();
+                let fresh = runtime
+                    .process(image.as_ref().clone(), backend.as_ref())
+                    .unwrap();
+                assert_eq!((cached.width, cached.height), dimensions, "{route}");
+                assert_eq!((fresh.width, fresh.height), dimensions, "{route}");
+                assert!(cached.data.iter().all(|value| value.is_finite()), "{route}");
+                assert_eq!(cached.data, fresh.data, "{route}");
+                assert!(
+                    cache.retained_bytes() > 0,
+                    "{route} must exercise the cache"
+                );
+                cached
+            };
+            let baseline = render(&runtime, &mut cache, (4, 4));
+            assert!(
+                baseline
+                    .data
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .any(|pixel| pixel.as_slice() != &baseline.data[..3]),
+                "{route}: the fixture must contain spatially varying output"
+            );
+
+            let mut params = runtime.params().clone();
+            params.io.crop = true;
+            params.io.crop_center = [0.5, 0.5];
+            params.io.crop_size = [0.5, 0.5];
+            runtime = runtime.with_params(params).unwrap();
+            render(&runtime, &mut cache, (2, 2));
+
+            let mut params = runtime.params().clone();
+            params.io.upscale_factor = 2.0;
+            runtime = runtime.with_params(params).unwrap();
+            let unmixed = render(&runtime, &mut cache, (4, 4));
+
+            let mut params = runtime.params().clone();
+            params.output_mix.amount = 0.35;
+            runtime = runtime.with_params(params).unwrap();
+            let mixed = render(&runtime, &mut cache, (4, 4));
+            assert!(
+                mixed
+                    .data
+                    .iter()
+                    .zip(&unmixed.data)
+                    .any(|(a, b)| (*a as f64 - *b as f64).abs() > 1e-6),
+                "{route}: output mixing must change real pixels"
+            );
+
+            let mut params = runtime.params().clone();
+            params.scanner.lens_blur = 1.0;
+            runtime = runtime.with_params(params).unwrap();
+            let blurred = render(&runtime, &mut cache, (4, 4));
+            assert!(
+                blurred
+                    .data
+                    .iter()
+                    .zip(&mixed.data)
+                    .any(|(a, b)| (*a as f64 - *b as f64).abs() > 1e-6),
+                "{route}: scanner blur must invalidate the prepared acquisition"
+            );
+            render(&runtime, &mut cache, (4, 4));
+        }
+    }
+
+    #[test]
+    fn cached_scan_preserves_explicit_gpu_policy_and_automatic_cpu_acquisition() {
+        use spektrafilm_backend::telemetry::{CollectionMode, CpuReason, Executor};
+
+        let mut params = scanner_params();
+        params.scanner.lens_blur = 1.0;
+        params.scanner.unsharp_mask = [0.0; 2];
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let image = Arc::new(scanner_image());
+        let mut cache = ScanFrameCache::default();
+        spektrafilm_gpu::test_support::explicit_adapter().with_shared_backend(|backend| {
+            assert!(backend.is_gpu() && backend.explicit_gpu_request());
+            let ordinary = runtime
+                .process(image.as_ref().clone(), backend.as_ref())
+                .expect_err("ordinary processing must reject the host acquisition");
+            let context = ObservationContext::new(CollectionMode::Summary);
+            let cached = runtime
+                .process_scan_cached_observed(&image, &mut cache, backend, &context)
+                .expect_err("cached processing must not bypass explicit GPU policy");
+            for error in [&ordinary, &cached] {
+                assert!(error.contains("explicit GPU request"), "{error}");
+                assert!(error.contains("scanner acquisition"), "{error}");
+            }
+            assert_eq!(cache.retained_bytes(), 0);
+            assert!(context.snapshot().observations.iter().all(|stage| {
+                stage.name != "negative_reconstruction" && stage.name != "standard_setup"
+            }));
+        });
+        spektrafilm_gpu::test_support::adapter().with_shared_backend(|backend| {
+            assert!(backend.is_gpu() && !backend.explicit_gpu_request());
+            let context = ObservationContext::new(CollectionMode::Summary);
+            let cached = runtime
+                .process_scan_cached_observed(&image, &mut cache, backend, &context)
+                .expect("automatic GPU selection permits CPU acquisition");
+            assert_eq!((cached.width, cached.height), (4, 4));
+            assert!(cached.data.iter().all(|value| value.is_finite()));
+            assert!(cache.retained_bytes() > 0);
+            let snapshot = context.snapshot();
+            let acquisition = snapshot
+                .observations
+                .iter()
+                .find(|stage| stage.name == "negative_reconstruction")
+                .expect("real negative reconstruction must execute");
+            assert_eq!(acquisition.executor, Some(Executor::Cpu));
+            assert_eq!(
+                acquisition.cpu_reason,
+                Some(CpuReason::NegativeToPositiveOutput)
+            );
+            assert_eq!(
+                snapshot
+                    .observations
+                    .iter()
+                    .filter(|stage| stage.name == "standard_setup")
+                    .count(),
+                1
+            );
+            let ordinary = runtime
+                .process(image.as_ref().clone(), backend.as_ref())
+                .expect("ordinary automatic processing permits CPU acquisition");
+            assert_eq!((ordinary.width, ordinary.height), (4, 4));
+            assert!(ordinary.data.iter().all(|value| value.is_finite()));
+            // Ordinary rendering uses the resident front pass; the cache
+            // uses per-stage boundaries. Match the existing n2p fence budget.
+            let (sum, maximum) = cached.data.iter().zip(&ordinary.data).fold(
+                (0.0, 0.0_f64),
+                |(sum, maximum), (a, b)| {
+                    let difference = (*a as f64 - *b as f64).abs();
+                    (sum + difference, maximum.max(difference))
+                },
+            );
+            let mean = sum / cached.data.len() as f64;
+            assert!(
+                mean < 5e-2 && maximum < 5e-1,
+                "automatic cached/resident divergence: mean={mean} max={maximum}"
+            );
+        });
+    }
+
+    #[test]
+    fn preview_entry_points_preserve_diagnostic_frame_and_samples() {
+        let data = data_dir();
+        let film = profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+        let image = scanner_image();
+        let backend = CpuBackend;
+        for collect in ["rgb_in", "rgb_pre", "log_e_film", "cmy_film"] {
+            let mut params = scanner_params();
+            params.settings.preview_max_size = 2;
+            params.io.crop = false;
+            params.taps.collect = Some(collect.into());
+            let photo = RuntimePhotoParams {
+                film: film.clone(),
+                print: print.clone(),
+                params,
+                data_dir: data.clone(),
+            };
+            let runtime = Runtime::from_photo_params(photo.clone()).unwrap();
+            let expected = runtime.process(image.clone(), &backend).unwrap();
+            assert_eq!((expected.width, expected.height), (4, 4), "{collect}");
+            assert!(
+                expected.data.iter().all(|value| value.is_finite()),
+                "{collect}"
+            );
+            assert!(
+                expected
+                    .data
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .any(|pixel| pixel.as_slice() != &expected.data[..3]),
+                "{collect}: diagnostic fixture must have varying samples"
+            );
+            if collect == "rgb_in" {
+                assert_eq!(expected.data, image.data);
+            }
+            for preview in [
+                runtime.process_preview(image.clone(), 2, &backend).unwrap(),
+                runtime
+                    .process_configured_preview(image.clone(), &backend)
+                    .unwrap(),
+                simulate_preview(image.clone(), &photo, &backend, false, false).unwrap(),
+            ] {
+                assert_eq!((preview.width, preview.height), (4, 4), "{collect}");
+                assert_eq!(
+                    preview.data, expected.data,
+                    "{collect}: samples were resampled"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn standard_preview_resamples_finished_full_workframe() {
+        let mut params = scanner_params();
+        params.taps.inject = Some("cmy_film".into());
+        params.scanner.unsharp_mask = [0.0; 2];
+        params.settings.preview_max_size = 2;
+        params.io.crop = false;
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let mut density = ImageBuf::from_data(16, 16, vec![from_f64(0.6); 16 * 16 * 3]);
+        density.data[..3].fill(from_f64(3.0));
+        let backend = CpuBackend;
+        let full = runtime.process(density.clone(), &backend).unwrap();
+        let expected = crate::params_builder::resize_for_preview(&full, 2);
+        let preview = runtime
+            .process_configured_preview(density, &backend)
+            .unwrap();
+        assert_eq!((preview.width, preview.height), (2, 2));
+        assert_eq!(preview.data, expected.data);
     }
 
     #[test]

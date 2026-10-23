@@ -5,6 +5,19 @@ use spektrafilm_core::params::RuntimeParams;
 
 use super::{overlay_runtime, translate_legacy_print_exposure};
 
+/// Stored operator values may be inactive; rendering validates the effective controls.
+pub(crate) fn validate_stored_runtime(params: &mut RuntimeParams) -> Result<()> {
+    params
+        .scanner
+        .operator
+        .validate()
+        .map_err(anyhow::Error::msg)?;
+    let operator = std::mem::take(&mut params.scanner.operator);
+    let result = params.validate();
+    params.scanner.operator = operator;
+    result.map_err(anyhow::Error::msg)
+}
+
 pub(super) fn normalize_grain_section(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;
@@ -251,13 +264,23 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     // scanner keys fail the document instead of being silently dropped.
     if let Some(fields) = value.get("scanner") {
         let projected = json!({"scanner": fields});
-        let _: RuntimeParams =
+        let params: RuntimeParams =
             serde_json::from_value(projected).context("Invalid GUI scanner parameters")?;
+        params
+            .scanner
+            .operator
+            .validate()
+            .map_err(anyhow::Error::msg)?;
     }
     if let Some(fields) = value["rust"]["runtime"].get("scanner") {
         let projected = json!({"scanner": fields});
-        let _: RuntimeParams = serde_json::from_value(projected)
+        let params: RuntimeParams = serde_json::from_value(projected)
             .context("Invalid GUI Rust runtime scanner parameters")?;
+        params
+            .scanner
+            .operator
+            .validate()
+            .map_err(anyhow::Error::msg)?;
     }
     if let Some(output) = value.get_mut("output_gamut_compress") {
         let mut projected = json!({"io": {"output_gamut_compress": output.clone()}});
