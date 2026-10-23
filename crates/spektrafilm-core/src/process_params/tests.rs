@@ -564,7 +564,7 @@ fn public_routes_have_identical_topology_with_noop_sources() {
             let result = resolve(req, &data_dir()).unwrap();
             assert_eq!(
                 result.params.io.scan_film,
-                WorkflowRoute::parse(route) == WorkflowRoute::FilmScan
+                WorkflowRoute::parse(route).scans_film()
             );
             results.push((
                 result.params.workflow.route,
