@@ -370,6 +370,9 @@ impl Pipeline {
                             observation.backend(backend),
                             &self.output_gamut,
                         )?;
+                        // The scanner tail finished the route: leave the
+                        // topology at the terminal tap.
+                        i = order.iter().position(|tap| *tap == Tap::RgbOut).unwrap();
                     } else {
                         cur.data.par_iter_mut().for_each(|value| {
                             *value = from_f64(to_f64(*value).log10());

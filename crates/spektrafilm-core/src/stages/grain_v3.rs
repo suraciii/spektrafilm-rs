@@ -74,6 +74,11 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
             "{CELL_SPECTRAL_ENV} does not support enlarger or scanner LUTs"
         ));
     }
+    if params.io.scan_film && params.scanner.scan_output != "direct_scan" {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} supports only the direct_scan film readout; the exact-cell capture does not reinterpret a negative"
+        ));
+    }
     if params.enlarger.diffusion_filter.active
         || params.enlarger.lens_blur > 0.0
         || params.scanner.lens_blur > 0.0

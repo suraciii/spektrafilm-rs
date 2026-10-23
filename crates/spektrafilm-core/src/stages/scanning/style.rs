@@ -45,7 +45,8 @@ pub(crate) fn resolve(name: &str, data_dir: Option<&Path>) -> Result<[ChannelTon
         || name.contains(':')
     {
         return Err(format!(
-            "scanner.conversion_style {name:?} is not a valid style name"
+            "scanner.conversion_style {name:?} is not a valid style name; available styles: {}",
+            available(data_dir).join(", ")
         ));
     }
     let Some(dir) = data_dir else {
@@ -63,7 +64,12 @@ pub(crate) fn resolve(name: &str, data_dir: Option<&Path>) -> Result<[ChannelTon
             available(data_dir).join(", ")
         )
     })?;
-    parse(&text, name)
+    parse(&text, name).map_err(|error| {
+        format!(
+            "{error}; available styles: {}",
+            available(data_dir).join(", ")
+        )
+    })
 }
 
 /// Style names available under a data directory (`neutral` always, then the

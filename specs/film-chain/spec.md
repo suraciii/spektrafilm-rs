@@ -99,7 +99,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 
 - The scanner has one colorimetric sensor modeled on the CIE 1931 color-matching functions. No narrow-band, approximate, or measured-device receiver profile exists; the sensor is not selectable.
 - Scan acquisition is one spectral integration of the scanned medium under the scanner lamp. `scanner.lamp` resolves to one spectral power distribution through the shared illuminant service that `enlarger.illuminant` uses, so one service owns every light-source name.
-- The white reference of a scan is the clear film base of the scanned medium. The scan chromatically adapts from the lamp's white to the output color space's white and emits output-space linear RGB. The scan matrix is the identity; no receiver calibration matrix is applied.
+- The white reference of a scan is the clear film base of the scanned medium. The scan chromatically adapts from that clear-film white to the output color space's white and emits output-space linear RGB. The scan matrix is the identity; no receiver calibration matrix is applied.
 - The clear film base must read as the output color space's white on every admitted route, for every accepted lamp, and for both scan output values.
 - The lamp changes the capture. Changing `scanner.lamp` must change the scanned pixels of a colored area, while a clear-film area remains the output white.
 - The lamp must not change film exposure, development, film-domain effects, print exposure, or the input camera exposure. It must not be derived from the capture illuminant or the enlarger illuminant, and it must not be inferred from image content.

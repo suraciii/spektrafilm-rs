@@ -46,7 +46,10 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
     assert_eq!(scan_model.model, "neutral_scan_v2");
     assert_eq!(scan_model.sensor, "cie_1931_cmf");
     assert_eq!(scan_model.white_reference, "clear_film_base");
+    assert_eq!(scan_model.output_white, "output_color_space_white");
+    assert_eq!(scan_model.matrix, "identity");
     assert_eq!(scan_model.lamp, "D65");
+    assert_eq!(actual.conversion_style, "neutral");
 }
 
 #[test]

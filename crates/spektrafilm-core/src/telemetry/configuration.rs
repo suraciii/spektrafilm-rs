@@ -255,23 +255,33 @@ pub enum ScanOutput {
 }
 
 /// Effective scanner model of a render: the one built-in neutral scan model
-/// plus the selected lamp.
+/// plus the resolved lamp, output white and device matrix.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanModelConfiguration {
     pub model: String,
     pub sensor: String,
     pub white_reference: String,
+    pub output_white: String,
+    pub matrix: String,
     pub lamp: String,
 }
 
 impl Default for ScanModelConfiguration {
     fn default() -> Self {
-        let provenance = crate::ScannerProvenance::from_params(&RuntimeParams::default());
+        Self::from_runtime(&RuntimeParams::default())
+    }
+}
+
+impl ScanModelConfiguration {
+    fn from_runtime(params: &RuntimeParams) -> Self {
+        let provenance = crate::ScannerProvenance::from_params(params);
         Self {
-            model: provenance.model.to_string(),
-            sensor: provenance.sensor.to_string(),
-            white_reference: provenance.white_reference.to_string(),
-            lamp: "D55".to_string(),
+            model: provenance.model.to_owned(),
+            sensor: provenance.sensor.to_owned(),
+            white_reference: provenance.white_reference.to_owned(),
+            output_white: provenance.output_white.to_owned(),
+            matrix: provenance.matrix.to_owned(),
+            lamp: params.scanner.lamp.clone(),
         }
     }
 }
@@ -338,15 +348,7 @@ impl RenderConfiguration {
                 ScanOutput::DirectScan
             },
             conversion_style: params.scanner.conversion_style.clone(),
-            scan_model: {
-                let provenance = crate::ScannerProvenance::from_params(params);
-                ScanModelConfiguration {
-                    model: provenance.model.to_string(),
-                    sensor: provenance.sensor.to_string(),
-                    white_reference: provenance.white_reference.to_string(),
-                    lamp: params.scanner.lamp.clone(),
-                }
-            },
+            scan_model: ScanModelConfiguration::from_runtime(params),
             output_mix_amount: params.output_mix.amount,
             model_version: crate::runtime::MODEL_VERSION.into(),
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),
