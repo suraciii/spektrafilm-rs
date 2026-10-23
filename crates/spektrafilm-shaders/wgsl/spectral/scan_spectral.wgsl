@@ -1,11 +1,11 @@
-// Scanning stage: density CMY → XYZ via spectral path.
+// Scanning stage: density CMY → RGB via the neutral scan model v2.
 //
 // For each pixel:
 //   1. Compute spectral density: d = cmy.r * channel_density[wl].r + cmy.g * ... + cmy.b * ...  + base_density[wl]
 //   2. Transmittance: light = pow(10, -d) * illuminant[wl]
 //   3. XYZ += light * cmf[wl]
-//   4. XYZ /= normalization
-//   5. RGB = xyz_to_rgb_matrix * XYZ
+//   4. XYZ /= normalization   (Y of the clear-film base under the lamp)
+//   5. RGB = xyz_to_rgb_matrix * XYZ   (output matrix × CAT(lamp → output white))
 
 struct Params {
     width: u32,
@@ -13,11 +13,6 @@ struct Params {
     n_wavelengths: u32,
     normalization: f32,
     xyz_to_rgb: mat3x3<f32>,
-    // B&W/slide scanner luminance remap: x=m, y=q, z=enable (0/1).
-    // Mirrors ColorReference::xyz_scale — clip(m*Y+q, 0, 1)/(Y+1e-10) on the
-    // pre-matrix scan XYZ. Identity (skipped) when z==0.
-    // w is reserved; scanning preserves the full floating-point RGB range.
-    bw: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -63,15 +58,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     }
 
     xyz /= params.normalization;
-
-    // B&W/slide luminance remap on the pre-matrix XYZ (the combined
-    // CAT × xyz_to_rgb matrix is linear, so scaling here == scaling the
-    // pre-CAT XYZ as the CPU LUT path does).
-    if params.bw.z != 0.0 {
-        let y = xyz.y;
-        let scale = clamp(params.bw.x * y + params.bw.y, 0.0, 1.0) / (y + 1e-10);
-        xyz = xyz * scale;
-    }
 
     // XYZ → RGB via matrix multiply
     let rgb = params.xyz_to_rgb * xyz;

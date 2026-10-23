@@ -62,13 +62,6 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
     if !enabled {
         return Ok(false);
     }
-    if params.scanner.negative_conversion_method
-        == crate::params::NegativeConversionMethod::DigitalReference
-    {
-        return Err(format!(
-            "{CELL_SPECTRAL_ENV} does not support Digital Reference; disable the exact-cell diagnostic"
-        ));
-    }
     if params.workflow.route_enum() != WorkflowRoute::FilmPrintScan
         && params.workflow.route_enum() != WorkflowRoute::FilmScan
     {
@@ -76,14 +69,14 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
             "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
         ));
     }
-    if params.scanner.auto_setup != crate::params::ScannerAutoSetup::Off {
-        return Err(format!(
-            "{CELL_SPECTRAL_ENV} does not support frame-derived scanner setup"
-        ));
-    }
     if params.settings.use_enlarger_lut || params.settings.use_scanner_lut {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} does not support enlarger or scanner LUTs"
+        ));
+    }
+    if params.io.scan_film && params.scanner.scan_output != "direct_scan" {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} supports only the direct_scan film readout; the exact-cell capture does not reinterpret a negative"
         ));
     }
     if params.enlarger.diffusion_filter.active
@@ -95,15 +88,6 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
     {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} does not support spatial optics or finishing"
-        ));
-    }
-    if params.scanner.black_point != [0.0; 3]
-        || params.scanner.white_point != [1.0; 3]
-        || params.scanner.white_correction
-        || params.scanner.black_correction
-    {
-        return Err(format!(
-            "{CELL_SPECTRAL_ENV} does not support scanner point or white corrections"
         ));
     }
     Ok(true)
@@ -1020,7 +1004,6 @@ mod tests {
             height: 6,
         };
         let formed_cells = v3::apply(&source, cell * 2.0, fine_grid, &model).unwrap();
-        let color = crate::color_reference::ColorReference::identity();
         let gamut = crate::gamut_compression::OutputGamutCompress::identity();
         let illuminant =
             crate::spectral_service::select_illuminant_f64(&print.info.reference_illuminant);
@@ -1035,7 +1018,6 @@ mod tests {
                     &illuminant,
                     0.7,
                     preflash,
-                    1.0,
                 )
             };
             let fine = expose(&formed_cells).unwrap();
@@ -1049,7 +1031,7 @@ mod tests {
         for mode in ["direct_scan", "negative_to_positive"] {
             params.scanner.scan_output = mode.into();
             let capture = |cells: &ImageBuf| {
-                super::super::scanning::capture_linear(cells, &film, &params, &backend, &color)
+                super::super::scanning::capture_linear(cells, &film, &params, &backend)
             };
             let fine_capture = capture(&formed_cells).unwrap();
             let expected = block_average_linear(&fine_capture, 4);
@@ -1057,10 +1039,8 @@ mod tests {
                 v3::apply_with_response(&source, cell * 2.0, coarse_grid, &model, capture).unwrap();
             assert!(max_abs_diff(&actual, &expected) < read_tolerance());
             let finish = |rgb| {
-                super::super::scanning::finish_capture(
-                    rgb, &film, &params, &backend, &color, &gamut,
-                )
-                .unwrap()
+                super::super::scanning::finish_capture(rgb, &film, &params, &backend, &gamut)
+                    .unwrap()
             };
             assert!(max_abs_diff(&finish(actual.clone()), &finish(expected)) < read_tolerance());
             let crop_grid = ReadoutGrid {

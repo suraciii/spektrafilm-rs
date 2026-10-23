@@ -40,12 +40,11 @@ A resettable section presents a `modified` chip while any of its parameters diff
 
 The GUI shows scanner controls for the scanned medium:
 
-- Paper and slides expose white/black correction.
-- Slides and negatives expose the receiver profile.
-- Negatives expose scan polarity; negative conversion controls appear on `input > film > scan` and `input > convert-film > scan`.
-- Slides and negative conversion outside Digital Reference expose film-scan points.
+- Every route exposes scan polarity and the scanner lamp illuminant.
+- The negative interpretation additionally exposes the conversion style: `neutral` is the frozen reference tone, and any other name is a declared style in `data/scan-styles/`.
+- Scanner lens blur and unsharp masking expose the readout optics and digital sharpening.
 
-Selecting the negative conversion method clears incompatible capture-correction flags. State files retain scanner point values. See [scanning](scanning.md) for scanner mode semantics.
+Changing the route resets an ineligible scan polarity; leaving the negative interpretation resets the conversion style to `neutral`. See [scanning](scanning.md) for scanner mode semantics.
 
 **MAIN → Output → Simulation blend** blends the complete result with the decoded, geometrically aligned source in linear output RGB. Amount `1` keeps the complete result. Amount `0` returns the prepared source before virtual camera exposure. A negative capture stays negative at zero. Preview, Scan, Export, and complete source-to-output LUTs share this operation. Segmented LUTs require amount `1`. See [the output mix specification](../specs/output-mix/spec.md#output-mix) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
 
@@ -74,9 +73,9 @@ New edits replace queued work. Stale results cannot replace the latest output. T
 
 **Scan** renders the full-resolution input with spatial and stochastic effects. It prefers GPU execution with CPU fallback. The resulting full-resolution output is retained for Save and inspection in the viewport.
 
-**Scan-for-print** temporarily enables scanner white/black corrections and disables print glare. Toggle it again to restore all three previous values. Loading state or changing profiles clears the transient snapshot.
+**Scan-for-print** disables print viewing glare for the print scan. Toggle it again to restore the previous value. Loading state or changing profiles clears the transient snapshot.
 
-The current optical model moves scanner lens blur to linear readout light. It runs before interpretation, points, correction, gamut, sharpening, and transfer encoding. Print viewing glare follows optical blur and does not expose or develop the print material. Nonzero blur can intentionally change historical direct-scan pixels. Recipes and reports identify the current model revision. Corrected scans use faithful per-stage execution when resident shaders cannot preserve that order. Preflash retains both exposure gains and floors. Resident printing applies its outer gain to flash as well as main exposure. Film grain stays in the material domain. Procedural grain stays a post-scan appearance. See [the output mix specification](../specs/output-mix/spec.md) and [the GUI workflow specification](../specs/gui-workflow/spec.md) for the owning semantics.
+The current optical model moves scanner lens blur to linear readout light. It runs before interpretation, gamut, sharpening, and transfer encoding. Print viewing glare follows optical blur and does not expose or develop the print material. Nonzero blur can intentionally change historical direct-scan pixels. Recipes and reports identify the current model revision. Corrected scans use faithful per-stage execution when resident shaders cannot preserve that order. Preflash retains both exposure gains and floors. Resident printing applies its outer gain to flash as well as main exposure. Film grain stays in the material domain. Procedural grain stays a post-scan appearance. See [the output mix specification](../specs/output-mix/spec.md) and [the GUI workflow specification](../specs/gui-workflow/spec.md) for the owning semantics.
 
 See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the action contract.
 

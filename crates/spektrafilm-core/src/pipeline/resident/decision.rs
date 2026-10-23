@@ -3,7 +3,6 @@ use super::super::Pipeline;
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ResidentFallbackReason {
     WorkflowRoute,
-    ScannerSetup,
     /// Active Dye needs a film-coordinate readout the resident chain's
     /// fixed-size density buffer cannot express (a crop or upscale, or the
     /// env-gated certification readouts); the field resolves on the
@@ -37,9 +36,6 @@ impl ResidentDecision {
 impl Pipeline {
     pub(super) fn resident_decision(&self) -> ResidentDecision {
         let mut reasons = Vec::new();
-        if self.scanner_setup.is_some() {
-            reasons.push(ResidentFallbackReason::ScannerSetup);
-        }
         // The Mallett shader has no numerically equivalent route through
         // CPU display-domain grain and optics; retain the per-stage path.
         if self.params.settings.rgb_to_raw_method == "mallett2019" {
@@ -52,15 +48,9 @@ impl Pipeline {
             reasons.push(ResidentFallbackReason::WorkflowRoute);
         }
         // Negative-to-positive interpretation no longer declines at all:
-        // the capture methods (separable/coupled) run as an assembled CPU
-        // fence on the scanner readout, and the density reading and Digital
-        // Reference replace the acquisition as the assembled acquisition
-        // fence (pipe architecture, capability class — see
-        // `scan_tail_cpu_stage` and `scan_acquisition_cpu_stage` in
-        // `try_gpu_resident`).
-        // A modeled scanner receiver (LabScanApprox) no longer declines
-        // either: the receiver capture replaces the GPU spectral
-        // integration as the same assembled acquisition fence.
+        // the density reading replaces the acquisition as the assembled
+        // acquisition fence (pipe architecture, capability class — see
+        // `scan_acquisition_cpu_stage` in `try_gpu_resident`).
         // Input transfer decoding no longer declines: the resident route
         // decodes the input before upload (pipe architecture, capability
         // class — see `try_gpu_resident`).

@@ -1,7 +1,7 @@
 # Procedural grain
 ## Contract
 - Procedural consumes and returns native display-encoded scanner RGB. It does not apply an internal transfer curve or primaries conversion.
-- Procedural is a post-scan grain appearance. It runs after scanner interpretation, optional scanner finish, output gamut processing, digital unsharp mask, and scanner encoding, before CMYK ink style and overall output mixing. It must not change film or print density or be exposed to subsequent photographic printing as if it were developed grain.
+- Procedural is a post-scan grain appearance. It runs after scanner interpretation, output gamut processing, digital unsharp mask, and scanner encoding, before CMYK ink style and overall output mixing. It must not change film or print density or be exposed to subsequent photographic printing as if it were developed grain.
 - The selector values, parameter paths, named profiles, and algorithm remain unchanged. This clarification must not move the existing RGB algorithm into density space or automatically map it to Spektra or Dye. Film Resolution belongs to this appearance model, not the scanner's optical blur.
 - `Analogue` samples the encoded source as a virtual grain texture and composites it over the Film Resolution result.
 - `Noise` is a single-pass image-resolution path. It generates procedural grain from the prepared input and does not execute Film Resolution; `v2_resolution_factor` and `v2_resolution_type` therefore do not alter Noise output.

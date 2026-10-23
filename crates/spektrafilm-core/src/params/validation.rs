@@ -1,5 +1,4 @@
 use super::{RuntimeParams, Tap};
-use crate::WorkflowRoute;
 use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 
 pub(crate) const SUPPORTED_ROUTES: [&str; 6] = [
@@ -110,13 +109,6 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "camera.film_format_mm" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "cmyk.strength" => Some((0.0, Some(1.0))),
-        "scanner.black_point" | "scanner.white_point" => Some((0.0, Some(1.0))),
-        "scanner.finish_strength" => Some((0.0, Some(1.0))),
-        "scanner.conversion_brightness_ev"
-        | "scanner.conversion_balance_ev"
-        | "scanner.reference_exposure_ev"
-        | "scanner.reference_balance_ev" => Some((-16.0, Some(16.0))),
-        "scanner.conversion_contrast" | "scanner.conversion_dmax" => Some((0.0, Some(16.0))),
         _ => None,
     }
 }
@@ -301,28 +293,6 @@ pub(crate) fn validate_v2_timer(value: f64) -> Result<(), String> {
 /// validated but not enumerable (for example `BB<kelvin>` blackbody sources).
 pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
     let values: Vec<String> = match path {
-        "scanner.receiver_profile" => [
-            "legacy_colorimetric",
-            "lab_scan_approx",
-            "digital_reference",
-        ]
-        .iter()
-        .map(|v| (*v).into())
-        .collect(),
-        "scanner.negative_conversion_method" => {
-            ["density", "separable", "coupled", "digital_reference"]
-                .iter()
-                .map(|v| (*v).into())
-                .collect()
-        }
-        "scanner.auto_setup" => ["off", "density", "density_color", "full"]
-            .iter()
-            .map(|v| (*v).into())
-            .collect(),
-        "scanner.finish" => ["neutral", "lab_scan"]
-            .iter()
-            .map(|v| (*v).into())
-            .collect(),
         "scanner.scan_output" => ["direct_scan", "negative_to_positive"]
             .iter()
             .map(|v| (*v).into())
@@ -350,13 +320,13 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).to_owned())
             .collect(),
-        "camera.capture_illuminant"
-        | "enlarger.illuminant"
-        | "film_render.convert.scan_illuminant" => crate::spectral_service::available_illuminants()
-            .iter()
-            .map(|v| (*v).to_owned())
-            .chain(std::iter::once("BB<kelvin> (1667..=25000)".into()))
-            .collect(),
+        "camera.capture_illuminant" | "enlarger.illuminant" | "scanner.lamp" => {
+            crate::spectral_service::available_illuminants()
+                .iter()
+                .map(|v| (*v).to_owned())
+                .chain(std::iter::once("BB<kelvin> (1667..=25000)".into()))
+                .collect()
+        }
         "camera.diffusion_filter.filter_family" | "enlarger.diffusion_filter.filter_family" => {
             ["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"]
                 .iter()
@@ -425,16 +395,6 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
 /// Per-leaf vocabulary validation, independent of cross-field state.
 pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String> {
     let valid = match path {
-        "scanner.receiver_profile" => matches!(
-            value,
-            "legacy_colorimetric" | "lab_scan_approx" | "digital_reference"
-        ),
-        "scanner.negative_conversion_method" => matches!(
-            value,
-            "density" | "separable" | "coupled" | "digital_reference"
-        ),
-        "scanner.auto_setup" => matches!(value, "off" | "density" | "density_color" | "full"),
-        "scanner.finish" => matches!(value, "neutral" | "lab_scan"),
         "scanner.scan_output" => matches!(value, "direct_scan" | "negative_to_positive"),
         "film_render.grain.engine" => {
             matches!(value, "spektra" | "procedural" | "dye" | "fotufilm")
@@ -449,9 +409,7 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
         }
         "settings.rgb_to_raw_method" => rgb_to_raw_names().contains(&value),
         "camera.color_filter" => crate::spectral_service::is_supported_color_filter(value),
-        "camera.capture_illuminant"
-        | "enlarger.illuminant"
-        | "film_render.convert.scan_illuminant" => {
+        "camera.capture_illuminant" | "enlarger.illuminant" | "scanner.lamp" => {
             crate::spectral_service::is_supported_illuminant(value)
         }
         "camera.diffusion_filter.filter_family" | "enlarger.diffusion_filter.filter_family" => {
@@ -654,114 +612,28 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         &params.camera.auto_exposure_method,
     )?;
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
-    let scanner = &params.scanner;
-    let reference =
-        scanner.negative_conversion_method == super::NegativeConversionMethod::DigitalReference;
-    if reference != (scanner.receiver_profile == super::ReceiverProfile::DigitalReference) {
-        return Err("Digital Reference requires matching digital_reference receiver and positive interpretation".into());
+    if !crate::spectral_service::is_supported_illuminant(&params.scanner.lamp) {
+        let supported = crate::spectral_service::available_illuminants().join(", ");
+        return Err(format!(
+            "scanner.lamp: unsupported illuminant {:?}; supported: {supported}",
+            params.scanner.lamp
+        ));
     }
-    for value in
-        std::iter::once(&scanner.reference_exposure_ev).chain(scanner.reference_balance_ev.iter())
+    let style = &params.scanner.conversion_style;
+    if style.is_empty()
+        || style.contains('/')
+        || style.contains('\\')
+        || style.contains("..")
+        || style.contains(':')
     {
-        if !value.is_finite() || !(-16.0..=16.0).contains(value) {
-            return Err("scanner.reference_exposure_ev and reference_balance_ev: must be finite and in -16..=16 stops".into());
-        }
+        return Err(format!(
+            "scanner.conversion_style: {style:?} is not a valid style name"
+        ));
     }
-    if reference {
-        if params.workflow.route_enum() != WorkflowRoute::FilmScan {
-            return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
-        }
-        if scanner.scan_output != "negative_to_positive" {
-            return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
-        }
-        if reference && scanner.auto_setup != super::ScannerAutoSetup::Off {
-            return Err(
-                "Digital Reference Reference Exposure requires scanner.auto_setup=off".into(),
-            );
-        }
-        if scanner.black_point != [0.0; 3] || scanner.white_point != [1.0; 3] {
-            return Err("Digital Reference requires identity scanner black/white points".into());
-        }
-        let defaults = super::ScannerParams::default();
-        if scanner.conversion_brightness_ev != defaults.conversion_brightness_ev
-            || scanner.conversion_balance_ev != defaults.conversion_balance_ev
-            || scanner.conversion_contrast != defaults.conversion_contrast
-            || scanner.conversion_dmax != defaults.conversion_dmax
-        {
-            return Err("Digital Reference requires default reconstruction controls; use reference_exposure_ev and reference_balance_ev".into());
-        }
-    } else if scanner.reference_exposure_ev != 0.0 || scanner.reference_balance_ev != [0.0; 3] {
+    if style != "neutral" && params.scanner.scan_output != "negative_to_positive" {
         return Err(
-            "scanner.reference_exposure_ev and reference_balance_ev require Digital Reference"
-                .into(),
+            "scanner.conversion_style requires scanner.scan_output=negative_to_positive".into(),
         );
-    }
-    if !scanner.finish_strength.is_finite() || !(0.0..=1.0).contains(&scanner.finish_strength) {
-        return Err("scanner.finish_strength: must be finite and in 0..=1".into());
-    }
-    if scanner.receiver_profile != super::ReceiverProfile::LegacyColorimetric
-        && !matches!(
-            params.workflow.route.as_str(),
-            "input > film > scan"
-                | "input > convert-film > scan"
-                | "input > convert-film > scan-minus-base"
-        )
-    {
-        return Err("scanner.receiver_profile=lab_scan_approx requires a film scan route".into());
-    }
-    if scanner.scan_output != "negative_to_positive" {
-        for (path, enabled) in [
-            (
-                "scanner.negative_conversion_method=coupled",
-                scanner.negative_conversion_method == super::NegativeConversionMethod::Coupled,
-            ),
-            (
-                "scanner.finish=lab_scan",
-                scanner.finish == super::ScannerFinish::LabScan,
-            ),
-        ] {
-            if enabled {
-                return Err(format!(
-                    "{path} requires scanner.scan_output=negative_to_positive"
-                ));
-            }
-        }
-    }
-    for channel in 0..3 {
-        let black = scanner.black_point[channel];
-        let white = scanner.white_point[channel];
-        if !black.is_finite()
-            || !white.is_finite()
-            || !(0.0..=1.0).contains(&black)
-            || !(0.0..=1.0).contains(&white)
-            || black >= white
-        {
-            return Err(format!(
-                "scanner.black_point[{channel}] and scanner.white_point[{channel}]: must be finite and satisfy 0 <= black_point < white_point <= 1"
-            ));
-        }
-    }
-    if !scanner.conversion_brightness_ev.is_finite()
-        || !(-16.0..=16.0).contains(&scanner.conversion_brightness_ev)
-    {
-        return Err("scanner.conversion_brightness_ev: must be finite and in -16..=16".into());
-    }
-    for (channel, value) in scanner.conversion_balance_ev.iter().enumerate() {
-        if !value.is_finite() || !(-16.0..=16.0).contains(value) {
-            return Err(format!(
-                "scanner.conversion_balance_ev[{channel}]: must be finite and in -16..=16"
-            ));
-        }
-    }
-    for (name, value) in [
-        ("scanner.conversion_contrast", scanner.conversion_contrast),
-        ("scanner.conversion_dmax", scanner.conversion_dmax),
-    ] {
-        if !value.is_finite() || value <= 0.0 || value > 16.0 {
-            return Err(format!(
-                "{name}: must be finite, strictly positive, and <= 16"
-            ));
-        }
     }
     if !params.film_render.halation.source_compression.is_finite()
         || !(0.0..=0.999999).contains(&params.film_render.halation.source_compression)
@@ -785,15 +657,6 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         return Err(format!(
             "enlarger.illuminant: unsupported illuminant {:?}; supported: {supported}",
             params.enlarger.illuminant
-        ));
-    }
-    if !crate::spectral_service::is_supported_illuminant(
-        &params.film_render.convert.scan_illuminant,
-    ) {
-        let supported = crate::spectral_service::available_illuminants().join(", ");
-        return Err(format!(
-            "film_render.convert.scan_illuminant: unsupported illuminant {:?}; supported: {supported}",
-            params.film_render.convert.scan_illuminant
         ));
     }
     const FILTER_FAMILIES: &str = "glimmerglass, black_pro_mist, pro_mist, cinebloom";

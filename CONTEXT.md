@@ -9,59 +9,39 @@ Real operations of exposure, development, photographic printing, and film digiti
 **Record exposure**: The exposure received by one film or photographic-paper record before development. In a chromogenic material, cyan, magenta, and yellow identify the dye-forming records, not RGB image colors or developed record densities.
 _Avoid_: Receiver capture, record density
 
-**Record density**: The optical density formed in one developed record of a film or a photographic paper. It describes the developed material, before an output receiver interprets it.
-_Avoid_: Scanned density, receiver capture
+**Record density**: The optical density formed in one developed record of a film or a photographic paper. It describes the developed material, before a scan interprets it.
+_Avoid_: Scanned density, scan capture
 
 **Scanned medium**: The developed film or photographic paper read for digital output. Its native polarity is independent of the delivered image's polarity.
 
-**Scan receiver**: The spectral response and reference readings used to acquire transmitted or reflected light from a scanned medium.
-_Avoid_: Scanner look, output color space
+**Scanner lamp**: The single physical light source of a scan. Its accepted values are the illuminant vocabulary the enlarger lamp uses: `D50`, `D55`, `D65`, `T`, `TH-KG3`, `TH-KG3-L`, `K75P`, and a `BB<kelvin>` blackbody token. `D55` is the default.
+_Avoid_: Scanner look, output color space, scan illuminant
 
-**Receiver capture**: The RGB readings a scan receiver acquires from a scanned medium. A negative conversion may interpret a receiver capture instead of record densities.
+**Scan sensor**: The colorimetric spectral response that acquires transmitted or reflected light from a scanned medium. The scanner has one sensor, modeled on the CIE 1931 color-matching functions; it is not selectable.
+_Avoid_: Scanner look, output color space, receiver profile
+
+**Scan capture**: The RGB readings the scan sensor acquires from a scanned medium. A negative conversion reads record densities instead of a scan capture.
 _Avoid_: Scan output, scanned medium
 
-**Scanned density**: The density derived from one channel of a scan capture, relative to that channel's clear reference. A slide scan reads its point range on scanned densities.
-_Avoid_: Record density, receiver capture
+**Clear film base**: The unexposed base of the scanned medium. It is the white reference of a scan: a clear area reads as the output color space's white.
+_Avoid_: Scanner white and black correction, output levels
+
+**Scanned density**: The density derived from one channel of a scan capture, relative to that channel's clear reference.
+_Avoid_: Record density, scan capture
 
 **Monochrome**: A film stock that forms one silver image. It uses the silver material law whether its profile is negative or positive. A chromogenic monochrome stock forms dye records and requires an explicit dye material law.
 _Avoid_: Black and white correction, scanner white and black correction
 
-**Negative conversion**: The interpretation of a developed negative as a positive image. It includes a color interpretation and a base positive tone response.
+**Negative conversion**: The interpretation of a developed negative as a positive image. It reads each dye record's density through the selected film's response and applies a positive tone response from one logistic curve family. It has one interpretation and no selectable method.
 _Avoid_: Positive scan, scanner finish
 
-**Exposure reconstruction**: A negative conversion that uses the selected film's response to estimate relative exposure from record densities or receiver measurements.
+**Exposure reconstruction**: The negative conversion that uses the selected film's response to estimate relative exposure from record densities.
 _Avoid_: Reference conversion
 
-**Reference conversion**: A negative conversion that uses a common receiver and positive response instead of reconstructing exposure through the selected film's characteristic curves.
-_Avoid_: Unprocessed film color, physical ground truth
+**Conversion style**: The named stylization of the negative-to-positive tone. `neutral` is the frozen reference constants of that tone curve and the only built-in style; any other name is user-authored declared data in `data/scan-styles/<name>.json` carrying one brightness, contrast, and maximum-density triple per channel. A style parameterizes the constants of the same curve family. It is never fitted from image or chart data, and it is inert on a direct scan.
+_Avoid_: Scanner finish, receiver profile, chart fit, calibration
 
-**Digital Reference**: The Scan output treatment that uses reference conversion to present simulated film under a common digital output model. The model is a reference convention, not a measured scanner.
-
-**Reference Exposure**: A fixed placement of the reference conversion's tone response. Its exposure and tone placement do not depend on the photograph's content.
-
-**Image correction**: A brightness, color balance, or contrast adjustment to the delivered image. It may be manual or derived from the photograph.
-
-**Automatic scan setup**: Image correction derived from a photograph's measurements for its digital delivery.
-_Avoid_: Receiver calibration, film development
-
-**Scanner finishing**: An optional color and tone appearance applied after negative conversion.
-
-_Avoid_: Negative conversion, scan receiver
-
-**CMYK ink style**: A modeled RGB appearance that suggests a fixed ink-on-paper grade. It runs after scanner interpretation, scanner finishing, output gamut processing, unsharp masking, transfer encoding, and Procedural grain. It remains three-channel RGB and does not produce CMYK separations, press-ready output, or an ICC press workflow.
-
-_Avoid_: Magazine finish, Printing, photographic paper, press proof, physical print
-
-**Lab Scan**: A modeled minilab-style digital delivery of a simulated negative. Receiver acquisition, conversion, automatic scan setup, and scanner finishing are separate parts of that delivery.
-_Avoid_: Measured Frontier profile, measured Noritsu profile
-
-**Scanner white and black correction**: The endpoint correction of a positive scan. A luminance remap maps the scanned medium's white and black reference luminances onto target white and black levels, with the matched film or print exposure correction. It applies to a photographic-paper or slide film scan, not a negative film scan.
-_Avoid_: Black and white correction, monochrome
-
-**Film-scan black and white points**: The per-channel window positions on a scanned film's point range: the relative log-exposure range of the derived inverse for a negative conversion, and the shared scanned-density range for a slide film scan. Points remap linearly without clipping.
-_Avoid_: Scanner white and black correction, output levels
-
-**Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver the image.
+**Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver an image.
 _Avoid_: Scanned medium, negative conversion
 
 **CIELAB**: A three-coordinate color representation under a declared reference white and observer. L* describes lightness; a* and b* describe opponent color directions. These coordinates describe color appearance, not film or photographic-paper record exposures or densities.

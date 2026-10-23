@@ -31,35 +31,28 @@ A control may show a technical identifier in a tooltip or diagnostic detail. It 
 The GUI must use these terms with the meanings defined by [`CONTEXT.md`](../../CONTEXT.md):
 
 - `record exposure` means exposure received by one film or photographic-paper record before development.
-- `record density` means optical density formed in one developed record before an output receiver interprets it.
+- `record density` means optical density formed in one developed record before an output scan interprets it.
 - `scanned medium` means developed film or photographic paper read for digital output.
-- `scan receiver` means the spectral response and reference readings used to acquire transmitted or reflected light from a scanned medium.
-- `receiver capture` means RGB readings acquired by a scan receiver.
-- `scanned density` means density derived from one channel of a receiver capture relative to that channel's clear reference.
+- `scan sensor` means the colorimetric spectral response used to acquire transmitted or reflected light from a scanned medium.
+- `scan capture` means RGB readings acquired by the scan sensor.
+- `scanned density` means density derived from one channel of a scan capture relative to that channel's clear reference.
+- `clear film base` means the unexposed base of the scanned medium, which reads as the output white reference of a scan.
 - `negative conversion` means interpretation of a developed negative as a positive image.
 - `exposure reconstruction` means negative conversion that estimates relative exposure through the selected film response.
-- `reference conversion` means negative conversion that uses a common receiver and positive response instead of reconstructing exposure through the selected film characteristic curves.
-- `automatic scan setup` means image correction derived from a photograph's measurements for digital delivery.
-- `scanner finishing` means optional color and tone appearance applied after negative conversion.
 - `digital output` means the color space, transfer encoding, geometry, and file representation used to deliver an image.
 
 The GUI must not use the following substitutions when they would change a physical boundary:
 
-- `capture response` for `scan receiver` or `receiver profile`;
+- `capture response` for `scan sensor`;
 - `interpretation` for `scan output` when the choices describe native polarity;
 - `negative interpretation` for `negative conversion`;
-- `scan finish` or unqualified `finish` for `scanner finishing`;
-- `amount` for `finish strength`;
-- `standard colorimetric` for `legacy colorimetric`;
 - `simulation color space` for `output color space`;
-- `black and white correction` for `scanner white and black correction`;
-- `output levels` for `film-scan black and white points`.
 
 A shorter label is permitted only when it preserves the same operation, domain, stage, and calibration claim.
 
 ## Scanner labels
 
-Scanner labels must follow the scan-output and conversion-control contracts in [`Film chain`](../film-chain/spec.md).
+Scanner labels must follow the scan-output and neutral-scan-model contracts in [`Film chain`](../film-chain/spec.md).
 
 The GUI must display:
 
@@ -67,24 +60,15 @@ The GUI must display:
 |---|---|
 | `scanner.scan_output = direct_scan` | `Preserve medium polarity` |
 | `scanner.scan_output = negative_to_positive` | `Negative to positive` |
-| `scanner.negative_conversion_method` | `Negative conversion method` |
-| `scanner.receiver_profile` | `receiver profile` |
-| `scanner.auto_setup` | `scanner auto setup` |
-| `scanner.finish` | `scanner finish` |
-| `scanner.finish_strength` | `finish strength` |
-| `ReceiverProfile::LegacyColorimetric` | `legacy colorimetric` |
-| `ReceiverProfile::LabScanApprox` | `lab scan (approximate)` |
-| `NegativeConversionMethod::DigitalReference` | `Digital Reference (modeled)` |
+| `scanner.lamp` | `Scanner lamp` |
+| `scanner.lens_blur` | `Lens blur (readout optics)` |
+| `scanner.unsharp_mask` | `Unsharp mask (digital sharpening)` |
 
-The GUI must identify `lab scan (approximate)` as approximate. Help must state that it is not a measured or calibrated scanner device.
+The GUI must explain that `Scanner lamp` names the single light source of the scan and that it does not change film exposure, development, film-domain effects, print exposure, or camera exposure.
 
-The GUI must explain that `receiver profile` selects scanner acquisition and does not change film exposure, development, film-domain effects, print exposure, or camera exposure.
+The GUI must explain that `negative conversion` interprets a developed negative as a positive image through the film's own density response. It must not describe negative conversion as a file conversion, a scan finish, or a positive-scan alias.
 
-The GUI must explain that `negative conversion` interprets a developed negative as a positive image. It must not describe negative conversion as a file conversion, a scan finish, or a positive-scan alias.
-
-The GUI must explain that `scanner finish` is a post-conversion appearance. It must not describe it as receiver acquisition, film development, or print exposure.
-
-The GUI may add a short explanatory line grouping the scanner controls by acquisition, conversion, automatic scan setup, and finishing. Such a line is explanatory only; it must not rename the runtime concepts or create a second control taxonomy.
+The GUI may add a short explanatory line grouping the scanner controls by acquisition and conversion. Such a line is explanatory only; it must not rename the runtime concepts or create a second control taxonomy.
 
 ## Color and output labels
 
@@ -187,7 +171,7 @@ Help text must not:
 - promise recovery of information absent from the source;
 - call a modeled convention measured or physical;
 - call a viewer decoration a saved material;
-- call a scanner receiver a look preset;
+- call a scanner sensor a look preset;
 - use a former implementation name as a product concept;
 - use color as the only state cue.
 

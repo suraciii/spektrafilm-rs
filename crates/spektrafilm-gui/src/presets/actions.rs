@@ -3,9 +3,7 @@ use super::*;
 impl App {
     pub(crate) fn load_preset(&mut self, group: PresetGroup, name: &str) {
         let mut current = self.params.clone();
-        if let Some((white, black, glare)) = self.scan_for_print_snapshot {
-            current.scanner.white_correction = white;
-            current.scanner.black_correction = black;
+        if let Some(glare) = self.scan_for_print_snapshot {
             current.print_render.glare.active = glare;
         }
         let before_scanner = current.scanner.clone();

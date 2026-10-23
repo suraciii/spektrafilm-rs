@@ -541,59 +541,51 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     choose(h, "workflow", "input > film > scan");
     click(h, "Scanner");
     choose(h, "scan output", "Preserve medium polarity");
-    assert!(h.query_by_label("brightness").is_none());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
+            .is_some()
+    );
     let direct = render(h, "PREVIEW");
     assert_eq!((direct.width, direct.height), (128, 64));
-    choose(h, "scan output", "Negative to positive");
-    assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
-    choose(h, "Negative conversion method", "separable");
+    // The lamp drives the direct colorimetric scan; the negative-to-positive
+    // density interpretation reads the film curves alone.
+    choose(h, "scanner lamp", "D65");
+    assert_eq!(h.state().params.scanner.lamp, "D65");
+    let lamp = render(h, "PREVIEW");
+    assert_ne!(lamp.data, direct.data);
+    choose(h, "scanner lamp", "D55");
+    assert_eq!(h.state().params.scanner.lamp, "D55");
+    let lamp_off = render(h, "PREVIEW");
+    assert_eq!(lamp_off.data, direct.data);
+    edit(h, "Lens blur (readout optics)", "0.5");
+    assert_eq!(h.state().params.scanner.lens_blur, 0.5);
+    edit(h, "Lens blur (readout optics)", "not-a-number");
+    assert_eq!(h.state().params.scanner.lens_blur, 0.5);
     assert_eq!(
-        h.state().params.scanner.negative_conversion_method,
-        spektrafilm_core::params::NegativeConversionMethod::Separable
+        h.get_by_label("Lens blur (readout optics)")
+            .value()
+            .as_deref(),
+        Some("0.50")
     );
-    choose(h, "Negative conversion method", "density");
-    assert!(h.query_by_label("brightness").is_some());
-    edit(h, "brightness", "0");
-    let positive = render(h, "PREVIEW");
-    assert!(
-        edge_difference(&direct) < -0.01,
-        "negative capture must reverse the ramp"
-    );
-    assert!(
-        edge_difference(&positive) > 0.01,
-        "negative conversion must restore ramp polarity"
-    );
-    edit(h, "brightness", "1");
-    assert_eq!(h.state().params.scanner.conversion_brightness_ev, 1.0);
-    let brighter = render(h, "PREVIEW");
-    assert!(mean(&brighter) > mean(&positive) + 0.01);
-    edit(h, "balance R", "0.25");
-    edit(h, "balance G", "-0.125");
-    edit(h, "balance B", "0.5");
-    assert_eq!(
-        h.state().params.scanner.conversion_balance_ev,
-        [0.25, -0.125, 0.5]
-    );
-    edit(h, "film-scan white point R", "0.95");
-    edit(h, "film-scan black point R", "0.025");
-    assert_eq!(h.state().params.scanner.white_point, [0.95, 1.0, 1.0]);
-    assert_eq!(h.state().params.scanner.black_point, [0.025, 0.0, 0.0]);
-    edit(h, "brightness", "not-a-number");
-    assert_eq!(h.state().params.scanner.conversion_brightness_ev, 1.0);
-    assert_eq!(
-        h.get_by_label("brightness").value().as_deref(),
-        Some("1.000")
-    );
-    choose(h, "scan output", "Preserve medium polarity");
-    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+    edit(h, "Unsharp mask (digital sharpening) sigma", "1.5");
+    assert_eq!(h.state().params.scanner.unsharp_mask[0], 1.5);
+    edit(h, "Lens blur (readout optics)", "0");
+    assert_eq!(h.state().params.scanner.lens_blur, 0.0);
     // The rest of this test exercises the negative-capture scanner path, so
     // select it through the real control rather than writing the parameter.
     choose(h, "scan output", "Negative to positive");
-    choose(h, "scanner auto setup", "full");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
-    assert_eq!(
-        h.state().params.scanner.auto_setup,
-        spektrafilm_core::params::ScannerAutoSetup::Full
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
+            .is_some()
+    );
+    // The conversion style belongs to the negative interpretation, so the
+    // combo appears only once that polarity is selected. Its end-to-end
+    // behaviour is covered by `conversion_style_combo_offers_installed_styles_and_renders_them`,
+    // which needs a data directory the test authors styles into.
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
+            .is_some()
     );
     let preview = render(h, "PREVIEW");
     let accepted = h.state().current_state().unwrap();
@@ -706,31 +698,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     )
     .unwrap();
     assert_png(&export_path, &expected_export);
-    let sidecar_path = export_path.with_extension("scanner-setup.json");
-    assert!(sidecar_path.is_file(), "scanner setup sidecar missing");
-    let sidecar: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&sidecar_path).unwrap()).unwrap();
-    assert_eq!(sidecar["policy"], "full");
-    assert_eq!(sidecar["completeFrameMeasurement"], true);
-    assert_eq!(sidecar["interpretationOnly"], true);
-    assert_eq!(sidecar["acquisitionChangesModeled"], false);
-    assert_eq!(sidecar["inputIdentity"]["width"], 160);
-    assert_eq!(sidecar["inputIdentity"]["height"], 80);
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
-    let mut off_state = h.state().current_state().unwrap();
-    off_state.sections["scanner"]["auto_setup"] = serde_json::json!("off");
-    h.state_mut().apply_state(off_state).unwrap();
-    let off_export = s.directory.path().join("off.png");
-    let off_options = h.state().export_options.clone();
-    h.state_mut()
-        .start_export_to_path(&ctx, off_options, &off_export);
-    wait_until(h, |a| a.export_job.is_none());
-    assert!(
-        h.state().status.starts_with("Exported"),
-        "{}",
-        h.state().status
-    );
-    assert!(!off_export.with_extension("scanner-setup.json").exists());
     // Extension correction must never silently overwrite an existing file.
     let before = std::fs::read(&export_path).unwrap();
     let options = h.state().export_options.clone();
@@ -747,10 +715,6 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     );
     assert_eq!(std::fs::read(&export_path).unwrap(), before);
     h.state_mut().apply_state(accepted.clone()).unwrap();
-    assert_eq!(
-        h.state().params.scanner.auto_setup,
-        spektrafilm_core::params::ScannerAutoSetup::Full
-    );
     let mut float_options = h.state().export_options.clone();
     float_options.format = export::ExportFormat::Tiff;
     float_options.depth = BitDepth::ThirtyTwo;
@@ -794,18 +758,12 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     );
     assert_eq!(restored.params.workflow.route, "input > film > scan");
     assert_eq!(restored.params.scanner.scan_output, "negative_to_positive");
-    assert_eq!(restored.params.scanner.conversion_brightness_ev, 1.0);
-    assert_eq!(
-        restored.params.scanner.conversion_balance_ev,
-        [0.25, -0.125, 0.5]
-    );
+    assert_eq!(restored.params.scanner.lens_blur, 0.0);
+    assert_eq!(restored.params.scanner.unsharp_mask[0], 1.5);
     assert_eq!(restored.film_name, "kodak_portra_400");
-    assert_eq!(restored.params.scanner.white_point, [0.95, 1.0, 1.0]);
-    assert_eq!(restored.params.scanner.black_point, [0.025, 0.0, 0.0]);
     eframe::App::on_exit(&mut restored, None);
     choose(h, "workflow", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    assert!(h.query_by_label("brightness").is_none());
 }
 
 #[test]
@@ -1062,9 +1020,115 @@ mod layout_snapshots {
     }
 }
 
+/// A session whose data directory is a symlink farm over the repository data
+/// plus a real `scan-styles/` the test authors. Nothing ships a style, so an
+/// end-to-end style check needs a directory the test controls; symlinks keep
+/// the heavy `luts`/`profiles` payloads shared instead of copied, and no test
+/// ever writes into the repository data dir.
+fn style_session(styles: &[(&str, &str)]) -> Session {
+    let directory = tempfile::tempdir().unwrap();
+    let data = directory.path().join("data");
+    std::fs::create_dir_all(data.join("scan-styles")).unwrap();
+    for entry in std::fs::read_dir(data_dir()).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name == "scan-styles" {
+            continue;
+        }
+        std::os::unix::fs::symlink(entry.path(), data.join(name)).unwrap();
+    }
+    for (name, body) in styles {
+        std::fs::write(data.join("scan-styles").join(format!("{name}.json")), body).unwrap();
+    }
+    let (image_path, _) = deterministic_inputs(directory.path());
+    // The state document carries no data-dir reference, so the shared
+    // deterministic state is reused verbatim.
+    let state_path = deterministic_state(directory.path());
+    let browser_path = directory.path().join("browser.json");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1500.0, 1400.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            App::new_with_browser_path(
+                Arc::new(CpuBackend),
+                Some(image_path),
+                Some(state_path),
+                None,
+                browser_path,
+                data,
+            )
+        });
+    assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
+    click(&mut harness, "◀");
+    Session { harness, directory }
+}
+
+/// One channel of a scan style: the same logistic tone triple the neutral
+/// reference uses, written as the `data/scan-styles/<name>.json` shape.
+const PROBE_STYLE_BODY: &str = r#"{"channels":[
+ {"brightness_ev":1.2,"contrast":0.9,"dmax":1.8},
+ {"brightness_ev":1.2,"contrast":0.9,"dmax":1.8},
+ {"brightness_ev":1.2,"contrast":0.9,"dmax":1.8}
+]}"#;
+
 #[test]
-fn digital_reference_real_app_selection_render_transactions_and_outputs() {
-    use spektrafilm_core::params::{NegativeConversionMethod, ReceiverProfile, ScannerAutoSetup};
+fn conversion_style_combo_offers_installed_styles_and_renders_them() {
+    // No style ships with the install, so this session authors one in a
+    // temporary data directory the test controls.
+    let mut s = style_session(&[("warm-probe", PROBE_STYLE_BODY)]);
+    let h = &mut s.harness;
+    assert_eq!(
+        h.state().params.scanner.conversion_style,
+        "neutral",
+        "the shipped default stays the frozen reference tone"
+    );
+    click(h, "Profiles");
+    let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+    choose(h, "film profile", profile.info.name.as_deref().unwrap());
+    choose(h, "workflow", "input > film > scan");
+    click(h, "Scanner");
+    // The style belongs to the negative interpretation, so the direct scan
+    // does not offer it.
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
+            .is_none()
+    );
+    choose(h, "scan output", "Negative to positive");
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
+            .is_some()
+    );
+    // The selector lists exactly what the data directory carries: the
+    // installed style is offered, and the neutral reference is too.
+    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
+        .simulate_click();
+    h.run_steps(3);
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::Button, "warm-probe")
+            .is_some()
+    );
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::Button, "neutral")
+            .is_some()
+    );
+    h.press_key(egui::Key::Escape);
+    h.run_steps(3);
+    let reference = render(h, "PREVIEW");
+    choose(h, "conversion style", "warm-probe");
+    assert_eq!(h.state().params.scanner.conversion_style, "warm-probe");
+    let styled = render(h, "PREVIEW");
+    assert_ne!(
+        styled.data, reference.data,
+        "an installed style must change the rendered capture"
+    );
+    choose(h, "conversion style", "neutral");
+    assert_eq!(h.state().params.scanner.conversion_style, "neutral");
+    let unstyled = render(h, "PREVIEW");
+    assert_eq!(unstyled.data, reference.data);
+}
+
+#[test]
+fn scanner_lamp_and_state_rejection_use_the_neutral_scan_model() {
     let mut s = session();
     let h = &mut s.harness;
     click(h, "Profiles");
@@ -1072,60 +1136,38 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
     choose(h, "workflow", "input > film > scan");
     click(h, "Scanner");
-    choose(h, "scan output", "Negative to positive");
-    choose(h, "scanner auto setup", "full");
-    edit(h, "brightness", "1");
-    edit(h, "contrast", "1.5");
-    edit(h, "film-scan black point R", "0.05");
-    choose(
-        h,
-        "Negative conversion method",
-        "Digital Reference (modeled)",
-    );
-    let scanner = &h.state().params.scanner;
-    assert_eq!(
-        scanner.negative_conversion_method,
-        NegativeConversionMethod::DigitalReference
-    );
-    assert_eq!(scanner.receiver_profile, ReceiverProfile::DigitalReference);
-    assert_eq!(scanner.auto_setup, ScannerAutoSetup::Off);
-    assert_eq!(scanner.black_point, [0.0; 3]);
-    assert_eq!(scanner.white_point, [1.0; 3]);
-    let defaults = spektrafilm_core::params::ScannerParams::default();
-    assert_eq!(
-        scanner.conversion_brightness_ev,
-        defaults.conversion_brightness_ev
-    );
-    assert_eq!(scanner.conversion_contrast, defaults.conversion_contrast);
+    // The lamp drives the direct colorimetric scan: the negative-to-positive
+    // density interpretation reads the film curves alone, so the lamp check
+    // runs on the direct scan this route defaults to.
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+    // The conversion style belongs to the negative interpretation, so the
+    // direct scan does not offer it.
     assert!(
-        h.query_by_label("Reference Exposure: 18% neutral (fixed)")
-            .is_some()
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
+            .is_none()
     );
     for label in [
         "receiver profile",
         "scanner auto setup",
+        "scanner finish",
+        "finish strength",
         "brightness",
         "balance R",
         "contrast",
         "maximum density",
         "film-scan black point R",
         "film-scan white point R",
+        "white and black correction",
     ] {
-        assert!(
-            h.query_by_label(label).is_none(),
-            "incompatible control {label}"
-        );
+        assert!(h.query_by_label(label).is_none(), "retired control {label}");
     }
+    choose(h, "scanner lamp", "TH-KG3");
+    assert_eq!(h.state().params.scanner.lamp, "TH-KG3");
     let neutral = render(h, "PREVIEW");
     assert!(neutral.data.iter().all(|x| x.is_finite()));
-    assert!(edge_difference(&neutral) > 0.0);
-    edit(h, "Reference exposure EV", "1");
-    let brighter = render(h, "PREVIEW");
-    assert!(mean(&brighter) > mean(&neutral));
-    edit(h, "Reference balance EV R", "0.25");
-    edit(h, "Reference balance EV G", "-0.125");
-    let balanced = render(h, "PREVIEW");
-    assert_ne!(balanced.data, brighter.data);
+    choose(h, "scanner lamp", "D55");
+    let default_lamp = render(h, "PREVIEW");
+    assert_ne!(default_lamp.data, neutral.data);
     let accepted = h.state().current_state().unwrap();
     let accepted_params = h.state().params.clone();
     let accepted_input = h.state().image.as_ref().unwrap().clone();
@@ -1133,10 +1175,8 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     let revision = h.state().parameter_revision;
     let epoch = h.state().calibration_epoch;
     for (key, value) in [
-        ("receiver_profile", serde_json::json!("legacy_colorimetric")),
-        ("auto_setup", serde_json::json!("full")),
-        ("black_point", serde_json::json!([0.1, 0.0, 0.0])),
-        ("conversion_contrast", serde_json::json!(1.5)),
+        ("lamp", serde_json::json!("not-a-lamp")),
+        ("scan_output", serde_json::json!("positive_scan")),
     ] {
         let mut invalid = accepted.sections.clone();
         invalid["scanner"][key] = value;
@@ -1158,15 +1198,10 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
             h.state().output_image.as_ref().unwrap(),
             &accepted_output
         ));
-        assert_eq!(
-            h.get_by_label("Reference exposure EV").value().as_deref(),
-            Some("1.000")
-        );
     }
-    for (section, key, value) in [
-        ("simulation", "route", "input > convert-film > scan"),
-        ("simulation", "film_stock", "kodak_ektachrome_100"),
-    ] {
+    {
+        // An unknown stock cannot resolve.
+        let (section, key, value) = ("simulation", "film_stock", "not_a_film_profile");
         let mut invalid = accepted.sections.clone();
         invalid[section][key] = serde_json::json!(value);
         let result =
@@ -1175,52 +1210,20 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         assert_eq!(h.state().params, accepted_params);
         assert_eq!(h.state().parameter_revision, revision);
         assert_eq!(h.state().calibration_epoch, epoch);
-        assert!(Arc::ptr_eq(
-            h.state().image.as_ref().unwrap(),
-            &accepted_input
-        ));
-        assert!(Arc::ptr_eq(
-            h.state().output_image.as_ref().unwrap(),
-            &accepted_output
-        ));
     }
-    let persisted = s.directory.path().join("reference-state.json");
+    let persisted = s.directory.path().join("lamp-state.json");
     accepted.save(&persisted).unwrap();
     let mut restored = app(
         persisted,
         s.directory.path().join("asymmetric-ramp.png"),
-        s.directory.path().join("reference-browser.json"),
+        s.directory.path().join("lamp-browser.json"),
     );
     assert_eq!(restored.params.scanner, accepted_params.scanner);
     eframe::App::on_exit(&mut restored, None);
-    let mut extension_only = accepted.sections.clone();
-    for key in [
-        "receiver_profile",
-        "negative_conversion_method",
-        "reference_exposure_ev",
-        "reference_balance_ev",
-    ] {
-        extension_only["scanner"]
-            .as_object_mut()
-            .unwrap()
-            .remove(key);
-    }
-    let extension_state = state::GuiState::from_value(extension_only).unwrap();
-    assert_eq!(
-        extension_state.runtime_params().unwrap().scanner,
-        accepted_params.scanner
-    );
-    h.state_mut().apply_state(extension_state).unwrap();
-    h.run_steps(3);
-    choose(h, "scanner finish", "lab_scan");
-    edit(h, "finish strength", "0");
-    let unfinished = render(h, "PREVIEW");
-    assert_eq!(unfinished.data, balanced.data);
-    choose(h, "scanner finish", "neutral");
-    let save_path = s.directory.path().join("reference-preview.png");
+    let save_path = s.directory.path().join("lamp-preview.png");
     h.state_mut().save_to_path(&save_path);
     let expected = image_io::convert_image(
-        &balanced,
+        &default_lamp,
         &h.state().output_color_space,
         h.state().output_cctf_encoding,
         "sRGB",
@@ -1231,7 +1234,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     let scan = render(h, "SCAN");
     assert_eq!((scan.width, scan.height), (160, 80));
     render(h, "PREVIEW");
-    let export_path = s.directory.path().join("reference-full.png");
+    let export_path = s.directory.path().join("lamp-full.png");
     let ctx = h.ctx.clone();
     let options = h.state().export_options.clone();
     h.state_mut()
@@ -1251,65 +1254,10 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     )
     .unwrap();
     assert_png(&export_path, &expected);
-    choose(h, "Negative conversion method", "density");
-    assert_eq!(
-        h.state().params.scanner.receiver_profile,
-        ReceiverProfile::LegacyColorimetric
-    );
-    assert_eq!(h.state().params.scanner.reference_exposure_ev, 0.0);
-    assert_eq!(h.state().params.scanner.reference_balance_ev, [0.0; 3]);
-    assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "receiver profile")
-            .is_some()
-    );
-    assert!(h.query_by_label("Reference exposure EV").is_none());
-    choose(
-        h,
-        "Negative conversion method",
-        "Digital Reference (modeled)",
-    );
-    choose(h, "workflow", "input > convert-film > scan");
-    assert_eq!(
-        h.state().params.scanner.negative_conversion_method,
-        NegativeConversionMethod::Density
-    );
-    assert_eq!(
-        h.state().params.scanner.receiver_profile,
-        ReceiverProfile::LegacyColorimetric
-    );
-    h.get_by_role_and_label(
-        egui::accesskit::Role::ComboBox,
-        "Negative conversion method",
-    )
-    .simulate_click();
-    h.run_steps(3);
-    assert!(h.query_by_label("Digital Reference (modeled)").is_none());
-    h.press_key(egui::Key::Escape);
-    h.run_steps(3);
-    choose(h, "workflow", "input > film > scan");
-    choose(
-        h,
-        "Negative conversion method",
-        "Digital Reference (modeled)",
-    );
     choose(h, "workflow", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    assert_eq!(
-        h.state().params.scanner.negative_conversion_method,
-        NegativeConversionMethod::Density
-    );
-    assert_eq!(
-        h.state().params.scanner.receiver_profile,
-        ReceiverProfile::LegacyColorimetric
-    );
-    render(h, "PREVIEW");
     choose(h, "workflow", "input > film > scan");
     choose(h, "scan output", "Negative to positive");
-    choose(
-        h,
-        "Negative conversion method",
-        "Digital Reference (modeled)",
-    );
     if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
         .is_none()
     {
@@ -1318,14 +1266,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     let slide = profile::load_profile_by_name(&data_dir(), "kodak_ektachrome_100").unwrap();
     choose(h, "film profile", slide.info.name.as_deref().unwrap());
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    assert_eq!(
-        h.state().params.scanner.negative_conversion_method,
-        NegativeConversionMethod::Density
-    );
-    assert_eq!(
-        h.state().params.scanner.receiver_profile,
-        ReceiverProfile::LegacyColorimetric
-    );
+    assert_eq!(h.state().params.scanner.lamp, "D55");
     render(h, "PREVIEW");
 }
 

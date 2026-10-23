@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use spektrafilm_core::ScannerProvenance;
 use spektrafilm_core::image_io::{self, BitDepth, SaveOptions};
 use spektrafilm_core::params_builder::resize_for_preview;
 use spektrafilm_core::profile;
@@ -96,14 +97,6 @@ fn render_recipe(
         params,
         data_dir: data_dir.to_owned(),
     };
-    let canonical_photo =
-        if photo.params.scanner.auto_setup != spektrafilm_core::params::ScannerAutoSetup::Off {
-            let mut canonical = photo.clone();
-            canonical.params.settings.preview_mode = false;
-            Some(canonical)
-        } else {
-            None
-        };
     let runtime = invocation.phase(
         "runtime_prepare",
         IssueCategory::Configuration,
@@ -121,7 +114,6 @@ fn render_recipe(
             .operation
             .set_render_configuration(runtime.telemetry_configuration());
     }
-    let mut runtime = runtime;
     let loaded = invocation.phase(
         "input_load",
         IssueCategory::Input,
@@ -138,23 +130,6 @@ fn render_recipe(
         .operation
         .set_input_dimensions(loaded.image.width, loaded.image.height);
     let input_size = [loaded.image.width, loaded.image.height];
-    if let Some(canonical) = canonical_photo {
-        let setup = invocation.phase(
-            "scanner_setup_prepare",
-            IssueCategory::Configuration,
-            IssueBoundary::RuntimePrepare,
-            &context,
-            |prepare_context| {
-                let canonical = canonical
-                    .into_runtime_observed(DigestMode::ApplyStockSpecifics, prepare_context)
-                    .map_err(anyhow::Error::msg)?;
-                canonical
-                    .prepare_scanner_setup(&loaded.image)
-                    .map_err(anyhow::Error::msg)
-            },
-        )?;
-        runtime = runtime.with_scanner_setup(setup);
-    }
     let params = runtime.params();
     let image = invocation.phase(
         "input_prepare",
@@ -256,7 +231,7 @@ fn render_recipe(
                 "parameterSchemaVersion": contract::PARAMETER_SCHEMA_VERSION,
                 "modelVersion": spektrafilm_core::runtime::MODEL_VERSION,
                 "parameterDigest": contract::parameter_digest(&recipe.parameters),
-                "scannerProvenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params),
+                "scannerProvenance": ScannerProvenance::from_params(params),
                 "input": {"path": input, "width": input_size[0], "height": input_size[1]},
                 "output": {
                     "path": output,

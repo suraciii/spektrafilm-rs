@@ -207,25 +207,10 @@ impl App {
     }
 
     pub(super) fn toggle_scan_for_print(&mut self) {
-        if let Some((white, black, glare)) = self.scan_for_print_snapshot.take() {
-            self.params.scanner.white_correction = white;
-            self.params.scanner.black_correction = black;
+        if let Some(glare) = self.scan_for_print_snapshot.take() {
             self.params.print_render.glare.active = glare;
         } else {
-            if !self
-                .film_medium
-                .for_route(&self.params.workflow.route)
-                .correction_eligible()
-            {
-                return;
-            }
-            self.scan_for_print_snapshot = Some((
-                self.params.scanner.white_correction,
-                self.params.scanner.black_correction,
-                self.params.print_render.glare.active,
-            ));
-            self.params.scanner.white_correction = true;
-            self.params.scanner.black_correction = true;
+            self.scan_for_print_snapshot = Some(self.params.print_render.glare.active);
             self.params.print_render.glare.active = false;
         }
         self.mark_parameters_changed();
@@ -235,11 +220,17 @@ impl App {
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
-            if self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
-                let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-                if ui.checkbox(&mut scan_for_print, "white and black correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
-                    self.toggle_scan_for_print();
-                }
+            let mut scan_for_print = self.scan_for_print_snapshot.is_some();
+            if ui
+                .checkbox(&mut scan_for_print, "scan for print")
+                .on_hover_text(
+                    "Disables print viewing glare for the print scan, as a scan of the \
+                     paper record has no viewing enclosure. Toggle it again to restore the \
+                     previous value.",
+                )
+                .changed()
+            {
+                self.toggle_scan_for_print();
             }
         });
         // The workflow selector's own row: its selected text is long, and a
@@ -335,9 +326,7 @@ impl App {
     }
 
     pub(super) fn finish_route_change(&mut self) {
-        if let Some((white, black, glare)) = self.scan_for_print_snapshot.take() {
-            self.params.scanner.white_correction = white;
-            self.params.scanner.black_correction = black;
+        if let Some(glare) = self.scan_for_print_snapshot.take() {
             self.params.print_render.glare.active = glare;
         }
         let before = self.params.scanner.clone();
@@ -362,32 +351,6 @@ impl App {
         let mut normalized = Vec::new();
         if before.scan_output != after.scan_output {
             normalized.push("scan output");
-        }
-        if before.negative_conversion_method != after.negative_conversion_method {
-            normalized.push("negative conversion method");
-        }
-        if before.auto_setup != after.auto_setup {
-            normalized.push("scanner auto setup");
-        }
-        if before.finish != after.finish {
-            normalized.push("scanner finish");
-        }
-        let default_finish_strength =
-            spektrafilm_core::params::ScannerParams::default().finish_strength;
-        if before.finish_strength.to_bits() != after.finish_strength.to_bits()
-            || (after.finish != spektrafilm_core::params::ScannerFinish::LabScan
-                && after.finish_strength.to_bits() != default_finish_strength.to_bits())
-        {
-            normalized.push("finish strength");
-        }
-        if before.receiver_profile != after.receiver_profile {
-            normalized.push("receiver profile");
-        }
-        if before.reference_exposure_ev.to_bits() != after.reference_exposure_ev.to_bits() {
-            normalized.push("reference exposure EV");
-        }
-        if before.reference_balance_ev != after.reference_balance_ev {
-            normalized.push("reference balance EV");
         }
         let inactive = film_medium.for_route(route) == controls::ScanMedium::None;
         if normalized.is_empty() && !inactive {
@@ -747,12 +710,14 @@ impl App {
         }
         let extras = self.gui_state.sections.clone();
         let params = self.params.clone();
+        let data_dir = self.data_dir.clone();
         let results = self.search_index.results(
             &self.filter,
             &params,
             &extras,
             self.film_medium,
             self.parameter_revision,
+            &data_dir,
         );
         if results.is_empty() {
             ui.label(
@@ -800,6 +765,7 @@ impl App {
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
         let cache = self.section_labels.entry(section.to_owned()).or_default();
         let capture_reference_illuminant = &self.film_reference_illuminant;
+        let data_dir = self.data_dir.clone();
         let changes = controls::show(
             ui,
             &mut self.params,
@@ -809,6 +775,7 @@ impl App {
             &self.filter,
             cache,
             capture_reference_illuminant,
+            &data_dir,
         );
         if changes.runtime_changed {
             self.mark_parameters_changed_invalidating_calibration();
@@ -824,41 +791,6 @@ impl App {
             && let Some(path) = self.image_path.clone()
         {
             self.load_image_from_path(&path);
-        }
-        if section == "Scanner" && self.params.scanner.scan_output == "negative_to_positive" {
-            match self.params.scanner.auto_setup {
-                ScannerAutoSetup::Off => {
-                    ui.label("Scanner setup: disabled");
-                }
-                ScannerAutoSetup::Density
-                | ScannerAutoSetup::DensityColor
-                | ScannerAutoSetup::Full
-                    if self.image.is_none() =>
-                {
-                    ui.label("Scanner setup: awaiting input");
-                }
-                ScannerAutoSetup::Density
-                | ScannerAutoSetup::DensityColor
-                | ScannerAutoSetup::Full => {
-                    let key = (self.input_epoch, self.parameter_revision);
-                    match self
-                        .scanner_setup
-                        .as_ref()
-                        .filter(|(cached, _)| *cached == key)
-                        .and_then(|(_, setup)| setup.get())
-                    {
-                        None => {
-                            ui.label("Scanner setup: pending for current input revision");
-                        }
-                        Some(Ok(_)) => {
-                            ui.label("Scanner setup: derived for current input revision");
-                        }
-                        Some(Err(reason)) => {
-                            ui.label(format!("Scanner setup: failed — {reason}"));
-                        }
-                    }
-                }
-            }
         }
     }
 

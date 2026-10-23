@@ -9,7 +9,6 @@ impl Pipeline {
         &self,
         image: &ImageBuf,
         backend: &dyn ComputeBackend,
-        color_ref: &crate::color_reference::ColorReference,
         pixel_size_um: f64,
         ae_ev: f64,
     ) -> Result<Option<ImageBuf>, String> {
@@ -24,7 +23,6 @@ impl Pipeline {
                         use spektrafilm_backend::telemetry::ResidentDeclineReason as R;
                         let reason = match reason {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
-                            ResidentFallbackReason::ScannerSetup => R::ScannerReceiver,
                             ResidentFallbackReason::FilmGrainV3FieldCpu => R::GrainV3FieldCpu,
                             ResidentFallbackReason::FilmGrainFotufilmCpu => R::FotufilmFilmCpu,
                             ResidentFallbackReason::UnsupportedOutputGamut => {
@@ -59,7 +57,6 @@ impl Pipeline {
                             .is_some();
                     let capability_missing = reasons.iter().any(|r| match r {
                         ResidentFallbackReason::WorkflowRoute
-                        | ResidentFallbackReason::ScannerSetup
                         | ResidentFallbackReason::MissingResidentFrontPass
                         | ResidentFallbackReason::MallettExecutionParity
                         | ResidentFallbackReason::UnsupportedOutputGamut => false,
@@ -115,14 +112,11 @@ impl Pipeline {
         } else {
             image
         };
-        // A corrected scan — slide points, the B&W/slide luminance remap,
-        // the negative-to-positive density reading, or Digital Reference —
-        // keeps the resident route: the scanner readout fence applies the
-        // interpretation after the acquisition, matching the per-stage
-        // order, and the acquisition itself runs on the host whenever the
-        // CPU route replaces it (PCHIP scanner LUT, receiver capture,
-        // density reading, Digital Reference).
-        let Some(front) = self.resident_front_pass(color_ref, ae_ev) else {
+        // A corrected scan — the negative-to-positive density reading —
+        // keeps the resident route: the acquisition itself runs on the host
+        // whenever the CPU route replaces it (PCHIP scanner LUT or the
+        // density reading).
+        let Some(front) = self.resident_front_pass(ae_ev) else {
             if backend.explicit_gpu_request() {
                 return Err(
                     "explicit GPU request cannot prepare the resident front pass on WGPU; retry with an explicit CPU request"
@@ -154,9 +148,9 @@ impl Pipeline {
         } else {
             &self.print
         };
-        let prepared = crate::chain_prep::PreparedChain::for_scan(scan_profile, &self.params, None);
+        let prepared = crate::chain_prep::PreparedChain::for_scan(scan_profile, &self.params, true);
         let scan_context = &prepared.scan;
-        let viewing_illu: &[f64] = &scan_context.illuminant;
+        let scan_illu: &[f64] = &scan_context.illuminant;
         let scan_norm = scan_context.normalization;
         let scan_xyz_to_rgb = prepared.scan_xyz_to_rgb;
 
@@ -164,10 +158,9 @@ impl Pipeline {
         let pix_um = pixel_size_um as f32;
 
         // Keep the two print exposure halves separate: preflash is added
-        // before the inner floor/log, while print exposure and BW correction
-        // multiply the recovered linear raw before the outer floor/log.
-        let print_exposure_scale =
-            self.params.enlarger.print_exposure as f64 * color_ref.printing_exposure_correction;
+        // before the inner floor/log, while print exposure multiplies the
+        // recovered linear raw before the outer floor/log.
+        let print_exposure_scale = self.params.enlarger.print_exposure as f64;
         let print_norm_factor = self.print_exposure_factor;
 
         // Halation in the resident chain — only built when the halation
@@ -313,28 +306,21 @@ impl Pipeline {
             None
         };
 
-        // The density reading and Digital Reference replace the scan
-        // acquisition itself; both run inside the assembled acquisition
-        // fence below. The resident route never supplies a captured image,
-        // so the density reading is exactly `n2p && Density` (the
-        // `captured_rgb.is_none()` conjunct in `stages::scanning` is always
-        // true here).
-        let n2p_requested = self.params.scanner.scan_output == "negative_to_positive";
-        let reference_mode = self.params.scanner.negative_conversion_method
-            == crate::params::NegativeConversionMethod::DigitalReference;
-        let density_reading = n2p_requested
-            && self.params.scanner.negative_conversion_method
-                == crate::params::NegativeConversionMethod::Density;
+        // The density reading replaces the scan acquisition itself; it runs
+        // inside the assembled acquisition fence below. The resident route
+        // never supplies a captured image, so the density reading is exactly
+        // `n2p` (the `captured_rgb.is_none()` conjunct in `stages::scanning`
+        // is always true here).
+        let density_reading = self.params.scanner.scan_output == "negative_to_positive";
 
-        // Both acquisition replacements blur the transmitted light inside
-        // the acquisition (density domain and optical capture domain), so
-        // the post-acquisition scanner lens blur must not run again.
-        let scanner_lens_blur_px =
-            if self.params.scanner.lens_blur > 0.0 && !reference_mode && !density_reading {
-                Some(self.params.scanner.lens_blur)
-            } else {
-                None
-            };
+        // The acquisition replacement blurs the transmitted light inside the
+        // acquisition (density domain), so the post-acquisition scanner lens
+        // blur must not run again.
+        let scanner_lens_blur_px = if self.params.scanner.lens_blur > 0.0 && !density_reading {
+            Some(self.params.scanner.lens_blur)
+        } else {
+            None
+        };
 
         let hboost = &self.params.film_render.halation;
         let highlight_boost = if hboost.boost_ev != 0.0 {
@@ -398,14 +384,6 @@ impl Pipeline {
             grain_dye.is_some(),
         );
 
-        // Scanner readout interpretation (slide points, faithful B&W/slide
-        // luminance remap, negative-to-positive conversion, LabScan finish)
-        // runs on the host as an assembled fence on the acquisition buffer
-        // — after scanner lens blur and glare, before output gamut (the CPU
-        // scanning order; pipe architecture, capability class). The capture
-        // methods (separable/coupled) interpret a captured image; the
-        // density reading and Digital Reference replace the acquisition
-        // itself in the acquisition fence below.
         let scan_output_space =
             spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
                 .expect("validated output colour space");
@@ -419,62 +397,24 @@ impl Pipeline {
         } else {
             print_base_density
         };
-        // The per-stage route rebuilds the luminance remap from the
-        // receiver's own dye captures before any scan work
-        // (`stages::scanning`), so both scanner fences must see that
-        // reference rather than the plain profile one. The density reading
-        // and Digital Reference skip the rebuild: they replace the
-        // acquisition and carry their own calibration.
-        let receiver_reference = if density_reading || reference_mode {
-            None
-        } else {
-            scan_context.receiver.as_ref().map(|receiver| {
-                receiver.correction(
-                    scan_profile,
-                    &self.params,
-                    color_ref,
-                    scan_channel_density,
-                    scan_base_density,
-                )
-            })
-        };
-        let color_ref = receiver_reference.as_ref().unwrap_or(color_ref);
-        // Per-frame scanner setup (`conversion_brightness_ev`/`balance_ev`/
-        // `contrast`) is part of the scan parameters the per-stage route
-        // hands to the scan stage, so the scanner fences run the same ones.
-        let scan_params_cow = self.scan_params();
-        let scan_params: &crate::params::RuntimeParams = scan_params_cow.as_ref();
-        // Only the capture methods (separable/coupled) interpret the
-        // acquired image; the density reading and Digital Reference replace
-        // the acquisition in `scan_acquisition_cpu_stage`.
-        let n2p_capture_method = n2p_requested
-            && matches!(
-                self.params.scanner.negative_conversion_method,
-                crate::params::NegativeConversionMethod::Separable
-                    | crate::params::NegativeConversionMethod::Coupled
-            );
         // A fenced CPU stage executes inside the resident chain, so it must
         // keep the executor observations the per-stage route publishes
         // (telemetry metrics: an actual CPU image stage is identified from
         // executor observations). Fence closures pass this observed CPU
         // backend to the shared stage functions so the stage's own stage
         // markers stay live.
-        // `use_scanner_lut` selects the PCHIP scanner LUT acquisition, a
-        // modeled receiver selects the receiver capture, and the luminance
-        // correction selects the same LUT (`stages::scanning`); all three
+        // `use_scanner_lut` selects the PCHIP scanner LUT acquisition, and
+        // the density reading replaces the acquisition outright; both
         // replace the GPU spectral integration on the CPU route, so the
         // resident chain runs the same CPU acquisition as an assembled
         // fence (pipe architecture, capability class).
         let scan_acquisition_cpu_stage = self.scan_acquisition_cpu_stage(
-            reference_mode,
             density_reading,
-            n2p_requested,
             scan_context,
             scan_profile,
-            scan_params,
+            &self.params,
             scan_channel_density,
             scan_base_density,
-            color_ref,
             backend,
         );
 
@@ -493,34 +433,8 @@ impl Pipeline {
         let edf = &self.params.enlarger.diffusion_filter;
         let print_fence_requested =
             self.params.settings.use_enlarger_lut || (edf.active && edf.strength > 0.0);
-        let print_acquisition_cpu_stage = self.print_acquisition_cpu_stage(
-            print_fence_requested,
-            color_ref,
-            backend,
-            pixel_size_um,
-        );
-        // Slide points are read after the acquisition, so a positive scan
-        // with non-default points needs the readout fence even when the
-        // luminance remap itself is off.
-        let slide_points_active = self.params.io.scan_film
-            && self.film.is_positive()
-            && (self.params.scanner.black_point != [0.0; 3]
-                || self.params.scanner.white_point != [1.0; 3]);
-        let scan_tail_cpu_stage = self.scan_tail_cpu_stage(
-            n2p_capture_method,
-            reference_mode,
-            density_reading,
-            slide_points_active,
-            n2p_requested,
-            scan_context,
-            scan_profile,
-            scan_params,
-            scan_channel_density,
-            scan_base_density,
-            scan_output_space,
-            color_ref,
-            backend,
-        );
+        let print_acquisition_cpu_stage =
+            self.print_acquisition_cpu_stage(print_fence_requested, backend, pixel_size_um);
         // Output transfer (pipe architecture, S4): encode the native
         // destination when the caller requested encoding and the
         // Procedural-grain pass hasn't already emitted encoded samples, or
@@ -593,15 +507,10 @@ impl Pipeline {
             print_channel_density: &print_channel_density,
             print_base_density,
             preflash: self.preflash_raw,
-            viewing_illuminant: viewing_illu,
+            scan_illuminant: scan_illu,
             scan_normalization: scan_norm,
             scan_xyz_to_rgb: &scan_xyz_to_rgb,
             scan_output_space,
-            white_black_xyz_remap: if scan_tail_cpu_stage.is_some() {
-                None
-            } else {
-                color_ref.xyz_remap()
-            },
             scan_film: self.params.io.scan_film,
             halation,
             dir_couplers,
@@ -614,7 +523,6 @@ impl Pipeline {
             highlight_boost,
             grain_dye,
             density_cpu_stage,
-            scan_tail_cpu_stage,
             scan_acquisition_cpu_stage,
             print_acquisition_cpu_stage,
             camera_diffusion_cpu_stage,
@@ -661,9 +569,6 @@ impl Pipeline {
             }
             if params.scan_acquisition_cpu_stage.is_some() {
                 host_stages.push("scanner acquisition");
-            }
-            if params.scan_tail_cpu_stage.is_some() {
-                host_stages.push("scanner readout interpretation");
             }
             if params.print_acquisition_cpu_stage.is_some() {
                 host_stages.push("print acquisition");

@@ -338,6 +338,16 @@
       }
     },
     "scanner": {
+      "lamp": {
+        "rust_status": "supported",
+        "owner_issue": null,
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/",
+        "verification": "Implementation source and current differential/package evidence.",
+        "audit_baseline": {
+          "rust_status": "supported",
+          "notes": ""
+        }
+      },
       "lens_blur": {
         "rust_status": "supported",
         "owner_issue": null,
@@ -348,44 +358,14 @@
           "notes": "scanning.rs::scan_with_capture"
         }
       },
-      "white_correction": {
+      "scan_output": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
-          "notes": "color_reference luminance remap"
-        }
-      },
-      "black_correction": {
-        "rust_status": "supported",
-        "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
-        "verification": "Implementation source and current differential/package evidence.",
-        "audit_baseline": {
-          "rust_status": "supported",
-          "notes": ""
-        }
-      },
-      "white_level": {
-        "rust_status": "supported",
-        "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
-        "verification": "Implementation source and current differential/package evidence.",
-        "audit_baseline": {
-          "rust_status": "supported",
-          "notes": ""
-        }
-      },
-      "black_level": {
-        "rust_status": "supported",
-        "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
-        "verification": "Implementation source and current differential/package evidence.",
-        "audit_baseline": {
-          "rust_status": "supported",
-          "notes": ""
+          "notes": "scanning.rs::scan_with_options"
         }
       },
       "unsharp_mask": {
@@ -4498,7 +4478,7 @@
         "audit_baseline": {
           "status": "known_gap",
           "notes": "film_render.glare is a distinct upstream group from print_render.glare; upstream never applies it anywhere (no-op on the print path, explicitly None on scan_film).",
-          "description": "Direct film scan with default glare flags — Python passes glare=None on the scan_film path (scanning.py:54-55); Rust applies film_render.glare (scanning.rs::scan_with_capture) with a fixed seed 42."
+          "description": "Direct film scan with default glare flags \u2014 Python passes glare=None on the scan_film path (scanning.py:54-55); Rust applies film_render.glare (scanning.rs::scan_with_capture) with a fixed seed 42."
         },
         "owner_issue": 8,
         "status": "pass",

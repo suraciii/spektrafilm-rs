@@ -263,7 +263,7 @@ const CHART: [[u8; 3]; 12] = [
 
 /// Disables every stage that mixes samples, meters the whole frame, or draws
 /// stochastic values, so the executed chain is point-wise.
-const POINT_WISE: [&str; 20] = [
+const POINT_WISE: [&str; 18] = [
     "--set",
     "film_render.grain.active=false",
     "--set",
@@ -282,8 +282,6 @@ const POINT_WISE: [&str; 20] = [
     "scanner.lens_blur=0",
     "--set",
     "scanner.unsharp_mask=[0,0]",
-    "--set",
-    "scanner.auto_setup=off",
 ];
 
 /// The same chart in two forms: the sRGB raster the user binary reads, and the
@@ -1737,11 +1735,7 @@ fn measure_gates_the_operations_the_route_executes() {
             args.push(route.to_owned());
         }
         if quiet {
-            for value in [
-                "scanner.lens_blur=0",
-                "scanner.unsharp_mask=[0,0]",
-                "scanner.auto_setup=off",
-            ] {
+            for value in ["scanner.lens_blur=0", "scanner.unsharp_mask=[0,0]"] {
                 args.push("--set".to_owned());
                 args.push(value.to_owned());
             }

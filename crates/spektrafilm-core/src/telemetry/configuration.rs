@@ -254,33 +254,34 @@ pub enum ScanOutput {
     NegativeToPositive,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NegativeConversionMethod {
-    #[default]
-    Density,
-    Separable,
-    Coupled,
-    DigitalReference,
-}
-
+/// Effective scanner model of a render: the one built-in neutral scan model
+/// plus the resolved lamp, output white and device matrix.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReceiverConfiguration {
-    pub profile: String,
-    pub calibration_status: String,
-    pub source_version: String,
-    pub approximate: bool,
+pub struct ScanModelConfiguration {
+    pub model: String,
+    pub sensor: String,
+    pub white_reference: String,
+    pub output_white: String,
+    pub matrix: String,
+    pub lamp: String,
 }
 
-impl Default for ReceiverConfiguration {
+impl Default for ScanModelConfiguration {
     fn default() -> Self {
-        let p =
-            crate::scan_receiver::provenance(crate::params::ReceiverProfile::LegacyColorimetric);
+        Self::from_runtime(&RuntimeParams::default())
+    }
+}
+
+impl ScanModelConfiguration {
+    fn from_runtime(params: &RuntimeParams) -> Self {
+        let provenance = crate::ScannerProvenance::from_params(params);
         Self {
-            profile: p.profile.as_str().to_string(),
-            calibration_status: p.calibration_status.to_string(),
-            source_version: p.version.to_string(),
-            approximate: false,
+            model: provenance.model.to_owned(),
+            sensor: provenance.sensor.to_owned(),
+            white_reference: provenance.white_reference.to_owned(),
+            output_white: provenance.output_white.to_owned(),
+            matrix: provenance.matrix.to_owned(),
+            lamp: params.scanner.lamp.clone(),
         }
     }
 }
@@ -299,23 +300,11 @@ pub struct RenderConfiguration {
     pub scanner_lut_requested: bool,
     #[serde(default)]
     pub scan_output: ScanOutput,
+    #[serde(default = "default_conversion_style")]
+    pub conversion_style: String,
     #[serde(default)]
-    pub negative_conversion_method: NegativeConversionMethod,
-    #[serde(default)]
-    pub receiver: ReceiverConfiguration,
-    #[serde(default)]
-    pub setup_mode: String,
-    #[serde(default)]
-    pub finish: String,
-    #[serde(default = "default_finish_strength")]
-    pub finish_strength: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reference: Option<crate::digital_reference::ReferenceProvenance>,
-    #[serde(default)]
-    pub reference_exposure_ev: f64,
-    #[serde(default)]
-    pub reference_balance_ev: [f64; 3],
-    #[serde(default = "default_finish_strength")]
+    pub scan_model: ScanModelConfiguration,
+    #[serde(default = "default_output_mix_amount")]
     pub output_mix_amount: f64,
     #[serde(default)]
     pub model_version: String,
@@ -324,8 +313,12 @@ pub struct RenderConfiguration {
     pub spatial: SpatialConfiguration,
 }
 
-fn default_finish_strength() -> f64 {
+fn default_output_mix_amount() -> f64 {
     1.0
+}
+
+fn default_conversion_style() -> String {
+    "neutral".into()
 }
 
 impl RenderConfiguration {
@@ -338,7 +331,6 @@ impl RenderConfiguration {
             && !(grain.engine == crate::params::GrainEngine::Fotufilm
                 && grain.fotufilm.amount == 0.0);
         let spatial_active = !params.debug.deactivate_spatial_effects;
-        let receiver = crate::scan_receiver::provenance(params.scanner.receiver_profile);
         Self {
             workflow_route: WorkflowRoute::parse(&params.workflow.route),
             film_stock: StockId::bundled(film),
@@ -355,32 +347,8 @@ impl RenderConfiguration {
             } else {
                 ScanOutput::DirectScan
             },
-            negative_conversion_method: match params.scanner.negative_conversion_method {
-                crate::params::NegativeConversionMethod::Density => {
-                    NegativeConversionMethod::Density
-                }
-                crate::params::NegativeConversionMethod::Separable => {
-                    NegativeConversionMethod::Separable
-                }
-                crate::params::NegativeConversionMethod::Coupled => {
-                    NegativeConversionMethod::Coupled
-                }
-                crate::params::NegativeConversionMethod::DigitalReference => {
-                    NegativeConversionMethod::DigitalReference
-                }
-            },
-            receiver: ReceiverConfiguration {
-                profile: receiver.profile.as_str().to_string(),
-                calibration_status: receiver.calibration_status.to_string(),
-                source_version: receiver.version.to_string(),
-                approximate: receiver.calibration_status.contains("approximate"),
-            },
-            setup_mode: params.scanner.auto_setup.as_str().to_string(),
-            finish: params.scanner.finish.as_str().to_string(),
-            finish_strength: params.scanner.finish_strength,
-            reference: None,
-            reference_exposure_ev: params.scanner.reference_exposure_ev,
-            reference_balance_ev: params.scanner.reference_balance_ev,
+            conversion_style: params.scanner.conversion_style.clone(),
+            scan_model: ScanModelConfiguration::from_runtime(params),
             output_mix_amount: params.output_mix.amount,
             model_version: crate::runtime::MODEL_VERSION.into(),
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),

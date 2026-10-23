@@ -42,7 +42,7 @@ Full-image color, tone, and FLIP diagnostics must remain separate from dedicated
 
 The initial standard look must use the renderer's explicit built-in `Kodak Gold 200` look preset. The preset must be exported as a materialized portable file. User-library settings must not affect its selection.
 
-Both configurations must use `input > film > print > scan`. Output must be encoded sRGB. The independent CMYK ink style treatment must be disabled. The scanner must use neutral finishing with automatic setup off. Preview and optional film-chain LUT shortcuts must be disabled.
+Both configurations must use `input > film > print > scan`. Output must be encoded sRGB. The independent CMYK ink style treatment must be disabled. The scanner must use its default lamp and direct scan output. Preview and optional film-chain LUT shortcuts must be disabled.
 
 The generator must not construct a synthetic benchmark film profile. The generated look must not enter the user's preset library or alter GUI startup settings.
 
@@ -68,7 +68,7 @@ Generating a new bundle after an upgrade must remain an explicit setup action. I
 
 A profile, preset, or data change must remain a declared comparison condition. A generated preset must not require the baseline's profile content hash when the caller intentionally compares profile revisions. The selected runtime data must still be hashed by the runner.
 
-Comparing different film materials may require a separately authored common output configuration. [Digital Reference](../../film-chain/digital-reference/spec.md) is one modeled convention for supported negative-film scans. It is not the standard print-scan setup and must not be enabled silently.
+Comparing different film materials may require a separately authored common output configuration. That configuration is authored per comparison and must not be enabled silently.
 
 No generated configuration may supply universal acceptance thresholds. The existing exploratory policy must remain unqualified. Generation must not create a calibrated policy or update an approved baseline.
 

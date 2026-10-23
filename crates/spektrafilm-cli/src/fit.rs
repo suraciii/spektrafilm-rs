@@ -14,14 +14,12 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum FitGroupArg {
     Surface,
-    Tone,
 }
 
 impl From<FitGroupArg> for FitGroup {
     fn from(value: FitGroupArg) -> Self {
         match value {
             FitGroupArg::Surface => FitGroup::Surface,
-            FitGroupArg::Tone => FitGroup::Tone,
         }
     }
 }
@@ -39,7 +37,7 @@ pub struct FitArgs {
     /// `source` that produced the values.
     #[arg(long, help_heading = "Fit data")]
     reference: PathBuf,
-    /// Parameter groups to fit, comma-separated: surface, tone.
+    /// Parameter groups to fit, comma-separated: surface.
     #[arg(
         long = "fit",
         value_enum,
@@ -68,9 +66,6 @@ pub struct FitArgs {
     /// Profile copy with the fitted surface; required when fitting the surface.
     #[arg(long, help_heading = "Fit output")]
     out_profile: Option<PathBuf>,
-    /// Sparse parameter overlay with the fitted tone; required when fitting tone.
-    #[arg(long, help_heading = "Fit output")]
-    out_overlay: Option<PathBuf>,
     /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
     #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
     preset: Vec<String>,
@@ -165,12 +160,8 @@ pub fn cmd_fit_with_result(args: &FitArgs, matches: &clap::ArgMatches) -> Result
         .map(|group| FitGroup::from(*group))
         .collect();
     let surface = groups.contains(&FitGroup::Surface);
-    let tone = groups.contains(&FitGroup::Tone);
     if surface && args.out_profile.is_none() {
         bail!("--out-profile is required when the fit includes the surface group");
-    }
-    if tone && args.out_overlay.is_none() {
-        bail!("--out-overlay is required when the fit includes the tone group");
     }
 
     let library = PresetLibrary::default();
@@ -231,16 +222,6 @@ pub fn cmd_fit_with_result(args: &FitArgs, matches: &clap::ArgMatches) -> Result
         spektrafilm_core::profile::save_profile_to(path, &fitted_profile)
             .map_err(anyhow::Error::msg)?;
     }
-    if let Some(fitted_tone) = &report.tone {
-        let path = args.out_overlay.as_ref().expect("checked before the fit");
-        let overlay = json!({
-            "scanner": {
-                "conversion_brightness_ev": fitted_tone.conversion_brightness_ev,
-                "conversion_balance_ev": fitted_tone.conversion_balance_ev,
-            }
-        });
-        write_json(path, &overlay)?;
-    }
 
     let mut document = serde_json::to_value(&report)?;
     let object = document
@@ -276,9 +257,6 @@ pub fn cmd_fit_with_result(args: &FitArgs, matches: &clap::ArgMatches) -> Result
     let mut outputs = Map::new();
     if let Some(path) = &args.out_profile {
         outputs.insert("profile".into(), json!(path.display().to_string()));
-    }
-    if let Some(path) = &args.out_overlay {
-        outputs.insert("overlay".into(), json!(path.display().to_string()));
     }
     object.insert("outputs".into(), Value::Object(outputs));
     write_json(&args.report, &document)?;

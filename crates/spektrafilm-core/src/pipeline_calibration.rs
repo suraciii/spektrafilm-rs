@@ -297,12 +297,6 @@ pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<()
             }
         }
     }
-    if params.scanner.white_correction || params.scanner.black_correction {
-        return Err(
-            "scanner.scan_output=negative_to_positive cannot be combined with scanner white/black correction"
-                .into(),
-        );
-    }
     if params.film_render.grain.active
         && matches!(
             params.film_render.grain.engine,
@@ -329,7 +323,6 @@ pub(crate) fn build(
     // actionable and artifact-free on every entry point.
     params.validate()?;
     crate::params_builder::normalize_runtime_topology(&film, &mut params);
-    crate::scanner_setup::validate_route(&film, &params)?;
     // Resolve development time and broadcast the profile's single channel
     // onto the 3-channel engine layout before reading the profile data.
     let mut film = crate::profile::resolve_for_render(film, params.film_render.development_time);
@@ -653,9 +646,6 @@ mod tests {
         assert!(validate_scan_output(&params, &profile("negative", "film", "printing")).is_err());
 
         let film = profile("negative", "film", "filming");
-        params.scanner.white_correction = true;
-        assert!(validate_scan_output(&params, &film).is_err());
-        params.scanner.white_correction = false;
         params.film_render.grain.active = true;
         params.film_render.grain.engine = GrainEngine::Procedural;
         assert!(validate_scan_output(&params, &film).is_err());

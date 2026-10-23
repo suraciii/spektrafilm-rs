@@ -1,6 +1,6 @@
 # Profile fitting
 
-`spektrafilm-lab fit` derives film-profile surface terms and negative-conversion tone values from reference patch data instead of hand measurement. It renders a chart through the calibrated chain and minimizes the CIELAB difference between the rendered patches and the reference table. The command exists only in the lab binary.
+`spektrafilm-lab fit` derives film-profile surface terms from reference patch data instead of hand measurement. It renders a chart through the calibrated chain and minimizes the CIELAB difference between the rendered patches and the reference table. The command exists only in the lab binary.
 
 ## Inputs and fitting
 
@@ -14,14 +14,13 @@ Each patch table names the `source` of its values. The fitted surface learns the
 
 Halation and grain are off in every evaluation. The scanner writes linear sRGB. Fitting the surface enables the surface toggle. `--lambda` must be finite and non-negative. See the [profile authoring contract](../specs/profile-authoring/spec.md) for the fitting requirements.
 
-A run succeeds only when the fit reduces both the color and the gray ΔE00 medians. A surface-only fit can trade gray for color. For this reason, `--fit surface,tone` is the usual choice. The `tone` group fits `scanner.conversion_brightness_ev` and `scanner.conversion_balance_ev`; `scanner.conversion_contrast` and `scanner.conversion_dmax` keep the chain configuration values.
+A run succeeds only when the fit reduces both the color and the gray ΔE00 medians. A surface fit can trade gray for color, so the metrics must both improve.
 
 ## Outputs
 
 A successful run writes one file per selected group, plus the report:
 
 - The `--out-profile` destination receives the profile copy with the fitted surface and a provenance sentence in `metadata.datasource`. It is required with the `surface` group.
-- The `--out-overlay` destination receives the sparse parameter overlay with the fitted tone. It is required with the `tone` group.
 - `--report` receives the metrics before and after the fit, the per-patch differences, the input SHA-256 values and sources, the resolved chain, the forced settings, and the tool version.
 
 A failed run leaves none of these outputs.
@@ -41,12 +40,12 @@ The shipped `kodak_portra_800` surface came from this command. The profile's `me
 ```bash
 ./target/release/spektrafilm-lab fit \
     --layout layout.json --scene scene.json --reference reference.json \
-    --fit surface,tone --surface-terms 9 --lambda 1.0 \
+    --fit surface --surface-terms 9 --lambda 1.0 \
     --preset "CineStill 800T Cs41 (experimental)" \
     --route "input > film > scan" --scan-output negative_to_positive \
     --input-color-space "ProPhoto RGB" --input-cctf-decoding false \
     --data-dir data \
-    --out-profile fitted_profile.json --out-overlay fitted_tone.json \
+    --out-profile fitted_profile.json \
     --report fit_report.json
 ```
 

@@ -10,15 +10,13 @@ use spektrafilm_core::{
 use spektrafilm_math::{image::ImageBuf, precision::from_f64};
 
 #[test]
-fn telemetry_scanner_configuration_roundtrips_actual_approximate_selection() {
+fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();
     params.io.scan_film = true;
-    params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
     params.scanner.scan_output = "negative_to_positive".into();
-    params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
-    params.scanner.finish_strength = 0.5;
+    params.scanner.lamp = "D65".into();
     let runtime =
         Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
     let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
@@ -44,14 +42,14 @@ fn telemetry_scanner_configuration_roundtrips_actual_approximate_selection() {
         serde_json::to_value(actual.scan_output).unwrap(),
         "negative_to_positive"
     );
-    assert_eq!(actual.receiver.profile, "lab_scan_approx");
-    assert_eq!(
-        actual.receiver.calibration_status,
-        "approximate_uncalibrated"
-    );
-    assert!(actual.receiver.approximate);
-    assert_eq!(actual.finish, "lab_scan");
-    assert_eq!(actual.finish_strength, 0.5);
+    let scan_model = actual.scan_model;
+    assert_eq!(scan_model.model, "neutral_scan_v2");
+    assert_eq!(scan_model.sensor, "cie_1931_cmf");
+    assert_eq!(scan_model.white_reference, "clear_film_base");
+    assert_eq!(scan_model.output_white, "output_color_space_white");
+    assert_eq!(scan_model.matrix, "identity");
+    assert_eq!(scan_model.lamp, "D65");
+    assert_eq!(actual.conversion_style, "neutral");
 }
 
 #[test]
@@ -449,73 +447,5 @@ fn active_fotufilm_engine_reports_its_cpu_stage_reason() {
             .contains(&("grain_fotufilm".to_owned(), CpuReason::FotufilmFilmCpu)),
         "Fotufilm stage missing from the report: {:?}",
         report.summary().cpu_stage_reasons
-    );
-}
-
-#[test]
-fn slide_reference_batches_are_calibration_not_image_work() {
-    let backend = spektrafilm_gpu::test_support::adapter();
-    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-    let mut params = RuntimeParams::default();
-    params.workflow.route = "input > film > scan".into();
-    params.io.scan_film = true;
-    params.camera.auto_exposure = false;
-    params.film_render.grain.active = false;
-    params.debug.deactivate_spatial_effects = true;
-    params.debug.deactivate_stochastic_effects = true;
-    params.settings.use_scanner_lut = false;
-    params.scanner.black_point = [0.04; 3];
-    params.scanner.white_point = [0.96; 3];
-    // The reference capture is device work only on the per-stage route: the
-    // resident chain runs the slide points on the host readout fence, where
-    // no calibration batch exists. The Mallett front pass keeps this check
-    // on the per-stage path (its execution-parity reason declines residency).
-    params.settings.rgb_to_raw_method = "mallett2019".into();
-    let runtime =
-        Runtime::from_stocks("fujifilm_provia_100f", "kodak_portra_endura", params, &data).unwrap();
-    let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
-    operation.set_render_configuration(runtime.telemetry_configuration());
-    operation.set_input_dimensions(3, 2);
-    let attempt = operation.attempt(1);
-    let simulation = attempt
-        .context()
-        .scope("simulation", ObservationKind::Phase, Purpose::Image);
-    runtime
-        .process_observed(
-            ImageBuf::from_data(3, 2, vec![from_f64(0.18); 18]),
-            backend.backend(),
-            simulation.context(),
-        )
-        .unwrap();
-    drop(simulation);
-    attempt.finish(Outcome::Succeeded);
-    let report = operation.finish(Outcome::Succeeded).unwrap();
-    report.validate().unwrap();
-    let calibration = report
-        .stages
-        .iter()
-        .find(|stage| stage.name == "scanner_film_points" && stage.purpose == Purpose::Calibration)
-        .expect("slide reference calibration scope");
-    let references: Vec<_> = report
-        .gpu_batches
-        .iter()
-        .filter(|batch| batch.parent_id == calibration.id)
-        .collect();
-    assert_eq!(
-        references.len(),
-        1,
-        "one two-reference spectral capture batch"
-    );
-    assert_eq!(references[0].purpose, Purpose::Calibration);
-    assert_eq!(references[0].work.dispatch_count, Some(1));
-    assert_eq!(references[0].work.readback_count, Some(1));
-    assert!(
-        report
-            .gpu_batches
-            .iter()
-            .any(|batch| batch.name == references[0].name
-                && batch.purpose == Purpose::Image
-                && batch.parent_id != calibration.id),
-        "bulk spectral capture retains image attribution"
     );
 }

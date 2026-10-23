@@ -407,14 +407,6 @@ pub fn point_wise_offenders(
             MeasureStage::RgbOut,
         );
     }
-    if params.scanner.auto_setup != spektrafilm_core::params::ScannerAutoSetup::Off {
-        add(
-            "scanner.auto_setup",
-            "full".to_owned(),
-            "off",
-            MeasureStage::RgbOut,
-        );
-    }
     out
 }
 

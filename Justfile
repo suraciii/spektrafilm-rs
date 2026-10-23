@@ -70,7 +70,7 @@ test-ci:
     cargo test --locked --workspace
     cargo test --locked -p spektrafilm-math --lib --features precision-f64
     cargo test --locked -p spektrafilm-model --lib --features precision-f64 -- density_curves:: illuminants:: couplers:: glare:: grain::v1:: grain::fotufilm:: diffusion::
-    cargo test --locked -p spektrafilm-core --lib --features precision-f64 -- params::sources:: params::tests:: params::validation:: params_builder:: pipeline_calibration::tests:: resizing:: scan_receiver:: suggest:: stages::scanning::setup:: stages::scanning::coupled:: stages::scanning::finish:: cmyk:: input_gamut:: gamut_compression:: lut_formats:: lut_ocio:: lut_delivery:: --skip process_params::
+    cargo test --locked -p spektrafilm-core --lib --features precision-f64 -- params::sources:: params::tests:: params::validation:: params_builder:: pipeline_calibration::tests:: resizing:: suggest:: cmyk:: input_gamut:: gamut_compression:: lut_formats:: lut_ocio:: lut_delivery:: --skip process_params::
     cargo test --locked -p spektrafilm-core --test telemetry --features precision-f64
     cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui --features precision-f64 -- state::tests:: numeric::tests::
 
@@ -82,7 +82,7 @@ test-fast: (test-fast-precision "") (test-fast-precision "--features precision-f
 test-fast-precision precision_args:
     cargo test --locked -p spektrafilm-math --lib {{precision_args}}
     cargo test --locked -p spektrafilm-model --lib {{precision_args}} -- density_curves:: illuminants:: couplers:: glare:: grain::v1:: grain::fotufilm:: diffusion::
-    cargo test --locked -p spektrafilm-core --lib {{precision_args}} -- params::sources:: params::tests:: params::validation:: params_builder:: pipeline_calibration::tests:: resizing:: scan_receiver:: suggest:: stages::scanning::setup:: stages::scanning::coupled:: stages::scanning::finish:: cmyk:: input_gamut:: gamut_compression:: lut_formats:: lut_ocio:: lut_delivery:: --skip process_params::
+    cargo test --locked -p spektrafilm-core --lib {{precision_args}} -- params::sources:: params::tests:: params::validation:: params_builder:: pipeline_calibration::tests:: resizing:: suggest:: cmyk:: input_gamut:: gamut_compression:: lut_formats:: lut_ocio:: lut_delivery:: --skip process_params::
     cargo test --locked -p spektrafilm-core --test telemetry {{precision_args}}
     cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui {{precision_args}} -- state::tests:: numeric::tests::
 

@@ -9,7 +9,7 @@ This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolp
 ## What you can do
 
 - **Simulate a film and print look.** Pick a film stock and a print paper, then adjust exposure, film format, halation, DIR couplers, grain, glare, enlarger and scanner settings. More than 30 bundled profiles cover Kodak, Fujifilm, CineStill and other stocks. See [the simulation pipeline](docs/pipeline.md).
-- **Convert a negative.** Interpret a real negative or a simulated one as a positive with the calibrated inverse. Digital Reference is a modeled conversion for a simulated negative on `input > film > scan`. See [scanning](docs/scanning.md).
+- **Convert a negative.** Interpret a real negative or a simulated one as a positive with the calibrated density reading. See [scanning](docs/scanning.md).
 - **Preview and export interactively.** One session keeps Preview, full-resolution Scan, Save and the independent Export dialog together, with state save and restore. See [the GUI guide](docs/gui.md).
 - **Process in batch.** `spektrafilm` is the fast f32 processor and `spektrafilm-f64` is the CPU reference exporter; both keep floating samples in float TIFF/EXR, copy source EXIF/IPTC/XMP to non-EXR output, and write color tags or ICC profiles. See [the CLI guide](docs/cli.md).
 - **Choose a grain engine.** Spektra, Procedural (Dehancer-derived), Dye and Fotufilm Film are selectable, each with its own controls and defaults. See [grain engines](docs/grain.md).

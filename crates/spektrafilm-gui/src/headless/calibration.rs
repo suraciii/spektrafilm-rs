@@ -127,8 +127,8 @@ const BASE_CYAN: f64 = 1.227_020_666_902_410;
 const BASE_MAGENTA: f64 = 0.600_426_922_252_643;
 const BASE_YELLOW: f64 = 0.500_288_922_285_685;
 const BASE_EXPOSURE_EV: f64 = -0.902_427_051_824_104;
-const FILTER_M_SHIFT: f32 = -0.016_944_397;
-const FILTER_Y_SHIFT: f32 = -0.010_907_692;
+const FILTER_M_SHIFT: f32 = -0.518_305_7;
+const FILTER_Y_SHIFT: f32 = -0.543_735_27;
 
 /// The applied `detect base` result: fitted base densities with the scan
 /// exposure, the untouched scale/tilt, and the status reporting that EV.

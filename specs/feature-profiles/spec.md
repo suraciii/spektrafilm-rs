@@ -6,7 +6,7 @@ This document owns the feature profile concept, built-in catalog, profile scopes
 
 ## Contract
 
-A **feature profile** is a named, built-in parameter set for one film-chain feature. It resolves only the leaves in its declared scope. It does not select a film profile, print profile, workflow, route, input, scanner receiver, calibration state, GUI state, or complete look.
+A **feature profile** is a named, built-in parameter set for one film-chain feature. It resolves only the leaves in its declared scope. It does not select a film profile, print profile, workflow, route, input, scan sensor, calibration state, GUI state, or complete look.
 
 A **feature profile family** has one feature identifier, one profile scope, one validation rule, and one set of named entries. A family may expose `custom` as the state in which the user controls the scoped leaves directly. `custom` is not a built-in parameter set.
 

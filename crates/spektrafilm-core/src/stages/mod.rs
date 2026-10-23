@@ -334,7 +334,6 @@ mod integration_tests {
 /// validation.
 #[cfg(test)]
 mod scan_semantics_tests {
-    use crate::color_reference::ColorReference;
     use crate::params::RuntimeParams;
     use crate::pipeline::Pipeline;
     use crate::profile;
@@ -535,40 +534,6 @@ mod scan_semantics_tests {
             max_diff(&portra_output, &gold_output),
             0.0,
             "Input route output must not depend on the resolved film or print profile"
-        );
-    }
-
-    #[test]
-    fn preflash_shifts_print_black_white_references() {
-        let dir = data_dir();
-        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        let mut params = quiet_params();
-        params.scanner.white_correction = true;
-        params.scanner.black_correction = true;
-        let pipeline =
-            Pipeline::new_with_spectral(film, print, params, &dir).expect("spectral pipeline");
-        let zero = ColorReference::compute(
-            &pipeline.film,
-            &pipeline.print,
-            &pipeline.params,
-            pipeline.print_illuminant_slice(),
-            pipeline.print_exposure_factor(),
-            [0.0; 3],
-        );
-        let flashed = ColorReference::compute(
-            &pipeline.film,
-            &pipeline.print,
-            &pipeline.params,
-            pipeline.print_illuminant_slice(),
-            pipeline.print_exposure_factor(),
-            [0.05; 3],
-        );
-        let (m0, q0) = zero.xyz_remap().expect("print path builds a remap");
-        let (m1, q1) = flashed.xyz_remap().expect("print path builds a remap");
-        assert!(
-            (m0 - m1).abs() > 1e-9 || (q0 - q1).abs() > 1e-9,
-            "preflash must flow into the B/W reference log-raws (m {m0} vs {m1})"
         );
     }
 

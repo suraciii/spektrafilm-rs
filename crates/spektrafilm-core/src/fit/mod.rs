@@ -25,8 +25,6 @@ use std::path::PathBuf;
 pub enum FitGroup {
     /// The leading terms of the film profile's `hanatos2025_adaptation_surface_params`.
     Surface,
-    /// The negative-conversion `conversion_brightness_ev` and `conversion_balance_ev`.
-    Tone,
 }
 
 #[derive(Debug, Clone)]
@@ -76,23 +74,6 @@ pub struct FitForcedSettings {
     pub surface_toggle: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ToneFit {
-    pub conversion_brightness_ev: f64,
-    pub conversion_balance_ev: [f64; 3],
-}
-
-/// The redundancy a tone fit pins, so that a fitted tone is unique.
-///
-/// A common offset added to `conversion_brightness_ev` and subtracted from every
-/// `conversion_balance_ev` channel leaves the negative conversion unchanged. The fit
-/// pins `conversion_balance_ev[pinned_channel]` to `value` and searches the rest.
-#[derive(Debug, Clone, Serialize)]
-pub struct ToneGauge {
-    pub pinned_channel: usize,
-    pub value: f64,
-}
-
 /// One cross-validation fold: the same fit, scored on its own half of the
 /// color patches and measured on the held-out half.
 #[derive(Debug, Clone, Serialize)]
@@ -122,10 +103,6 @@ pub struct FitReport {
     pub differences: PatchDifferences,
     /// The 3x15 surface the fitted profile stores; absent without the surface group.
     pub surface: Option<Vec<Vec<f64>>>,
-    /// The fitted tone values; absent without the tone group.
-    pub tone: Option<ToneFit>,
-    /// The pinned tone redundancy; absent without the tone group.
-    pub tone_gauge: Option<ToneGauge>,
     /// The cross-validation folds; absent without `cv`.
     pub cv: Option<Vec<CvFold>>,
     pub forced: FitForcedSettings,
@@ -228,7 +205,6 @@ pub fn fit(request: FitRequest) -> Result<FitReport, String> {
         return Err("fit requires at least one parameter group".into());
     }
     let surface = options.groups.contains(&FitGroup::Surface);
-    let tone = options.groups.contains(&FitGroup::Tone);
     let evaluator = Evaluator::new(
         film,
         print,
@@ -238,7 +214,6 @@ pub fn fit(request: FitRequest) -> Result<FitReport, String> {
         &scene,
         &reference,
         surface,
-        tone,
         options.surface_terms,
         options.lambda,
     )?;
@@ -280,20 +255,6 @@ pub fn fit(request: FitRequest) -> Result<FitReport, String> {
         gray_de_median: run.fitted.gray_de,
         differences,
         surface: surface.then(|| evaluator.surface_matrix(&run.x[..surface_parameters])),
-        tone: tone.then(|| {
-            let (conversion_brightness_ev, conversion_balance_ev) = evaluator.tone_values(&run.x);
-            ToneFit {
-                conversion_brightness_ev,
-                conversion_balance_ev,
-            }
-        }),
-        tone_gauge: tone.then(|| {
-            let (pinned_channel, value) = evaluator.tone_pin();
-            ToneGauge {
-                pinned_channel,
-                value,
-            }
-        }),
         cv,
         forced: FitForcedSettings {
             halation_active: false,

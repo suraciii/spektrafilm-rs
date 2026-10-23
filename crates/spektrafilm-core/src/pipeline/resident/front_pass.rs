@@ -4,7 +4,6 @@ impl Pipeline {
     /// Prepare the resident front pass with exposure folded into its f64 matrix.
     pub(super) fn resident_front_pass(
         &self,
-        color_ref: &crate::color_reference::ColorReference,
         ae_ev: f64,
     ) -> Option<spektrafilm_backend::FrontPass<'_>> {
         // Bake the exposure scale (auto-exposure × manual EV compensation)
@@ -21,12 +20,7 @@ impl Pipeline {
         if self.params.camera.exposure_compensation_ev != 0.0 {
             exposure_scale_f64 *= 2.0f64.powf(self.params.camera.exposure_compensation_ev as f64);
         }
-        // B&W/slide filming exposure correction is a linear scale on the raw
-        // film exposure (CPU: `raw *= factor` before log10). Since both
-        // upsamplers are homogeneous in the input RGB, folding it into the
-        // exposure scale is equivalent. 1.0 (no-op) on every path except a
-        // corrected slide scan.
-        exposure_scale_f64 *= color_ref.filming_exposure_correction;
+        // Front pass: hanatos TC LUT lookup, or the mallett 3×3 matmul
         let fold_exposure = |m: &mut [[f64; 3]; 3]| {
             if (exposure_scale_f64 - 1.0).abs() > 1e-9 {
                 for row in m.iter_mut() {

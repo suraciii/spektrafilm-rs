@@ -30,9 +30,9 @@ pub(crate) struct App {
     pub(crate) gui_state: state::GuiState,
     pub(crate) force_preview: bool,
     pub(crate) full_scan_requested: bool,
-    /// Original correction switches captured while Scan-for-print is active.
+    /// Original print-glare switch captured while Scan-for-print is active.
     /// This transient workflow state is deliberately excluded from persistence.
-    pub(crate) scan_for_print_snapshot: Option<(bool, bool, bool)>,
+    pub(crate) scan_for_print_snapshot: Option<bool>,
     pub(crate) image_path: Option<PathBuf>,
     pub(crate) image: Option<Arc<ImageBuf>>,
     pub(crate) raw_lens_info: Option<String>,
@@ -42,7 +42,6 @@ pub(crate) struct App {
     pub(crate) export_options: ExportOptions,
     pub(crate) export_dialog: ExportDialog,
     pub(crate) input_epoch: u64,
-    pub(crate) scanner_setup: Option<((u64, u64), SharedScannerSetup)>,
     /// Latest accepted floating output, shared with background viewing workers.
     pub(crate) output_image: Option<Arc<ImageBuf>>,
     pub(crate) output_metadata: Option<ImageMetadata>,
@@ -226,7 +225,6 @@ impl App {
             export_options,
             export_dialog: ExportDialog::default(),
             input_epoch: 0,
-            scanner_setup: None,
             output_image: None,
             output_metadata: None,
             source_render: None,

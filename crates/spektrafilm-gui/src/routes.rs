@@ -26,43 +26,47 @@ pub(crate) mod vocabulary {
     /// whether the samples are encoded or linear.
     pub(crate) const CCTF: &str = "color component transfer function";
 
-    /// How the scanner surface is sequenced: acquisition, then conversion,
-    /// then automatic scan setup, then finishing, then digital output.
-    pub(crate) const SCANNER_SEQUENCE: &str = "Scanner sequence: scan receiver acquisition, \
-         scan output polarity and negative conversion, automatic scan setup, \
-         scanner finishing, then digital output.";
+    /// How the scanner surface is sequenced: the physical light source, the
+    /// output polarity, then the readout optics and digital sharpening.
+    pub(crate) const SCANNER_SEQUENCE: &str = "Scanner sequence: scanner lamp, scan output \
+         polarity, then readout optics and digital sharpening.";
 
-    /// `receiver profile`: scanner acquisition only.
-    pub(crate) const RECEIVER_PROFILE: &str = "receiver profile";
+    /// `conversion style`: the named positive-conversion tone of the
+    /// negative-to-positive interpretation.
+    pub(crate) const CONVERSION_STYLE: &str = "conversion style";
 
-    /// `receiver profile` help, composed from each choice's own help so every
-    /// choice keeps its qualification stated beside the control that selects it.
-    pub(crate) fn receiver_profile_help() -> &'static str {
+    /// `conversion style` help, stating that it is declared data, that the
+    /// selector lists only what the user has installed, and that it applies
+    /// only to the negative interpretation.
+    pub(crate) const CONVERSION_STYLE_HELP: &str = "Named positive-conversion tone of the \
+         negative-to-positive interpretation. `neutral` is the frozen reference tone; any other \
+         name is a declared style you place in data/scan-styles/, never a fitted surface. The \
+         selector lists the styles found there. A style applies only with scan output set to \
+         Negative to positive.";
+
+    /// `neutral`, the frozen reference tone every style is measured against.
+    pub(crate) const CONVERSION_STYLE_NEUTRAL: &str = "neutral";
+
+    /// `scanner lamp`: the one physical light source of a scan.
+    pub(crate) const SCANNER_LAMP: &str = "scanner lamp";
+
+    /// `scanner lamp` help, stating the boundary between the lamp and the
+    /// film's own calibration.
+    pub(crate) fn scanner_lamp_help() -> &'static str {
         static HELP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
             format!(
-                "Selects the scan receiver that acquires transmitted or reflected light from the \
-                 scanned medium. {} {} A receiver profile changes scanner acquisition only: it \
-                 does not change film exposure, development, film-domain effects, print exposure, \
-                 or camera exposure.",
-                LEGACY_COLORIMETRIC_HELP, LAB_SCAN_APPROX_HELP
+                "Light source of the scanning rig that reads the scanned medium; the model is \
+                 one colorimetric scan of the clear film base. It changes scanner acquisition \
+                 only: it does not change film exposure, development, film-domain effects, \
+                 print exposure, or camera exposure. {SCANNER_LAMP_SCOPE}"
             )
         });
         &HELP
     }
 
-    /// `legacy colorimetric`: the default receiver profile.
-    pub(crate) const LEGACY_COLORIMETRIC: &str = "legacy colorimetric";
-
-    pub(crate) const LEGACY_COLORIMETRIC_HELP: &str = "legacy colorimetric is the default: an \
-         existing spectral-to-output acquisition, not a measured scanner device.";
-
-    /// `lab scan (approximate)`: carries its qualification in the choice
-    /// itself, and its help states the calibration status.
-    pub(crate) const LAB_SCAN_APPROX: &str = "lab scan (approximate)";
-
-    pub(crate) const LAB_SCAN_APPROX_HELP: &str = "lab scan (approximate) is an approximate \
-         narrow-band receiver: it is not a measured or calibrated scanner device, so a \
-         measured-device claim requires measurement and calibration provenance.";
+    /// Scope note shared by the lamp help.
+    pub(crate) const SCANNER_LAMP_SCOPE: &str = "The catalog covers daylight, fluorescent, LED \
+         and discharge series plus any BB<kelvin> blackbody.";
 
     /// `scan output`: native polarity or negative conversion.
     pub(crate) const SCAN_OUTPUT: &str = "scan output";
@@ -70,55 +74,8 @@ pub(crate) mod vocabulary {
     pub(crate) const SCAN_OUTPUT_HELP: &str = "Preserve medium polarity keeps the scanned \
          medium's native scan polarity: a negative film scan reads the negative image on the film, \
          and a photographic-paper or slide scan already reads a positive image. Negative to \
-         positive interprets a developed negative as a positive image by negative conversion, and \
-         turns off scanner white and black correction.";
-
-    /// `negative conversion`: interpretation of a developed negative.
-    pub(crate) const NEGATIVE_CONVERSION_METHOD: &str = "Negative conversion method";
-
-    /// `negative conversion method` help, composed from each method's own help
-    /// so the modeled method's qualification travels with the control.
-    pub(crate) fn negative_conversion_help() -> &'static str {
-        static HELP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-            format!(
-                "How negative conversion interprets a developed negative as a positive image. \
-                 Density, separable and coupled reconstruct the selected film; they name real \
-                 scanner operations and are not a file conversion, a scan finish, or a \
-                 positive-scan alias. {}",
-                DIGITAL_REFERENCE_HELP
-            )
-        });
-        &HELP
-    }
-
-    pub(crate) const DIGITAL_REFERENCE: &str = "Digital Reference (modeled)";
-
-    pub(crate) const DIGITAL_REFERENCE_HELP: &str = "Digital Reference (modeled) uses a common \
-         modeled receiver and fixed positive response to preserve stock differences instead of \
-         reconstructing exposure through the selected film characteristic curves; it is listed \
-         after the real methods and is not a measured scanner.";
-
-    /// `scanner auto setup`: image-derived correction, not receiver calibration.
-    pub(crate) const SCANNER_AUTO_SETUP: &str = "scanner auto setup";
-
-    pub(crate) const SCANNER_AUTO_SETUP_HELP: &str = "Automatic scan setup derives scanner \
-         exposure, channel balance, and contrast placement from the full input frame for digital \
-         delivery. It corrects the capture for delivery; it is not receiver calibration and does \
-         not derive or replace the receiver response, film profile, or positive calibration.";
-
-    /// `scanner finish`: post-conversion appearance.
-    pub(crate) const SCANNER_FINISH: &str = "scanner finish";
-
-    pub(crate) const SCANNER_FINISH_HELP: &str = "Optional scanner finishing: color and tone \
-         appearance applied after negative conversion. It is not receiver acquisition, film \
-         development, or print exposure, and it does not run on a direct negative output.";
-
-    /// `finish strength`: the amount of that appearance.
-    pub(crate) const FINISH_STRENGTH: &str = "finish strength";
-
-    pub(crate) const FINISH_STRENGTH_HELP: &str = "Strength of the scanner finish, from 0 to 1. \
-         Zero returns the converted scan before scanner finishing, subject to the shared output \
-         stages.";
+         positive interprets a developed negative as a positive image by inverting the film's \
+         own density records and applying the fixed positive tone response.";
 
     /// The direct physical description of one exact route value, describing
     /// the process sequence the image takes. The descriptions are the constants
@@ -268,11 +225,10 @@ mod tests {
         // The explanatory line is explanatory only: it names the groups without
         // renaming a runtime concept or adding a second control taxonomy.
         for group in [
-            "scan receiver acquisition",
-            "scan output polarity and negative conversion",
-            "automatic scan setup",
-            "scanner finishing",
-            "digital output",
+            "scanner lamp",
+            "scan output polarity",
+            "readout optics",
+            "digital sharpening",
         ] {
             assert!(
                 vocabulary::SCANNER_SEQUENCE.contains(group),
@@ -283,46 +239,13 @@ mod tests {
 
     #[test]
     fn scanner_help_keeps_the_physical_boundaries_distinct() {
-        // Acquisition is separated from conversion, setup from calibration,
-        // and finishing from development and print exposure.
+        // The lamp is the acquisition light source: it stays separate from
+        // the material stages the scan reads.
+        assert_eq!(vocabulary::SCANNER_LAMP, "scanner lamp");
         assert!(
-            vocabulary::receiver_profile_help()
+            vocabulary::scanner_lamp_help()
                 .contains("does not change film exposure, development, film-domain effects"),
-            "receiver help must state what it does not change"
-        );
-        assert!(
-            vocabulary::SCANNER_AUTO_SETUP_HELP.contains("not receiver calibration"),
-            "auto setup help must separate setup from calibration"
-        );
-        assert!(
-            vocabulary::SCANNER_FINISH_HELP
-                .contains("not receiver acquisition, film development, or print exposure"),
-            "finish help must separate finishing from the material stages"
-        );
-        // An approximate choice carries its qualification, and a modeled
-        // convention is never called measured or physical.
-        assert!(
-            vocabulary::LAB_SCAN_APPROX.contains("(approximate)"),
-            "the approximate choice keeps its qualification in the visible choice"
-        );
-        assert!(
-            vocabulary::LAB_SCAN_APPROX_HELP
-                .contains("not a measured or calibrated scanner device"),
-            "approximate help must state its calibration status"
-        );
-        assert!(
-            vocabulary::DIGITAL_REFERENCE.contains("(modeled)"),
-            "the modeled choice keeps its qualification in the visible choice"
-        );
-        assert!(
-            vocabulary::DIGITAL_REFERENCE_HELP.contains("not a measured scanner"),
-            "modeled help must not claim a measured device"
-        );
-        // Finish strength keeps its own name; amount is a different concept.
-        assert_eq!(vocabulary::FINISH_STRENGTH, "finish strength");
-        assert!(
-            vocabulary::FINISH_STRENGTH_HELP.contains("Zero returns the converted scan"),
-            "finish strength help must state what zero does"
+            "lamp help must state what it does not change"
         );
         // CCTF expands at first use.
         assert_eq!(vocabulary::CCTF, "color component transfer function");

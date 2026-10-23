@@ -10,27 +10,11 @@ use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_math::image::ImageBuf;
 use std::path::PathBuf;
 
-/// Scalar count of the free tone parameters: `conversion_brightness_ev`, then the
-/// red and blue balance channels. The green channel is pinned, see
-/// [`PINNED_BALANCE_CHANNEL`].
-pub(crate) const TONE_PARAMETERS: usize = 3;
-/// The balance channel a tone fit pins.
-///
-/// A common offset added to `conversion_brightness_ev` and subtracted from every
-/// `conversion_balance_ev` channel leaves the negative conversion unchanged, so the
-/// four values are redundant by one degree of freedom. Pinning one channel
-/// makes the fitted tone unique.
-pub(crate) const PINNED_BALANCE_CHANNEL: usize = 1;
 /// Largest supported leading surface term count (the polynomial stores 15).
 pub(crate) const MAX_SURFACE_TERMS: usize = 14;
 pub(crate) const SURFACE_LOWER: f64 = -40.0;
 pub(crate) const SURFACE_UPPER: f64 = 40.0;
-pub(crate) const DENSITY_LOWER: f64 = -4.0;
-pub(crate) const DENSITY_UPPER: f64 = 4.0;
-pub(crate) const BALANCE_LOWER: f64 = -2.0;
-pub(crate) const BALANCE_UPPER: f64 = 2.0;
 pub(crate) const SURFACE_STEP: f64 = 0.05;
-pub(crate) const TONE_STEP: f64 = 0.01;
 /// The scan output color space of every evaluation: the reference table has
 /// sRGB primaries and the patch comparison converts from linear sRGB.
 pub(crate) const FIT_OUTPUT_COLOR_SPACE: &str = "sRGB";
@@ -64,11 +48,8 @@ pub(crate) struct Evaluator {
     /// The scored gray patches, in layout order.
     fit_gray: Vec<usize>,
     surface: bool,
-    tone: bool,
     surface_terms: usize,
     lambda: f64,
-    /// The resolved value the tone fit pins in [`PINNED_BALANCE_CHANNEL`].
-    tone_pin: f64,
 }
 
 impl Evaluator {
@@ -83,7 +64,6 @@ impl Evaluator {
         scene: &PatchTable,
         reference: &PatchTable,
         surface: bool,
-        tone: bool,
         surface_terms: usize,
         lambda: f64,
     ) -> Result<Self, String> {
@@ -159,7 +139,6 @@ impl Evaluator {
             .chain(fit_gray.iter().copied())
             .collect();
         fit_indices.sort_unstable();
-        let tone_pin = params.scanner.conversion_balance_ev[PINNED_BALANCE_CHANNEL];
         Ok(Self {
             film,
             print,
@@ -172,10 +151,8 @@ impl Evaluator {
             color,
             fit_gray,
             surface,
-            tone,
             surface_terms,
             lambda,
-            tone_pin,
         })
     }
 
@@ -210,7 +187,7 @@ impl Evaluator {
     }
 
     pub(crate) fn dimension(&self) -> usize {
-        self.surface_parameters() + if self.tone { TONE_PARAMETERS } else { 0 }
+        self.surface_parameters()
     }
 
     fn surface_parameters(&self) -> usize {
@@ -221,57 +198,21 @@ impl Evaluator {
         }
     }
 
-    /// Starting vector: a zero surface and the configured tone values.
+    /// Starting vector: a zero surface.
     pub(crate) fn initial(&self) -> Vec<f64> {
-        let mut x = vec![0.0; self.dimension()];
-        if self.tone {
-            let offset = self.surface_parameters();
-            x[offset] = self.params.scanner.conversion_brightness_ev;
-            x[offset + 1] = self.params.scanner.conversion_balance_ev[0];
-            x[offset + 2] = self.params.scanner.conversion_balance_ev[2];
-        }
-        x
+        vec![0.0; self.dimension()]
     }
 
     pub(crate) fn lower(&self) -> Vec<f64> {
-        let mut bounds = vec![SURFACE_LOWER; self.surface_parameters()];
-        if self.tone {
-            bounds.push(DENSITY_LOWER);
-            bounds.extend([BALANCE_LOWER; TONE_PARAMETERS - 1]);
-        }
-        bounds
+        vec![SURFACE_LOWER; self.surface_parameters()]
     }
 
     pub(crate) fn upper(&self) -> Vec<f64> {
-        let mut bounds = vec![SURFACE_UPPER; self.surface_parameters()];
-        if self.tone {
-            bounds.push(DENSITY_UPPER);
-            bounds.extend([BALANCE_UPPER; TONE_PARAMETERS - 1]);
-        }
-        bounds
+        vec![SURFACE_UPPER; self.surface_parameters()]
     }
 
     pub(crate) fn steps(&self) -> Vec<f64> {
-        let mut steps = vec![SURFACE_STEP; self.surface_parameters()];
-        if self.tone {
-            steps.extend([TONE_STEP; TONE_PARAMETERS]);
-        }
-        steps
-    }
-
-    /// The tone values a candidate vector denotes, including the pinned balance.
-    pub(crate) fn tone_values(&self, x: &[f64]) -> (f64, [f64; 3]) {
-        let offset = self.surface_parameters();
-        let mut balance = [0.0; 3];
-        balance[0] = x[offset + 1];
-        balance[PINNED_BALANCE_CHANNEL] = self.tone_pin;
-        balance[2] = x[offset + 2];
-        (x[offset], balance)
-    }
-
-    /// The balance channel a tone fit pins, and the value it pins.
-    pub(crate) fn tone_pin(&self) -> (usize, f64) {
-        (PINNED_BALANCE_CHANNEL, self.tone_pin)
+        vec![SURFACE_STEP; self.surface_parameters()]
     }
 
     /// Fit a candidate vector and measure the rendered patches.
@@ -283,12 +224,6 @@ impl Evaluator {
             film.data.hanatos2025_adaptation_surface_params = self.surface_matrix(surface_values);
             params.settings.apply_hanatos2025_adaptation_surface = true;
         }
-        if self.tone {
-            let (density, balance) = self.tone_values(x);
-            params.scanner.conversion_brightness_ev = density;
-            params.scanner.conversion_balance_ev = balance;
-        }
-        params.film_render.halation.active = false;
         params.film_render.grain.active = false;
         params.io.output_cctf_encoding = false;
         params.io.output_color_space = FIT_OUTPUT_COLOR_SPACE.into();

@@ -4,7 +4,7 @@
 
 The [CMYK ink style specification](spec.md) owns the product contract and the `cmyk_ink_v1` color definition. The shared runtime owns one implementation for the `input` workflow and scanned outputs. The GUI and CLI must not implement separate color transforms.
 
-CMYK ink style is a terminal RGB appearance boundary. It runs after all scanner-domain effects, including scanner finishing, output gamut processing, unsharp masking, transfer encoding, and Procedural grain, and before output mix and writing. It does not belong to the spectral film or photographic printing stages.
+CMYK ink style is a terminal RGB appearance boundary. It runs after all scanner-domain effects, including output gamut processing, unsharp masking, transfer encoding, and Procedural grain, and before output mix and writing. It does not belong to the spectral film or photographic printing stages.
 
 The runtime parameter group is `cmyk`. It contains only `active` and `strength` for this release. No general effect graph, new workflow syntax, press profile, proof profile, or fourth spectral stage is introduced.
 

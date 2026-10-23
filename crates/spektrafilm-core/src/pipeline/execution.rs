@@ -60,35 +60,11 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbOut),
         };
-        if self.params.scanner.auto_setup != crate::params::ScannerAutoSetup::Off
-            && (inject != Tap::RgbIn || collect != Tap::RgbOut)
-        {
-            return Err(format!(
-                "scanner.auto_setup={} is not valid for tap route; use off or the complete-frame rgb_in→rgb_out route",
-                self.params.scanner.auto_setup
-            ));
-        }
-        if self.params.scanner.auto_setup != crate::params::ScannerAutoSetup::Off
-            && self.scanner_setup.is_none()
-        {
-            let setup = self.prepare_scanner_setup(&image)?;
-            let mut prepared = self.clone();
-            prepared.scanner_setup = Some(setup);
-            return prepared.process_with_taps_timed(
-                image,
-                backend,
-                Some(inject),
-                Some(collect),
-                timings,
-                capture,
-            );
-        }
         // Negative-to-positive interpretation is part of the resident
-        // decision: the capture methods run as the assembled scanner readout
-        // fence and the density reading and Digital Reference replace the
-        // acquisition as the assembled acquisition fence (pipe
-        // architecture, capability class). `resident_decision` is the sole
-        // authority, so no whole-route demotion happens here.
+        // decision: the density reading runs as the assembled scanner readout
+        // fence and replaces the acquisition as the assembled acquisition
+        // fence (pipe architecture, capability class). `resident_decision`
+        // is the sole authority, so no whole-route demotion happens here.
         if collect == Tap::RgbOut && self.params.output_mix.amount < 1.0 && inject != Tap::RgbIn {
             return Err(
                 "output_mix.amount below 1 requires rgb_in injection for final rgb_out collection"
@@ -162,15 +138,11 @@ impl Pipeline {
             collect = collect.name(),
             "pipeline: start"
         );
-        let t = Instant::now();
-        let color_ref = self.color_reference(backend);
-        record_stage_timing(&mut timings, "color_reference", t);
         let result = self.run_from(
             image,
             inject,
             collect,
             backend,
-            &color_ref,
             None,
             timings,
             capture.as_deref_mut(),
@@ -348,7 +320,6 @@ impl Pipeline {
         if let Some(capture) = capture.as_deref_mut() {
             capture.record_boundary(StageId::CmyFilm, &film_density, CoordinateSpace::Working);
         }
-        let color_ref = self.color_reference(backend);
         if print_after_convert {
             let printing = crate::stages::StageObservation::new(backend, "printing");
             let printing_backend = printing.backend(backend);
@@ -361,7 +332,6 @@ impl Pipeline {
                 &self.print_illuminant,
                 self.print_exposure_factor,
                 self.preflash_raw,
-                color_ref.printing_exposure_correction,
                 pixel_size_um,
             );
             let developed = crate::stages::printing::develop(
@@ -389,29 +359,27 @@ impl Pipeline {
             Ok(crate::stages::scanning::process(
                 &print_density,
                 &self.print,
+                &self.conversion_tones,
                 &self.params,
                 backend,
-                &color_ref,
                 &self.output_gamut,
-                self.scanner_setup.as_ref(),
             )?)
         } else {
             if let Some(capture) = capture {
                 capture.record_skip(StageId::LogEPrint, "no_print_stage_on_route");
                 capture.record_skip(StageId::CmyPrint, "no_print_stage_on_route");
             }
-            let mut scan_params = self.scan_params().into_owned();
+            let mut scan_params = self.params.clone();
             scan_params.io.scan_film = true;
             let scanning = crate::stages::StageObservation::new(backend, "scanning");
             let backend = scanning.backend(backend);
             Ok(crate::stages::scanning::scan_with_options(
                 &film_density,
                 &self.film,
+                &self.conversion_tones,
                 &scan_params,
                 backend,
-                &color_ref,
                 &self.output_gamut,
-                Some(&self.params.film_render.convert.scan_illuminant),
                 !scan_minus_base,
             )?)
         }
@@ -426,20 +394,12 @@ impl Pipeline {
         pixel_size_um: f64,
         ae_ev: f64,
         backend: &dyn ComputeBackend,
-        mut timings: Option<&mut BTreeMap<String, f64>>,
+        timings: Option<&mut BTreeMap<String, f64>>,
         capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
-        let stage_timings = stage_timings_enabled();
         if let Some(context) = backend.observation_context() {
             context.set_working_dimensions(image.width, image.height);
         }
-        // Scanner B&W/slide exposure correction (no-op unless scanner
-        // white/black correction is on for a slide or print scan). Computed
-        // up front so both the GPU-resident and per-stage paths share it.
-        let t = Instant::now();
-        let color_ref = self.color_reference(backend);
-        print_stage_timing(stage_timings, "color_reference", t);
-        record_stage_timing(&mut timings, "color_reference", t);
 
         // GPU fast path: dispatch the whole filming→printing→scanning chain
         // (or filming→scanning when scan_film) as a single GPU command
@@ -449,8 +409,7 @@ impl Pipeline {
         // path; backends without resident support return `None`. Active Dye
         // selects a per-stage path through `resident_decision`.
         if (self.tc_lut.is_some() || self.mallett_core.is_some())
-            && let Some(out) =
-                self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)?
+            && let Some(out) = self.try_gpu_resident(&image, backend, pixel_size_um, ae_ev)?
         {
             tracing::info!("pipeline: gpu-resident fast path complete");
             // Post-scan finishing (output transfer + cmyk) already ran
@@ -473,7 +432,6 @@ impl Pipeline {
             Tap::RgbPre,
             Tap::RgbOut,
             backend,
-            &color_ref,
             Some((pixel_size_um, ae_ev)),
             timings,
             capture,
@@ -564,8 +522,7 @@ impl Pipeline {
         if let Some(context) = backend.observation_context() {
             context.set_working_dimensions(working.width, working.height);
         }
-        let color_ref = self.color_reference(backend);
-        let out = match self.try_gpu_resident(&working, backend, &color_ref, pixel_size_um, 0.0)? {
+        let out = match self.try_gpu_resident(&working, backend, pixel_size_um, 0.0)? {
             Some(out) => out,
             None => return Ok(None),
         };

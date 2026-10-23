@@ -18,8 +18,6 @@ const SHARED_SET: &[&str] = &[
     "camera.auto_exposure=false",
     "camera.exposure_compensation_ev=0",
     "camera.film_format_mm=35",
-    "scanner.auto_setup=off",
-    "scanner.finish=neutral",
     "cmyk.active=false",
     "io.output_color_space=sRGB",
     "io.output_cctf_encoding=true",
@@ -316,7 +314,7 @@ fn standard_bundle_is_portable_validated_and_frozen_against_library_and_destinat
     let calls = fs::read(root.join("renderer.calls")).unwrap();
     assert_eq!(
         calls,
-        b"preset\nprocess:16\nprocess:15\npreset\nprocess:16\nprocess:15\n"
+        b"preset\nprocess:14\nprocess:13\npreset\nprocess:14\nprocess:13\n"
     );
 
     let before = directory_contents(&bundle);
@@ -373,7 +371,7 @@ fn unresolved_configuration_returns_structured_error_without_provenance() {
     assert!(!root.join("unresolved-bundle/provenance.json").exists());
     assert_eq!(
         fs::read(root.join("renderer.calls")).unwrap(),
-        b"preset\nprocess:16\n"
+        b"preset\nprocess:14\n"
     );
 }
 

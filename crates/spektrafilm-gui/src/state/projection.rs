@@ -375,7 +375,7 @@ impl GuiState {
         s["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         s["rust"]["scanner_provenance"] = serde_json::to_value(
-            spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params),
+            spektrafilm_core::scanner_provenance::ScannerProvenance::from_params(params),
         )?;
         // Route owns the derived scan decision; do not persist the legacy
         // `scan_film` flag or a second workflow owner in the Rust snapshot.

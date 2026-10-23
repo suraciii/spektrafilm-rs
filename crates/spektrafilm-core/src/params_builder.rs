@@ -99,9 +99,6 @@ fn apply_preview_constraints(params: &mut RuntimeParams) {
 
 fn apply_debug_constraints(params: &mut RuntimeParams) {
     if params.debug.lut_mode {
-        // LUT mode has no frame-derived context; force the modeled scanner
-        // setup off before the rest of the static LUT constraints apply.
-        params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
         // LUT-sampling regime: force the pipeline into a deterministic
         // per-pixel transform. Enabling lut_mode promotes spatial and
         // stochastic deactivation and disables image-aware adjustments.
@@ -113,8 +110,6 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Never;
         params.enlarger.print_exposure = 1.0;
         params.film_render.halation.boost_ev = 0.0;
-        params.scanner.white_correction = false;
-        params.scanner.black_correction = false;
         params.scanner.unsharp_mask = [0.0, 0.0];
         params.enlarger.y_filter_shift = 0.0;
         params.enlarger.m_filter_shift = 0.0;
@@ -462,8 +457,6 @@ mod tests {
         params.enlarger.print_exposure = 3.0;
         params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Always;
         params.film_render.halation.boost_ev = 1.5;
-        params.scanner.white_correction = true;
-        params.scanner.black_correction = true;
         params.scanner.unsharp_mask = [0.7, 0.7];
         params.debug.lut_mode = true;
         params.enlarger.y_filter_shift = 12.0;
@@ -493,8 +486,6 @@ mod tests {
         );
         assert_eq!(d.enlarger.print_exposure, 1.0);
         assert_eq!(d.film_render.halation.boost_ev, 0.0);
-        assert!(!d.scanner.white_correction);
-        assert!(!d.scanner.black_correction);
         assert_eq!(d.scanner.unsharp_mask, [0.0, 0.0]);
         assert_eq!(d.enlarger.y_filter_shift, 0.0);
         assert_eq!(d.enlarger.m_filter_shift, 0.0);

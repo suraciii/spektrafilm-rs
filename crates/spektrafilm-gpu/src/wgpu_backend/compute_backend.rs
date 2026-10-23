@@ -457,11 +457,6 @@ impl ComputeBackend for WgpuBackend {
             col0: columns[0],
             col1: columns[1],
             col2: columns[2],
-            // Standalone scan path carries no B&W remap (the resident chain
-            // is the only caller that sets it). Identity / disabled.
-            // Per-stage CPU callers consume linear scan RGB; final encoding
-            // and clipping happen at the end of the scanning stage.
-            bw: [1.0, 0.0, 0.0, 1.0],
         };
 
         // GPU shaders are f32-only — narrow f64 inputs at the shader boundary.

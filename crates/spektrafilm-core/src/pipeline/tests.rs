@@ -142,46 +142,6 @@ fn input_route_preserves_requested_crop_pixels_without_exposure() {
     assert_eq!((output.width, output.height), (8, 4));
 }
 #[test]
-fn digital_reference_preserves_formed_negative_and_prepared_identity() {
-    let mut baseline = build();
-    baseline.params.workflow.route = "input > film > scan".into();
-    baseline.params.io.scan_film = true;
-    baseline.params.film_render.grain.active = false;
-    baseline.params.film_render.halation.active = false;
-    baseline.params.film_render.dir_couplers.active = false;
-    baseline.params.camera.auto_exposure = false;
-    let mut params = baseline.params.clone();
-    params.scanner.scan_output = "negative_to_positive".into();
-    params.scanner.receiver_profile = crate::params::ReceiverProfile::DigitalReference;
-    params.scanner.negative_conversion_method =
-        crate::params::NegativeConversionMethod::DigitalReference;
-    let reference = baseline.clone().with_params(params).unwrap();
-    let image = ImageBuf::from_data(3, 1, vec![from_f64(0.18); 9]);
-    let cpu = spektrafilm_backend::cpu_backend::CpuBackend;
-    let before = baseline
-        .process_with_taps(image.clone(), &cpu, None, Some(Tap::CmyFilm))
-        .unwrap();
-    let after = reference
-        .process_with_taps(image, &cpu, None, Some(Tap::CmyFilm))
-        .unwrap();
-    assert_eq!(before.data, after.data);
-    let identity = reference.digital_reference.as_ref().unwrap().clone();
-    let mut params = reference.params.clone();
-    params.scanner.reference_exposure_ev = 1.0;
-    let adjusted = reference.with_params(params).unwrap();
-    assert!(Arc::ptr_eq(
-        &identity,
-        adjusted.digital_reference.as_ref().unwrap()
-    ));
-    assert!(
-        adjusted
-            .reference_provenance()
-            .unwrap()
-            .receiver_content_identity
-            .starts_with("sha256-")
-    );
-}
-#[test]
 fn fotufilm_zero_amount_bypasses_geometry_and_cancelled_render_fails() {
     let mut pipeline = build();
     pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
@@ -288,6 +248,58 @@ fn fotufilm_reference_survives_amount_and_calibration_edits() {
     params.camera.exposure_compensation_ev += 1.0;
     let recalibrated = edited.with_params(params).unwrap();
     assert!(Arc::ptr_eq(&original, &recalibrated.original_film));
+}
+
+/// `with_params` must refresh the resolved conversion tone when the style
+/// changes: the tone is resolved once per pipeline, never re-read per frame.
+///
+/// No style ships with the product, so the test data directory is overlaid
+/// with a user-authored `scan-styles/warm-probe.json`.
+#[test]
+fn with_params_resolves_a_changed_conversion_style() {
+    let data = data_dir();
+    let overlay = tempfile::tempdir().unwrap();
+    for entry in std::fs::read_dir(&data).unwrap() {
+        let entry = entry.unwrap();
+        std::os::unix::fs::symlink(entry.path(), overlay.path().join(entry.file_name())).unwrap();
+    }
+    let styles = overlay.path().join("scan-styles");
+    std::fs::create_dir(&styles).unwrap();
+    std::fs::write(
+        styles.join("warm-probe.json"),
+        r#"{"channels":[
+            {"brightness_ev":0.9281766618,"contrast":0.73551400058216643,"dmax":1.5625841465572565},
+            {"brightness_ev":0.8781766618,"contrast":0.73551400058216643,"dmax":1.5625841465572565},
+            {"brightness_ev":0.8281766618,"contrast":0.73551400058216643,"dmax":1.5625841465572565}
+        ]}"#,
+    )
+    .unwrap();
+
+    let film = crate::profile::load_profile_by_name(overlay.path(), "kodak_portra_400").unwrap();
+    let print =
+        crate::profile::load_profile_by_name(overlay.path(), "kodak_portra_endura").unwrap();
+    let base =
+        Pipeline::new_with_spectral(film, print, RuntimeParams::default(), overlay.path()).unwrap();
+    let mut params = base.params.clone();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.scanner.scan_output = "negative_to_positive".into();
+    params.scanner.conversion_style = "warm-probe".into();
+    let edited = base.with_params(params).unwrap();
+    let warm = crate::stages::scanning::style::resolve("warm-probe", Some(overlay.path())).unwrap();
+    assert_eq!(
+        edited.conversion_tones[0].brightness_ev,
+        warm[0].brightness_ev
+    );
+
+    // Back to neutral restores the frozen reference tone.
+    let mut params = edited.params.clone();
+    params.scanner.conversion_style = "neutral".into();
+    let neutral = edited.with_params(params).unwrap();
+    assert_eq!(
+        neutral.conversion_tones[0].brightness_ev,
+        crate::stages::scanning::style::NEUTRAL[0].brightness_ev
+    );
 }
 
 /// A monochrome stock must reach the silver path: the pipeline renders
@@ -734,7 +746,6 @@ fn v3_final_crop_preserves_scanner_and_print_boundaries() {
             params.scanner.unsharp_mask = [0.7, 0.7];
             params.enlarger.diffusion_filter.active = !scan_film;
             let full_pipeline = Pipeline::new(film.clone(), print.clone(), params.clone());
-            let color_ref = full_pipeline.color_reference(&backend);
             // Inject a small developed-exposure field at photographic pitch.
             let render = |pipeline: &Pipeline| {
                 pipeline
@@ -743,7 +754,6 @@ fn v3_final_crop_preserves_scanner_and_print_boundaries() {
                         Tap::LogEFilm,
                         Tap::RgbOut,
                         &backend,
-                        &color_ref,
                         Some((3.1, 0.0)),
                         None,
                         None,

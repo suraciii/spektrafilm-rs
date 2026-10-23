@@ -141,14 +141,6 @@ pub fn resolve(
     resolve_with_preview_mode(request, data_dir, None)
 }
 
-/// Resolve the same sources for full-frame scanner measurement before preview constraints.
-pub fn resolve_scanner_setup(
-    request: ProcessParamsRequest<'_>,
-    data_dir: &Path,
-) -> Result<ResolvedProcessParams, String> {
-    resolve_with_preview_mode(request, data_dir, Some(false))
-}
-
 fn resolve_with_preview_mode(
     request: ProcessParamsRequest<'_>,
     data_dir: &Path,
@@ -405,7 +397,6 @@ fn resolve_with_preview_mode(
     }
 
     normalize_runtime_topology(&film, &mut params);
-    crate::scanner_setup::validate_route(&film, &params)?;
     crate::pipeline_calibration::validate_scan_output(&params, &film)?;
     let raw_source = DeclarationSource {
         kind: "raw".into(),

@@ -5,9 +5,9 @@
 // the central viewer owns the input/output/paper-back presentation.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -15,7 +15,7 @@ use eframe::egui;
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_backend::telemetry::{CollectionMode, ObservationKind, Purpose};
 use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
-use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
+use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::presets::workflow_default;
 use spektrafilm_core::profile;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
@@ -61,7 +61,7 @@ use profiles::{
 };
 #[cfg(test)]
 use render::RuntimeCache;
-use render::{RenderSnapshot, SharedScannerSetup, build_runtime_observed};
+use render::{RenderSnapshot, build_runtime_observed};
 use render_worker::{RenderJob, RenderKind, RenderRequest, RenderWorker, observed_result};
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
@@ -197,10 +197,9 @@ mod telemetry_lifecycle_tests {
         app.print_name = "kodak_portra_endura".into();
         app.params.workflow.route = "input > film > scan".into();
         app.params.io.scan_film = true;
-        app.params.scanner.scan_output = "negative_to_positive".into();
-        app.params.scanner.auto_setup = ScannerAutoSetup::Full;
-        app.params.scanner.white_correction = false;
-        app.params.scanner.black_correction = false;
+        // The lamp drives the direct colorimetric scan: the negative-to-positive
+        // density interpretation reads the film curves alone.
+        app.params.scanner.scan_output = "direct_scan".into();
         app.params.film_render.grain.active = false;
         app.params.camera.auto_exposure = false;
         app.params.print_render.glare.active = false;
@@ -218,57 +217,18 @@ mod telemetry_lifecycle_tests {
     }
 
     #[test]
-    fn app_source_remeasurement_and_manual_scanner_edits_preserve_user_brightness() {
+    fn app_manual_scanner_edits_reach_the_render_snapshot() {
         let mut app = scanner_app();
         let context = ObservationContext::default();
-        let original = app.render_snapshot(app.params.clone());
-        let initial = original
-            .prepare_scanner_setup(app.image.as_ref().unwrap(), &context)
-            .unwrap()
-            .unwrap();
-        let mut changed_input = (**app.image.as_ref().unwrap()).clone();
-        for (index, sample) in changed_input.data.iter_mut().enumerate() {
-            *sample *= spektrafilm_math::precision::from_f64([0.18, 0.45, 0.8][index % 3]);
-        }
-        app.image = Some(Arc::new(changed_input));
-        app.input_epoch = app.input_epoch.wrapping_add(1);
         let source = app.render_snapshot(app.params.clone());
-        let source_setup = source
-            .prepare_scanner_setup(app.image.as_ref().unwrap(), &context)
-            .unwrap()
-            .unwrap();
-        assert_ne!(
-            initial, source_setup,
-            "new chromatic source must change measured scanner setup"
-        );
-        app.params.scanner.conversion_brightness_ev += 1.0;
+        app.params.scanner.lamp = "D65".into();
         app.parameter_revision = app.parameter_revision.wrapping_add(1);
         let edited = app.render_snapshot(app.params.clone());
-        assert!(!Arc::ptr_eq(source.scanner_setup(), edited.scanner_setup()));
-        assert!(
-            edited.scanner_setup().get().is_none(),
-            "parameter revision must create a fresh measurement slot"
-        );
-        let edited_setup = edited
-            .prepare_scanner_setup(app.image.as_ref().unwrap(), &context)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            source_setup, edited_setup,
-            "derived setup must preserve the user's additional brightness"
-        );
+        let source_runtime = build_runtime_observed(&source, false, &context).unwrap();
+        let edited_runtime = build_runtime_observed(&edited, false, &context).unwrap();
+        assert_eq!(edited_runtime.params().scanner.lamp, "D65");
+        assert_eq!(source_runtime.params().scanner.lamp, "D55");
         let input = app.image.as_ref().unwrap();
-        let source_runtime = build_runtime_observed(&source, false, &context)
-            .unwrap()
-            .with_scanner_setup(source_setup);
-        let edited_runtime = build_runtime_observed(&edited, false, &context)
-            .unwrap()
-            .with_scanner_setup(edited_setup);
-        assert_eq!(
-            edited_runtime.params().scanner.conversion_brightness_ev
-                - source_runtime.params().scanner.conversion_brightness_ev,
-            1.0
-        );
         let before = source_runtime
             .process((**input).clone(), app.backend.as_ref())
             .unwrap();
@@ -281,98 +241,52 @@ mod telemetry_lifecycle_tests {
                 .iter()
                 .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
         );
-        let brightness = |image: &ImageBuf| {
-            image
-                .data
-                .iter()
-                .map(|sample| spektrafilm_math::precision::to_f64(*sample))
-                .sum::<f64>()
-        };
-        assert!(
-            brightness(&after) > brightness(&before),
-            "manual +1 EV must increase rendered brightness with the measured setup retained"
-        );
-        assert_eq!(original.scanner_setup().get().unwrap(), &Ok(initial));
-        assert_eq!(source.scanner_setup().get().unwrap(), &Ok(source_setup));
+        assert_ne!(before.data, after.data);
     }
 
     #[test]
-    fn app_preview_scan_and_export_measure_canonical_full_source_once() {
-        for first in [Some(true), Some(false), None] {
+    fn app_preview_scan_and_export_render_the_same_raster() {
+        for first in [Some(true), Some(false)] {
             let mut app = scanner_app();
             let snapshot = app.render_snapshot(app.params.clone());
             let context = ObservationContext::default();
             let input = app.image.as_ref().unwrap().clone();
             let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
-            let expected = canonical.prepare_scanner_setup(&input).unwrap();
             let mut cache = RuntimeCache::default();
-            if let Some(preview_first) = first {
-                let runtime = cache
-                    .prepare_observed(&snapshot, preview_first, &input, &context)
-                    .unwrap();
-                let working = if preview_first {
-                    spektrafilm_core::params_builder::resize_for_preview(
-                        &input,
-                        runtime.params().settings.preview_max_size,
-                    )
-                } else {
-                    (*input).clone()
-                };
-                let rendered = runtime.process(working, app.backend.as_ref()).unwrap();
-                assert!(
-                    rendered
-                        .data
-                        .iter()
-                        .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
-                );
-                assert_eq!(runtime.params().settings.preview_mode, preview_first);
-            } else {
-                assert_eq!(
-                    snapshot.prepare_scanner_setup(&input, &context).unwrap(),
-                    Some(expected)
-                );
-            }
-            assert_eq!(snapshot.scanner_setup().get().unwrap(), &Ok(expected));
-            let original_params = serde_json::to_value(snapshot.params()).unwrap();
-            let export = app.render_snapshot(app.params.clone());
-            assert_eq!(
-                export.prepare_scanner_setup(&input, &context).unwrap(),
-                Some(expected)
-            );
-            let mut alternative_input = (*input).clone();
-            for (index, sample) in alternative_input.data.iter_mut().enumerate() {
-                *sample *= spektrafilm_math::precision::from_f64([0.18, 0.45, 0.8][index % 3]);
-            }
-            assert_ne!(
-                canonical.prepare_scanner_setup(&alternative_input).unwrap(),
-                expected
-            );
-            assert_eq!(
-                export
-                    .prepare_scanner_setup(&alternative_input, &context)
-                    .unwrap(),
-                Some(expected),
-                "initialized snapshot must reuse its measured full source rather than remeasure another raster"
-            );
-            let scan_runtime = cache
-                .prepare_observed(&export, false, &input, &context)
+            let preview_first = first.unwrap();
+            let runtime = cache
+                .prepare_observed(&snapshot, preview_first, &context)
                 .unwrap();
+            let working = if preview_first {
+                spektrafilm_core::params_builder::resize_for_preview(
+                    &input,
+                    runtime.params().settings.preview_max_size,
+                )
+            } else {
+                (*input).clone()
+            };
+            let rendered = runtime.process(working, app.backend.as_ref()).unwrap();
+            assert!(
+                rendered
+                    .data
+                    .iter()
+                    .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
+            );
+            assert_eq!(runtime.params().settings.preview_mode, preview_first);
+            let export = app.render_snapshot(app.params.clone());
+            let scan_runtime = cache.prepare_observed(&export, false, &context).unwrap();
             let scan = scan_runtime
                 .process((*input).clone(), app.backend.as_ref())
                 .unwrap();
-            let export_runtime = build_runtime_observed(&export, false, &context)
-                .unwrap()
-                .with_scanner_setup(expected);
+            let export_runtime = build_runtime_observed(&export, false, &context).unwrap();
             let exported = export_runtime
                 .process((*input).clone(), app.backend.as_ref())
                 .unwrap();
             assert_eq!(
                 scan.data, exported.data,
-                "shared full setup must produce the same Scan and Export raster"
+                "shared snapshot must produce the same Scan and Export raster"
             );
-            let preview_runtime = cache
-                .prepare_observed(&export, true, &input, &context)
-                .unwrap();
+            let preview_runtime = cache.prepare_observed(&export, true, &context).unwrap();
             let working = spektrafilm_core::params_builder::resize_for_preview(
                 &input,
                 preview_runtime.params().settings.preview_max_size,
@@ -387,14 +301,22 @@ mod telemetry_lifecycle_tests {
                     .iter()
                     .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
             );
-            assert!(Arc::ptr_eq(
-                snapshot.scanner_setup(),
-                export.scanner_setup()
-            ));
-            assert_eq!(
-                serde_json::to_value(snapshot.params()).unwrap(),
-                original_params
-            );
+            // The neutral filters are derived from the selected print profile,
+            // so the snapshot's raw value and the runtime's resolved value
+            // legitimately differ. Everything else must agree exactly.
+            let mut snapshot_params = serde_json::to_value(snapshot.params()).unwrap();
+            let mut canonical_params = serde_json::to_value(canonical.params()).unwrap();
+            for value in [&mut snapshot_params, &mut canonical_params] {
+                value["enlarger"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("m_filter_neutral");
+                value["enlarger"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("y_filter_neutral");
+            }
+            assert_eq!(snapshot_params, canonical_params);
         }
     }
 
@@ -403,9 +325,6 @@ mod telemetry_lifecycle_tests {
         let mut app = scanner_app();
         app.params.workflow.route = "input > convert-film > scan".into();
         app.params.scanner.scan_output = "negative_to_positive".into();
-        app.params.scanner.auto_setup = ScannerAutoSetup::Off;
-        app.params.scanner.negative_conversion_method =
-            spektrafilm_core::params::NegativeConversionMethod::Separable;
         let context = ObservationContext::default();
         let input = app.image.as_ref().unwrap().clone();
         app.params.camera.auto_exposure = false;
@@ -438,21 +357,9 @@ mod telemetry_lifecycle_tests {
         let context = ObservationContext::default();
         let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
         let mut cache = RuntimeCache::default();
-        let actual = cache
-            .prepare_without_setup(&snapshot, false, &context)
-            .unwrap();
-        let expected = canonical.prepare_scanner_setup(&input).unwrap();
-        assert_eq!(
-            actual.prepare_scanner_setup(&input).unwrap(),
-            expected,
-            "full setup and cached runtime must apply the same film and print channel swaps"
-        );
+        let actual = cache.prepare_observed(&snapshot, false, &context).unwrap();
         let canonical_output = canonical
-            .with_scanner_setup(expected)
             .process((*input).clone(), app.backend.as_ref())
-            .unwrap();
-        let actual = cache
-            .prepare_observed(&snapshot, false, &input, &context)
             .unwrap();
         let actual_output = actual
             .process((*input).clone(), app.backend.as_ref())
@@ -467,9 +374,7 @@ mod telemetry_lifecycle_tests {
         let revision = app.parameter_revision;
         let mut invalid = app.current_state().unwrap();
         invalid.sections["simulation"]["film_stock"] = "fujifilm_provia_100f".into();
-        invalid.sections["scanner"]["negative_conversion_method"] = "coupled".into();
-        invalid.sections["scanner"]["auto_setup"] = "full".into();
-        invalid.sections["scanner"]["finish"] = "lab_scan".into();
+        invalid.sections["scanner"]["scan_output"] = "negative_to_positive".into();
         let error = app.apply_state(invalid).unwrap_err();
         assert!(
             error
@@ -482,8 +387,8 @@ mod telemetry_lifecycle_tests {
         app.image_path = None;
         let valid = app.current_state().unwrap();
         app.apply_state(valid).unwrap();
-        assert_eq!(app.params.scanner.scan_output, "negative_to_positive");
-        assert_eq!(app.params.scanner.auto_setup, ScannerAutoSetup::Full);
+        assert_eq!(app.params.scanner.scan_output, "direct_scan");
+        assert_eq!(app.params.scanner.lamp, "D55");
     }
 
     fn job(request_id: u64) -> RenderJob {

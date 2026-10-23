@@ -132,7 +132,6 @@ impl RenderWorker {
                         let pipeline_template = runtime_cache.prepare_observed(
                             &request.snapshot,
                             job.kind == RenderKind::Preview,
-                            &request.image,
                             &observation,
                         )?;
                         let pipeline_template = pipeline_template
