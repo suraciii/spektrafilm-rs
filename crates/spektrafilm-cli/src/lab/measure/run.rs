@@ -105,10 +105,10 @@ pub fn run_with_result(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Res
     // collection boundary reaches every requested reading, so the retained
     // effective document describes what actually executes.
     let (entry_tap, collect) = resolve_range(&mut chain.params, args.enter, &read)?;
-    // The canonical parameter sources own the execution seed. Never replace
-    // their resolved value with the skipped parser carrier's default zero.
-    let seed = u32::try_from(chain.params.random_seed)
-        .context("measurement random_seed must fit UINT32")?;
+    // Measurement seed is an instrument-owned runtime value, not a settable
+    // parameter leaf or public command option.
+    let seed = args.chain.seed;
+    chain.params.random_seed = u64::from(seed);
 
     // The point-wise requirement is evaluated before executing anything: an
     // injected numeric sample has no neighborhood, so a spatial or stochastic
@@ -449,7 +449,7 @@ fn declaration_record(
         "sources": chain.sources,
         "route": args.chain.route,
         "scan_output": args.chain.scan_output,
-        "seed": chain.params.random_seed,
+        "seed": args.chain.seed,
         "data_dir": std::fs::canonicalize(data_dir)?,
         "enter": args.enter.name(),
         "read": read,

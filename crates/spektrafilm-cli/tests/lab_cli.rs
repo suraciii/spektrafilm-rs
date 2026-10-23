@@ -490,8 +490,6 @@ impl MeasureFixture {
             self.data.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
-            "--set",
-            "random_seed=42",
         ];
         args.extend_from_slice(&POINT_WISE);
         self.lab(&args)
@@ -775,8 +773,8 @@ fn measure_run_matches_experiment_observation_on_log_e_film() {
     );
     let replayed: Value =
         serde_json::from_slice(&std::fs::read(repeat.join("run.json")).unwrap()).unwrap();
-    assert_eq!(original["declaration"]["seed"], 42);
-    assert_eq!(replayed["declaration"]["seed"], 42);
+    assert_eq!(original["declaration"]["seed"], 0);
+    assert_eq!(replayed["declaration"]["seed"], 0);
     assert_eq!(original["identity"], replayed["identity"]);
     assert!(
         !f.measure_with(&stimuli, &lab).status.success(),
@@ -2519,7 +2517,7 @@ fn automatic_standard_is_not_a_point_wise_measurement_but_density_taps_remain_av
 }
 
 #[test]
-fn measurement_replay_pins_named_user_preset_and_nonzero_seed() {
+fn measurement_replay_pins_named_user_preset() {
     let f = MeasureFixture::new();
     let library = f.root.join("config/presets");
     std::fs::create_dir_all(&library).unwrap();
@@ -2550,8 +2548,6 @@ fn measurement_replay_pins_named_user_preset_and_nonzero_seed() {
         "rgb_in",
         "--preset",
         "Replay look",
-        "--set",
-        "random_seed=42",
         "--data-dir",
         f.data.to_str().unwrap(),
         "--out",
@@ -2564,11 +2560,8 @@ fn measurement_replay_pins_named_user_preset_and_nonzero_seed() {
     );
     let record: Value =
         serde_json::from_slice(&std::fs::read(out.join("run.json")).unwrap()).unwrap();
-    assert_eq!(record["declaration"]["seed"], 42);
-    assert_eq!(
-        record["identity"]["parameters"]["effective"]["random_seed"],
-        42
-    );
+    assert_eq!(record["declaration"]["seed"], 0);
+    assert_eq!(record["identity"]["parameters"]["seed"], 0);
     assert_eq!(
         record["declaration"]["preset"][0],
         preset.canonicalize().unwrap().to_str().unwrap()
@@ -2602,7 +2595,7 @@ fn measurement_replay_pins_named_user_preset_and_nonzero_seed() {
     let replayed: Value =
         serde_json::from_slice(&std::fs::read(replay_out.join("run.json")).unwrap()).unwrap();
     assert_eq!(record["identity"], replayed["identity"]);
-    assert_eq!(replayed["declaration"]["seed"], 42);
+    assert_eq!(replayed["declaration"]["seed"], 0);
     assert_eq!(
         std::fs::read(out.join("readings.csv")).unwrap(),
         std::fs::read(replay_out.join("readings.csv")).unwrap()
