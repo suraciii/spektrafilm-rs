@@ -82,8 +82,11 @@ mod tests {
     /// no fitted model, so the sampled arrays are authoritative: the loader
     /// must not regenerate or rescale them. The curves are floor-stripped
     /// (per-channel minima zero, as upstream; the base fog lives in
-    /// `base_density`), and the sublayer tensor sums to the composite at
-    /// every knot so the layered grain paths stay consistent.
+    /// `base_density`). The upstream sublayer decomposition is kept: the
+    /// research round validated its grain statistics against the E-88
+    /// composite, and rebuilding it to sum to the new composite removes the
+    /// grain density contribution (measured +13 L*50 on the reference
+    /// scenes) — pinned here by the upstream layer-sum maxima.
     #[test]
     fn kodachrome_64_ships_authoritative_e88_curves() {
         let Some(p) = data_profile("kodak_kodachrome_64") else {
@@ -118,17 +121,23 @@ mod tests {
                 .fold(f64::MIN, f64::max);
             assert!((dmax - expected).abs() < 0.02, "channel {ch} Dmax {dmax}");
         }
-        let layers = p.density_curves_layers_f64();
-        assert_eq!(layers.len(), p.data.density_curves.len());
-        for (i, (row, layer_row)) in p.data.density_curves.iter().zip(&layers).enumerate() {
-            for ch in 0..3 {
-                let sum: f64 = layer_row.iter().map(|l| l[ch]).sum();
-                assert!(
-                    (sum - row[ch]).abs() < 1e-9,
-                    "knot {i} channel {ch}: layers sum {sum} != composite {}",
-                    row[ch]
-                );
-            }
+        // The sublayer decomposition stays the pre-E-88 upstream fit: its
+        // per-channel sum maxima are the old curve's Dmax. No E-88 sublayer
+        // data exists, and the research round validated this pairing's grain
+        // statistics against the E-88 composite — refitting the tensor to
+        // sum to the new composite removes the grain density contribution
+        // (measured +13 L*50 on the reference scenes).
+        let tensor = p.density_curves_layers_f64();
+        assert_eq!(tensor.len(), p.data.density_curves.len());
+        for (ch, expected) in [2.9136, 2.7911, 2.2720].into_iter().enumerate() {
+            let sum_max = tensor
+                .iter()
+                .map(|row| row.iter().map(|l| l[ch]).sum::<f64>())
+                .fold(f64::MIN, f64::max);
+            assert!(
+                (sum_max - expected).abs() < 0.01,
+                "channel {ch} layer sum {sum_max}"
+            );
         }
     }
 
