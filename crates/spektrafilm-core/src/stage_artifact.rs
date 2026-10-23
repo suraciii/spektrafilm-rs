@@ -481,7 +481,7 @@ pub fn read_header(path: impl AsRef<Path>) -> Result<StageHeader> {
 }
 
 fn read_header_from_root(root: &publication::ArtifactRoot) -> Result<StageHeader> {
-    let file = publication::open_member(&root, "stage.json")
+    let file = publication::open_member(root, "stage.json")
         .context("reading completed stage manifest")?;
     ensure!(
         file.metadata()?.len() <= MAX_MANIFEST_BYTES,
@@ -510,7 +510,7 @@ fn read_header_from_root(root: &publication::ArtifactRoot) -> Result<StageHeader
     require_complete_records(&value, &serde_json::to_value(&header)?, "stage")?;
     header.validate(true)?;
     for member in header.density.iter().chain(header.prepared_source.iter()) {
-        let file = publication::open_member(&root, &member.path)?;
+        let file = publication::open_member(root, &member.path)?;
         ensure!(
             file.metadata()?.len() == member.byte_length,
             "member {} has incorrect byte length",
