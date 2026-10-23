@@ -73,7 +73,8 @@ pub fn is_frozen_parameter(kind: MaterialKind, path: &str, baseline: &RuntimePar
             || path.starts_with("print_render.")
             || path == "settings.print_exposure_ev_tracking"
             || path == "settings.neutral_print_filters_from_database"
-            || path == "settings.use_enlarger_lut")
+            || path == "settings.use_enlarger_lut"
+            || path == "neutral_print_filters_protected")
     {
         return false;
     }
