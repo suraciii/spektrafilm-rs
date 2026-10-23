@@ -342,7 +342,7 @@ class ExperimentalDesktop(X11):
                     return
                 self.xd('mousemove', '--window', self.window,
                         int(selected[1] + selected[3] / 2), int(y + 70))
-                self.xd('click', '--repeat', 3, '--delay', 30, direction)
+                self.xd('click', direction)
                 time.sleep(.15)
         self.snap('choice-missing-' + '-'.join(words(option)))
         raise RuntimeError(f'Native choice option not visible: {label}: {option}')
