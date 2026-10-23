@@ -255,6 +255,11 @@ class ExperimentalDesktop(X11):
                         right = max(word[1] + word[3] for word in span)
                         values = [word for word in line[end + 1:]
                                   if word[1] > right and abs(word[2] + word[4] / 2 - y) < 12]
+                        # OCR can split a badge, selected value, and chevron
+                        # into separate lines even when they share one UI row.
+                        values.extend(word for candidate in lines for word in candidate
+                                      if word[1] > right
+                                      and abs(word[2] + word[4] / 2 - y) < 8)
                         if not values:
                             values = [word for word in line[:start]
                                       if word[1] + word[3] < span[0][1]
