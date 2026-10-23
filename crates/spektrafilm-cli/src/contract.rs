@@ -429,6 +429,7 @@ mod tests {
                 "scanner":{"scan_output":"negative_to_positive","operator":operator}},
             "output":default_output("png")
         });
+        document["output"]["maxEdge"] = 128.into();
         std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
         let accepted = read_recipe(&path).unwrap();
         assert_eq!(accepted.parameters["scanner"]["operator"], operator);

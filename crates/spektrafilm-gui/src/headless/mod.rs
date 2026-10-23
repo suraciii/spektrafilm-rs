@@ -297,6 +297,7 @@ fn import_file(h: &mut Harness<'_, App>, raw: bool) {
 /// `CollapsingHeader` whose title carries the engine's label, so a plain
 /// label query would match both the header and the popup option.
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
+    scroll_controls_into_view(h, label);
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .simulate_click();
     h.run_steps(3);

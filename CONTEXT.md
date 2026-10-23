@@ -38,8 +38,14 @@ _Avoid_: Positive scan, scanner finish
 **Exposure reconstruction**: The negative conversion that uses the selected film's response to estimate relative exposure from record densities.
 _Avoid_: Reference conversion
 
-**Conversion style**: The named stylization of the negative-to-positive tone. `neutral` is the frozen reference constants of that tone curve and the only built-in style; any other name is user-authored declared data in `data/scan-styles/<name>.json` carrying one brightness, contrast, and maximum-density triple per channel. A style parameterizes the constants of the same curve family. It is never fitted from image or chart data, and it is inert on a direct scan.
+**Conversion style**: The named positive rendering of a developed negative. The built-in `standard` combines automatic frame setup with a declared positive tone; a fixed style uses a declared tone without automatic frame setup.
 _Avoid_: Scanner finish, receiver profile, chart fit, calibration
+
+**Automatic frame setup**: The global exposure and color judgment derived from one complete developed frame. It is separate from exposure reconstruction and operator correction, not a calibrated response of a particular scanner.
+_Avoid_: Capture exposure, operator correction, scanner calibration
+
+**Operator correction**: The user's global finished-positive exposure, warmth, green–magenta balance, and common-exposure contrast judgment over a frame's automatic result. It does not change the developed negative or the automatic judgment.
+_Avoid_: Capture white balance, material gamma, scanner calibration
 
 **Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver an image.
 _Avoid_: Scanned medium, negative conversion
