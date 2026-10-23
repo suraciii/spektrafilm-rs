@@ -60,6 +60,53 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
 }
 
 #[test]
+fn grain_correlation_search_survives_language_switch_without_changing_the_recipe() {
+    let mut s = session();
+    let h = &mut s.harness;
+    reveal_control(h, "film_render.grain.engine");
+    choose(h, "Engine", "Dye");
+    let params = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+    for (preference, search, label) in [
+        (
+            LanguagePreference::English,
+            "Search controls",
+            "Channel correlation",
+        ),
+        (
+            LanguagePreference::SimplifiedChinese,
+            "搜索控件",
+            "通道相关性",
+        ),
+        (
+            LanguagePreference::English,
+            "Search controls",
+            "Channel correlation",
+        ),
+    ] {
+        language(h, preference);
+        for query in [
+            "Channel correlation",
+            "通道相关性",
+            "film_render.grain.channel_correlation",
+        ] {
+            h.get_by_label(search).focus();
+            h.step();
+            h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            h.get_by_label(search).type_text(query);
+            h.run_steps(3);
+            assert!(
+                h.query_by_role_and_label(egui::accesskit::Role::TextInput, label)
+                    .is_some(),
+                "grain control unavailable for {query}"
+            );
+            assert_eq!(h.state().params, params);
+            assert_eq!(h.state().parameter_revision, revision);
+        }
+    }
+}
+
+#[test]
 fn language_switch_retains_invalid_numeric_draft_and_control_focus() {
     let mut s = session();
     let h = &mut s.harness;

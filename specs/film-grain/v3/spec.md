@@ -73,6 +73,14 @@ Every optical grain measurement must retain:
 
 The standalone `spektrafilm_core::dye_measurement::DyeOpticalOracle` validates this declared protocol, reads fixed CMY realizations through a normalized aperture kernel, integrates wavelength-dependent transmission before optical-density conversion, and produces `DyeMeasurementRecord` population statistics. It does not invoke Dye formation or inspect a current image.
 
+The oracle must reject negative or non-finite absolute total spectral density before transmission conversion. It must report transmission underflow separately. It must not clamp invalid absorption. A negative CMY coefficient must remain valid when the combined absolute spectral density is nonnegative. Receiver density relative to a declared reference may be negative.
+
+Single-realization reading must remain available with a one-seed protocol. Population measurement must require at least two realizations. It must preserve the declared seed order, reject duplicate seeds, and enforce the declared aperture and footprint.
+
+Population covariance and RMS must describe the supplied population with divisor `N`. Mean-density uncertainty must estimate the standard error of the mean under an independent-seed assumption. Unique seeds alone must not establish independence. RMS and uncertainty must use optical-density units `D`, not `1000 D`. See [the measurement statistics contract](design.md#measurement-statistics-and-revision) for the estimators and record identity.
+
+New population records must identify the measurement revision as well as the caller's algorithm revision. Reading an older record must preserve its recorded values and revision. It must not reinterpret an older uncertainty estimate as the current estimator.
+
 RMS values from different receivers, apertures, density definitions, wavelengths, viewing sizes, or processing paths are not interchangeable. An RMS result must not be promoted to a runtime control or universal stock property without a new contract and evidence.
 
 ## Photographic review

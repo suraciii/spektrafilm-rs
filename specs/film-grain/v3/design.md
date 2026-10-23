@@ -162,6 +162,8 @@ Readout must integrate formed cell averages over the exact output footprint with
 
 The resulting CMY density is a density-domain approximation to downstream spectral readout. The independent `spektrafilm_core::dye_measurement` oracle owns transmission-first measurement outside Dye formation. It forms wavelength-dependent transmission from the film base and all CMY records, applies the declared receiver spectrum and aperture kernel, and integrates transmission before applying the receiver's density interpretation. It must not exponentiate independent CMY coefficients as separate outputs.
 
+The oracle's absolute total spectral density is `D_abs(lambda) = D_base(lambda) + sum_c d_c * s_c(lambda)`. It must be finite and nonnegative. The oracle must evaluate `T = 10^(-D_abs)` before aperture or spectral integration. A negative CMY coefficient alone must not fail validation. The final receiver ratio must be positive and finite, but may exceed one when the declared reference is not a unit clear film. Its resulting receiver density may therefore be negative. Total-density and transmission failures must identify the wavelength index. For these failures, realization reads must also identify the aperture sample and seed.
+
 The production density readout may be accepted only after the oracle bounds its difference for the declared route, receiver, aperture, density definition, wavelength range, and viewing/output conditions. A failure must trigger an algorithm or boundary decision. It must not be hidden by retuning event area or applying a per-image gain.
 
 ## Deterministic comparison
@@ -200,6 +202,24 @@ The optical measurement record must identify:
 The calibration solver must fit parameters against a fixed development and optical condition. It must use separate fit and holdout stimuli or seeds. It must evaluate mean density, optical RMS, spatial correlation, and relevant tone/color bias together. It must reject an infeasible fit when the requested target requires an unrepresentable parameter instead of changing support, density, or target semantics.
 
 RMS is a measurement under a declared protocol. It is not automatically a runtime control, a universal stock property, or proof of microscopic grain size. A stock-specific calibration must not be generalized to another stock, receiver, aperture, density definition, route, or format without new evidence.
+
+### Measurement statistics and revision
+
+The standalone oracle owns the population estimators. For `N >= 2` receiver-density readings `D_i`, it must compute:
+
+```text
+mean = sum_i D_i / N
+C_pop = sum_i (D_i - mean) (D_i - mean)^T / N
+rms_density[j] = sqrt(C_pop[j,j])
+uncertainty_density[j] = sqrt(C_pop[j,j] / (N - 1))
+```
+
+`covariance` must retain the descriptive divisor `N`. `uncertainty_density` must use the sample-variance estimate of the mean's standard error under independent seed realizations. It is not an RMS error bar. A constant population may produce zero estimated uncertainty; this does not establish zero systematic error. Both RMS and SEM use `D`. A comparison with granularity reported as `1000 sigma_D` must apply that conversion explicitly outside these fields.
+
+The oracle must stamp new output records' existing `protocol.algorithm_revision` with the prefix `dye-measurement-v2:` followed by the caller's algorithm revision. This prefix identifies the passive-absorption domain, the two-realization minimum, and the SEM estimator above. An input revision already bearing this prefix must retain it without duplication. The oracle's retained input protocol must remain unchanged. This record identity must not add a serialized field or change the measurement record's field set.
+
+Older unprefixed records must deserialize without relabeling or recomputing statistics. Records from the prior implementation used `rms_density / sqrt(N)` for uncertainty and allowed a one-realization population. Their original generating revision determines their interpretation; an absent current prefix must not be treated as proof of the current estimator.
+
 
 ## Runtime integration and module boundaries
 

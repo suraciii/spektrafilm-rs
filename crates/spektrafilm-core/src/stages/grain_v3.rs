@@ -21,9 +21,9 @@ use crate::params::RuntimeParams;
 use crate::params::grain::GrainEngine;
 use crate::profile::Profile;
 
-/// Granularity preset of the reference stock `kodak_portra_800`. A channel
-/// with this preset keeps the validated `v3_event_area_um2`; every other
-/// channel and stock is resolved against it.
+/// Relative granularity reference of `kodak_portra_800`. A channel at this
+/// preset keeps the configured `v3_event_area_um2`; this reference does not
+/// certify an absolute material event area or optical RMS.
 const GRANULARITY_REFERENCE: f64 = 6.0;
 /// Reference route: the film exposes the print paper, which is scanned.
 const PRINT_ROUTE: &str = "input > film > print > scan";
@@ -407,14 +407,14 @@ pub fn collapse_log_exposure(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, S
     Ok(out)
 }
 
-/// Per-channel event-area scale `k_c` resolved from the stock granularity
-/// preset (design §Resolved parameter contract).
+/// Relative per-channel event-area scale `k_c = (G_c / 6)^2` resolved from
+/// `rms_granularity` (design §Resolved parameter contract).
 ///
-/// Readout variance is proportional to event area, so `(G_c / 6)^2` makes
-/// the readout RMS proportional to the preset at fixed density and support.
-/// The presets are not verified Kodak density-RMS values: they act only as
-/// channel and stock ratios against [`GRANULARITY_REFERENCE`]. This is the
-/// only per-channel strength input; Spektra's `particle_scale` would count a
+/// This is a relative Dye strength scale, not a certified optical RMS target.
+/// Measured readout RMS also depends on density, support, and the receiver.
+/// Non-positive or non-finite values retain the reference-scale fallback;
+/// disabling grain uses `active`, not a zero preset. This is the only
+/// per-channel strength input; Spektra's `particle_scale` would count a
 /// coarser blue record a second time.
 fn channel_event_scale(rms_granularity: [f64; 3]) -> [f64; 3] {
     rms_granularity.map(|granularity| {
@@ -1196,7 +1196,7 @@ mod tests {
 
     #[test]
     fn stock_granularity_alone_sets_the_channel_scale() {
-        // The reference preset keeps the validated event area.
+        // The reference preset keeps the configured event area.
         assert_eq!(channel_event_scale([6.0; 3]), [1.0; 3]);
         // Square law: a quarter of the granularity is a sixteenth of the area.
         assert_eq!(channel_event_scale([1.5, 3.0, 12.0]), [0.0625, 0.25, 4.0]);

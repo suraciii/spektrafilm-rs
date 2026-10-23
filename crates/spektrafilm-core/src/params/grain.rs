@@ -131,6 +131,9 @@ pub struct GrainParams {
     /// remains the seed-derived phase sentinel.
     #[serde(default = "default_grain_v2_timer")]
     pub v2_timer: f32,
+    /// Positive component scales. Spektra uses relative particle scales per
+    /// emulsion sublayer; Dye's numerical curve components use these scales
+    /// for event mass and rate, not separate spatial kernel widths.
     #[serde(default = "default_particle_scale_sublayers_f64")]
     pub particle_scale_sublayers: [f64; 3],
     /// Film-space Gaussian sigma of Dye's support, in micrometers. It
@@ -139,16 +142,16 @@ pub struct GrainParams {
     #[serde(default = "default_v3_dye_support_um")]
     pub v3_dye_support_um: f32,
     /// Base statistical event area of Dye, in square film micrometers. The
-    /// stock granularity preset scales it per channel; it never changes the
-    /// dye support. Dye-only; Spektra reads `particle_area_um2` instead.
+    /// relative `rms_granularity` scale multiplies it per channel; it never
+    /// changes dye support or certifies material RMS. Dye-only; Spektra reads
+    /// `particle_area_um2` instead.
     #[serde(default = "default_v3_event_area_um2")]
     pub v3_event_area_um2: f64,
-    /// Fraction of one emulsion layer's count rate that Dye's active channels
-    /// share, in `[0, MEASURED_CHANNEL_CORRELATION_CEILING]`. Raising it correlates the channels of a layer while
-    /// every channel keeps its marginal Poisson rate. The value is the shared
-    /// fraction, not the realized correlation: unequal channel rates make the
-    /// realized correlation lower. Dye-only; the other engines have no
-    /// equivalent control.
+    /// Shared Poisson-event rate fraction among active records within each
+    /// numerical component, in `[0, MEASURED_CHANNEL_CORRELATION_CEILING]`.
+    /// Each record retains its marginal Poisson count distribution. This is
+    /// not realized CMY or final RGB correlation; record-rate ratios affect
+    /// count correlation. Dye-only; other engines have no equivalent control.
     #[serde(default = "default_channel_correlation")]
     pub channel_correlation: f64,
     #[serde(default = "default_07")]
@@ -173,6 +176,9 @@ pub struct GrainParams {
     pub particle_scale: [f64; 3],
     #[serde(default = "default_particle_scale_layers_f64", skip_serializing)]
     pub particle_scale_layers: [f64; 3],
+    /// Relative Dye strength `G`: event-area scale `k = (G / 6)^2`, not a
+    /// certified optical RMS target. Zero retains the reference-scale fallback.
+    /// Spektra retains this value as a no-op.
     #[serde(default = "default_rms_granularity_f64")]
     pub rms_granularity: [f64; 3],
     #[serde(default = "default_density_min_f64")]
@@ -211,24 +217,17 @@ fn default_particle_scale_sublayers_f64() -> [f64; 3] {
 fn default_v3_dye_support_um() -> f32 {
     3.5
 }
-/// Validated event area of the reference stock `kodak_portra_800`
-/// (`specs/film-grain/v3/design.md` §Resolved parameter contract).
+/// Default statistical event area for the relative Dye reference scale
+/// (`kodak_portra_800`), not a validated absolute material event area.
 fn default_v3_event_area_um2() -> f64 {
     1.28
 }
-/// Ceiling of [`Grain::channel_correlation`], the top of the band the evidence
-/// supports.
+/// Historical supported and acceptance ceiling for [`GrainParams::channel_correlation`].
 ///
-/// A raw UltraMax 400 negative scan without disclosed noise reduction brackets
-/// inter-record coherence at `0.0` to `0.45`; everything above that band that
-/// has been measured (`0.853` in a commercial film-simulation product) is
-/// coherence the evidence attributes to scanner processing, which
-/// `specs/film-grain/v3/design.md` §Channel coupling forbids the records
-/// from imitating. The
-/// control stays legal on `[0, 1)` in principle -- the split only requires the
-/// independent remainder to be non-negative -- so this bound is an evidence
-/// bound, not a structural one, and it moves when better evidence replaces the
-/// band.
+/// The public name is retained for compatibility; it does not certify a
+/// universal material limit or attribute higher correlation to scanner
+/// processing. The Poisson split's structural domain is `[0, 1)`; the product
+/// continues to accept only `[0, 0.45]`.
 pub const MEASURED_CHANNEL_CORRELATION_CEILING: f64 = 0.45;
 
 /// Off by default: the independent-field realization stays the shipped
