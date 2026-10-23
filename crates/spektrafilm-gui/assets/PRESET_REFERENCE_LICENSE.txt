@@ -13,7 +13,7 @@ preset-thumbnails.json images are adaptations: resized and processed through
 SpektraFilm's CPU simulation, with preset/material content fingerprints. These
 image adaptations are distributed under the same CC BY-SA 2.5 license. The
 photographer does not endorse this application. Code licensing is unchanged.
-The browser displays the credit and license next to every reference thumbnail.
+The browser displays the credit and license beside the fixed-reference group.
 
 Regenerate actual thumbnails from the repository root after preset/material changes:
 cargo test -p spektrafilm-gui presets::thumbnails::tests::generate_fixed_reference_thumbnails -- --ignored --exact --nocapture
