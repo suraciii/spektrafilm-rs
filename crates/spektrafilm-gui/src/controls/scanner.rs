@@ -14,6 +14,20 @@ struct OperatorEditor {
     comparing: bool,
 }
 
+impl OperatorEditor {
+    /// Commit one button action without retaining redo from an abandoned branch.
+    fn record_edit(&mut self, time: f64, before: &ScanOperatorParams, after: &ScanOperatorParams) {
+        if before == after {
+            return;
+        }
+        self.history.add_undo(before);
+        // add_undo does not clear redo. Feed the changed state before making it
+        // the latest undo point, so Undoer detects and discards the old branch.
+        self.history.feed_state(time, after);
+        self.history.add_undo(after);
+    }
+}
+
 fn operator_editor_id() -> egui::Id {
     egui::Id::new("scanner.operator.editor")
 }
@@ -92,7 +106,7 @@ fn operator_controls(
     let time = ui.input(|input| input.time);
     let operator = &mut params.scanner.operator;
     editor.history.feed_state(time, operator);
-    let before = operator.clone();
+    let before = *operator;
     ui.add_enabled_ui(active, |ui| {
         let mut reset = operator_row(ui, filter, "Finished exposure", "Reset Finished exposure", &mut operator.exposure_ev,
             "scanner.operator.exposure_ev", 0.0,
@@ -107,8 +121,7 @@ fn operator_controls(
             "scanner.operator.contrast", 1.0,
             "Common exposure contrast around the fixed reference exposure. Above 1 is harder; below 1 is softer. Channel differences and automatic setup are unchanged.");
         if reset {
-            editor.history.add_undo(&before);
-            editor.history.add_undo(operator);
+            editor.record_edit(time, &before, operator);
         }
         ui.horizontal_wrapped(|ui| {
             if filter_matches(filter, "restore automatic")
@@ -116,19 +129,19 @@ fn operator_controls(
                     .on_hover_text("Reset the four operator values only; keep this frame's own automatic setup.")
                     .clicked()
             {
-                editor.history.add_undo(operator);
+                let previous = *operator;
                 *operator = ScanOperatorParams::default();
-                editor.history.add_undo(operator);
+                editor.record_edit(time, &previous, operator);
             }
             if filter_matches(filter, "undo operator correction")
                 && ui.add_enabled(editor.history.has_undo(operator), egui::Button::new("Undo operator correction")).clicked()
-                && let Some(previous) = editor.history.undo(operator).cloned()
+                && let Some(previous) = editor.history.undo(operator).copied()
             {
                 *operator = previous;
             }
             if filter_matches(filter, "redo operator correction")
                 && ui.add_enabled(editor.history.has_redo(operator), egui::Button::new("Redo operator correction")).clicked()
-                && let Some(next) = editor.history.redo(operator).cloned()
+                && let Some(next) = editor.history.redo(operator).copied()
             {
                 *operator = next;
             }
@@ -137,17 +150,17 @@ fn operator_controls(
                     .on_hover_text("Copy only the four operator values for this session, not automatic setup, film density or capture settings.")
                     .clicked()
             {
-                editor.clipboard = Some(operator.clone());
+                editor.clipboard = Some(*operator);
             }
             if filter_matches(filter, "paste operator correction")
                 && ui.add_enabled(editor.clipboard.is_some(), egui::Button::new("Paste operator correction"))
                     .on_hover_text("Apply the copied four values to this frame's own automatic setup.")
                     .clicked()
-                && let Some(copied) = &editor.clipboard
+                && let Some(copied) = editor.clipboard
             {
-                editor.history.add_undo(operator);
-                *operator = copied.clone();
-                editor.history.add_undo(operator);
+                let previous = *operator;
+                *operator = copied;
+                editor.record_edit(time, &previous, operator);
             }
             if filter_matches(filter, "hold automatic comparison") {
                 let response = ui.button("Hold automatic comparison")

@@ -22,7 +22,7 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
         tint_ev: 0.125,
         contrast: 1.2,
     };
-    let operator = params.scanner.operator.clone();
+    let operator = params.scanner.operator;
     let runtime =
         Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
     let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);

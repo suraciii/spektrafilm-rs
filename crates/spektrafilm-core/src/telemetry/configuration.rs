@@ -368,7 +368,7 @@ impl RenderConfiguration {
                 ScanOutput::DirectScan
             },
             conversion_style: params.scanner.conversion_style_name().to_owned(),
-            scan_operator: params.scanner.operator.clone(),
+            scan_operator: params.scanner.operator,
             scan_model: ScanModelConfiguration::from_runtime(params, film, print),
             output_mix_amount: params.output_mix.amount,
             model_version: crate::runtime::MODEL_VERSION.into(),

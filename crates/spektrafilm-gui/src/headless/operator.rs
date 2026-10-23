@@ -23,6 +23,9 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     assert_eq!(automatic_preview.data, automatic_scan.data);
     settle_animation(h);
     let automatic_display = h.state().viewer.output.as_ref().unwrap().clone();
+    click(h, "100%");
+    settle_animation(h);
+    let automatic_composed = h.state().viewer.observation().pixels.unwrap();
 
     scroll_controls_into_view(h, "Finished exposure");
     edit(h, "Finished exposure", "1.0");
@@ -33,6 +36,8 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     settle_animation(h);
     let corrected_display = h.state().viewer.output.as_ref().unwrap().clone();
     assert_ne!(automatic_display.rgb, corrected_display.rgb);
+    let corrected_composed = h.state().viewer.observation().pixels.unwrap();
+    assert_ne!(automatic_composed.pixels, corrected_composed.pixels);
     let corrected_source = h.state().source_render.clone().unwrap();
     let corrected_space = h.state().output_color_space.clone();
     let corrected_encoding = h.state().output_cctf_encoding;
@@ -67,6 +72,9 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     let compared_display = h.state().viewer.output.as_ref().unwrap();
     assert_eq!(compared_display.size, automatic_display.size);
     assert_eq!(compared_display.rgb, automatic_display.rgb);
+    let compared_composed = h.state().viewer.observation().pixels.unwrap();
+    assert_eq!(compared_composed.size, automatic_composed.size);
+    assert_eq!(compared_composed.pixels, automatic_composed.pixels);
     assert!(Arc::ptr_eq(
         h.state().output_image.as_ref().unwrap(),
         &corrected
@@ -139,4 +147,6 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     let restored_display = h.state().viewer.output.as_ref().unwrap();
     assert_eq!(restored_display.size, corrected_display.size);
     assert_eq!(restored_display.rgb, corrected_display.rgb);
+    let restored_composed = h.state().viewer.observation().pixels.unwrap();
+    assert_eq!(restored_composed.pixels, corrected_composed.pixels);
 }

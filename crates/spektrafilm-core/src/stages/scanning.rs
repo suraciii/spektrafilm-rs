@@ -845,7 +845,11 @@ mod tests {
         let offset = setup::FrameSetup::measure(&density, &calibration)
             .unwrap()
             .offset;
-        for (baseline, px) in prepared.exposure.iter().zip(density.data.chunks_exact(3)) {
+        for (baseline, px) in prepared
+            .exposure
+            .iter()
+            .zip(density.data.as_chunks::<3>().0)
+        {
             let inverse = calibration
                 .estimate([to_f64(px[0]), to_f64(px[1]), to_f64(px[2])])
                 .unwrap();

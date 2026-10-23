@@ -65,9 +65,13 @@ impl App {
             &self.params.io.input_color_space,
             self.params.io.input_cctf_decoding,
         );
+        let (space, encoded) = self.operator_comparison.as_ref().map_or(
+            (self.output_color_space.as_str(), self.output_cctf_encoding),
+            |comparison| (comparison.color_space.as_str(), comparison.encoded),
+        );
         self.viewer.set_output_display_source(
-            &self.output_color_space,
-            self.output_cctf_encoding,
+            space,
+            encoded,
             self.viewer.settings.use_display_transform,
             self.gui_state.display_profile().map(Path::new),
         );
@@ -492,6 +496,7 @@ impl App {
                 }
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                 self.input_epoch = self.input_epoch.wrapping_add(1);
+                self.set_operator_compare(false);
                 self.render_worker.cancel_active();
                 self.full_scan_requested = false;
                 self.image = Some(Arc::new(img));
@@ -518,6 +523,7 @@ impl App {
         self.image = Some(Arc::new(rotated));
         self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
         self.input_epoch = self.input_epoch.wrapping_add(1);
+        self.set_operator_compare(false);
         self.render_worker.cancel_active();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.full_scan_requested = false;
@@ -1380,8 +1386,10 @@ impl eframe::App for App {
             } else {
                 None
             });
-            self.viewer
-                .show(ui, self.image.as_ref(), self.output_image.as_ref());
+            let displayed_output = self.operator_comparison.as_ref()
+                .map(|comparison| &comparison.image)
+                .or(self.output_image.as_ref());
+            self.viewer.show(ui, self.image.as_ref(), displayed_output);
             // Before/after compare divider overlay
             if self.compare_active {
                 let rect = ui.max_rect();

@@ -55,6 +55,9 @@ impl Pipeline {
         }
         self.params.validate()?;
         crate::pipeline_calibration::validate_scan_output(&self.params, &self.film)?;
+        if backend.explicit_gpu_request() {
+            return Err("explicit GPU request cannot run the complete computation scope on WGPU (host-executed stages: scanner acquisition); retry with an explicit CPU request to use the per-stage route".into());
+        }
         let mut parameters = self.params.clone();
         parameters.scanner.operator = Default::default();
         // Preview affects presentation only on this exact path.

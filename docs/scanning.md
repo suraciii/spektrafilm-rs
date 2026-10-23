@@ -108,7 +108,7 @@ The three triples are what let a style carry a color tendency on top of the tone
 
 Every value must be finite, and `contrast` and `dmax` must be positive. A parse error names the offending field.
 
-A style parameterizes the constants of the same logistic curve family the built-in style uses, and it never adds a curve family. It is never fitted from a photograph or a chart, and it is not a measured or calibrated scanner response. The per-record reconstruction remains unchanged. Fixed styles preserve per-record independence; standard setup depends on the complete frame.
+A style parameterizes the constants of the same logistic curve family the built-in style uses, and it never adds a curve family. It is never fitted from a photograph or a chart, and it is not a measured or calibrated scanner response. The per-record reconstruction remains unchanged. Fixed styles preserve record independence before destination primary conversion; standard setup depends on the complete frame.
 
 A custom fixed style requires `scanner.scan_output = negative_to_positive`. A `direct_scan` does not read the style slot, so the style is inert there. Style names must not be empty and must not contain `/`, `\`, `..`, or `:`. The style resolves once when the pipeline is built.
 

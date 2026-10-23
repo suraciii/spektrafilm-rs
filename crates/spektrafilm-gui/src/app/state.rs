@@ -35,6 +35,7 @@ pub(crate) struct App {
     pub(crate) scan_for_print_snapshot: Option<bool>,
     /// Temporary automatic-baseline display. Never enters saved parameters.
     pub(crate) operator_compare: bool,
+    pub(crate) operator_comparison: Option<super::render::OperatorComparison>,
     pub(crate) image_path: Option<PathBuf>,
     pub(crate) image: Option<Arc<ImageBuf>>,
     pub(crate) raw_lens_info: Option<String>,
@@ -220,6 +221,7 @@ impl App {
             full_scan_requested: false,
             scan_for_print_snapshot: None,
             operator_compare: false,
+            operator_comparison: None,
             image_path: None,
             input_rotation: 0,
             image: None,

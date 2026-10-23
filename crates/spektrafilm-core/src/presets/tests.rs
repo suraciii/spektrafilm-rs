@@ -67,7 +67,7 @@ fn scanner_operator_documents_apply_atomically_and_keep_neutral_omission() {
     ] {
         let applied = reloaded.apply_section(&current, &film).unwrap();
         assert_eq!(
-            serde_json::to_value(&applied.scanner.operator).unwrap(),
+            serde_json::to_value(applied.scanner.operator).unwrap(),
             operator
         );
         assert_eq!(current.scanner.scan_output, "direct_scan");

@@ -440,6 +440,12 @@ mod operator_interactions {
         h.run();
     }
 
+    fn settle(h: &mut Harness<'_, RuntimeParams>) {
+        h.input_mut().time = Some(h.ctx.input(|input| input.time) + 1.1);
+        h.step();
+        h.run();
+    }
+
     #[test]
     fn operator_edit_reset_undo_redo_and_copy_apply_only_four_values() {
         let mut h = harness(scanner_params());
@@ -451,7 +457,7 @@ mod operator_interactions {
         ] {
             edit(&mut h, label, value);
         }
-        let copied = h.state().scanner.operator.clone();
+        let copied = h.state().scanner.operator;
         assert_eq!(copied.exposure_ev, 1.25);
         assert_eq!(copied.warmth_ev, 0.35);
         assert_eq!(copied.tint_ev, -0.2);
@@ -486,6 +492,130 @@ mod operator_interactions {
     }
 
     #[test]
+    fn operator_reset_restore_and_paste_discard_abandoned_redo_branches() {
+        let copied = ScanOperatorParams {
+            exposure_ev: 0.25,
+            warmth_ev: 0.35,
+            tint_ev: -0.2,
+            contrast: 1.4,
+        };
+        let first = ScanOperatorParams {
+            exposure_ev: 1.0,
+            ..copied
+        };
+        for (action, expected) in [
+            (
+                "Reset Finished exposure",
+                ScanOperatorParams {
+                    exposure_ev: 0.0,
+                    ..first
+                },
+            ),
+            (
+                "Reset Warmth",
+                ScanOperatorParams {
+                    warmth_ev: 0.0,
+                    ..first
+                },
+            ),
+            (
+                "Reset Green–magenta tint",
+                ScanOperatorParams {
+                    tint_ev: 0.0,
+                    ..first
+                },
+            ),
+            (
+                "Reset Contrast",
+                ScanOperatorParams {
+                    contrast: 1.0,
+                    ..first
+                },
+            ),
+            ("Restore automatic", ScanOperatorParams::default()),
+            ("Paste operator correction", copied),
+        ] {
+            let mut params = scanner_params();
+            params.scanner.operator = copied;
+            params.camera.exposure_compensation_ev = -1.5;
+            params.scanner.lens_blur = 0.5;
+            let mut h = harness(params);
+            click(&mut h, "Copy operator correction");
+            edit(&mut h, "Finished exposure", "1");
+            settle(&mut h);
+            edit(&mut h, "Finished exposure", "2");
+            settle(&mut h);
+            click(&mut h, "Undo operator correction");
+            assert_eq!(h.state().scanner.operator, first, "{action}");
+            assert!(
+                !h.get_by_label("Redo operator correction")
+                    .node()
+                    .is_disabled()
+            );
+
+            // Branch from the undone state using each discrete correction action.
+            // The abandoned exposure=2 state must not reappear, even immediately.
+            click(&mut h, action);
+            assert_eq!(h.state().scanner.operator, expected, "{action}");
+            assert!(
+                h.get_by_label("Redo operator correction")
+                    .node()
+                    .is_disabled(),
+                "{action}"
+            );
+            click(&mut h, "Redo operator correction");
+            assert_eq!(h.state().scanner.operator, expected, "{action}");
+
+            // Discarding redo must not discard older undo points or the new action.
+            click(&mut h, "Undo operator correction");
+            assert_eq!(h.state().scanner.operator, first, "{action}");
+            click(&mut h, "Redo operator correction");
+            assert_eq!(h.state().scanner.operator, expected, "{action}");
+            click(&mut h, "Undo operator correction");
+            click(&mut h, "Undo operator correction");
+            assert_eq!(h.state().scanner.operator, copied, "{action}");
+            assert_eq!(h.state().camera.exposure_compensation_ev, -1.5);
+            assert_eq!(h.state().scanner.lens_blur, 0.5);
+
+            // Only the corrections survive a new session, never history/clipboard.
+            let fresh = harness(h.state().clone());
+            assert_eq!(fresh.state().scanner.operator, copied);
+            for label in [
+                "Undo operator correction",
+                "Redo operator correction",
+                "Paste operator correction",
+            ] {
+                assert!(
+                    fresh.get_by_label(label).node().is_disabled(),
+                    "{action}: {label}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pasting_unchanged_operator_values_preserves_redo() {
+        let mut h = harness(scanner_params());
+        edit(&mut h, "Finished exposure", "1");
+        settle(&mut h);
+        click(&mut h, "Copy operator correction");
+        edit(&mut h, "Finished exposure", "2");
+        settle(&mut h);
+        click(&mut h, "Undo operator correction");
+        assert_eq!(h.state().scanner.operator.exposure_ev, 1.0);
+
+        click(&mut h, "Paste operator correction");
+        assert_eq!(h.state().scanner.operator.exposure_ev, 1.0);
+        assert!(
+            !h.get_by_label("Redo operator correction")
+                .node()
+                .is_disabled()
+        );
+        click(&mut h, "Redo operator correction");
+        assert_eq!(h.state().scanner.operator.exposure_ev, 2.0);
+    }
+
+    #[test]
     fn inactive_operator_values_remain_visible_disabled_and_return_unchanged() {
         let mut params = scanner_params();
         params.scanner.operator.exposure_ev = 0.75;
@@ -517,7 +647,7 @@ mod operator_interactions {
     fn held_automatic_comparison_emits_transitions_without_editing_operator() {
         let mut params = scanner_params();
         params.scanner.operator.exposure_ev = 1.0;
-        let original = params.scanner.operator.clone();
+        let original = params.scanner.operator;
         let mut h = Harness::builder()
             .with_size(egui::vec2(720.0, 1400.0))
             .build_state(

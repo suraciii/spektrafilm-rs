@@ -164,7 +164,7 @@ The additive defaulted `scanner.operator` fields retain GUI state version 5, pre
 - A uniform 16% neutral patch has a setup offset of zero within precision tolerance.
 - Gray ramps remain neutral, monotone, and finite. Positive and negative exposure shifts remain distinguishable. Exact residual `(1 - slope)` applies to linear response curves, not arbitrary toe/shoulder regions.
 - Repeated execution on the same frame produces identical setup and pixels at the same precision and backend.
-- Changing a frame's other pixels may change a pixel's output under `standard`. Fixed styles retain record independence.
+- Changing a frame's other pixels may change a pixel's output under `standard`. Fixed styles retain record independence before destination primary conversion.
 - A dominant red field remains red after correction. A dark field must not be forced to the same result as the neutral aim.
 - A bright background may still darken a subject. Setup provides no face detection, subject classification, or local tone correction. Do not weaken this limit into a claim that inverse-lighting scenes are rescued.
 - Backend parity, style changes, canonical alias output, versioned migration, and point-wise rejection require real-consumer tests.
