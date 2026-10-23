@@ -17,6 +17,11 @@ pub(crate) fn sections(
                     .small()
                     .color(theme::FG_MUTED),
             );
+            if filter_matches(filter, "scan illuminant") {
+                flags.runtime_changed |= choice_tip_experimental(ui, "scan illuminant", &mut params.film_render.convert.scan_illuminant,
+                    &["D50", "D55", "D65", "T", "TH-KG3"],
+                    "Light used to acquire the imported negative RGB. This only changes capture inversion, not the fixed product readout light.");
+            }
             if filter_matches(filter, "exposure compensation ev") {
                 flags.runtime_changed |= param_numeric(ui, "exposure compensation ev", &mut params.film_render.convert.exposure_compensation_ev, "film_render.convert.exposure_compensation_ev", "Aligns the scan's overall brightness to the model (gain = 2^ev). Brighter input -> less recovered film density.");
             }

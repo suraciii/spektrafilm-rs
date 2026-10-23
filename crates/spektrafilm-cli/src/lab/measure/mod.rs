@@ -388,6 +388,17 @@ pub fn point_wise_offenders(
             MeasureStage::RgbOut,
         );
     }
+    if scan
+        && params.scanner.scan_output == "negative_to_positive"
+        && params.scanner.uses_standard()
+    {
+        add(
+            "scanner.conversion_style",
+            "standard".to_owned(),
+            "<fixed-style-name>",
+            MeasureStage::RgbOut,
+        );
+    }
     if scan && params.scanner.lens_blur > 0.0 {
         add(
             "scanner.lens_blur",

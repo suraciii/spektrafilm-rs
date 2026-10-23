@@ -92,7 +92,8 @@ struct Converter {
 
 impl Converter {
     fn new(profile: &Profile, params: &RuntimeParams) -> Result<Self, String> {
-        let illuminant = select_illuminant_f64(&params.scanner.lamp).into_owned();
+        let illuminant =
+            select_illuminant_f64(&params.film_render.convert.scan_illuminant).into_owned();
         let n = illuminant
             .len()
             .min(profile.data.channel_density.len())
@@ -644,5 +645,61 @@ mod action_tests {
         assert!(parse_calibration("1 0 nope 0 1 0 0 0 1").is_err());
         assert!(parse_calibration("1 0 0 0 1 0 0 0").is_err());
         assert!(parse_calibration("1 0 0 0 1 0 0 0 1").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod acquisition_tests {
+    use super::*;
+    #[test]
+    fn imported_capture_light_is_independent_of_product_readout_and_round_trips() {
+        let film = crate::profile::load_profile_by_name(
+            &crate::test_support::data_dir(),
+            "kodak_portra_400",
+        )
+        .unwrap();
+        let mut params = RuntimeParams::default();
+        assert_eq!(params.film_render.convert.scan_illuminant, "D55");
+        let expected = [0.2, 0.35, 0.15];
+        let mut captures = Vec::new();
+        for light in ["D55", "T"] {
+            params.film_render.convert.scan_illuminant = light.into();
+            params.validate().unwrap();
+            let converter = Converter::new(&film, &params).unwrap();
+            let capture = converter.forward_jacobian(expected).0;
+            let inverse = converter.invert(capture);
+            for c in 0..3 {
+                assert!(
+                    (inverse[c] - expected[c]).abs() < 1e-5,
+                    "{light} {inverse:?}"
+                );
+            }
+            captures.push(capture);
+            let mut changed = film.clone();
+            changed.info.stage = "printing".into();
+            changed.info.usage = "cine".into();
+            assert_eq!(changed.readout_illuminant(), "BB5800");
+            let same = Converter::new(&changed, &params)
+                .unwrap()
+                .forward_jacobian(expected)
+                .0;
+            assert_eq!(
+                same, capture,
+                "product readout categories must not change imported capture inversion"
+            );
+        }
+        assert!(
+            captures[0]
+                .iter()
+                .zip(captures[1])
+                .any(|(a, b)| (a - b).abs() > 1e-5)
+        );
+        params.film_render.convert.scan_illuminant = "not-a-light".into();
+        assert!(
+            params
+                .validate()
+                .unwrap_err()
+                .contains("film_render.convert.scan_illuminant")
+        );
     }
 }

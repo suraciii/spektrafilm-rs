@@ -1,8 +1,8 @@
 //! Named positive-conversion styles for the negative-to-positive
 //! interpretation.
 //!
-//! A style is declared data, never a fitted surface: `neutral` is the
-//! frozen reference tone (the historical fitted constants the retired
+//! A style is declared data, never a fitted surface: `standard` is the
+//! automatic setup plus the frozen reference tone (historical constants the retired
 //! conversion controls once parameterized), and every other name resolves
 //! to `data/scan-styles/<name>.json` carrying one tone triple per channel
 //! of the same logistic family. Per-channel parameters are what lets a
@@ -24,26 +24,20 @@ pub struct ChannelTone {
 
 /// The frozen reference tone: the historical fitted defaults of the retired
 /// `conversion_brightness_ev` / `conversion_contrast` / `conversion_dmax`
-/// controls, byte-identical so `conversion_style = neutral` renders exactly
-/// as before the style slot existed.
-pub(crate) const NEUTRAL: [ChannelTone; 3] = [ChannelTone {
+/// controls. Standard adds frame setup before this unchanged tone.
+pub(crate) const STANDARD: [ChannelTone; 3] = [ChannelTone {
     brightness_ev: 0.8781766618,
     contrast: 0.73551400058216643,
     dmax: 1.5625841465572565,
 }; 3];
 
-/// `neutral` needs no data directory; any other style is a JSON file in
+/// `standard` needs no data directory; any other style is a JSON file in
 /// `scan-styles/` next to the profiles.
 pub(crate) fn resolve(name: &str, data_dir: Option<&Path>) -> Result<[ChannelTone; 3], String> {
-    if name == "neutral" {
-        return Ok(NEUTRAL);
+    if matches!(name, "standard" | "neutral") {
+        return Ok(STANDARD);
     }
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-        || name.contains(':')
-    {
+    if !valid_name(name) {
         return Err(format!(
             "scanner.conversion_style {name:?} is not a valid style name; available styles: {}",
             available(data_dir).join(", ")
@@ -51,7 +45,7 @@ pub(crate) fn resolve(name: &str, data_dir: Option<&Path>) -> Result<[ChannelTon
     }
     let Some(dir) = data_dir else {
         return Err(
-            "scanner.conversion_style requires a pipeline built from a data directory; only \"neutral\" is available here"
+            "scanner.conversion_style requires a pipeline built from a data directory; only \"standard\" is available here"
                 .into(),
         );
     };
@@ -72,10 +66,18 @@ pub(crate) fn resolve(name: &str, data_dir: Option<&Path>) -> Result<[ChannelTon
     })
 }
 
-/// Style names available under a data directory (`neutral` always, then the
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && !name.contains(':')
+}
+
+/// Style names available under a data directory (`standard` always, then the
 /// `scan-styles/*.json` stems) — for error messages and pickers.
 pub(crate) fn available(data_dir: Option<&Path>) -> Vec<String> {
-    let mut names = vec!["neutral".to_owned()];
+    let mut names = vec!["standard".to_owned()];
     if let Some(dir) = data_dir
         && let Ok(entries) = std::fs::read_dir(dir.join("scan-styles"))
     {
@@ -83,9 +85,10 @@ pub(crate) fn available(data_dir: Option<&Path>) -> Vec<String> {
             .flatten()
             .filter_map(|entry| {
                 let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                     path.file_stem()
                         .and_then(|stem| stem.to_str())
+                        .filter(|name| valid_name(name) && !matches!(*name, "standard" | "neutral"))
                         .map(str::to_owned)
                 } else {
                     None
@@ -136,19 +139,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn neutral_is_the_frozen_reference_and_needs_no_data_dir() {
-        assert_eq!(resolve("neutral", None).unwrap(), NEUTRAL);
-        assert_eq!(NEUTRAL[0].brightness_ev, 0.8781766618);
-        assert_eq!(NEUTRAL[0].contrast, 0.73551400058216643);
-        assert_eq!(NEUTRAL[0].dmax, 1.5625841465572565);
+    fn standard_uses_frozen_tone_and_needs_no_data_dir() {
+        assert_eq!(resolve("standard", None).unwrap(), STANDARD);
+        assert_eq!(STANDARD[0].brightness_ev, 0.8781766618);
+        assert_eq!(STANDARD[0].contrast, 0.73551400058216643);
+        assert_eq!(STANDARD[0].dmax, 1.5625841465572565);
     }
 
     #[test]
-    fn non_neutral_names_reject_traversal_and_missing_directories() {
+    fn fixed_names_reject_traversal_and_missing_directories() {
         assert!(resolve("../etc/passwd", None).is_err());
         assert!(resolve("a/b", None).is_err());
         let error = resolve("missing_style", None).unwrap_err();
-        assert!(error.contains("neutral"), "{error}");
+        assert!(error.contains("standard"), "{error}");
     }
 
     #[test]
@@ -165,15 +168,19 @@ mod tests {
             ]}"#,
         )
         .unwrap();
+        std::fs::write(styles.join("standard.json"), "not consulted").unwrap();
+        std::fs::write(styles.join("neutral.json"), "not consulted").unwrap();
+        std::fs::write(styles.join("bad..name.json"), "not offered").unwrap();
+        std::fs::create_dir(styles.join("not-a-file.json")).unwrap();
         let tones = resolve("warm-probe", Some(dir.path())).unwrap();
         assert_ne!(tones[0], tones[2]);
         assert_eq!(
             available(Some(dir.path())),
-            vec!["neutral".to_owned(), "warm-probe".to_owned()]
+            vec!["standard".to_owned(), "warm-probe".to_owned()]
         );
         assert_eq!(
             available(Some(&crate::test_support::data_dir())),
-            vec!["neutral".to_owned()]
+            vec!["standard".to_owned()]
         );
 
         let bad = r#"{"channels":[{"brightness_ev":0,"contrast":0,"dmax":1},{"brightness_ev":0,"contrast":1,"dmax":1},{"brightness_ev":0,"contrast":1,"dmax":1}]}"#;

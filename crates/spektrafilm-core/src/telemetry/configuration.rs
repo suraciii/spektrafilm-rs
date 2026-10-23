@@ -254,8 +254,9 @@ pub enum ScanOutput {
     NegativeToPositive,
 }
 
-/// Effective scanner model of a render: the one built-in neutral scan model
-/// plus the resolved lamp, output white and device matrix.
+/// Effective scanner model of a render: the one built-in neutral scan model,
+/// the readout illuminant selected by the material category, output white and
+/// device matrix.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanModelConfiguration {
     pub model: String,
@@ -263,25 +264,39 @@ pub struct ScanModelConfiguration {
     pub white_reference: String,
     pub output_white: String,
     pub matrix: String,
-    pub lamp: String,
+    /// Empty when reading a pre-cutover report that did not record this fact.
+    #[serde(default)]
+    pub readout_illuminant: String,
+    #[serde(default)]
+    pub readout_rule: String,
 }
 
 impl Default for ScanModelConfiguration {
     fn default() -> Self {
-        Self::from_runtime(&RuntimeParams::default())
+        Self {
+            model: "lab_scan_v1".into(),
+            sensor: "cie_1931_cmf".into(),
+            white_reference: "clear_film_base".into(),
+            output_white: "output_color_space_white".into(),
+            matrix: "identity".into(),
+            readout_illuminant: "D50".into(),
+            readout_rule: "default".into(),
+        }
     }
 }
 
 impl ScanModelConfiguration {
-    fn from_runtime(params: &RuntimeParams) -> Self {
+    fn from_runtime(params: &RuntimeParams, film: &Profile, print: &Profile) -> Self {
         let provenance = crate::ScannerProvenance::from_params(params);
+        let scanned = if params.io.scan_film { film } else { print };
         Self {
             model: provenance.model.to_owned(),
             sensor: provenance.sensor.to_owned(),
             white_reference: provenance.white_reference.to_owned(),
             output_white: provenance.output_white.to_owned(),
             matrix: provenance.matrix.to_owned(),
-            lamp: params.scanner.lamp.clone(),
+            readout_illuminant: scanned.readout_illuminant().to_owned(),
+            readout_rule: scanned.readout_rule().to_owned(),
         }
     }
 }
@@ -347,8 +362,8 @@ impl RenderConfiguration {
             } else {
                 ScanOutput::DirectScan
             },
-            conversion_style: params.scanner.conversion_style.clone(),
-            scan_model: ScanModelConfiguration::from_runtime(params),
+            conversion_style: params.scanner.conversion_style_name().to_owned(),
+            scan_model: ScanModelConfiguration::from_runtime(params, film, print),
             output_mix_amount: params.output_mix.amount,
             model_version: crate::runtime::MODEL_VERSION.into(),
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),

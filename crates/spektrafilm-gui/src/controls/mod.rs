@@ -102,9 +102,9 @@ pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medi
     // keeps the transition actioned; a non-neutral style with a direct scan
     // is a validation error the render would otherwise surface.
     if params.scanner.scan_output != "negative_to_positive"
-        && params.scanner.conversion_style != vocabulary::CONVERSION_STYLE_NEUTRAL
+        && params.scanner.conversion_style != vocabulary::CONVERSION_STYLE_STANDARD
     {
-        params.scanner.conversion_style = vocabulary::CONVERSION_STYLE_NEUTRAL.into();
+        params.scanner.conversion_style = vocabulary::CONVERSION_STYLE_STANDARD.into();
     }
 }
 
@@ -481,45 +481,17 @@ mod tests {
             // The scanner surface derives its medium from the route, so the
             // controls follow the route rather than the selected film stock.
             let active = medium.for_route(route) != ScanMedium::None;
-            for label in ["scanner lamp", "Lens blur (readout optics)"] {
-                assert_eq!(has_text(&output, label), active, "{route}: {label}");
-            }
+            assert_eq!(
+                has_text(&output, "Lens blur (readout optics)"),
+                active,
+                "{route}: lens blur"
+            );
             assert_eq!(
                 has_text(&output, "scan output"),
                 medium.positive_output_eligible(route),
                 "{route}"
             );
         }
-    }
-
-    #[test]
-    fn scanner_lamp_choice_writes_the_selected_illuminant() {
-        let ctx = egui::Context::default();
-        let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
-        assert!(has_text(&output, "D55"));
-        fn select(
-            ctx: &egui::Context,
-            params: &mut RuntimeParams,
-            summary: &str,
-            option: &str,
-        ) -> ChangeFlags {
-            let (_, output) = scanner_frame(ctx, params, ScanMedium::Negative, vec![]);
-            let button = text_position(&output, summary);
-            scanner_frame(ctx, params, ScanMedium::Negative, click(button, true));
-            scanner_frame(ctx, params, ScanMedium::Negative, click(button, false));
-            // Popup areas lay out their first frame before becoming visible and hittable.
-            let (_, output) = scanner_frame(ctx, params, ScanMedium::Negative, vec![]);
-            let entry = popup_text_position(&output, option);
-            scanner_frame(ctx, params, ScanMedium::Negative, click(entry, true));
-            scanner_frame(ctx, params, ScanMedium::Negative, click(entry, false)).0
-        }
-        let flags = select(&ctx, &mut params, "D55", "D65");
-        assert!(flags.runtime_changed, "scanner lamp");
-        assert_eq!(params.scanner.lamp, "D65");
-        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
-        assert!(has_text(&output, "D65"));
     }
 
     #[test]
@@ -547,7 +519,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
-        assert_eq!(params.scanner.conversion_style, "neutral");
+        assert_eq!(params.scanner.conversion_style, "standard");
         // The style belongs to the negative interpretation, so the direct scan
         // does not offer it at all.
         let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
@@ -555,16 +527,16 @@ mod tests {
         params.scanner.scan_output = "negative_to_positive".into();
         let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
         assert!(has_text(&output, "conversion style"));
-        assert!(has_text(&output, "neutral"));
+        assert!(has_text(&output, "standard"));
     }
 
     #[test]
     fn the_repository_data_directory_offers_only_the_neutral_style() {
         // No style ships with the install, so the shipped vocabulary is
-        // exactly `neutral` until the user drops a file into the data dir.
+        // exactly `standard` until the user drops a file into the data dir.
         assert_eq!(
             crate::profiles::scan_conversion_styles(&crate::profiles::pick_data_dir()),
-            vec!["neutral".to_owned()]
+            vec!["standard".to_owned()]
         );
     }
 
@@ -582,7 +554,7 @@ mod tests {
         assert_eq!(
             crate::profiles::scan_conversion_styles(data.path()),
             vec![
-                "neutral".to_owned(),
+                "standard".to_owned(),
                 "cool-probe".to_owned(),
                 "warm-probe".to_owned()
             ],
@@ -602,7 +574,7 @@ mod tests {
         // leaving a combination validation rejects.
         params.scanner.scan_output = "direct_scan".into();
         normalize_scanner_selections(&mut params, ScanMedium::Negative);
-        assert_eq!(params.scanner.conversion_style, "neutral");
+        assert_eq!(params.scanner.conversion_style, "standard");
         params.validate().unwrap();
     }
 

@@ -11,9 +11,9 @@ pub use io::{default_path, reset_factory, startup};
 pub use spektrafilm_core::config::config_dir;
 use validation::{normalize_grain_section, validate_state_parameters};
 
-/// The current Rust GUI state extension version. A saved document carries the
-/// canonical `cmyk` group; a legacy spelling is rejected by strict validation.
-pub(crate) const CURRENT_STATE_VERSION: u64 = 4;
+/// Version 5 removes scanner light controls and emits the canonical standard
+/// style. Explicit versions 1–4 migrate; current documents validate strictly.
+pub(crate) const CURRENT_STATE_VERSION: u64 = 5;
 
 /// Enlarger controls the upstream GUI also exposes under `simulation`
 /// aliases, as `(simulation key, enlarger key)`. Both directions of the
@@ -147,6 +147,37 @@ impl GuiState {
         if value.get("rust").is_some() && !matches!(version, Some(1..=CURRENT_STATE_VERSION)) {
             bail!("Unsupported Rust GUI state extension version");
         }
+        if matches!(version, Some(1..=4)) {
+            let mut top = json!({"scanner": value["scanner"].clone(),
+                "film_render": {"convert": value.get("convert").cloned().or_else(|| value.pointer("/rust/runtime/film_render/convert").cloned()).unwrap_or_else(|| json!({}))}});
+            spektrafilm_core::params::sources::normalize_legacy_scan_readout(&mut top, true)
+                .map_err(anyhow::Error::msg)?;
+            if value.get("scanner").is_some() {
+                value["scanner"] = top["scanner"].clone();
+            }
+            if top
+                .pointer("/film_render/convert/scan_illuminant")
+                .is_some()
+            {
+                value["convert"] = top["film_render"]["convert"].clone();
+            }
+            if let Some(runtime) = value.pointer_mut("/rust/runtime") {
+                spektrafilm_core::params::sources::normalize_legacy_scan_readout(runtime, true)
+                    .map_err(anyhow::Error::msg)?;
+            }
+        }
+        if value.pointer("/convert/scan_illuminant").is_none()
+            && let Some(light) = value
+                .pointer("/rust/runtime/film_render/convert/scan_illuminant")
+                .cloned()
+        {
+            if value.get("convert").is_none() {
+                value["convert"] = json!({});
+            }
+            if let Some(convert) = value.get_mut("convert").and_then(Value::as_object_mut) {
+                convert.insert("scan_illuminant".into(), light);
+            }
+        }
         validate_state_parameters(&mut value, version)?;
         for scanner in [&value["scanner"], &value["rust"]["runtime"]["scanner"]] {
             if let Some(selection) = scanner.get("scan_output") {
@@ -210,7 +241,7 @@ impl GuiState {
             }
         }
         // Promote extension-only controls before canonical factory defaults merge.
-        for key in ["scan_output", "conversion_style", "lamp"] {
+        for key in ["scan_output", "conversion_style"] {
             if normalized["scanner"].get(key).is_none()
                 && let Some(selection) = value["rust"]["runtime"]["scanner"].get(key)
             {
@@ -249,6 +280,13 @@ impl GuiState {
         state.sections["rust"]["version"] = json!(CURRENT_STATE_VERSION);
         state.sections["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         let params = state.runtime_params()?;
+        state.sections["scanner"]["conversion_style"] =
+            json!(params.scanner.conversion_style_name());
+        if state.sections["rust"]["runtime"]["scanner"].is_object() {
+            state.sections["rust"]["runtime"]["scanner"]["conversion_style"] =
+                json!(params.scanner.conversion_style_name());
+        }
+
         // Metadata is derived from the selected built-ins, never trusted from an import.
         state.sections["rust"]["scanner_provenance"] = serde_json::to_value(
             spektrafilm_core::scanner_provenance::ScannerProvenance::from_params(&params),

@@ -36,6 +36,11 @@ resolved value on the left and the value that disables it on the right. The
 after resolution, so it names the stages the preset, the profile, and your `--set` edits left
 active.
 
+The automatic `standard` negative conversion also measures the frame. A range that
+reaches its RGB output must select a declared fixed conversion style instead.
+Earlier density and exposure boundaries remain measurable. The instrument does
+not treat its point array as a photograph for automatic setup.
+
 The command does not disable a stage on your behalf. Pass the `--set` edits it names.
 
 ## `measure run`

@@ -543,20 +543,11 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     choose(h, "scan output", "Preserve medium polarity");
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
-            .is_some()
+            .is_none(),
+        "the readout light is a product constant, not a control"
     );
     let direct = render(h, "PREVIEW");
     assert_eq!((direct.width, direct.height), (128, 64));
-    // The lamp drives the direct colorimetric scan; the negative-to-positive
-    // density interpretation reads the film curves alone.
-    choose(h, "scanner lamp", "D65");
-    assert_eq!(h.state().params.scanner.lamp, "D65");
-    let lamp = render(h, "PREVIEW");
-    assert_ne!(lamp.data, direct.data);
-    choose(h, "scanner lamp", "D55");
-    assert_eq!(h.state().params.scanner.lamp, "D55");
-    let lamp_off = render(h, "PREVIEW");
-    assert_eq!(lamp_off.data, direct.data);
     edit(h, "Lens blur (readout optics)", "0.5");
     assert_eq!(h.state().params.scanner.lens_blur, 0.5);
     edit(h, "Lens blur (readout optics)", "not-a-number");
@@ -577,7 +568,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
-            .is_some()
+            .is_none()
     );
     // The conversion style belongs to the negative interpretation, so the
     // combo appears only once that polarity is selected. Its end-to-end
@@ -1079,8 +1070,8 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
     let h = &mut s.harness;
     assert_eq!(
         h.state().params.scanner.conversion_style,
-        "neutral",
-        "the shipped default stays the frozen reference tone"
+        "standard",
+        "the shipped default is the automatic standard"
     );
     click(h, "Profiles");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
@@ -1108,7 +1099,7 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
             .is_some()
     );
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::Button, "neutral")
+        h.query_by_role_and_label(egui::accesskit::Role::Button, "standard")
             .is_some()
     );
     h.press_key(egui::Key::Escape);
@@ -1121,14 +1112,14 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
         styled.data, reference.data,
         "an installed style must change the rendered capture"
     );
-    choose(h, "conversion style", "neutral");
-    assert_eq!(h.state().params.scanner.conversion_style, "neutral");
+    choose(h, "conversion style", "standard");
+    assert_eq!(h.state().params.scanner.conversion_style, "standard");
     let unstyled = render(h, "PREVIEW");
     assert_eq!(unstyled.data, reference.data);
 }
 
 #[test]
-fn scanner_lamp_and_state_rejection_use_the_neutral_scan_model() {
+fn scanner_state_rejection_uses_the_neutral_scan_model() {
     let mut s = session();
     let h = &mut s.harness;
     click(h, "Profiles");
@@ -1136,9 +1127,9 @@ fn scanner_lamp_and_state_rejection_use_the_neutral_scan_model() {
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
     choose(h, "workflow", "input > film > scan");
     click(h, "Scanner");
-    // The lamp drives the direct colorimetric scan: the negative-to-positive
-    // density interpretation reads the film curves alone, so the lamp check
-    // runs on the direct scan this route defaults to.
+    // The readout light is a product constant; it is not a control on any
+    // route. The retired-control checks run on the direct scan this route
+    // defaults to.
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     // The conversion style belongs to the negative interpretation, so the
     // direct scan does not offer it.
@@ -1148,6 +1139,7 @@ fn scanner_lamp_and_state_rejection_use_the_neutral_scan_model() {
     );
     for label in [
         "receiver profile",
+        "scanner lamp",
         "scanner auto setup",
         "scanner finish",
         "finish strength",
@@ -1161,13 +1153,8 @@ fn scanner_lamp_and_state_rejection_use_the_neutral_scan_model() {
     ] {
         assert!(h.query_by_label(label).is_none(), "retired control {label}");
     }
-    choose(h, "scanner lamp", "TH-KG3");
-    assert_eq!(h.state().params.scanner.lamp, "TH-KG3");
     let neutral = render(h, "PREVIEW");
     assert!(neutral.data.iter().all(|x| x.is_finite()));
-    choose(h, "scanner lamp", "D55");
-    let default_lamp = render(h, "PREVIEW");
-    assert_ne!(default_lamp.data, neutral.data);
     let accepted = h.state().current_state().unwrap();
     let accepted_params = h.state().params.clone();
     let accepted_input = h.state().image.as_ref().unwrap().clone();
@@ -1175,7 +1162,7 @@ fn scanner_lamp_and_state_rejection_use_the_neutral_scan_model() {
     let revision = h.state().parameter_revision;
     let epoch = h.state().calibration_epoch;
     for (key, value) in [
-        ("lamp", serde_json::json!("not-a-lamp")),
+        ("lens_blur", serde_json::json!("not-a-number")),
         ("scan_output", serde_json::json!("positive_scan")),
     ] {
         let mut invalid = accepted.sections.clone();
@@ -1211,19 +1198,19 @@ fn scanner_lamp_and_state_rejection_use_the_neutral_scan_model() {
         assert_eq!(h.state().parameter_revision, revision);
         assert_eq!(h.state().calibration_epoch, epoch);
     }
-    let persisted = s.directory.path().join("lamp-state.json");
+    let persisted = s.directory.path().join("scanner-state.json");
     accepted.save(&persisted).unwrap();
     let mut restored = app(
         persisted,
         s.directory.path().join("asymmetric-ramp.png"),
-        s.directory.path().join("lamp-browser.json"),
+        s.directory.path().join("scanner-browser.json"),
     );
     assert_eq!(restored.params.scanner, accepted_params.scanner);
     eframe::App::on_exit(&mut restored, None);
-    let save_path = s.directory.path().join("lamp-preview.png");
+    let save_path = s.directory.path().join("scanner-preview.png");
     h.state_mut().save_to_path(&save_path);
     let expected = image_io::convert_image(
-        &default_lamp,
+        &accepted_output,
         &h.state().output_color_space,
         h.state().output_cctf_encoding,
         "sRGB",
@@ -1266,7 +1253,6 @@ fn scanner_lamp_and_state_rejection_use_the_neutral_scan_model() {
     let slide = profile::load_profile_by_name(&data_dir(), "kodak_ektachrome_100").unwrap();
     choose(h, "film profile", slide.info.name.as_deref().unwrap());
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    assert_eq!(h.state().params.scanner.lamp, "D55");
     render(h, "PREVIEW");
 }
 

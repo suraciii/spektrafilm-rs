@@ -385,4 +385,30 @@ impl Profile {
     pub fn is_print_stock(&self) -> bool {
         (self.is_paper() || self.is_film()) && self.is_printing()
     }
+
+    /// The product readout illuminant selected by the material category.
+    ///
+    /// ISO 2910:2018 §6 fixes projection white for colour cine print
+    /// materials; every other material is read under ISO 3664 D50. This is a
+    /// product constant: it is not a runtime parameter and not a profile
+    /// field.
+    pub fn readout_illuminant(&self) -> &'static str {
+        if self.info.stage == "printing"
+            && self.info.usage == "cine"
+            && self.info.channel_model == "color"
+        {
+            "BB5800"
+        } else {
+            "D50"
+        }
+    }
+
+    /// The category rule that selected the readout illuminant, for provenance.
+    pub fn readout_rule(&self) -> &'static str {
+        if self.readout_illuminant() == "BB5800" {
+            "printing+cine+color"
+        } else {
+            "default"
+        }
+    }
 }

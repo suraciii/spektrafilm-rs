@@ -320,13 +320,13 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).to_owned())
             .collect(),
-        "camera.capture_illuminant" | "enlarger.illuminant" | "scanner.lamp" => {
-            crate::spectral_service::available_illuminants()
-                .iter()
-                .map(|v| (*v).to_owned())
-                .chain(std::iter::once("BB<kelvin> (1667..=25000)".into()))
-                .collect()
-        }
+        "camera.capture_illuminant"
+        | "enlarger.illuminant"
+        | "film_render.convert.scan_illuminant" => crate::spectral_service::available_illuminants()
+            .iter()
+            .map(|v| (*v).to_owned())
+            .chain(std::iter::once("BB<kelvin> (1667..=25000)".into()))
+            .collect(),
         "camera.diffusion_filter.filter_family" | "enlarger.diffusion_filter.filter_family" => {
             ["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"]
                 .iter()
@@ -409,7 +409,9 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
         }
         "settings.rgb_to_raw_method" => rgb_to_raw_names().contains(&value),
         "camera.color_filter" => crate::spectral_service::is_supported_color_filter(value),
-        "camera.capture_illuminant" | "enlarger.illuminant" | "scanner.lamp" => {
+        "camera.capture_illuminant"
+        | "enlarger.illuminant"
+        | "film_render.convert.scan_illuminant" => {
             crate::spectral_service::is_supported_illuminant(value)
         }
         "camera.diffusion_filter.filter_family" | "enlarger.diffusion_filter.filter_family" => {
@@ -612,12 +614,11 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         &params.camera.auto_exposure_method,
     )?;
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
-    if !crate::spectral_service::is_supported_illuminant(&params.scanner.lamp) {
-        let supported = crate::spectral_service::available_illuminants().join(", ");
-        return Err(format!(
-            "scanner.lamp: unsupported illuminant {:?}; supported: {supported}",
-            params.scanner.lamp
-        ));
+    if params.debug.lut_mode
+        && params.scanner.scan_output == "negative_to_positive"
+        && params.scanner.uses_standard()
+    {
+        return Err("scanner.conversion_style=standard measures the whole frame and cannot be baked into a point-wise LUT; select a declared fixed conversion style".into());
     }
     let style = &params.scanner.conversion_style;
     if style.is_empty()
@@ -630,7 +631,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             "scanner.conversion_style: {style:?} is not a valid style name"
         ));
     }
-    if style != "neutral" && params.scanner.scan_output != "negative_to_positive" {
+    if !params.scanner.uses_standard() && params.scanner.scan_output != "negative_to_positive" {
         return Err(
             "scanner.conversion_style requires scanner.scan_output=negative_to_positive".into(),
         );
@@ -650,6 +651,14 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         return Err(format!(
             "camera.capture_illuminant: unsupported illuminant {capture_illuminant:?}; \
              supported: {supported}"
+        ));
+    }
+    if !crate::spectral_service::is_supported_illuminant(
+        &params.film_render.convert.scan_illuminant,
+    ) {
+        return Err(format!(
+            "film_render.convert.scan_illuminant: unsupported capture illuminant {:?}",
+            params.film_render.convert.scan_illuminant
         ));
     }
     if !crate::spectral_service::is_supported_illuminant(&params.enlarger.illuminant) {
