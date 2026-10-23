@@ -107,6 +107,8 @@ The same setup implementation must serve per-stage CPU execution and the assembl
 
 Nondefault operator correction must require `standard`, `negative_to_positive`, and an eligible negative-film scan route. Direct scans, positive film, paper, scan-minus-base, and fixed styles must reject explicit nondefault correction. GUI state must retain valid inactive edits and expose their inactive status. The GUI must pass neutral operator values to rendering while those edits are inactive.
 
+Material-producing routes may retain otherwise valid pending scanner correction in their stage baseline, but must report the operator edits as inactive while no scan executes. Resumed negative `film > scan` must use the same setup and correction math as an uninterrupted film scan. Changing that downstream correction must not redevelop the stored material or reuse an earlier corrected positive as its setup input.
+
 Let `x_c` be reconstructed log10 exposure and `o_c` the immutable full-frame setup offset. Define `p = log10(0.16 / 0.184)` and `L = log10(2)`. The operator coordinates and correction are:
 
 ```text

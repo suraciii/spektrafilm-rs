@@ -14,9 +14,9 @@ The scanner controls include `scanner.scan_output`, `scanner.conversion_style`, 
 
 ## Experimental workflow routes and output modes
 
-Runtime and GUI state accept passthrough, film-scan, film-print-scan, and the three convert-film routes. Direct negative-film scans expose `scanner.scan_output=direct_scan|negative_to_positive`.
+The GUI exposes passthrough, film-scan, film-print-scan, and the three convert-film routes. The CLI also accepts material-producing and continuation routes described in [stage artifacts](../specs/cli/stage-artifacts.md). Direct negative-film scans expose `scanner.scan_output=direct_scan|negative_to_positive`.
 
-`direct_scan` preserves the medium's polarity. Calibrated `negative_to_positive` supports direct `input > film > scan` and real negative-capture `input > convert-film > scan`. It rejects paper, positive-film, print-paper, scan-minus-base, and active-Grain-Procedural combinations.
+`direct_scan` preserves the medium's polarity. Calibrated `negative_to_positive` supports direct `input > film > scan`, resumed `film > scan`, and real negative-capture `input > convert-film > scan`. It rejects paper, positive-film, print-paper, scan-minus-base, and active-Grain-Procedural combinations.
 
 `scanner.scan_output` accepts `direct_scan` and `negative_to_positive`. Replace the removed `positive_scan` value in CLI commands, parameter files, presets, recipes, and GUI states. Old values fail validation. The GUI displays **Preserve medium polarity** and **Negative to positive**. See [scanner language](../specs/film-chain/spec.md#scanner-language).
 
@@ -79,6 +79,8 @@ Warmth and tint are differential EV, not Kelvin. These controls do not change ne
 ```
 
 All four values must be finite, and contrast must be greater than zero. The GUI trial ranges are exposure ±3 EV, warmth/tint ±1 EV, and contrast 0.5–2. They are editor ranges, not document validation limits. Nondefault values require `standard`, `negative_to_positive`, and a supported negative-film route. CLI, recipes, and presets reject incompatible explicit combinations. The GUI retains inactive edits and renders with neutral operator values until the route and style support them. Reset restores `0, 0, 0, 1` without changing setup.
+
+Material-producing CLI routes may retain a valid pending negative-scan correction in their `.sfstage` baseline. They report it as inactive because no scanner ran. On `film > scan`, the correction becomes active and can be changed without developing the material again; automatic setup is measured from the retained complete material frame. See [material-stage continuation](../specs/cli/stage-artifacts.md).
 
 Standard negative-to-positive preview renders the complete crop/upscale working grid, including spatial effects, before reducing terminal RGB for preview. The GUI keeps full-grid output and reduces only the display raster. Pan, zoom, and preview size do not change the automatic baseline. Operator variants share core preparation when reusable; optical Dye/Fotufilm grain may require exact full-route recomputation. There is no separate approximate scan engine or hidden cross-frame setup lock. Full-grid preparation costs memory; it must not silently use reduced precision or sampled setup.
 

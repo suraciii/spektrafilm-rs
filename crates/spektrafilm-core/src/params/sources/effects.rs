@@ -97,6 +97,7 @@ impl Condition {
         match self {
             Self::ScanOperator => {
                 p.scanner.requires_full_frame()
+                    && p.workflow.route_enum().artifact_output().is_none()
                     && crate::pipeline_calibration::validate_scan_output(p, film).is_ok()
             }
             Self::NoOp => false,
