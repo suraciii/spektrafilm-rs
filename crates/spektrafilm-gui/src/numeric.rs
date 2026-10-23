@@ -130,6 +130,140 @@ struct SliderEditState {
     start: Option<f64>,
     canceled: bool,
     deferred: Option<f64>,
+    suspended: bool,
+}
+
+#[derive(Clone, Default)]
+struct NumericRegistry {
+    text: Vec<egui::Id>,
+    sliders: Vec<(egui::Id, egui::Id)>,
+}
+
+/// Photograph-local pending editors, separate from accepted adjustment state.
+/// Moving a photograph out of the live GUI removes its draft owners, queued
+/// wheel input, focus and slider drag from the shared egui context.
+#[derive(Default)]
+pub(crate) struct NumericDrafts {
+    text: Vec<(egui::Id, NumericEditState)>,
+    editors: Vec<(egui::Id, egui::text_edit::TextEditState)>,
+    sliders: Vec<(egui::Id, egui::Id, SliderEditState)>,
+    suspended: Option<egui::Id>,
+}
+
+impl NumericDrafts {
+    pub(crate) fn take(ctx: &egui::Context) -> Self {
+        let (drafts, focused, dragging) = ctx.data_mut(|data| {
+            let registry = data
+                .remove_temp::<NumericRegistry>(egui::Id::new("numeric-registry"))
+                .unwrap_or_default();
+            let active = data.get_temp::<egui::Id>(egui::Id::new("numeric-active-text"));
+            data.remove::<egui::Id>(egui::Id::new("numeric-active-text"));
+            let mut suspended = data.get_temp::<egui::Id>(egui::Id::new("numeric-suspended-text"));
+            data.remove::<egui::Id>(egui::Id::new("numeric-suspended-text"));
+            data.remove::<FrameAdjustmentSignals>(egui::Id::new("numeric-adjustment-signals"));
+            let mut text = Vec::new();
+            let mut editors = Vec::new();
+            for id in &registry.text {
+                let editor = data.get_persisted::<egui::text_edit::TextEditState>(*id);
+                data.remove::<egui::text_edit::TextEditState>(*id);
+                let state = data.get_temp::<NumericEditState>(*id);
+                data.remove::<NumericEditState>(*id);
+                if let Some(mut state) = state {
+                    state.wheel_events.clear();
+                    state.focused = false;
+                    if state.editing {
+                        state.suspended_for_language = true;
+                        if !state.resumed_after_language
+                            && (active == Some(*id) || suspended.is_none())
+                        {
+                            suspended = Some(*id);
+                        }
+                        text.push((*id, state));
+                        if let Some(editor) = editor {
+                            editors.push((*id, editor));
+                        }
+                    }
+                }
+            }
+            let mut sliders = Vec::new();
+            for &(widget, state_id) in &registry.sliders {
+                if let Some(mut state) = data.remove_temp::<SliderEditState>(state_id)
+                    && (state.start.is_some() || state.deferred.is_some())
+                {
+                    state.suspended = true;
+                    sliders.push((widget, state_id, state));
+                }
+            }
+            (
+                Self {
+                    text,
+                    editors,
+                    sliders,
+                    suspended,
+                },
+                registry.text,
+                registry.sliders,
+            )
+        });
+        ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused()
+                && (focused.contains(&id) || dragging.iter().any(|(widget, _)| *widget == id))
+            {
+                memory.surrender_focus(id);
+            }
+        });
+        if ctx
+            .dragged_id()
+            .is_some_and(|id| dragging.iter().any(|(widget, _)| *widget == id))
+        {
+            ctx.stop_dragging();
+        }
+        drafts
+    }
+
+    /// Restore as suspended, not focused: merely reopening a photograph must
+    /// neither commit its text nor turn the current pointer into its old drag.
+    pub(crate) fn restore(self, ctx: &egui::Context) {
+        let _ = Self::take(ctx);
+        ctx.data_mut(|data| {
+            let mut registry = NumericRegistry::default();
+            for (id, state) in self.text {
+                registry.text.push(id);
+                data.insert_temp(id, state);
+            }
+            for (id, editor) in self.editors {
+                data.insert_persisted(id, editor);
+            }
+            for (widget, id, state) in self.sliders {
+                registry.sliders.push((widget, id));
+                data.insert_temp(id, state);
+            }
+            data.insert_temp(egui::Id::new("numeric-registry"), registry);
+            if let Some(id) = self.suspended {
+                data.insert_temp(egui::Id::new("numeric-suspended-text"), id);
+            }
+        });
+    }
+}
+
+fn register_numeric_text(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|data| {
+        let registry =
+            data.get_temp_mut_or_default::<NumericRegistry>(egui::Id::new("numeric-registry"));
+        if !registry.text.contains(&id) {
+            registry.text.push(id);
+        }
+    });
+}
+
+fn register_numeric_slider(ctx: &egui::Context, widget: egui::Id, state: egui::Id) {
+    ctx.data_mut(|data| {
+        let registry =
+            data.get_temp_mut_or_default::<NumericRegistry>(egui::Id::new("numeric-registry"));
+        if !registry.sliders.iter().any(|(_, id)| *id == state) {
+            registry.sliders.push((widget, state));
+        }
+    });
 }
 
 /// Record the language control's stable focus/pointer target. The inspector
@@ -405,11 +539,28 @@ fn row_slider<T: egui::emath::Numeric>(
         )
         .inner;
     let state_id = response.id.with("adjustment");
+    register_numeric_slider(ui.ctx(), response.id, state_id);
     let mut state = ui
         .ctx()
         .data(|data| data.get_temp::<SliderEditState>(state_id))
         .unwrap_or_default();
     let pointer_active = response.is_pointer_button_down_on() || response.dragged();
+    if state.suspended
+        && !pointer_active
+        && !response.changed()
+        && !ui.input(|input| input.key_pressed(egui::Key::Escape))
+    {
+        signal_adjustment(
+            ui.ctx(),
+            label,
+            AdjustmentSignals {
+                active: true,
+                ..Default::default()
+            },
+        );
+        return false;
+    }
+    state.suspended = false;
     if state.start.is_none()
         && (adjustment_ended(ui.ctx())
             || ui.ctx().data(|data| {
@@ -537,6 +688,7 @@ where
     let decimals = if T::INTEGRAL { 0 } else { decimals };
     let current = value.to_f64();
     let id = ui.make_persistent_id(("numeric-field", id_salt));
+    register_numeric_text(ui.ctx(), id);
     let mut state = ui
         .ctx()
         .data(|data| data.get_temp::<NumericEditState>(id))
@@ -1597,5 +1749,152 @@ mod tests {
         assert!(!changed);
         assert!((value - 0.5).abs() < 1e-12);
         assert_eq!(super::take_adjustment_signals(&ctx), Default::default());
+    }
+}
+
+#[cfg(test)]
+mod photograph_draft_tests {
+    use super::*;
+
+    fn state(text: &str, value: f64, start: f64, detached: bool) -> NumericEditState {
+        NumericEditState {
+            text: text.into(),
+            last_value: value,
+            edit_start: start,
+            focused: true,
+            editing: true,
+            suspended_for_language: detached,
+            resumed_after_language: detached,
+            wheel_events: VecDeque::from([1.0]),
+        }
+    }
+
+    fn frame(ctx: &egui::Context, value: &mut f64) -> egui::Id {
+        let mut id = egui::Id::NULL;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                id = ui.make_persistent_id(("numeric-field", "photo-exposure"));
+                numeric_field(
+                    ui,
+                    "exposure",
+                    "photo-exposure",
+                    value,
+                    0.0,
+                    1.0,
+                    0.05,
+                    3,
+                    "tip",
+                    None,
+                    None,
+                );
+            });
+        });
+        id
+    }
+
+    #[test]
+    fn suspended_photograph_a_draft_cannot_commit_or_cancel_into_b() {
+        let ctx = egui::Context::default();
+        let mut a = 0.25;
+        let id = frame(&ctx, &mut a);
+        ctx.data_mut(|data| {
+            data.insert_temp(id, state("not-a-number", a, 0.5, false));
+            data.insert_temp(egui::Id::new("numeric-active-text"), id);
+        });
+        ctx.memory_mut(|memory| memory.request_focus(id));
+        suspend_numeric_draft(&ctx);
+        signal_adjustment(
+            &ctx,
+            "exposure",
+            AdjustmentSignals {
+                active: true,
+                ..Default::default()
+            },
+        );
+        let a_drafts = NumericDrafts::take(&ctx);
+        assert!(ctx.memory(|memory| memory.focused()).is_none());
+        assert!(!has_suspended_adjustment(&ctx));
+        assert_eq!(take_adjustment_signals(&ctx), AdjustmentSignals::default());
+        assert!(
+            ctx.data(|data| data.get_temp::<NumericEditState>(id))
+                .is_none()
+        );
+        let mut b = 0.9;
+        assert_eq!(
+            frame(&ctx, &mut b),
+            id,
+            "same stable control ID across photographs"
+        );
+        assert_eq!(b, 0.9);
+        assert_eq!(take_adjustment_signals(&ctx), AdjustmentSignals::default());
+        let b_drafts = NumericDrafts::take(&ctx);
+        a_drafts.restore(&ctx);
+        frame(&ctx, &mut a);
+        assert_eq!(a, 0.25, "restoring must not lose-focus commit or cancel A");
+        assert!(has_suspended_adjustment(&ctx));
+        let restored = ctx
+            .data(|data| data.get_temp::<NumericEditState>(id))
+            .unwrap();
+        assert_eq!(restored.text, "not-a-number");
+        assert_eq!(restored.edit_start, 0.5);
+        assert!(restored.wheel_events.is_empty());
+        assert_eq!(take_adjustment_signals(&ctx), AdjustmentSignals::default());
+        b_drafts.restore(&ctx);
+        frame(&ctx, &mut b);
+        assert_eq!(b, 0.9);
+        assert!(!has_suspended_adjustment(&ctx));
+    }
+
+    #[test]
+    fn detached_drafts_and_slider_interactions_are_moved_not_shared() {
+        let ctx = egui::Context::default();
+        let text = egui::Id::new("detached-photo-draft");
+        let widget = egui::Id::new("photo-slider");
+        let slider = widget.with("adjustment");
+        register_numeric_text(&ctx, text);
+        register_numeric_slider(&ctx, widget, slider);
+        ctx.data_mut(|data| {
+            data.insert_temp(text, state("0.1200", 0.12, 0.4, true));
+            data.insert_temp(
+                slider,
+                SliderEditState {
+                    start: Some(0.6),
+                    deferred: Some(0.2),
+                    ..Default::default()
+                },
+            );
+        });
+        ctx.set_dragged_id(widget);
+        let drafts = NumericDrafts::take(&ctx);
+        assert!(ctx.dragged_id().is_none());
+        assert!(
+            ctx.data(|data| data.get_temp::<SliderEditState>(slider))
+                .is_none()
+        );
+        assert!(
+            ctx.data(|data| data.get_temp::<NumericEditState>(text))
+                .is_none()
+        );
+        drafts.restore(&ctx);
+        assert!(
+            ctx.dragged_id().is_none(),
+            "restoring never resumes a pointer from another photograph"
+        );
+        let restored = ctx
+            .data(|data| data.get_temp::<SliderEditState>(slider))
+            .unwrap();
+        assert!(restored.suspended);
+        assert_eq!(restored.start, Some(0.6));
+        assert_eq!(restored.deferred, Some(0.2));
+        let restored = ctx
+            .data(|data| data.get_temp::<NumericEditState>(text))
+            .unwrap();
+        assert_eq!(restored.text, "0.1200");
+        assert!(restored.resumed_after_language);
+        assert!(restored.suspended_for_language);
+        assert!(
+            !has_suspended_adjustment(&ctx),
+            "detached draft must not reopen a closed history gesture"
+        );
     }
 }

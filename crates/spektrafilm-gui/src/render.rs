@@ -42,6 +42,28 @@ impl RenderSnapshot {
         }
     }
 
+    pub(crate) fn export_dependencies(
+        &self,
+    ) -> anyhow::Result<Vec<crate::photograph::record::Dependency>> {
+        let mut special = self.special.clone();
+        for name in ["film_channel_swap", "print_channel_swap"] {
+            if special.get(name).is_none() {
+                special[name] = serde_json::json!([0, 1, 2]);
+            }
+        }
+        let settings = crate::photograph::record::PhotographSettings {
+            params: self.params.clone(),
+            preparation: self.params.render_preparation_state(),
+            film: self.film_name.clone(),
+            print: self.print_name.clone(),
+            special,
+            raw: crate::state::GuiState::factory().sections["load_raw"].clone(),
+            rotation: 0,
+            applied: None,
+        };
+        crate::photograph::record::dependencies(&settings, &self.data_dir)
+    }
+
     /// Bind the owner's cancellation token to runtimes built from this snapshot.
     pub(super) fn with_cancellation(mut self, cancellation: Option<Arc<AtomicBool>>) -> Self {
         self.cancellation = cancellation;

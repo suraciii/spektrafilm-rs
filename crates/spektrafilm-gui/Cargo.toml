@@ -44,9 +44,13 @@ rust-i18n = { version = "3.1", features = ["log-miss-tr"] }
 sys-locale = "0.3"
 tempfile = "3"
 log = "0.4"
+sha2 = "0.10"
 
 [build-dependencies]
 serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # macOS-only: tag the CAMetalLayer's colorspace as sRGB so the OS
 # colour-manages the window correctly on wide-gamut external displays.
@@ -58,8 +62,8 @@ core-graphics = "0.24"
 foreign-types = "0.5"
 
 [dev-dependencies]
+image = { workspace = true, features = ["jpeg"] }
 egui_kittest = { version = "=0.31.1", default-features = false, features = ["eframe"] }
-sha2 = "0.10"
 
 [lints]
 workspace = true

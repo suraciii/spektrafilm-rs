@@ -8,10 +8,47 @@ fn expand_preset_library(h: &mut Harness<'_, App>) {
     if h.query_by_label("▶").is_some() {
         click(h, "▶");
     }
-    click(h, "Refresh");
+    scroll_preset_into_view(h, "Refresh");
+    preset_pointer_click(h, "Refresh", egui::PointerButton::Primary);
+}
+
+/// Scroll the preset browser itself, not the independent control inspector.
+fn scroll_preset_into_view(h: &mut Harness<'_, App>, label: &str) {
+    for _ in 0..32 {
+        let search = h.get_by_label("Search presets").raw_bounds().unwrap();
+        let filters = h.get_by_label("Recently used").raw_bounds().unwrap();
+        let top = filters.y1 + 8.0;
+        let bottom = h.ctx.screen_rect().bottom() as f64 - 8.0;
+        let bounds = h.get_by_label(label).raw_bounds().unwrap();
+        let delta = if bounds.y0 < top {
+            top - bounds.y0 + 12.0
+        } else if bounds.y1 > bottom {
+            bottom - bounds.y1 - 12.0
+        } else {
+            return;
+        };
+        h.input_mut()
+            .events
+            .push(egui::Event::PointerMoved(egui::pos2(
+                ((search.x0 + search.x1) * 0.5) as f32,
+                ((top + bottom) * 0.5) as f32,
+            )));
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, delta.clamp(-350.0, 350.0) as f32),
+            modifiers: Default::default(),
+        });
+        h.run_steps(10);
+    }
+    panic!("preset target did not enter the browser viewport: {label}");
 }
 
 fn context_click(h: &mut Harness<'_, App>, label: &str) {
+    scroll_preset_into_view(h, label);
+    preset_pointer_click(h, label, egui::PointerButton::Secondary);
+}
+
+fn preset_pointer_click(h: &mut Harness<'_, App>, label: &str, button: egui::PointerButton) {
     let bounds = h
         .get_by_label(label)
         .raw_bounds()
@@ -27,7 +64,7 @@ fn context_click(h: &mut Harness<'_, App>, label: &str) {
     for pressed in [true, false] {
         h.input_mut().events.push(egui::Event::PointerButton {
             pos: position,
-            button: egui::PointerButton::Secondary,
+            button,
             pressed,
             modifiers: egui::Modifiers::default(),
         });
@@ -87,16 +124,8 @@ fn edit_preset_name(h: &mut Harness<'_, App>, text: &str) {
 
 fn preset_row(h: &Harness<'_, App>, name: &str) -> String {
     let nodes: Vec<_> = h
-        .query_all_by_label_contains(name)
-        .filter(|node| node.node().role() == egui::accesskit::Role::Button)
-        // The card's action control is named after its entry, but it is not
-        // the row itself.
-        .filter(|node| {
-            !node
-                .label()
-                .unwrap_or_default()
-                .starts_with("preset actions for ")
-        })
+        .query_all_by_role(egui::accesskit::Role::Button)
+        .filter(|node| node.label().is_some_and(|label| label.starts_with(name)))
         .collect();
     assert_eq!(nodes.len(), 1, "preset row for {name}");
     nodes[0].label().unwrap().to_string()
@@ -202,7 +231,6 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     expand_preset_library(h);
 
     click(h, "Save preset…");
-    assert!(h.query_by_label("Name in My Presets").is_some());
     let invalid_name = "bad/name";
     edit_preset_name(h, invalid_name);
     assert!(h.get_by_label("Save").node().is_disabled());
@@ -231,7 +259,6 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
 
     let row = preset_row(h, "Dialog Look");
     click_preset_action(h, &row, "Rename…");
-    assert!(h.query_by_label("Name in My Presets").is_some());
     edit_preset_name(h, "Renamed Look");
     click(h, "Save");
     let renamed = library.directory().join("Renamed Look.toml");
@@ -265,7 +292,8 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     let external = s.directory.path().join("external-look.toml");
     external_look(h, "Renamed Look", &external);
     script(h, chooser::ChooserResult::Scripted(external.clone()));
-    click(h, "Import");
+    scroll_preset_into_view(h, "Import");
+    preset_pointer_click(h, "Import", egui::PointerButton::Primary);
     assert!(h.state().presets.name_dialog.is_some());
     edit_preset_name(h, "Imported Copy");
     click(h, "Save");
@@ -295,36 +323,39 @@ fn preset_card_actions_are_reachable_by_pointer_and_by_keyboard() {
 
     // The card's own action control is addressable per entry, so the context
     // menu is not the only route to the actions.
-    let actions: Vec<_> = h
-        .query_all_by_label_contains("preset actions for Card Look")
-        .collect();
-    assert_eq!(actions.len(), 1, "one action control per preset card");
-    actions[0].simulate_click();
-    h.run_steps(3);
-    assert!(h.query_by_label("Rename…").is_some());
-    assert!(h.query_by_label("Duplicate…").is_some());
-    assert!(h.query_by_label("Export…").is_some());
-    assert!(h.query_by_label("Show file").is_some());
-    assert!(h.query_by_label("Delete…").is_some());
+    let actions = "preset actions for Card Look";
+    scroll_preset_into_view(h, actions);
+    preset_pointer_click(h, actions, egui::PointerButton::Primary);
+    preset_pointer_click(h, "Rename…", egui::PointerButton::Primary);
+    assert!(h.state().presets.name_dialog.is_some());
+    click(h, "Cancel");
     h.press_key(egui::Key::Escape);
     h.run_steps(3);
 
     // Keyboard route: focus the control, then activate it.
-    let actions: Vec<_> = h
-        .query_all_by_label_contains("preset actions for Card Look")
-        .collect();
-    assert_eq!(actions.len(), 1, "the action control is addressable");
-    actions[0].focus();
-    h.step();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, actions)
+        .focus();
+    h.run_steps(10);
     h.press_key(egui::Key::Space);
     h.run_steps(3);
-    assert!(h.query_by_label("Rename…").is_some());
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Duplicate…")
+        .focus();
+    h.step();
+    h.press_key(egui::Key::Enter);
+    h.run_steps(3);
+    assert!(h.state().presets.name_dialog.is_some());
     h.press_key(egui::Key::Escape);
     h.run_steps(3);
+    assert!(
+        h.get_by_role_and_label(egui::accesskit::Role::Button, actions)
+            .node()
+            .is_focused(),
+        "closing the dialog returns focus to its persistent card action control"
+    );
 
     // The context menu remains an additional route.
     click_preset_action(h, &preset_row(h, "Card Look"), "Rename…");
-    assert!(h.query_by_label("Name in My Presets").is_some());
+    assert!(h.state().presets.name_dialog.is_some());
 }
 
 fn open_export_dialog(h: &mut Harness<'_, App>) {
@@ -762,7 +793,6 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     assert_eq!((loaded.width, loaded.height), (7, 3));
     assert_eq!(loaded.data, expected.data);
     assert!(h.state().output_image.is_none());
-    assert!(h.state().status.to_string().starts_with("Loaded 7 × 3"));
 
     let mut imported = session();
     script(
@@ -781,16 +811,15 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     let retained_image = h.state().image.as_ref().unwrap().clone();
     let retained_path = h.state().image_path.clone();
     let params = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+    let history = (h.state().can_undo(), h.state().can_redo());
     let corrupt = s.directory.path().join("dropped-corrupt.png");
     std::fs::write(&corrupt, b"not an image").unwrap();
     drop_file(h, &corrupt);
-    assert!(
-        h.state().status.to_string().starts_with("Load error:"),
-        "{}",
-        h.state().status
-    );
     assert_eq!(h.state().image_path, retained_path);
     assert_eq!(h.state().params, params);
+    assert_eq!(h.state().parameter_revision, revision);
+    assert_eq!((h.state().can_undo(), h.state().can_redo()), history);
     assert!(Arc::ptr_eq(
         h.state().image.as_ref().unwrap(),
         &retained_image

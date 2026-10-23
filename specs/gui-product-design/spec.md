@@ -8,13 +8,32 @@ The GUI must reduce navigation and editing effort without removing supported con
 
 This target replaces the MAIN, FILM, PRINT, ADVANCED, and CONFIG page navigation with a stage inspector and separate application settings. It does not change the film pipeline, canonical parameter paths, preset schemas, validation, or Save and Export pixel semantics.
 
+## Capability map
+
+The GUI must support this photographic work without requiring a second basic/expert control inventory:
+
+```mermaid
+flowchart LR
+    O[Open photograph] --> L[Choose a look]
+    L --> E[Refine adjustments]
+    E --> C[Compare A and B]
+    C --> D[Inspect and deliver]
+    E --> R[Save photograph adjustments]
+    R --> W[Continue across photographs]
+    W --> Q[Queue exports]
+```
+
+[Result identity](../gui-workflow/spec.md#result-identity-and-delivery-guidance) owns confidence in the displayed and delivered image. [Visual hierarchy](../gui-presentation/spec.md#visual-hierarchy) owns control density. [Preset discovery aids](../presets/spec.md#preset-discovery-aids) owns reference thumbnails, favorites, and recently used looks. [Photograph work](photo-work/spec.md) owns A/B comparison, adjustment records, and multi-photograph work.
+
+These are target capabilities, not a statement of implementation. Delivery schedules and research candidates are not product contracts.
+
 ## Workspace
 
 The workspace must keep three regions: a collapsible preset browser on the left, the retained-image viewer in the center, and the adjustment inspector on the right. The image must remain visible while a person chooses a preset or edits a photographic parameter.
 
 The header must expose Open image, Undo, Redo, application settings, and independent Export. It must identify the current source, material pair, and physical workflow. Material and workflow summaries outside the inspector must be read-only. The header remains the single operation-status surface.
 
-Preview, Scan, and Save must remain reachable without opening a photographic module. They must retain their distinct names and operation scopes. Export may be the primary delivery action, but it must not replace Save.
+Preview, Scan, and Save must remain reachable without opening a photographic module. They must retain their distinct names and operation scopes. Delivery emphasis follows [Result identity and delivery guidance](../gui-workflow/spec.md#result-identity-and-delivery-guidance).
 
 The inspector must present Input and capture, Film, Print, Scan, and Output in that order. A stage jump strip must reveal and scroll to the corresponding heading in the same inspector. It must not switch between mutually exclusive pages. Several stages and modules must be able to remain open together.
 
@@ -95,7 +114,7 @@ All controls, module toggles, preset actions, search results, and dialogs must w
 
 ## Non-goals
 
-This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, live preset thumbnails, favorites, collections, batch processing, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls.
+This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, live current-photograph preset thumbnails, media cataloging, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls. Favorites and multi-photograph work follow the owners in the [capability map](#capability-map).
 
 The HTML design reference is not an engine implementation. Its sample values, parameter count, browser storage, image assets, and disabled engine actions are not native product contracts. Native acceptance must use actual source images, production controls, and real render and writer operations.
 

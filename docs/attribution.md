@@ -26,6 +26,10 @@ Claude Code assisted the port.
 The Rust program is GPL-3.0; see [LICENSE](../LICENSE).
 Andrea Volpato's spectral profiles and their LUT derivatives retain CC BY-SA 4.0; see [the canonical asset license](../data/license/SPEKTRAFILM_LICENSE.txt).
 
+## Fixed GUI preset reference photograph
+
+The fixed Kiwi (`Actinidia chinensis`) reference photograph is by [Luc Viatour](https://lucnix.be/) (2008) and comes from [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Kiwi_(Actinidia_chinensis)_1_Luc_Viatour.jpg), where it is licensed under [CC BY-SA 2.5 Generic](https://creativecommons.org/licenses/by-sa/2.5/) ([legal code](https://creativecommons.org/licenses/by-sa/2.5/legalcode)). The bundled `preset-reference.jpg` is a downsampled source photograph; `preset-thumbnails.json` contains resized and CPU-processed adaptations distributed under the same license. The license applies to those image assets and adaptations, not to users' photographs or the SpektraFilm program, which remains GPL-3.0. The GUI shows the photograph credit and license beside each reference thumbnail. See the [bundled reference-image notice](../crates/spektrafilm-gui/assets/PRESET_REFERENCE_LICENSE.txt) for the complete provenance record.
+
 ## GUI Chinese font
 
 The GUI embeds unmodified Noto Sans SC Regular (Version 2.004) from [Noto CJK](https://github.com/notofonts/noto-cjk). The font is © 2014–2021 Adobe and distributed under the SIL Open Font License 1.1. The [source notice](../crates/spektrafilm-gui/assets/NotoSansSC-NOTICE.txt) records its upstream blob; the [license](../crates/spektrafilm-gui/assets/NotoSansSC-OFL.txt) ships with native packages. It supplies offline Chinese and mixed-script text without requiring system font installation.

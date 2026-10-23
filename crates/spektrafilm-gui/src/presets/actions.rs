@@ -62,6 +62,7 @@ impl App {
                     group,
                     name: name.to_owned(),
                 });
+                self.presets.record_application(group, name);
                 self.invalidate_look_render();
                 self.label_adjustment_message(
                     crate::app::Message::new("operations.history.apply_named_look")

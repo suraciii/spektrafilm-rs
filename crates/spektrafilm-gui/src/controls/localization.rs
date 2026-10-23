@@ -4,6 +4,61 @@ use std::borrow::Cow;
 
 fn key(label: &str) -> Option<&'static str> {
     match label {
+        "Photograph toolbar" => Some("controls.owner.photograph_toolbar"),
+        "Result actions" => Some("controls.owner.result_actions"),
+        "Work list" => Some("photo_work.list.title"),
+        "Retained image" => Some("controls.section.retained_image"),
+        "Photograph records" => Some("controls.section.photograph_records"),
+        "A/B comparison" => Some("photo_work.compare.title"),
+        "Export queue" => Some("photo.queue.title"),
+        "Preset discovery" => Some("controls.section.preset_discovery"),
+        "Continue saving retained pixels" => Some("result.save.continue"),
+        "Save adjustments…" => Some("photo.record.save"),
+        "Reopen adjustments…" => Some("photo.record.reopen"),
+        "Photographs…" => Some("photo.work_list"),
+        "Capture A" => Some("photo_work.compare.capture"),
+        "A · reference" => Some("photo_work.compare.a"),
+        "B · current" => Some("photo_work.compare.b"),
+        "Adopt A" => Some("photo_work.compare.adopt"),
+        "Clear A" => Some("photo_work.compare.clear"),
+        "Render A" => Some("photo_work.compare.render"),
+        "Add photographs…" => Some("photo_work.list.add"),
+        "Previous photograph" => Some("photo_work.list.previous"),
+        "Next photograph" => Some("photo_work.list.next"),
+        "Remove entry" => Some("photo_work.list.remove"),
+        "Choose an adjustment scope…" => Some("photo_work.list.choose_scope"),
+        "Copy scope to selected destinations" => Some("photo_work.list.copy"),
+        "Choose output directory…" => Some("photo_work.list.choose_directory"),
+        "Allow replacement of existing output files" => Some("photo_work.list.replace"),
+        "Submit selected photographs" => Some("photo_work.list.submit"),
+        "Cancel remaining queue entries" => Some("photo.queue.cancel_remaining"),
+        "Cancel this export" => Some("photo.queue.cancel"),
+        "Retry submitted snapshot" => Some("photo.queue.retry_snapshot"),
+        "All looks" => Some("surfaces.presets.discovery_all"),
+        "Favorites" => Some("surfaces.presets.discovery_favorites"),
+        "Recently used" => Some("surfaces.presets.discovery_recent"),
+        "Clear search and filters" => Some("surfaces.presets.discovery_reset"),
+        "retained image" => Some("controls.condition.retained_image"),
+        "stale Save confirmation is open" => Some("controls.condition.stale_save"),
+        "loaded source; accepted adjustments only" => Some("controls.condition.accepted_source"),
+        "captured reference; matching geometry" => Some("controls.condition.comparison_geometry"),
+        "captured reference" => Some("controls.condition.comparison_reference"),
+        "captured reference without output or running render" => {
+            Some("controls.condition.comparison_render")
+        }
+        "adjacent work list entry" => Some("controls.condition.work_adjacent"),
+        "work list entry; removes membership, not files" => Some("controls.condition.work_remove"),
+        "loaded source; selected destinations; explicit scope" => {
+            Some("controls.condition.work_copy")
+        }
+        "selected destinations; output directory" => Some("controls.condition.work_submit"),
+        "pending queued exports" => Some("controls.condition.queue_pending"),
+        "pending queue entry; first eligible entry" => Some("controls.condition.queue_cancel"),
+        "failed queue entry; first eligible entry" => Some("controls.condition.queue_retry"),
+        "favorites retain built-in or user group identity" => {
+            Some("controls.condition.preset_favorites")
+        }
+        "no matching presets" => Some("controls.condition.preset_empty"),
         " • applied" => Some("surfaces.presets.suffix_applied"),
         " • missing" => Some("surfaces.presets.suffix_missing"),
         " • modified" => Some("surfaces.presets.suffix_modified"),

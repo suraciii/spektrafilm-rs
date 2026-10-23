@@ -24,6 +24,16 @@ Filtering must preserve the `Built-in` and `My Presets` groups and their identit
 
 The browser must distinguish a library with no look presets from a search with no matches. The no-match state must offer to clear the query. The empty-library state must retain the save guidance. The query must not persist across restarts or enter GUI-state files or preset documents. This browser search is separate from [control search](../gui-workflow/spec.md#control-search).
 
+### Preset discovery aids
+
+The browser must offer Favorites and Recently used filters within the existing library. Both must retain group identity, deterministic row ordering, and the applied or missing context under [Browser search](#browser-search). Recent membership must record successful look application, not browsing or failed application. It must contain the latest ten distinct applied look identities.
+
+Favorites and recent membership must persist as application browsing preferences, separately from presets and photographic state. Toggling a favorite or changing a filter must not apply a look or render a photograph. Application-owned rename must carry these references to the new name; missing entries must not bind to another group with the same name.
+
+Built-in looks must offer thumbnails rendered from one fixed reference photograph. Each thumbnail must identify that reference and must not imply that it previews the active photograph. It must represent its preset and material versions; a missing or outdated image must show unavailable rather than a misleading substitute. User looks may have no reference image and must remain fully usable.
+
+Reference images must retain visible preset and material names. Opening the browser must not start a render of the current photograph for every preset. Reference-image rights must permit distribution with the application.
+
 ## User library
 
 A user preset is a valid preset document in the preset library directory. Placing such a document in that directory makes it available to the GUI browser and to preset name resolution. The browser and the CLI must use the same discovery and name rules.
@@ -54,7 +64,7 @@ Ordinary startup must restore the browser metadata independently of the configur
 
 Renaming or deleting the applied user preset must update the marker: a rename follows the new name, and a delete leaves the look controls untouched and shows the remembered name as missing.
 
-Browser rows must show the preset name, the film reference, and the print reference. Live thumbnails, favorites, sorting options, collections, per-scope preset memory, arbitrary scope capture, and batch application are outside this contract.
+Browser rows must show the preset name, the film reference, and the print reference. [Preset discovery aids](#preset-discovery-aids) owns reference-image requirements and browsing filters. Live current-photograph thumbnails, user-selectable sorting, collections, per-scope preset memory, and arbitrary scope capture are outside this contract. Multi-photograph application follows [Photograph work](../gui-product-design/photo-work/spec.md#copy-adjustments).
 
 ### Apply
 

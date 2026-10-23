@@ -46,6 +46,10 @@ The header toolbar must present Open, Undo, Redo, Settings, and Export without c
 
 The inspector must use one vertically scrolling control list. Long lists must not require horizontal scrolling to reach a value, reset action, or help. Labels and help may wrap without hiding the value or its editor. Collapse controls must show their expanded state without color alone. Stage and module expansion must remain independent under [complete control access](../gui-workflow/spec.md#complete-control-access).
 
+Labels and current values must have greater visual emphasis than reset, management, and technical-help actions. Compact secondary actions must retain visible keyboard focus and an accessible name that identifies their target. Essential actions must not be discoverable only by hover.
+
+Numeric entries and sliders must remain available under [Parameter rows](#parameter-rows); reducing visual weight must not remove an editing method. Canonical paths must remain secondary detail rather than replace product labels. Inactive values must stay legible. These changes must use the existing semantic tokens rather than introduce a second theme.
+
 ## Parameter rows
 
 - The inspector presents an editable parameter as a parameter row in its owning module.

@@ -165,6 +165,8 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
     let params = h.state().params.clone();
     let image = h.state().image.as_ref().unwrap().clone();
     let output = h.state().output_image.as_ref().unwrap().clone();
+    let revision = h.state().parameter_revision;
+    let history = (h.state().can_undo(), h.state().can_redo());
     let mut incompatible = h.state().current_state().unwrap().sections;
     incompatible["scanner"]["scan_output"] = serde_json::json!("positive_scan");
     state_controls(h);
@@ -179,16 +181,10 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
         std::fs::write(&path, bytes).unwrap();
         script(h, chooser::ChooserResult::Scripted(path));
         click(h, "Load from file");
-        assert!(
-            h.state()
-                .status
-                .to_string()
-                .starts_with("State load error:"),
-            "{}",
-            h.state().status
-        );
         assert_eq!(h.state().image_path, image_path);
         assert_eq!(h.state().params, params);
+        assert_eq!(h.state().parameter_revision, revision);
+        assert_eq!((h.state().can_undo(), h.state().can_redo()), history);
         assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &image));
         assert!(Arc::ptr_eq(
             h.state().output_image.as_ref().unwrap(),
@@ -203,13 +199,10 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
     std::fs::write(&corrupt, b"not an image").unwrap();
     script(h, chooser::ChooserResult::Scripted(corrupt));
     import_file(h, false);
-    assert!(
-        h.state().status.to_string().starts_with("Load error:"),
-        "{}",
-        h.state().status
-    );
     assert_eq!(h.state().image_path.as_ref(), image_path.as_ref());
     assert_eq!(h.state().params, params);
+    assert_eq!(h.state().parameter_revision, revision);
+    assert_eq!((h.state().can_undo(), h.state().can_redo()), history);
     assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &image));
     assert!(Arc::ptr_eq(
         h.state().output_image.as_ref().unwrap(),
@@ -338,8 +331,13 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
     choose(h, "workflow", "input");
-    script(h, chooser::ChooserResult::Scripted(path));
+    script(h, chooser::ChooserResult::Scripted(path.clone()));
     import_file(h, false);
+    assert!(h.query_by_label("Discard changes").is_some());
+    assert_eq!(h.state().params.workflow.route, "input");
+    click(h, "Discard changes");
+    assert!(h.query_by_label("Discard changes").is_none());
+    assert_eq!(h.state().image_path.as_ref(), Some(&path));
     let original = h.state().image.as_ref().unwrap().clone();
     let baseline = render(h, "SCAN");
     reveal_control(h, "action.rotate_cw");

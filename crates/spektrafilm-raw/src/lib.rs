@@ -30,6 +30,9 @@ pub struct RawResult {
     /// Linear ACES2065-1 pixels; LibRaw applies camera orientation during decode.
     pub image: ImageBuf,
     pub lens_info: String,
+    /// The exact version-tagged model selected during this decode's native
+    /// correction, not a later lookup. None means correction was disabled.
+    pub lens_model_identity: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -60,11 +63,19 @@ unsafe extern "C" {
         height: u32,
         summary: *mut c_char,
         summary_length: usize,
+        identity: *mut *mut c_char,
         error: *mut c_char,
         error_length: usize,
     ) -> i32;
     fn sf_raw_free(pixels: *mut f32);
     fn sf_raw_version() -> *const c_char;
+    fn sf_raw_lens_model_identity(
+        path: *const c_char,
+        identity: *mut *mut c_char,
+        error: *mut c_char,
+        error_length: usize,
+    ) -> i32;
+    fn sf_raw_free_lens_identity(identity: *mut c_char);
 }
 
 pub fn decoder_version() -> String {
@@ -73,6 +84,29 @@ pub fn decoder_version() -> String {
             .to_string_lossy()
             .into_owned()
     }
+}
+
+/// Source-specific resolved Lensfun camera/lens model, using the correction
+/// resolver and database loader. This is identity evidence, not a project asset.
+pub fn lens_model_identity(path: &Path) -> Result<String, RawError> {
+    let path = CString::new(path.to_string_lossy().as_bytes())
+        .map_err(|_| RawError::Native("Path contains NUL".into()))?;
+    let mut identity = std::ptr::null_mut();
+    let mut error = [0 as c_char; 1024];
+    let status = unsafe {
+        sf_raw_lens_model_identity(
+            path.as_ptr(),
+            &mut identity,
+            error.as_mut_ptr(),
+            error.len(),
+        )
+    };
+    if status != 0 {
+        return Err(RawError::Native(c_string(&error)));
+    }
+    let text = unsafe { CStr::from_ptr(identity).to_string_lossy().into_owned() };
+    unsafe { sf_raw_free_lens_identity(identity) };
+    Ok(text)
 }
 
 struct NativePixels(*mut f32);
@@ -111,10 +145,12 @@ pub fn load(path: &Path, options: &RawOptions) -> Result<RawResult, RawError> {
         .ok_or_else(|| RawError::Native("Image dimensions overflow".into()))?;
     let floats = unsafe { std::slice::from_raw_parts_mut(owned.0, count) };
     let mut lens_info = String::new();
+    let mut lens_model_identity = None;
     if options.lens_correction {
         let path = CString::new(path.to_string_lossy().as_bytes())
             .map_err(|_| RawError::Native("Path contains NUL".into()))?;
         let mut summary = [0 as c_char; 1024];
+        let mut identity = std::ptr::null_mut();
         let status = unsafe {
             sf_raw_correct_lens(
                 path.as_ptr(),
@@ -123,6 +159,7 @@ pub fn load(path: &Path, options: &RawOptions) -> Result<RawResult, RawError> {
                 height,
                 summary.as_mut_ptr(),
                 summary.len(),
+                &mut identity,
                 error.as_mut_ptr(),
                 error.len(),
             )
@@ -131,6 +168,9 @@ pub fn load(path: &Path, options: &RawOptions) -> Result<RawResult, RawError> {
             return Err(RawError::Native(c_string(&error)));
         }
         lens_info = c_string(&summary);
+        lens_model_identity =
+            Some(unsafe { CStr::from_ptr(identity).to_string_lossy().into_owned() });
+        unsafe { sf_raw_free_lens_identity(identity) };
     }
     if let Some(matrix) = adaptation {
         for rgb in floats.as_chunks_mut::<3>().0 {
@@ -154,6 +194,7 @@ pub fn load(path: &Path, options: &RawOptions) -> Result<RawResult, RawError> {
     Ok(RawResult {
         image: ImageBuf::from_data(width, height, data),
         lens_info,
+        lens_model_identity,
     })
 }
 fn c_string(buffer: &[c_char]) -> String {

@@ -20,9 +20,12 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 ## Workspace
 
-The header provides **Open**, **Undo**, **Redo**, **Settings**, and **Export**. It identifies the accepted source, film, print material, and workflow route as read-only context, and reports operation status. While an export runs, **Cancel export** replaces **Export**.
+The header provides **Save adjustments…**, **Reopen adjustments…**, **Photographs…**, **Open**, **Undo**, **Redo**, **Settings**, and primary **Export**. It identifies the accepted source, film, print material, and workflow route as read-only context, and reports operation status. While an export runs, **Cancel export** replaces **Export**.
 
 The left **Presets** browser is collapsible and resizable. **Search presets** finds looks by name or film/print stock, including stock display names. **Clear preset search** restores the full list. **Built-in** looks are read-only; **My Presets** holds user looks. **Save preset…** saves a look, not a photograph or startup default. Searching, collapsing, or scrolling the browser does not apply a look or change the photograph.
+Built-in reference thumbnails sit beside the compact card controls; the fixed-reference warning, attribution, and license appear once above the group. Each card's visible action menu supports pointer and keyboard activation, with focused controls scrolled into view; library issues precede the cards, and the applied or missing look remains visible above the list.
+
+**Favorites** and **Recently used** filter the same library together with search. Favoriting or browsing does not apply a look. Recently used retains ten distinct successful whole-look applications. These discovery preferences persist separately from photographic controls and preset files. Reference thumbnails use one licensed photograph, not the active source; missing or outdated assets show an unavailable reference instead of a misleading image.
 
 The right inspector contains one continuous list, not mutually exclusive pages. Its sticky **Search controls**, **Only modified**, and stage-jump strip remain visible while controls scroll. The jumps reveal and scroll to **Input and capture**, **Film**, **Print**, **Scan**, or **Output** in that same list; they clear the active search and Only modified filter without changing parameters. Several stages and modules can remain open together. Folding a module changes its presentation only, and ordinary edits, render completion, and route changes retain its disclosure and scroll state.
 
@@ -138,6 +141,8 @@ Accepting another source, completing RAW reprocessing, or loading a complete GUI
 
 New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates skip the development animation; explicit Preview and Scan retain it.
 
+The retained-result label identifies **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
+
 **SCAN** renders the full-resolution input with spatial and stochastic effects. It prefers GPU execution with CPU fallback. The resulting full-resolution output is retained for Save and inspection in the viewport.
 
 **Scan → Scanner → scan for print** disables print viewing glare for the print scan. Toggle it again to restore the previous value. Loading state or changing profiles clears the transient snapshot.
@@ -198,13 +203,37 @@ The GUI warns that JPEG remains lossy even at quality 100. 4:2:0 can soften colo
 
 ## Save retained output
 
-**SAVE** saves the latest retained floating output without rerendering, even when the header marks that frame as not current. It uses **Output → Output → saving color space** and **saving cctf encoding**. The filename extension selects the format. `.jpg` is the default. Run Preview or Scan first when the file should reflect changed controls.
+**SAVE** saves the latest retained floating output without rerendering. If it no longer matches the accepted adjustments, an explicit confirmation offers to continue saving that frame or cancel before opening the file chooser. It uses **Output → Output → saving color space** and **saving cctf encoding**. The filename extension selects the format. `.jpg` is the default. Run Preview or Scan first when the file should reflect changed controls.
 
 - JPEG/PNG use 8-bit integer samples.
 - TIFF uses 16-bit integer samples with ZIP compression.
 - OpenEXR uses 16-bit half samples.
 
 Save uses upstream OpenImageIO JPEG defaults rather than Export's quality/subsampling settings. Neither TIFF nor EXR forces ACES or linear encoding. Viewer borders, watermark, and display ICC transforms stay out of saved pixels. See the [shared writer contract](cli.md) for output format details.
+
+## A/B comparison
+
+Use **Capture A** below the viewer to retain the accepted adjustments as a session-local reference. Pending numeric text and RAW decode drafts are excluded. **A · reference** and **B · current** alternate in the same viewer with synchronized image position, scale, and display transform. Both sides report quality, dimensions, and readiness; unequal quality and incompatible geometry are explicit.
+
+If A has no matching pixels, **Render A** uses an isolated renderer. It never substitutes B's stale output. Inspecting A does not change B, history, Save, or Export. **Adopt A** makes one reversible adjustment without rereading a preset. Accepted source replacement, RAW reprocessing, or complete-state loading clears A; a failed replacement preserves it.
+
+## Photograph adjustment records
+
+**Save adjustments…** writes a versioned photograph record containing source identity, accepted input interpretation, RAW decode settings, geometry, adjustments, seed, material identities, and render-preparation ownership. It does not embed source images or runtime assets. Keep the referenced external files unchanged. Pending text and RAW drafts, application preferences, undo stacks, jobs, and Export drafts are excluded.
+
+**Reopen adjustments…** validates the source and dependencies before replacing the photograph. Missing or changed assets leave the current photograph intact. Explicit source relocation accepts only identical contents. A record is not a reusable preset or a startup-default file. Failed writes preserve an existing valid record and never overwrite the source.
+
+Closing or replacing unsaved accepted work offers **Save record**, **Discard changes**, and **Cancel**. Canceling the chooser or a failed save stops the transition. Closing also protects unsaved inactive work-list entries, one identified source at a time.
+
+## Photograph work list and queue
+
+**Photographs…** opens the explicit work list. Add selected files, select an entry, or use previous/next. Each entry retains its accepted adjustments, history, record-save state, and separate pending drafts. Removing an entry never deletes its source, record, or exported files. Single-photograph editing does not require a work list.
+
+Select destinations and an explicit copy scope before **Copy adjustments**. The dialog states which controls will be replaced. Look and section scopes use the existing preset boundaries. Procedural-grain and Halation feature-profile scopes copy only their canonical owned leaves, including custom overrides, without changing feature enable or engine selection. Operator correction copies only its four correction values. Copy preserves each destination's source interpretation, RAW settings, geometry, source calibration, and delivery settings. Each destination validates independently and gets one reversible history transaction; a failed destination stays unchanged.
+
+Choose an output directory and explicitly permit replacement when needed, then submit selected entries. Duplicate destinations must be resolved before submission. The sequential queue captures source pixels, accepted adjustments, dependency identities, delivery options, and destinations independently of later edits or removal. Changed dependencies fail that submission rather than silently rendering another result.
+
+The queue shows waiting, running, completed, failed, and canceled outcomes. Cancel one job or all remaining jobs without removing completed files. A failure does not stop unrelated entries. **Retry submitted snapshot** repeats the failed submission, not current adjustments. Queue work and interactive Export share the existing staged publication path; the batch is not one atomic transaction. Restart recovery is not supported.
 
 ## State and defaults
 

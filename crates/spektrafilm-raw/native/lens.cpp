@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -281,12 +282,46 @@ lfError load_database(lfDatabase& database) {
     }
     return database.Load();
 }
+
+std::pair<const lfCamera*, const lfLens*> resolve_model(lfDatabase& database,
+                                                       const Metadata& metadata) {
+    if (metadata.lens_model.empty()) return {nullptr, nullptr};
+    const lfError status = load_database(database);
+    if (status != LF_NO_ERROR) {
+        throw std::runtime_error("Cannot load the Lensfun database (error " + std::to_string(status) +
+                                 "). Install the Lensfun lens database package or update it with lensfun-update-data.");
+    }
+    std::unique_ptr<const lfCamera*, GlibFree> cameras(
+        database.FindCamerasExt(metadata.make.c_str(), metadata.model.c_str(), LF_SEARCH_LOOSE));
+    if (!cameras || !*cameras) return {nullptr, nullptr};
+    const lfCamera* camera = *cameras;
+    const auto candidates = find_candidates(database, camera, metadata);
+    if (candidates.empty()) return {camera, nullptr};
+    return {camera, select_candidate(candidates, metadata)};
+}
+
+char* model_identity(const lfCamera* camera, const lfLens* lens) {
+    std::unique_ptr<char, GlibFree> model;
+    if (!lens) {
+        model.reset(g_strdup("no-matching-lens-correction"));
+    } else {
+        const lfCamera* cameras[] = {camera, nullptr};
+        const lfLens* lenses[] = {lens, nullptr};
+        model.reset(lfDatabase::Save(nullptr, cameras, lenses));
+    }
+    if (!model) throw std::bad_alloc();
+    char* identity = g_strdup_printf("lensfun:%u\n%s", static_cast<unsigned>(LF_VERSION), model.get());
+    if (!identity) throw std::bad_alloc();
+    return identity;
+}
 }
 
 extern "C" int sf_raw_correct_lens(const char* path, float* rgb, unsigned width, unsigned height,
-                                    char* summary, size_t summary_len, char* error, size_t error_len) {
+                                    char* summary, size_t summary_len, char** identity,
+                                    char* error, size_t error_len) {
     copy_message(summary, summary_len, "");
     copy_message(error, error_len, "");
+    *identity = nullptr;
     try {
         if (!path || !rgb || width == 0 || height == 0 ||
             width > static_cast<unsigned>(std::numeric_limits<int>::max() / (3 * sizeof(float))) ||
@@ -295,20 +330,13 @@ extern "C" int sf_raw_correct_lens(const char* path, float* rgb, unsigned width,
             throw std::invalid_argument("Lens correction requires a path and a nonempty float32 RGB image within native size limits");
         }
         const Metadata metadata = read_metadata(path);
-        if (metadata.lens_model.empty()) return 0;
         lfDatabase database;
-        const lfError status = load_database(database);
-        if (status != LF_NO_ERROR) {
-            throw std::runtime_error("Cannot load the Lensfun database (error " + std::to_string(status) +
-                                     "). Install the Lensfun lens database package or update it with lensfun-update-data.");
+        const auto [camera, lens] = resolve_model(database, metadata);
+        std::unique_ptr<char, GlibFree> accepted_identity(model_identity(camera, lens));
+        if (!lens) {
+            *identity = accepted_identity.release();
+            return 0;
         }
-        std::unique_ptr<const lfCamera*, GlibFree> cameras(
-            database.FindCamerasExt(metadata.make.c_str(), metadata.model.c_str(), LF_SEARCH_LOOSE));
-        if (!cameras || !*cameras) return 0;
-        const lfCamera* camera = *cameras;
-        const auto candidates = find_candidates(database, camera, metadata);
-        if (candidates.empty()) return 0;
-        const lfLens* lens = select_candidate(candidates, metadata);
         const std::string label = lens->Model && *lens->Model ? lens->Model : metadata.lens_model;
         const std::string information = label + " @ " + float_label(metadata.focal) +
                                         "mm f/" + float_label(metadata.aperture);
@@ -338,6 +366,7 @@ extern "C" int sf_raw_correct_lens(const char* path, float* rgb, unsigned width,
             std::memcpy(rgb, corrected.data(), corrected.size() * sizeof(float));
         }
         copy_message(summary, summary_len, information.c_str());
+        *identity = accepted_identity.release();
         return 0;
     } catch (const std::exception& exception) {
         copy_message(error, error_len, exception.what());
@@ -346,3 +375,26 @@ extern "C" int sf_raw_correct_lens(const char* path, float* rgb, unsigned width,
     }
     return 1;
 }
+
+// The same source-specific selection as correction, without decoding pixels.
+// Serialize only the selected camera and lens; unrelated database edits do not
+// invalidate an accepted photograph. The caller owns the returned GLib string.
+extern "C" int sf_raw_lens_model_identity(const char* path, char** identity,
+                                          char* error, size_t error_len) {
+    *identity = nullptr;
+    copy_message(error, error_len, "");
+    try {
+        const Metadata metadata = read_metadata(path);
+        lfDatabase database;
+        const auto [camera, lens] = resolve_model(database, metadata);
+        *identity = model_identity(camera, lens);
+        return 0;
+    } catch (const std::exception& exception) {
+        copy_message(error, error_len, exception.what());
+        return 1;
+    } catch (...) {
+        copy_message(error, error_len, "Unknown Lensfun identity failure");
+        return 1;
+    }
+}
+extern "C" void sf_raw_free_lens_identity(char* identity) { lf_free(identity); }

@@ -85,8 +85,11 @@ def main():
         correct = bridge.sf_raw_correct_lens
         correct.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_uint,
                             ctypes.c_uint, ctypes.c_char_p, ctypes.c_size_t,
-                            ctypes.c_char_p, ctypes.c_size_t]
+                            ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p, ctypes.c_size_t]
         correct.restype = ctypes.c_int
+        free_identity = bridge.sf_raw_free_lens_identity
+        free_identity.argtypes = [ctypes.c_void_p]
+        free_identity.restype = None
         for name, tags in cases:
             path = temporary / (name + ".jpg")
             write_exif(fixture, path, tags)
@@ -95,8 +98,12 @@ def main():
                 original = (0.1 + ((x * 3 + y * 7 + channel * 11) % 31) / 100).astype(np.float32)
                 actual = original.copy()
                 summary, error = ctypes.create_string_buffer(512), ctypes.create_string_buffer(1024)
-                status = correct(str(path).encode(), actual.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                                 width, height, summary, len(summary), error, len(error))
+                identity = ctypes.c_void_p()
+                try:
+                    status = correct(str(path).encode(), actual.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                                     width, height, summary, len(summary), ctypes.byref(identity), error, len(error))
+                finally:
+                    free_identity(identity)
                 reference, label = _apply_lens_correction(original.copy(), _read_exif_metadata(path))
                 difference = np.abs(actual.astype(np.float64) - reference.astype(np.float64))
                 maximum, mean = float(difference.max()), float(difference.mean())
