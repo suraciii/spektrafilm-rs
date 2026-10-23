@@ -9,6 +9,12 @@ All spectral data, film/paper profiles, and pipeline architecture come from that
 
 The spectral-upsampling LUT (`hanatos2025_*`) is named after [Johannes Hanatos](https://github.com/hanatos), author of [vkdt](https://github.com/hanatos/vkdt).
 Hanatos provided the upstream Python project with the LUT files and sample code that drive the RGB → spectrum step.
+The bundled `kodak_kodachrome_64` profile carries density curves rebuilt from the
+Kodak E-88 KODACHROME 64 publication (digitized characteristic curves, anchored at
+the profile's own midscale density, per-channel minima at zero per the bundled-profile
+convention; the sublayer tensor is rebuilt to sum to the new composite, and the
+upstream fitted curve model was removed so the sampled curves are authoritative).
+The modification is noted in the profile's `datasource` field per the asset license.
 
 PCHIP 3D LUT, MT19937 binomial sampler, and CIE 1931 observer constants are ported from numpy / scipy / scikit-image / colour-science.
 
