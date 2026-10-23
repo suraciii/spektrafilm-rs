@@ -3306,9 +3306,9 @@
       {
         "path": "data/profiles/kodak_kodachrome_64.json",
         "py_sha256": "f88ede487219cf75090ed6663af6923c595707b3c48819f2ccf27122130e921d",
-        "rs_sha256": "72d07979f45bab0c04cf914426654864c2a7834c8e57a8c5b3ae2d8cb772bc41",
+        "rs_sha256": "1eeb5f5213c32edeecf7a9bfeb60806a1b126be5652642957db2fc5a52c0dfef",
         "match": false,
-        "detail": "verified modification: density_curves rebuilt from the Kodak E-88 KODACHROME 64 publication (digitized characteristic curves, anchored at the profile's own midscale density, per-channel minima at zero per the bundled-profile convention); density_curves_layers rebuilt to sum to the new composite; fitted density_curves_model removed so the sampled curves are authoritative. Noted in the profile datasource per the asset license; all other fields byte-identical to upstream"
+        "detail": "verified modification: density_curves rebuilt from the Kodak E-88 KODACHROME 64 publication (digitized characteristic curves, anchored at the profile's own midscale density, per-channel minima at zero per the bundled-profile convention); the pre-E-88 upstream sublayer decomposition retained under the E-88 composite (the research-validated pairing; no E-88 sublayer data exists); fitted density_curves_model removed so the sampled curves are authoritative. Noted in the profile datasource per the asset license; all other fields byte-identical to upstream"
       },
       {
         "path": "data/profiles/kodak_portra_160.json",
