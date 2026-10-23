@@ -190,6 +190,12 @@ fn lexical_absolute(path: &Path) -> Result<PathBuf, PersistenceError> {
     Ok(output)
 }
 
+/// Whether existing paths refer to the same filesystem object, including
+/// hard links. Missing paths are not aliases; pathname validation is separate.
+pub fn paths_alias(left: &Path, right: &Path) -> bool {
+    same_file(left, right)
+}
+
 #[cfg(unix)]
 fn same_file(left: &Path, right: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;

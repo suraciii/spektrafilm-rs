@@ -66,13 +66,12 @@ pub fn resolve_continuation(
         }
         let mut candidate = params.clone();
         edits.apply(&mut candidate)?;
-        crate::stage_execution::validate_frozen_controls(header, &candidate).map_err(|e| {
-            format!(
-                "{}{}: {e}",
-                origin.option.as_deref().unwrap_or(&origin.kind),
-                origin.index.map(|i| format!(" #{i}")).unwrap_or_default()
-            )
-        })?;
+        for path in edits.paths() {
+            let axis = match path { "enlarger.c_filter_neutral" => Some(0), "enlarger.m_filter_neutral" => Some(1), "enlarger.y_filter_neutral" => Some(2), _ => None };
+            if let Some(axis) = axis { candidate.neutral_print_filters_protected.get_or_insert([false; 3])[axis] = true; }
+        }
+        crate::stage_execution::validate_frozen_controls(header, &candidate)
+            .map_err(|e| format!("{}{}: {e}", origin.option.as_deref().unwrap_or(&origin.kind), origin.index.map(|i| format!(" #{i}")).unwrap_or_default()))?;
         *params = candidate;
         Ok(())
     };
@@ -119,7 +118,15 @@ pub fn resolve_continuation(
         }
         let mut candidate = params.clone();
         match &preset.parameters {
-            presets::PresetParameters::Look(look) => look.apply_to(&mut candidate),
+            presets::PresetParameters::Look(look) => {
+                look.apply_to(&mut candidate);
+                let defaults = crate::params::EnlargerParams::default();
+                candidate.neutral_print_filters_protected = Some([
+                    look.enlarger.c_filter_neutral != defaults.c_filter_neutral,
+                    look.enlarger.m_filter_neutral != defaults.m_filter_neutral,
+                    look.enlarger.y_filter_neutral != defaults.y_filter_neutral,
+                ]);
+            }
             presets::PresetParameters::Section(_) => candidate = preset.overlay_section(&params)?,
         }
         // Presets own only their documented leaves. Use the shared overlay to
@@ -134,31 +141,23 @@ pub fn resolve_continuation(
         };
         let mut leaves = Vec::new();
         changed_leaves("", &current, &candidate, &mut leaves);
+        let mut payload = Value::Object(Default::default());
         for (path, value) in leaves {
-            apply(
-                ParameterEdits::single(&path, value)?,
-                origin.clone(),
-                &mut params,
-            )?;
+            crate::params::sources::insert(&mut payload, &path, value);
         }
+        apply(ParameterEdits::from_value(payload)?, origin, &mut params)?;
     }
     for selection in request.feature_profiles {
-        let (_, requested) =
-            crate::feature_profiles::apply_with_requests(&params, std::slice::from_ref(selection))?;
+        let (_, requested) = crate::feature_profiles::apply_with_requests(&params, std::slice::from_ref(selection))?;
+        let mut payload = Value::Object(Default::default());
         for path in crate::feature_profiles::scope(selection.family) {
             if let Some(value) = requested[0].get(*path) {
-                apply(
-                    ParameterEdits::single(path, value.clone())?,
-                    DeclarationSource {
-                        kind: "feature_profile".into(),
-                        option: Some("--feature-profile".into()),
-                        index: Some(selection.position),
-                        path: None,
-                    },
-                    &mut params,
-                )?;
+                crate::params::sources::insert(&mut payload, path, value.clone());
             }
         }
+        apply(ParameterEdits::from_value(payload)?, DeclarationSource {
+            kind: "feature_profile".into(), option: Some("--feature-profile".into()), index: Some(selection.position), path: None,
+        }, &mut params)?;
     }
     for (index, source) in request.sources.iter().enumerate() {
         let edits = ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}"))?;
@@ -194,17 +193,9 @@ pub fn resolve_continuation(
         }
     }
     if route.prints() && print.is_none() && retained_print.is_none() {
-        let name = header
-            .film
-            .profile
-            .info
-            .target_print
-            .as_deref()
+        let name = header.downstream_print_name.as_deref().or(header.film.profile.info.target_print.as_deref())
             .ok_or("new print operation requires --paper or a retained target_print")?;
-        print = Some(
-            profile::load_profile_by_name(data_dir, name)
-                .map_err(|e| format!("loading downstream print profile {name:?}: {e}"))?,
-        );
+        print = Some(profile::load_profile_by_name(data_dir, name).map_err(|e| format!("loading downstream print profile {name:?}: {e}"))?);
     }
     if route.prints() && print.as_ref().is_some_and(|p| !p.is_print_stock()) {
         return Err("downstream print profile must have printing support/stage".into());

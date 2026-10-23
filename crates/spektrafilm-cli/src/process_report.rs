@@ -157,14 +157,9 @@ pub(crate) fn print_text(report: &Value) {
         }
     }
     println!("NOT CHECKED");
-    let unresolved_format = report["unchecked"]
-        .as_array()
-        .map(|values| values.iter().any(|value| value == "output_format"))
-        .unwrap_or(false);
-    let unchecked = if unresolved_format {
-        "Pixel decoding; compute-device availability; metered exposure; final pixel geometry; output format"
-    } else {
-        "Pixel decoding; compute-device availability; metered exposure; final pixel geometry"
-    };
-    println!("  {unchecked}");
+    if let Some(unchecked) = report["unchecked"].as_array() {
+        for item in unchecked {
+            println!("  {}", value(item));
+        }
+    }
 }

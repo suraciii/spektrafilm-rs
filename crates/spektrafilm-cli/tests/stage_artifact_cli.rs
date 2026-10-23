@@ -94,7 +94,7 @@ fn debug_is_boolean_and_retired_capture_is_not_a_parser_option() {
 fn film_terminal_dry_run_has_no_print_or_image_writer_dependency_and_debug_preserves_stdout() {
     for bin in binaries() {
         let root = fixture();
-        let flags = [IMAGE, &["--route", "input > film", "--dry-run"]].concat();
+        let flags = [IMAGE, &["--route", "input > film", "--paper", "unavailable_future_print", "--dry-run"]].concat();
         let plain = success(invoke(bin, root.path(), "input.png", &flags));
         let debug = success(invoke(
             bin,
@@ -152,77 +152,36 @@ fn all_six_stage_routes_continue_actual_material_and_preserve_direct_scan_pixels
     for bin in binaries() {
         let root = fixture();
         let root = root.path();
-        success(invoke(
-            bin,
-            root,
-            "input.png",
-            &[
-                IMAGE,
-                &[
-                    "--route",
-                    "input > film",
-                    "--seed",
-                    "42",
-                    "-o",
-                    "film.sfstage",
-                ],
-            ]
-            .concat(),
-        ));
-        let header = success(invoke(
-            bin,
-            root,
-            "film.sfstage",
-            &["--route", "film > scan", "--dry-run"],
-        ));
+        success(invoke(bin, root, "input.png", &[IMAGE, &["--route", "input > film", "--paper", "unavailable_future_print", "--seed", "42", "-o", "film.sfstage"]].concat()));
+        let header = success(invoke(bin, root, "film.sfstage", &["--route", "film > scan", "--dry-run"]));
         let report: Value = serde_json::from_slice(&header.stdout).unwrap();
         assert_eq!(report["seed"], 42);
         assert_eq!(report["seed_source"], "artifact");
         assert_eq!(report["input"]["kind"], "stage_artifact");
         assert!(report["input"]["declaration"].is_null());
-        assert!(
-            report["unchecked"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|v| v == "artifact_integrity")
-        );
-        success(invoke(
-            bin,
-            root,
-            "film.sfstage",
-            &[
-                "--route",
-                "film > scan",
-                "-o",
-                "film.tif",
-                "--raw-out",
-                "split.raw",
-            ],
-        ));
-        success(invoke(
-            bin,
-            root,
-            "input.png",
-            &[
-                IMAGE,
-                &[
-                    "--route",
-                    "input > film > scan",
-                    "--seed",
-                    "42",
-                    "-o",
-                    "direct.tif",
-                    "--raw-out",
-                    "direct.raw",
-                ],
-            ]
-            .concat(),
-        ));
-        assert_eq!(
-            fs::read(root.join("split.raw")).unwrap(),
-            fs::read(root.join("direct.raw")).unwrap()
-        );
+        assert!(report["unchecked"].as_array().unwrap().iter().any(|v| v == "artifact_integrity"));
+        let unresolved = success(invoke(bin, root, "film.sfstage", &["--route", "film > scan", "--dry-run", "--bit-depth", "32", "--saving-color-space", "sRGB", "--saving-cctf-encoding", "false"]));
+        let unresolved: Value = serde_json::from_slice(&unresolved.stdout).unwrap();
+        assert_eq!(unresolved["output"]["bit_depth"], 32);
+        assert_eq!(unresolved["output"]["color_space"], "sRGB");
+        assert_eq!(unresolved["output"]["cctf_encoding"], false);
+        assert!(!invoke(bin, root, "film.sfstage", &["--route", "film > scan", "--dry-run", "--saving-color-space", "not_a_color_space"]).status.success());
+        let text = success(invoke(bin, root, "film.sfstage", &["--route", "film > scan", "--dry-run", "--dry-run-format", "text"]));
+        assert!(String::from_utf8_lossy(&text.stdout).contains("artifact_integrity"));
+        #[cfg(unix)]
+        {
+            let stage = spektrafilm_core::stage_artifact::read_header(root.join("film.sfstage")).unwrap();
+            let member = root.join("film.sfstage").join(stage.density.unwrap().path);
+            let before = fs::read(&member).unwrap();
+            fs::hard_link(&member, root.join("aliased.raw")).unwrap();
+            let rejected = invoke(bin, root, "film.sfstage", &["--route", "film > scan", "-o", "alias.tif", "--raw-out", "aliased.raw"]);
+            assert!(!rejected.status.success());
+            assert_eq!(before, fs::read(&member).unwrap());
+            assert!(!root.join("alias.tif").exists());
+        }
+        success(invoke(bin, root, "film.sfstage", &["--route", "film > scan", "-o", "film.tif", "--raw-out", "split.raw"]));
+        success(invoke(bin, root, "input.png", &[IMAGE, &["--route", "input > film > scan", "--seed", "42", "-o", "direct.tif", "--raw-out", "direct.raw"]].concat()));
+        assert_eq!(fs::read(root.join("split.raw")).unwrap(), fs::read(root.join("direct.raw")).unwrap());
         // Final workflow choices apply after sparse sources: an intermediate
         // scan interpretation must not reject an otherwise valid print route.
         let composed = success(invoke(
@@ -242,122 +201,20 @@ fn all_six_stage_routes_continue_actual_material_and_preserve_direct_scan_pixels
             ],
         ));
         let composed: Value = serde_json::from_slice(&composed.stdout).unwrap();
-        assert_eq!(
-            composed["parameters"]["scanner"]["scan_output"],
-            "direct_scan"
-        );
-        success(invoke(
-            bin,
-            root,
-            "film.sfstage",
-            &[
-                "--route",
-                "film > print",
-                "--paper",
-                "kodak_portra_endura",
-                "-o",
-                "print.sfstage",
-            ],
-        ));
-        success(invoke(
-            bin,
-            root,
-            "print.sfstage",
-            &[
-                "--route",
-                "print > scan",
-                "-o",
-                "print.tif",
-                "--raw-out",
-                "print.raw",
-            ],
-        ));
-        success(invoke(
-            bin,
-            root,
-            "film.sfstage",
-            &[
-                "--route",
-                "film > print > scan",
-                "--paper",
-                "kodak_portra_endura",
-                "-o",
-                "continued.tif",
-                "--raw-out",
-                "continued.raw",
-            ],
-        ));
-        assert_eq!(
-            fs::read(root.join("print.raw")).unwrap(),
-            fs::read(root.join("continued.raw")).unwrap()
-        );
-        success(invoke(
-            bin,
-            root,
-            "input.png",
-            &[
-                IMAGE,
-                &[
-                    "--route",
-                    "input > film > print",
-                    "--paper",
-                    "kodak_portra_endura",
-                    "--seed",
-                    "42",
-                    "-o",
-                    "image-print.sfstage",
-                ],
-            ]
-            .concat(),
-        ));
-        success(invoke(
-            bin,
-            root,
-            "image-print.sfstage",
-            &[
-                "--route",
-                "print > scan",
-                "-o",
-                "image-print.tif",
-                "--raw-out",
-                "image-print.raw",
-            ],
-        ));
-        assert_eq!(
-            fs::read(root.join("print.raw")).unwrap(),
-            fs::read(root.join("image-print.raw")).unwrap()
-        );
-        for flags in [
-            vec!["--dry-run"],
-            vec!["--route", "print > scan", "--dry-run"],
-            vec![
-                "--route",
-                "film > scan",
-                "--input-color-space",
-                "sRGB",
-                "--dry-run",
-            ],
-            vec![
-                "--route",
-                "film > scan",
-                "--raw-white-balance",
-                "as-shot",
-                "--dry-run",
-            ],
-            vec![
-                "--route",
-                "film > scan",
-                "--set",
-                "camera.exposure_compensation_ev=1",
-                "--set",
-                "camera.exposure_compensation_ev=0",
-                "--dry-run",
-            ],
-        ] {
-            assert!(
-                !invoke(bin, root, "film.sfstage", &flags).status.success(),
-                "accepted {flags:?}"
-            );
+        assert_eq!(composed["parameters"]["scanner"]["scan_output"], "direct_scan");
+        success(invoke(bin, root, "film.sfstage", &["--route", "film > print", "--paper", "kodak_portra_endura", "--set", "enlarger.m_filter_neutral=20", "-o", "authored.sfstage"]));
+        let authored = spektrafilm_core::stage_artifact::read_header(root.join("authored.sfstage")).unwrap();
+        assert_eq!(authored.baseline.enlarger.m_filter_neutral, 20.0);
+        assert!(authored.baseline.neutral_print_filters_protected.unwrap()[1]);
+        success(invoke(bin, root, "film.sfstage", &["--route", "film > print", "--paper", "kodak_portra_endura", "-o", "print.sfstage"]));
+        success(invoke(bin, root, "print.sfstage", &["--route", "print > scan", "-o", "print.tif", "--raw-out", "print.raw"]));
+        success(invoke(bin, root, "film.sfstage", &["--route", "film > print > scan", "--paper", "kodak_portra_endura", "-o", "continued.tif", "--raw-out", "continued.raw"]));
+        assert_eq!(fs::read(root.join("print.raw")).unwrap(), fs::read(root.join("continued.raw")).unwrap());
+        success(invoke(bin, root, "input.png", &[IMAGE, &["--route", "input > film > print", "--paper", "kodak_portra_endura", "--seed", "42", "-o", "image-print.sfstage"]].concat()));
+        success(invoke(bin, root, "image-print.sfstage", &["--route", "print > scan", "-o", "image-print.tif", "--raw-out", "image-print.raw"]));
+        assert_eq!(fs::read(root.join("print.raw")).unwrap(), fs::read(root.join("image-print.raw")).unwrap());
+        for flags in [vec!["--dry-run"], vec!["--route", "print > scan", "--dry-run"], vec!["--route", "film > scan", "--input-color-space", "sRGB", "--dry-run"], vec!["--route", "film > scan", "--raw-white-balance", "as-shot", "--dry-run"], vec!["--route", "film > scan", "--set", "camera.exposure_compensation_ev=1", "--set", "camera.exposure_compensation_ev=0", "--dry-run"]] {
+            assert!(!invoke(bin, root, "film.sfstage", &flags).status.success(), "accepted {flags:?}");
         }
     }
 }

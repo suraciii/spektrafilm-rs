@@ -202,29 +202,9 @@ fn execute(
     if params.taps.inject.is_some() || params.taps.collect.is_some() {
         bail!("stage artifact routes reject explicit taps.inject and taps.collect");
     }
-    let retained_print_selection =
-        if header.is_none() && route.artifact_output() == Some(MaterialKind::Film) {
-            let selected = args.paper.as_deref().or_else(|| {
-                presets
-                    .iter()
-                    .rev()
-                    .find_map(|p| p.print_profile.as_ref().map(|p| p.stock.as_str()))
-            });
-            let profile = selected
-                .map(|name| {
-                    profile::load_profile_by_name(&data.path, name).map_err(anyhow::Error::from)
-                })
-                .transpose()?;
-            if profile
-                .as_ref()
-                .is_some_and(|profile| !profile.is_print_stock())
-            {
-                bail!("retained print selection must have printing support/stage");
-            }
-            profile
-        } else {
-            None
-        };
+    let retained_print_selection = if header.is_none() && route.artifact_output() == Some(MaterialKind::Film) {
+        args.paper.clone().or_else(|| presets.iter().rev().find_map(|p| p.print_profile.as_ref().map(|p| p.stock.clone())))
+    } else { None };
     if header.is_none() {
         spektrafilm_core::stages::grain_v3::validate_supported(&film, &params)
             .map_err(anyhow::Error::msg)?;
@@ -255,24 +235,12 @@ fn execute(
                 })
                 .transpose()?,
         };
-        if plan.is_none() {
-            OutputPlan::validate_unresolved(
-                args.bit_depth,
-                args.jpeg_quality,
-                args.jpeg_subsampling,
-                args.compression,
-            )?;
+        if plan.is_none() { OutputPlan::validate_unresolved(args.bit_depth, args.jpeg_quality, args.jpeg_subsampling, args.compression)?; }
+        if let Some(space) = args.workflow.saving_color_space.as_deref() {
+            spektrafilm_math::colorspace::resolve(space).map_err(anyhow::Error::msg)?;
         }
-        let plan = plan.map(|p| {
-            p.with_saving(
-                &args.workflow,
-                &params.io.output_color_space,
-                params.io.output_cctf_encoding,
-            )
-        });
-        if let Some(plan) = &plan {
-            plan.validate_saving()?;
-        }
+        let plan = plan.map(|p| p.with_saving(&args.workflow, &params.io.output_color_space, params.io.output_cctf_encoding));
+        if let Some(plan) = &plan { plan.validate_saving()?; }
         plan
     };
     process_report::warn_edits(&edits);
@@ -373,12 +341,15 @@ fn execute(
     if header.is_some() {
         // Validate payload once; warm-cache attempts reuse the same restored state.
         let mut state = restored.take();
-        if let Some(conversion) = &state
-            .as_ref()
-            .expect("restored state")
-            .header
-            .storage_conversion
-        {
+        let material = state.as_ref().expect("restored state");
+        invocation.operation.set_input_dimensions(material.density.width, material.density.height);
+        if context.enabled() {
+            let selected = print.as_ref().or_else(|| material.header.print.as_ref().or(material.header.original_print.as_ref()).map(|p| &p.profile)).unwrap_or(&film);
+            let mut configuration = spektrafilm_core::telemetry::RenderConfiguration::from_runtime(&params, &film, selected);
+            if route.scans_film() { configuration.print_stock = None; }
+            invocation.operation.set_render_configuration(configuration);
+        }
+        if let Some(conversion) = &state.as_ref().expect("restored state").header.storage_conversion {
             eprintln!("Stage storage-to-computation precision conversion: {conversion:?}");
         }
         for index in 1..=args.iters {
@@ -414,20 +385,12 @@ fn execute(
             metadata = loaded.metadata;
             loaded.image
         };
-        let image = if params.settings.preview_mode {
-            resize_for_preview(&image, params.settings.preview_max_size)
-        } else {
-            image
-        };
-        invocation
-            .operation
-            .set_input_dimensions(image.width, image.height);
-        let runtime = if let Some(print) = print {
-            Runtime::new(film, print, params, &data.path)
-        } else {
-            Runtime::new_film(film, params, &data.path)
+        let image = if params.settings.preview_mode { resize_for_preview(&image, params.settings.preview_max_size) } else { image };
+        invocation.operation.set_input_dimensions(image.width, image.height);
+        let runtime = if let Some(print) = print { Runtime::new(film, print, params, &data.path) } else { Runtime::new_film(film, params, &data.path) }.map_err(anyhow::Error::msg)?;
+        if context.enabled() {
+            invocation.operation.set_render_configuration(runtime.telemetry_configuration());
         }
-        .map_err(anyhow::Error::msg)?;
         let mut image = Some(image);
         for index in 1..=args.iters {
             let input = if index == args.iters {
@@ -454,12 +417,10 @@ fn execute(
             state.header.provenance.input_identity =
                 input_identity.expect("material content identity");
             if state.header.state == MaterialKind::Film {
-                if let Some(profile) = retained_print_selection {
-                    state.header.original_print =
-                        Some(stage_artifact::EmbeddedProfile::new(profile)?);
-                }
+                state.header.downstream_print_name = retained_print_selection;
             }
             stage_artifact::write(output, &state)?;
+            invocation.operation.set_published_dimensions(state.density.width as u32, state.density.height as u32);
             eprintln!("Saved stage: {}", output.display());
             if let Some(path) = &args.raw_out {
                 write_raw(path, &state.density).with_context(|| {
@@ -473,32 +434,13 @@ fn execute(
         }
         stage_execution::StageResult::Image(image) => {
             let plan = plan.context("missing image output plan")?;
-            let saving = image_io::convert_image(
-                &image,
-                &output_space,
-                output_encoded,
-                &plan.saving_space,
-                plan.saving_encoded,
-            )?;
-            let prepared = image_io::prepare_save_observed(
-                output,
-                &saving,
-                plan.save_options(),
-                metadata.as_ref(),
-                &context,
-            )?;
-            let report = prepared
-                .publish(true)
-                .map_err(|e| anyhow::Error::msg(e.to_string()))?;
-            if let Some(warning) = report.metadata_warning {
-                eprintln!("Warning: {warning}");
-            }
-            eprintln!(
-                "Saved: {} ({}x{})",
-                output.display(),
-                image.width,
-                image.height
-            );
+            let saving = image_io::convert_image(&image, &output_space, output_encoded, &plan.saving_space, plan.saving_encoded)?;
+            invocation.operation.set_saving_configuration(spektrafilm_core::telemetry::SavingConfiguration::from_save_options(plan.format.image_format(), &plan.save_options()));
+            let prepared = image_io::prepare_save_observed(output, &saving, plan.save_options(), metadata.as_ref(), &context)?;
+            let report = prepared.publish(true).map_err(|e| anyhow::Error::msg(e.to_string()))?;
+            invocation.operation.set_published_dimensions(image.width as u32, image.height as u32);
+            if let Some(warning) = report.metadata_warning { eprintln!("Warning: {warning}"); }
+            eprintln!("Saved: {} ({}x{})", output.display(), image.width, image.height);
             if let Some(path) = &args.raw_out {
                 write_raw(path, &image).with_context(|| {
                     format!(
@@ -649,16 +591,14 @@ fn dry_report(
             JpegSubsampling::Yuv420 => "420",
         }));
     }
-    let capture_source = if params.camera.capture_illuminant.is_none() {
-        "unset"
-    } else if edits
-        .iter()
-        .any(|edit| edit.path == "camera.capture_illuminant" && edit.source.kind == "set")
-    {
-        "set"
-    } else {
-        "preset"
-    };
+    if !artifact_output && plan.is_none() {
+        output["bit_depth"] = json!(OutputPlan::validate_unresolved(args.bit_depth, args.jpeg_quality, args.jpeg_subsampling, args.compression)?.map(|depth| depth.bits()));
+        output["color_space"] = json!(args.workflow.saving_color_space);
+        output["cctf_encoding"] = json!(args.workflow.saving_cctf_encoding);
+    }
+    let capture_source = if params.camera.capture_illuminant.is_none() { "unset" }
+        else if edits.iter().any(|edit| edit.path == "camera.capture_illuminant" && edit.source.kind == "set") { "set" }
+        else { "preset" };
     let dye_active = spektrafilm_core::stages::grain_v3::active(params);
     Ok(
         json!({"data":{"path":data.path,"source":data.source},"film_profile":film_name,"print_profile":print_name,
@@ -675,26 +615,17 @@ fn dry_report(
 
 fn validate_read_only_input(args: &ProcessArgs) -> Result<()> {
     let root = std::fs::canonicalize(&args.input)?;
-    for destination in args
-        .output
-        .as_deref()
-        .into_iter()
-        .chain(args.raw_out.as_deref())
-        .chain(args.diagnostics.as_deref())
-    {
-        let parent = destination
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let resolved = if destination.exists() {
-            std::fs::canonicalize(destination)?
-        } else {
-            std::fs::canonicalize(parent)?.join(
-                destination
-                    .file_name()
-                    .context("output path needs a file name")?,
-            )
+    let header = stage_artifact::read_header(&args.input)?;
+    let mut members = vec![root.join("stage.json")];
+    members.extend(header.density.iter().chain(header.prepared_source.iter()).map(|member| root.join(&member.path)));
+    for destination in args.output.as_deref().into_iter().chain(args.raw_out.as_deref()).chain(args.diagnostics.as_deref()) {
+        let parent = destination.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let resolved = if destination.exists() { std::fs::canonicalize(destination)? } else {
+            std::fs::canonicalize(parent)?.join(destination.file_name().context("output path needs a file name")?)
         };
+        if members.iter().any(|member| spektrafilm_core::telemetry::paths_alias(destination, member)) {
+            bail!("stage artifact input is read-only; destination aliases a required member: {}", destination.display());
+        }
         if resolved == root || resolved.starts_with(&root) {
             bail!(
                 "stage artifact input is read-only; destination is inside {}",

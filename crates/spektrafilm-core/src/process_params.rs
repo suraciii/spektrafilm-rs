@@ -214,6 +214,12 @@ fn resolve_with_preview_mode(
                 }
                 apply_film_specifics(&mut params, &film);
                 look.apply_to(&mut params);
+                let defaults = crate::params::EnlargerParams::default();
+                params.neutral_print_filters_protected = Some([
+                    look.enlarger.c_filter_neutral != defaults.c_filter_neutral,
+                    look.enlarger.m_filter_neutral != defaults.m_filter_neutral,
+                    look.enlarger.y_filter_neutral != defaults.y_filter_neutral,
+                ]);
                 let route = WorkflowRoute::parse(request.route.expect("stage route"));
                 let (print, print_name) = if route.prints() {
                     let reference = preset.print_profile.as_ref().expect("validated look");
