@@ -452,6 +452,19 @@ def asset_inventory():
                 entry["detail"] = (f"verified superset: all {len(py_db)} upstream papers "
                                    f"byte-identical ({shared_ok}); Rust adds extra papers "
                                    f"{extra} for its B&W stocks (upstream entries unchanged)")
+            if not entry["match"] and rel == Path("profiles/kodak_kodachrome_64.json"):
+                entry["match"] = False
+                entry["detail"] = (
+                    "verified modification: density_curves rebuilt from the Kodak E-88 "
+                    "KODACHROME 64 publication (digitized characteristic curves, anchored "
+                    "at the profile's own midscale density, per-channel minima at zero per "
+                    "the bundled-profile convention); the pre-E-88 upstream sublayer "
+                    "decomposition retained under the E-88 composite (the research-"
+                    "validated pairing; no E-88 sublayer data exists); fitted "
+                    "density_curves_model removed so the sampled curves are authoritative. "
+                    "Noted in the profile datasource per the asset license; all other "
+                    "fields byte-identical to upstream"
+                )
         else:
             entry["rs_sha256"] = None
             entry["match"] = False
