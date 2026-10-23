@@ -735,16 +735,25 @@ fn measure_run_matches_experiment_observation_on_log_e_film() {
         }
     }
 
-    // Repeated runs on identical inputs produce identical artifacts.
+    // Replay the owning declaration from another working directory. Only the
+    // output destination changes, so numerical readings must be byte-identical.
     let repeat = f.root.join("lab-repeat");
-    assert!(f.measure_with(&stimuli, &repeat).status.success());
-    for name in ["run.json", "readings.csv"] {
-        assert_eq!(
-            std::fs::read(lab.join(name)).unwrap(),
-            std::fs::read(repeat.join(name)).unwrap(),
-            "{name} differs between identical runs"
-        );
-    }
+    let original: Value = serde_json::from_slice(&std::fs::read(lab.join("run.json")).unwrap()).unwrap();
+    let mut argv: Vec<String> = original["command"]["argv"].as_array().unwrap().iter()
+        .map(|value| value.as_str().unwrap().to_owned()).collect();
+    assert_eq!(&argv[..2], &["measure", "run"]);
+    let output_index = argv.iter().position(|value| value == "--out").unwrap() + 1;
+    argv[output_index] = repeat.display().to_string();
+    let result = Command::new(original["command"]["executable"]["path"].as_str().unwrap())
+        .args(&argv).current_dir(&f.root)
+        .env("RUST_LOG", "off").env("SPEKTRAFILM_CONFIG_DIR", f.root.join("config"))
+        .env_remove("SPEKTRAFILM_BACKEND").env_remove("SPEKTRAFILM_DATA_DIR")
+        .output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(std::fs::read(lab.join("readings.csv")).unwrap(), std::fs::read(repeat.join("readings.csv")).unwrap());
+    assert_eq!(original["command"]["executable"], original["identity"]["renderer"]);
+    let replayed: Value = serde_json::from_slice(&std::fs::read(repeat.join("run.json")).unwrap()).unwrap();
+    assert_eq!(original["identity"], replayed["identity"]);
     assert!(
         !f.measure_with(&stimuli, &lab).status.success(),
         "an existing artifact must not be replaced"
@@ -760,6 +769,8 @@ fn measure_run_matches_experiment_observation_on_log_e_film() {
     assert_eq!(record["observer"]["host_precision"], "f64");
     assert_eq!(record["observer"]["inject"], "rgb_in");
     assert_eq!(record["observer"]["collect"], "rgb_out");
+    assert_eq!(record["observer"]["directory"], "evidence");
+    assert!(lab.join(record["observer"]["directory"].as_str().unwrap()).join("stage-evidence.json").is_file());
     assert_eq!(
         record["identity"]["input_declaration"]["cctf_decoding"],
         true
@@ -2010,6 +2021,8 @@ fn measure_records_the_parameter_files_it_declared() {
         .as_array()
         .unwrap();
     assert_eq!(files.len(), 1, "{record}");
+    assert_eq!(record["command"]["dependencies"]["parameters"], record["identity"]["parameters"]["files"]);
+    assert_eq!(record["command"]["dependencies"]["stimulus"], record["identity"]["stimulus"]);
     let path = files[0]["path"].as_str().unwrap();
     assert!(path.ends_with("edits.toml"), "{path}");
     assert!(

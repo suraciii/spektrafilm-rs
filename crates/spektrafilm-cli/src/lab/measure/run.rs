@@ -172,7 +172,8 @@ pub fn run_with_result(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Res
 
     // The runs record their declaration before the runtime takes ownership of
     // the resolved profiles.
-    let declaration = declaration_record(args, &chain, &data_dir, &read);
+    let declaration = declaration_record(args, &chain, &data_dir, &read)?;
+    let command = replay_record(args, &declaration, &identity)?;
 
     stage_evidence::ensure_supported_params(&chain.params).map_err(anyhow::Error::msg)?;
 
@@ -230,6 +231,7 @@ pub fn run_with_result(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Res
             "kind": "run",
             "executed": true,
             "declaration": declaration,
+            "command": command,
             "executor": {
                 "backend": backend.name(),
                 "precision": "f64",
@@ -237,7 +239,7 @@ pub fn run_with_result(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Res
             "observer": {
                 "kind": "native_stage_capture",
                 "schema_version": 1,
-                "directory": ".",
+                "directory": "evidence",
                 "backend": "cpu",
                 "host_precision": "f64",
                 "buffer_dtype": "f64",
@@ -438,8 +440,8 @@ fn declaration_record(
     chain: &ResolvedChain,
     data_dir: &Path,
     read: &[String],
-) -> Value {
-    json!({
+) -> Result<Value> {
+    Ok(json!({
         "preset": chain.presets,
         "film": args.chain.film,
         "paper": args.chain.paper,
@@ -447,15 +449,54 @@ fn declaration_record(
         "route": args.chain.route,
         "scan_output": args.chain.scan_output,
         "seed": args.chain.seed,
-        "data_dir": data_dir.display().to_string(),
+        "data_dir": std::fs::canonicalize(data_dir)?,
         "enter": args.enter.name(),
         "read": read,
-        "stimuli": args.stimuli.display().to_string(),
+        "stimuli": std::fs::canonicalize(&args.stimuli)?,
         "resolved": {
             "film": chain.film_name,
             "print": chain.print_name,
         },
-    })
+    }))
+}
+
+/// Replay the same declaration that `measure verify` re-resolves, retaining
+/// the dependency identities already computed by the measurement owner.
+fn replay_record(args: &MeasureRunArgs, declaration: &Value, identity: &Value) -> Result<Value> {
+    let cwd = std::env::current_dir()?;
+    let out = if args.out.is_absolute() { args.out.clone() } else { cwd.join(&args.out) };
+    let text = |field: &str| declaration[field].as_str().unwrap_or_default().to_owned();
+    let mut argv = vec![
+        "measure".to_owned(), "run".to_owned(), "--stimuli".to_owned(), text("stimuli"),
+        "--enter".to_owned(), text("enter"), "--out".to_owned(), out.display().to_string(),
+        "--data-dir".to_owned(), text("data_dir"),
+    ];
+    for field in ["film", "paper", "route", "scan_output"] {
+        if let Some(value) = declaration[field].as_str() {
+            argv.extend([format!("--{}", field.replace('_', "-")), value.to_owned()]);
+        }
+    }
+    for (field, option) in [("preset", "--preset"), ("sources", "--set"), ("read", "--read")] {
+        for value in declaration[field].as_array().into_iter().flatten() {
+            if let Some(value) = value.as_str() {
+                argv.extend([option.to_owned(), value.to_owned()]);
+            }
+        }
+    }
+    Ok(json!({
+        "argv": argv,
+        "cwd": cwd,
+        "executable": identity["renderer"],
+        "seed": declaration["seed"],
+        "dependencies": {
+            "parameters": identity["parameters"]["files"],
+            "stimulus": identity["stimulus"],
+            "data_dir": identity["data_dir"],
+            "film_profile": identity["film_profile"],
+            "print_profile": identity["print_profile"],
+        },
+        "observer": {"record": "run.json", "field": "observer"},
+    }))
 }
 
 /// Every active point-wise offender, one per line, with the exact `--set` edit
@@ -692,7 +733,7 @@ fn write_dry_run(
         "schema_version": 1,
         "kind": "run",
         "executed": false,
-        "declaration": declaration_record(args, chain, data_dir, read),
+        "declaration": declaration_record(args, chain, data_dir, read)?,
         "stimulus": stimulus.manifest_record(),
         "identity": identity,
         "stages": stages,

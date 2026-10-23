@@ -157,11 +157,15 @@ named after a flag.
 
 `run.json` carries the declared inputs and their hashes, the resolved chain identity,
 the entry boundary, the read stages, the stimulus identity, and the group summaries.
-The target replay record must also retain the owning replayable `spektrafilm-lab measure run`
-invocation and the actual observer configuration: selected named taps, CPU f64 execution,
-native schema version, and evidence destination. Canonical declaration paths and hashes of
-their parameter and stimulus dependencies make this replayable from another working directory.
-A fabricated `process` argv or a resolved snapshot alone is not a replayable declaration.
+The `command` record retains the owning replayable `spektrafilm-lab measure run`
+argv, executable identity, executed seed, and the dependency identities already used by
+`verify`: parameter-source hashes, stimulus manifest/array hashes, profile identities,
+and the data inventory. It reuses the canonical `declaration`, rather than serializing
+a resolved snapshot as a new input. The `observer` record identifies the actual named
+taps, entry and collection boundary, CPU f64 execution, native schema version, and
+`directory: "evidence"` relative to `run.json`. Replay may change `--out` to a fresh
+destination; canonical declaration paths allow another working directory. There is
+no fabricated `process` capture argv.
 `readings.csv` carries one row per sample per available stage: the sample identity, its group,
 the stage, channel order, the three channel values, the unit, and a validity flag. A sample
 whose values include a non-finite number is invalid and reports an empty field; the command
