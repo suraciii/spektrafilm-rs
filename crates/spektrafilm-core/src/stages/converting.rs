@@ -92,7 +92,7 @@ struct Converter {
 
 impl Converter {
     fn new(profile: &Profile, params: &RuntimeParams) -> Result<Self, String> {
-        let illuminant = select_illuminant_f64(&params.scanner.lamp).into_owned();
+        let illuminant = select_illuminant_f64(profile.readout_illuminant()).into_owned();
         let n = illuminant
             .len()
             .min(profile.data.channel_density.len())

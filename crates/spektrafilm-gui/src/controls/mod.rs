@@ -481,45 +481,17 @@ mod tests {
             // The scanner surface derives its medium from the route, so the
             // controls follow the route rather than the selected film stock.
             let active = medium.for_route(route) != ScanMedium::None;
-            for label in ["scanner lamp", "Lens blur (readout optics)"] {
-                assert_eq!(has_text(&output, label), active, "{route}: {label}");
-            }
+            assert_eq!(
+                has_text(&output, "Lens blur (readout optics)"),
+                active,
+                "{route}: lens blur"
+            );
             assert_eq!(
                 has_text(&output, "scan output"),
                 medium.positive_output_eligible(route),
                 "{route}"
             );
         }
-    }
-
-    #[test]
-    fn scanner_lamp_choice_writes_the_selected_illuminant() {
-        let ctx = egui::Context::default();
-        let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
-        assert!(has_text(&output, "D55"));
-        fn select(
-            ctx: &egui::Context,
-            params: &mut RuntimeParams,
-            summary: &str,
-            option: &str,
-        ) -> ChangeFlags {
-            let (_, output) = scanner_frame(ctx, params, ScanMedium::Negative, vec![]);
-            let button = text_position(&output, summary);
-            scanner_frame(ctx, params, ScanMedium::Negative, click(button, true));
-            scanner_frame(ctx, params, ScanMedium::Negative, click(button, false));
-            // Popup areas lay out their first frame before becoming visible and hittable.
-            let (_, output) = scanner_frame(ctx, params, ScanMedium::Negative, vec![]);
-            let entry = popup_text_position(&output, option);
-            scanner_frame(ctx, params, ScanMedium::Negative, click(entry, true));
-            scanner_frame(ctx, params, ScanMedium::Negative, click(entry, false)).0
-        }
-        let flags = select(&ctx, &mut params, "D55", "D65");
-        assert!(flags.runtime_changed, "scanner lamp");
-        assert_eq!(params.scanner.lamp, "D65");
-        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
-        assert!(has_text(&output, "D65"));
     }
 
     #[test]

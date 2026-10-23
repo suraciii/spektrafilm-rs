@@ -123,12 +123,12 @@ fn parse_calibration(text: &str) -> Vec<f64> {
 
 // Deterministic fits on the `session_fixture` ramp, measured from the f64
 // pipeline. Tolerances absorb precision-feature and libm ULP drift only.
-const BASE_CYAN: f64 = 1.227_020_666_902_410;
-const BASE_MAGENTA: f64 = 0.600_426_922_252_643;
-const BASE_YELLOW: f64 = 0.500_288_922_285_685;
-const BASE_EXPOSURE_EV: f64 = -0.902_427_051_824_104;
-const FILTER_M_SHIFT: f32 = -0.518_305_7;
-const FILTER_Y_SHIFT: f32 = -0.543_735_27;
+const BASE_CYAN: f64 = 1.229_000_194_836_021;
+const BASE_MAGENTA: f64 = 0.587_970_549_967_285;
+const BASE_YELLOW: f64 = 0.498_317_624_146_600;
+const BASE_EXPOSURE_EV: f64 = -0.887_888_884_676_046;
+const FILTER_M_SHIFT: f32 = 0.101_127_781;
+const FILTER_Y_SHIFT: f32 = -0.180_145_949;
 
 /// The applied `detect base` result: fitted base densities with the scan
 /// exposure, the untouched scale/tilt, and the status reporting that EV.

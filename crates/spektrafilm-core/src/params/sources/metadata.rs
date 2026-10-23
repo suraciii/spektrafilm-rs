@@ -365,9 +365,6 @@ fn conditions(path: &str) -> Vec<String> {
     if path == "scanner.scan_output" {
         out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; active Grain Procedural is unsupported".into());
     }
-    if path == "scanner.lamp" {
-        out.push("the scanner's one light source; the clear-film white calibration keeps its spectral shape in play, and the declared infrared cut rides on it".into());
-    }
     if path == "scanner.conversion_style" {
         out.push(
             "named positive-conversion tone for negative_to_positive; neutral is the frozen reference, other names resolve to data/scan-styles/<name>.json (declared per-channel tone parameters, never fitted)"

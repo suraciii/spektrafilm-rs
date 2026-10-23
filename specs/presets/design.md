@@ -27,7 +27,7 @@ A section must be a group of editable controls that a user can see and that can 
 - `camera filter`: `camera_diffusion_filter`
 - `enlarger filter`: `enlarger.diffusion_filter`
 - `enlarger`: `enlarger` without `enlarger.diffusion_filter`
-- `scanner`: `scanner.lamp`, `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`
+- `scanner`: `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`
 - `cmyk ink style`: `cmyk`
 - `print`: `print_render`
 - `output mix`: `output_mix`

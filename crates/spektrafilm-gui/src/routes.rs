@@ -28,8 +28,8 @@ pub(crate) mod vocabulary {
 
     /// How the scanner surface is sequenced: the physical light source, the
     /// output polarity, then the readout optics and digital sharpening.
-    pub(crate) const SCANNER_SEQUENCE: &str = "Scanner sequence: scanner lamp, scan output \
-         polarity, then readout optics and digital sharpening.";
+    pub(crate) const SCANNER_SEQUENCE: &str = "Scanner sequence: scan output polarity, then \
+         readout optics and digital sharpening.";
 
     /// `conversion style`: the named positive-conversion tone of the
     /// negative-to-positive interpretation.
@@ -46,27 +46,6 @@ pub(crate) mod vocabulary {
 
     /// `neutral`, the frozen reference tone every style is measured against.
     pub(crate) const CONVERSION_STYLE_NEUTRAL: &str = "neutral";
-
-    /// `scanner lamp`: the one physical light source of a scan.
-    pub(crate) const SCANNER_LAMP: &str = "scanner lamp";
-
-    /// `scanner lamp` help, stating the boundary between the lamp and the
-    /// film's own calibration.
-    pub(crate) fn scanner_lamp_help() -> &'static str {
-        static HELP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-            format!(
-                "Light source of the scanning rig that reads the scanned medium; the model is \
-                 one colorimetric scan of the clear film base. It changes scanner acquisition \
-                 only: it does not change film exposure, development, film-domain effects, \
-                 print exposure, or camera exposure. {SCANNER_LAMP_SCOPE}"
-            )
-        });
-        &HELP
-    }
-
-    /// Scope note shared by the lamp help.
-    pub(crate) const SCANNER_LAMP_SCOPE: &str = "The catalog covers daylight, fluorescent, LED \
-         and discharge series plus any BB<kelvin> blackbody.";
 
     /// `scan output`: native polarity or negative conversion.
     pub(crate) const SCAN_OUTPUT: &str = "scan output";
@@ -225,7 +204,6 @@ mod tests {
         // The explanatory line is explanatory only: it names the groups without
         // renaming a runtime concept or adding a second control taxonomy.
         for group in [
-            "scanner lamp",
             "scan output polarity",
             "readout optics",
             "digital sharpening",
@@ -237,19 +215,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scanner_help_keeps_the_physical_boundaries_distinct() {
-        // The lamp is the acquisition light source: it stays separate from
-        // the material stages the scan reads.
-        assert_eq!(vocabulary::SCANNER_LAMP, "scanner lamp");
-        assert!(
-            vocabulary::scanner_lamp_help()
-                .contains("does not change film exposure, development, film-domain effects"),
-            "lamp help must state what it does not change"
-        );
-        // CCTF expands at first use.
-        assert_eq!(vocabulary::CCTF, "color component transfer function");
-    }
     #[test]
     fn route_tooltip_names_conditional_scanned_medium_and_polarity() {
         let tooltip = tooltip();

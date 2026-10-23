@@ -79,7 +79,6 @@ fn state_carriers_reject_ignored_mix_and_nested_retired_io() {
 fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
     let legacy_scanner = json!({
         "scan_output": "negative_to_positive",
-        "lamp": "D55",
     });
     for (pair, mode, compensation, tracking) in [
         (
@@ -121,7 +120,6 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
         let state = GuiState::from_value(source.clone()).unwrap();
         let params = state.runtime_params().unwrap();
         assert_eq!(params.scanner.scan_output, "negative_to_positive");
-        assert_eq!(params.scanner.lamp, "D55");
         assert_eq!(params.enlarger.print_exposure_mode.as_str(), mode);
         assert_eq!(
             params.settings.print_exposure_ev_tracking.as_str(),
@@ -284,8 +282,8 @@ fn factory_matches_independently_generated_upstream_state() {
         .as_object_mut()
         .unwrap()
         .remove("lightness_compression");
-    // The pinned oracle predates the neutral scan model: `scan_illuminant`
-    // moved onto `scanner.lamp` and is no longer a `convert` control.
+    // The pinned oracle predates the neutral scan model: `convert.scan_illuminant`
+    // is no longer a convert control; the readout light is a product constant.
     expected["convert"]
         .as_object_mut()
         .unwrap()
@@ -338,7 +336,7 @@ fn factory_matches_independently_generated_upstream_state() {
     // These controls belong to the Rust scanner extension, not the
     // independently generated Python factory-state oracle.
     let scanner = shared["scanner"].as_object_mut().unwrap();
-    for key in ["scan_output", "conversion_style", "lamp"] {
+    for key in ["scan_output", "conversion_style"] {
         scanner.remove(key);
     }
     // The pinned oracle predates the neutral scan model: it still carries the
@@ -898,7 +896,6 @@ fn negative_to_positive_convert_route_roundtrip() -> anyhow::Result<()> {
     let mut params = factory.runtime_params().unwrap();
     params.workflow.route = "input > convert-film > scan".into();
     params.scanner.scan_output = "negative_to_positive".into();
-    params.scanner.lamp = "TH-KG3".into();
     params.scanner.lens_blur = 0.25;
     let saved =
         GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)?;
@@ -930,7 +927,6 @@ fn negative_to_positive_convert_route_roundtrip() -> anyhow::Result<()> {
     let restored = loaded.runtime_params()?;
     assert_eq!(restored.workflow.route, "input > convert-film > scan");
     assert_eq!(restored.scanner.scan_output, "negative_to_positive");
-    assert_eq!(restored.scanner.lamp, "TH-KG3");
     assert_eq!(restored.scanner.lens_blur, 0.25);
     assert_eq!(restored.scanner.unsharp_mask, [0.7, 0.7]);
     Ok(())
@@ -939,7 +935,7 @@ fn negative_to_positive_convert_route_roundtrip() -> anyhow::Result<()> {
 #[test]
 fn conversion_style_round_trips_through_the_param_set_path() -> anyhow::Result<()> {
     // The value routes through the same schema-driven parameter-set mechanism
-    // as scanner.lamp and scanner.scan_output. Validation checks name sanity
+    // as scanner.scan_output. Validation checks name sanity
     // and the negative-to-positive gate only, so the file need not exist here.
     let mut params = GuiState::factory().runtime_params()?;
     spektrafilm_core::params::sources::ParameterEdits::parse(
@@ -976,18 +972,16 @@ fn legacy_runtime_extension_scan_output_survives_state_load() {
     let state = GuiState::from_value(json!({
         "simulation": {"route": "input > convert-film > scan"},
         "rust": {"version": 1, "runtime": {"scanner": {
-            "scan_output": "negative_to_positive", "lamp": "D65"
+            "scan_output": "negative_to_positive"
         }}}
     }))
     .unwrap();
     let params = state.runtime_params().unwrap();
     assert_eq!(params.scanner.scan_output, "negative_to_positive");
-    assert_eq!(params.scanner.lamp, "D65");
     assert_eq!(
         state.sections["scanner"]["scan_output"],
         "negative_to_positive"
     );
-    assert_eq!(state.sections["scanner"]["lamp"], "D65");
     // An explicit canonical selection takes precedence over the extension.
     let mut canonical = state.sections.clone();
     canonical["scanner"]["scan_output"] = json!("direct_scan");
@@ -1005,14 +999,12 @@ fn scanner_defaults_and_invalid_combinations_use_runtime_contract() {
     for key in [
         "scan_output",
         "conversion_style",
-        "lamp",
         "lens_blur",
         "unsharp_mask",
     ] {
         assert_eq!(state.sections["scanner"][key], runtime_defaults[key]);
     }
     for scanner in [
-        json!({"lamp": "not-a-lamp"}),
         json!({"scan_output": "positive_scan"}),
         json!({"conversion_style": ""}),
         json!({"conversion_style": "../etc/passwd"}),
@@ -1060,13 +1052,6 @@ fn scanner_provenance_is_rederived_from_builtin_selection() {
     assert_eq!(
         state.sections["rust"]["scanner_provenance"]["sensor"],
         "cie_1931_cmf"
-    );
-    assert!(
-        GuiState::from_value(json!({
-            "simulation": {"route": "input > film > scan"},
-            "scanner": {"lamp": "unavailable_lamp"}
-        }))
-        .is_err()
     );
 }
 

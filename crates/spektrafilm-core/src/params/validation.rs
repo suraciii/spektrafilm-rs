@@ -320,7 +320,7 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).to_owned())
             .collect(),
-        "camera.capture_illuminant" | "enlarger.illuminant" | "scanner.lamp" => {
+        "camera.capture_illuminant" | "enlarger.illuminant" => {
             crate::spectral_service::available_illuminants()
                 .iter()
                 .map(|v| (*v).to_owned())
@@ -409,7 +409,7 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
         }
         "settings.rgb_to_raw_method" => rgb_to_raw_names().contains(&value),
         "camera.color_filter" => crate::spectral_service::is_supported_color_filter(value),
-        "camera.capture_illuminant" | "enlarger.illuminant" | "scanner.lamp" => {
+        "camera.capture_illuminant" | "enlarger.illuminant" => {
             crate::spectral_service::is_supported_illuminant(value)
         }
         "camera.diffusion_filter.filter_family" | "enlarger.diffusion_filter.filter_family" => {
@@ -612,13 +612,6 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         &params.camera.auto_exposure_method,
     )?;
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
-    if !crate::spectral_service::is_supported_illuminant(&params.scanner.lamp) {
-        let supported = crate::spectral_service::available_illuminants().join(", ");
-        return Err(format!(
-            "scanner.lamp: unsupported illuminant {:?}; supported: {supported}",
-            params.scanner.lamp
-        ));
-    }
     let style = &params.scanner.conversion_style;
     if style.is_empty()
         || style.contains('/')

@@ -476,23 +476,17 @@ mod tests {
         }
     }
 
-    /// The lamp must stay in play: swapping it changes a colored capture,
-    /// which the retired lamp-integral normalization cancelled out.
+    /// The readout light is a product constant selected by the material
+    /// category, not a runtime knob.
     #[test]
-    fn lamp_swap_changes_colored_captures() {
+    fn readout_illuminant_follows_the_material_category() {
         let data = data_dir();
-        let film = crate::profile::load_profile_by_name(&data, "kodak_kodachrome_64").unwrap();
-        let density = [0.512, 0.357, 0.095];
-        let mut daylight = params();
-        daylight.scanner.lamp = "D55".into();
-        let mut tungsten = params();
-        tungsten.scanner.lamp = "T".into();
-        let a = scan(&density, &film, &style::NEUTRAL, &daylight);
-        let b = scan(&density, &film, &style::NEUTRAL, &tungsten);
-        assert!(
-            a.iter().zip(&b).any(|(x, y)| (x - y).abs() > 1e-3),
-            "lamp swap must move the capture: {a:?} vs {b:?}"
-        );
+        let negative = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let cine_print = crate::profile::load_profile_by_name(&data, "kodak_2383").unwrap();
+        let bw_print = crate::profile::load_profile_by_name(&data, "kodak_2302").unwrap();
+        assert_eq!(negative.readout_illuminant(), "D50");
+        assert_eq!(cine_print.readout_illuminant(), "BB5800");
+        assert_eq!(bw_print.readout_illuminant(), "D50");
     }
 
     #[test]

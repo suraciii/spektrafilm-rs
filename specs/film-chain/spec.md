@@ -24,13 +24,13 @@ Each light source in the chain has one owner, and the chain holds them separate.
 The capture illuminant MUST NOT change any of the following, and none of the following MAY change it:
 
 - film exposure, development, film-domain effects, or the developed negative;
-- `scanner.lamp`, the single light source of a scan, which belongs to scan acquisition;
+- the readout illuminant, a product constant selected by the material category;
 - `enlarger.illuminant` and the enlarger filter pack, which belong to print exposure;
 - the output white point and transfer encoding.
 
 Stage preparation resolves the capture illuminant once for the selected profile and controls, before the camera-side spectral conversion. A route that computes no film exposure from scene RGB — the `input` route and a real negative-capture `input > convert-film > ...` route — does not consume it. A zero-balance negative conversion renders a grey lit by the profile reference illuminant neutral, and that rule continues to describe the conversion, not the capture declaration.
 
-The scanner lamp is resolved through the same shared illuminant service. Its accepted values are the illuminant vocabulary of `enlarger.illuminant`. An invalid lamp name fails before output publication.
+The readout illuminant is a product constant: `BB5800` for colour cine print materials (ISO 2910:2018) and `D50` for every other material (ISO 3664). It is not a runtime parameter, a profile field, or a preset value.
 
 No Capture & Scan Setup document, universal camera or scanner registry, or automatic scene-light inference is part of this contract.
 
@@ -38,7 +38,7 @@ No Capture & Scan Setup document, universal camera or scanner registry, or autom
 
 Scanner terms follow the [Film simulation language](../../CONTEXT.md). A reversal-film scan and a photographic-paper scan already read positive images.
 
-The scan is one colorimetric capture made through the scanner lamp. `scanner.lamp` names that single physical light source; its accepted values are `D50`, `D55`, `D65`, `T`, `TH-KG3`, `TH-KG3-L`, `K75P`, and a blackbody temperature. `D55` is the default. The lamp belongs to scan acquisition and MUST NOT be derived from the capture illuminant, the enlarger illuminant, or image content.
+The scan is one colorimetric capture made through the readout illuminant. The readout illuminant is a product constant selected by the material category; it is not a control. It MUST NOT be derived from the capture illuminant, the enlarger illuminant, or image content. A document that carries `scanner.lamp` fails validation at the current schema version.
 
 The scan output value `negative_to_positive` selects negative conversion. Negative conversion has one interpretation: it reads each dye record's density through the selected film's response and applies a positive tone response from one curve family, whose constants a declared conversion style selects. It requires no automatic setup and no scanner finish.
 
@@ -61,7 +61,7 @@ The white reference of a scan is the clear film base of the scanned medium. A cl
 - The selected route determines the scanned medium. A film-scan route scans the film; a print route scans the photographic paper.
 - The scanned medium determines the scanner controls that apply.
 - A photographic-paper scan and a slide film scan read a positive image. A negative film scan reads the negative image on the film; `negative_to_positive` produces the positive image by negative conversion.
-- Every scan exposes the scanner lamp, scanner lens blur, scanner unsharp mask, and the scan output mode.
+- Every scan exposes scanner lens blur, scanner unsharp mask, and the scan output mode.
 - A negative film scan with `negative_to_positive` additionally exposes `scanner.conversion_style`, the declared stylization point of the conversion tone.
 - The scanner owns no white/black correction, no white/black levels, and no film-scan black or white points. Those controls are removed from the runtime model, discovery, presets, recipes, GUI state, and CLI options; their canonical names must fail unknown-field validation at the current schema version.
 - Negative conversion belongs to `negative_to_positive`. A photographic-paper scan and a slide film scan must not expose it. See [Direct negative-film scan output](#direct-negative-film-scan-output).
@@ -98,11 +98,11 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 ## Neutral scan model
 
 - The scanner has one colorimetric sensor modeled on the CIE 1931 color-matching functions. No narrow-band, approximate, or measured-device receiver profile exists; the sensor is not selectable.
-- Scan acquisition is one spectral integration of the scanned medium under the scanner lamp. `scanner.lamp` resolves to one spectral power distribution through the shared illuminant service that `enlarger.illuminant` uses, so one service owns every light-source name.
+- Scan acquisition is one spectral integration of the scanned medium under the readout illuminant. The illuminant is resolved from the material category through the shared illuminant service, so one service owns every light-source name.
 - The white reference of a scan is the clear film base of the scanned medium. The scan chromatically adapts from that clear-film white to the output color space's white and emits output-space linear RGB. The scan matrix is the identity; no receiver calibration matrix is applied.
-- The clear film base must read as the output color space's white on every admitted route, for every accepted lamp, and for both scan output values.
-- The lamp changes the capture. Changing `scanner.lamp` must change the scanned pixels of a colored area, while a clear-film area remains the output white.
-- The lamp must not change film exposure, development, film-domain effects, print exposure, or the input camera exposure. It must not be derived from the capture illuminant or the enlarger illuminant, and it must not be inferred from image content.
+- The clear film base must read as the output color space's white on every admitted route, for every material category, and for both scan output values.
+- The readout illuminant is part of the capture model. On a positive transmission or paper readout it changes the scanned pixels of a coloured area, while a clear-film area remains the output white. On a negative-to-positive readout it changes only the final colour transform; the reconstructed record exposure does not read it.
+- The readout illuminant must not change film exposure, development, film-domain effects, print exposure, or the input camera exposure. It must not be derived from the capture illuminant or the enlarger illuminant, and it must not be inferred from image content.
 - `negative_to_positive` has one interpretation. It reads each dye record's density, as a narrowband scanner does, derives a per-record monotone inverse from the selected profile density curves, and applies a positive tone response from the same logistic curve family. One record's output must not depend on another record's density.
 - No selectable negative conversion method exists. The removed names `separable`, `coupled`, and `digital_reference`, and the leaf `scanner.negative_conversion_method`, must fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes.
 - The scanner owns no automatic setup and no finish. The removed leaves `scanner.auto_setup`, `scanner.finish`, `scanner.finish_strength`, `scanner.white_correction`, `scanner.black_correction`, `scanner.white_level`, `scanner.black_level`, `scanner.black_point`, `scanner.white_point`, `scanner.reference_exposure_ev`, and `scanner.reference_balance_ev` must fail unknown-field validation at the current schema version.
@@ -139,8 +139,8 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 
 ## Conversion control naming acceptance
 
-1. Discovery, CLI help, effective parameter reports, saved presets, recipes, and GUI state must emit the canonical paths `scanner.lamp`, `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`, and `enlarger.print_exposure_mode`.
-2. GUI display names must use the real operation words: scanner lamp, scan output, lens blur, unsharp mask, and print exposure mode.
+1. Discovery, CLI help, effective parameter reports, saved presets, recipes, and GUI state must emit the canonical paths `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`, and `enlarger.print_exposure_mode`.
+2. GUI display names must use the real operation words: scan output, lens blur, unsharp mask, and print exposure mode.
 3. Replacing a legacy path with its canonical path must preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls.
 4. The legacy `scanner.receiver_profile`, `scanner.negative_conversion_method`, `scanner.conversion_brightness_ev`, `scanner.conversion_balance_ev`, `scanner.conversion_contrast`, `scanner.conversion_dmax`, `scanner.auto_setup`, `scanner.finish`, `scanner.finish_strength`, `scanner.white_correction`, `scanner.black_correction`, `scanner.white_level`, `scanner.black_level`, `scanner.black_point`, `scanner.white_point`, `scanner.reference_exposure_ev`, and `scanner.reference_balance_ev` paths, the legacy `enlarger.normalize_print_exposure` and `enlarger.print_exposure_compensation` leaves, and the legacy `film_render.convert.scan_illuminant` leaf must fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes. Only the versioned preset migration and the versioned complete GUI state migration may map them.
 5. Rejection timing and failed-import retention follow [Scan output naming acceptance](#scan-output-naming-acceptance).
@@ -148,9 +148,9 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 
 ## Scanner acceptance
 
-- The clear film base of the scanned medium must read as the output color space's white on every admitted route, for every accepted lamp, and for both scan output values.
-- Changing `scanner.lamp` must change the scanned pixels of a colored area. A clear-film area must remain the output white under every lamp.
-- The lamp must not change film density, film-domain grain, halation, print exposure, or camera exposure. It must change only the scan acquisition.
+- The clear film base of the scanned medium must read as the output color space's white on every admitted route, for every material category, and for both scan output values.
+- The readout illuminant must follow the material category; no runtime control may override it. A clear-film area must remain the output white on every admitted route.
+- The readout illuminant must not change film density, film-domain grain, halation, print exposure, or camera exposure. It may change only the readout colour transform.
 - `direct_scan` must preserve the native polarity of the selected medium.
 - Negative conversion must read one record's density without depending on another record's density, and must not acquire a receiver capture.
 - Negative conversion must produce finite, continuous output across the calibration range and finite tangent extrapolation outside it.

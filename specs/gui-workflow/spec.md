@@ -15,7 +15,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
   [Scan medium and scanner controls](../film-chain/spec.md#scan-medium-and-scanner-controls)
   assign to the scanned medium. For a negative film profile on the direct
   `input > film > scan` route or the real negative-capture `input > convert-film > scan` route, they offer `direct_scan` and
-  `negative_to_positive`. Labels must follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance). Every route shows the scanner lamp, lens blur, and unsharp mask. Conversion control display names must follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance).
+  `negative_to_positive`. Labels must follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance). Every route shows lens blur and unsharp mask; the readout illuminant is not a control. Conversion control display names must follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance).
   A route or film profile change that makes the selected mode ineligible resets it to
   `direct_scan` and clears ineligible scanner controls.
 - Imported states and presets must reject the removed mode as defined by [Scanner language](../film-chain/spec.md#scanner-language). A rejected import must not replace accepted parameters or the retained image.

@@ -69,7 +69,7 @@ The selector must not silently change route terminology when a profile or stock 
 
 The Scanner surface must follow the physical sequence from [`Film chain`](../film-chain/spec.md#scan-medium-and-scanner-controls):
 
-1. scanner acquisition through the scanner lamp;
+1. scan acquisition through the product readout illuminant;
 2. scan output polarity and negative conversion;
 3. readout optics and digital sharpening;
 4. downstream digital output.

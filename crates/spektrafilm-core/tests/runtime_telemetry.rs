@@ -16,7 +16,6 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
     params.workflow.route = "input > film > scan".into();
     params.io.scan_film = true;
     params.scanner.scan_output = "negative_to_positive".into();
-    params.scanner.lamp = "D65".into();
     let runtime =
         Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
     let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
@@ -48,7 +47,8 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
     assert_eq!(scan_model.white_reference, "clear_film_base");
     assert_eq!(scan_model.output_white, "output_color_space_white");
     assert_eq!(scan_model.matrix, "identity");
-    assert_eq!(scan_model.lamp, "D65");
+    assert_eq!(scan_model.readout_illuminant, "D50");
+    assert_eq!(scan_model.readout_rule, "default");
     assert_eq!(actual.conversion_style, "neutral");
 }
 

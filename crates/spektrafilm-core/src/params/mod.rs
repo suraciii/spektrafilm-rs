@@ -168,11 +168,6 @@ impl Default for EnlargerParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
-    /// The scanner lamp — the single physical light source of a scan. A
-    /// reversal stock has no second viewing illuminant; the lamp is the only
-    /// light a scanner owns.
-    #[serde(default = "default_d55")]
-    pub lamp: String,
     /// Scan output polarity: `direct_scan` preserves the scanner capture;
     /// `negative_to_positive` interprets each negative dye record's density as a
     /// positive image.
@@ -194,7 +189,6 @@ pub struct ScannerParams {
 impl Default for ScannerParams {
     fn default() -> Self {
         Self {
-            lamp: default_d55(),
             scan_output: default_direct_scan(),
             conversion_style: default_conversion_style(),
             lens_blur: 0.0,
@@ -935,9 +929,6 @@ fn default_17() -> u32 {
 fn default_640() -> u32 {
     640
 }
-fn default_d55() -> String {
-    "D55".into()
-}
 fn default_99() -> f64 {
     99.0
 }
@@ -954,15 +945,10 @@ mod tests {
     #[test]
     fn scanner_defaults_and_sparse_edits_are_compatible() {
         let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();
-        assert_eq!(legacy.lamp, "D55");
         assert_eq!(legacy.scan_output, "direct_scan");
         assert_eq!(legacy.lens_blur, 0.0);
         assert_eq!(legacy.unsharp_mask, [0.7, 0.7]);
         for (path, allowed) in [
-            (
-                "scanner.lamp",
-                &["D50", "D55", "D65", "T", "TH-KG3", "K75P"][..],
-            ),
             (
                 "scanner.scan_output",
                 &["direct_scan", "negative_to_positive"][..],
@@ -979,7 +965,6 @@ mod tests {
             assert!(super::sources::ParameterEdits::parse(&format!("{path}=unknown")).is_err());
         }
         let encoded = serde_json::to_value(&legacy).unwrap();
-        assert_eq!(encoded["lamp"], "D55");
         assert_eq!(encoded["scan_output"], "direct_scan");
         for removed in [
             "receiver_profile",
@@ -1000,16 +985,6 @@ mod tests {
         let settings = serde_json::to_value(super::SettingsParams::default()).unwrap();
         assert_eq!(settings["print_exposure_ev_tracking"], "follow_mode");
     }
-    #[test]
-    fn scanner_lamp_rejects_unsupported_illuminants() {
-        let mut params = RuntimeParams::default();
-        params.scanner.lamp = "D55".into();
-        params.validate().unwrap();
-        params.scanner.lamp = "sunlit-window".into();
-        let error = params.validate().unwrap_err();
-        assert!(error.contains("scanner.lamp"));
-    }
-
     #[test]
     fn conversion_style_requires_negative_to_positive() {
         let mut params = RuntimeParams::default();

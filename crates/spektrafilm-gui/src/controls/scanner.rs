@@ -4,13 +4,6 @@ use egui::Ui;
 use serde_json::Value;
 use std::path::Path;
 
-/// Illuminants offered by the scanner lamp selector. The lamp is the one
-/// physical light source of a scan, so the list is the same curated
-/// vocabulary the enlarger illuminant selector offers; the canonical
-/// `--set scanner.lamp=…` / preset path accepts every catalog name plus any
-/// `BB<kelvin>` blackbody.
-const SCANNER_ILLUMINANTS: &[&str] = &["D50", "D55", "D65", "T", "TH-KG3", "TH-KG3-L", "K75P"];
-
 /// Conversion-style names the selector offers.
 ///
 /// Resolved from the same data directory the pipeline reads, so the selector
@@ -182,15 +175,6 @@ pub(crate) fn sections(
                 ) {
                     flags.runtime_changed = true;
                 }
-            }
-            if filter_matches(filter, vocabulary::SCANNER_LAMP) {
-                flags.runtime_changed |= choice_tip_experimental(
-                    ui,
-                    vocabulary::SCANNER_LAMP,
-                    &mut params.scanner.lamp,
-                    SCANNER_ILLUMINANTS,
-                    vocabulary::scanner_lamp_help(),
-                );
             }
             if filter_matches(filter, "lens blur (readout optics)") {
                 flags.runtime_changed |= param_numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, "scanner.lens_blur", "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, gamut processing, sharpening and encoding. Identity points retain this optical order.");

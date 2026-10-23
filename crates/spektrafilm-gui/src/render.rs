@@ -304,13 +304,13 @@ mod tests {
         assert_eq!(recovered.data, expected.data);
 
         let mut failed_update = snapshot.clone();
-        failed_update.params.scanner.lamp = "not-a-lamp".into();
+        failed_update.params.scanner.conversion_style = "../etc/passwd".into();
         assert!(
             cache
                 .prepare_observed(&failed_update, false, &context)
                 .err()
                 .unwrap()
-                .contains("scanner.lamp")
+                .contains("conversion_style")
         );
         assert!(cache.entry.is_none());
         let rebuilt = cache

@@ -40,7 +40,7 @@ A resettable section presents a `modified` chip while any of its parameters diff
 
 The GUI shows scanner controls for the scanned medium:
 
-- Every route exposes scan polarity and the scanner lamp illuminant.
+- Every route exposes scan polarity; the readout illuminant follows the material category.
 - The negative interpretation additionally exposes the conversion style: `neutral` is the frozen reference tone, and any other name is a declared style in `data/scan-styles/`.
 - Scanner lens blur and unsharp masking expose the readout optics and digital sharpening.
 

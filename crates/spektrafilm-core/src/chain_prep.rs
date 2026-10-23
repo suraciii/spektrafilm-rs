@@ -100,8 +100,8 @@ pub(crate) fn dir_matrix(dir: &crate::params::couplers::DirCouplersParams) -> [[
 /// the output white removes the film-base tint.
 #[derive(Debug, Clone)]
 pub struct ScanColorContext {
-    /// Effective scanner lamp, f64 per wavelength: the resolved illuminant
-    /// with the scanner's declared infrared cut (`1/(1+exp((λ-670nm)/20nm))`,
+    /// Effective readout illuminant, f64 per wavelength: the product constant
+    /// selected by the material category, without a device filter.
     /// research `k64-neutral-scan-v2`) folded in. Every kernel multiplies
     /// this spectrum, so the cut needs no separate plumbing.
     pub illuminant: Vec<f64>,
@@ -144,17 +144,6 @@ impl ScanColorContext {
 
         let mut base_xyz = [0.0f64; 3];
         let mut lamp_xyz = [0.0f64; 3];
-        // The scanner's declared infrared cut (research
-        // `k64-neutral-scan-v2`: soft edge at 670 nm, 20 nm scale) rides on
-        // the lamp. Index i is wavelength 380 + 5·i nm on the shared grid.
-        let lamp: Vec<f64> = lamp
-            .iter()
-            .enumerate()
-            .map(|(i, &v)| {
-                let nm = spectral::WAVELENGTH_MIN as f64 + 5.0 * i as f64;
-                v / (1.0 + ((nm - 670.0) / 20.0).exp())
-            })
-            .collect();
         // The wavelength index aligns lamp, dye, base density, and
         // color-matching samples. A row the kernels would mask — a
         // non-finite lamp, dye, or base sample (NaN·0 is NaN, then masked
@@ -226,7 +215,7 @@ impl PreparedChain {
         params: &crate::params::RuntimeParams,
         include_base: bool,
     ) -> Self {
-        let lamp = crate::spectral_service::select_illuminant_f64(&params.scanner.lamp);
+        let lamp = crate::spectral_service::select_illuminant_f64(profile.readout_illuminant());
         let base_density = if include_base {
             std::borrow::Cow::Borrowed(profile.data.base_density.as_slice())
         } else {

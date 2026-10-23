@@ -60,11 +60,10 @@ The GUI must display:
 |---|---|
 | `scanner.scan_output = direct_scan` | `Preserve medium polarity` |
 | `scanner.scan_output = negative_to_positive` | `Negative to positive` |
-| `scanner.lamp` | `Scanner lamp` |
 | `scanner.lens_blur` | `Lens blur (readout optics)` |
 | `scanner.unsharp_mask` | `Unsharp mask (digital sharpening)` |
 
-The GUI must explain that `Scanner lamp` names the single light source of the scan and that it does not change film exposure, development, film-domain effects, print exposure, or camera exposure.
+The GUI must not offer a scanner light control. The readout illuminant is a product constant selected by the material category.
 
 The GUI must explain that `negative conversion` interprets a developed negative as a positive image through the film's own density response. It must not describe negative conversion as a file conversion, a scan finish, or a positive-scan alias.
 

@@ -18,7 +18,7 @@ The leaf's semantics — optional value, profile inheritance, explicit override,
 | Dedicated `process` flag | none — `--set` is the canonical surface |
 | Editing surface parity | MAIN → Camera in the GUI, per [GUI workflow](../gui-workflow/spec.md) |
 
-The accepted names come from the shared illuminant vocabulary that `describe --field` already reports for `enlarger.illuminant` and `scanner.lamp`: the catalog sources in `data/illuminants/catalog.json`, the bundled `T`, `TH-KG3`, `TH-KG3-L`, and `K75P` selections, and the analytic `BB<kelvin>` token. `BB` must be followed by a temperature the spectral service accepts; a name it does not accept fails with the permitted values and never falls back to the profile reference.
+The accepted names come from the shared illuminant vocabulary that `describe --field` already reports for `enlarger.illuminant`: the catalog sources in `data/illuminants/catalog.json`, the bundled `T`, `TH-KG3`, `TH-KG3-L`, and `K75P` selections, and the analytic `BB<kelvin>` token. `BB` must be followed by a temperature the spectral service accepts; a name it does not accept fails with the permitted values and never falls back to the profile reference.
 
 Nothing in this language selects the capture illuminant from EXIF or RAW metadata, from RAW white balance, or from image content. Those are out of scope for version 1.
 
@@ -188,7 +188,7 @@ Field meanings:
 
 - `requested` — the composed leaf value, `null` when unset.
 - `effective` — the illuminant in force for this render. An unset leaf reports the inherited profile reference; an inactive leaf reports the profile reference too.
-- `source` — `unset`, `set`, or `preset`. RAW white balance, `scanner.lamp`, `enlarger.illuminant`, and the output white point never appear here as the source.
+- `source` — `unset`, `set`, or `preset`. RAW white balance, the readout illuminant, `enlarger.illuminant`, and the output white point never appear here as the source.
 - `profile_reference_illuminant` — the selected film profile's own reference illuminant, reported so an inherited value is never confused with an authored one.
 - `status` — the same `active`, `inactive`, `constrained`, `overridden` classification the [report contract](../cli/spec.md#discovery-and-dry-run) uses for `edits`, with the same precedence.
 - `reason` — `null` for an active value; otherwise the responsible condition.
@@ -201,7 +201,7 @@ A winning non-active `--set` edit warns on stderr, names the canonical path, and
 - No dedicated `process` flag, no shortened path, no alias.
 - No Capture & Scan Setup document, no universal camera or scanner registry, no receiver-matrix authoring.
 - No automatic inference from EXIF, RAW metadata, RAW white balance, or image content.
-- No change to RAW white balance, the film profile reference, the scanner lamp, the enlarger illuminant, the output white point, or the scan sensor.
+- No change to RAW white balance, the film profile reference, the readout illuminant, the enlarger illuminant, the output white point, or the scan sensor.
 - No new 800T profile and no stock-specific value written into a generic look.
 
 ## Acceptance

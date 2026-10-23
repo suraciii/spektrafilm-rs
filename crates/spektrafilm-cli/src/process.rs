@@ -805,17 +805,10 @@ fn cmd_process(
             "status": if capture_active { "active" } else { "inactive" },
             "reason": (!capture_active).then_some("route computes no film exposure from scene RGB")
         });
-        let lamp_edit = resolved
-            .edits
-            .iter()
-            .find(|edit| edit.path == "scanner.lamp");
-        let scanner_lamp = json!({
-            "effective": params.scanner.lamp,
-            "source": match lamp_edit {
-                None => "unset",
-                Some(edit) if edit.source.kind == "set" => "set",
-                Some(_) => "preset",
-            },
+        let scan_profile = if params.io.scan_film { &film } else { &print };
+        let readout_illuminant = json!({
+            "effective": scan_profile.readout_illuminant(),
+            "rule": scan_profile.readout_rule(),
         });
         let feature_profile_report = serde_json::to_value(&resolved.feature_profiles)?;
         let report = json!({
@@ -827,7 +820,7 @@ fn cmd_process(
             "film_profile": resolved.film_name,
             "print_profile": resolved.print_name,
             "capture_illuminant": capture_illuminant,
-            "scanner_lamp": scanner_lamp,
+            "readout_illuminant": readout_illuminant,
             "parameters": params,
             "scanner_provenance": ScannerProvenance::from_params(&params),
             "film_grain_dye": grain_v3,

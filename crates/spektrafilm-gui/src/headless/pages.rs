@@ -802,12 +802,6 @@ fn control_search_reaches_scanner_controls_by_their_visible_labels() {
     choose(h, "workflow", "input > film > scan");
     h.state_mut().params.scanner.scan_output = "negative_to_positive".into();
 
-    search(h, "scanner lamp");
-    assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
-            .is_some()
-    );
-
     search(h, "Lens blur");
     assert!(h.query_by_label("Lens blur (readout optics)").is_some());
     assert!(
