@@ -240,25 +240,15 @@ mod layout_snapshots {
             assert_eq!(image.height(), (size.y * dpi) as u32);
             let labels = [
                 "scan output",
-                "brightness",
-                "balance R",
-                "balance G",
-                "balance B",
-                "contrast",
-                "maximum density",
+                "conversion style",
+                "scanner lamp",
                 "Lens blur (readout optics)",
-                "film-scan black point R",
-                "film-scan black point G",
-                "film-scan black point B",
-                "film-scan white point R",
-                "film-scan white point G",
-                "film-scan white point B",
                 "Unsharp mask (digital sharpening) sigma",
                 "Unsharp mask (digital sharpening) amount",
             ];
             let mut bounds = Vec::new();
             for label in labels {
-                let node = if label == "scan output" {
+                let node = if matches!(label, "scan output" | "conversion style" | "scanner lamp") {
                     harness.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
                 } else {
                     harness.get_by_label(label)
