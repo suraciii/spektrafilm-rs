@@ -13,11 +13,11 @@ The print-and-scan chain follows this order: RGB → film dye density → enlarg
 
 See [scanning](scanning.md) for scan polarity and negative conversion.
 
-## Film and print continuation (target)
+## Film and print continuation
 
-**Not yet implemented:** the target CLI can stop after film or print development and
-resume from that completed material state. The [stage-artifact contract](../specs/cli/stage-artifacts.md)
-owns the format and admission rules. A `.sfstage` directory containing `stage.json`
+The CLI can stop after film or print development and resume from that completed material
+state. The [stage-artifact contract](../specs/cli/stage-artifacts.md) owns the format and
+admission rules. A `.sfstage` directory containing `stage.json`
 represents exactly one always-resumable film or print state, not an image or a collection
 of research observations.
 
@@ -37,7 +37,7 @@ paper, and a print scan does not require film preparation. A negative `film > sc
 conversion retains the original frozen camera exposure compensation; it does not meter
 the material state as a new photograph or synthesize a negative capture.
 
-See [CLI stage processing](cli.md#process-film-and-print-states-target) for target examples.
+See [CLI stage processing](cli.md#process-film-and-print-states) for executable examples.
 Boolean `--debug` adds stderr messages only; `--diagnostics REPORT` writes a structured
 execution report. Neither selects material output nor captures numerical observations.
 Dedicated research workflows own those buffers through the core observer under the

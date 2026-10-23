@@ -208,10 +208,9 @@ Present but malformed neutral-filter JSON is an error.
 
 ## Debug and diagnostics
 
-The target `process` interface accepts Boolean `--debug` for additional human-readable
-stderr messages. It takes no directory argument, writes no files, captures no numerical
-buffers, and must not change parameters, routing, or numerical results. This is a target
-contract, not a claim that the current binary implements it. See the authoritative
+The `process` interface accepts Boolean `--debug` for additional human-readable
+stderr messages. It takes no directory argument, writes no files, and captures no numerical
+buffers. It must not change parameters, routing, or numerical results. See the authoritative
 [debug and diagnostics contract](../specs/cli/spec.md#debug-diagnostics).
 
 `--diagnostics REPORT.json` is separate: `process` and `render` accept it to persist a
@@ -236,12 +235,10 @@ fail this configuration before publication.
 
 See [the telemetry contract](../specs/telemetry/spec.md) and [report metrics](../specs/telemetry/metrics/spec.md) for report semantics, bounded detail, and measurement limits.
 
-## Process film and print states (target)
+## Process film and print states
 
-**Not yet implemented:** the following process routes and `.sfstage` inputs/outputs are
-the target interface. They are not instructions for the current executable. The
-[stage-artifact contract](../specs/cli/stage-artifacts.md) owns route admission, the
-artifact format, frozen controls, and continuation semantics.
+The [stage-artifact contract](../specs/cli/stage-artifacts.md) owns route admission,
+the artifact format, frozen controls, and continuation semantics.
 
 The command shape is `process INPUT --route ROUTE -o OUTPUT [--debug] [--diagnostics REPORT]`.
 A `.sfstage` directory with `stage.json` is one completed, always-resumable film or print
@@ -250,18 +247,18 @@ developing the selected material; a continuation starts from that completed stat
 executes only the remaining operations. A stage input always requires an explicit route.
 
 ```bash
-# Target: develop an image into a retained film state.
+# Develop an image into a retained film state.
 ./target/release/spektrafilm-f64 process input.tif \
     --route 'input > film' -o negative.sfstage \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --film kodak_portra_400 --backend cpu --data-dir data
 
-# Target: expose and develop a print from that completed film state.
+# Expose and develop a print from that completed film state.
 ./target/release/spektrafilm-f64 process negative.sfstage \
     --route 'film > print' -o print.sfstage \
     --paper kodak_portra_endura --data-dir data
 
-# Target: scan that completed print; --debug writes messages only to stderr.
+# Scan that completed print; --debug writes messages only to stderr.
 ./target/release/spektrafilm-f64 process print.sfstage \
     --route 'print > scan' -o print.png --debug \
     --diagnostics print-report.json --data-dir data
@@ -278,6 +275,8 @@ Only downstream controls remain editable. Geometry, metering, film development a
 effects, and already completed print development must not run a second time. Loading a
 stage requires only the material dependencies used by the requested continuation; a film
 scan does not require a paper profile, and a print scan does not rerun film preparation.
+Downstream edits execute on the retained material grid. They cannot change completed
+crop or scale operations or recreate an upstream halo.
 
 There is no `--stage-evidence` process option or replacement capture flag. Stage output is
 selected by the route and `-o`, not by `--save-stage`, `--export-stage`, or a directory

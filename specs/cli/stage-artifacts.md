@@ -2,9 +2,7 @@
 
 ## Status and scope
 
-This is the approved target contract for stage input and output on `process`. The [CLI specification](spec.md) owns common command syntax, parameter composition, and Boolean debug diagnostics. This document owns the added routes and the stage artifact contract. It replaces the earlier stage-export DSL proposal.
-
-The implementation does not yet provide this contract. It still exposes the retired stage-evidence option. Specification examples describe the target language, not current executable support. The implementation must deliver the validation and real-entry-point acceptance below before this capability is presented as available.
+The [CLI specification](spec.md) owns common command syntax, parameter composition, and Boolean debug diagnostics. This document owns the implemented stage routes and the stage artifact contract. It replaces the earlier stage-export DSL proposal.
 
 ## Product contract
 

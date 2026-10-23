@@ -2,7 +2,7 @@
 
 This document is the unified CLI specification. The parameter and workflow sections below form one contract; links between them use local anchors.
 
-The [stage input and output contract](stage-artifacts.md) adds resumable material artifacts and partial routes. Those routes and the Boolean debug flag below are approved target behavior, not yet implemented. The stage-evidence option remains in current code but is retired from the target interface.
+The [stage input and output contract](stage-artifacts.md) adds resumable material artifacts and partial routes. The Boolean debug flag below adds human-readable stderr diagnostics. The process interface must not accept the retired `--stage-evidence` option.
 
 ## Parameter contract
 

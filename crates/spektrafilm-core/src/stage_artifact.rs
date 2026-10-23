@@ -481,8 +481,8 @@ pub fn read_header(path: impl AsRef<Path>) -> Result<StageHeader> {
 }
 
 fn read_header_from_root(root: &publication::ArtifactRoot) -> Result<StageHeader> {
-    let file = publication::open_member(root, "stage.json")
-        .context("reading completed stage manifest")?;
+    let file =
+        publication::open_member(root, "stage.json").context("reading completed stage manifest")?;
     ensure!(
         file.metadata()?.len() <= MAX_MANIFEST_BYTES,
         "stage manifest exceeds maximum record size"

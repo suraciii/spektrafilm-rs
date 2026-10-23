@@ -2,7 +2,7 @@
 
 ## Status and authority
 
-This is the normative target contract for instrument-owned native numerical observations. The separation from ordinary rendering and the observer-based experiment publication described here are not yet implemented; this specification is not a claim of delivered command behavior. No runtime changes accompany this revision.
+This document owns instrument-owned native numerical observations. Dedicated research endpoints must observe the shared core execution and publish their own retained evidence.
 
 The instrument owns research observation configuration, retention, and readers. The shared core owns the observed numerical execution. [Experiment runs](experiment/spec.md) and [`measure run`](spec.md#measure-run) attach the common core observer to their actual execution; they must not invoke a process capture option, implement a second stage walk, or reconstruct pipeline mathematics. Ordinary `process`, `run suite`, and `run image` do not offer optional native capture. There is no implicit replacement capture path or rerender when observations are absent.
 

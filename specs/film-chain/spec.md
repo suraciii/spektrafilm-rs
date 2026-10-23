@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Existing image-entry `input` and film workflows accept a normalized image, a film profile, and runtime controls. Input processing follows the [CMYK ink style entry-point contract](../cmyk-style/spec.md#enablement). Completed-material entry follows [Film and print continuation](#film-and-print-continuation-target) instead; it MUST NOT be interpreted as a new scene image.
+- Existing image-entry `input` and film workflows accept a normalized image, a film profile, and runtime controls. Input processing follows the [CMYK ink style entry-point contract](../cmyk-style/spec.md#enablement). Completed-material entry follows [Film and print continuation](#film-and-print-continuation) instead; it MUST NOT be interpreted as a new scene image.
 - A route that exposes and develops photographic print material must provide a photographic print profile. A film-only continuation MUST NOT acquire a paper dependency.
 - Optional CMYK ink style must satisfy the [CMYK ink style](../cmyk-style/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
@@ -17,11 +17,9 @@
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
 
-## Film and print continuation (target)
+## Film and print continuation
 
-**Implementation gap:** the routes and material-state entry described in this section
-are normative target behavior, not implemented CLI capabilities. The
-[stage-artifact contract](../cli/stage-artifacts.md) is authoritative for the `.sfstage`
+The [stage-artifact contract](../cli/stage-artifacts.md) is authoritative for the `.sfstage`
 format, validation, frozen controls, seed inheritance, and publication. This section owns
 the film-chain meaning of continuing from a developed medium. Existing image-entry and
 real-negative `convert-film` behavior remains unchanged.

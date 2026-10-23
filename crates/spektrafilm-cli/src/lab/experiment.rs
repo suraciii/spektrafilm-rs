@@ -228,7 +228,8 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
             bundle_dir.join(&name),
             bundle_dir.join(format!("{name}.tmp")),
         ] {
-            match spektrafilm_core::telemetry::validate_report_destination(&destination, &protected) {
+            match spektrafilm_core::telemetry::validate_report_destination(&destination, &protected)
+            {
                 Ok(_) => {}
                 // The shared handler owns destination shape validation and
                 // clears a valid stale completeness marker before rejecting

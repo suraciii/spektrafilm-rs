@@ -2,7 +2,7 @@
 
 `experiment run` publishes one instrument-owned [native observation bundle](../native-observations.md) for one declared experiment invocation. `experiment export` converts an existing bundle's raw f64 buffers into `.npy` arrays. They are separate endpoints in the Unix-style research pipe and do not execute downstream sampling, comparison, reporting, or optimization.
 
-Both commands are experimental and carry no compatibility promise; see the [endpoint model](../spec.md#unix-endpoint-model). This document specifies the normative target: the common-core observer execution, owning replay record, and positional export input described below are not yet implemented. This is a specification-only revision, not a claim of delivered CLI support.
+Both commands are experimental and carry no compatibility promise; see the [endpoint model](../spec.md#unix-endpoint-model).
 
 The experiment document is a typed declaration carrier, not a second parameter language or workflow DSL. Renderer parameter sources retain the [process surface](../../cli/spec.md) syntax and precedence. Instrument fields describe the endpoint input and retained evidence only.
 
