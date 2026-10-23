@@ -278,7 +278,7 @@ fn target_owned_geometry_changes_are_rejected_in_both_modes() {
 }
 
 #[test]
-fn stage_capture_under_preview_bounding_is_rejected_with_an_actionable_reason() {
+fn ordinary_preflight_rejects_retired_capture_without_creating_outputs() {
     let temp = fixture();
     let root = temp.path();
     let mut suite = read(&root.join("suite.json"));
@@ -299,18 +299,9 @@ fn stage_capture_under_preview_bounding_is_rejected_with_an_actionable_reason() 
         .arg("first")
         .output()
         .unwrap();
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        result["errors"][0]["error"]["code"], "stage_capture_unsupported",
-        "{result}"
-    );
-    // The same configuration keeps working without the capture request.
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--stage-evidence"));
+    assert!(!root.join("capture").exists());
+    // Preview remains valid when no dedicated numerical observer is requested.
     invoke(root, "plain", true, &["first"], 0);
 }

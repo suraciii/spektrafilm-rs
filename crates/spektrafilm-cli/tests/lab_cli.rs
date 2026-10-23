@@ -442,10 +442,6 @@ impl MeasureFixture {
         self.command(env!("CARGO_BIN_EXE_spektrafilm-lab"), args)
     }
 
-    fn panel(&self, args: &[&str]) -> Output {
-        self.command(env!("CARGO_BIN_EXE_spektrafilm-f64"), args)
-    }
-
     fn command(&self, binary: &str, args: &[&str]) -> Output {
         self.command_env(binary, args, &[])
     }
@@ -499,29 +495,38 @@ impl MeasureFixture {
         self.lab(&args)
     }
 
-    /// Execute the same values as a raster through the user binary.
+    /// Observe the raster through the dedicated experiment owner.
     fn process(&self, bundle: &Path) -> Output {
-        let mut args = vec![
-            "process".to_owned(),
-            self.root.join("input.png").display().to_string(),
-            "--output".to_owned(),
-            self.root.join("out.png").display().to_string(),
-            "--stage-evidence".to_owned(),
-            bundle.display().to_string(),
-            "--film".to_owned(),
-            "kodak_portra_400".to_owned(),
-            "--backend".to_owned(),
-            "cpu".to_owned(),
-            "--input-color-space".to_owned(),
-            "sRGB".to_owned(),
-            "--input-cctf-decoding".to_owned(),
-            "true".to_owned(),
-            "--data-dir".to_owned(),
-            self.data.display().to_string(),
-        ];
-        args.extend(POINT_WISE.iter().map(|value| (*value).to_owned()));
-        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-        self.panel(&borrowed)
+        use sha2::{Digest, Sha256};
+        let suite = self.root.join("capture-suite.json");
+        let regions: Vec<Value> = (0..CHART_WIDTH).map(|x| json!({
+            "id": format!("p{x:02}"), "geometry": [x, 0, 1, 1]
+        })).collect();
+        std::fs::write(&suite, serde_json::to_vec(&json!({
+            "cases": [{"id": "chart", "regions": regions}]
+        })).unwrap()).unwrap();
+        let patch: serde_json::Map<String, Value> = (0..CHART_WIDTH)
+            .map(|x| (format!("p{x:02}"), json!([0, x]))).collect();
+        let document = self.root.join("capture-experiment.json");
+        let sources: Vec<&str> = POINT_WISE.chunks_exact(2).map(|pair| pair[1]).collect();
+        std::fs::write(&document, serde_json::to_vec(&json!({
+            "schema_version": 1, "id": "chart",
+            "chain": {"film": "kodak_portra_400", "input_color_space": "sRGB", "input_cctf_decoding": true, "set": sources},
+            "input": {"path": "input.png", "sha256": format!("{:x}", Sha256::digest(std::fs::read(self.root.join("input.png")).unwrap()))},
+            "case": {"id": "chart", "suite": "capture-suite.json"},
+            "grid": {"rows": 1, "cols": CHART_WIDTH, "patch_px": 1, "gap_px": 0, "origin": [0, 0], "patch": patch},
+            "seeds": [0]
+        })).unwrap()).unwrap();
+        let out = bundle.with_extension("experiment");
+        let result = self.lab(&[
+            "experiment", "run", "--experiment", document.to_str().unwrap(),
+            "--out", out.to_str().unwrap(), "--output-format", "png", "--force",
+            "--data-dir", self.data.to_str().unwrap(),
+        ]);
+        if result.status.success() {
+            std::fs::rename(out.join("bundle"), bundle).unwrap();
+        }
+        result
     }
 }
 
@@ -677,7 +682,7 @@ fn assert_close(label: &str, got: [f64; 3], want: [f64; 3]) {
 }
 
 #[test]
-fn measure_run_matches_process_stage_evidence_on_log_e_film() {
+fn measure_run_matches_experiment_observation_on_log_e_film() {
     let f = MeasureFixture::new();
     let bundle = f.root.join("bundle");
     let result = f.process(&bundle);
@@ -732,6 +737,11 @@ fn measure_run_matches_process_stage_evidence_on_log_e_film() {
     assert_eq!(record["kind"], "run");
     assert_eq!(record["executed"], true);
     assert_eq!(record["declaration"]["enter"], "rgb_in");
+    assert_eq!(record["observer"]["kind"], "native_stage_capture");
+    assert_eq!(record["observer"]["backend"], "cpu");
+    assert_eq!(record["observer"]["host_precision"], "f64");
+    assert_eq!(record["observer"]["inject"], "rgb_in");
+    assert_eq!(record["observer"]["collect"], "rgb_out");
     assert_eq!(
         record["identity"]["input_declaration"]["cctf_decoding"],
         true
@@ -2204,11 +2214,8 @@ fn measure_verify_reports_identity_differences_without_failing() {
 fn measure_verify_reads_a_comparison_record_and_rehashes_its_sides() {
     let f = MeasureFixture::new();
     let bundle = f.root.join("verify-bundle");
-    assert!(
-        f.process(&bundle).status.success(),
-        "{}",
-        String::from_utf8_lossy(&f.process(&bundle).stderr)
-    );
+    let observation = f.process(&bundle);
+    assert!(observation.status.success(), "{}", String::from_utf8_lossy(&observation.stderr));
     let lab = f.root.join("verify-lab");
     assert!(
         f.measure_with(&f.stimuli, &lab).status.success(),

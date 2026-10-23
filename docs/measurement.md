@@ -8,7 +8,7 @@ only in the instrument binary and run at f64 reference precision. They compute v
 evidence; they do not fit parameters, render images, or judge a result. See the [measurement
 contract](../specs/instrument/spec.md#measurement) for the requirements.
 
-The [native observation separation](../specs/instrument/native-observations.md) is a normative target, not yet implemented. Dedicated measurement and experiment endpoints attach the common core observer to their actual execution and own observation retention; they do not request capture through `process` flags. Ordinary `process`, `run suite`, and `run image` offer no optional native capture or implicit replacement. This specification-only revision does not claim that the new parser, observer plumbing, replay records, or absence metadata have landed.
+The [native observation contract](../specs/instrument/native-observations.md) separates dedicated measurement and experiment endpoints from ordinary rendering. They attach the common core observer to their actual execution and own observation retention; they do not request capture through `process` flags. Measurement records retain their replayable declaration and actual observer entry, collection boundary, named taps, schema, and CPU f64 precision. Ordinary `process`, `run suite`, and `run image` offer no optional native capture or implicit replacement. Scientific bundles remain explicit research inputs, not resumable `.sfstage` states.
 
 ## The point-wise requirement
 
