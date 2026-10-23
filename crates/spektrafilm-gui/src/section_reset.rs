@@ -256,7 +256,10 @@ pub(crate) fn reset_leaf(params: &mut RuntimeParams, extras: &mut Value, path: &
     }
     let preparation = params.render_preparation_state();
     match serde_json::from_value::<RuntimeParams>(root) {
-        Ok(mut candidate) if candidate.validate().is_ok() => {
+        Ok(mut candidate) => {
+            if crate::state::validate_stored_runtime(&mut candidate).is_err() {
+                return false;
+            }
             candidate.restore_render_preparation_state(&preparation);
             *params = candidate;
             true

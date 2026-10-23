@@ -10,13 +10,13 @@ The readout light is a product constant selected by the material category: `BB58
 
 The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white, and the scan chromatically adapts from that clear-film white to the output white. The scan matrix is the identity. The readout light is part of the final colour transform, not an acquisition control.
 
-The scanner controls are `scanner.scan_output`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. White/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, automatic setup controls, scanner finish, and Digital Reference are removed; their field names fail validation at the current schema version.
+The scanner controls include `scanner.scan_output`, `scanner.conversion_style`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. Legacy white/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, automatic setup controls, scanner finish, and Digital Reference remain removed; their field names fail validation at the current schema version.
 
 ## Experimental workflow routes and output modes
 
-Runtime and GUI state accept passthrough, film-scan, film-print-scan, and the three convert-film routes. Direct negative-film scans expose `scanner.scan_output=direct_scan|negative_to_positive`.
+The GUI exposes passthrough, film-scan, film-print-scan, and the three convert-film routes. The CLI also accepts material-producing and continuation routes described in [stage artifacts](../specs/cli/stage-artifacts.md). Direct negative-film scans expose `scanner.scan_output=direct_scan|negative_to_positive`.
 
-`direct_scan` preserves the medium's polarity. Calibrated `negative_to_positive` supports direct `input > film > scan` and real negative-capture `input > convert-film > scan`. It rejects paper, positive-film, print-paper, scan-minus-base, and active-Grain-Procedural combinations.
+`direct_scan` preserves the medium's polarity. Calibrated `negative_to_positive` supports direct `input > film > scan`, resumed `film > scan`, and real negative-capture `input > convert-film > scan`. It rejects paper, positive-film, print-paper, scan-minus-base, and active-Grain-Procedural combinations.
 
 `scanner.scan_output` accepts `direct_scan` and `negative_to_positive`. Replace the removed `positive_scan` value in CLI commands, parameter files, presets, recipes, and GUI states. Old values fail validation. The GUI displays **Preserve medium polarity** and **Negative to positive**. See [scanner language](../specs/film-chain/spec.md#scanner-language).
 
@@ -55,6 +55,43 @@ Standard setup does not subtract simulated camera exposure compensation a second
 
 A frame-dependent scan cannot be represented by a point-wise LUT. LUT baking and point-wise measurements that reach this setup fail and request a fixed style. Upstream density and exposure taps remain measurable.
 
+## Operator correction
+
+After `standard` prepares its full-frame automatic baseline, four controls adjust the positive image before the fixed tone:
+
+| Field under `scanner.operator` | Default | Positive direction |
+| --- | --- | --- |
+| `exposure_ev` | `0` | Brighter; common reconstructed exposure in stops |
+| `warmth_ev` | `0` | Warmer; R−B exposure difference in stops |
+| `tint_ev` | `0` | More magenta; mean(R,B)−G exposure difference in stops |
+| `contrast` | `1` | Values above one increase common-exposure contrast about the reference |
+
+Warmth and tint are differential EV, not Kelvin. These controls do not change negative density, camera exposure, Convert recovery, or the automatic setup. Contrast does not amplify channel differences before tone. The nonlinear tone can still change perceived hue and saturation. See the [equations and numerical contract](../specs/film-chain/lab-scan/spec.md#operator-correction).
+
+```bash
+./target/release/spektrafilm-f64 process input.tif -o corrected.tif \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
+    --backend cpu --film kodak_portra_400 --scan-film \
+    --scan-output negative_to_positive --data-dir data \
+    --set scanner.operator.exposure_ev=0.5,scanner.operator.warmth_ev=0.3,scanner.operator.tint_ev=0.1,scanner.operator.contrast=1.1
+
+./target/release/spektrafilm describe --module scanner.operator --format json
+```
+
+All four values must be finite, and contrast must be greater than zero. The GUI trial ranges are exposure ±3 EV, warmth/tint ±1 EV, and contrast 0.5–2. They are editor ranges, not document validation limits. Nondefault values require `standard`, `negative_to_positive`, and a supported negative-film route. CLI, recipes, and presets reject incompatible explicit combinations. The GUI retains inactive edits and renders with neutral operator values until the route and style support them. Reset restores `0, 0, 0, 1` without changing setup.
+
+Material-producing CLI routes may retain a valid pending negative-scan correction in their `.sfstage` baseline. They report it as inactive because no scanner ran. On `film > scan`, the correction becomes active and can be changed without developing the material again; automatic setup is measured from the retained complete material frame. See [material-stage continuation](../specs/cli/stage-artifacts.md).
+
+Standard negative-to-positive preview renders the complete crop/upscale working grid, including spatial effects, before reducing terminal RGB for preview. The GUI keeps full-grid output and reduces only the display raster. Pan, zoom, and preview size do not change the automatic baseline. Operator variants share core preparation when reusable; optical Dye/Fotufilm grain may require exact full-route recomputation. There is no separate approximate scan engine or hidden cross-frame setup lock. Full-grid preparation costs memory; it must not silently use reduced precision or sampled setup.
+
+### Output color and compatibility
+
+Both standard and fixed negative-to-positive tone responses denote fixed linear sRGB. The renderer converts this response into `io.output_color_space` before the shared gamut and output tail. Destination conversion may mix channels; the record inverse itself remains independent. Writer saving-space conversion and display ICC processing are separate steps.
+
+Neutral operator values bypass correction exactly. Pixel compatibility with PR #318 applies to sRGB only. Non-sRGB output intentionally changes because older versions assigned different primaries to unchanged tone response values. This changes the runtime model version, not the additive document schema.
+
+## Fixed conversion styles
+
 Any other name resolves to `data/scan-styles/<name>.json` in your data directory. No extra fixed style ships with the product. With a stock data directory, only `standard` is listed. A fixed style runs no automatic setup.
 
 A style file is user-authored declared data. It declares one tone triple per channel:
@@ -73,7 +110,7 @@ The three triples are what let a style carry a color tendency on top of the tone
 
 Every value must be finite, and `contrast` and `dmax` must be positive. A parse error names the offending field.
 
-A style parameterizes the constants of the same logistic curve family the built-in style uses, and it never adds a curve family. It is never fitted from a photograph or a chart, and it is not a measured or calibrated scanner response. The per-record reconstruction remains unchanged. Fixed styles preserve per-record independence; standard setup depends on the complete frame.
+A style parameterizes the constants of the same logistic curve family the built-in style uses, and it never adds a curve family. It is never fitted from a photograph or a chart, and it is not a measured or calibrated scanner response. The per-record reconstruction remains unchanged. Fixed styles preserve record independence before destination primary conversion; standard setup depends on the complete frame.
 
 A custom fixed style requires `scanner.scan_output = negative_to_positive`. A `direct_scan` does not read the style slot, so the style is inert there. Style names must not be empty and must not contain `/`, `\`, `..`, or `:`. The style resolves once when the pipeline is built.
 
@@ -143,4 +180,4 @@ The look's `negative_to_positive` tone assumes scene-linear input. Its tone valu
 
 ## Saved document cutover
 
-GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6` own the scanner cutover. Explicit older versions migrate `scanner.lamp` out of the readout controls. Complete captures preserve it as the Convert acquisition illuminant unless already declared. Current versions reject `scanner.lamp`. The built-in `neutral` spelling becomes `standard`; this migration intentionally changes the automatic scan output.
+GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6` own the scanner cutover. The additive `scanner.operator` group uses these same versions; omitted values default to `0, 0, 0, 1`. Saved corrections contain no automatic offsets. Unknown and retired fields remain errors. Explicit older versions migrate `scanner.lamp` out of the readout controls. Complete captures preserve it as the Convert acquisition illuminant unless already declared. Current versions reject `scanner.lamp`. The built-in `neutral` spelling becomes `standard`; this migration intentionally changes the automatic scan output.

@@ -37,9 +37,13 @@ impl App {
             &self.params.io.input_color_space,
             self.params.io.input_cctf_decoding,
         );
+        let (space, encoded) = self.operator_comparison.as_ref().map_or(
+            (self.output_color_space.as_str(), self.output_cctf_encoding),
+            |comparison| (comparison.color_space.as_str(), comparison.encoded),
+        );
         self.viewer.set_output_display_source(
-            &self.output_color_space,
-            self.output_cctf_encoding,
+            space,
+            encoded,
             self.viewer.settings.use_display_transform,
             self.gui_state.display_profile().map(Path::new),
         );
@@ -423,6 +427,7 @@ impl App {
                 }
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                 self.input_epoch = self.input_epoch.wrapping_add(1);
+                self.set_operator_compare(false);
                 self.render_worker.cancel_active();
                 self.full_scan_requested = false;
                 self.image = Some(Arc::new(img));
@@ -450,6 +455,7 @@ impl App {
         self.image = Some(Arc::new(rotated));
         self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
         self.input_epoch = self.input_epoch.wrapping_add(1);
+        self.set_operator_compare(false);
         self.render_worker.cancel_active();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.full_scan_requested = false;
@@ -900,6 +906,9 @@ impl App {
         if changes.runtime_changed {
             self.mark_parameters_changed_invalidating_calibration();
         }
+        if let Some(comparing) = changes.operator_compare {
+            self.set_operator_compare(comparing);
+        }
         if let Some(action) = changes.action {
             self.start_calibration(action);
         }
@@ -1335,6 +1344,9 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.render_progress.bind_context(ctx);
+        if controls::release_operator_compare(ctx) {
+            self.set_operator_compare(false);
+        }
         // First-paint hook: tag the wgpu Metal layer's colorspace as sRGB.
         // Has to happen here (not in `App::new`) because the CAMetalLayer
         // isn't wired up at construction time.
@@ -1588,8 +1600,10 @@ impl eframe::App for App {
             } else {
                 None
             });
-            self.viewer
-                .show(ui, self.image.as_ref(), self.output_image.as_ref());
+            let displayed_output = self.operator_comparison.as_ref()
+                .map(|comparison| &comparison.image)
+                .or(self.output_image.as_ref());
+            self.viewer.show(ui, self.image.as_ref(), displayed_output);
             // Before/after compare divider overlay
             if self.compare_active {
                 let rect = ui.max_rect();

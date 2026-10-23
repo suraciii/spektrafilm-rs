@@ -177,6 +177,11 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
                 module,
                 entry.owner.label()
             );
+            if entry.path.starts_with("scanner.operator.")
+                || entry.path.starts_with("action.operator_")
+            {
+                text.push_str("\nOperator correction");
+            }
             for component in &entry.components {
                 text.push('\n');
                 text.push_str(&component.label);
@@ -467,11 +472,58 @@ fn nonruntime(surface: SurfaceEntry, affected_paths: &'static [&'static str]) ->
     }
 }
 
+const OPERATOR_PATHS: &[&str] = &[
+    "scanner.operator.exposure_ev",
+    "scanner.operator.warmth_ev",
+    "scanner.operator.tint_ev",
+    "scanner.operator.contrast",
+];
+
+const OPERATOR_ACTIONS: &[(&str, &str, &[&str])] = &[
+    (
+        "action.operator_restore_automatic",
+        "Restore automatic",
+        OPERATOR_PATHS,
+    ),
+    (
+        "action.operator_copy",
+        "Copy operator correction",
+        OPERATOR_PATHS,
+    ),
+    (
+        "action.operator_paste",
+        "Paste operator correction",
+        OPERATOR_PATHS,
+    ),
+    (
+        "action.operator_compare",
+        "Hold automatic comparison",
+        OPERATOR_PATHS,
+    ),
+];
+
 fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
     use ControlOwner::Stage as Owner;
     use EditorKind::*;
     for &surface in SURFACES {
         entries.push(nonruntime(surface, &[]));
+    }
+    for (path, label, affected_paths) in OPERATOR_ACTIONS {
+        entries.push(nonruntime(
+            SurfaceEntry {
+                path,
+                label,
+                owner: Owner(Stage::Scan),
+                section: "Scanner",
+                editor: Action,
+                validator: "controls::scanner::operator_controls",
+                conditions: &[
+                    "negative film; eligible negative-to-positive route; standard conversion style",
+                    "stored corrections retained while inactive; clipboard and comparison are session-only",
+                ],
+            },
+            affected_paths,
+        ));
     }
     entries.push(nonruntime(
         SurfaceEntry {
@@ -1262,6 +1314,10 @@ const LABELS: &[(&str, &str)] = &[
     ("print_render.glare.roughness", "roughness"),
     ("scanner.conversion_style", "conversion style"),
     ("scanner.lens_blur", "Lens blur (readout optics)"),
+    ("scanner.operator.exposure_ev", "Finished exposure"),
+    ("scanner.operator.warmth_ev", "Warmth"),
+    ("scanner.operator.tint_ev", "Green–magenta tint"),
+    ("scanner.operator.contrast", "Contrast"),
     ("scanner.scan_output", "scan output"),
     ("scanner.unsharp_mask", "Unsharp mask (digital sharpening)"),
     (

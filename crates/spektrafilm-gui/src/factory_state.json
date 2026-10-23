@@ -251,6 +251,12 @@
   "scanner": {
     "scan_output": "direct_scan",
     "conversion_style": "standard",
+    "operator": {
+      "exposure_ev": 0.0,
+      "warmth_ev": 0.0,
+      "tint_ev": 0.0,
+      "contrast": 1.0
+    },
     "lens_blur": 0.0,
     "unsharp_mask": [
       0.7,

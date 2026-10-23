@@ -46,6 +46,94 @@ fn output_mix_state_roundtrip_and_legacy_retirement_are_atomic() {
 }
 
 #[test]
+fn operator_state_retains_inactive_edits_and_reactivates_after_real_io() {
+    let factory = GuiState::factory();
+    let mut params = factory.runtime_params().unwrap();
+    params.scanner.operator = spektrafilm_core::params::ScanOperatorParams {
+        exposure_ev: 0.5000000000000001,
+        warmth_ev: -0.25,
+        tint_ev: 0.125,
+        contrast: 1.2,
+    };
+    let saved = GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+        .unwrap();
+    assert_eq!(
+        saved.runtime_params().unwrap().scanner.operator,
+        params.scanner.operator
+    );
+    assert!(
+        saved
+            .effective_runtime_params()
+            .unwrap()
+            .scanner
+            .operator
+            .is_default()
+    );
+    let path = std::env::temp_dir().join(format!(
+        "spektrafilm-operator-state-{}.json",
+        std::process::id()
+    ));
+    saved.save(&path).unwrap();
+    let loaded = GuiState::load(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(
+        loaded.runtime_params().unwrap().scanner.operator,
+        params.scanner.operator
+    );
+    let mut active = loaded.sections.clone();
+    active["simulation"]["route"] = json!("input > film > scan");
+    active["scanner"]["scan_output"] = json!("negative_to_positive");
+    let active = GuiState::from_value(active).unwrap();
+    assert_eq!(
+        active.effective_runtime_params().unwrap().scanner.operator,
+        params.scanner.operator
+    );
+    let mut fixed = active.sections.clone();
+    fixed["scanner"]["conversion_style"] = json!("fixed");
+    let fixed = GuiState::from_value(fixed).unwrap();
+    assert!(
+        fixed
+            .effective_runtime_params()
+            .unwrap()
+            .scanner
+            .operator
+            .is_default()
+    );
+    assert_eq!(
+        fixed.runtime_params().unwrap().scanner.operator,
+        params.scanner.operator
+    );
+    for invalid in [
+        json!({"contrast":0}),
+        json!({"contrast":-1}),
+        json!({"unknown":1}),
+    ] {
+        let mut candidate = loaded.sections.clone();
+        candidate["scanner"]["operator"] = invalid;
+        assert!(GuiState::from_value(candidate).is_err());
+    }
+    let extension = GuiState::from_value(json!({"rust":{"version":CURRENT_STATE_VERSION,"runtime":{"scanner":{"operator":{"warmth_ev":0.25}}}}})).unwrap();
+    assert_eq!(
+        extension
+            .runtime_params()
+            .unwrap()
+            .scanner
+            .operator
+            .warmth_ev,
+        0.25
+    );
+    assert!(
+        GuiState::from_value(json!({}))
+            .unwrap()
+            .runtime_params()
+            .unwrap()
+            .scanner
+            .operator
+            .is_default()
+    );
+}
+
+#[test]
 fn state_carriers_reject_ignored_mix_and_nested_retired_io() {
     for amount in [0.25, 1.01, -0.01] {
         let error = GuiState::from_value(json!({"output_mix":{"amount":amount}})).unwrap_err();
@@ -336,7 +424,7 @@ fn factory_matches_independently_generated_upstream_state() {
     // These controls belong to the Rust scanner extension, not the
     // independently generated Python factory-state oracle.
     let scanner = shared["scanner"].as_object_mut().unwrap();
-    for key in ["scan_output", "conversion_style"] {
+    for key in ["scan_output", "conversion_style", "operator"] {
         scanner.remove(key);
     }
     // The pinned oracle predates the neutral scan model: it still carries the
@@ -999,6 +1087,7 @@ fn scanner_defaults_and_invalid_combinations_use_runtime_contract() {
     for key in [
         "scan_output",
         "conversion_style",
+        "operator",
         "lens_blur",
         "unsharp_mask",
     ] {

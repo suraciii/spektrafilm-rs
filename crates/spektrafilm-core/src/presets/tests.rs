@@ -45,6 +45,67 @@ fn scanner_preset_import_rejects_removed_mode_and_preserves_canonical_or_omitted
     assert_eq!(applied.scanner.scan_output, "direct_scan");
 }
 
+#[test]
+fn scanner_operator_documents_apply_atomically_and_keep_neutral_omission() {
+    let film = test_film();
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > scan".into();
+    current.io.scan_film = true;
+    let operator = serde_json::json!({
+        "exposure_ev": 0.5000000000000001, "warmth_ev": -0.25,
+        "tint_ev": 0.125, "contrast": 1.2
+    });
+    let mut document = serde_json::json!({
+        "schema_version": PRESET_SCHEMA_VERSION, "name": "Operator correction",
+        "parameters": {"scanner": {"scan_output": "negative_to_positive", "operator": operator}},
+        "provenance": provenance()
+    });
+    let preset = Preset::from_json_str(&document.to_string()).unwrap();
+    for reloaded in [
+        Preset::from_json_str(&preset.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&preset.to_toml().unwrap()).unwrap(),
+    ] {
+        let applied = reloaded.apply_section(&current, &film).unwrap();
+        assert_eq!(
+            serde_json::to_value(applied.scanner.operator).unwrap(),
+            operator
+        );
+        assert_eq!(current.scanner.scan_output, "direct_scan");
+        let positive = profile::load_profile_by_name(&data(), "fujifilm_provia_100f").unwrap();
+        let mut already_invalid = current.clone();
+        already_invalid.scanner.scan_output = "negative_to_positive".into();
+        assert!(reloaded.apply_section(&already_invalid, &positive).is_err());
+        let mut print_route = current.clone();
+        print_route.workflow.route = "input > film > print > scan".into();
+        assert!(reloaded.apply_section(&print_route, &film).is_err());
+    }
+    document["parameters"]["scanner"]
+        .as_object_mut()
+        .unwrap()
+        .remove("operator");
+    let omitted = Preset::from_json_str(&document.to_string()).unwrap();
+    assert!(
+        omitted
+            .apply_section(&current, &film)
+            .unwrap()
+            .scanner
+            .operator
+            .is_default()
+    );
+    for invalid in [
+        serde_json::json!({"operator": {"contrast": 0.0}}),
+        serde_json::json!({"operator": {"exposure_ev": 0.5}}),
+        serde_json::json!({"scan_output": "negative_to_positive", "conversion_style": "fixed", "operator": {"tint_ev": 0.2}}),
+        serde_json::json!({"scan_output": "negative_to_positive", "operator": {"unknown": 0.0}}),
+        serde_json::json!({"conversion_exposure_ev": 0.0}),
+        serde_json::json!({"auto_setup": "full"}),
+        serde_json::json!({"finish": "lab_scan"}),
+    ] {
+        document["parameters"]["scanner"] = invalid;
+        assert!(Preset::from_json_str(&document.to_string()).is_err());
+    }
+}
+
 struct Temp(std::path::PathBuf);
 impl Temp {
     fn new() -> Self {

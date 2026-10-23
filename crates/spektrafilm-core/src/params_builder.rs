@@ -73,7 +73,7 @@ pub(crate) fn apply_runtime_constraints(params: &mut RuntimeParams) {
 }
 
 fn apply_preview_constraints(params: &mut RuntimeParams) {
-    if params.settings.preview_mode {
+    if params.settings.preview_mode && !params.scanner.requires_full_frame() {
         // Preview keeps the per-pixel Procedural scanner grain path and the
         // Fotufilm Film population model, whose contract evaluates the same
         // model on the declared reduced-resolution source. Spektra remains a

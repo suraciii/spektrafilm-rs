@@ -202,6 +202,124 @@ mod tests {
     }
 
     #[test]
+    fn operator_fields_and_session_actions_share_the_scanner_destination() {
+        let (mut params, extras) = factory();
+        params.workflow.route = "input".into();
+        let found = build_filtered("Operator correction", &params, &extras, false);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].owner, ControlOwner::Stage(Stage::Scan));
+        assert_eq!(found[0].section, "Scanner");
+        assert_eq!(found[0].labels.len(), 8);
+        for (path, label, editor) in [
+            (
+                "scanner.operator.exposure_ev",
+                "Finished exposure",
+                EditorKind::Numeric,
+            ),
+            ("scanner.operator.warmth_ev", "Warmth", EditorKind::Numeric),
+            (
+                "scanner.operator.tint_ev",
+                "Green–magenta tint",
+                EditorKind::Numeric,
+            ),
+            ("scanner.operator.contrast", "Contrast", EditorKind::Numeric),
+            (
+                "action.operator_restore_automatic",
+                "Restore automatic",
+                EditorKind::Action,
+            ),
+            (
+                "action.operator_copy",
+                "Copy operator correction",
+                EditorKind::Action,
+            ),
+            (
+                "action.operator_paste",
+                "Paste operator correction",
+                EditorKind::Action,
+            ),
+            (
+                "action.operator_compare",
+                "Hold automatic comparison",
+                EditorKind::Action,
+            ),
+        ] {
+            let entry = lookup(path).unwrap();
+            assert_eq!(entry.editor, editor, "{path}");
+            assert_eq!(entry.owner, ControlOwner::Stage(Stage::Scan));
+            assert_eq!(entry.section, "Scanner");
+            assert!(!entry.conditions.is_empty(), "{path}");
+            assert!(found[0].labels.iter().any(|candidate| candidate == label));
+            let located = build_filtered(path, &params, &extras, false);
+            assert_eq!(located.len(), 1, "{path}");
+            assert_eq!(located[0].target_path, path);
+            assert_eq!(located[0].locator_label(), "Locate Scan: Scanner");
+            if editor == EditorKind::Action {
+                assert_eq!(entry.affected_paths.len(), 4, "{path}");
+            }
+        }
+    }
+
+    #[test]
+    fn inactive_operator_edits_remain_modified_searchable_and_reset_when_reactivated() {
+        let (mut params, mut extras) = factory();
+        params.workflow.route = "input".into();
+        params.scanner.scan_output = "direct_scan".into();
+        params.scanner.conversion_style = "standard".into();
+        params.scanner.operator = spektrafilm_core::params::ScanOperatorParams {
+            exposure_ev: 1.25,
+            warmth_ev: 0.35,
+            tint_ev: -0.2,
+            contrast: 1.4,
+        };
+        let camera_exposure = params.camera.exposure_compensation_ev;
+        let optics = params.scanner.lens_blur;
+        let found = build_filtered("Operator correction", &params, &extras, true);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].labels.len(),
+            4,
+            "session actions are not modified runtime values"
+        );
+        // Inactive values are GUI storage, not a core-valid render request.
+        // Their disabled rows become resettable again on the eligible route.
+        params.workflow.route = "input > film > scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
+        for path in [
+            "scanner.operator.exposure_ev",
+            "scanner.operator.warmth_ev",
+            "scanner.operator.tint_ev",
+            "scanner.operator.contrast",
+        ] {
+            assert!(crate::section_reset::reset_leaf(
+                &mut params,
+                &mut extras,
+                path
+            ));
+            assert!(
+                build_filtered(path, &params, &extras, true).is_empty(),
+                "{path}"
+            );
+            assert_eq!(build_filtered(path, &params, &extras, false).len(), 1);
+        }
+        assert_eq!(params.scanner.operator, Default::default());
+        assert_eq!(params.camera.exposure_compensation_ev, camera_exposure);
+        assert_eq!(params.scanner.lens_blur, optics);
+        assert!(build_filtered("Operator correction", &params, &extras, true).is_empty());
+        params.scanner.operator.exposure_ev = 0.5;
+        assert!(crate::section_reset::is_modified(
+            "Scanner", &params, &extras
+        ));
+        assert!(crate::section_reset::reset(
+            &mut params,
+            &mut extras,
+            "Scanner"
+        ));
+        assert_eq!(params.scanner.operator, Default::default());
+        assert_eq!(params.camera.exposure_compensation_ev, camera_exposure);
+    }
+
+    #[test]
     fn results_name_real_dialog_and_viewer_owners() {
         let (params, extras) = factory();
         for (query, owner, section) in [

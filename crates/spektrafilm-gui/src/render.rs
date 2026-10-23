@@ -20,6 +20,7 @@ pub(super) struct RenderSnapshot {
     data_dir: PathBuf,
     special: serde_json::Value,
     cancellation: Option<Arc<AtomicBool>>,
+    operator_compare: bool,
 }
 
 impl RenderSnapshot {
@@ -37,6 +38,7 @@ impl RenderSnapshot {
             data_dir,
             special,
             cancellation: None,
+            operator_compare: false,
         }
     }
 
@@ -48,6 +50,18 @@ impl RenderSnapshot {
 
     pub(super) fn cancellation(&self) -> Option<Arc<AtomicBool>> {
         self.cancellation.clone()
+    }
+
+    pub(super) fn with_operator_compare(mut self, comparing: bool) -> Self {
+        self.operator_compare = comparing;
+        if comparing {
+            self.params.scanner.operator = Default::default();
+        }
+        self
+    }
+
+    pub(super) fn operator_compare(&self) -> bool {
+        self.operator_compare
     }
 
     #[cfg(test)]
@@ -63,7 +77,10 @@ impl RenderSnapshot {
         neutral: &spektrafilm_core::neutral_filters::NeutralFilters,
     ) -> RuntimeParams {
         let mut params = self.params.clone();
-        params.settings.preview_mode = preview;
+        if !params.scanner.requires_full_frame() {
+            params.scanner.operator = Default::default();
+        }
+        params.settings.preview_mode = preview && !params.scanner.requires_full_frame();
         spektrafilm_core::runtime::digest_params_with_neutral(
             params,
             film,

@@ -1039,15 +1039,15 @@ fn cmd_process(
     invocation
         .operation
         .set_input_dimensions(image.width, image.height);
-    // Preview mode: bound the long edge before processing (upstream
-    // `simulate_preview` + `resize_for_preview`).
+    // Standard setup measures the full working frame. Its preview reduction
+    // runs only after the nonlinear scan and output tail.
     let image = invocation.phase(
         "input_prepare",
         IssueCategory::Input,
         IssueBoundary::InputPrepare,
         &context,
         |_| {
-            let image = if params.settings.preview_mode {
+            let image = if params.settings.preview_mode && !params.scanner.requires_full_frame() {
                 let resized = resize_for_preview(&image, params.settings.preview_max_size);
                 eprintln!(
                     "Preview: {}x{} → {}x{} (max edge {})",
@@ -1131,7 +1131,17 @@ fn cmd_process(
                         )
                         .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
                 };
-                Ok(out)
+                if runtime.params().settings.preview_mode
+                    && runtime.params().scanner.requires_full_frame()
+                    && collect.is_none_or(|tap| tap == Tap::RgbOut)
+                {
+                    Ok(resize_for_preview(
+                        &out,
+                        runtime.params().settings.preview_max_size,
+                    ))
+                } else {
+                    Ok(out)
+                }
             });
         if result.is_ok() {
             output_attempt.set(attempt_id);

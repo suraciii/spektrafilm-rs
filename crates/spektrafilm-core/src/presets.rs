@@ -787,7 +787,9 @@ impl Preset {
         let scan_changed = params.scanner.scan_output != current.scanner.scan_output
             || params.film_render.grain.active != current.film_render.grain.active
             || params.film_render.grain.engine != current.film_render.grain.engine;
-        if scan_changed || crate::pipeline_calibration::validate_scan_output(current, film).is_ok()
+        if scan_changed
+            || !params.scanner.operator.is_default()
+            || crate::pipeline_calibration::validate_scan_output(current, film).is_ok()
         {
             crate::pipeline_calibration::validate_scan_output(&params, film)?;
         }

@@ -4,7 +4,7 @@ This contract owns the readout of developed photographic material. It does not o
 
 ## Readout routes
 
-1. Negative-to-positive readout reconstructs relative log exposure from each record's density. It applies frame setup when the conversion style is `standard`, then a positive tone.
+1. Negative-to-positive readout reconstructs relative log exposure from each record's density. It applies frame setup and operator correction when the conversion style is `standard`, then a positive tone.
 2. Positive transmission readout integrates the material's spectral transmittance under the readout illuminant with the CIE 1931 2° observer.
 3. Paper reflection readout uses the same integration with spectral reflectance instead of transmittance.
 
@@ -101,9 +101,45 @@ The same setup implementation must serve per-stage CPU execution and the assembl
 
 `standard` must not subtract camera exposure compensation again after automatic setup. Fixed styles retain the historical camera compensation on simulated film-scan routes. Real captures receive no virtual camera compensation.
 
+## Operator correction
+
+`scanner.operator` must carry f64 `exposure_ev`, `warmth_ev`, `tint_ev`, and `contrast`. Their defaults must be `0`, `0`, `0`, and `1`. All four values must be finite. Contrast must be positive. Editor trial ranges of exposure ±3 EV, warmth/tint ±1 differential EV, and contrast 0.5–2 must not become schema clamps.
+
+Nondefault operator correction must require `standard`, `negative_to_positive`, and an eligible negative-film scan route. Direct scans, positive film, paper, scan-minus-base, and fixed styles must reject explicit nondefault correction. GUI state must retain valid inactive edits and expose their inactive status. The GUI must pass neutral operator values to rendering while those edits are inactive.
+
+Material-producing routes may retain otherwise valid pending scanner correction in their stage baseline, but must report the operator edits as inactive while no scan executes. Resumed negative `film > scan` must use the same setup and correction math as an uninterrupted film scan. Changing that downstream correction must not redevelop the stored material or reuse an earlier corrected positive as its setup input.
+
+Let `x_c` be reconstructed log10 exposure and `o_c` the immutable full-frame setup offset. Define `p = log10(0.16 / 0.184)` and `L = log10(2)`. The operator coordinates and correction are:
+
+```text
+e_c = (x_c + o_c - p) / L
+m = (e_R + e_G + e_B) / 3
+v_c = e_c - m
+q = (W/2 + M/3, -2M/3, -W/2 + M/3)
+e'_c = k*m + v_c + E + q_c
+z_c = p + L*e'_c
+r_c = T(z_c)
+```
+
+`E` is `exposure_ev`: a common exposure increase in stops. Positive values make the positive image brighter. `W` is `warmth_ev`: an increase in the R−B exposure difference in stops. Positive values make the image warmer. `M` is `tint_ev`: an increase in mean(R,B)−G exposure difference in stops. Positive values make the image more magenta. `k` is `contrast`: the positive multiplier of common exposure about the reference point. Values above one increase contrast. Warmth and tint are not Kelvin or device button steps. The common exposure `m` is not CIE Y.
+
+Correction must not alter density, reconstructed exposure taps, camera or Convert acquisition settings, or setup statistics and offsets. Contrast must preserve exposure channel differences before tone. The channel-wise nonlinear tone does not guarantee perceptual hue, chroma, or output luminance preservation. Default correction must bypass the coordinate round trip exactly.
+
+## Exact preview and prepared baseline
+
+Standard negative-to-positive previews must use the same complete working grid as export, including crop, upscale, lens blur, spatial effects, and stochastic sampling. Setup and tone must run on that grid even at default operator values. Only terminal RGB or the display raster may be reduced afterward. Diagnostic density and exposure taps must retain their actual grid and meaning. Pan, zoom, and display size must not remeasure setup.
+
+The core must own one immutable prepared full-frame baseline shared by operator variants, comparison, preview, and export. Operator-only edits must reuse reconstruction and setup when the upstream route exposes reusable preparation. Optical Dye/Fotufilm grain may require exact full-route recomputation. A new input, crop, upscale, material, upstream processing, acquisition setting, backend, or precision must invalidate incompatible preparation. Cancellation and failed preparation must not publish a cache entry. Stale results must not replace a newer input epoch, parameter revision, or request. Cache reuse must not lock offsets across frames. Insufficient memory must cause explicit failure or exact recomputation, not reduced precision or sampled setup. No separate approximate preview engine is introduced.
+
+## Output primaries
+
+The positive tone output must denote fixed linear sRGB. The scan must convert this response into the selected output RGB space before gamut processing, CMYK, output mixing, sharpening, and transfer encoding. Selecting sRGB must use an exact identity transform. Writer saving-space conversion and viewer ICC conversion remain separate boundaries.
+
+This is a declared synthetic response, not a measured film or scanner calibration. With default correction, pixel compatibility with PR #318 applies only to sRGB. Other output RGB spaces intentionally change because the old path assigned selected primaries to unchanged response numbers. The runtime model version must change; saved carrier versions need not change for additive neutral-defaulted operator fields.
+
 ## Tone and style names
 
-Apply the existing logistic family to `x'_c = x_c + delta_x_c`. Fixed styles use a zero setup offset. `standard` keeps the historical tone constants in all three channels:
+Apply the existing logistic family to the corrected coordinate `z_c`. Fixed styles use a zero setup offset and no operator correction. `standard` keeps the historical tone constants in all three channels:
 
 | `brightness_ev` | `contrast` | `dmax` |
 | --- | --- | --- |
@@ -123,12 +159,14 @@ GUI state version 5 owns the cutover. Versions 1–4 must remove retired `lamp` 
 
 Preset schema 6 and recipe schema `spektrafilm-rs-params-6` own the same scanner cutover for versions 1–5. It must validate historical scanner provenance against the built-in model before replacing it. It must reject forged device metadata. Current schemas reject `lamp` and retain all unrelated retired-field rejection. Sparse sections must preserve omission when normalizing the style alias.
 
+The additive defaulted `scanner.operator` fields retain GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6`. Omitted operator fields must receive neutral defaults. Unknown and retired fields must remain rejected; operator correction must not revive `conversion_*`, `auto_setup`, or `finish` controls. Presets, recipes, parameter discovery, CLI `--set`, GUI persistence, and effective render configuration must share the typed core model. Automatic offsets must not enter ordinary saved correction parameters.
+
 ## Acceptance and limits
 
 - A uniform 16% neutral patch has a setup offset of zero within precision tolerance.
 - Gray ramps remain neutral, monotone, and finite. Positive and negative exposure shifts remain distinguishable. Exact residual `(1 - slope)` applies to linear response curves, not arbitrary toe/shoulder regions.
 - Repeated execution on the same frame produces identical setup and pixels at the same precision and backend.
-- Changing a frame's other pixels may change a pixel's output under `standard`. Fixed styles retain record independence.
+- Changing a frame's other pixels may change a pixel's output under `standard`. Fixed styles retain record independence before destination primary conversion.
 - A dominant red field remains red after correction. A dark field must not be forced to the same result as the neutral aim.
 - A bright background may still darken a subject. Setup provides no face detection, subject classification, or local tone correction. Do not weaken this limit into a claim that inverse-lighting scenes are rescued.
 - Backend parity, style changes, canonical alias output, versioned migration, and point-wise rejection require real-consumer tests.
