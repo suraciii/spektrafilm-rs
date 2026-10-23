@@ -155,74 +155,49 @@ fn header_inspection_does_not_claim_unchecked_payload_integrity() {
 #[test]
 fn malformed_envelopes_and_missing_model_state_fail_before_payload_use() {
     let root = tempfile::tempdir().unwrap();
-    let cases: Vec<(&str, Box<dyn FnOnce(&mut Value)>)> = vec![
-        ("schema", Box::new(|v| v["schema_version"] = json!(2))),
-        (
-            "representation",
-            Box::new(|v| v["representation_version"] = json!(2)),
-        ),
-        ("unknown", Box::new(|v| v["surprise"] = json!(true))),
-        (
-            "nested_unknown",
-            Box::new(|v| v["film"]["profile"]["info"]["surprise"] = json!(true)),
-        ),
-        (
-            "missing_context",
-            Box::new(|v| {
-                v["context"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("midgray_density");
-            }),
-        ),
-        (
-            "missing_parameter",
-            Box::new(|v| {
-                v["baseline"]["camera"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("exposure_compensation_ev");
-            }),
-        ),
-        (
-            "null_geometry",
-            Box::new(|v| v["geometry"]["pixel_size_um"] = Value::Null),
-        ),
-        (
-            "profile_nan",
-            Box::new(|v| v["film"]["profile"]["data"]["log_sensitivity"][0][0] = Value::Null),
-        ),
-        (
-            "unsafe",
-            Box::new(|v| v["density"]["path"] = json!("../density.bin")),
-        ),
-        (
-            "absolute",
-            Box::new(|v| v["density"]["path"] = json!("/tmp/density.bin")),
-        ),
-        (
-            "windows",
-            Box::new(|v| v["density"]["path"] = json!("C:\\density.bin")),
-        ),
-        (
-            "layout",
-            Box::new(|v| v["density"]["channel_order"] = json!("RGB")),
-        ),
-        (
-            "overflow",
-            Box::new(|v| {
-                v["density"]["width"] = json!(u32::MAX);
-                v["density"]["height"] = json!(u32::MAX);
-            }),
-        ),
-        (
-            "crop",
-            Box::new(|v| v["geometry"]["pending_crop"] = json!([2, 1, 2, 2])),
-        ),
-        (
-            "profile_hash",
-            Box::new(|v| v["film"]["resolved_base_density"][0] = json!(0.2)),
-        ),
+    let cases: [(&str, fn(&mut Value)); 15] = [
+        ("schema", |v| v["schema_version"] = json!(2)),
+        ("representation", |v| v["representation_version"] = json!(2)),
+        ("unknown", |v| v["surprise"] = json!(true)),
+        ("nested_unknown", |v| {
+            v["film"]["profile"]["info"]["surprise"] = json!(true)
+        }),
+        ("missing_context", |v| {
+            v["context"]
+                .as_object_mut()
+                .unwrap()
+                .remove("midgray_density");
+        }),
+        ("missing_parameter", |v| {
+            v["baseline"]["camera"]
+                .as_object_mut()
+                .unwrap()
+                .remove("exposure_compensation_ev");
+        }),
+        ("null_geometry", |v| {
+            v["geometry"]["pixel_size_um"] = Value::Null
+        }),
+        ("profile_nan", |v| {
+            v["film"]["profile"]["data"]["log_sensitivity"][0][0] = Value::Null
+        }),
+        ("unsafe", |v| v["density"]["path"] = json!("../density.bin")),
+        ("absolute", |v| {
+            v["density"]["path"] = json!("/tmp/density.bin")
+        }),
+        ("windows", |v| {
+            v["density"]["path"] = json!("C:\\density.bin")
+        }),
+        ("layout", |v| v["density"]["channel_order"] = json!("RGB")),
+        ("overflow", |v| {
+            v["density"]["width"] = json!(u32::MAX);
+            v["density"]["height"] = json!(u32::MAX);
+        }),
+        ("crop", |v| {
+            v["geometry"]["pending_crop"] = json!([2, 1, 2, 2])
+        }),
+        ("profile_hash", |v| {
+            v["film"]["resolved_base_density"][0] = json!(0.2)
+        }),
     ];
     for (name, mutation) in cases {
         let path = root.path().join(name);
