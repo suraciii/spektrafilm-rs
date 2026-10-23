@@ -25,12 +25,18 @@ retain implementation provenance without claiming universal coverage;
 
 ## Verified matches (hash evidence)
 
-- 28/28 upstream film profiles byte-identical
+- Asset entries record the pinned generation snapshot; the
+  `kodak_kodachrome_64` entry carries the verified E-88 modification
+  (digitized characteristic curves, floor-stripped per the bundled-profile
+  convention, layer tensor rebuilt to sum to the composite, fitted curve
+  model removed — see the profile's datasource note). Other profile rows
+  reflect the matrix's generation commit and are not live hash claims.
 - spectral upsampling LUT assets (2/2) byte-identical
 - dichroic/heat-absorbing/lens-transmission filter CSVs (16/16) byte-identical
 - `neutral_print_filters.json`: verified superset (upstream 160 combos unchanged)
-- All 214 pinned Python asset paths are present: 212 byte-identical,
-  neutral-filter database verified superset, ICC README adapted for Rust.
+- Recorded snapshot: 214 pinned Python asset paths present, 211 byte-identical,
+  neutral-filter database verified superset, ICC README adapted for Rust,
+  `kodak_kodachrome_64` verified E-88 modification.
 - Rust-only extras (out of 0.3.4 scope): `arctic2026alpha02` LUT dir,
   `kodak_2302` / `kodak_doublex` / `kodak_trix` profiles, B&W papers in the
   neutral-filter database, `settings.use_cat16`, film/paper

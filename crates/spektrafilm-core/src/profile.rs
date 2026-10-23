@@ -78,6 +78,60 @@ mod tests {
         assert!(film.is_film() && film.is_filming() && !film.is_print_stock());
     }
 
+    /// The bundled K64 ships the digitized E-88 characteristic curves with
+    /// no fitted model, so the sampled arrays are authoritative: the loader
+    /// must not regenerate or rescale them. The curves are floor-stripped
+    /// (per-channel minima zero, as upstream; the base fog lives in
+    /// `base_density`), and the sublayer tensor sums to the composite at
+    /// every knot so the layered grain paths stay consistent.
+    #[test]
+    fn kodachrome_64_ships_authoritative_e88_curves() {
+        let Some(p) = data_profile("kodak_kodachrome_64") else {
+            return;
+        };
+        assert!(p.data.density_curves_model.is_none());
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../data/profiles/kodak_kodachrome_64.json"),
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let shipped: Vec<Vec<f64>> =
+            serde_json::from_value(value["data"]["density_curves"].clone()).unwrap();
+        assert_eq!(p.data.density_curves, shipped);
+        for ch in 0..3 {
+            let min = p
+                .data
+                .density_curves
+                .iter()
+                .map(|row| row[ch])
+                .fold(f64::INFINITY, f64::min);
+            assert!(min.abs() < 1e-9, "channel {ch} floor {min}");
+        }
+        // E-88 Status A scale per channel: Dmax ≈ 3.50 / 3.26 / 3.13.
+        for (ch, expected) in [3.4976, 3.2577, 3.1280].into_iter().enumerate() {
+            let dmax = p
+                .data
+                .density_curves
+                .iter()
+                .map(|row| row[ch])
+                .fold(f64::MIN, f64::max);
+            assert!((dmax - expected).abs() < 0.02, "channel {ch} Dmax {dmax}");
+        }
+        let layers = p.density_curves_layers_f64();
+        assert_eq!(layers.len(), p.data.density_curves.len());
+        for (i, (row, layer_row)) in p.data.density_curves.iter().zip(&layers).enumerate() {
+            for ch in 0..3 {
+                let sum: f64 = layer_row.iter().map(|l| l[ch]).sum();
+                assert!(
+                    (sum - row[ch]).abs() < 1e-9,
+                    "knot {i} channel {ch}: layers sum {sum} != composite {}",
+                    row[ch]
+                );
+            }
+        }
+    }
+
     #[test]
     fn rejects_invalid_metadata_and_shape() {
         let Some(mut profile) = data_profile("kodak_portra_400") else {
