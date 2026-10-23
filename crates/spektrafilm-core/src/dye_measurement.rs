@@ -9,6 +9,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+const MEASUREMENT_REVISION_PREFIX: &str = "dye-measurement-v2:";
+
 /// Density convention used for the receiver result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -199,6 +201,8 @@ pub struct DyeMeasurementProtocol {
     pub output_footprint_um: [f64; 2],
     pub viewing_condition: String,
     pub seed_population: Vec<u64>,
+    /// Caller revision; new population records prepend `dye-measurement-v2:`
+    /// unless already present. The oracle retains the declared value unchanged.
     pub algorithm_revision: String,
     pub precision: String,
     pub executor: String,
@@ -261,7 +265,9 @@ fn validate_realization_geometry(
     Ok(())
 }
 
-/// Summary of one measurement population.
+/// Summary of one measurement population. Interpret legacy uncertainty values
+/// using the retained `protocol.algorithm_revision`; deserialization does not
+/// relabel or recompute old records.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DyeMeasurementRecord {
     /// Artifact links copied from the declared protocol for retained evidence.
@@ -270,10 +276,14 @@ pub struct DyeMeasurementRecord {
     pub protocol: DyeMeasurementProtocol,
     pub realization_count: usize,
     pub mean_density: [f64; 3],
-    /// Population standard deviation of the receiver density readings.
+    /// Population standard deviation of receiver density readings, in D (ddof 0).
     pub rms_density: [f64; 3],
+    /// Descriptive receiver-density covariance, in D², divided by population N.
     pub covariance: [[f64; 3]; 3],
-    /// Standard error of the mean for each receiver density channel.
+    /// For `dye-measurement-v2:` records, estimated standard error of the mean
+    /// in D: `rms_density / sqrt(N - 1)`, assuming independent seed realizations.
+    /// Unique seeds do not establish independence, and zero estimated SEM does
+    /// not imply zero systematic error. Legacy revisions retain their old meaning.
     pub uncertainty_density: [f64; 3],
     /// Mean channel bias relative to `reference_density`, when declared.
     pub tone_bias: Option<f64>,
@@ -308,12 +318,18 @@ impl DyeOpticalOracle {
             ));
         }
         let mut capture = [0.0; 3];
-        for (sample, &aperture_weight) in realization
+        for (sample_index, (sample, &aperture_weight)) in realization
             .samples
             .iter()
             .zip(&self.protocol.aperture.weights)
+            .enumerate()
         {
-            let receiver = receiver_capture_validated(sample, &self.protocol)?;
+            let receiver = receiver_capture_validated(sample, &self.protocol).map_err(|error| {
+                format!(
+                    "{error} at aperture sample index {sample_index}, seed {}",
+                    realization.seed
+                )
+            })?;
             for channel in 0..3 {
                 capture[channel] += aperture_weight * receiver[channel];
             }
@@ -331,11 +347,12 @@ impl DyeOpticalOracle {
         Ok(density)
     }
 
-    /// Measure the declared seed population without reading or normalizing a
-    /// current image. Each realization must correspond to one declared seed.
+    /// Measure at least two declared seed realizations without reading or
+    /// normalizing a current image. Each realization must match one declared
+    /// seed, in order. SEM estimation assumes independent seed realizations.
     pub fn measure(&self, realizations: &[DyeRealization]) -> Result<DyeMeasurementRecord, String> {
-        if realizations.is_empty() {
-            return Err("Dye measurement realization population must not be empty".into());
+        if realizations.len() < 2 {
+            return Err("Dye measurement population requires at least two realizations".into());
         }
         if self.protocol.seed_population.len() != realizations.len() {
             return Err(format!(
@@ -382,7 +399,8 @@ impl DyeOpticalOracle {
             }
         }
         let rms = std::array::from_fn(|channel| covariance[channel][channel].sqrt());
-        let uncertainty = rms.map(|value| value / count.sqrt());
+        let sem_divisor = (count - 1.0).sqrt();
+        let uncertainty = rms.map(|value| value / sem_divisor);
         let (tone_bias, color_bias) = self
             .protocol
             .reference_density
@@ -392,8 +410,17 @@ impl DyeOpticalOracle {
                 (Some(tone), Some(delta.map(|value| value - tone)))
             })
             .unwrap_or((None, None));
+        let mut protocol = self.protocol.clone();
+        if !protocol
+            .algorithm_revision
+            .starts_with(MEASUREMENT_REVISION_PREFIX)
+        {
+            protocol
+                .algorithm_revision
+                .insert_str(0, MEASUREMENT_REVISION_PREFIX);
+        }
         Ok(DyeMeasurementRecord {
-            protocol: self.protocol.clone(),
+            protocol,
             realization_count: readings.len(),
             mean_density: mean,
             rms_density: rms,
@@ -499,19 +526,30 @@ pub fn validate_protocol(protocol: &DyeMeasurementProtocol) -> Result<(), String
     Ok(())
 }
 
-/// Convert one total optical density to transmission.
+/// Convert finite nonnegative absolute total spectral density to transmission.
+/// Negative totals are invalid for passive material; they are never clamped.
 pub fn transmission(total_density: f64) -> Result<f64, String> {
     if !total_density.is_finite() {
-        return Err("Dye measurement total density must be finite".into());
+        return Err("Dye measurement absolute total spectral density must be finite".into());
+    }
+    if total_density < 0.0 {
+        return Err(format!(
+            "Dye measurement absolute total spectral density must be nonnegative (got {total_density})"
+        ));
     }
     let value = 10.0f64.powf(-total_density);
-    if !value.is_finite() || value <= 0.0 {
-        return Err("Dye measurement transmission must be positive and finite".into());
+    if !value.is_finite() {
+        return Err("Dye measurement transmission must be finite".into());
+    }
+    if value == 0.0 {
+        return Err("Dye measurement transmission underflow at high absolute density".into());
     }
     Ok(value)
 }
 
 /// Integrate one CMY density sample through the declared spectral receiver.
+/// Only its summed base-plus-CMY spectral density must be nonnegative; an
+/// individual CMY coefficient may be negative.
 pub fn receiver_capture(
     density: &[f64; 3],
     protocol: &DyeMeasurementProtocol,
@@ -524,9 +562,6 @@ fn receiver_capture_validated(
     density: &[f64; 3],
     protocol: &DyeMeasurementProtocol,
 ) -> Result<[f64; 3], String> {
-    if density.iter().any(|&value| !value.is_finite()) {
-        return Err("Dye measurement realization density must be finite".into());
-    }
     let mut output = [0.0; 3];
     #[allow(clippy::needless_range_loop)]
     for wavelength in 0..protocol.wavelengths_nm.len() {
@@ -534,8 +569,12 @@ fn receiver_capture_validated(
         for channel in 0..3 {
             total_density += density[channel] * protocol.dye_density[wavelength][channel];
         }
-        let sample_transmission = transmission(total_density)
-            .map_err(|error| format!("{error} at wavelength index {wavelength}"))?;
+        let sample_transmission = transmission(total_density).map_err(|error| {
+            format!(
+                "{error} at wavelength index {wavelength} ({} nm)",
+                protocol.wavelengths_nm[wavelength]
+            )
+        })?;
         let wavelength_weight = protocol.wavelength_weights[wavelength];
         #[allow(clippy::needless_range_loop)]
         for channel in 0..3 {
@@ -605,6 +644,13 @@ mod tests {
         }
     }
 
+    fn point_protocol(reference_density: Option<[f64; 3]>) -> DyeMeasurementProtocol {
+        protocol(
+            DyeApertureKernel::new(vec![[0.0, 0.0]], vec![1.0]).unwrap(),
+            reference_density,
+        )
+    }
+
     fn realization(
         protocol: &DyeMeasurementProtocol,
         seed: u64,
@@ -649,28 +695,26 @@ mod tests {
     }
 
     #[test]
-    fn population_statistics_and_bias_are_declared() {
-        let aperture = DyeApertureKernel::new(vec![[0.0, 0.0]], vec![1.0]).unwrap();
-        let oracle = DyeOpticalOracle::new(protocol(aperture, Some([0.25; 3]))).unwrap();
+    fn population_statistics_and_bias_use_optical_readings() {
+        let oracle = DyeOpticalOracle::new(point_protocol(Some([0.25; 3]))).unwrap();
+        // Equal CMY coefficients at both wavelengths give receiver densities
+        // [0, 2] in every channel, including the off-diagonal covariance pairs.
         let record = oracle
             .measure(&[
-                realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0]]),
-                realization(oracle.protocol(), 2, vec![[1.0, 1.0, 1.0]]),
+                realization(oracle.protocol(), 1, vec![[0.0; 3]]),
+                realization(oracle.protocol(), 2, vec![[2.0; 3]]),
             ])
             .unwrap();
         assert_eq!(record.realization_count, 2);
-        assert_eq!(record.artifact_references.len(), 1);
-        assert_eq!(record.artifact_references[0].path, "measurements/test.json");
-        assert!(record.rms_density.iter().all(|value| *value > 0.0));
-        assert!(
-            record
-                .covariance
-                .iter()
-                .flatten()
-                .all(|value| value.is_finite())
-        );
-        assert!(record.tone_bias.is_some());
-        assert!(record.color_bias.is_some());
+        for channel in 0..3 {
+            assert!((record.mean_density[channel] - 1.0).abs() < 1e-12);
+            assert!((record.rms_density[channel] - 1.0).abs() < 1e-12);
+            assert!((record.uncertainty_density[channel] - 1.0).abs() < 1e-12);
+            for &covariance in &record.covariance[channel] {
+                assert!((covariance - 1.0).abs() < 1e-12);
+            }
+        }
+        assert!((record.tone_bias.unwrap() - 0.75).abs() < 1e-12);
         assert!(
             record
                 .color_bias
@@ -679,66 +723,276 @@ mod tests {
                 .all(|value| value.abs() < 1e-12)
         );
     }
+
     #[test]
-    fn public_helpers_preserve_the_transmission_first_boundary() {
-        assert!((transmission(0.4).unwrap() - 10.0f64.powf(-0.4)).abs() < 1e-12);
-        assert!(transmission(f64::NAN).is_err());
-        let aperture = DyeApertureKernel::new(vec![[0.0, 0.0]], vec![1.0]).unwrap();
-        let protocol = protocol(aperture, None);
-        assert!(validate_protocol(&protocol).is_ok());
-        assert!(require_text("field", "  ").is_err());
-        let capture = receiver_capture(&[0.4, 0.6, 0.0], &protocol).unwrap();
+    fn constant_population_has_zero_descriptive_spread_and_estimated_sem() {
+        let mut protocol = point_protocol(None);
+        protocol.seed_population = vec![1, 2, 3];
+        let oracle = DyeOpticalOracle::new(protocol).unwrap();
+        let population: Vec<_> = oracle
+            .protocol()
+            .seed_population
+            .iter()
+            .map(|&seed| realization(oracle.protocol(), seed, vec![[2.0; 3]]))
+            .collect();
+        let record = oracle.measure(&population).unwrap();
         assert!(
-            capture
+            record
+                .mean_density
                 .iter()
-                .all(|value| value.is_finite() && *value > 0.0)
+                .all(|value| (value - 2.0).abs() < 1e-12)
+        );
+        assert_eq!(record.covariance, [[0.0; 3]; 3]);
+        assert_eq!(record.rms_density, [0.0; 3]);
+        assert_eq!(record.uncertainty_density, [0.0; 3]);
+    }
+
+    #[test]
+    fn passive_totals_retain_the_existing_transmission_calculation() {
+        for total in [0.0, -0.0, 0.4, 2.0, 300.0] {
+            assert_eq!(transmission(total).unwrap(), 10.0f64.powf(-total));
+        }
+        let protocol = point_protocol(None);
+        let expected = 0.5 * 10.0f64.powf(-0.4) + 0.5 * 10.0f64.powf(-0.6);
+        assert_eq!(
+            receiver_capture(&[0.4, 0.6, 0.0], &protocol).unwrap(),
+            [expected; 3]
         );
     }
 
     #[test]
-    fn realization_geometry_must_match_the_protocol() {
+    fn absolute_density_failures_are_distinct_and_located() {
         let aperture =
             DyeApertureKernel::new(vec![[0.0, 0.0], [1.0, 0.0]], vec![1.0, 1.0]).unwrap();
         let oracle = DyeOpticalOracle::new(protocol(aperture, None)).unwrap();
-        let mut wrong_positions =
-            realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
-        wrong_positions.offsets_um[1] = [2.0, 0.0];
-        assert!(oracle.read_realization(&wrong_positions).is_err());
+        for (value, reason) in [
+            (-0.1, "must be nonnegative"),
+            (f64::NAN, "must be finite"),
+            (f64::INFINITY, "must be finite"),
+            (f64::NEG_INFINITY, "must be finite"),
+            (400.0, "transmission underflow"),
+        ] {
+            let direct = transmission(value).unwrap_err();
+            assert!(direct.contains(reason), "{direct}");
+            let sample = [0.0, value, 0.0];
+            let error = oracle
+                .read_realization(&realization(oracle.protocol(), 17, vec![[0.0; 3], sample]))
+                .unwrap_err();
+            assert!(error.contains(reason), "{error}");
+            assert!(error.contains("wavelength index"), "{error}");
+            // Nonfinite coefficients also produce NaN when multiplied by a
+            // zero spectral coefficient, so their first invalid total is 500 nm.
+            let wavelength = if value.is_finite() {
+                "1 (600 nm)"
+            } else {
+                "0 (500 nm)"
+            };
+            assert!(error.contains(wavelength), "{error}");
+            assert!(error.contains("aperture sample index 1"), "{error}");
+            assert!(error.contains("seed 17"), "{error}");
 
-        let mut wrong_footprint =
-            realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
-        wrong_footprint.footprint_um[0] = 2.0;
-        assert!(oracle.read_realization(&wrong_footprint).is_err());
+            let helper_error = receiver_capture(&sample, oracle.protocol()).unwrap_err();
+            assert!(helper_error.contains(reason), "{helper_error}");
+            assert!(helper_error.contains(wavelength), "{helper_error}");
+            assert!(!helper_error.contains("seed"), "{helper_error}");
+        }
     }
 
     #[test]
-    fn invalid_aperture_and_seed_population_fail_before_measurement() {
-        assert!(DyeApertureKernel::new(vec![[0.0, 0.0]], vec![0.0]).is_err());
-        let aperture = DyeApertureKernel::new(vec![[0.0, 0.0]], vec![1.0]).unwrap();
-        let mut invalid = protocol(aperture, None);
-        invalid.seed_population = vec![1];
-        let oracle = DyeOpticalOracle::new(invalid).unwrap();
+    fn passivity_applies_to_the_sum_not_individual_cmy_coefficients() {
+        let mut protocol = point_protocol(None);
+        protocol.base_density = vec![0.5, 0.5];
+        let oracle = DyeOpticalOracle::new(protocol).unwrap();
+        let reading = oracle
+            .read_realization(&realization(oracle.protocol(), 1, vec![[-0.25, 0.25, 0.0]]))
+            .unwrap();
+        let expected = -(0.5 * 10.0f64.powf(-0.25) + 0.5 * 10.0f64.powf(-0.75)).log10();
+        assert!(reading.iter().all(|value| (value - expected).abs() < 1e-12));
+    }
+
+    #[test]
+    fn declared_reference_can_produce_negative_record_density() {
+        let mut protocol = point_protocol(None);
+        protocol.receiver.reference_levels = [0.1; 3];
+        let oracle = DyeOpticalOracle::new(protocol).unwrap();
+        let population = [
+            realization(oracle.protocol(), 1, vec![[0.0; 3]]),
+            realization(oracle.protocol(), 2, vec![[0.0; 3]]),
+        ];
+        assert_eq!(oracle.read_realization(&population[0]).unwrap(), [-1.0; 3]);
+        assert_eq!(oracle.measure(&population).unwrap().mean_density, [-1.0; 3]);
+    }
+
+    #[test]
+    fn single_realization_read_is_valid_but_population_measure_requires_two() {
+        let mut protocol = point_protocol(None);
+        protocol.seed_population = vec![1];
+        let oracle = DyeOpticalOracle::new(protocol).unwrap();
+        let sample = realization(oracle.protocol(), 1, vec![[0.0; 3]]);
+        assert_eq!(oracle.read_realization(&sample).unwrap(), [0.0; 3]);
+        for population in [&[][..], std::slice::from_ref(&sample)] {
+            let error = oracle.measure(population).unwrap_err();
+            assert!(error.contains("at least two realizations"), "{error}");
+        }
+        let mut empty_protocol = oracle.protocol().clone();
+        empty_protocol.seed_population.clear();
         assert!(
-            oracle
-                .measure(&[
-                    realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0]]),
-                    realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0]]),
-                ])
-                .is_err()
+            DyeOpticalOracle::new(empty_protocol)
+                .unwrap_err()
+                .contains("must not be empty")
+        );
+    }
+
+    #[test]
+    fn realization_geometry_must_match_for_reads_and_population_measurements() {
+        let aperture =
+            DyeApertureKernel::new(vec![[0.0, 0.0], [1.0, 0.0]], vec![1.0, 1.0]).unwrap();
+        let oracle = DyeOpticalOracle::new(protocol(aperture, None)).unwrap();
+        let mut wrong_positions = realization(oracle.protocol(), 1, vec![[0.0; 3]; 2]);
+        wrong_positions.offsets_um[1] = [2.0, 0.0];
+        let mut wrong_footprint = realization(oracle.protocol(), 1, vec![[0.0; 3]; 2]);
+        wrong_footprint.footprint_um[0] = 2.0;
+        let wrong_sample_count = realization(oracle.protocol(), 1, vec![[0.0; 3]]);
+        for (invalid, reason) in [
+            (wrong_positions, "aperture positions do not match"),
+            (wrong_footprint, "output footprint does not match"),
+            (wrong_sample_count, "1 aperture samples; expected 2"),
+        ] {
+            let error = oracle.read_realization(&invalid).unwrap_err();
+            assert!(error.contains(reason), "{error}");
+            let population = [
+                invalid,
+                realization(oracle.protocol(), 2, vec![[0.0; 3]; 2]),
+            ];
+            let error = oracle.measure(&population).unwrap_err();
+            assert!(error.contains(reason), "{error}");
+        }
+    }
+
+    #[test]
+    fn invalid_aperture_and_seed_populations_are_rejected() {
+        assert!(DyeApertureKernel::new(vec![[0.0, 0.0]], vec![0.0]).is_err());
+        let mut duplicate = point_protocol(None);
+        duplicate.seed_population = vec![1, 1];
+        let oracle = DyeOpticalOracle::new(duplicate).unwrap();
+        let error = oracle
+            .measure(&[
+                realization(oracle.protocol(), 1, vec![[0.0; 3]]),
+                realization(oracle.protocol(), 1, vec![[0.0; 3]]),
+            ])
+            .unwrap_err();
+        assert!(error.contains("repeats seed 1"), "{error}");
+
+        let oracle = DyeOpticalOracle::new(point_protocol(None)).unwrap();
+        let error = oracle
+            .measure(&[
+                realization(oracle.protocol(), 2, vec![[0.0; 3]]),
+                realization(oracle.protocol(), 1, vec![[0.0; 3]]),
+            ])
+            .unwrap_err();
+        assert!(
+            error.contains("realization 0 has seed 2; expected 1"),
+            "{error}"
         );
 
-        let valid = protocol(
-            DyeApertureKernel::new(vec![[0.0, 0.0]], vec![1.0]).unwrap(),
-            None,
+        let mut wrong_count = oracle.protocol().clone();
+        wrong_count.seed_population = vec![1, 2, 3];
+        let oracle = DyeOpticalOracle::new(wrong_count).unwrap();
+        let error = oracle
+            .measure(&[
+                realization(oracle.protocol(), 1, vec![[0.0; 3]]),
+                realization(oracle.protocol(), 2, vec![[0.0; 3]]),
+            ])
+            .unwrap_err();
+        assert!(error.contains("3 entries for 2 realizations"), "{error}");
+    }
+
+    #[test]
+    fn legacy_json_keeps_old_sem_while_new_records_stamp_the_corrected_estimator() {
+        // A retained two-realization legacy record used rms/sqrt(N), not the
+        // independent-seed SEM now estimated from ddof-1 sample variance.
+        let legacy_json = r#"{
+            "artifact_references": [{"path":"measurements/legacy.json",
+                "kind":"measurement_output","description":"Legacy fixture"}],
+            "protocol": {
+                "profile_id":"test-stock", "profile_provenance":"test fixture",
+                "density_convention":"optical_density",
+                "wavelengths_nm":[500.0,600.0], "wavelength_weights":[0.5,0.5],
+                "base_density":[0.0,0.0],
+                "dye_density":[[1.0,0.0,0.0],[0.0,1.0,0.0]],
+                "receiver": {"name":"test receiver","source":"test fixture",
+                    "version":"1","calibration_status":"uncalibrated",
+                    "response":[[1.0,1.0,1.0],[1.0,1.0,1.0]],
+                    "reference_levels":[1.0,1.0,1.0]},
+                "aperture":{"offsets_um":[[0.0,0.0]],"weights":[1.0]},
+                "output_footprint_um":[1.0,1.0], "viewing_condition":"test viewing",
+                "seed_population":[1,2], "algorithm_revision":"legacy-generator",
+                "precision":"f64", "executor":"test", "effective_parameters":[],
+                "calibration_status":"uncalibrated",
+                "artifact_references":[{"path":"measurements/legacy.json",
+                    "kind":"measurement_output","description":"Legacy fixture"}],
+                "reference_density":[0.25,0.25,0.25]
+            },
+            "realization_count":2, "mean_density":[1.0,1.0,1.0],
+            "rms_density":[1.0,1.0,1.0], "covariance":[[1,1,1],[1,1,1],[1,1,1]],
+            "uncertainty_density":[0.7071067811865476,0.7071067811865476,0.7071067811865476],
+            "tone_bias":0.75, "color_bias":[0.0,0.0,0.0]
+        }"#;
+        let legacy: DyeMeasurementRecord = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(legacy.protocol.algorithm_revision, "legacy-generator");
+        assert_eq!(
+            legacy.uncertainty_density,
+            [std::f64::consts::FRAC_1_SQRT_2; 3]
         );
-        let oracle = DyeOpticalOracle::new(valid).unwrap();
-        assert!(
-            oracle
-                .measure(&[
-                    realization(oracle.protocol(), 2, vec![[0.0, 0.0, 0.0]]),
-                    realization(oracle.protocol(), 1, vec![[0.0, 0.0, 0.0]]),
-                ])
-                .is_err()
+        assert_eq!(legacy.covariance, [[1.0; 3]; 3]);
+
+        let oracle = DyeOpticalOracle::new(legacy.protocol.clone()).unwrap();
+        let population = [
+            realization(oracle.protocol(), 1, vec![[0.0; 3]]),
+            realization(oracle.protocol(), 2, vec![[2.0; 3]]),
+        ];
+        let current = oracle.measure(&population).unwrap();
+        assert_eq!(oracle.protocol().algorithm_revision, "legacy-generator");
+        assert_eq!(
+            current.protocol.algorithm_revision,
+            "dye-measurement-v2:legacy-generator"
+        );
+        assert_eq!(current.mean_density, legacy.mean_density);
+        assert_eq!(current.covariance, legacy.covariance);
+        assert_eq!(current.rms_density, legacy.rms_density);
+        assert_eq!(current.uncertainty_density, [1.0; 3]);
+        assert_eq!(
+            legacy.uncertainty_density,
+            [std::f64::consts::FRAC_1_SQRT_2; 3]
+        );
+
+        let reused = DyeOpticalOracle::new(current.protocol.clone())
+            .unwrap()
+            .measure(&population)
+            .unwrap();
+        assert_eq!(
+            reused.protocol.algorithm_revision,
+            current.protocol.algorithm_revision
+        );
+
+        let old_value: serde_json::Value = serde_json::from_str(legacy_json).unwrap();
+        let new_json = serde_json::to_string(&current).unwrap();
+        let new_value: serde_json::Value = serde_json::from_str(&new_json).unwrap();
+        for (old, new) in [
+            (&old_value, &new_value),
+            (&old_value["protocol"], &new_value["protocol"]),
+        ] {
+            assert_eq!(
+                old.as_object().unwrap().keys().collect::<HashSet<_>>(),
+                new.as_object().unwrap().keys().collect::<HashSet<_>>()
+            );
+        }
+        // Every field in this fixture is present; null would hide a nonfinite
+        // result rather than preserving a meaningful numerical measurement.
+        assert!(!new_json.contains("null"));
+        assert_eq!(
+            serde_json::from_str::<DyeMeasurementRecord>(&new_json).unwrap(),
+            current
         );
     }
 }

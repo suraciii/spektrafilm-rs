@@ -786,10 +786,9 @@ pub(super) fn validate_detailed(params: &RuntimeParams) -> Result<(), Validation
         return Err(ValidationError::new(Reason::EventArea, "film_render.grain.v3_event_area_um2",
             "film_render.grain.v3_event_area_um2: must be finite and strictly positive (square micrometers)").arg("value", grain.v3_event_area_um2));
     }
-    // The bound is the measured band, not the structural limit: the split
-    // itself tolerates anything below one, but the record coherence above the
-    // band is what the evidence attributes to the scanner, so a preset may not
-    // reach it.
+    // Preserve the historical supported and acceptance range. This ceiling
+    // is not a certified material limit or scanner-processing attribution;
+    // the Poisson split's structural domain is wider.
     let ceiling = super::grain::MEASURED_CHANNEL_CORRELATION_CEILING;
     if !grain.channel_correlation.is_finite()
         || !(0.0..=ceiling).contains(&grain.channel_correlation)

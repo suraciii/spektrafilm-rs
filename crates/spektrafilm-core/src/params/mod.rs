@@ -1383,9 +1383,8 @@ mod tests {
                 "unexpected error for {value}: {error}"
             );
         }
-        // The channel correlation is bounded by the measured record-coherence
-        // band, so a value the evidence attributes to scanner processing is
-        // rejected rather than stored.
+        // Preserve the historical supported and acceptance range, not an
+        // identified material limit or scanner-processing attribution.
         for value in [-0.5, 0.4500001, 1.0, f64::NAN, f64::INFINITY] {
             let mut bad = params.clone();
             bad.film_render.grain.channel_correlation = value;

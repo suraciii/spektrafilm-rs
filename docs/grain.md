@@ -73,11 +73,13 @@ Grain Dye is selected with `film_render.grain.engine: "dye"`.
 
 Dye conditions a mixed film-coordinate dye field on `v3_dye_support_um`. This control gives the Gaussian sigma in micrometers. Its default is `3.5`. The field-cell pitch is `support / 2`.
 
-Dye realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers`. `v3_event_area_um2` uses square micrometers and defaults to `1.28`. Dye uses the resolved `density_min` and `uniformity`. It forms every channel from the film's three sublayers. Both `v3_dye_support_um` and `v3_event_area_um2` must be finite and strictly positive. Dye sublayer scales must also be positive.
+Dye realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers`. `v3_event_area_um2` uses square micrometers and defaults to `1.28`. Dye uses the resolved `density_min` and `uniformity`. It allocates each channel across the profile's three numerical curve components; these components are not identified physical emulsion layers. Both `v3_dye_support_um` and `v3_event_area_um2` must be finite and strictly positive. Dye component scales must also be positive. They change statistical event mass and count rate, not separate component kernel widths. The components share Dye's spatial support.
 
-The channel scale is `k_c = (rms_granularity_c / 6)²`. Here, `6` is the preset of the reference stock `kodak_portra_800`. This scale is the only per-channel strength input. Dye does not read Spektra's `particle_area_um2` or `particle_scale`. Their blue-heavy default would double a coarser blue record.
+The channel scale is `k_c = (rms_granularity_c / 6)²`. Here, `6` is the preset of the reference stock `kodak_portra_800`. The existing `rms_granularity` field is a relative Dye strength scale, not a certified optical RMS target. Entering `8` does not request a measured stock granularity of `8`. Zero or a missing stock value retains the existing fallback; use `active: false` to disable grain. Dye does not read Spektra's `particle_area_um2` or `particle_scale`.
 
-`channel_correlation` defaults to `0.0`. It accepts `[0, 0.45]`: the structural domain is `[0, 1)`, but an enabled value must stay inside the measured inter-record coherence band, so validation rejects anything above `0.45`. It is the fraction of one emulsion layer's per-channel event rate that the layer's active channels share; the shared part correlates those channels while every channel keeps its own marginal count rate, so strength, support, and readout do not move. The configured value is an upper bound on realized correlation, because a layer whose channels have unequal rates shares only the smallest of them. Zero leaves the independent per-channel realization exactly as it was. Correlation of this kind is off by default: the available measurements do not separate the film's own record correlation from the scanner's, and a lab scan's strong coherence belongs to the scanner.
+Some preset channel ratios come from measured outputs of a commercial film simulator. They remain appearance references, not measurements of film material. The reference stock and its event area define the existing relative scale; they do not establish an absolute material calibration.
+
+`channel_correlation` defaults to `0.0` and accepts `[0, 0.45]`. This is the historical supported and acceptance range, not an identified universal material limit. The public constant `MEASURED_CHANNEL_CORRELATION_CEILING` retains its historical name for compatibility. The parameter sets the shared Poisson-event rate fraction among active records within each numerical component. Each record retains its marginal Poisson count distribution. For positive-rate records `a` and `b` in one component, count correlation is `rho × min_c(lambda_c) / sqrt(lambda_a × lambda_b)`, which is at most `rho`. This is not a bound on final RGB correlation or a guarantee of identical measured variance in a finite realization. Zero retains independent record counts. Processed scans do not, by themselves, separate material correlation from receiver or scanner effects.
 
 
 ### Film geometry and routes
@@ -103,6 +105,15 @@ See [the Dye specification](../specs/film-grain/v3/spec.md) for experimental rea
 ### Cine limits
 
 Cine profiles such as Kodak VISION3 500T can use Dye with their existing stock controls. This availability does not establish cine photographic calibration or optical-readout acceptance. Receiver, aperture, density convention, wavelength range, and viewing condition remain required before a cine optical claim.
+
+### Standalone measurement compatibility
+
+The independent `DyeOpticalOracle` measures declared fixed CMY realizations. Normal rendering does not invoke it. It rejects negative absolute total spectral density, non-finite absorption, and transmission underflow without clamping. Negative CMY coefficients remain valid when the combined total is nonnegative. Receiver density relative to a non-unit reference may also be negative.
+
+Population `measure` now requires at least two realizations. A one-seed protocol still supports `read_realization`. Descriptive covariance and RMS keep divisor `N`; the mean-density SEM now uses `sqrt(C_pop[j,j] / (N - 1))`. For readings `[0, 2]`, the mean, RMS, and SEM are each `1 D`. SEM assumes independent realizations and does not bound systematic error or uncertainty in the RMS. Convert explicitly when comparing with manufacturer granularity in `1000 sigma_D`.
+
+New records automatically carry `dye-measurement-v2:` before the caller's algorithm revision in the existing `protocol.algorithm_revision` field. Old JSON fields remain readable without changing their stored revision or uncertainty. The prior estimator was `rms_density / sqrt(N)`; old records must retain that interpretation according to their generating version. No measurement field, runtime parameter, preset value, formation law, or random stream changes in this repair. See [the measurement contract](../specs/film-grain/v3/design.md#measurement-statistics-and-revision).
+
 
 ## Fotufilm Film
 

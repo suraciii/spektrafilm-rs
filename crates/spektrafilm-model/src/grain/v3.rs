@@ -1,11 +1,12 @@
 //! Film-coordinate conditional dye-mass grain (Dye).
 //!
-//! The model realizes independent conditional Poisson dye masses on a global
-//! film-cell grid, forms the complete realization with a normalized truncated
-//! Gaussian, and reads the formed field through rectangular output
-//! footprints. `specs/film-grain/v3/design.md` owns the contract; this module
-//! implements it and `specs/film-grain/v3/spec.md` owns the supported
-//! conditions.
+//! The model realizes conditional Poisson dye masses on a global film-cell
+//! grid, with optional shared counts among records within each numerical
+//! component. It forms the complete realization with a normalized truncated
+//! Gaussian and reads the field through rectangular output footprints.
+//! Curve components are numerical, not identified physical emulsion layers.
+//! `specs/film-grain/v3/design.md` owns the contract; this module implements it,
+//! and `specs/film-grain/v3/spec.md` owns the supported conditions.
 
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
@@ -34,10 +35,10 @@ const MAX_BAND_CELLS: u64 = 1 << 24;
 /// Tags `0..=8` are the per-`(channel, layer)` streams (`c * 3 + l`) and stay
 /// as they are, so adding the shared streams cannot move any existing
 /// sequence. Tags `9..=11` are the shared stream of layers 0..=2. The shared
-/// stream is per layer, not one stream for all three: all three layers of one
-/// cell share the same cell address, so a single shared tag would hand them
-/// the same uniform sequence and correlate three independently coated
-/// emulsions.
+/// stream is per numerical component, not one stream for all three: all
+/// components of one cell share the same cell address, so a single shared
+/// tag would give them the same uniform sequence and correlate otherwise
+/// independent components.
 const SHARED_TAG_BASE: u64 = 9;
 
 /// Rectangular readout footprints in global film coordinates. Cropping
@@ -62,25 +63,27 @@ pub struct GrainV3Params {
     /// Statistical event area in square micrometers before channel and layer
     /// scaling. It controls count variance, never the support width.
     pub event_area_um2: f64,
-    /// Fraction of a layer's count rate shared by its active channels. The
-    /// structural domain is `[0, 1)`; the accepted range stops at the measured
-    /// inter-record coherence ceiling, so validation rejects a value above it.
-    /// It sets the channel correlation without changing any channel's marginal
-    /// count law.
+    /// Shared Poisson-event rate fraction among active records within each
+    /// numerical component, not realized CMY or final RGB correlation. Each
+    /// record retains its marginal count law; record-rate ratios affect count
+    /// correlation. The model's structural domain is `[0, 1)`; runtime
+    /// validation retains the historical supported range `[0, 0.45]`, not a
+    /// certified material limit.
     pub channel_correlation: f64,
-    /// Per-channel event-area scale (the stock granularity ratio squared).
+    /// Relative per-channel event-area scale `(G / 6)^2`, not certified RMS.
     pub channel_scale: [f64; 3],
-    /// Per-layer event-area scale.
+    /// Numerical-component event-area scale: changes mass and rate, not
+    /// separate spatial kernel widths. All components share the support.
     pub particle_scale_sublayers: [f64; 3],
     /// Per-channel base density offset.
     pub density_min: [f64; 3],
     /// Per-channel grain uniformity in `[0, 1]`.
     pub uniformity: [f64; 3],
-    /// Raw per-layer density maxima `[layer][channel]`.
+    /// Raw numerical-component density maxima `[layer][channel]`.
     pub layer_max: [[f64; 3]; 3],
     /// Normalized composite density curves: the x axis of the layer split.
     pub composite_curves: Vec<[f64; 3]>,
-    /// Raw per-layer density curves `[exposure][layer][channel]`.
+    /// Raw numerical-component density curves `[exposure][layer][channel]`.
     pub layer_curves: Vec<[[f64; 3]; 3]>,
     /// Positive films flip the composite lookup axis.
     pub positive_film: bool,
