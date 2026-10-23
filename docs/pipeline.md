@@ -13,6 +13,37 @@ The print-and-scan chain follows this order: RGB → film dye density → enlarg
 
 See [scanning](scanning.md) for scan polarity and negative conversion.
 
+## Film and print continuation
+
+The CLI can stop after film or print development and resume from that completed material
+state. The [stage-artifact contract](../specs/cli/stage-artifacts.md) owns the format and
+admission rules. A `.sfstage` directory containing `stage.json`
+represents exactly one always-resumable film or print state, not an image or a collection
+of research observations.
+
+The added routes are `input > film`, `input > film > print`, `film > scan`, `film > print`,
+`film > print > scan`, and `print > scan`. A stage input requires an explicit route.
+The route and `-o` select the resulting material artifact or ordinary scan image;
+there is no optional process capture flag. Existing image and real-negative
+`convert-film` routes retain their behavior.
+
+A film source has already completed source interpretation, metering, geometry, film
+exposure, film development, and film-domain effects. A print source has also completed
+print exposure and development. A continuation MUST NOT repeat those operations or
+their stochastic effects. Conflicting overrides of completed controls fail; downstream
+controls remain editable, and an omitted seed inherits the source seed. It loads only
+the material dependencies consumed by its remaining operations: a film scan needs no
+paper, and a print scan does not require film preparation. A negative `film > scan`
+conversion retains the original frozen camera exposure compensation; it does not meter
+the material state as a new photograph or synthesize a negative capture.
+
+See [CLI stage processing](cli.md#process-film-and-print-states) for executable examples.
+Boolean `--debug` adds stderr messages only; `--diagnostics REPORT` writes a structured
+execution report. Neither selects material output nor captures numerical observations.
+Dedicated research workflows own those buffers through the core observer under the
+[instrument native-observation contract](../specs/instrument/native-observations.md),
+not the `.sfstage` contract.
+
 ## Spectral methods and illuminants
 
 The experimental spectral registry ships these methods:

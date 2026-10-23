@@ -8,6 +8,8 @@ only in the instrument binary and run at f64 reference precision. They compute v
 evidence; they do not fit parameters, render images, or judge a result. See the [measurement
 contract](../specs/instrument/spec.md#measurement) for the requirements.
 
+The [native observation contract](../specs/instrument/native-observations.md) separates dedicated measurement and experiment endpoints from ordinary rendering. They attach the common core observer to their actual execution and own observation retention; they do not request capture through `process` flags. Measurement records retain their replayable declaration and actual observer entry, collection boundary, named taps, schema, and CPU f64 precision. Ordinary `process`, `run suite`, and `run image` offer no optional native capture or implicit replacement. Scientific bundles remain explicit research inputs, not resumable `.sfstage` states.
+
 ## The point-wise requirement
 
 A reading is defined only for a point-wise chain. An injected numeric sample has no
@@ -155,6 +157,20 @@ named after a flag.
 
 `run.json` carries the declared inputs and their hashes, the resolved chain identity,
 the entry boundary, the read stages, the stimulus identity, and the group summaries.
+The `command` record retains the owning replayable `spektrafilm-lab measure run`
+argv, executable identity, executed seed, and the dependency identities already used by
+`verify`: parameter-source hashes, stimulus manifest/array hashes, profile identities,
+and the data inventory. It reuses the canonical `declaration`, rather than serializing
+a resolved snapshot as a new input. The `observer` record identifies the actual named
+taps, entry and collection boundary, CPU f64 execution, native schema version, and
+`directory: "evidence"` relative to `run.json`. Replay may change `--out` to a fresh
+destination; canonical declaration paths allow another working directory. There is
+no fabricated `process` capture argv.
+The measurement seed remains instrument-owned and defaults to zero; `random_seed`
+is not a settable parameter source and measurement adds no seed flag. Named user
+presets are retained as the selected file's canonical path and content hash, while
+built-in selections are qualified with `built-in:` so a different user library
+cannot shadow them.
 `readings.csv` carries one row per sample per available stage: the sample identity, its group,
 the stage, channel order, the three channel values, the unit, and a validity flag. A sample
 whose values include a non-finite number is invalid and reports an empty field; the command
@@ -176,7 +192,7 @@ command prints its human text on stderr and a result object on stdout whose
     --regions regions.json --out sample-1
 ```
 
-`--source` declares a raster image and requires the same input declaration as `process`: a source color space and a transfer state. `--from-evidence DIRECTORY --stage STAGE` reads one stage of a retained render-evidence bundle instead, and the bundle manifest supplies that stage's coordinate space, channel order, units, color space, and transfer state. `--from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE` resolves one exact completed case/seed row from a retained image-domain run and reads only its indexed available stage bundle. The run artifact index and the case manifest reference must agree on path and digest; unsafe paths, missing or failed rows, unavailable capture, missing stages, malformed buffers, and cross-seed references fail without fallback.
+`--source` declares a raster image and requires the same input declaration as `process`: a source color space and a transfer state. `--from-evidence DIRECTORY --stage STAGE` remains a research reader for one retained native observation bundle; its manifest supplies coordinate space, channel order, units, color space, and transfer state. `--from-run DIRECTORY|RUN.JSON --case ID --seed UINT32 --stage STAGE` remains a reader for an exact completed historical case/seed row with indexed available observations. The artifact index and case manifest reference must agree on path and digest; unsafe paths, missing or failed rows, absent observations, missing stages, malformed buffers, and cross-seed references fail without fallback. New ordinary suite/image rows explicitly retain observation absence. Sampling never renders, reconstructs a missing stage, enables capture, or resumes a `.sfstage` state to fill that absence.
 
 An image source reports its readings under the stage name `source`, with the domain
 `source_rgb` and the declared color space. An evidence source reports the bundle's own stage
@@ -339,6 +355,9 @@ stages before it, which the route never executed for this measurement, report
 - [Measurement contract](../specs/instrument/spec.md#measurement)
 - [Lab CLI design](../specs/instrument/design.md)
 - [CLI processing](cli.md)
-- [Stage evidence](cli.md#stage-evidence)
+- [Native observations](../specs/instrument/native-observations.md)
+- [Dedicated experiment and positional bundle export](../specs/instrument/experiment/spec.md)
+- [Resumable film and print artifacts](../specs/cli/stage-artifacts.md)
+- [Human debug diagnostics](../specs/cli/spec.md#debug-diagnostics)
 - [Profile fitting](profile-fitting.md)
 - [Building](building.md)

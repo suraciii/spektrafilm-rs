@@ -1,8 +1,8 @@
 # Experiment runs
 
-`experiment run` publishes one native stage-evidence bundle for one declared experiment invocation, and `experiment export` converts an existing bundle's raw f64 buffers into `.npy` arrays. Together they are one endpoint in the Unix-style research pipe; they do not execute a downstream sample, compare, report, or optimization step.
+`experiment run` publishes one instrument-owned [native observation bundle](../native-observations.md) for one declared experiment invocation. `experiment export` converts an existing bundle's raw f64 buffers into `.npy` arrays. They are separate endpoints in the Unix-style research pipe and do not execute downstream sampling, comparison, reporting, or optimization.
 
-Both commands are experimental: they carry no compatibility promise. See [command tiers](../spec.md#command-tiers).
+Both commands are experimental and carry no compatibility promise; see the [endpoint model](../spec.md#unix-endpoint-model).
 
 The experiment document is a typed declaration carrier, not a second parameter language or workflow DSL. Renderer parameter sources retain the [process surface](../../cli/spec.md) syntax and precedence. Instrument fields describe the endpoint input and retained evidence only.
 
@@ -18,7 +18,7 @@ The experiment document is a typed declaration carrier, not a second parameter l
 - `schema_version` — `1`.
 - `id` — a nonempty identifier matching `^[A-Za-z0-9][A-Za-z0-9_.-]*$`.
 - `input` — the source image. `path` is a file path relative to the document or an absolute path; `sha256` is the SHA-256 of the file's bytes. A missing or changed file is a command failure.
-- `chain` — the parameter chain. `--film`, `--paper`, `--preset`, `--params`, `--set`, `--route`, and `--scan-output` use the [process surface](../../cli/spec.md) names and precedence. The document is a source of these values, not a new parameter language. An omitted field takes the process default.
+- `chain` — the parameter chain. `--film`, `--paper`, `--preset`, `--params`, `--set`, `--route`, and `--scan-output` use the [process surface](../../cli/spec.md) names and precedence. The document is a source of these values, not a new parameter language. The route must be explicit; an omitted non-route field takes the process default.
 - `case` — the case whose regions the grid describes. `id` must name a case in the suite that `suite` names; `suite` is that suite's path, resolved relative to the document. The case must declare a nonempty `regions` array.
 - `grid` — the patch grid the case's regions must reproduce. `rows` and `cols` are positive integers; `patch_px` and `gap_px` are nonnegative integers; `origin` is `[x, y]`; `patch` maps a region `id` to its `[row, col]` position, zero-based. A region matches when its `geometry` equals `origin + [col * (patch_px + gap_px), row * (patch_px + gap_px), patch_px, patch_px]` for the `[row, col]` that `patch` names. Every case region must appear in `patch`, and `patch` must not name an id the case does not declare. `rows` and `cols` must equal the largest declared row and column plus one.
 - `seeds` — one or more unsigned 32-bit seeds. The default is `[0]`. `experiment run` must execute and retain one result for every declared seed. Until that multi-seed publication contract is implemented, the command must reject more than one seed rather than execute only the first seed while reporting the whole population.
@@ -44,17 +44,17 @@ spektrafilm-lab experiment run --experiment EXPERIMENT.json --out DIR \
 - `--data-dir` — otherwise `SPEKTRAFILM_DATA_DIR` or automatic discovery, as on the [process surface](../../cli/spec.md#data-directory-selection).
 - `--output-format` — the image container written beside the bundle, as on the [process surface](../../cli/spec.md#export-and-execution-options). The default is `tiff`. The command writes the image into `--out` under the same replacement rule as the report.
 
-`run` resolves the chain with the shared `process_params::resolve`, renders through the shared `process` entry with the CPU f64 backend, and publishes the bundle.
+`run` resolves the chain with the shared `process_params::resolve` and executes the shared core pipeline with the CPU f64 backend and the common core observer. The instrument owns observation configuration and publication; it must not synthesize a `process` capture invocation, invoke a removed process option, or implement a second rendering path or stage walk.
 
 - `resolved.json` is the resolved chain of the executed run: profiles, effective parameters, input declaration, and edit feedback. It is the single record of what the run actually used.
-- `command.json` is the full `process` argument vector, including the `--stage-evidence` destination and every `--set` source, so a retained run is reproducible.
+- `command.json` records the owning replayable `spektrafilm-lab experiment run` invocation, not a fabricated `process` argument vector. It must retain canonical document and data paths, executable identity, the experiment document and every parameter-source content hash, the executed seed, and the observer configuration (selected named taps, CPU f64 execution, bundle destination, and native observation schema version). Replaying the owning invocation with the retained declarations and dependencies must reproduce that configuration; a resolved parameter snapshot is not a substitute declaration.
 - `report.json` records the experiment identity, the resolved chain's profile names and input declaration, the bundle manifest, the grid and case references, and the tool version.
 
-`run` must not accept `--dry-run`: a resolved report without a bundle is not evidence. It must not render on a GPU backend, in preview mode, or through a route the bundle cannot describe; those are configuration-level failures before rendering under the [stage-evidence contract](../../cli/spec.md#stage-evidence).
+`run` must not accept `--dry-run`: a resolved report without a bundle is not evidence. It must not execute on a GPU backend, in preview mode, or through an execution the bundle cannot describe; these are configuration-level failures before rendering under the [native observation contract](../native-observations.md). This endpoint must retain its full film-and-print observation requirement: routes that skip required film or print boundaries must fail before rendering. Other research endpoints may deliberately observe narrower ranges and record skipped boundaries as `not_applicable`; that general bundle capability must not relax this experiment's required readings.
 
 ## Bundle validation
 
-`experiment export` validates a bundle against the [stage-evidence contract](../../cli/spec.md#stage-evidence) and rejects one it cannot consume:
+`experiment export` validates a bundle against the [native observation contract](../native-observations.md) and rejects one it cannot consume:
 
 - `schema_version` is `1` and `execution_status` is `completed`.
 - `host_precision` is `f64`. The instrument is f64-only; an `f32` bundle is not convertible to the `.npy` the caller expects.
@@ -66,10 +66,10 @@ The manifest is the authority for stage identity and layout. `export` must not i
 ## Buffer conversion
 
 ```bash
-spektrafilm-lab experiment export --stage-evidence DIR --out DIR [--stage ID]... [--force]
+spektrafilm-lab experiment export INPUT --out DIR [--stage ID]... [--force]
 ```
 
-- `--stage-evidence <DIR>` — the bundle directory.
+- `INPUT` — the native observation bundle directory containing `stage-evidence.json`, not a resumable `.sfstage` artifact.
 - `--out <DIR>` — the array destination. `export` refuses to replace an existing array unless `--force` is given.
 - `--stage <ID>` — a stage to convert. Repeats. The default is every `available` stage in manifest order. An `ID` that the manifest does not list as `available` is a command failure naming the available stages.
 
@@ -93,14 +93,14 @@ A bundle's buffers are the render's own values. `export` does not re-render, doe
 
 ## Acceptance
 
-1. Run one experiment whose case grid matches. Confirm the bundle publishes, `resolved.json` carries the resolved chain, `command.json` carries the full argument vector, and `report.json` names the case and grid.
+1. Run one experiment whose case grid matches. Confirm the common core observer publishes the bundle, `resolved.json` carries the resolved chain, `command.json` carries the owning replayable experiment invocation and observer configuration without fabricated process capture argv, and `report.json` names the case and grid.
 2. Repeat the same run. Confirm `report.json`, `resolved.json`, and `command.json` are byte-identical and every bundle buffer is byte-identical.
 3. Run with a case region absent from `patch`, and with `patch` naming an id the case does not declare. Confirm both fail before rendering and leave no manifest.
 4. Run with a region geometry that does not match the declared grid. Confirm it fails before rendering and leaves no manifest.
 5. Run with `input.sha256` not matching the file. Confirm it fails before rendering.
 6. Run with a `--set` file path outside the document's directory tree. Confirm it fails with an actionable message.
 7. Run with a document that repeats a key or carries an unknown field. Confirm it fails before rendering.
-8. Run with a configuration the bundle cannot describe, on each of: a GPU backend, preview mode, and a route outside the executed tap range. Confirm each fails before rendering and leaves no manifest.
+8. Run with a configuration the bundle cannot describe, including a GPU backend, preview mode, or a route that omits required film or print boundaries. Confirm each fails before rendering and leaves no manifest. Exercise valid narrower measurement ranges through their owning measurement endpoint; skipped named boundaries must be `not_applicable`, never invented.
 9. Run with `--dry-run`. Confirm it is rejected as an unknown option and writes nothing.
 10. Export a completed f64 bundle. Confirm every `available` stage becomes a `.npy` with shape `[height, width, 3]`, little-endian `<f8`, and bytes equal to the bundle buffer, and that `export.json` records each array's SHA-256.
 11. Export a bundle whose `host_precision` is `f32`. Confirm it fails naming `f64` and writes no array.
@@ -109,3 +109,6 @@ A bundle's buffers are the render's own values. `export` does not re-render, doe
 14. Export with `--force` over a destination holding a byte-for-byte sentinel array. Confirm the sentinel is replaced and the new array is readable.
 15. Export a bundle whose manifest marks one stage `unavailable`. Confirm the bundle is rejected as incomplete, no array is written, and the reason is reported.
 16. Read an exported `rgb_out` array and a `log_e_film` array from the same bundle. Confirm the first is `"RGB"` and the second is `"CMY"` in the manifest, and that neither array's channel order was rewritten.
+17. Export using positional `INPUT --out DIR`; reject the removed capture-option spelling and reject a `.sfstage` directory as the input kind. Confirm export never executes or resumes rendering.
+18. Replay the retained owning invocation with its retained dependencies and observer configuration. Confirm the same seed and observed taps execute through the common core, with no process capture option or second stage implementation.
+19. Compare observation-on and observation-off shared-core executions under the same chain and seed. Confirm observation does not change numerical output, RNG, backend, route, or parameters; this is dedicated research acceptance, not an optional ordinary-run mode.

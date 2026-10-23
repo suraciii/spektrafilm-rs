@@ -46,7 +46,7 @@ cblas = "0.4"
 blas-src = { version = "0.10", features = ["openblas"] }
 
 
-[target.'cfg(unix)'.dev-dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [lints]
