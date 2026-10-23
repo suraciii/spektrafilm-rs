@@ -37,7 +37,8 @@ pub fn resolve_continuation(
     let baseline = serde_json::to_value(&params).map_err(|e| e.to_string())?;
     let mut apply = |edits: ParameterEdits,
                      origin: DeclarationSource,
-                     params: &mut RuntimeParams|
+                     params: &mut RuntimeParams,
+                     protect_axes: bool|
      -> Result<(), String> {
         for (path, value) in edits.values() {
             if matches!(
@@ -66,12 +67,28 @@ pub fn resolve_continuation(
         }
         let mut candidate = params.clone();
         edits.apply(&mut candidate)?;
-        for path in edits.paths() {
-            let axis = match path { "enlarger.c_filter_neutral" => Some(0), "enlarger.m_filter_neutral" => Some(1), "enlarger.y_filter_neutral" => Some(2), _ => None };
-            if let Some(axis) = axis { candidate.neutral_print_filters_protected.get_or_insert([false; 3])[axis] = true; }
+        if header.state == MaterialKind::Film && protect_axes {
+            for path in edits.paths() {
+                let axis = match path {
+                    "enlarger.c_filter_neutral" => Some(0),
+                    "enlarger.m_filter_neutral" => Some(1),
+                    "enlarger.y_filter_neutral" => Some(2),
+                    _ => None,
+                };
+                if let Some(axis) = axis {
+                    candidate
+                        .neutral_print_filters_protected
+                        .get_or_insert([false; 3])[axis] = true;
+                }
+            }
         }
-        crate::stage_execution::validate_frozen_controls(header, &candidate)
-            .map_err(|e| format!("{}{}: {e}", origin.option.as_deref().unwrap_or(&origin.kind), origin.index.map(|i| format!(" #{i}")).unwrap_or_default()))?;
+        crate::stage_execution::validate_frozen_controls(header, &candidate).map_err(|e| {
+            format!(
+                "{}{}: {e}",
+                origin.option.as_deref().unwrap_or(&origin.kind),
+                origin.index.map(|i| format!(" #{i}")).unwrap_or_default()
+            )
+        })?;
         *params = candidate;
         Ok(())
     };
@@ -90,6 +107,7 @@ pub fn resolve_continuation(
                 path: Some(absolute_path(path)?),
             },
             &mut params,
+            false,
         )?;
     }
     let retained_print = header.original_print.as_ref().or(header.print.as_ref());
@@ -145,19 +163,33 @@ pub fn resolve_continuation(
         for (path, value) in leaves {
             crate::params::sources::insert(&mut payload, &path, value);
         }
-        apply(ParameterEdits::from_value(payload)?, origin, &mut params)?;
+        apply(
+            ParameterEdits::from_value(payload)?,
+            origin,
+            &mut params,
+            matches!(preset.parameters, presets::PresetParameters::Section(_)),
+        )?;
     }
     for selection in request.feature_profiles {
-        let (_, requested) = crate::feature_profiles::apply_with_requests(&params, std::slice::from_ref(selection))?;
+        let (_, requested) =
+            crate::feature_profiles::apply_with_requests(&params, std::slice::from_ref(selection))?;
         let mut payload = Value::Object(Default::default());
         for path in crate::feature_profiles::scope(selection.family) {
             if let Some(value) = requested[0].get(*path) {
                 crate::params::sources::insert(&mut payload, path, value.clone());
             }
         }
-        apply(ParameterEdits::from_value(payload)?, DeclarationSource {
-            kind: "feature_profile".into(), option: Some("--feature-profile".into()), index: Some(selection.position), path: None,
-        }, &mut params)?;
+        apply(
+            ParameterEdits::from_value(payload)?,
+            DeclarationSource {
+                kind: "feature_profile".into(),
+                option: Some("--feature-profile".into()),
+                index: Some(selection.position),
+                path: None,
+            },
+            &mut params,
+            true,
+        )?;
     }
     for (index, source) in request.sources.iter().enumerate() {
         let edits = ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}"))?;
@@ -172,6 +204,7 @@ pub fn resolve_continuation(
                     .transpose()?,
             },
             &mut params,
+            true,
         )?;
     }
     if let Some(name) = request.film {
@@ -193,9 +226,15 @@ pub fn resolve_continuation(
         }
     }
     if route.prints() && print.is_none() && retained_print.is_none() {
-        let name = header.downstream_print_name.as_deref().or(header.film.profile.info.target_print.as_deref())
+        let name = header
+            .downstream_print_name
+            .as_deref()
+            .or(header.film.profile.info.target_print.as_deref())
             .ok_or("new print operation requires --paper or a retained target_print")?;
-        print = Some(profile::load_profile_by_name(data_dir, name).map_err(|e| format!("loading downstream print profile {name:?}: {e}"))?);
+        print = Some(
+            profile::load_profile_by_name(data_dir, name)
+                .map_err(|e| format!("loading downstream print profile {name:?}: {e}"))?,
+        );
     }
     if route.prints() && print.as_ref().is_some_and(|p| !p.is_print_stock()) {
         return Err("downstream print profile must have printing support/stage".into());
