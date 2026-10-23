@@ -29,10 +29,24 @@ use spektrafilm_core::params::RuntimeParams;
 /// `camera.diffusion_filter` at projection time; the same holds for the two
 /// Enlarger entries and `enlarger.diffusion_filter`.
 const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
+    ("Workflow", &["workflow.route"], &[]),
+    ("Film material", &["film_render.development_time"], &[]),
+    ("Print material", &["print_render.development_time"], &[]),
+    (
+        "Import Raw",
+        &[],
+        &[
+            "load_raw.white_balance",
+            "load_raw.temperature",
+            "load_raw.tint",
+            "load_raw.lens_correction",
+        ],
+    ),
+    ("Session", &["settings.preview_max_size"], &[]),
     ("Film base", &["film_render.base"], &[]),
     (
         "Film chemistry",
-        &["film_render.chemistry", "film_render.development_time"],
+        &["film_render.chemistry", "film_render.density_curve_gamma"],
         &[],
     ),
     ("Print base", &["print_render.base"], &[]),
@@ -40,7 +54,7 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
         "Print chemistry",
         &[
             "print_render.density_curves_morph",
-            "print_render.development_time",
+            "print_render.density_curve_gamma",
         ],
         &[],
     ),
@@ -66,6 +80,7 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
             "camera.auto_exposure_method",
             "camera.color_filter",
             "camera.film_format_mm",
+            "camera.capture_illuminant",
         ],
         &[],
     ),
@@ -83,10 +98,16 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
             "enlarger.print_exposure_mode",
             "enlarger.y_filter_shift",
             "enlarger.m_filter_shift",
+            "settings.print_exposure_ev_tracking",
+        ],
+        &[],
+    ),
+    (
+        "Preflash",
+        &[
             "enlarger.preflash_exposure",
             "enlarger.preflash_y_filter_shift",
             "enlarger.preflash_m_filter_shift",
-            "settings.print_exposure_ev_tracking",
         ],
         &[],
     ),
@@ -98,6 +119,7 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
         &[
             "io.input_gamut_compress.active",
             "io.input_gamut_compress.algorithm",
+            "io.input_gamut_compress.boundary",
             "io.input_gamut_compress.knee",
             "io.input_gamut_compress.hull_detail",
         ],
@@ -129,6 +151,7 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
             "settings.apply_hanatos2025_adaptation_window",
             "settings.apply_hanatos2025_adaptation_surface",
             "settings.spectral_gaussian_blur",
+            "settings.use_cat16",
         ],
         &[],
     ),
@@ -139,13 +162,111 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
     ),
     (
         "Output",
-        &["output_mix.amount", "io.output_color_space"],
+        &[
+            "output_mix.amount",
+            "io.output_color_space",
+            "io.output_cctf_encoding",
+        ],
         &[
             "simulation.saving_color_space",
             "simulation.saving_cctf_encoding",
         ],
     ),
 ];
+
+/// Factory values shared by row resets, inventory filtering and module markers.
+pub(crate) fn factory_value(path: &str) -> Option<Value> {
+    if let Some(path) = path.strip_prefix("extras.") {
+        document_value(&FACTORY_EXTRAS, path)
+    } else {
+        document_value(&FACTORY_ROOT, path)
+    }
+}
+
+/// Compare extras in the type their real editing owner accepts. Raw GUI JSON
+/// and the live f32-backed viewer projection must describe the same value.
+fn extras_value(extras: &Value, path: &str) -> Option<Value> {
+    if path == "display.white_padding" {
+        Some(Value::from(
+            crate::display::DisplaySettings::from_json(&extras["display"]).white_padding,
+        ))
+    } else if path == "rust.display_profile" {
+        Some(
+            extras["rust"]["display_profile"]
+                .as_str()
+                .filter(|selection| !selection.is_empty())
+                .map_or(Value::Null, |selection| Value::from(selection.to_owned())),
+        )
+    } else if document_value(extras, path).is_none()
+        && matches!(
+            path,
+            "rust.export_saving_color_space" | "rust.export_saving_cctf_encoding"
+        )
+    {
+        let options = crate::export::ExportOptions::from_state(extras);
+        Some(if path == "rust.export_saving_color_space" {
+            Value::from(options.saving_color_space)
+        } else {
+            Value::from(options.saving_cctf_encoding)
+        })
+    } else {
+        document_value(extras, path)
+    }
+}
+
+pub(crate) fn path_modified(path: &str, live_root: &Value, extras: &Value) -> bool {
+    let live = if let Some(path) = path.strip_prefix("extras.") {
+        extras_value(extras, path)
+    } else {
+        document_value(live_root, path)
+    };
+    match (live, factory_value(path)) {
+        (Some(live), Some(factory)) => !same_bits(&live, &factory),
+        (None, Some(factory)) => !factory.is_null(),
+        _ => false,
+    }
+}
+
+/// Restore one canonical leaf, including its optional state or complete vector.
+/// The candidate is validated before publication; no neighboring leaf changes.
+pub(crate) fn reset_leaf(params: &mut RuntimeParams, extras: &mut Value, path: &str) -> bool {
+    let Some(factory) = factory_value(path) else {
+        return false;
+    };
+    if let Some(path) = path.strip_prefix("extras.") {
+        if extras_value(extras, path)
+            .as_ref()
+            .is_some_and(|live| same_bits(live, &factory))
+        {
+            return false;
+        }
+        return set_value(extras, path, factory);
+    }
+    let Ok(mut root) = serde_json::to_value(&*params) else {
+        return false;
+    };
+    if document_value(&root, path)
+        .as_ref()
+        .is_some_and(|live| same_bits(live, &factory))
+    {
+        return false;
+    }
+    if !set_value(&mut root, path, factory) {
+        return false;
+    }
+    let preparation = params.render_preparation_state();
+    match serde_json::from_value::<RuntimeParams>(root) {
+        Ok(mut candidate) => {
+            if crate::state::validate_stored_runtime(&mut candidate).is_err() {
+                return false;
+            }
+            candidate.restore_render_preparation_state(&preparation);
+            *params = candidate;
+            true
+        }
+        _ => false,
+    }
+}
 
 /// The GUI sections whose parameters a reset restores.
 pub fn sections() -> impl Iterator<Item = &'static str> {
@@ -154,14 +275,14 @@ pub fn sections() -> impl Iterator<Item = &'static str> {
 
 /// One section's runtime paths and extras paths, or `None` when the section is
 /// not resettable.
-fn section_paths(section: &str) -> Option<&'static [&'static str]> {
+pub(crate) fn section_paths(section: &str) -> Option<&'static [&'static str]> {
     SECTION_PARAMETERS
         .iter()
         .find(|&&(name, _, _)| name == section)
         .map(|&(_, paths, _)| paths)
 }
 
-fn section_extras(section: &str) -> Option<&'static [&'static str]> {
+pub(crate) fn section_extras(section: &str) -> Option<&'static [&'static str]> {
     SECTION_PARAMETERS
         .iter()
         .find(|&&(name, _, _)| name == section)
@@ -189,8 +310,19 @@ static FACTORY_ROOT: std::sync::LazyLock<Value> =
 /// The factory extras document, computed once. The channel swaps and other
 /// extras-only values never reach the runtime model, so their factory values
 /// are read from the document the factory projects.
-static FACTORY_EXTRAS: std::sync::LazyLock<Value> =
-    std::sync::LazyLock::new(|| GuiState::factory().sections.clone());
+static FACTORY_EXTRAS: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+    let mut sections = GuiState::factory().sections;
+    crate::export::ExportOptions::from_state(&sections).write_state(&mut sections);
+    sections["rust"]["display_profile"] = Value::Null;
+    let display = crate::display::DisplaySettings::from_json(&sections["display"]).to_json();
+    for (key, value) in display
+        .as_object()
+        .expect("display settings serialize as an object")
+    {
+        sections["display"][key] = value.clone();
+    }
+    sections
+});
 
 /// The value a dotted path resolves to inside one document, or `None` when the
 /// document does not carry the path.
@@ -233,7 +365,7 @@ pub fn is_modified(section: &str, live: &RuntimeParams, extras: &Value) -> bool 
     if let Some(extras_paths) = section_extras(section) {
         for path in extras_paths {
             if let (Some(live), Some(factory)) = (
-                document_value(extras, path),
+                extras_value(extras, path),
                 document_value(&FACTORY_EXTRAS, path),
             ) && !same_bits(&live, &factory)
             {
@@ -276,7 +408,7 @@ pub(crate) fn leaf_modified(
             let is_child = path == *scope
                 || (path.starts_with(scope) && path.as_bytes().get(scope.len()) == Some(&b'.'));
             if is_child {
-                let Some(live) = document_value(live_extras, path) else {
+                let Some(live) = extras_value(live_extras, path) else {
                     continue;
                 };
                 let Some(factory) = document_value(&FACTORY_EXTRAS, path) else {
@@ -325,8 +457,12 @@ pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> b
             // writing a value the model cannot hold. A restore the model
             // rejects leaves the section unrestored, so the caller is told
             // nothing changed rather than marking a reset that did not happen.
+            let preparation = params.render_preparation_state();
             match serde_json::from_value::<RuntimeParams>(live_root) {
-                Ok(restored) if restored.validate().is_ok() => *params = restored,
+                Ok(mut restored) if restored.validate().is_ok() => {
+                    restored.restore_render_preparation_state(&preparation);
+                    *params = restored;
+                }
                 _ => return false,
             }
         }
@@ -336,7 +472,7 @@ pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> b
             let Some(factory) = document_value(&FACTORY_EXTRAS, path) else {
                 continue;
             };
-            if document_value(extras, path)
+            if extras_value(extras, path)
                 .as_ref()
                 .is_some_and(|live| same_bits(live, &factory))
             {
@@ -390,6 +526,99 @@ mod tests {
 
     fn factory() -> RuntimeParams {
         GuiState::factory().runtime_params().unwrap()
+    }
+
+    #[test]
+    fn display_factory_reset_compares_in_the_actual_editor_type() {
+        let params = factory();
+        let mut extras = GuiState::factory().sections;
+        let raw_root = serde_json::to_value(&params).unwrap();
+        assert!(!path_modified(
+            "extras.display.white_padding",
+            &raw_root,
+            &extras
+        ));
+        let projected = crate::display::DisplaySettings::from_json(&extras["display"]).to_json();
+        extras["display"]["white_padding"] = projected["white_padding"].clone();
+        let root = serde_json::to_value(&params).unwrap();
+        assert!(!path_modified(
+            "extras.display.white_padding",
+            &root,
+            &extras
+        ));
+        extras["display"]["white_padding"] = Value::from(0.25_f32);
+        let mut params = params;
+        assert!(reset_leaf(
+            &mut params,
+            &mut extras,
+            "extras.display.white_padding"
+        ));
+        assert!(!path_modified(
+            "extras.display.white_padding",
+            &root,
+            &extras
+        ));
+    }
+
+    #[test]
+    fn export_conversion_and_icc_modified_markers_use_typed_factory_defaults() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections;
+        let root = serde_json::to_value(&params).unwrap();
+        let paths = [
+            "extras.rust.export_saving_color_space",
+            "extras.rust.export_saving_cctf_encoding",
+            "extras.rust.display_profile",
+        ];
+        for path in paths {
+            assert!(factory_value(path).is_some(), "{path}");
+            assert!(!path_modified(path, &root, &extras), "{path}");
+        }
+        extras["rust"]["display_profile"] = Value::Null;
+        assert!(!path_modified(paths[2], &root, &extras));
+        let mut options = crate::export::ExportOptions::from_state(&extras);
+        options.format = crate::export::ExportFormat::Tiff;
+        options.saving_color_space = "ProPhoto RGB".into();
+        options.saving_cctf_encoding = !options.saving_cctf_encoding;
+        options.write_state(&mut extras);
+        extras["rust"]["display_profile"] = Value::from("selected-display.icc");
+        for path in paths {
+            assert!(path_modified(path, &root, &extras), "{path}");
+            assert!(reset_leaf(&mut params, &mut extras, path), "{path}");
+            assert!(!path_modified(path, &root, &extras), "{path}");
+        }
+        extras["rust"]
+            .as_object_mut()
+            .unwrap()
+            .remove("display_profile");
+        assert!(!path_modified(paths[2], &root, &extras));
+    }
+
+    #[test]
+    fn leaf_and_module_resets_preserve_unrelated_explicit_preparation_ownership() {
+        for module in [false, true] {
+            let mut params = factory();
+            params.camera.exposure_compensation_ev = 1.0;
+            params.enlarger.preflash_y_filter_shift = 7.0;
+            let mut preparation = params.render_preparation_state();
+            preparation.explicit_section_paths = vec![
+                "enlarger.print_exposure".into(),
+                "enlarger.preflash_y_filter_shift".into(),
+            ];
+            preparation.explicit_section_paths.sort();
+            preparation.neutral_print_filters_protected = [true, false, true];
+            params.restore_render_preparation_state(&preparation);
+            let mut extras = GuiState::factory().sections.clone();
+            assert!(if module {
+                reset(&mut params, &mut extras, "Camera")
+            } else {
+                reset_leaf(&mut params, &mut extras, "enlarger.preflash_y_filter_shift")
+            });
+            assert_eq!(params.render_preparation_state(), preparation);
+            if module {
+                assert_eq!(params.enlarger.preflash_y_filter_shift, 7.0);
+            }
+        }
     }
 
     #[test]
@@ -454,6 +683,31 @@ mod tests {
         extras["special"]["film_channel_swap"] = serde_json::json!([1, 0, 2]);
         assert!(is_modified("Convert", &params, &extras));
         assert!(reset(&mut params, &mut extras, "Convert"));
+        assert!(!is_modified("Convert", &params, &extras));
+    }
+
+    #[test]
+    fn imported_acquisition_light_resets_only_with_its_convert_owner() {
+        let mut params = factory();
+        let mut extras = GuiState::factory().sections;
+        let factory_light = params.film_render.convert.scan_illuminant.clone();
+        params.film_render.convert.scan_illuminant = "BB4321".into();
+        assert!(is_modified("Convert", &params, &extras));
+        assert!(!is_modified("Scanner", &params, &extras));
+        params.scanner.lens_blur = 0.25;
+        assert!(reset(&mut params, &mut extras, "Scanner"));
+        assert_eq!(params.film_render.convert.scan_illuminant, "BB4321");
+        assert!(reset_leaf(
+            &mut params,
+            &mut extras,
+            "film_render.convert.scan_illuminant"
+        ));
+        assert_eq!(params.film_render.convert.scan_illuminant, factory_light);
+        params.film_render.convert.scan_illuminant = "T".into();
+        params.scanner.lens_blur = 0.5;
+        assert!(reset(&mut params, &mut extras, "Convert"));
+        assert_eq!(params.film_render.convert.scan_illuminant, factory_light);
+        assert_eq!(params.scanner.lens_blur, 0.5);
         assert!(!is_modified("Convert", &params, &extras));
     }
 

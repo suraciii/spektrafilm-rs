@@ -120,14 +120,7 @@ impl GuiState {
                 .context("Invalid render preparation ownership")?;
             params.restore_render_preparation_state(&preparation);
         }
-        params
-            .scanner
-            .operator
-            .validate()
-            .map_err(anyhow::Error::msg)?;
-        let operator = std::mem::take(&mut params.scanner.operator);
-        params.validate().map_err(anyhow::Error::msg)?;
-        params.scanner.operator = operator;
+        super::validate_stored_runtime(&mut params)?;
         for name in ["film_channel_swap", "print_channel_swap"] {
             let order = s["special"][name]
                 .as_array()

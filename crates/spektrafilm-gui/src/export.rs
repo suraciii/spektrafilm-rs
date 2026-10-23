@@ -1,7 +1,9 @@
 //! Full-render export preferences and a cancellable options draft.
+//! Search locates this draft's real controls without changing its format;
+//! inapplicable codec values remain readable, and only submission commits it.
 use std::path::{Path, PathBuf};
 
-use crate::controls::enum_choice;
+use crate::controls::{self, enum_choice};
 use crate::theme;
 use eframe::egui;
 use serde_json::{Value, json};
@@ -122,7 +124,7 @@ impl ExportCompression {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExportOptions {
     pub(crate) backend: ExportBackend,
     pub(crate) format: ExportFormat,
@@ -292,6 +294,20 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+fn draft_reset<T: Clone + PartialEq>(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut T,
+    factory: &T,
+    applicable: bool,
+) {
+    if ui.add_enabled(applicable && value != factory, egui::Button::new(format!("Reset {label} to factory")))
+        .on_hover_text("Reset only this Export draft option. Cancel discards the draft; this does not edit the photograph.")
+        .clicked() {
+        value.clone_from(factory);
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct ExportDialog {
     draft: Option<ExportOptions>,
@@ -318,47 +334,94 @@ impl ExportDialog {
         dimensions: [u32; 2],
     ) -> Option<ExportOptions> {
         let draft = self.draft.as_mut()?;
+        static FACTORY: std::sync::LazyLock<ExportOptions> = std::sync::LazyLock::new(|| {
+            ExportOptions::from_state(&crate::state::GuiState::factory().sections)
+        });
+        let factory = &*FACTORY;
         let mut open = true;
         let mut submit = false;
         let mut cancel = false;
         egui::Window::new("Export options")
             .id(egui::Id::new("full_render_export_options"))
-            .open(&mut open).collapsible(false).resizable(false)
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(440.0)
+            .max_width((ctx.screen_rect().width() - 32.0).max(240.0))
+            .max_height((ctx.screen_rect().height() - 48.0).max(120.0))
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("export-options-scroll")
+                    .max_height((ctx.screen_rect().height() - 160.0).max(80.0))
+                    .show(ui, |ui| {
                 let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
                 enum_choice(ui, "Backend", &mut draft.backend, &[
                     (ExportBackend::Cpu, cpu_label),
                     (ExportBackend::Gpu, "GPU (WGPU f32)"),
                 ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
+                draft_reset(ui, "Backend", &mut draft.backend, &factory.backend, true);
                 enum_choice(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, ExportFormat::Jpeg.label()),
                     (ExportFormat::Png, ExportFormat::Png.label()),
                     (ExportFormat::Tiff, ExportFormat::Tiff.label()),
                     (ExportFormat::Exr, ExportFormat::Exr.label()),
-                ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit ZIP. EXR: 16/32-bit linear for compositing.");
+                ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit integer or 32-bit float, ZIP or uncompressed. EXR: 16/32-bit linear for compositing.");
+                draft_reset(ui, "Format", &mut draft.format, &factory.format, true);
                 draft.normalize();
                 let depth_choices: &[(BitDepth, &str)] = match draft.format {
-                    ExportFormat::Jpeg | ExportFormat::Png => &[(BitDepth::Eight, "8 bit")],
+                    ExportFormat::Jpeg | ExportFormat::Png => &[],
                     ExportFormat::Tiff => &[(BitDepth::Eight, "8 bit"), (BitDepth::Sixteen, "16 bit"), (BitDepth::ThirtyTwo, "32 bit")],
                     ExportFormat::Exr => &[(BitDepth::Sixteen, "16 bit"), (BitDepth::ThirtyTwo, "32 bit")],
                 };
-                enum_choice(ui, "Bit depth", &mut draft.depth, depth_choices, "Select the bit depth.");
-                if draft.format == ExportFormat::Jpeg {
+                if depth_choices.is_empty() {
+                    let response = ui.add(egui::Label::new("Bit depth: 8 bit — required by JPEG and PNG")
+                        .sense(egui::Sense::focusable_noninteractive()));
+                    controls::locate_row(ui, "extras.rust.save_bit_depth", &response);
+                } else {
+                    enum_choice(ui, "Bit depth", &mut draft.depth, depth_choices, "Select the bit depth.");
+                }
+                draft_reset(ui, "Bit depth", &mut draft.depth, &factory.depth, !depth_choices.is_empty());
+                let jpeg = draft.format == ExportFormat::Jpeg;
+                if jpeg {
                     ui.label("JPEG uses lossy compression, including at quality 100. Use PNG, TIFF or EXR to preserve image detail.");
-                    ui.add(egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text("JPEG quality"));
+                }
+                let quality = ui.add_enabled(jpeg,
+                    egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text("JPEG quality"))
+                    .on_disabled_hover_text("JPEG quality applies only to JPEG. The stored quality is retained for the next JPEG export.");
+                controls::locate_row(ui, "extras.rust.jpeg_quality", &quality);
+                draft_reset(ui, "JPEG quality", &mut draft.jpeg_quality, &factory.jpeg_quality, jpeg);
+                ui.add_enabled_ui(jpeg, |ui| {
                     enum_choice(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &[
                         (JpegSubsampling::Yuv444, "4:4:4"),
                         (JpegSubsampling::Yuv420, "4:2:0"),
                     ], "Select the JPEG chroma subsampling.");
+                });
+                draft_reset(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &factory.jpeg_subsampling, jpeg);
+                if !jpeg {
+                    ui.label(egui::RichText::new("JPEG quality and subsampling apply only to JPEG; stored values are retained.").small().color(theme::FG_MUTED));
                 }
-                if draft.format == ExportFormat::Tiff {
-                    enum_choice(ui, "Compression", &mut draft.compression, &[
-                        (ExportCompression::Zip, "ZIP"),
-                        (ExportCompression::None, "None"),
-                    ], "Select the TIFF compression method.");
+                match draft.format {
+                    ExportFormat::Tiff => {
+                        enum_choice(ui, "Compression", &mut draft.compression, &[
+                            (ExportCompression::Zip, "ZIP"),
+                            (ExportCompression::None, "None"),
+                        ], "Select the TIFF compression method.");
+                    }
+                    format => {
+                        let text = match format {
+                            ExportFormat::Exr => "Compression: ZIP — required by the EXR writer",
+                            ExportFormat::Jpeg => "Compression: JPEG lossy — use JPEG quality and subsampling",
+                            ExportFormat::Png => "Compression: PNG lossless — fixed by the PNG writer",
+                            ExportFormat::Tiff => unreachable!(),
+                        };
+                        let response = ui.add(egui::Label::new(text)
+                            .sense(egui::Sense::focusable_noninteractive()));
+                        controls::locate_row(ui, "extras.rust.export_compression", &response);
+                    }
                 }
+                draft_reset(ui, "Compression", &mut draft.compression, &factory.compression, draft.format == ExportFormat::Tiff);
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
-                egui::ComboBox::from_label("Saving color space")
+                let color_space = egui::ComboBox::from_label("Saving color space")
                     .selected_text(&draft.saving_color_space)
                     .show_ui(ui, |ui| {
                     ui.label(
@@ -372,16 +435,21 @@ impl ExportDialog {
                 })
                 .response
                 .on_hover_text("Color space and transfer encoding of the file Export writes. This is file conversion, distinct from the output color space of the runtime digital output and from the display transform, which is viewer-only.");
+                controls::locate_row(ui, "extras.rust.export_saving_color_space", &color_space);
+                draft_reset(ui, "Saving color space", &mut draft.saving_color_space, &factory.saving_color_space, true);
+                let encoding = ui.add_enabled(draft.format == ExportFormat::Tiff,
+                    egui::Checkbox::new(&mut draft.saving_cctf_encoding, "Apply saving CCTF encoding"))
+                    .on_hover_text(format!(
+                        "CCTF is the {}. Apply the saving transfer encoding to the samples Export writes; off writes linear samples. This file conversion is independent of the viewer-only display transform.",
+                        crate::routes::vocabulary::CCTF
+                    ));
+                controls::locate_row(ui, "extras.rust.export_saving_cctf_encoding", &encoding);
+                draft_reset(ui, "Apply saving CCTF encoding", &mut draft.saving_cctf_encoding, &factory.saving_cctf_encoding, draft.format == ExportFormat::Tiff);
+                draft.normalize();
                 match draft.format {
-                    ExportFormat::Exr => { ui.label("EXR uses linear color and ZIP compression."); }
-                    ExportFormat::Jpeg | ExportFormat::Png => { ui.label("JPEG and PNG use encoded color."); }
-                    ExportFormat::Tiff => {
-                        ui.checkbox(&mut draft.saving_cctf_encoding, "Apply saving CCTF encoding")
-                            .on_hover_text(format!(
-                                "CCTF is the {}. Apply the saving transfer encoding to the samples Export writes; off writes linear samples. This file conversion is independent of the viewer-only display transform.",
-                                crate::routes::vocabulary::CCTF
-                            ));
-                    }
+                    ExportFormat::Exr => { ui.label("EXR uses linear color and ZIP compression; encoding is fixed off."); }
+                    ExportFormat::Jpeg | ExportFormat::Png => { ui.label("JPEG and PNG use encoded color; encoding is fixed on."); }
+                    ExportFormat::Tiff => {}
                 }
                 let depth_label = match draft.depth {
                     BitDepth::Eight => "8 bit",
@@ -413,18 +481,21 @@ impl ExportDialog {
                     } else {
                         "Pixel payload at the input's full resolution. This container stores the samples uncompressed, so the file matches apart from headers."
                     });
+                    });
                 ui.separator();
                 ui.horizontal(|ui| {
                     // The sidebar opener and this submit are two steps of one
                     // flow, so they carry distinct labels.
-                    submit = ui
+                    let export = ui
                         .button("Export file…")
-                        .on_hover_text("Start an independent export: render the full-resolution input with the current runtime controls and these saving settings, then write the file. Export never reads or writes the retained output, so it is a different operation from Save.")
-                        .clicked();
-                    cancel = ui
+                        .on_hover_text("Start an independent export: render the full-resolution input with the current runtime controls and these saving settings, then write the file. Export never reads or writes the retained output, so it is a different operation from Save.");
+                    controls::locate_row(ui, "action.export", &export);
+                    submit = export.clicked();
+                    let discard = ui
                         .button("Cancel")
-                        .on_hover_text("Discard these export settings. The retained output is unchanged.")
-                        .clicked();
+                        .on_hover_text("Discard these export settings. The retained output is unchanged.");
+                    controls::locate_row(ui, "action.cancel_export_draft", &discard);
+                    cancel = discard.clicked();
                 });
             });
         if !open || cancel || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {

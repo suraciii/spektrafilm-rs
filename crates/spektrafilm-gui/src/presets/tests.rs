@@ -472,3 +472,315 @@ fn browser_extension_preserves_existing_fields() {
             .is_none()
     );
 }
+
+#[test]
+fn browser_search_matches_both_material_names_and_ids_without_changing_order_or_state() {
+    let (mut app, directory) = test_app("browser-search");
+    let initial = app
+        .presets
+        .entries
+        .iter()
+        .find(|entry| {
+            entry
+                .preset
+                .as_ref()
+                .is_some_and(|preset| preset.kind() == Ok(PresetKind::Look))
+        })
+        .unwrap()
+        .clone();
+    app.load_preset(initial.group, &initial.name);
+    app.params.enlarger.print_exposure += 0.5;
+    let controls = serde_json::to_value(&app.params).unwrap();
+    let preparation = app.params.render_preparation_state();
+    let state = app.presets.state.clone();
+    let revision = app.parameter_revision;
+    let film = initial.film_profile.as_ref().unwrap().stock.clone();
+    let print = initial.print_profile.as_ref().unwrap().stock.clone();
+    let films = vec![crate::profiles::ProfileEntry {
+        stock: film.clone(),
+        display: "Film Search Display".into(),
+    }];
+    let prints = vec![crate::profiles::ProfileEntry {
+        stock: print.clone(),
+        display: "Print Search Display".into(),
+    }];
+    app.presets.update_search(&films, &prints);
+    let unfiltered = app.presets.visible_indices().to_vec();
+    for query in [
+        initial.name.to_uppercase(),
+        film.to_uppercase(),
+        print.to_uppercase(),
+        "fILm sEARch dISPlay".into(),
+        "pRINT seARch diSPLAY".into(),
+    ] {
+        app.presets.query = query;
+        app.presets.update_search(&films, &prints);
+        let visible = app.presets.visible_indices();
+        assert!(
+            visible
+                .iter()
+                .any(|index| app.presets.entries[*index].name == initial.name
+                    && app.presets.entries[*index].group == initial.group)
+        );
+        assert!(visible.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(visible.iter().all(|index| unfiltered.contains(index)));
+    }
+    app.presets.query = "not-a-stock-or-look-9d8e7f".into();
+    app.presets.update_search(&films, &prints);
+    assert!(app.presets.visible_indices().is_empty());
+    assert_eq!(
+        marker(
+            state.applied.as_ref().unwrap(),
+            &app.presets.entries,
+            &app.params,
+            &app.film_name,
+            &app.print_name
+        ),
+        Marker::Modified
+    );
+    app.presets.query.clear();
+    app.presets.update_search(&films, &prints);
+    assert_eq!(app.presets.visible_indices(), unfiltered);
+    assert_eq!(serde_json::to_value(&app.params).unwrap(), controls);
+    assert_eq!(app.params.render_preparation_state(), preparation);
+    assert_eq!(app.presets.state, state);
+    assert_eq!(app.parameter_revision, revision);
+    assert!(
+        serde_json::to_value(&app.presets.state)
+            .unwrap()
+            .get("query")
+            .is_none()
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn section_application_keeps_full_serialized_scope_and_explicit_ownership() {
+    let (mut app, directory) = test_app("section-application");
+    let remembered = AppliedPreset {
+        group: PresetGroup::BuiltIn,
+        name: "Remembered look".into(),
+    };
+    app.presets.state.applied = Some(remembered.clone());
+    app.params.camera.exposure_compensation_ev = 1.25;
+    let mut preparation = app.params.render_preparation_state();
+    preparation
+        .explicit_section_paths
+        .push("camera.exposure_compensation_ev".into());
+    app.params.restore_render_preparation_state(&preparation);
+    let mut source = app.params.clone();
+    source.enlarger.print_exposure = 2.5;
+    source.enlarger.preflash_exposure = 0.1;
+    source.enlarger.preflash_y_filter_shift = 3.0;
+    source.enlarger.preflash_m_filter_shift = 4.0;
+    let preset =
+        Preset::capture_section("Full enlarger", Section::Enlarger, &source, provenance()).unwrap();
+    app.presets
+        .library
+        .save_new(&preset, &app.data_dir)
+        .unwrap();
+    let film = app.film_name.clone();
+    let print = app.print_name.clone();
+    let route = app.params.workflow.route.clone();
+    let diffusion = serde_json::to_value(&app.params.enlarger.diffusion_filter).unwrap();
+    app.load_preset(PresetGroup::User, &preset.name);
+    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+    assert_eq!(app.params.enlarger.print_exposure, 2.5);
+    assert_eq!(app.params.enlarger.preflash_exposure, 0.1);
+    assert_eq!(app.params.enlarger.preflash_y_filter_shift, 3.0);
+    assert_eq!(app.params.enlarger.preflash_m_filter_shift, 4.0);
+    assert_eq!(
+        serde_json::to_value(&app.params.enlarger.diffusion_filter).unwrap(),
+        diffusion
+    );
+    assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
+    let preparation = app.params.render_preparation_state();
+    assert!(
+        preparation
+            .explicit_section_paths
+            .iter()
+            .any(|path| path == "camera.exposure_compensation_ev")
+    );
+    assert!(
+        preparation
+            .explicit_section_paths
+            .iter()
+            .any(|path| path == "enlarger.preflash_exposure")
+    );
+    assert_eq!(app.presets.state.applied, Some(remembered));
+    assert_eq!(app.film_name, film);
+    assert_eq!(app.print_name, print);
+    assert_eq!(app.params.workflow.route, route);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn browser_filters_only_looks_and_does_not_hide_library_faults() {
+    let (mut app, directory) = test_app("search-faults");
+    let section = Preset::capture_section(
+        "Needle section",
+        Section::OutputMix,
+        &app.params,
+        provenance(),
+    )
+    .unwrap();
+    app.presets
+        .library
+        .save_new(&section, &app.data_dir)
+        .unwrap();
+    std::fs::write(directory.join("presets/Broken.json"), "not JSON").unwrap();
+    app.presets.refresh();
+    app.presets.query = "Needle section".into();
+    app.presets.update_search(&app.films, &app.papers);
+    assert!(app.presets.visible_indices().is_empty());
+    assert!(
+        app.presets
+            .entries
+            .iter()
+            .any(|entry| entry.fault.is_some())
+    );
+    app.presets.query.clear();
+    app.presets.update_search(&app.films, &app.papers);
+    assert!(app.presets.visible_indices().iter().all(|index| {
+        app.presets.entries[*index].preset.as_ref().unwrap().kind() == Ok(PresetKind::Look)
+    }));
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn browser_clear_collapse_and_reopen_preserve_controls_and_missing_context() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    let (mut app, directory) = test_app("browser-interaction");
+    app.presets.state.applied = Some(AppliedPreset {
+        group: PresetGroup::User,
+        name: "Absent look".into(),
+    });
+    app.presets.query = "query-with-no-look-match".into();
+    let params = serde_json::to_value(&app.params).unwrap();
+    let revision = app.parameter_revision;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 980.0))
+        .build_state(
+            |ctx, app: &mut App| {
+                app.preset_panel(ctx);
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.label("Retained photograph");
+                });
+            },
+            app,
+        );
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Current look: My Presets / Absent look • missing")
+            .is_some()
+    );
+    assert!(
+        harness
+            .query_by_label("No matching look presets. Clear preset search to show all looks.")
+            .is_some()
+    );
+    harness.get_by_label("◀").click();
+    harness.run();
+    assert!(!harness.state().presets.state.expanded);
+    assert_eq!(harness.state().presets.query, "query-with-no-look-match");
+    harness.get_by_label("▶").click();
+    harness.run();
+    assert!(harness.state().presets.state.expanded);
+    harness.get_by_label("Clear preset search").click();
+    harness.run();
+    assert!(harness.state().presets.query.is_empty());
+    assert!(!harness.state().presets.visible_indices().is_empty());
+    assert_eq!(
+        serde_json::to_value(&harness.state().params).unwrap(),
+        params
+    );
+    assert_eq!(harness.state().parameter_revision, revision);
+    assert!(
+        harness
+            .query_by_label("Current look: My Presets / Absent look • missing")
+            .is_some()
+    );
+    drop(harness);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn look_application_preserves_existing_explicit_ownership_and_legacy_camera_omission() {
+    let (mut app, directory) = test_app("look-ownership");
+    let mut ownership = app.params.render_preparation_state();
+    ownership.explicit_section_paths = vec!["film_render.halation.active".into()];
+    app.params.restore_render_preparation_state(&ownership);
+    let mut authored = app.params.clone();
+    authored.camera.exposure_compensation_ev = 2.0;
+    let mut preset = Preset::capture(
+        "Authored look",
+        &app.film_name,
+        &app.print_name,
+        &authored,
+        provenance(),
+    );
+    app.presets
+        .library
+        .save_new(&preset, &app.data_dir)
+        .unwrap();
+    app.load_preset(PresetGroup::User, &preset.name);
+    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+    assert_eq!(app.params.camera.exposure_compensation_ev, 2.0);
+    assert_eq!(
+        app.params.render_preparation_state().explicit_section_paths,
+        ownership.explicit_section_paths
+    );
+    if let spektrafilm_core::presets::PresetParameters::Look(look) = &mut preset.parameters {
+        look.camera = None;
+    }
+    preset.name = "Legacy camera omission".into();
+    app.presets
+        .library
+        .save_new(&preset, &app.data_dir)
+        .unwrap();
+    app.params.camera.exposure_compensation_ev = 1.25;
+    app.load_preset(PresetGroup::User, &preset.name);
+    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+    assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
+    assert_eq!(
+        app.params.render_preparation_state().explicit_section_paths,
+        ownership.explicit_section_paths
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn print_section_changes_scan_glare_without_changing_enlarger_or_materials() {
+    let (mut app, directory) = test_app("print-section-scope");
+    app.params.enlarger.preflash_exposure = 0.05;
+    app.params.print_render.glare.active = false;
+    app.toggle_scan_for_print();
+    let mut source = app.params.clone();
+    source.print_render.glare.active = true;
+    source.print_render.glare.percent = 2.0;
+    source.print_render.density_curve_gamma = 1.25;
+    let preset =
+        Preset::capture_section("Print and readout", Section::Print, &source, provenance())
+            .unwrap();
+    app.presets
+        .library
+        .save_new(&preset, &app.data_dir)
+        .unwrap();
+    let enlarger = serde_json::to_value(&app.params.enlarger).unwrap();
+    let film = app.film_name.clone();
+    let print = app.print_name.clone();
+    app.load_preset(PresetGroup::User, &preset.name);
+    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+    assert!(app.params.print_render.glare.active);
+    assert_eq!(app.params.print_render.glare.percent, 2.0);
+    assert_eq!(app.params.print_render.density_curve_gamma, 1.25);
+    assert!(app.scan_for_print_snapshot.is_none());
+    assert_eq!(
+        serde_json::to_value(&app.params.enlarger).unwrap(),
+        enlarger
+    );
+    assert_eq!(app.film_name, film);
+    assert_eq!(app.print_name, print);
+    std::fs::remove_dir_all(directory).unwrap();
+}

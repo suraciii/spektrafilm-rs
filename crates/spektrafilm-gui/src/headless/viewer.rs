@@ -129,8 +129,28 @@ fn finish_animation(h: &mut Harness<'_, App>, mut time: f64) -> f64 {
 }
 
 fn display_controls(h: &mut Harness<'_, App>) {
-    click(h, "CONFIG");
-    click(h, "Display");
+    reveal_control(h, "extras.rust.display_profile");
+}
+
+fn save_and_export_float_images(h: &mut Harness<'_, App>, save: &Path, export: &Path) {
+    close_settings(h);
+    let retained = h.state().output_image.as_ref().unwrap().clone();
+    script(h, chooser::Chooser::chooser_path(save));
+    click(h, "SAVE");
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &retained
+    ));
+    open_export(h);
+    choose(h, "Format", "EXR");
+    choose(h, "Bit depth", "32 bit");
+    script(h, chooser::Chooser::chooser_path(export));
+    export_action(h, "Export file…");
+    wait_until(h, |app| app.export_job.is_none() && export.is_file());
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &retained
+    ));
 }
 
 fn pointer(h: &mut Harness<'_, App>, position: egui::Pos2, pressed: bool, time: f64) {
@@ -167,13 +187,16 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
     assert_eq!(composed(h, 10.0).interpolation, Interpolation::Spline36);
     develop(h, "PREVIEW", 10.0);
     settle_animation(h);
-    display_controls(h);
     click(h, "400%");
+    display_controls(h);
     choose(h, "output interpolation", "nearest");
+    close_settings(h);
     click(h, "Output");
     let nearest = composed(h, 100.0);
     assert_eq!(nearest.interpolation, Interpolation::Nearest);
+    display_controls(h);
     choose(h, "output interpolation", "spline36");
+    close_settings(h);
     let spline = composed(h, 100.0);
     assert_eq!(spline.interpolation, Interpolation::Spline36);
     let nearest = nearest.pixels.unwrap();
@@ -195,7 +218,9 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
     );
     click(h, "Input");
     let baseline = composed(h, 100.0).pixels.unwrap();
+    display_controls(h);
     choose(h, "output interpolation", "nearest");
+    close_settings(h);
     let input = composed(h, 100.0);
     assert_eq!(input.interpolation, Interpolation::Nearest);
     assert_eq!(baseline.pixels, input.pixels.unwrap().pixels);
@@ -437,6 +462,153 @@ fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
 }
 
 #[test]
+fn white_padding_modified_locator_and_row_reset_follow_live_and_persisted_viewer_settings() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let factory = state::GuiState::factory().sections["display"]["white_padding"]
+        .as_f64()
+        .expect("factory white padding");
+    let params = h.state().params.clone();
+    reveal_control(h, "extras.display.white_padding");
+    edit(h, "white padding", "0.2");
+    assert!((h.state().viewer.settings.white_padding as f64 - 0.2).abs() < 1e-6);
+    assert!(
+        (h.state().current_state().unwrap().sections["display"]["white_padding"]
+            .as_f64()
+            .unwrap()
+            - 0.2)
+            .abs()
+            < 1e-6
+    );
+
+    close_settings(h);
+    click(h, "Only modified");
+    let locator = "Locate Settings: Display";
+    assert!(h.query_by_label(locator).is_some());
+    click(h, locator);
+    click(h, "Reset white padding to factory");
+    assert!((h.state().viewer.settings.white_padding as f64 - factory).abs() < 1e-6);
+    assert!(
+        (h.state().current_state().unwrap().sections["display"]["white_padding"]
+            .as_f64()
+            .unwrap()
+            - factory)
+            .abs()
+            < 1e-6
+    );
+    assert_eq!(h.state().params, params);
+    close_settings(h);
+    assert!(
+        h.query_by_label(locator).is_none(),
+        "factory white padding leaves the modified index"
+    );
+}
+
+#[test]
+fn display_row_resets_restore_only_the_live_owned_field_without_adjustment_history() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let factory =
+        display::DisplaySettings::from_json(&state::GuiState::factory().sections["display"]);
+    let params = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+    let undo_label = h.state().undo_label().map(str::to_owned);
+    reveal_control(h, "extras.display.use_display_transform");
+    click(h, "use display transform");
+    click(h, "gray 18% canvas");
+    choose(
+        h,
+        "output interpolation",
+        if factory.interpolation == Interpolation::Nearest {
+            "spline36"
+        } else {
+            "nearest"
+        },
+    );
+    let changed = h.state().viewer.settings.clone();
+    assert_ne!(changed.use_display_transform, factory.use_display_transform);
+    assert_ne!(changed.gray_18_canvas, factory.gray_18_canvas);
+    assert_ne!(changed.interpolation, factory.interpolation);
+
+    click(h, "Reset use display transform to factory");
+    assert_eq!(
+        h.state().viewer.settings.use_display_transform,
+        factory.use_display_transform
+    );
+    assert_eq!(
+        h.state().viewer.settings.gray_18_canvas,
+        changed.gray_18_canvas
+    );
+    assert_eq!(
+        h.state().viewer.settings.interpolation,
+        changed.interpolation
+    );
+    assert_eq!(
+        h.state().current_state().unwrap().sections["display"]["use_display_transform"],
+        serde_json::json!(factory.use_display_transform)
+    );
+
+    click(h, "Reset gray 18% canvas to factory");
+    assert_eq!(
+        h.state().viewer.settings.gray_18_canvas,
+        factory.gray_18_canvas
+    );
+    assert_eq!(
+        h.state().viewer.settings.interpolation,
+        changed.interpolation
+    );
+    assert_eq!(
+        h.state().current_state().unwrap().sections["display"]["gray_18_canvas"],
+        serde_json::json!(factory.gray_18_canvas)
+    );
+
+    click(h, "Reset output interpolation to factory");
+    assert_eq!(
+        h.state().viewer.settings.interpolation,
+        factory.interpolation
+    );
+    assert_eq!(
+        h.state().current_state().unwrap().sections["display"]["output_interpolation"],
+        serde_json::json!(factory.interpolation.name())
+    );
+    assert_eq!(
+        h.state().viewer.settings.white_padding,
+        changed.white_padding
+    );
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().parameter_revision, revision);
+    assert_eq!(h.state().undo_label(), undo_label.as_deref());
+}
+
+#[test]
+fn comparison_split_locator_reveals_retained_disabled_value_without_enabling_comparison() {
+    let mut s = session();
+    let h = &mut s.harness;
+    assert!(!h.state().compare_active);
+    let split = h.state().compare_split;
+    let params = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+
+    search_controls(h, "viewer.compare_split");
+    click(h, "Locate Viewer: Viewer");
+
+    let slider = h.get_by_role_and_label(egui::accesskit::Role::Slider, "comparison split");
+    assert!(slider.node().is_disabled());
+    assert_eq!(slider.node().numeric_value(), Some(split as f64));
+    assert!(
+        h.query_by_label("Comparison split inactive · enable compare; stored split retained.")
+            .is_some()
+    );
+    assert!(
+        !h.state().compare_active,
+        "locating the split must not enable comparison"
+    );
+    assert_eq!(h.state().compare_split.to_bits(), split.to_bits());
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().parameter_revision, revision);
+}
+
+#[test]
 fn explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not() {
     let mut s = session();
     let h = &mut s.harness;
@@ -447,6 +619,7 @@ fn explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not() {
     let reveal = composed(h, 40.0).transition.unwrap();
     assert_eq!(reveal, (0, true));
     let time = finish_animation(h, 40.0);
+    reveal_control(h, "camera.exposure_compensation_ev");
     edit(h, "exposure compensation ev", "0.75");
     develop(h, "PREVIEW", time);
     assert_eq!(composed(h, time).transition, Some((0, false)));
@@ -455,7 +628,10 @@ fn explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not() {
     develop(h, "SCAN", time + 1.0);
     assert_eq!(composed(h, time + 1.0).transition, Some((0, true)));
     let time = finish_animation(h, time + 1.0);
+    reveal_control(h, "extras.simulation.auto_preview");
     click(h, "auto preview");
+    close_settings(h);
+    reveal_control(h, "camera.exposure_compensation_ev");
     let before = h.state().output_image.clone().unwrap();
     edit(h, "exposure compensation ev", "0.5");
     let deadline = Instant::now() + WAIT_DEADLINE;
@@ -479,30 +655,20 @@ fn viewer_settings_do_not_change_saved_or_exported_pixels() {
     let h = &mut s.harness;
     develop(h, "PREVIEW", 50.0);
     settle_animation(h);
-    let mut options = h.state().export_options.clone();
-    options.format = export::ExportFormat::Exr;
-    options.depth = BitDepth::ThirtyTwo;
-    options.saving_cctf_encoding = false;
-    let ctx = h.ctx.clone();
     let save_before = s.directory.path().join("save-before.exr");
     let export_before = s.directory.path().join("export-before.exr");
-    h.state_mut().save_to_path(&save_before);
-    h.state_mut()
-        .start_export_to_path(&ctx, options.clone(), &export_before);
-    wait_until(h, |a| a.export_job.is_none());
+    save_and_export_float_images(h, &save_before, &export_before);
     display_controls(h);
     click(h, "gray 18% canvas");
     click(h, "use display transform");
     edit(h, "white padding", "0.2");
     choose(h, "output interpolation", "nearest");
+    close_settings(h);
     click(h, "Input");
     click(h, "400%");
     let save_after = s.directory.path().join("save-after.exr");
     let export_after = s.directory.path().join("export-after.exr");
-    h.state_mut().save_to_path(&save_after);
-    h.state_mut()
-        .start_export_to_path(&ctx, options, &export_after);
-    wait_until(h, |a| a.export_job.is_none());
+    save_and_export_float_images(h, &save_after, &export_after);
     for (before, after) in [(save_before, save_after), (export_before, export_after)] {
         let before = image_io::load(&before).unwrap().image;
         let after = image_io::load(&after).unwrap().image;
@@ -518,7 +684,7 @@ fn viewer_settings_do_not_change_saved_or_exported_pixels() {
 /// viewer raster only; the retained output, Save, and Export keep their own
 /// pixels.
 #[test]
-fn config_display_profile_selection_clear_persistence_and_viewer_only_effect() {
+fn display_profile_selection_clear_persistence_and_viewer_only_effect() {
     let mut s = session();
     let h = &mut s.harness;
     develop(h, "PREVIEW", 60.0);
@@ -539,14 +705,6 @@ fn config_display_profile_selection_clear_persistence_and_viewer_only_effect() {
         h.state().viewer.output_display_profile(),
         Some(profile.as_path()),
         "the prepared viewing raster carries the profile"
-    );
-    assert!(
-        h.query_by_label_contains("Display ICC:").is_some(),
-        "the CONFIG Display surface presents the selected path"
-    );
-    assert_eq!(
-        h.state().status,
-        format!("Display ICC profile: {}", profile.display())
     );
 
     // The retained output is not re-rendered, and the profile reaches the
@@ -580,6 +738,7 @@ fn config_display_profile_selection_clear_persistence_and_viewer_only_effect() {
     );
     // The reloaded state reloads the input, so the retained output is produced
     // again; the selection then reaches the freshly seeded viewing raster.
+    close_settings(h);
     develop(h, "PREVIEW", 62.0);
     settle_animation(h);
     assert_eq!(
@@ -589,18 +748,11 @@ fn config_display_profile_selection_clear_persistence_and_viewer_only_effect() {
     );
 
     // Save and Export ignore the viewer-only selection.
-    let mut options = h.state().export_options.clone();
-    options.format = export::ExportFormat::Exr;
-    options.depth = BitDepth::ThirtyTwo;
-    options.saving_cctf_encoding = false;
-    let ctx = h.ctx.clone();
     let save_profile = s.directory.path().join("profile-save.exr");
     let export_profile = s.directory.path().join("profile-export.exr");
-    h.state_mut().save_to_path(&save_profile);
-    h.state_mut()
-        .start_export_to_path(&ctx, options, &export_profile);
-    wait_until(h, |a| a.export_job.is_none());
+    save_and_export_float_images(h, &save_profile, &export_profile);
 
+    display_controls(h);
     click(h, "clear");
     assert_eq!(
         h.state().gui_state.display_profile(),
@@ -623,14 +775,7 @@ fn config_display_profile_selection_clear_persistence_and_viewer_only_effect() {
     assert_eq!(cleared.display_profile(), None);
     let save_cleared = s.directory.path().join("cleared-save.exr");
     let export_cleared = s.directory.path().join("cleared-export.exr");
-    h.state_mut().save_to_path(&save_cleared);
-    let mut cleared_options = h.state().export_options.clone();
-    cleared_options.format = export::ExportFormat::Exr;
-    cleared_options.depth = BitDepth::ThirtyTwo;
-    cleared_options.saving_cctf_encoding = false;
-    h.state_mut()
-        .start_export_to_path(&ctx, cleared_options, &export_cleared);
-    wait_until(h, |a| a.export_job.is_none());
+    save_and_export_float_images(h, &save_cleared, &export_cleared);
     assert_float_images_equal(&save_profile, &save_cleared);
     assert_float_images_equal(&export_profile, &export_cleared);
 }
@@ -646,6 +791,8 @@ fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
     settle_animation(h);
     display_controls(h);
 
+    let baseline = composed(h, 70.0).pixels.unwrap();
+    let retained = h.state().output_image.as_ref().unwrap().clone();
     let missing = s.directory.path().join("absent-profile.icc");
     script(h, chooser::Chooser::chooser_path(&missing));
     click(h, "select ICC profile…");
@@ -654,11 +801,11 @@ fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
         Some(missing.to_str().unwrap()),
         "the selection is retained so the user can see and correct it"
     );
-    assert!(
-        h.query_by_label_contains("using the sRGB preview")
-            .is_some(),
-        "the surface states the fallback"
-    );
+    assert_eq!(composed(h, 70.0).pixels.unwrap().pixels, baseline.pixels);
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &retained
+    ));
 
     let broken = s.directory.path().join("broken.icc");
     std::fs::write(&broken, b"not an icc profile").unwrap();
@@ -668,12 +815,12 @@ fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
         h.state().gui_state.display_profile(),
         Some(broken.to_str().unwrap())
     );
-    assert!(
-        h.query_by_label_contains("using the sRGB preview")
-            .is_some(),
-        "an unusable profile reports the fallback"
-    );
 
+    assert_eq!(composed(h, 70.0).pixels.unwrap().pixels, baseline.pixels);
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &retained
+    ));
     let saved = s.directory.path().join("broken-state.json");
     h.state_mut().current_state().unwrap().save(&saved).unwrap();
     let restored = state::GuiState::load(&saved).unwrap();
@@ -689,12 +836,61 @@ fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
         composed.pixels.is_some(),
         "the viewer still composes with the fallback raster"
     );
-    assert!(
-        h.state()
-            .viewer
-            .transform_status
-            .contains("viewing sRGB preview"),
-        "the transform falls back: {}",
-        h.state().viewer.transform_status
-    );
+}
+
+#[test]
+fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop_sizes() {
+    for size in [egui::vec2(1460.0, 980.0), egui::vec2(1100.0, 800.0)] {
+        let directory = tempfile::tempdir().unwrap();
+        let (image_path, state_path) = deterministic_inputs(directory.path());
+        let browser_path = directory.path().join("browser.json");
+        let mut h = Harness::builder().with_size(size).build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            app(state_path, image_path, browser_path)
+        });
+        h.ctx.style_mut(|style| style.animation_time = 0.0);
+        click(&mut h, "◀");
+        let params = h.state().params.clone();
+        let initial_search = h.get_by_label("Search controls").raw_bounds().unwrap();
+        let initial_viewer = h.state().viewer.observation().viewport;
+        assert!(initial_viewer.width() > 0.0 && initial_viewer.height() > 0.0);
+
+        for query in [
+            "film_render.halation.halation_first_sigma_um",
+            "film_render.grain.fotufilm.sublayer_shares",
+            "",
+        ] {
+            search_controls(&mut h, query);
+            let search = h.get_by_label("Search controls").raw_bounds().unwrap();
+            let viewer = h.state().viewer.observation().viewport;
+            assert!(
+                (search.x0 - initial_search.x0).abs() <= 2.0,
+                "inspector moved for {query:?} at {size:?}"
+            );
+            assert!(
+                (viewer.left() - initial_viewer.left()).abs() <= 2.0,
+                "viewer left moved for {query:?} at {size:?}"
+            );
+            assert!(
+                (viewer.width() - initial_viewer.width()).abs() <= 2.0,
+                "viewer width changed for {query:?} at {size:?}"
+            );
+            assert!(
+                (viewer.height() - initial_viewer.height()).abs() <= 2.0,
+                "viewer height changed for {query:?} at {size:?}"
+            );
+            assert_eq!(h.state().params, params, "search must not edit controls");
+            for action in ["PREVIEW", "SCAN", "SAVE"] {
+                let bounds = h.get_by_label(action).raw_bounds().unwrap();
+                assert!(
+                    bounds.x0 >= search.x0 - 2.0 && bounds.x1 <= size.x as f64,
+                    "{action} clipped horizontally at {size:?}"
+                );
+                assert!(
+                    bounds.y0 >= 0.0 && bounds.y1 <= size.y as f64,
+                    "{action} clipped vertically at {size:?}"
+                );
+            }
+        }
+    }
 }

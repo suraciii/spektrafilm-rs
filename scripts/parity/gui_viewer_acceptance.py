@@ -36,7 +36,27 @@ def _state_path(root: Path, name: str, state: dict) -> Path:
 
 def _load_state(driver, path: Path, label: str):
     driver.state_action("Load from file", path)
-    driver.rendered(label)
+    _preview(driver, label)
+
+
+def _start_preview(driver):
+    driver.close_settings()
+    driver.drain_reports()
+    point = wait_for(lambda: driver.locate("PREVIEW", bottom=True), "persistent PREVIEW action", 25)
+    driver.snap("viewer-preview-request")
+    driver.xd("mousemove", "--window", driver.window, int(point[0]), int(point[1]))
+    driver.xd("click", 1)
+
+
+def _preview(driver, label):
+    _start_preview(driver)
+    driver.wait_report(label, "Preview")
+    driver.snap(label)
+
+
+def _viewer_control(driver, path, label):
+    driver.reveal(path, "Viewer", "Viewer")
+    driver.click(label, bottom=True)
 
 
 def _text(lines):
@@ -44,13 +64,12 @@ def _text(lines):
 
 
 def _viewer_status_text(image, lines):
-    # The selected layer is in the viewer overlay below the layer tabs.
-    # Use the native driver's word coordinates, independent of OCR line order.
+    # The overlay is at the top of the central canvas, below the header.
     left, _, right, _ = viewer_canvas_bounds(image)
-    content_top = 30 if sys.platform == 'darwin' else 0
+    top = 40 + (30 if sys.platform == "darwin" else 0)
     return _text([[word for word in line
                    if left <= word[1] + word[3] / 2 < right
-                   and content_top + 35 <= word[2] + word[4] / 2 < content_top + 63]
+                   and top <= word[2] + word[4] / 2 < top + 70]
                   for line in lines])
 
 
@@ -85,82 +104,82 @@ def _transition_frames(driver, records, label, count=24, interval=0.05):
     return frames
 
 
-def _display_line(driver, words, section=None):
-    wanted = [word.lower() for word in words]
-    for attempt in range(3):
-        image, _, lines = driver.read()
-        for line in lines:
-            normalized = [re.sub(r"[^a-z0-9]", "", word[0].lower()) for word in line]
-            if all(any(item.startswith(term) for item in normalized) for term in wanted):
-                return image, line
-        if attempt == 0:
-            # Sidebar rows render below the diagnostics list, so read the
-            # scrolled sidebar before giving up on the current view.
-            driver.scroll(True)
-        elif attempt == 1 and section:
-            # Collapsed sections hide their controls; open the section.
-            driver.click(section)
-            driver.scroll(True)
-    raise RuntimeError(f"Could not locate display control: {' '.join(words)}")
+def _preview_transition_frames(driver, records, label):
+    """Capture during rendering and after handoff without blocking on OCR."""
+    _start_preview(driver)
+    frames = []
+    deadline = time.monotonic() + 120
+    completed = False
+    while time.monotonic() < deadline:
+        image = _record_frame(driver, records, f"{label}-render-frame-{len(frames)}")
+        frames.append(np.asarray(_viewer_crop(image), dtype=np.float32))
+        for path in driver.report_directory.glob("operation-*.json"):
+            try:
+                operation = json.loads(path.read_text())["operation"]
+            except (OSError, ValueError, KeyError):
+                continue
+            if (operation["id"] > driver.last_report_id
+                    and operation["kind"] == "preview"
+                    and operation["outcome"] != "superseded"):
+                completed = True
+                break
+        if completed:
+            break
+        time.sleep(.05)
+    _require(completed, f"Timed out capturing {label} render")
+    driver.wait_report(label + "-rendered", "Preview")
+    frames.extend(_transition_frames(driver, records, label, count=32, interval=.05))
+    changed = sum(float(np.max(np.abs(a - b))) > 1.0
+                  for a, b in zip(frames, frames[1:]))
+    _require(changed >= 2, f"{label} has no observable intermediate transition frames")
+    return frames
 
 
 def _set_white_padding(driver, value="0.2"):
-    # The white-padding control is a text field right of its label in the
-    # CONFIG sidebar; its row shifts with the surrounding controls. Click
-    # the field, replace the text and commit it with Return.
-    image, line = _display_line(driver, ("white", "padd"), section="Display")
-    _require(image.width >= 1460 and image.height >= 980,
-             "White-padding probe requires the pinned 1460x980 window")
-    numeric = [word for word in line if re.match(r"^\d", word[0])]
-    _require(numeric, "White padding value not visible")
-    field = numeric[0]
-    driver.xd("mousemove", "--window", driver.window,
-              int(field[1] + field[3] / 2), int(field[2] + field[4] / 2))
-    driver.xd("click", 1)
-    time.sleep(.3)
+    driver.reveal("extras.display.white_padding", "Settings", "Display")
+    image, _, lines = driver.read()
+    matches = driver.match(lines, "white padding")
+    _require(matches, "Settings white-padding row is not visible")
+    x, y = matches[-1]
+    numeric = [word for line in lines for word in line
+               if word[1] > x and abs(word[2] + word[4] / 2 - y) < 10
+               and re.fullmatch(r"[-+−]?\d+(?:[.,]\d+)?", word[0].strip("[]()|"))]
+    _require(numeric, "Settings white-padding editor is not visible")
+    field = min(numeric, key=lambda word: word[1])
+    driver.point_click((field[1] + field[3] / 2, field[2] + field[4] / 2))
     driver.xd("key", "ctrl+a")
-    driver.xd("type", "--clearmodifiers", value)
+    driver.xd("type", "--clearmodifiers", "--", value)
     driver.xd("key", "Return")
-    time.sleep(1.0)
-    return image
-
-
-def _click_combo(driver, label):
-    image, line = _display_line(driver, tuple(label.lower().split()), section="Profiles")
-    x = 1200
-    y = sum(word[2] + word[4] / 2 for word in line) / len(line) + 20
-    driver.xd("mousemove", "--window", driver.window, int(x), int(y))
-    driver.xd("click", 1)
-    time.sleep(0.2)
+    driver.xd("key", "Tab")
+    driver.close_settings()
     return image
 
 
 def _select_profile(driver, label, option):
-    _click_combo(driver, label)
-    time.sleep(.5)
-    driver.xd('mousemove', '--window', driver.window, 1200, 420)
-    for _ in range(25):
-        image, _, lines = driver.read()
-        matches = driver.match(lines, option, True)
-        if matches:
-            x, y = matches[0]
-            driver.snap('profile-option-' + option.replace(' ', '-'), image, lines)
-            driver.xd('mousemove', '--window', driver.window, int(x), int(y))
-            driver.xd('click', 1)
-            time.sleep(.8)
-            return
-        driver.xd('click', 5)
-        time.sleep(.25)
-    driver.xd('click', 1)
-    time.sleep(.8)
-    return
+    path, owner, section = {
+        "film profile": ("extras.simulation.film_stock", "Film", "Film material"),
+        "print profile": ("extras.simulation.print_paper", "Print", "Print material"),
+    }[label]
+    driver.reveal(path, owner, section)
+    driver.choose(label, option, below=True)
+
+
+def _interpolation(driver, option):
+    driver.reveal("extras.display.output_interpolation", "Settings", "Display")
+    driver.choose("output interpolation", option)
+    driver.close_settings()
+
+
+def _gray_canvas(driver):
+    driver.reveal("extras.display.gray_18_canvas", "Settings", "Display")
+    driver.click("gray 18% canvas")
+    driver.close_settings()
 
 
 def _hover_float(driver, pixels, records):
-    before_view = driver.viewer_fingerprint()
-    driver.click("Input", False)
-    driver.click("100%", False)
-    bounds = driver.measure_viewer("viewer-float-inspection", before_view)
+    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.zoom.100", "100%")
+    bounds = driver.measure_viewer("viewer-float-inspection")
     x = bounds[0] + pixels.shape[1] // 2
     y = bounds[1] + pixels.shape[0] // 2
     driver.xd("mousemove", "--window", driver.window, x, y)
@@ -169,7 +188,8 @@ def _hover_float(driver, pixels, records):
         image, _, lines = driver.read()
         text = _text(lines)
         left, _, right, _ = viewer_canvas_bounds(image)
-        status = image.crop((left + 15, 35, right, 63))
+        top = 40 + (30 if sys.platform == "darwin" else 0)
+        status = image.crop((left, top, right, top + 70))
         status = status.resize((status.width * 4, status.height * 4))
         data = driver.ocr.image_to_data(status, config='--psm 7', output_type=driver.ocr.Output.DICT)
         text += '\n' + ' '.join(data['text'])
@@ -203,32 +223,25 @@ def _hover_float(driver, pixels, records):
     return record
 
 
-def _display_control(driver, label):
-    """Click a Display-section control, expanding and scrolling as needed."""
-    _, _, lines = driver.read()
-    if not driver.match(lines, label):
-        driver.scroll(True)
-        _, _, lines = driver.read()
-    if not driver.match(lines, label):
-        # The section is collapsed: open it and read its content at the bottom.
-        driver.click("Display")
-        driver.scroll(True)
-    driver.click(label)
-
 
 def _export(driver, root, name):
     path = root / name
     path.unlink(missing_ok=True)
-    driver.file_action("Export", path, True)
-    driver.exported(path, f"viewer-{name}-exported")
+    driver.close_settings()
+    driver.click("Export", header=True)
+    driver.export_options(path)
+    driver.dialog(path, True)
+    driver.wait_text(r"Exported[^\n]*" + re.escape(path.name), f"viewer-{name}-exported", timeout=240)
+    _wait_file(path, f"viewer export {name}")
     return path
 
 
 def _save(driver, root, name):
     path = root / name
     path.unlink(missing_ok=True)
-    driver.file_action("Save", path, True)
-    driver.scroll(True)
+    driver.close_settings()
+    driver.click("SAVE", bottom=True)
+    driver.dialog(path, True)
     driver.wait_text(r"Saved\s+" + re.escape(path.name), f"viewer-{name}-saved", timeout=30)
     _wait_file(path, f"viewer save {name}")
     import OpenImageIO as oiio
@@ -243,6 +256,71 @@ def _save(driver, root, name):
     return path
 
 
+def _zoom(driver, pixels, records):
+    _viewer_control(driver, "viewer.layer.input", "Input")
+    original, _ = driver.image()
+    required_width = 260 + 420 + pixels.shape[1] * 4 + 80
+    required_height = pixels.shape[0] * 4 + 240
+    driver.resize_window(max(original.width, required_width), max(original.height, required_height))
+    driver.search_point = None
+    bounds = []
+    try:
+        for percent in (100, 200, 400):
+            _viewer_control(driver, f"viewer.zoom.{percent}", f"{percent}%")
+            driver.wait_text(r"zoom\s*" + str(percent), f"viewer-zoom-{percent}")
+            measured = driver.measure_viewer(f"viewer-zoom-{percent}-pixels")
+            bounds.append(measured)
+        widths = [right - left for left, _, right, _ in bounds]
+        expected = [pixels.shape[1] * scale for scale in (1, 2, 4)]
+        _require(widths == expected, f"Exact zoom pixel widths differ: {widths}, expected {expected}")
+        records.append({"scenario": "exact_zoom", "action": "select 100%, 200%, 400%",
+                        "assertion": "native Input raster widths equal source width times exact zoom",
+                        "pixel_bounds": bounds, "pixel_widths": widths})
+    finally:
+        driver.resize_window(original.width, original.height)
+        driver.search_point = None
+    _viewer_control(driver, "viewer.reset", "reset view")
+    driver.await_viewer(label="fitted and recentered Input")
+
+
+def _display_evidence(driver, root, records):
+    _viewer_control(driver, "viewer.zoom.100", "100%")
+    _viewer_control(driver, "viewer.layer.input", "Input")
+    input_image, _ = driver.await_viewer(label="input comparison")
+    input_pixels = np.asarray(_viewer_crop(input_image), dtype=np.float32)
+    input_path = root / "input-viewer-raster.png"
+    _viewer_crop(input_image).save(input_path)
+    _viewer_control(driver, "viewer.layer.output", "Output")
+    output_image, _ = driver.await_viewer(label="output comparison")
+    output_pixels = np.asarray(_viewer_crop(output_image), dtype=np.float32)
+    output_path = root / "output-viewer-raster.png"
+    _viewer_crop(output_image).save(output_path)
+    difference = float(np.mean(np.abs(input_pixels - output_pixels)))
+    _require(difference > .1, "Input/output controls did not change viewer pixels")
+    chroma = output_pixels.max(axis=2) - output_pixels.min(axis=2)
+    content = output_pixels[(chroma > 25) & (output_pixels.max(axis=2) > 35)]
+    _require(content.shape[0] > 100, "Output viewer has no measurable rendered pixels")
+    contrast = float(content.std())
+    _require(contrast > 5, "Output viewer lost gradient contrast")
+    records.append({"scenario": "input_output_rasters",
+                    "assertion": "Input and Output differ and Output retains visible gradient contrast",
+                    "viewer_roi": list(viewer_canvas_bounds(input_image)),
+                    "input_raster": input_path.name, "output_raster": output_path.name,
+                    "mean_abs_pixel_change": difference, "output_pixel_std": contrast,
+                    "output_rendered_pixel_count": int(content.shape[0])})
+    driver.reveal("extras.display.use_display_transform", "Settings", "Display")
+    image, _, lines = driver.read()
+    text = _text(lines)
+    _require(re.search(r"display\s+transform", text, re.I),
+             "Settings did not report display transform status")
+    driver.snap("display-transform-status", image, lines)
+    records.append({"parity_action": "report_display_transform_status",
+                    "scenario": "display_transform_status",
+                    "assertion": "Settings reports the active display transform status",
+                    "screenshot": driver.records[-1]["screenshot"], "status": text})
+    driver.close_settings()
+
+
 def accept_viewer(driver, root, state, pixels, exporter):
     """Run required viewer scenarios and return assertion records."""
     root = Path(root)
@@ -252,19 +330,21 @@ def accept_viewer(driver, root, state, pixels, exporter):
     records = []
     small_preview_state = copy.deepcopy(state)
     small_preview_state.setdefault("display", {})["preview_max_size"] = 128
+    small_preview_state.setdefault("rust", {}).setdefault("runtime", {}).setdefault("settings", {})["preview_max_size"] = 128
     small_preview_state["display"].update({"viewer_layer": "input", "crossfade": False})
     small_preview_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "input", "crossfade": False})
     small_preview_path = _state_path(root, "viewer-small-preview.json", small_preview_state)
     _load_state(driver, small_preview_path, "viewer-small-preview")
-    driver.tab("CONFIG")
-    driver.click("Input", False)
+    _viewer_control(driver, "viewer.layer.input", "Input")
+    driver.await_viewer(label="small Input raster")
     small_input, _ = _record_snap(driver, records, "viewer-small-input-raster")
     large_preview_state = copy.deepcopy(small_preview_state)
     large_preview_state["display"]["preview_max_size"] = 256
+    large_preview_state["rust"]["runtime"]["settings"]["preview_max_size"] = 256
     large_preview_path = _state_path(root, "viewer-large-preview.json", large_preview_state)
     _load_state(driver, large_preview_path, "viewer-large-preview")
-    driver.tab("CONFIG")
-    driver.click("Input", False)
+    _viewer_control(driver, "viewer.layer.input", "Input")
+    driver.await_viewer(label="large Input raster")
     large_input, _ = _record_snap(driver, records, "viewer-large-input-raster")
     preview_delta = float(np.mean(np.abs(np.asarray(_viewer_crop(small_input), dtype=np.float32) -
                                          np.asarray(_viewer_crop(large_input), dtype=np.float32))))
@@ -279,8 +359,8 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _load_state(driver, _state_path(root, "viewer-reset-after-preview.json", state), "viewer-reset-after-preview")
     baseline = _state_path(root, "viewer-baseline.json", copy.deepcopy(state))
 
-    driver.tab("CONFIG")
-    driver.click("Paper back", False)
+    _viewer_control(driver, "viewer.layer.paper_back", "Paper back")
+    driver.await_viewer(label="Paper back")
     def paper_back_ready():
         image, _, lines = driver.read()
         text = _text(lines)
@@ -314,15 +394,15 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _require(float(paper.std()) > 1.0 and float(watermark.std()) > 0.1,
              "Paper back screenshot has no visible presentation raster/watermark region")
 
-    driver.click("Output", False)
+    _viewer_control(driver, "viewer.layer.output", "Output")
+    _interpolation(driver, "spline36")
+    driver.await_viewer(label="baseline spline36")
     fingerprint = driver.viewer_fingerprint()
-    _display_control(driver, "spline36")
-    _display_control(driver, "nearest")
+    _interpolation(driver, "nearest")
     driver.await_viewer(fingerprint, label='interpolation nearest')
     nearest_image, _ = _record_snap(driver, records, "viewer-interpolation-nearest")
     fingerprint = driver.viewer_fingerprint()
-    _display_control(driver, "nearest")
-    _display_control(driver, "spline36")
+    _interpolation(driver, "spline36")
     driver.await_viewer(fingerprint, label='interpolation spline36')
     spline_image, _ = _record_snap(driver, records, "viewer-interpolation-spline36")
     nearest = np.asarray(_viewer_crop(nearest_image), dtype=np.float32)
@@ -335,14 +415,12 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     "spline36_screenshot": records[-1]["screenshot"],
                     "mean_abs_pixel_change": interpolation_delta})
     _require(interpolation_delta > 0.01, "Nearest and spline36 did not produce different viewer pixels")
-    fingerprint = driver.viewer_fingerprint()
-    driver.click("Input", False)
-    _display_control(driver, "spline36")
-    _display_control(driver, "nearest")
-    driver.await_viewer(fingerprint, label='input interpolation nearest')
+    _viewer_control(driver, "viewer.layer.input", "Input")
+    _interpolation(driver, "nearest")
+    driver.await_viewer(label='input interpolation nearest')
     input_nearest_image, _ = _record_snap(driver, records, "viewer-input-nearest")
-    _display_control(driver, "nearest")
-    _display_control(driver, "spline36")
+    _interpolation(driver, "spline36")
+    driver.await_viewer(label='input interpolation spline36')
     input_spline_image, _ = _record_snap(driver, records, "viewer-input-spline36")
     input_interpolation_delta = float(np.mean(np.abs(
         np.asarray(_viewer_crop(input_nearest_image), dtype=np.float32) -
@@ -354,12 +432,12 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _require(input_interpolation_delta < 2.0,
              "Output interpolation changed Input viewer pixels")
     fingerprint = driver.viewer_fingerprint()
-    _display_control(driver, "gray 18% canvas")
+    _gray_canvas(driver)
     driver.await_viewer(fingerprint, label='gray canvas toggled')
     gray_image, _ = _record_snap(driver, records, "viewer-gray-canvas-toggled")
     gray = np.asarray(_viewer_crop(gray_image), dtype=np.float32)
     fingerprint = driver.viewer_fingerprint()
-    driver.reclick_last_control()
+    _gray_canvas(driver)
     driver.await_viewer(fingerprint, label='gray canvas restored')
     gray_restored_image, _ = _record_snap(driver, records, "viewer-gray-canvas-restored")
     gray_restored = np.asarray(_viewer_crop(gray_restored_image), dtype=np.float32)
@@ -376,7 +454,6 @@ def accept_viewer(driver, root, state, pixels, exporter):
     border_path = _state_path(root, "viewer-border-zero.json", border_state)
     fingerprint = driver.viewer_fingerprint()
     _load_state(driver, border_path, "viewer-border-zero")
-    driver.tab("CONFIG")
     driver.await_viewer(fingerprint, label='white padding zero')
     before_border, _ = _record_snap(driver, records, "viewer-border-zero")
     fingerprint = driver.viewer_fingerprint()
@@ -413,11 +490,9 @@ def accept_viewer(driver, root, state, pixels, exporter):
     animation_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "paper_back", "reveal": True})
     animation_path = _state_path(root, "viewer-animation.json", animation_state)
     _load_state(driver, animation_path, "viewer-animation-baseline")
-    driver.tab("MAIN")
-    driver.click('Paper back', False)
-    driver.click("Preview")
-    reveal_frames = _transition_frames(driver, records, "viewer-reveal", count=32, interval=0.05)
-    driver.wait_text(r"Preview[^\n]*\d+\s*[x×=*]\s*\d+", "viewer-reveal-rendered")
+    _viewer_control(driver, "viewer.layer.paper_back", "Paper back")
+    driver.await_viewer(label="reveal baseline")
+    reveal_frames = _preview_transition_frames(driver, records, "viewer-reveal")
     reveal_delta = float(max(np.max(np.abs(reveal_frames[0] - frame)) for frame in reveal_frames[1:]))
     records.append({"parity_action": "polaroid_animation",
                     "scenario": "reveal", "action": "preview with Paper back and Reveal",
@@ -431,30 +506,25 @@ def accept_viewer(driver, root, state, pixels, exporter):
     crossfade_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
     crossfade_path = _state_path(root, "viewer-crossfade.json", crossfade_state)
     _load_state(driver, crossfade_path, "viewer-crossfade-baseline")
-    driver.tab("MAIN")
-    driver.click("Output", False)
-    _, _, lines = driver.read()
-    if not driver.match(lines, 'Auto exposure', True):
-        driver.xd('mousemove', '--window', driver.window, 1090, 331)
-        driver.xd('click', 1)
-        time.sleep(.8)
-    _, _, lines = driver.read()
-    matches = driver.match(lines, 'Auto exposure', True)
-    _require(matches, 'Crossfade trigger requires visible Auto exposure')
-    driver.xd('mousemove', '--window', driver.window, 1073, int(matches[0][1]))
-    driver.xd('click', 1)
-    driver.click("Preview")
-    crossfade_frames = _transition_frames(driver, records, "viewer-crossfade", count=32, interval=0.05)
-    driver.wait_text(r"Preview[^\n]*\d+\s*[x×=*]\s*\d+", "viewer-crossfade-rendered")
+    _viewer_control(driver, "viewer.layer.output", "Output")
+    driver.await_viewer(label="crossfade baseline")
+    driver.reveal("camera.auto_exposure", "Input and capture", "Camera")
+    driver.click("auto exposure", right=True)
+    crossfade_frames = _preview_transition_frames(driver, records, "viewer-crossfade")
     crossfade_delta = float(max(np.max(np.abs(crossfade_frames[0] - frame)) for frame in crossfade_frames[1:]))
     records.append({"scenario": "crossfade", "action": "preview Output with Crossfade",
                     "assertion": "raw transition frames differ in the viewer region",
                     "frames": len(crossfade_frames), "max_frame_delta": crossfade_delta})
     _require(crossfade_delta > 1.0, "Crossfade did not produce observable transition frames")
 
-    _load_state(driver, baseline, "viewer-float-baseline")
-    driver.tab("CONFIG")
+    detail_state = copy.deepcopy(state)
+    detail_state.setdefault("display", {})["preview_max_size"] = max(256, max(np.asarray(pixels).shape[:2]))
+    detail_state.setdefault("rust", {}).setdefault("runtime", {}).setdefault("settings", {})["preview_max_size"] = detail_state["display"]["preview_max_size"]
+    detail_path = _state_path(root, "viewer-full-detail.json", detail_state)
+    _load_state(driver, detail_path, "viewer-float-baseline")
     _hover_float(driver, np.asarray(pixels), records)
+    _zoom(driver, np.asarray(pixels), records)
+    _display_evidence(driver, root, records)
 
     _load_state(driver, baseline, "viewer-isolation-baseline")
     before_save = _save(driver, root, "viewer-isolation-before-save.exr")
@@ -470,12 +540,10 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     'assertion': 'Save pixels and dimensions remain identical before and after independent full-input Export',
                     'save_before': before_save.name, 'save_after': after_export_save.name,
                     'export': before_export.name})
-    driver.tab("CONFIG")
-    driver.click("Paper back", False)
-    _display_control(driver, "spline36")
-    _display_control(driver, "nearest")
-    _display_control(driver, "gray 18% canvas")
-    driver.reclick_last_control()
+    _viewer_control(driver, "viewer.layer.paper_back", "Paper back")
+    _interpolation(driver, "nearest")
+    _gray_canvas(driver)
+    _gray_canvas(driver)
     after_save = _save(driver, root, "viewer-isolation-after-save.exr")
     after_export = _export(driver, root, "viewer-isolation-after-export.exr")
     from gui_acceptance import read_image
@@ -506,16 +574,13 @@ def accept_viewer(driver, root, state, pixels, exporter):
     paper_target, paper_label = (("kodak_supra_endura", "Kodak Professional Supra Endura")
                                 if current_paper == "kodak_portra_endura"
                                 else ("kodak_portra_endura", "Kodak Professional Portra Endura"))
-    driver.tab("MAIN")
     profile_before_path = root / "viewer-profile-before-state.json"
     profile_before_path.unlink(missing_ok=True)
     driver.state_action("Save current to file", profile_before_path, True)
     _wait_file(profile_before_path, "viewer profile baseline state")
-    driver.tab("MAIN")
     _select_profile(driver, "film profile", film_label)
     _select_profile(driver, "print profile", paper_label)
-    driver.click("Preview")
-    driver.rendered("viewer-profile-selected", action="Preview")
+    _preview(driver, "viewer-profile-selected")
     selected_path = root / "viewer-profile-selected-state.json"
     selected_path.unlink(missing_ok=True)
     driver.state_action("Save current to file", selected_path, True)
@@ -538,8 +603,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     runtime_io.update(input_color_space='ProPhoto RGB', output_color_space='Display P3',
                       saving_color_space='Display P3')
     non_srgb_path = _state_path(root, "viewer-non-srgb.json", non_srgb)
-    driver.file_action("Open", source)
-    driver.rendered("viewer-non-srgb-source")
+    driver.open_image(source, "viewer-non-srgb-source")
     _load_state(driver, non_srgb_path, "viewer-non-srgb-state")
     persisted_path = root / "viewer-non-srgb-persisted.json"
     persisted_path.unlink(missing_ok=True)
@@ -561,8 +625,8 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _require(np.isfinite(non_srgb_pixels).all(), "Non-sRGB GUI save contains nonfinite pixels")
 
     _load_state(driver, baseline, "viewer-restored-state")
-    driver.file_action("Open", source)
-    driver.rendered("viewer-restored-source")
+    driver.open_image(source, "viewer-restored-source")
+    _preview(driver, "viewer-restored-output")
     records.append({"scenario": "viewer_restore", "action": "reload baseline state and source",
                     "assertion": "caller receives restored configured source",
                     "state": baseline.name, "source": source.name})

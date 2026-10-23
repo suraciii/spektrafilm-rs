@@ -10,11 +10,19 @@ Built-in look presets must enable the selected film profile's Hanatos2025 adapta
 
 A preset **name** is its identity: the document `name`, the document file stem, and the selector used by the GUI and the CLI. A name must be unique inside its group and may repeat across groups. The groups are `Built-in` and `My Presets`. The [preset design](design.md) owns the name rules, file locations, discovery, conflicts, and writes.
 
-The GUI provides a Presets browser for look presets in a collapsible panel on the left of the window, and one preset menu per section for section presets. The browser shows the two groups. Each row shows the preset name and its film and print references. The active row is marked. A modified marker appears while the active look controls differ from the applied document. The MAIN control panel must not repeat the browser list. User presets must not be implemented by reusing complete `GuiState`.
+The GUI provides a Presets browser for look presets in a collapsible panel on the left of the window, and one preset menu per section for section presets. The browser shows the two groups. Each row shows the preset name and its film and print references. The active row is marked. A modified marker appears while the active look controls differ from the applied document. The inspector must not repeat the browser list. User presets must not be implemented by reusing complete `GuiState`.
 
-A section preset must appear only in the menu of its own section, never in the browser. Every section of the section table must carry that menu, because Save as lives there: an empty list must offer to save the section's current controls and must state that a preset file can also be placed in the library. A section menu must report the issues of the documents it would carry. A section menu must show the name of the section preset whose controls match the section and `custom` otherwise. That match must be derived from the section's controls and must not be stored as separate state.
+A section preset must appear only in the menu of its own section, never in the browser. Every section of the section table must carry one menu at its named primary module anchor in the [preset design](design.md#sections). A section that spans modules or stages must not gain duplicate menus or split payloads. Its menu must identify the full carried scope, not just the controls under its anchor. Save as lives in that menu: an empty list must offer to save the section's current controls and must state that a preset file can also be placed in the library. A section menu must report the issues of the documents it would carry. A section menu must show the name of the section preset whose controls match the section and `custom` otherwise. That match must be derived from the section's controls and must not be stored as separate state.
 
 Browser rows and section menus must be ordered by name, case-insensitively, with a deterministic tie-break, so one library always presents one order. User-selectable sorting is outside this contract.
+
+### Browser search
+
+The browser must offer a transient search field. It must filter look presets by a case-insensitive substring match against the preset name or either referenced film or print stock's name or identifier. An empty query must show all look presets. Search must not change discovery, exact name resolution, preset identity, group membership, or the deterministic order within each group.
+
+Filtering must preserve the `Built-in` and `My Presets` groups and their identities. The applied group and name, modified state, and missing-document state must remain visible as context even when the applied row does not match. Search must not apply a preset or clear that context. Library faults must remain visible and must not be mistaken for unmatched presets.
+
+The browser must distinguish a library with no look presets from a search with no matches. The no-match state must offer to clear the query. The empty-library state must retain the save guidance. The query must not persist across restarts or enter GUI-state files or preset documents. This browser search is separate from [control search](../gui-workflow/spec.md#control-search).
 
 ## User library
 
@@ -46,7 +54,7 @@ Ordinary startup must restore the browser metadata independently of the configur
 
 Renaming or deleting the applied user preset must update the marker: a rename follows the new name, and a delete leaves the look controls untouched and shows the remembered name as missing.
 
-Browser rows must show the preset name, the film reference, and the print reference. Live thumbnails, favorites, search, sorting options, collections, per-scope preset memory, arbitrary scope capture, and batch application are outside this contract.
+Browser rows must show the preset name, the film reference, and the print reference. Live thumbnails, favorites, sorting options, collections, per-scope preset memory, arbitrary scope capture, and batch application are outside this contract.
 
 ### Apply
 
@@ -59,6 +67,7 @@ Browser rows must show the preset name, the film reference, and the print refere
 - Applying a section preset replaces exactly the controls of its section, and those values count as explicit. Every other control retains its value, including explicit values from an earlier preset or parameter source, so the result does not re-derive them from stock defaults. It clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
 - Applying a section preset that would introduce a scanner-output, workflow-route, scan-film, film-profile, or grain-engine combination the pipeline rejects must fail without changing any control. A state that already fails that check may still receive an unrelated section edit.
 - Applying a section preset must not replace the remembered applied preset. It is an edit, so an applied look preset becomes modified.
+- Each successful look or section preset application must create one undo transaction under [Edit history](../gui-workflow/spec.md#edit-history), including explicit-leaf provenance and dependent normalization. A failed application must not create a history entry. Undo and Redo must not reverse preset-file or library writes.
 - Applying a preset preserves loaded image and metadata, RAW/source settings, source exposure correction, input color interpretation, crop, resize, rotation, viewer/display state, Save settings, and Export settings.
 - Built-in presets are immutable. Editing controls after an apply never rewrites the built-in definition.
 
@@ -165,7 +174,9 @@ candidate only after resolution succeeds.
 
 ### Transaction and stale results
 
-Applying a preset validates and resolves first, commits film/print/look parameters together, selects the profile-derived workflow default, preserves excluded context, clears transient Scan-for-print, increments a parameter revision, invalidates caches, and marks the render dirty. Render workers carry the parameter revision and stale results cannot replace a newer preset result.
+Applying a preset validates and resolves first, commits its carried controls together, preserves excluded context, clears transient Scan-for-print, increments a parameter revision, invalidates caches, and marks the render dirty. A look application also commits film and print selections and the profile-derived workflow default under [Apply](#apply). A section application must preserve profile selections and the workflow. Render workers carry the parameter revision and stale results cannot replace a newer preset result.
+
+The GUI must commit the application as the single edit-history transaction defined under [Apply](#apply). Parameter revisions must continue to reject stale render results after Undo or Redo.
 
 A failed application must preserve active controls, the applied marker, transient Scan-for-print state, and the parameter revision. Only the error status may change.
 

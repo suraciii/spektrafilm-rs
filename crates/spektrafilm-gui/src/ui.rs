@@ -1,56 +1,28 @@
 use super::*;
 use std::sync::atomic::Ordering;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum GuiTab {
-    #[default]
-    Main,
-    Film,
-    Print,
-    Advanced,
-    Config,
+struct InspectorMaterials {
+    film_name: String,
+    print_name: String,
+    film: profile::Profile,
+    print: profile::Profile,
 }
 
-impl GuiTab {
-    const ALL: [Self; 5] = [
-        Self::Main,
-        Self::Film,
-        Self::Print,
-        Self::Advanced,
-        Self::Config,
-    ];
-
-    /// One-line description of what the page holds.
-    pub(super) fn description(self) -> &'static str {
-        match self {
-            Self::Main => "Import, workflow, and film stock",
-            Self::Film => "Film negative response and material controls",
-            Self::Print => "Print response and finishing controls",
-            Self::Advanced => "Scanner, gamut, and experimental controls",
-            Self::Config => "GUI and display settings",
-        }
-    }
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Main => "MAIN",
-            Self::Film => "FILM",
-            Self::Print => "PRINT",
-            Self::Advanced => "ADVANCED",
-            Self::Config => "CONFIG",
-        }
-    }
-}
 fn section_summary(section: &str) -> Option<&'static str> {
     match section {
         "Film base" => Some("Base density: scale, tilt, and per-channel masks"),
-        "Halation" => Some("Highlight glow: halation, in-emulsion scatter, boost"),
+        "Halation" => {
+            Some("Highlight scatter and back-reflection; source response and RGB controls")
+        }
         "Couplers" => Some("DIR couplers: inhibition and interlayer response"),
-        "Convert" => Some("Convert-film calibration: base, matrix, controller actions"),
-        "Camera diffusion" => Some("Lens diffusion: core, tail, and warmth"),
+        "Convert" => {
+            Some("Real negative capture: exposure, base estimation, calibration, channel swaps")
+        }
+        "Camera diffusion" => Some("Taking-lens diffusion: core, tail, and warmth"),
         "Print base" => Some("Base density: scale and per-channel masks"),
-        "Glare" => Some("Print viewing glare: percent, roughness, blur"),
-        "Enlarger diffusion" => Some("Enlarger diffusion: core, tail, and warmth"),
+        "Glare" => Some("Readout stray light: percent, roughness, blur"),
+        "Enlarger diffusion" => Some("Enlarger optics: core, tail, and warmth"),
+        "Preflash" => Some("Linear flash exposure and independent Yellow and Magenta shifts"),
         "Film chemistry" | "Print chemistry" => {
             Some("Density curves: development time, gamma, developer exhaustion")
         }
@@ -107,32 +79,30 @@ impl App {
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Save current to file").clicked() {
+            let save = ui.button("Save current to file");
+            controls::locate_row(ui, "action.save_state", &save);
+            if save.clicked() {
                 self.save_state_with_dialog();
             }
-            if ui.button("Load from file").clicked() {
+            let load = ui.button("Load from file");
+            controls::locate_row(ui, "action.load_state", &load);
+            if load.clicked() {
                 self.load_state_with_dialog();
             }
-            if ui
-                .button("Save current as default")
-                .on_hover_text("Replace the startup GUI state with the current controls. The current session keeps its settings.")
-                .clicked()
-            {
+            let startup = ui.button("Save current as default").on_hover_text("Replace startup controls with the current state. Adjustment Undo does not reverse this file change.");
+            controls::locate_row(ui, "action.save_startup", &startup);
+            if startup.clicked() {
                 let result = self
                     .current_state()
                     .and_then(|s| s.save(&state::default_path(&self.config_directory)));
                 self.status = match result {
-                    Ok(()) => "Saved current GUI state as startup default".into(),
+                    Ok(()) => "Replaced startup controls with current GUI state; adjustment Undo does not reverse this file change".into(),
                     Err(e) => format!("Startup save error: {e:#}"),
                 };
             }
-            if ui
-                .button("Restore factory default")
-                .on_hover_text(
-                    "Replace the current controls and session settings with the factory state and remove the saved startup default.",
-                )
-                .clicked()
-            {
+            let restore = ui.button("Restore factory default").on_hover_text("Replace the current controls and session settings with factory state and remove the saved startup default; confirmation required.");
+            controls::locate_row(ui, "action.restore_factory", &restore);
+            if restore.clicked() {
                 self.factory_reset_confirm = true;
             }
         });
@@ -155,7 +125,7 @@ impl App {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.label("Replaces the current controls and session settings with the factory state, and removes the saved startup default.");
+                ui.label("Replaces the current controls and session settings with the factory state, and removes the saved startup default. Adjustment Undo does not reverse the startup-file change.");
                 ui.horizontal(|ui| {
                     confirmed = ui.button("Restore").clicked();
                     canceled = ui.button("Cancel").clicked();
@@ -222,43 +192,6 @@ impl App {
     }
 
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
-            let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-            if ui
-                .checkbox(&mut scan_for_print, "scan for print")
-                .on_hover_text(
-                    "Disables print viewing glare for the print scan, as a scan of the \
-                     paper record has no viewing enclosure. Toggle it again to restore the \
-                     previous value.",
-                )
-                .changed()
-            {
-                self.toggle_scan_for_print();
-            }
-        });
-        // The workflow selector's own row: its selected text is long, and a
-        // checkbox sharing the row would be pushed past the panel.
-        ui.horizontal(|ui| {
-            if controls::choice_tip_entries(
-                ui,
-                "workflow",
-                &mut self.params.workflow.route,
-                routes::entries(),
-                routes::tooltip(),
-            ) {
-                self.finish_route_change();
-            }
-        });
-        ui.horizontal(|ui| {
-            if ui
-                .checkbox(&mut self.params.cmyk.active, "CMYK ink style")
-                .on_hover_text("Apply the CMYK ink style appearance after the selected workflow. The result remains three-channel RGB; it is not a press proof or a separation.")
-                .changed()
-            {
-                self.mark_parameters_changed();
-            }
-        });
         ui.horizontal(|ui| {
             let busy = self.render_job.is_some()
                 || self.export_job.is_some()
@@ -289,14 +222,6 @@ impl App {
                 self.save_dialog();
             }
         });
-        if let Some(error) = self.last_export_error.clone() {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(error).color(theme::ERROR).small());
-                if ui.button("Dismiss").clicked() {
-                    self.last_export_error = None;
-                }
-            });
-        }
     }
 
     pub(super) fn file_dialog(&self, key: &str) -> rfd::FileDialog {
@@ -402,6 +327,8 @@ impl App {
             }
         };
         self.film_name = selected;
+        self.params.film_render.development_time = None;
+        self.gui_state.sections["simulation"]["film_stock"] = serde_json::json!(self.film_name);
         self.film_reference_illuminant = film.info.reference_illuminant.clone();
         self.film_dev_times = film.data.development_time.clone();
         self.film_medium = scan_medium(&film);
@@ -434,6 +361,8 @@ impl App {
             }
         };
         self.print_name = selected;
+        self.params.print_render.development_time = None;
+        self.gui_state.sections["simulation"]["print_paper"] = serde_json::json!(self.print_name);
         self.print_dev_times = print.data.development_time.clone();
         self.invalidate_look_render();
     }
@@ -486,6 +415,8 @@ impl App {
                     t.elapsed().as_secs_f32() * 1000.0
                 );
                 self.raw_lens_info = raw_lens_info;
+                self.raw_applied_settings =
+                    raw.then(|| self.gui_state.sections["load_raw"].clone());
                 if raw {
                     match self.raw_lens_info.as_deref() {
                         Some(info) if !info.is_empty() => self
@@ -506,6 +437,7 @@ impl App {
                 self.output_metadata = None;
                 self.source_render = None;
                 self.dirty = true;
+                self.reset_adjustment_history();
             }
             Err(e) => {
                 self.status = format!("Load error: {e:#}");
@@ -540,7 +472,7 @@ impl App {
     /// display source, and the full-resolution source the viewer later prepares
     /// display rasters from. Every path that replaces `image` ends here, so a
     /// new handoff step cannot land in only one of them.
-    fn refresh_input_viewer(&mut self) {
+    pub(crate) fn refresh_input_viewer(&mut self) {
         let Some(image) = self.image.as_ref() else {
             return;
         };
@@ -572,95 +504,232 @@ impl App {
         self.rotate_input_image(false);
     }
     fn parameter_section(&mut self, ui: &mut egui::Ui, section: &str) {
-        let reveal = self.pending_scroll.as_deref() == Some(section);
-        if reveal {
-            self.pending_scroll = None;
-        }
-        // Sections that own their own header rather than rendering one inside
-        // the controls, with the state the header opens in.
-        let collapsible = match section {
-            "Film base" => Some(("Base", false)),
-            "Grain" => Some(("Grain", true)),
-            "Halation" => Some(("Halation", false)),
-            "Couplers" => Some(("Couplers", false)),
-            "Convert" => Some(("Convert", false)),
-            "Camera" => Some(("Camera", true)),
-            "Camera diffusion" => Some(("Diffusion", false)),
-            "Enlarger diffusion" => Some(("Diffusion", false)),
-            "Enlarger" => Some(("Enlarger", true)),
-            "Scanner" => Some(("Scanner", false)),
-            "Output" => Some(("Output", true)),
-            _ => None,
-        };
-        if !self.filter.is_empty() {
-            // Search mode: reveal the matching controls of a section that has
-            // any, and drop a section that has none.
-            if !self.section_has_filter_match(section) {
-                return;
-            }
-            if let Some((label, _)) = collapsible {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(label)
-                            .color(theme::FG)
-                            .size(theme::SIZE_TITLE)
-                            .strong(),
-                    );
-                    self.section_reset_controls(ui, section);
-                });
-            }
-            self.parameter_section_controls(ui, section);
-            if reveal {
-                ui.scroll_to_rect(ui.min_rect(), Some(egui::Align::Center));
-            }
+        if !controls::section_matches(
+            section,
+            &self.filter,
+            &self.params,
+            &self.gui_state.sections,
+            self.only_modified,
+        ) {
             return;
         }
-        if let Some((label, default_open)) = collapsible {
-            let mut label_clicked = false;
-            let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                ui.make_persistent_id(("section", section)),
-                default_open || reveal,
-            )
-            .show_header(ui, |ui| {
-                label_clicked = ui
-                    .add(
-                        egui::Label::new(
-                            egui::RichText::new(label)
-                                .color(theme::FG)
-                                .size(theme::SIZE_TITLE)
-                                .strong(),
-                        )
-                        .sense(egui::Sense::click()),
-                    )
-                    .clicked();
+        ui.push_id(("module", section), |ui| {
+            let reveal = self.pending_scroll.as_deref() == Some(section);
+            let disclosure_id = ui.make_persistent_id("open");
+            let default_open = matches!(
+                section,
+                "Workflow" | "Camera" | "Film material" | "Print material" | "Output"
+            );
+            let normal_open = ui.ctx().data_mut(|data| {
+                *data.get_persisted_mut_or_insert_with(disclosure_id, || default_open)
+            });
+            let temporary_open = !self.filter.is_empty() || self.only_modified;
+            let open = normal_open || temporary_open || reveal;
+            let mut heading = None;
+            ui.horizontal_wrapped(|ui| {
+                let title = if section == "Glare" {
+                    "Print viewing glare"
+                } else {
+                    section
+                };
+                let response = ui.button(format!("{} {title}", if open { "v" } else { ">" }));
+                ui.ctx()
+                    .accesskit_node_builder(response.id, |node| node.set_label(title));
+                if response.clicked() && !temporary_open {
+                    ui.ctx()
+                        .data_mut(|data| data.insert_persisted(disclosure_id, !normal_open));
+                }
+                heading = Some(response);
                 self.section_reset_controls(ui, section);
+                self.section_preset_menu(
+                    ui,
+                    if section == "Output" {
+                        "Simulation blend"
+                    } else {
+                        section
+                    },
+                );
             });
             if reveal {
-                header.set_open(true);
+                self.pending_scroll = None;
+                if !temporary_open {
+                    ui.ctx()
+                        .data_mut(|data| data.insert_persisted(disclosure_id, true));
+                }
+                if let Some(response) = heading {
+                    response.request_focus();
+                    ui.scroll_to_rect(response.rect, Some(egui::Align::TOP));
+                }
             }
-            if label_clicked {
-                header.toggle();
-            }
-            let closed = !header.is_open();
-            header.body(|ui| self.parameter_section_controls(ui, section));
-            if closed && let Some(summary) = section_summary(section) {
+            if open {
+                ui.indent("body", |ui| self.module_body(ui, section));
+            } else if let Some(summary) = section_summary(section) {
                 ui.label(egui::RichText::new(summary).color(theme::FG_MUTED).small());
             }
-            if reveal {
-                ui.scroll_to_rect(ui.min_rect(), Some(egui::Align::Center));
+            if let Some(materials) = ui.ctx().data(|data| {
+                data.get_temp::<Arc<InspectorMaterials>>(egui::Id::new(
+                    "inspector-material-context",
+                ))
+            }) && let Some(reason) = controls::module_applicability(
+                section,
+                &self.params,
+                &materials.film,
+                &materials.print,
+            ) {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Inactive controls · {reason} · stored values retained"
+                    ))
+                    .color(theme::FG_MUTED)
+                    .small(),
+                );
             }
-        } else {
-            // A section without its own header renders one inside the controls,
-            // so its reset scope rides on a row above them.
-            if section_reset::sections().any(|name| name == section) {
-                ui.horizontal(|ui| {
-                    self.section_reset_controls(ui, section);
+            ui.add_space(theme::SPACE_ROW);
+        });
+    }
+
+    fn module_body(&mut self, ui: &mut egui::Ui, section: &str) {
+        let _row_scope = controls::row_modified::install(
+            ui.ctx(),
+            section,
+            &self.params,
+            &self.gui_state.sections,
+        );
+        match section {
+            "Workflow" => {
+                if controls::choice_tip_entries(
+                    ui,
+                    "workflow",
+                    &mut self.params.workflow.route,
+                    routes::entries(),
+                    routes::tooltip(),
+                ) {
+                    controls::record_edited_path(ui.ctx(), "workflow.route");
+                    self.label_adjustment("Change workflow");
+                    self.finish_route_change();
+                }
+            }
+            "Film material" | "Print material" => {
+                let film = section == "Film material";
+                let path = if film {
+                    "extras.simulation.film_stock"
+                } else {
+                    "extras.simulation.print_paper"
+                };
+                if controls::entry_matches(
+                    path,
+                    &self.filter,
+                    &self.params,
+                    &self.gui_state.sections,
+                    self.only_modified,
+                ) {
+                    let mut selected = if film {
+                        self.film_name.clone()
+                    } else {
+                        self.print_name.clone()
+                    };
+                    let changed = if film {
+                        profile_combo(ui, "film", "film profile", &self.films, &mut selected)
+                    } else {
+                        profile_combo(ui, "paper", "print profile", &self.papers, &mut selected)
+                    };
+                    if let Some(response) =
+                        ui.ctx()
+                            .read_response(ui.make_persistent_id(egui::Id::new(if film {
+                                "film"
+                            } else {
+                                "paper"
+                            })))
+                    {
+                        controls::locate_row(ui, path, &response);
+                    }
+                    if changed {
+                        self.label_adjustment(if film {
+                            "Change film material"
+                        } else {
+                            "Change print material"
+                        });
+                        if film {
+                            self.select_film_profile(selected);
+                        } else {
+                            self.select_print_profile(selected);
+                        }
+                    }
+                    let reset_label = if film {
+                        "Reset film profile to factory"
+                    } else {
+                        "Reset print profile to factory"
+                    };
+                    if ui.small_button(reset_label).clicked() {
+                        let factory = state::GuiState::factory();
+                        self.label_adjustment(reset_label);
+                        if film {
+                            self.select_film_profile(factory.film().to_owned());
+                        } else {
+                            self.select_print_profile(factory.paper().to_owned());
+                        }
+                    }
+                }
+                self.chemistry_dev_time(ui, film);
+            }
+            "Source rotation" => {
+                ui.horizontal_wrapped(|ui| {
+                    let ccw = ui.add_enabled(self.image.is_some(), egui::Button::new("ccw rotate")).on_hover_text("Rotate the retained source 90° counter-clockwise. Preview, Scan, and Export render this source.");
+                    controls::locate_row(ui, "action.rotate_ccw", &ccw);
+                    if ccw.clicked() {
+                        self.label_adjustment("Rotate source counter-clockwise");
+                        self.rotate_input_image_counterclockwise();
+                    }
+                    let cw = ui.add_enabled(self.image.is_some(), egui::Button::new("cw rotate")).on_hover_text("Rotate the retained source 90° clockwise; this is not a viewer transform.");
+                    controls::locate_row(ui, "action.rotate_cw", &cw);
+                    if cw.clicked() {
+                        self.label_adjustment("Rotate source clockwise");
+                        self.rotate_input_image_clockwise();
+                    }
+                    ui.label(format!("Source rotation: {}°", self.input_rotation * 90));
                 });
             }
-            self.parameter_section_controls(ui, section);
-            if reveal {
-                ui.scroll_to_rect(ui.min_rect(), Some(egui::Align::Center));
+            "Import Raw" => {
+                self.parameter_section_controls(ui, section);
+                let raw = self.image_path.as_deref().is_some_and(image_io::is_raw);
+                if raw {
+                    if self.raw_applied_settings.as_ref()
+                        != Some(&self.gui_state.sections["load_raw"])
+                    {
+                        ui.weak("RAW decode settings pending; the accepted source still uses the previous settings.");
+                    } else {
+                        ui.weak("RAW decode settings match the accepted source. Camera exposure is a separate simulation control.");
+                    }
+                } else {
+                    ui.weak("RAW decoding is inactive for this source. Settings are retained for the next RAW import.");
+                }
+                let reprocess = ui.add_enabled(raw, egui::Button::new("Reprocess RAW"));
+                controls::locate_row(ui, "action.reprocess_raw", &reprocess);
+                if reprocess.clicked()
+                    && let Some(path) = self.image_path.clone()
+                {
+                    self.load_image_from_path(&path);
+                }
+            }
+            "Scanner" => {
+                let mut scan_for_print = self.scan_for_print_snapshot.is_some();
+                let response = ui.checkbox(&mut scan_for_print, "scan for print").on_hover_text("Disable print viewing glare for a print scan; toggle again to restore its previous state.");
+                controls::locate_row(ui, "action.scan_for_print", &response);
+                if response.changed() {
+                    self.label_adjustment("Toggle scan for print");
+                    self.toggle_scan_for_print();
+                }
+                self.parameter_section_controls(ui, section);
+            }
+            _ => self.parameter_section_controls(ui, section),
+        }
+        if controls::apply_pending_resets(ui.ctx(), &mut self.params, &mut self.gui_state.sections)
+        {
+            self.label_adjustment("Reset control to factory");
+            if section == "Workflow" {
+                self.finish_route_change();
+            } else {
+                self.mark_parameters_changed_invalidating_calibration();
             }
         }
     }
@@ -672,7 +741,26 @@ impl App {
     /// declares is reachable from the surface that renders the section.
     fn section_reset_controls(&mut self, ui: &mut egui::Ui, section: &str) -> bool {
         let mut changed = false;
-        if section_reset::is_modified(section, &self.params, &self.gui_state.sections) {
+        let material_modified = match section {
+            "Film material" => controls::entry_matches(
+                "extras.simulation.film_stock",
+                "",
+                &self.params,
+                &self.gui_state.sections,
+                true,
+            ),
+            "Print material" => controls::entry_matches(
+                "extras.simulation.print_paper",
+                "",
+                &self.params,
+                &self.gui_state.sections,
+                true,
+            ),
+            _ => false,
+        };
+        if material_modified
+            || section_reset::is_modified(section, &self.params, &self.gui_state.sections)
+        {
             ui.label(
                 egui::RichText::new("modified")
                     .color(theme::WARNING)
@@ -696,75 +784,107 @@ impl App {
                 node.set_label(format!("reset {section}"));
             });
             if response.clicked() {
+                self.label_adjustment(&format!("Reset {section} to factory"));
+                if section == "Film material" {
+                    self.select_film_profile(state::GuiState::factory().film().to_owned());
+                } else if section == "Print material" {
+                    self.select_print_profile(state::GuiState::factory().paper().to_owned());
+                }
                 section_reset::reset(&mut self.params, &mut self.gui_state.sections, section);
-                self.mark_parameters_changed_invalidating_calibration();
+                if section == "Workflow" {
+                    self.finish_route_change();
+                } else {
+                    self.mark_parameters_changed_invalidating_calibration();
+                }
                 changed = true;
             }
         }
         changed
     }
 
-    /// Whether `section` rendered a control whose label matches the search
-    /// filter.
-    fn section_has_filter_match(&self, section: &str) -> bool {
-        controls::cached_labels_match(&self.filter, self.section_labels.get(section))
+    fn retain_locator_focus(ctx: &egui::Context, current: Vec<egui::Id>) {
+        let key = egui::Id::new("control-locator-response-ids");
+        let previous = ctx
+            .data_mut(|data| data.get_temp::<Vec<egui::Id>>(key))
+            .unwrap_or_default();
+        if ctx
+            .memory(|memory| memory.focused())
+            .is_some_and(|id| previous.contains(&id) && !current.contains(&id))
+        {
+            ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("control-search")));
+        }
+        ctx.data_mut(|data| data.insert_temp(key, current));
     }
 
     fn search_results(&mut self, ui: &mut egui::Ui) {
-        if self.filter.is_empty() {
+        if self.filter.is_empty() && !self.only_modified {
+            Self::retain_locator_focus(ui.ctx(), Vec::new());
             return;
         }
-        let extras = self.gui_state.sections.clone();
-        let params = self.params.clone();
-        let data_dir = self.data_dir.clone();
-        let results = self.search_index.results(
+        let results = self.search_index.results_filtered(
             &self.filter,
-            &params,
-            &extras,
+            &self.params,
+            &self.gui_state.sections,
             self.film_medium,
             self.parameter_revision,
-            &data_dir,
+            &self.data_dir,
+            self.only_modified,
         );
         if results.is_empty() {
-            ui.label(
-                egui::RichText::new(format!("No control matches “{}”.", self.filter))
-                    .color(theme::FG_MUTED)
-                    .small(),
-            );
+            Self::retain_locator_focus(ui.ctx(), Vec::new());
+            let message = if self.filter.is_empty() {
+                "No controls differ from the factory baseline.".to_owned()
+            } else if self.only_modified {
+                format!("No modified controls match “{}”.", self.filter)
+            } else {
+                format!("No control matches “{}”.", self.filter)
+            };
+            ui.label(egui::RichText::new(message).color(theme::FG_MUTED).small());
             return;
         }
-        if !results.iter().any(|result| result.page == self.gui_tab) {
-            ui.label(
-                egui::RichText::new(format!("No control on {} matches.", self.gui_tab.label()))
-                    .color(theme::FG_MUTED)
-                    .small(),
-            );
-        }
         let mut destination = None;
-        for result in results {
-            if result.page == self.gui_tab {
-                continue;
-            }
-            let summary = result.summary();
-            let response = ui
-                .button(format!(
-                    "{} · {}: {}",
-                    result.page.label(),
-                    result.section,
-                    summary
-                ))
-                .on_hover_text(summary);
-            let result_label = format!("{} · {}", result.page.label(), result.section);
-            ui.ctx().accesskit_node_builder(response.id, |node| {
-                node.set_label(result_label);
+        let mut locator_ids = Vec::with_capacity(results.len());
+        egui::ScrollArea::vertical()
+            .id_salt("control-locators")
+            .max_height(120.0)
+            .show(ui, |ui| {
+                for result in results {
+                    let label = result.locator_label();
+                    let response = ui.button(&label).on_hover_text(result.details());
+                    locator_ids.push(response.id);
+                    if response.clicked() {
+                        destination = Some((
+                            result.owner,
+                            result.section,
+                            result.target_path.clone(),
+                            response.id,
+                        ));
+                    }
+                }
             });
-            if response.clicked() {
-                destination = Some((result.page, result.section));
+        Self::retain_locator_focus(ui.ctx(), locator_ids);
+        if let Some((owner, section, path, _invoking_id)) = destination {
+            controls::request_focus(ui.ctx(), section, &path);
+            match owner {
+                controls::ControlOwner::Stage(stage) => {
+                    self.pending_stage = Some(stage);
+                    self.pending_scroll = Some(section.to_owned());
+                }
+                controls::ControlOwner::Settings => {
+                    self.settings_open = true;
+                    self.settings_return_focus = Some(egui::Id::new("control-search"));
+                    self.pending_scroll = Some(section.to_owned());
+                }
+                controls::ControlOwner::Export => {
+                    self.export_return_focus = Some(egui::Id::new("control-search"));
+                    if !self.export_dialog.is_open() {
+                        self.export_dialog.open(&self.export_options);
+                    }
+                }
+                controls::ControlOwner::Viewer => {
+                    self.pending_scroll = None;
+                }
             }
-        }
-        if let Some((page, section)) = destination {
-            self.gui_tab = page;
-            self.pending_scroll = Some(section.to_owned());
         }
     }
 
@@ -796,48 +916,13 @@ impl App {
             self.dirty = true;
             self.force_preview = true;
         }
-        if changes.raw_reload
-            && let Some(path) = self.image_path.clone()
-        {
-            self.load_image_from_path(&path);
-        }
-    }
-
-    fn import_section(&mut self, ui: &mut egui::Ui, raw: bool) {
-        ui.collapsing(if raw { "Import Raw" } else { "Import RGB" }, |ui| {
-            let label = if raw {
-                "Select RAW file…"
-            } else {
-                "Select RGB image…"
-            };
-            if ui
-                .button(label)
-                .on_hover_text(if raw {
-                    "Choose and load a camera RAW file through the RAW path. The raw white balance, temperature, tint and lens correction settings apply to the loaded input before the workflow renders it."
-                } else {
-                    "Choose and load a standard raster image. The image becomes the retained input the workflow renders."
-                })
-                .clicked()
-                && let Some(path) = self.chooser.pick_file(
-                    self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()),
-                )
-            {
-                self.remember_dialog("load", &path);
-                self.load_image_from_path(&path);
-            }
-            if raw {
-                self.parameter_section(ui, "Import Raw");
-            }
-            if let Some(p) = &self.image_path {
-                ui.label(egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("" )).small());
-            }
-            ui.add_space(theme::SPACE_BLOCK);
-        });
     }
 
     fn display_profile_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("select ICC profile…").on_hover_text("Choose an ICC profile for the display transform applied to the viewer raster only. It never reaches the retained, saved or exported pixels, which use their own saving color space and transfer encoding.").clicked()
+            let select = ui.button("select ICC profile…").on_hover_text("Choose an ICC profile for the display transform applied to the viewer raster only. It never reaches retained, saved or exported pixels.");
+            controls::locate_row(ui, "extras.rust.display_profile", &select);
+            if select.clicked()
                 && let Some(path) = self.chooser.pick_file(
                     self.file_dialog("display")
                         .add_filter("ICC profile", &["icc", "icm"]),
@@ -851,12 +936,10 @@ impl App {
                 }
                 self.status = format!("Display ICC profile: {}", path.display());
             }
-            if self.gui_state.display_profile().is_some()
-                && ui
-                    .button("clear")
-                    .on_hover_text("Stop using the selected ICC profile and fall back to the platform profile or sRGB. The retained, saved and exported pixels never used the profile, so they are unchanged.")
-                    .clicked()
-            {
+            let clear = ui.add_enabled(self.gui_state.display_profile().is_some(), egui::Button::new("clear"))
+                .on_hover_text("Stop using the selected ICC profile and fall back to the platform profile or sRGB. Retained, saved and exported pixels are unchanged.");
+            controls::locate_row(ui, "action.clear_display_profile", &clear);
+            if clear.clicked() {
                 self.gui_state.set_display_profile(None);
                 self.refresh_viewing_artifacts();
                 self.status = "Display ICC profile cleared".into();
@@ -879,89 +962,53 @@ impl App {
         );
     }
 
-    fn export_actions(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("Export options")
-            .default_open(false)
-            .show(ui, |ui| {
-                if self.export_job.is_some() {
-                    if ui.button("Cancel")
-                        .on_hover_text("Cancel export; the current operation finishes before its output is discarded.")
-                        .clicked()
-                    {
-                        self.cancel_export();
-                    }
-                } else {
-                    let enabled = self.image.is_some()
-                        && self.calibration_job.is_none()
-                        && !self.export_dialog.is_open();
-                    if ui.add_enabled(enabled, egui::Button::new("Open export settings…"))
-                        .on_hover_text("Open the independent export settings: format, bit depth, compression, saving color space and saving transfer encoding. These settings belong to Export only and do not change Save, which writes the retained output with the current simulation saving settings.")
-                        .clicked()
-                    {
-                        self.export_dialog.open(&self.export_options);
-                    }
-                }
-            });
-    }
-    fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
-        let section = if film {
-            "Film chemistry"
+    fn chemistry_dev_time(&mut self, ui: &mut egui::Ui, film: bool) {
+        let path = if film {
+            "film_render.development_time"
         } else {
-            "Print chemistry"
+            "print_render.development_time"
         };
-        if !self.filter.is_empty() {
-            // Search mode: no collapsing header, and matching parts only.
-            let development_time = controls::label_matches(&self.filter, "development time");
-            if !development_time && !self.section_has_filter_match(section) {
-                return;
-            }
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Chemistry")
-                        .color(theme::FG)
-                        .size(theme::SIZE_TITLE)
-                        .strong(),
-                );
-                self.section_reset_controls(ui, section);
-            });
-            if development_time {
-                self.chemistry_dev_time(ui, film);
-            }
-            self.parameter_section(ui, section);
+        if !controls::entry_matches(
+            path,
+            &self.filter,
+            &self.params,
+            &self.gui_state.sections,
+            self.only_modified,
+        ) {
             return;
         }
-        let mut label_clicked = false;
-        let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
-            ui.ctx(),
-            ui.make_persistent_id(("chemistry", film)),
-            false,
-        )
-        .show_header(ui, |ui| {
-            label_clicked = ui
-                .add(egui::Label::new("Chemistry").sense(egui::Sense::click()))
-                .clicked();
-            self.section_reset_controls(ui, section);
-        });
-        if label_clicked {
-            header.toggle();
+        let times = if film {
+            &self.film_dev_times
+        } else {
+            &self.print_dev_times
+        };
+        if times.len() <= 1 {
+            let effective = times.first().copied().unwrap_or(1.0);
+            ui.label(format!(
+                "Development time: {effective} min · material-defined (no selectable family)"
+            ));
+            return;
         }
-        let closed = !header.is_open();
-        header.body(|ui| {
-            self.chemistry_dev_time(ui, film);
-            self.parameter_section(ui, section);
-        });
-        if closed {
-            ui.label(
-                egui::RichText::new(
-                    "Density curves: development time, gamma, developer exhaustion",
+        let inactive = ui
+            .ctx()
+            .data(|data| {
+                data.get_temp::<Arc<InspectorMaterials>>(egui::Id::new(
+                    "inspector-material-context",
+                ))
+            })
+            .and_then(|materials| {
+                spektrafilm_core::params::sources::inactive_reason(
+                    path,
+                    &self.params,
+                    &materials.film,
+                    &materials.print,
                 )
-                .color(theme::FG_MUTED)
-                .small(),
-            );
+            });
+        if let Some(reason) = &inactive {
+            ui.weak(format!(
+                "Development time inactive: {reason}; stored selection retained."
+            ));
         }
-    }
-
-    fn chemistry_dev_time(&mut self, ui: &mut egui::Ui, film: bool) {
         let (times, selected) = if film {
             (
                 &self.film_dev_times,
@@ -973,110 +1020,247 @@ impl App {
                 &mut self.params.print_render.development_time,
             )
         };
-        if dev_time_combo(
-            ui,
-            if film { "film-time" } else { "print-time" },
-            "development time",
-            times,
-            selected,
-        ) {
+        let changed = ui
+            .add_enabled_ui(inactive.is_none(), |ui| {
+                dev_time_combo(
+                    ui,
+                    if film { "film-time" } else { "print-time" },
+                    "development time",
+                    times,
+                    selected,
+                )
+            })
+            .inner;
+        if changed {
+            controls::record_edited_path(
+                ui.ctx(),
+                if film {
+                    "film_render.development_time"
+                } else {
+                    "print_render.development_time"
+                },
+            );
             self.mark_parameters_changed();
         }
+        if let Some(response) =
+            ui.ctx()
+                .read_response(ui.make_persistent_id(egui::Id::new(if film {
+                    "film-time"
+                } else {
+                    "print-time"
+                })))
+        {
+            controls::locate_row(ui, path, &response);
+        }
+        controls::row_modified::offer_reset(
+            ui,
+            "development time",
+            Some(if film {
+                "film_render.development_time"
+            } else {
+                "print_render.development_time"
+            }),
+        );
     }
 
     fn controls_panel(&mut self, ui: &mut egui::Ui) {
         let input_view_before = (
             self.params.io.input_color_space.clone(),
             self.params.io.input_cctf_decoding,
-            self.params.settings.preview_max_size,
         );
-        match self.gui_tab {
-            GuiTab::Main => {
-                self.import_section(ui, false);
-                self.import_section(ui, true);
-                for section in ["Crop and upscale", "Input", "Camera"] {
-                    self.parameter_section(ui, section);
-                }
-                ui.collapsing("Profiles", |ui| {
-                    if self.params.workflow.route == "input" {
-                        ui.weak(
-                            "The input route ignores these profiles: it only colour-manages the \
-                             input to the output space.",
-                        );
-                    }
-                    if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
-                        let selected = self.film_name.clone();
-                        self.params.film_render.development_time = None;
-                        self.select_film_profile(selected);
-                    }
-                    if profile_combo(
-                        ui,
-                        "paper",
-                        "print profile",
-                        &self.papers,
-                        &mut self.print_name,
-                    ) {
-                        let selected = self.print_name.clone();
-                        self.params.print_render.development_time = None;
-                        self.select_print_profile(selected);
-                    }
+        let cache_id = egui::Id::new("inspector-material-context");
+        let cache_current = ui
+            .ctx()
+            .data(|data| data.get_temp::<Arc<InspectorMaterials>>(cache_id))
+            .is_some_and(|materials| {
+                materials.film_name == self.film_name && materials.print_name == self.print_name
+            });
+        if !cache_current
+            && let (Ok(film), Ok(print)) = (
+                profile::load_profile_by_name(&self.data_dir, &self.film_name),
+                profile::load_profile_by_name(&self.data_dir, &self.print_name),
+            )
+        {
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    cache_id,
+                    Arc::new(InspectorMaterials {
+                        film_name: self.film_name.clone(),
+                        print_name: self.print_name.clone(),
+                        film,
+                        print,
+                    }),
+                )
+            });
+        }
+        for &(stage, sections) in controls::STAGE_LAYOUT {
+            let reveal_stage = self.pending_stage == Some(stage);
+            let has_locator = sections
+                .iter()
+                .any(|section| self.pending_scroll.as_deref() == Some(*section));
+            let visible = sections.iter().any(|section| {
+                controls::section_matches(
+                    section,
+                    &self.filter,
+                    &self.params,
+                    &self.gui_state.sections,
+                    self.only_modified,
+                )
+            });
+            if !visible && !reveal_stage && !has_locator {
+                continue;
+            }
+            ui.push_id(("stage", stage.label()), |ui| {
+                let open_id = ui.make_persistent_id("open");
+                let normal_open = ui
+                    .ctx()
+                    .data_mut(|data| *data.get_persisted_mut_or_insert_with(open_id, || true));
+                let filtered = !self.filter.is_empty() || self.only_modified;
+                let open = normal_open || filtered || reveal_stage || has_locator;
+                let response = ui.button(
+                    egui::RichText::new(format!(
+                        "{} {}",
+                        if open { "v" } else { ">" },
+                        stage.label()
+                    ))
+                    .strong()
+                    .size(theme::SIZE_TITLE),
+                );
+                ui.ctx().accesskit_node_builder(response.id, |node| {
+                    node.set_label(format!("{} stage", stage.label()))
                 });
-                for section in ["Enlarger", "Scanner"] {
-                    self.parameter_section(ui, section);
+                if response.clicked() && !filtered {
+                    ui.ctx()
+                        .data_mut(|data| data.insert_persisted(open_id, !normal_open));
                 }
-                self.parameter_section(ui, "Output");
-                self.export_actions(ui);
-            }
-            GuiTab::Film => {
-                self.chemistry_section(ui, true);
-                for section in [
-                    "Film base",
-                    "Halation",
-                    "Couplers",
-                    "Grain",
-                    "Camera diffusion",
-                    "Convert",
-                ] {
-                    self.parameter_section(ui, section);
-                }
-            }
-            GuiTab::Print => {
-                self.chemistry_section(ui, false);
-                for section in ["Print base", "Glare", "Enlarger diffusion"] {
-                    self.parameter_section(ui, section);
-                }
-                self.parameter_section(ui, "CMYK ink style");
-            }
-            GuiTab::Advanced => {
-                for section in [
-                    "Spectral upsampling",
-                    "Input gamut compress",
-                    "Output gamut compress",
-                ] {
-                    self.parameter_section(ui, section);
-                }
-            }
-            GuiTab::Config => {
-                self.diagnostics_panel(ui);
-                ui.collapsing("GUI parameters", |ui| {
-                    self.state_toolbar(ui);
-                });
-                ui.collapsing("Display", |ui| {
-                    let display_transform_before = self.viewer.settings.use_display_transform;
-                    self.display_profile_controls(ui);
-                    self.viewer.controls(ui);
-                    self.parameter_section(ui, "Display");
-                    self.viewer.interpolation_control(ui);
-                    if display_transform_before != self.viewer.settings.use_display_transform {
-                        self.refresh_viewing_artifacts();
+                if reveal_stage || has_locator {
+                    ui.ctx()
+                        .data_mut(|data| data.insert_persisted(open_id, true));
+                    if reveal_stage && !has_locator {
+                        response.request_focus();
+                        ui.scroll_to_rect(response.rect, Some(egui::Align::TOP));
                     }
-                });
-            }
+                    self.pending_stage = None;
+                }
+                if open {
+                    for section in sections {
+                        self.parameter_section(ui, section);
+                    }
+                }
+                ui.separator();
+            });
         }
         if input_view_before
             != (
                 self.params.io.input_color_space.clone(),
                 self.params.io.input_cctf_decoding,
+            )
+        {
+            self.refresh_viewing_artifacts();
+        }
+    }
+    fn sync_display_controls(&mut self) {
+        let display = self.viewer.settings.to_json();
+        let mut changed = false;
+        for key in [
+            "use_display_transform",
+            "gray_18_canvas",
+            "white_padding",
+            "output_interpolation",
+        ] {
+            if self.gui_state.sections["display"][key] != display[key] {
+                self.gui_state.sections["display"][key] = display[key].clone();
+                changed = true;
+            }
+        }
+        if changed {
+            self.search_index.reset();
+        }
+    }
+
+    fn settings_dialog(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+        let mut open = true;
+        let mut close = false;
+        let display_before = (
+            self.viewer.settings.use_display_transform,
+            self.params.settings.preview_max_size,
+        );
+        egui::Window::new("Settings")
+            .id(egui::Id::new("application-settings"))
+            .open(&mut open)
+            .default_width(520.0)
+            .max_height((ctx.screen_rect().height() - 80.0).max(160.0))
+            .show(ctx, |ui| {
+                close = ui.button("Close settings").clicked();
+                ui.separator();
+                egui::ScrollArea::vertical().id_salt("settings-scroll").max_height((ctx.screen_rect().height() - 180.0).max(100.0)).show(ui, |ui| {
+                // The inspector query locates this owner; it never filters a dialog.
+                for section in ["Session", "GUI parameters", "Display", "Diagnostics"] {
+                    let reveal = self.pending_scroll.as_deref() == Some(section);
+                    let response = egui::CollapsingHeader::new(section).default_open(false).open(reveal.then_some(true)).show(ui, |ui| {
+                        let _scope = controls::row_modified::install(ui.ctx(), section, &self.params, &self.gui_state.sections);
+                        match section {
+                            "Session" => {
+                                controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "Schedule a bounded Preview after accepted photographic adjustments.");
+                                self.settings_parameter_controls(ui, "Session");
+                            }
+                            "GUI parameters" => self.state_toolbar(ui),
+                            "Display" => {
+                                self.display_profile_controls(ui);
+                                let transform = ui.checkbox(&mut self.viewer.settings.use_display_transform, "use display transform").on_hover_text("Viewer-only display conversion; does not change retained or written pixels.");
+                                controls::locate_row(ui, "extras.display.use_display_transform", &transform);
+                                if ui.small_button("Reset use display transform to factory").clicked() {
+                                    self.viewer.settings.use_display_transform = display::DisplaySettings::from_json(&state::GuiState::factory().sections["display"]).use_display_transform;
+                                }
+                                let canvas = ui.checkbox(&mut self.viewer.settings.gray_18_canvas, "gray 18% canvas");
+                                controls::locate_row(ui, "extras.display.gray_18_canvas", &canvas);
+                                if ui.small_button("Reset gray 18% canvas to factory").clicked() {
+                                    self.viewer.settings.gray_18_canvas = display::DisplaySettings::from_json(&state::GuiState::factory().sections["display"]).gray_18_canvas;
+                                }
+                                controls::param_numeric(ui, "white padding", &mut self.viewer.settings.white_padding, "extras.display.white_padding", "Viewer-only white border, as a fraction of the image long edge.");
+                                self.viewer.interpolation_control(ui);
+                                if ui.small_button("Reset output interpolation to factory").clicked() {
+                                    self.viewer.settings.interpolation = display::DisplaySettings::from_json(&state::GuiState::factory().sections["display"]).interpolation;
+                                }
+                                self.sync_display_controls();
+                                if controls::apply_pending_resets(ui.ctx(), &mut self.params, &mut self.gui_state.sections) {
+                                    let restored = display::DisplaySettings::from_json(&self.gui_state.sections["display"]);
+                                    self.viewer.settings.use_display_transform = restored.use_display_transform;
+                                    self.viewer.settings.gray_18_canvas = restored.gray_18_canvas;
+                                    self.viewer.settings.white_padding = restored.white_padding;
+                                    self.viewer.settings.interpolation = restored.interpolation;
+                                    self.search_index.reset();
+                                }
+                            }
+                            "Diagnostics" => self.diagnostics_panel(ui),
+                            _ => unreachable!(),
+                        }
+                    });
+                    if self.pending_scroll.as_deref() == Some(section) {
+                        if ui.ctx().data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))).is_some() {
+                            response.header_response.request_focus();
+                        }
+                        ui.scroll_to_rect(response.header_response.rect, Some(egui::Align::TOP));
+                        self.pending_scroll = None;
+                    }
+                }
+                });
+            });
+        if !open
+            || close
+            || ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.settings_open = false;
+            if let Some(id) = self.settings_return_focus.take() {
+                ctx.memory_mut(|memory| memory.request_focus(id));
+            }
+        }
+        if display_before
+            != (
+                self.viewer.settings.use_display_transform,
                 self.params.settings.preview_max_size,
             )
         {
@@ -1084,57 +1268,74 @@ impl App {
         }
     }
 
-    /// The window header spans the full width above the three regions. It
-    /// shows the film profile, print profile, and workflow route as
-    /// read-only text, and it is the only surface that shows the
-    /// operation status.
-    ///
-    /// The exact route string stays visible: it identifies the physical
-    /// sequence and is required for diagnostics. The description beside it
-    /// is a direct reading of that same sequence, taken from the shared
-    /// presentation vocabulary, so it cannot describe a route the selector
-    /// does not offer.
-    fn window_header(&self, ctx: &egui::Context) {
-        let film = profiles::selected_display(&self.films, &self.film_name);
-        let paper = profiles::selected_display(&self.papers, &self.print_name);
+    fn settings_parameter_controls(&mut self, ui: &mut egui::Ui, section: &str) {
+        let cache = self.section_labels.entry(section.to_owned()).or_default();
+        let changes = controls::show(
+            ui,
+            &mut self.params,
+            &mut self.gui_state.sections,
+            section,
+            self.film_medium,
+            "",
+            cache,
+            &self.film_reference_illuminant,
+            &self.data_dir,
+        );
+        if changes.preview_requested {
+            self.dirty = true;
+            self.force_preview = true;
+        }
+    }
+
+    fn open_image_dialog(&mut self) {
+        if let Some(path) = self.chooser.pick_file(
+            self.file_dialog("load")
+                .add_filter("Image", &image_io::accepted_extensions()),
+        ) {
+            self.remember_dialog("load", &path);
+            self.load_image_from_path(&path);
+        }
+    }
+
+    /// One header owns global actions, read-only context, and operation status.
+    fn window_header(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("window-header")
-            .frame(egui::Frame::default().fill(theme::SURFACE2).inner_margin(
-                egui::Margin::symmetric(theme::SPACE_GROUP as i8, theme::SPACE_ROW as i8),
-            ))
+            .frame(egui::Frame::default().fill(theme::SURFACE2).inner_margin(egui::Margin::symmetric(theme::SPACE_GROUP as i8, theme::SPACE_ROW as i8)))
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(egui::RichText::new("spektrafilm").strong());
-                    ui.separator();
-                    ui.label(format!("Film: {film}"));
-                    ui.separator();
-                    ui.label(format!("Print: {paper}"));
-                    ui.separator();
-                    ui.label(format!("Route: {}", self.params.workflow.route));
-                    // Direct physical reading of the same route, not a second
-                    // route: the exact serialized string stays on the row, and
-                    // the description beside it comes from the shared
-                    // vocabulary, so it cannot name a route the selector does
-                    // not offer. An unknown route shows no description rather
-                    // than a wrong one.
-                    let description =
-                        routes::vocabulary::route_description(&self.params.workflow.route);
-                    if !description.is_empty() {
-                        // Truncated rather than wrapped: the header stays one
-                        // row, so the pinned viewer canvas does not move.
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(description)
-                                    .color(theme::FG_MUTED)
-                                    .small(),
-                            )
-                            .wrap_mode(egui::TextWrapMode::Truncate),
-                        )
-                        .on_hover_text(format!(
-                            "{description} The exact route beside it is the serialized value and is required for diagnostics."
-                        ));
+                    if ui.button("Open").on_hover_text("Open image — RGB and supported RAW formats use their existing import paths.").clicked() { self.open_image_dialog(); }
+                    let undo_label = self.undo_label().map_or_else(|| "No adjustment to undo".to_owned(), |label| format!("Undo {label}"));
+                    if ui.add_enabled(self.can_undo(), egui::Button::new("Undo")).on_hover_text(undo_label).clicked() { self.undo_adjustment(); }
+                    let redo_label = self.redo_label().map_or_else(|| "No adjustment to redo".to_owned(), |label| format!("Redo {label}"));
+                    if ui.add_enabled(self.can_redo(), egui::Button::new("Redo")).on_hover_text(redo_label).clicked() { self.redo_adjustment(); }
+                    let settings = ui.button("Settings");
+                    if settings.clicked() {
+                        self.settings_return_focus = Some(settings.id);
+                        self.settings_open = true;
                     }
-                    ui.separator();
+                    if self.export_job.is_some() {
+                        if ui.button("Cancel export").on_hover_text("Cancel using the export worker; an output not yet published is discarded.").clicked() { self.cancel_export(); }
+                    } else {
+                        let export = ui.add_enabled(self.image.is_some() && self.calibration_job.is_none() && !self.export_dialog.is_open(), egui::Button::new("Export"));
+                        if export.clicked() {
+                            self.export_return_focus = Some(export.id);
+                            self.export_dialog.open(&self.export_options);
+                        }
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    let source = self.image_path.as_deref().and_then(Path::file_name).map(|name| name.to_string_lossy()).unwrap_or_else(|| "No image loaded".into());
+                    ui.label(format!("Source: {source}"));
+                    ui.label(format!("Film: {}", profiles::selected_display(&self.films, &self.film_name)));
+                    ui.label(format!("Print: {}", profiles::selected_display(&self.papers, &self.print_name)));
+                    ui.label(format!("Route: {}", self.params.workflow.route)).on_hover_text(routes::vocabulary::route_description(&self.params.workflow.route));
+                });
+                ui.horizontal_wrapped(|ui| {
                     ui.label(egui::RichText::new(self.operation_status()).small());
+                    if self.accepted_frame_is_stale() {
+                        ui.label(egui::RichText::new("Retained frame is not current · controls changed").color(theme::WARNING).small());
+                    }
                 });
             });
     }
@@ -1183,9 +1384,27 @@ impl eframe::App for App {
                 ctx.request_repaint_after(PREVIEW_DEBOUNCE - elapsed);
             }
         }
+        self.begin_adjustment_frame(ctx);
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
         self.poll_export_job(ctx);
+        let editing_text = ctx
+            .memory(|memory| memory.focused())
+            .is_some_and(|id| egui::text_edit::TextEditState::load(ctx, id).is_some());
+        if !editing_text && !self.settings_open && !self.export_dialog.is_open() {
+            if ctx.input_mut(|input| {
+                input.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::Z,
+                )
+            }) {
+                self.redo_adjustment();
+            } else if ctx
+                .input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Z))
+            {
+                self.undo_adjustment();
+            }
+        }
         // The export renders the retained input, so the dialog's estimate
         // reads that image's dimensions while the dialog is open.
         let export_dimensions = self
@@ -1193,17 +1412,41 @@ impl eframe::App for App {
             .as_ref()
             .map(|image| [image.width, image.height])
             .unwrap_or([0, 0]);
+        let export_was_open = self.export_dialog.is_open();
         if let Some(options) = self.export_dialog.show(ctx, export_dimensions) {
             self.start_export(ctx, options);
+        }
+        if export_was_open
+            && !self.export_dialog.is_open()
+            && let Some(id) = self.export_return_focus.take()
+        {
+            ctx.memory_mut(|memory| memory.request_focus(id));
         }
         self.window_header(ctx);
         self.factory_reset_confirmation(ctx);
         self.preset_panel(ctx);
-        // Right control panel: histogram at top, tabs, scrollable controls, action bar
+        self.sync_display_controls();
+        controls::begin_control_frame(ctx, &self.params, &self.gui_state.sections);
+        // Fixed histogram, search, and stage jumps above one scrolling inspector.
         egui::SidePanel::right("controls")
-            .resizable(false)
-            .exact_width(theme::WIDTH_CONTROL_PANEL)
+            .resizable(true)
+            .default_width(theme::WIDTH_CONTROL_PANEL)
+            .min_width(300.0)
+            .max_width((ctx.screen_rect().width() * 0.48).max(300.0))
             .show(ctx, |ui| {
+                // Panel sizing belongs to the user's resize gesture, never to a
+                // long query, locator, or applicability explanation inside it.
+                let inspector_rect = ui.available_rect_before_wrap();
+                ui.allocate_space(inspector_rect.size());
+                let mut inspector = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt("inspector-content")
+                        .max_rect(inspector_rect)
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                inspector.set_clip_rect(inspector_rect);
+                inspector.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                let ui = &mut inspector;
                 let output_id = self
                     .output_image
                     .as_ref()
@@ -1213,55 +1456,47 @@ impl eframe::App for App {
                     .update(&self.output_image, output_id, ui.ctx());
                 self.histogram.render(ui);
                 ui.add_space(theme::SPACE_BLOCK);
+                ui.horizontal(|ui| {
+                    let clear_width = if self.filter.is_empty() { 0.0 } else { 82.0 + ui.spacing().item_spacing.x };
+                    let search_width = (ui.available_width() - clear_width).max(1.0);
+                    let response = ui.add_sized(
+                        [search_width, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut self.filter)
+                            .id(egui::Id::new("control-search"))
+                            .hint_text("Search controls")
+                            .clip_text(true)
+                            .desired_width(search_width),
+                    );
+                    ui.ctx().accesskit_node_builder(response.id, |node| node.set_label("Search controls"));
+                    if !self.filter.is_empty() && ui.button("clear filter").on_hover_text("Clear search and restore ordinary inspector disclosure.").clicked() {
+                        self.filter.clear();
+                    }
+                });
+                ui.checkbox(&mut self.only_modified, "Only modified").on_hover_text("Show controls that differ from their factory baseline, independently of an applied preset.");
                 ui.horizontal_wrapped(|ui| {
-                    // One segmented control: every page shares a frame, so the
-                    // current page reads as a position in a row rather than a
-                    // lone highlighted button. Segments take their natural
-                    // width, which fits the panel, so no label is clipped.
-                    for tab in GuiTab::ALL {
-                        let selected = self.gui_tab == tab;
-                        if ui
-                            .add(
-                                egui::Button::new(tab.label())
-                                    .selected(selected)
-                                    .corner_radius(theme::RADIUS_CARD),
-                            )
-                            .on_hover_text(tab.description())
-                            .clicked()
-                        {
-                            self.gui_tab = tab;
+                    for stage in controls::Stage::ALL {
+                        if ui.button(stage.label()).on_hover_text("Reveal and scroll to this stage in the continuous inspector.").clicked() {
+                            self.filter.clear();
+                            self.only_modified = false;
+                            self.pending_stage = Some(stage);
                         }
                     }
                 });
                 ui.separator();
-                ui.horizontal(|ui| {
-                    let label = ui.label("Filter controls");
-                    ui.text_edit_singleline(&mut self.filter)
-                        .labelled_by(label.id);
-                    // Clearing the filter restores the unfiltered controls; it
-                    // is transient state and touches neither parameters nor
-                    // persisted sections. The action appears only while a
-                    // filter is active, so it never suggests an empty filter.
-                    if !self.filter.is_empty() {
-                        let response = ui.button("clear filter").on_hover_text(
-                            "Clear the control filter and show every control of this page.",
-                        );
-                        if response.clicked() {
-                            self.filter.clear();
-                        }
-                    }
-                });
                 self.search_results(ui);
+                controls::install_view_filter(ui.ctx(), self.only_modified);
                 ui.add_space(theme::SPACE_ROW);
                 // Reserve the action bar's height below the scrollable
                 // controls, so the bar stays inside the panel.
                 let scroll_height =
                     (ui.available_height() - theme::HEIGHT_ACTION_BAR_RESERVE).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("controls-scroll")
+                    egui::ScrollArea::both()
+                        .id_salt(("controls-scroll", !self.filter.is_empty() || self.only_modified))
+                        .max_width(ui.available_width())
                         .auto_shrink([false, false])
                         .show(ui, |ui| self.controls_panel(ui));
+                    controls::install_view_filter(ui.ctx(), false);
                 });
                 ui.separator();
                 self.simulation_action_bar(ui);
@@ -1277,54 +1512,30 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    // Orientation: rotate the retained input. This is an
-                    // input change, not a viewer decoration: Preview, Scan and
-                    // Export render the rotated image.
-                    if ui
-                        .button("ccw rotate")
-                        .on_hover_text("Rotate the retained input 90° counter-clockwise. Rotation clears the retained output and schedules a new preview; Preview, Scan, and Export render the rotated input. Save writes only a retained output and cannot rerender it.")
-                        .clicked()
-                    {
-                        self.rotate_input_image_counterclockwise();
-                        ui.ctx().request_repaint();
-                    }
-                    if ui
-                        .button("cw rotate")
-                        .on_hover_text("Rotate the retained input 90° clockwise. Rotation clears the retained output and schedules a new preview; Preview, Scan, and Export render the rotated input. Save writes only a retained output and cannot rerender it.")
-                        .clicked()
-                    {
-                        self.rotate_input_image_clockwise();
-                        ui.ctx().request_repaint();
-                    }
-                    ui.separator();
+                    self.viewer.layer_controls(ui);
+                    ui.checkbox(&mut self.viewer.settings.reveal, "reveal transition").on_hover_text("Viewer-only wipe between input and output; retained and written pixels are unchanged.");
+                    ui.checkbox(&mut self.viewer.settings.crossfade, "crossfade transition").on_hover_text("Viewer-only transition between accepted outputs.");
                     // View: zoom presets and the fit reset. Exact percentages
                     // are a source-pixel-to-device-pixel scale, so 100% means
                     // one source pixel per device pixel.
                     for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
-                        if ui
-                            .button(label)
-                            .on_hover_text(format!(
-                                "Show the retained image at {percent:.0}% — one source pixel per device pixel at 100%. Viewer presentation only; retained, saved and exported pixels are unchanged."
-                            ))
-                            .clicked()
-                        {
+                        let response = ui.button(label).on_hover_text(format!("Show the retained image at {percent:.0}% — one source pixel per device pixel at 100%. Viewer only; retained and written pixels are unchanged."));
+                        let path = match label { "100%" => "viewer.zoom.100", "200%" => "viewer.zoom.200", _ => "viewer.zoom.400" };
+                        controls::locate_row(ui, path, &response);
+                        if response.clicked() {
                             self.viewer.set_zoom_percent(percent);
                             ui.ctx().request_repaint();
                         }
                     }
-                    if ui
-                        .button("fit")
-                        .on_hover_text("Return to the zoom that fits the retained image in the viewer window, leaving the pan where it is. Viewer presentation only; retained, saved and exported pixels are unchanged.")
-                        .clicked()
-                    {
+                    let fit = ui.button("fit").on_hover_text("Fit the retained image in the viewer, leaving pan unchanged. Viewer only.");
+                    controls::locate_row(ui, "viewer.fit", &fit);
+                    if fit.clicked() {
                         self.viewer.fit_view();
                         ui.ctx().request_repaint();
                     }
-                    if ui
-                        .button("reset view")
-                        .on_hover_text("Return to the fitted zoom and recenter the pan. Viewer presentation only; retained, saved and exported pixels are unchanged.")
-                        .clicked()
-                    {
+                    let reset = ui.button("reset view").on_hover_text("Fit and recenter the viewer. Retained and written pixels are unchanged.");
+                    controls::locate_row(ui, "viewer.reset", &reset);
+                    if reset.clicked() {
                         self.viewer.reset_view();
                         ui.ctx().request_repaint();
                     }
@@ -1335,21 +1546,22 @@ impl eframe::App for App {
                     } else {
                         "compare"
                     };
-                    if ui
-                        .selectable_label(self.compare_active, compare_label)
-                        .on_hover_text("Compare the retained input with the retained output side by side. The split moves where the before and after halves meet; both halves are viewer composition only and change neither retained, saved nor exported pixels.")
-                        .clicked()
-                    {
+                    let compare = ui.selectable_label(self.compare_active, compare_label).on_hover_text("Compare retained input and output side by side; the split is viewer-only.");
+                    controls::locate_row(ui, "viewer.compare", &compare);
+                    if compare.clicked() {
                         self.compare_active = !self.compare_active;
                         ui.ctx().request_repaint();
                     }
-                    if self.compare_active {
-                        ui.add_space(theme::SPACE_GROUP);
-                        let slider = ui.add(
+                    ui.add_space(theme::SPACE_GROUP);
+                    {
+                        let slider = ui.add_enabled(
+                            self.compare_active,
                             egui::Slider::new(&mut self.compare_split, 0.0..=1.0)
                                 .fixed_decimals(2)
                                 .trailing_fill(false),
                         );
+                        ui.ctx().accesskit_node_builder(slider.id, |node| node.set_label("comparison split"));
+                        controls::locate_row(ui, "viewer.compare_split", &slider);
                         if slider.changed() {
                             ui.ctx().request_repaint();
                         }
@@ -1363,6 +1575,9 @@ impl eframe::App for App {
                             .size(theme::SIZE_HINT),
                         )
                         .on_hover_text("Where the before and after halves meet. The retained input stays left of the split and the retained output right of it; neither half reaches saved or exported pixels.");
+                        if !self.compare_active {
+                            ui.label(egui::RichText::new("Comparison split inactive · enable compare; stored split retained.").color(theme::FG_MUTED).small());
+                        }
                     }
                     ui.separator();
                     // Read-only: the current zoom.
@@ -1378,7 +1593,6 @@ impl eframe::App for App {
                     .on_hover_text("Read-only zoom status: the fitted zoom, or the exact source-pixel-to-device-pixel percentage. Viewer presentation only.");
                 });
             });
-            self.viewer.layer_controls(ui);
             self.viewer
                 .set_display_max_size(self.params.settings.preview_max_size);
             self.viewer.set_compare_split(if self.compare_active {
@@ -1428,6 +1642,10 @@ impl eframe::App for App {
         if let Some(path) = dropped.into_iter().next() {
             self.load_image_from_path(&path);
         }
+        self.end_adjustment_frame(ctx);
+        self.settings_dialog(ctx);
+        self.sync_display_controls();
+        controls::end_control_frame();
     }
 
     /// Cancel pending export publication and drain its worker before exiting.

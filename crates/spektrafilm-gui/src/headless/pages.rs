@@ -1,9 +1,45 @@
 use super::*;
 
-/// The Convert calibration matrix editor is a plain text field beside its
-/// visible "calibration" label, so it is selected by role instead of by label;
-/// typing then follows the same replace-and-commit flow as `edit`.
+fn edit_control(h: &mut Harness<'_, App>, path: &str, label: &str, text: &str) {
+    reveal_control(h, path);
+    edit(h, label, text);
+}
+
+fn choose_control(h: &mut Harness<'_, App>, path: &str, label: &str, option: &str) {
+    reveal_control(h, path);
+    choose(h, label, option);
+}
+
+fn toggle_control(h: &mut Harness<'_, App>, path: &str, label: &str) {
+    reveal_control(h, path);
+    scroll_controls_into_view(h, label);
+    let node = h
+        .query_by_role_and_label(egui::accesskit::Role::Switch, label)
+        .or_else(|| h.query_by_role_and_label(egui::accesskit::Role::CheckBox, label))
+        .unwrap_or_else(|| panic!("No boolean editor found for {path}: {label}"));
+    node.simulate_click();
+    h.run_steps(3);
+}
+
+fn set_route(h: &mut Harness<'_, App>, route: &str) {
+    choose_control(h, "workflow.route", "workflow", route);
+    assert_eq!(h.state().params.workflow.route, route);
+}
+
+fn select_film(h: &mut Harness<'_, App>, label: &str) {
+    search_controls(h, "");
+    navigate_stage(h, controls::Stage::Film);
+    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+        .is_none()
+    {
+        click(h, "Film material");
+    }
+    choose(h, "film profile", label);
+}
+
+/// Convert retains its free-form calibration editor beside the matrix rows.
 fn edit_calibration(h: &mut Harness<'_, App>, text: &str) {
+    reveal_control(h, "film_render.convert.calibration");
     let field = h.get(
         egui_kittest::kittest::by()
             .role(egui::accesskit::Role::TextInput)
@@ -11,20 +47,7 @@ fn edit_calibration(h: &mut Harness<'_, App>, text: &str) {
     );
     field.focus();
     h.step();
-    // egui's command modifier is platform dependent; no global environment changes.
-    h.input_mut().events.push(egui::Event::Key {
-        key: egui::Key::A,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers {
-            ctrl: !cfg!(target_os = "macos"),
-            mac_cmd: cfg!(target_os = "macos"),
-            command: true,
-            ..Default::default()
-        },
-    });
-    h.step();
+    h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     h.input_mut()
         .events
         .push(egui::Event::Text(text.to_owned()));
@@ -33,11 +56,8 @@ fn edit_calibration(h: &mut Harness<'_, App>, text: &str) {
     h.run_steps(3);
 }
 
-/// Save the accepted GUI state to a scripted destination, prove the document
-/// itself projects back to the accepted runtime parameters, run `between` to
-/// move the live state away from the saved one, then load the file back and
-/// require the exact accepted parameters again (the canonical-state roundtrip
-/// from `workflow.rs`).
+/// Exercise the production Settings state writer and loader, not a runtime-only
+/// serialization roundtrip. Dialog navigation must not change accepted values.
 fn save_mutate_and_reload(
     s: &mut Session,
     file_name: &str,
@@ -45,7 +65,7 @@ fn save_mutate_and_reload(
 ) {
     let accepted = s.harness.state().params.clone();
     let path = s.directory.path().join(file_name);
-    click(&mut s.harness, "CONFIG");
+    open_settings(&mut s.harness);
     if s.harness.query_by_label("Save current to file").is_none() {
         click(&mut s.harness, "GUI parameters");
     }
@@ -66,8 +86,9 @@ fn save_mutate_and_reload(
             .unwrap(),
         accepted
     );
+    close_settings(&mut s.harness);
     between(&mut s.harness);
-    click(&mut s.harness, "CONFIG");
+    open_settings(&mut s.harness);
     if s.harness.query_by_label("Load from file").is_none() {
         click(&mut s.harness, "GUI parameters");
     }
@@ -79,69 +100,56 @@ fn save_mutate_and_reload(
         s.harness.state().status
     );
     assert_eq!(s.harness.state().params, accepted);
-}
-/// Address a collapsible parameter section by its button role. Some sections
-/// share their visible title with a top-level workflow toggle, so a plain
-/// label query is intentionally not used here.
-fn click_section(h: &mut Harness<'_, App>, label: &str) {
-    scroll_controls_into_view(h, label);
-    h.get_by_role_and_label(egui::accesskit::Role::Button, label)
-        .simulate_click();
-    h.run_steps(3);
+    close_settings(&mut s.harness);
 }
 
-// The FILM page keeps every material section expanded into the shared control
-// panel; driving one section at a time keeps their repeated labels ("active",
-// "scale", …) unambiguous without any production hooks.
 #[test]
-fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_save_load() {
+fn film_chemistry_material_and_capture_controls_accept_edits_and_persist() {
     let mut s = session();
     let h = &mut s.harness;
-    // A B&W stock with a development-time family gives the Chemistry
-    // development-time selector real alternatives to pick from.
-    click(h, "Profiles");
     let double_x = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
-    let double_x_label = double_x
-        .info
-        .name
-        .as_deref()
-        .unwrap_or("kodak_doublex")
-        .to_owned();
-    choose(h, "film profile", &double_x_label);
+    select_film(h, double_x.info.name.as_deref().unwrap_or("kodak_doublex"));
     assert_eq!(h.state().film_name, "kodak_doublex");
-    choose(h, "workflow", "input > film > scan");
-    assert_eq!(h.state().params.workflow.route, "input > film > scan");
-    click(h, "FILM");
-    click(h, "Grain");
+    set_route(h, "input > film > scan");
 
-    click(h, "Base");
     let base_active = h.state().params.film_render.base.active;
-    click(h, "Enable film base");
-    edit(h, "scale", "1.25");
-    edit(h, "tilt", "0.75");
+    toggle_control(h, "film_render.base.active", "Enable film base");
+    edit_control(h, "film_render.base.scale", "scale", "1.25");
+    edit_control(h, "film_render.base.tilt", "tilt", "0.75");
     assert_eq!(h.state().params.film_render.base.active, !base_active);
     assert_eq!(h.state().params.film_render.base.scale, 1.25);
     assert_eq!(h.state().params.film_render.base.tilt, 0.75);
-    click(h, "Base");
 
-    click(h, "Halation");
     let halation_active = h.state().params.film_render.halation.active;
-    click(h, "Enable halation");
-    edit(h, "scatter amount", "0.25");
-    edit(h, "boost ev", "1.5");
+    toggle_control(h, "film_render.halation.active", "Enable halation");
+    edit_control(
+        h,
+        "film_render.halation.scatter_amount",
+        "scatter amount",
+        "0.25",
+    );
+    edit_control(h, "film_render.halation.boost_ev", "boost ev", "1.5");
     assert_eq!(
         h.state().params.film_render.halation.active,
         !halation_active
     );
     assert_eq!(h.state().params.film_render.halation.scatter_amount, 0.25);
     assert_eq!(h.state().params.film_render.halation.boost_ev, 1.5);
-    click(h, "Halation");
 
-    click(h, "Couplers");
     let couplers_active = h.state().params.film_render.dir_couplers.active;
-    click(h, "Enable DIR couplers");
-    edit(h, "inhibition amount", "1.5");
-    edit(h, "inhibition samelayer", "0.75");
+    toggle_control(h, "film_render.dir_couplers.active", "Enable DIR couplers");
+    edit_control(
+        h,
+        "film_render.dir_couplers.amount",
+        "inhibition amount",
+        "1.5",
+    );
+    edit_control(
+        h,
+        "film_render.dir_couplers.inhibition_samelayer",
+        "inhibition samelayer",
+        "0.75",
+    );
     assert_eq!(
         h.state().params.film_render.dir_couplers.active,
         !couplers_active
@@ -155,13 +163,16 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
             .inhibition_samelayer,
         0.75
     );
-    click(h, "Couplers");
 
-    click(h, "Diffusion");
     let diffusion_active = h.state().params.camera.diffusion_filter.active;
-    click(h, "Camera diffusion");
-    choose(h, "filter family", "cinebloom");
-    edit(h, "strength", "0.5");
+    toggle_control(h, "camera.diffusion_filter.active", "Camera diffusion");
+    choose_control(
+        h,
+        "camera.diffusion_filter.filter_family",
+        "filter family",
+        "cinebloom",
+    );
+    edit_control(h, "camera.diffusion_filter.strength", "strength", "0.5");
     assert_eq!(
         h.state().params.camera.diffusion_filter.active,
         !diffusion_active
@@ -171,14 +182,31 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
         "cinebloom"
     );
     assert_eq!(h.state().params.camera.diffusion_filter.strength, 0.5);
-    click(h, "Diffusion");
 
-    click(h, "Chemistry");
-    choose(h, "development time", "9 min");
+    choose_control(
+        h,
+        "film_render.development_time",
+        "development time",
+        "9 min",
+    );
     let chemistry_active = h.state().params.film_render.chemistry.active;
-    click(h, "Enable film density curves");
-    edit(h, "gamma factor", "1.25");
-    edit(h, "developer exhaustion", "0.375");
+    toggle_control(
+        h,
+        "film_render.chemistry.active",
+        "Enable film density curves",
+    );
+    edit_control(
+        h,
+        "film_render.chemistry.gamma_factor",
+        "gamma factor",
+        "1.25",
+    );
+    edit_control(
+        h,
+        "film_render.chemistry.developer_exhaustion",
+        "developer exhaustion",
+        "0.375",
+    );
     assert_eq!(h.state().params.film_render.development_time, Some(9.0));
     assert_eq!(
         h.state().params.film_render.chemistry.active,
@@ -189,54 +217,58 @@ fn film_page_chemistry_and_material_controls_accept_edits_and_persist_through_sa
         h.state().params.film_render.chemistry.developer_exhaustion,
         0.375
     );
-    click(h, "Chemistry");
 
-    click(h, "Convert");
     edit_calibration(h, "1.05 0 0  0 1 0  0 0 0.95");
     assert_eq!(
         h.state().params.film_render.convert.calibration,
         "1.05 0 0  0 1 0  0 0 0.95"
     );
-    click(h, "Convert");
-
-    click(h, "Halation");
     let before_reject = h.state().params.clone();
-    edit(h, "scatter amount", "not-a-number");
+    edit_control(
+        h,
+        "film_render.halation.scatter_amount",
+        "scatter amount",
+        "not-a-number",
+    );
     assert_eq!(h.state().params, before_reject);
     assert_eq!(
-        h.get_by_label("scatter amount").value().as_deref(),
-        Some("0.25")
+        h.get_by_label("scatter amount")
+            .value()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap(),
+        0.25
     );
-    click(h, "Halation");
 
-    save_mutate_and_reload(&mut s, "film-page.json", |h| {
-        click(h, "FILM");
-        click(h, "Base");
-        edit(h, "tilt", "-0.5");
+    save_mutate_and_reload(&mut s, "film-controls.json", |h| {
+        edit_control(h, "film_render.base.tilt", "tilt", "-0.5");
         assert_eq!(h.state().params.film_render.base.tilt, -0.5);
     });
 }
 
-// PRINT page sections share the FILM page's repeated labels across Chemistry,
-// Print base, Glare and Enlarger diffusion; same one-section-at-a-time drive.
 #[test]
-fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist_through_save_load()
- {
+fn print_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persist() {
     let mut s = session();
     let h = &mut s.harness;
-    // Glare and the enlarger controls are only active on printing routes.
-    choose(h, "workflow", "input > film > print > scan");
-    assert_eq!(
-        h.state().params.workflow.route,
-        "input > film > print > scan"
-    );
-    click(h, "PRINT");
-
-    click(h, "Chemistry");
+    set_route(h, "input > film > print > scan");
     let chemistry_active = h.state().params.print_render.density_curves_morph.active;
-    click(h, "Enable print density curves");
-    edit(h, "gamma factor", "1.5");
-    edit(h, "developer exhaustion", "0.375");
+    toggle_control(
+        h,
+        "print_render.density_curves_morph.active",
+        "Enable print density curves",
+    );
+    edit_control(
+        h,
+        "print_render.density_curves_morph.gamma_factor",
+        "gamma factor",
+        "1.5",
+    );
+    edit_control(
+        h,
+        "print_render.density_curves_morph.developer_exhaustion",
+        "developer exhaustion",
+        "0.375",
+    );
     assert_eq!(
         h.state().params.print_render.density_curves_morph.active,
         !chemistry_active
@@ -257,34 +289,38 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
             .developer_exhaustion,
         0.375
     );
-    click(h, "Chemistry");
 
-    click(h, "Base");
     let base_active = h.state().params.print_render.base.active;
-    click(h, "Enable print base");
-    edit(h, "scale", "1.25");
-    edit(h, "cyan", "0.75");
+    toggle_control(h, "print_render.base.active", "Enable print base");
+    edit_control(h, "print_render.base.scale", "scale", "1.25");
+    edit_control(h, "print_render.base.cyan", "cyan", "0.75");
     assert_eq!(h.state().params.print_render.base.active, !base_active);
     assert_eq!(h.state().params.print_render.base.scale, 1.25);
     assert_eq!(h.state().params.print_render.base.cyan, 0.75);
-    click(h, "Base");
 
-    click(h, "Print viewing glare");
     let glare_active = h.state().params.print_render.glare.active;
-    click(h, "Enable print glare");
-    edit(h, "percent", "0.25");
-    edit(h, "roughness", "0.5");
+    toggle_control(h, "print_render.glare.active", "Enable print glare");
+    edit_control(h, "print_render.glare.percent", "percent", "0.25");
+    edit_control(h, "print_render.glare.roughness", "roughness", "0.5");
     assert_eq!(h.state().params.print_render.glare.active, !glare_active);
     assert_eq!(h.state().params.print_render.glare.percent, 0.25);
     assert_eq!(h.state().params.print_render.glare.roughness, 0.5);
-    click(h, "Print viewing glare");
 
-    click(h, "Diffusion");
     let diffusion_active = h.state().params.enlarger.diffusion_filter.active;
-    click(h, "Enlarger diffusion");
-    choose(h, "filter family", "black_pro_mist");
-    edit(h, "strength", "0.375");
-    edit(h, "halo warmth", "0.25");
+    toggle_control(h, "enlarger.diffusion_filter.active", "Enlarger diffusion");
+    choose_control(
+        h,
+        "enlarger.diffusion_filter.filter_family",
+        "filter family",
+        "black_pro_mist",
+    );
+    edit_control(h, "enlarger.diffusion_filter.strength", "strength", "0.375");
+    edit_control(
+        h,
+        "enlarger.diffusion_filter.halo_warmth",
+        "halo warmth",
+        "0.25",
+    );
     assert_eq!(
         h.state().params.enlarger.diffusion_filter.active,
         !diffusion_active
@@ -295,41 +331,50 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
     );
     assert_eq!(h.state().params.enlarger.diffusion_filter.strength, 0.375);
     assert_eq!(h.state().params.enlarger.diffusion_filter.halo_warmth, 0.25);
-    click(h, "Diffusion");
 
-    click(h, "Print viewing glare");
     let before_reject = h.state().params.clone();
-    edit(h, "percent", "not-a-number");
+    edit_control(h, "print_render.glare.percent", "percent", "not-a-number");
     assert_eq!(h.state().params, before_reject);
-    assert_eq!(h.get_by_label("percent").value().as_deref(), Some("0.25"));
-    click(h, "Print viewing glare");
-
-    save_mutate_and_reload(&mut s, "print-page.json", |h| {
-        click(h, "PRINT");
-        click(h, "Base");
-        edit(h, "scale", "0.5");
+    assert_eq!(
+        h.get_by_label("percent")
+            .value()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap(),
+        0.25
+    );
+    save_mutate_and_reload(&mut s, "print-controls.json", |h| {
+        edit_control(h, "print_render.base.scale", "scale", "0.5");
         assert_eq!(h.state().params.print_render.base.scale, 0.5);
     });
 }
 
-// ADVANCED + PRINT pages: spectral upsampling, CMYK ink style strength and the
-// input/output gamut compression strengths (never their algorithm selectors).
 #[test]
-fn advanced_and_print_page_spectral_cmyk_and_gamut_controls_accept_edits_and_persist_through_save_load()
- {
+fn spectral_cmyk_and_gamut_controls_accept_edits_and_persist() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "ADVANCED");
-
-    click(h, "Spectral upsampling");
-    choose(h, "spectral upsampling", "mallett2019");
+    choose_control(
+        h,
+        "settings.rgb_to_raw_method",
+        "spectral upsampling",
+        "mallett2019",
+    );
     let adaptation_window = h
         .state()
         .params
         .settings
         .apply_hanatos2025_adaptation_window;
-    click(h, "hanatos2025 adaptation window");
-    edit(h, "spectral gaussian blur", "2.5");
+    toggle_control(
+        h,
+        "settings.apply_hanatos2025_adaptation_window",
+        "hanatos2025 adaptation window",
+    );
+    edit_control(
+        h,
+        "settings.spectral_gaussian_blur",
+        "spectral gaussian blur",
+        "2.5",
+    );
     assert_eq!(h.state().params.settings.rgb_to_raw_method, "mallett2019");
     assert_eq!(
         h.state()
@@ -339,14 +384,21 @@ fn advanced_and_print_page_spectral_cmyk_and_gamut_controls_accept_edits_and_per
         !adaptation_window
     );
     assert_eq!(h.state().params.settings.spectral_gaussian_blur, 2.5);
-    click(h, "Spectral upsampling");
 
-    click(h, "Input gamut compress");
     let compress_active = h.state().params.io.input_gamut_compress.active;
-    click(h, "Enable input gamut compress");
-    edit(h, "knee threshold", "0.75");
-    edit(h, "knee power", "1.5");
-    edit(h, "hull detail", "12");
+    toggle_control(
+        h,
+        "io.input_gamut_compress.active",
+        "Enable input gamut compress",
+    );
+    edit_control(h, "io.input_gamut_compress.knee", "knee threshold", "0.75");
+    edit_control(h, "io.input_gamut_compress.knee", "knee power", "1.5");
+    edit_control(
+        h,
+        "io.input_gamut_compress.hull_detail",
+        "hull detail",
+        "12",
+    );
     assert_eq!(
         h.state().params.io.input_gamut_compress.active,
         !compress_active
@@ -354,69 +406,74 @@ fn advanced_and_print_page_spectral_cmyk_and_gamut_controls_accept_edits_and_per
     assert_eq!(h.state().params.io.input_gamut_compress.knee[0], 0.75);
     assert_eq!(h.state().params.io.input_gamut_compress.knee[2], 1.5);
     assert_eq!(h.state().params.io.input_gamut_compress.hull_detail, 12.0);
-    click(h, "Input gamut compress");
-
-    click(h, "Output gamut compress");
-    edit(h, "knee threshold", "0.5");
-    edit(h, "knee power", "4.5");
+    edit_control(h, "io.output_gamut_compress.knee", "knee threshold", "0.5");
+    edit_control(h, "io.output_gamut_compress.knee", "knee power", "4.5");
     assert_eq!(h.state().params.io.output_gamut_compress.knee[0], 0.5);
     assert_eq!(h.state().params.io.output_gamut_compress.knee[2], 4.5);
-    click(h, "Output gamut compress");
 
-    click(h, "PRINT");
-    click_section(h, "CMYK ink style");
-    edit(h, "strength", "0.75");
+    edit_control(h, "cmyk.strength", "strength", "0.75");
     assert_eq!(h.state().params.cmyk.strength, 0.75);
-    click_section(h, "CMYK ink style");
-
-    click_section(h, "CMYK ink style");
     let before_reject = h.state().params.clone();
     edit(h, "strength", "not-a-number");
     assert_eq!(h.state().params, before_reject);
-    assert_eq!(h.get_by_label("strength").value().as_deref(), Some("0.75"));
-    click_section(h, "CMYK ink style");
-
-    save_mutate_and_reload(&mut s, "advanced-page.json", |h| {
-        click(h, "PRINT");
-        click_section(h, "CMYK ink style");
-        edit(h, "strength", "0.25");
+    assert_eq!(
+        h.get_by_label("strength")
+            .value()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap(),
+        0.75
+    );
+    save_mutate_and_reload(&mut s, "spectral-controls.json", |h| {
+        edit_control(h, "cmyk.strength", "strength", "0.25");
         assert_eq!(h.state().params.cmyk.strength, 0.25);
     });
 }
 
-// MAIN page singles: CMYK ink style, Camera film format and selectors, the
-// print-active Enlarger block including preflash, and Crop and upscale whose
-// normalized crop moves the source window before the upscale resamples it.
 #[test]
-fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_accepted_params_geometry_and_persist() {
+fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persist() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "input > film > print > scan");
-    assert_eq!(
-        h.state().params.workflow.route,
-        "input > film > print > scan"
-    );
-
+    set_route(h, "input > film > print > scan");
     let cmyk_active = h.state().params.cmyk.active;
-    click(h, "CMYK ink style");
+    toggle_control(h, "cmyk.active", "Enable CMYK ink style");
     assert_eq!(h.state().params.cmyk.active, !cmyk_active);
-    click(h, "CMYK ink style");
+    toggle_control(h, "cmyk.active", "Enable CMYK ink style");
     assert_eq!(h.state().params.cmyk.active, cmyk_active);
 
-    edit(h, "film format mm", "56");
-    choose(h, "auto exposure method", "matrix");
-    choose(h, "color filter", "hoya_y2");
+    edit_control(h, "camera.film_format_mm", "film format mm", "56");
+    choose_control(
+        h,
+        "camera.auto_exposure_method",
+        "auto exposure method",
+        "matrix",
+    );
+    choose_control(h, "camera.color_filter", "color filter", "hoya_y2");
     assert_eq!(h.state().params.camera.film_format_mm, 56.0);
     assert_eq!(h.state().params.camera.auto_exposure_method, "matrix");
     assert_eq!(h.state().params.camera.color_filter, "hoya_y2");
-
-    edit(h, "print exposure", "0.5");
-    choose(h, "print exposure mode", "manual");
-    edit(h, "print y filter shift", "0.75");
-    edit(h, "print m filter shift", "-0.5");
-    edit(h, "preflash exposure", "0.25");
-    edit(h, "preflash y filter shift", "1.5");
-    edit(h, "preflash m filter shift", "-0.75");
+    edit_control(h, "enlarger.print_exposure", "print exposure", "0.5");
+    choose_control(
+        h,
+        "enlarger.print_exposure_mode",
+        "print exposure mode",
+        "manual",
+    );
+    edit_control(h, "enlarger.y_filter_shift", "print y filter shift", "0.75");
+    edit_control(h, "enlarger.m_filter_shift", "print m filter shift", "-0.5");
+    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0.25");
+    edit_control(
+        h,
+        "enlarger.preflash_y_filter_shift",
+        "preflash y filter shift",
+        "1.5",
+    );
+    edit_control(
+        h,
+        "enlarger.preflash_m_filter_shift",
+        "preflash m filter shift",
+        "-0.75",
+    );
     assert_eq!(h.state().params.enlarger.print_exposure, 0.5);
     assert_eq!(
         h.state().params.enlarger.print_exposure_mode,
@@ -428,23 +485,18 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_accepted_params_geometry_
     assert_eq!(h.state().params.enlarger.preflash_y_filter_shift, 1.5);
     assert_eq!(h.state().params.enlarger.preflash_m_filter_shift, -0.75);
 
-    click(h, "Crop and upscale");
-    edit(h, "crop center x", "0.25");
-    edit(h, "crop center y", "0.5");
-    edit(h, "crop size x", "0.5");
-    edit(h, "crop size y", "0.5");
-    click(h, "crop");
+    edit_control(h, "io.crop_center", "crop center x", "0.25");
+    edit_control(h, "io.crop_center", "crop center y", "0.5");
+    edit_control(h, "io.crop_size", "crop size x", "0.5");
+    edit_control(h, "io.crop_size", "crop size y", "0.5");
+    toggle_control(h, "io.crop", "crop");
     assert!(h.state().params.io.crop);
     assert_eq!(h.state().params.io.crop_center, [0.25, 0.5]);
     assert_eq!(h.state().params.io.crop_size, [0.5, 0.5]);
-
-    // The input route keeps the input ramp's polarity, so the crop window's
-    // source region is observable in the output pixels.
-    choose(h, "workflow", "input");
-    assert_eq!(h.state().params.workflow.route, "input");
+    set_route(h, "input");
     let left = render(h, "SCAN");
     assert_eq!((left.width, left.height), (80, 80));
-    edit(h, "crop center x", "0.75");
+    edit_control(h, "io.crop_center", "crop center x", "0.75");
     assert_eq!(h.state().params.io.crop_center, [0.75, 0.5]);
     let right = render(h, "SCAN");
     assert_eq!((right.width, right.height), (80, 80));
@@ -454,55 +506,49 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_accepted_params_geometry_
         mean(&left),
         mean(&right)
     );
-    edit(h, "upscale factor", "2");
+    edit_control(h, "io.upscale_factor", "upscale factor", "2");
     assert_eq!(h.state().params.io.upscale_factor, 2.0);
     let up = render(h, "SCAN");
     assert_eq!((up.width, up.height), (160, 160));
-    click(h, "crop");
+    toggle_control(h, "io.crop", "crop");
     assert!(!h.state().params.io.crop);
     let full = render(h, "SCAN");
     assert_eq!((full.width, full.height), (320, 160));
-
     let before_reject = h.state().params.clone();
-    edit(h, "upscale factor", "not-a-number");
+    edit_control(h, "io.upscale_factor", "upscale factor", "not-a-number");
     assert_eq!(h.state().params, before_reject);
     assert_eq!(
-        h.get_by_label("upscale factor").value().as_deref(),
-        Some("2.00")
+        h.get_by_label("upscale factor")
+            .value()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap(),
+        2.0
     );
-
-    save_mutate_and_reload(&mut s, "main-page.json", |h| {
-        click(h, "MAIN");
-        edit(h, "film format mm", "42");
+    save_mutate_and_reload(&mut s, "capture-controls.json", |h| {
+        edit_control(h, "camera.film_format_mm", "film format mm", "42");
         assert_eq!(h.state().params.camera.film_format_mm, 42.0);
     });
 }
 
-// specs/output-mix/spec.md: Simulation blend blends the prepared source
-// with the complete result in linear output RGB — exact endpoints and a known
-// intermediate mixture, driven through the real MAIN Output scenario.
 #[test]
-fn overall_effect_amount_scales_render_between_prepared_source_and_complete_result() {
+fn simulation_blend_scales_render_between_prepared_source_and_complete_result() {
     use spektrafilm_math::colorspace::{cctf_decode, resolve};
-
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "input > film > scan");
-    assert_eq!(h.state().params.workflow.route, "input > film > scan");
-
+    set_route(h, "input > film > scan");
     assert_eq!(h.state().params.output_mix.amount, 1.0);
     let complete = render(h, "PREVIEW");
-    edit(h, "Simulation blend", "0.0");
+    edit_control(h, "output_mix.amount", "Simulation blend", "0.0");
     assert_eq!(h.state().params.output_mix.amount, 0.0);
     let prepared = render(h, "PREVIEW");
-    assert!(
-        prepared.data != complete.data,
+    assert_ne!(
+        prepared.data, complete.data,
         "amount 0 and 1 must reach distinct mix branches"
     );
-    edit(h, "Simulation blend", "0.25");
+    edit_control(h, "output_mix.amount", "Simulation blend", "0.25");
     assert_eq!(h.state().params.output_mix.amount, 0.25);
     let mixed = render(h, "PREVIEW");
-
     let space = resolve(&h.state().output_color_space).unwrap();
     let encoded = h.state().output_cctf_encoding;
     let linear = |value: f64| {
@@ -522,23 +568,40 @@ fn overall_effect_amount_scales_render_between_prepared_source_and_complete_resu
             "mixed sample {actual} differs from interpolated {expected}"
         );
     }
-    assert!(mixed.data != complete.data);
-    assert!(mixed.data != prepared.data);
-
+    assert_ne!(mixed.data, complete.data);
+    assert_ne!(mixed.data, prepared.data);
     let before_reject = h.state().params.clone();
     edit(h, "Simulation blend", "not-a-number");
     assert_eq!(h.state().params, before_reject);
     assert_eq!(
-        h.get_by_label("Simulation blend").value().as_deref(),
-        Some("0.250")
+        h.get_by_label("Simulation blend")
+            .value()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap(),
+        0.25
     );
 
-    choose(h, "output color space", "Display P3");
-    choose(h, "saving color space", "ProPhoto RGB");
+    choose_control(
+        h,
+        "io.output_color_space",
+        "output color space",
+        "Display P3",
+    );
+    choose_control(
+        h,
+        "extras.simulation.saving_color_space",
+        "saving color space",
+        "ProPhoto RGB",
+    );
     let saving_cctf = h.state().gui_state.sections["simulation"]["saving_cctf_encoding"]
         .as_bool()
         .unwrap_or(true);
-    click(h, "saving cctf encoding");
+    toggle_control(
+        h,
+        "extras.simulation.saving_cctf_encoding",
+        "saving cctf encoding",
+    );
     assert_eq!(h.state().params.io.output_color_space, "Display P3");
     assert_eq!(
         h.state().gui_state.sections["simulation"]["saving_color_space"].as_str(),
@@ -549,10 +612,7 @@ fn overall_effect_amount_scales_render_between_prepared_source_and_complete_resu
         Some(!saving_cctf)
     );
 
-    // The Display update button must request a preview at the new max size
-    // without any further PREVIEW click.
-    click(h, "CONFIG");
-    click(h, "Display");
+    reveal_control(h, "settings.preview_max_size");
     edit(h, "preview max size", "256");
     assert_eq!(h.state().params.settings.preview_max_size, 256);
     let previous = h.state().output_image.clone();
@@ -574,530 +634,602 @@ fn overall_effect_amount_scales_render_between_prepared_source_and_complete_resu
         h.state().gui_state.sections["display"]["preview_max_size"].as_u64(),
         Some(256)
     );
-
+    close_settings(h);
     save_mutate_and_reload(&mut s, "output-mix.json", |h| {
-        click(h, "MAIN");
-        edit(h, "Simulation blend", "0.75");
+        edit_control(h, "output_mix.amount", "Simulation blend", "0.75");
         assert_eq!(h.state().params.output_mix.amount, 0.75);
     });
 }
 
-/// Replace the control-search filter through the search box above the tabs.
-fn search(h: &mut Harness<'_, App>, text: &str) {
-    h.get_by_label("Filter controls").focus();
-    h.step();
-    h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-    if text.is_empty() {
-        h.press_key(egui::Key::Backspace);
-    } else {
-        h.get_by_label("Filter controls").type_text(text);
+#[test]
+fn preflash_zero_and_nonprinting_route_retain_independent_filters_and_main_exposure() {
+    let mut s = session();
+    let h = &mut s.harness;
+    set_route(h, "input > film > print > scan");
+    edit_control(h, "enlarger.print_exposure", "print exposure", "0.5");
+    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0.25");
+    edit_control(
+        h,
+        "enlarger.preflash_y_filter_shift",
+        "preflash y filter shift",
+        "1.5",
+    );
+    edit_control(
+        h,
+        "enlarger.preflash_m_filter_shift",
+        "preflash m filter shift",
+        "-0.75",
+    );
+    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0");
+    assert_eq!(h.state().params.enlarger.preflash_exposure, 0.0);
+    assert_eq!(h.state().params.enlarger.preflash_y_filter_shift, 1.5);
+    assert_eq!(h.state().params.enlarger.preflash_m_filter_shift, -0.75);
+    assert_eq!(h.state().params.enlarger.print_exposure, 0.5);
+    let retained = h.state().params.enlarger.clone();
+    set_route(h, "input > film > scan");
+    for (path, label) in [
+        ("enlarger.preflash_exposure", "preflash exposure"),
+        (
+            "enlarger.preflash_y_filter_shift",
+            "preflash y filter shift",
+        ),
+        (
+            "enlarger.preflash_m_filter_shift",
+            "preflash m filter shift",
+        ),
+    ] {
+        reveal_control(h, path);
+        assert!(
+            h.get_by_label(label).node().is_disabled(),
+            "inactive row {path} must be readable and not editable"
+        );
+        assert_eq!(h.state().params.enlarger, retained);
     }
-    h.run_steps(3);
+    set_route(h, "input > film > print > scan");
+    reveal_control(h, "enlarger.preflash_y_filter_shift");
+    assert!(
+        !h.get_by_label("preflash y filter shift")
+            .node()
+            .is_disabled()
+    );
+    assert_eq!(h.state().params.enlarger, retained);
 }
 
-// specs/gui-workflow/spec.md#control-search: the box filters the parameter
-// controls by label within the active tab, reveals the matching controls of a
-// collapsed section, hides the sections without a match, and leaves parameter
-// values and the saved sections untouched.
 #[test]
-fn control_search_filters_controls_and_hides_sections_without_matches() {
+fn canonical_search_reveals_unselected_grain_engines_without_mutating_values() {
     let mut s = session();
     let h = &mut s.harness;
-    let params_before = h.state().params.clone();
-    let sections_before = h.state().gui_state.sections.clone();
-    assert_eq!(
-        h.get_by_label("Filter controls").role(),
-        egui::accesskit::Role::TextInput
+    choose_control(h, "film_render.grain.engine", "Engine", "Spektra");
+    let params = h.state().params.clone();
+    let sections = h.state().gui_state.sections.clone();
+    for (path, label) in [
+        ("film_render.grain.fotufilm.rms_density", "RMS density"),
+        ("film_render.grain.v3_event_area_um2", "Event area (µm²)"),
+        ("film_render.grain.v2_timer", "Timer"),
+    ] {
+        reveal_control(h, path);
+        assert!(
+            h.get_by_label(label).node().is_disabled(),
+            "unselected engine control {path} must be read-only"
+        );
+        assert_eq!(h.state().params, params);
+        assert_eq!(h.state().gui_state.sections, sections);
+    }
+    choose_control(h, "film_render.grain.engine", "Engine", "Fotufilm Film");
+    edit_control(
+        h,
+        "film_render.grain.fotufilm.rms_density",
+        "RMS density",
+        "0.04",
     );
+    let fotufilm = h.state().params.film_render.grain.fotufilm.clone();
+    choose_control(h, "film_render.grain.engine", "Engine", "Dye");
+    edit_control(
+        h,
+        "film_render.grain.v3_event_area_um2",
+        "Event area (µm²)",
+        "0.5",
+    );
+    let event_area = h.state().params.film_render.grain.v3_event_area_um2;
+    choose_control(h, "film_render.grain.engine", "Engine", "Fotufilm Film");
+    reveal_control(h, "film_render.grain.fotufilm.rms_density");
+    assert!(!h.get_by_label("RMS density").node().is_disabled());
+    assert_eq!(h.state().params.film_render.grain.fotufilm, fotufilm);
+    assert_eq!(
+        h.state().params.film_render.grain.v3_event_area_um2,
+        event_area
+    );
+}
 
-    // The Camera section is open by default; Crop and upscale is collapsed.
-    assert!(h.query_by_label("exposure compensation ev").is_some());
-    assert!(h.query_by_label("upscale factor").is_none());
-
-    search(h, "UPSCALE");
-
-    // Case-insensitive substring matching reveals the matching control of the
-    // collapsed section and drops the sections that do not match.
-    assert!(h.query_by_label("Crop and upscale").is_some());
+#[test]
+fn control_search_by_label_module_and_path_never_changes_parameters_or_saved_sections() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let params = h.state().params.clone();
+    let sections = h.state().gui_state.sections.clone();
+    search_controls(h, "UPSCALE");
     assert!(h.query_by_label("upscale factor").is_some());
-    assert!(h.query_by_label("exposure compensation ev").is_none());
-    assert!(h.query_by_label("print exposure").is_none());
-    assert!(h.query_by_label("Simulation blend").is_none());
-    // The import surface keeps its normal layout while the filter is active.
-    assert!(h.query_all_by_label("workflow").next().is_some());
-
-    search(h, "no-such-control-label");
+    search_controls(h, "Halation");
+    assert!(h.query_by_label("scatter amount").is_some());
+    reveal_control(h, "film_render.chemistry.active");
+    assert!(h.query_by_label("Enable film density curves").is_some());
+    reveal_control(h, "print_render.density_curves_morph.active");
+    assert!(h.query_by_label("Enable print density curves").is_some());
+    search_controls(h, "no-such-control-label");
     assert!(h.query_by_label("upscale factor").is_none());
-    assert!(h.query_by_label("exposure compensation ev").is_none());
-
-    // A group of controls between two route states is reachable by the full
-    // label of each member, not only by the shared prefix.
-    search(h, "preflash exposure");
-    assert!(h.query_by_label("preflash exposure").is_some());
-    assert!(h.query_by_label("preflash y filter shift").is_none());
-    assert!(h.query_by_label("print exposure").is_none());
-
-    search(h, "");
-    assert!(h.query_by_label("exposure compensation ev").is_some());
-    // Clearing the search restores the collapsed layout.
-    assert!(h.query_by_label("upscale factor").is_none());
-    assert_eq!(h.state().params, params_before);
-    assert_eq!(h.state().gui_state.sections, sections_before);
+    assert!(h.query_by_label("scatter amount").is_none());
+    search_controls(h, "");
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().gui_state.sections, sections);
 }
 
-// specs/gui-workflow/spec.md#control-search: the box stays above the tab
-// content, and a match inside a collapsed section reveals that section while
-// the sections without a match disappear.
 #[test]
-fn control_search_reveals_a_collapsed_section_and_restores_it_when_cleared() {
+fn scanner_search_reveals_independent_rows_on_an_inactive_route() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "FILM");
-    assert!(h.query_by_label("Filter controls").is_some());
-
-    // Chemistry is collapsed by default; Grain is open by default.
-    assert!(h.query_by_label("development time").is_none());
-    assert!(h.query_all_by_label("Engine").next().is_some());
-
-    search(h, "development time");
-    assert!(h.query_by_label("Chemistry").is_some());
-    assert!(h.query_by_label("development time").is_some());
-    assert!(h.query_all_by_label("Engine").next().is_none());
-    // Film chemistry's density-curve controls do not match the filter.
-    assert!(h.query_by_label("gamma factor").is_none());
-
-    // The diffusion editor is collapsed by default; its matching control
-    // appears on its own while its other controls stay hidden.
-    search(h, "halo warmth");
-    assert!(h.query_all_by_label("Diffusion").next().is_some());
-    assert!(h.query_by_label("halo warmth").is_some());
-    assert!(h.query_by_label("filter family").is_none());
-    assert!(h.query_by_label("strength").is_none());
-
-    search(h, "");
-    assert!(h.query_by_label("development time").is_none());
-    assert!(h.query_all_by_label("Engine").next().is_some());
-    // The revealed sections collapse back behind their headers.
-    assert!(h.query_by_label("halo warmth").is_none());
-}
-
-// specs/gui-product-design/spec.md#control-panel-product-surface: the clear
-// action makes clearing the transient filter discoverable without touching
-// parameters or persisted sections, and the no-match message reports the
-// entered text rather than implying the parameters changed.
-#[test]
-fn control_search_clear_action_and_no_match_state_report_the_entered_filter() {
-    let mut s = session();
-    let h = &mut s.harness;
-    let params_before = h.state().params.clone();
-    let sections_before = h.state().gui_state.sections.clone();
-
-    // Without a filter there is nothing to clear, so the action stays absent.
-    assert!(h.query_by_label("clear filter").is_none());
-
-    search(h, "no-such-control-label");
+    set_route(h, "input");
+    let params = h.state().params.clone();
+    reveal_control(h, "scanner.conversion_style");
     assert!(
-        h.query_by_label_contains("No control matches “no-such-control-label”.")
-            .is_some(),
-        "the no-match message uses the entered text"
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
+            .node()
+            .is_disabled()
     );
-
-    search(h, "upscale");
-    assert!(h.query_by_label("clear filter").is_some());
-    let clear = h.get_by_role_and_label(egui::accesskit::Role::Button, "clear filter");
-    clear.focus();
-    h.step();
-    h.press_key(egui::Key::Enter);
-    h.run_steps(5);
+    reveal_control(h, "scanner.lens_blur");
     assert!(
-        h.state().filter.is_empty(),
-        "clear action must clear transient filter state"
-    );
-    assert!(h.query_by_label("clear filter").is_none());
-    assert!(h.query_by_label("exposure compensation ev").is_some());
-    assert!(h.query_by_label_contains("No control matches").is_none());
-    assert_eq!(h.state().params, params_before);
-    assert_eq!(h.state().gui_state.sections, sections_before);
-}
-
-// specs/gui-workflow/spec.md#control-search: a control inside a collapsed
-// sub-section of a revealed section is found by its own label and does not
-// require the sub-section to be opened first.
-#[test]
-fn control_search_reveals_controls_of_a_collapsed_subsection() {
-    use spektrafilm_core::params::GrainEngine;
-    let mut s = session();
-    let h = &mut s.harness;
-    click(h, "FILM");
-    h.state_mut().params.film_render.grain.engine = GrainEngine::Fotufilm;
-    h.step();
-
-    // The Fotufilm advanced sub-section is collapsed by default.
-    assert!(h.query_by_label("RMS density").is_none());
-    assert!(h.query_by_label("Softness").is_some());
-
-    search(h, "rms density");
-    assert!(h.query_all_by_label("Grain").next().is_some());
-    assert!(h.query_by_label("Fotufilm advanced").is_some());
-    assert!(h.query_by_label("RMS density").is_some());
-    // The sub-section's other controls do not match the filter.
-    assert!(h.query_by_label("Coating density scale").is_none());
-    assert!(h.query_by_label("Softness").is_none());
-
-    // Each share editor row matches by its own visible label.
-    search(h, "sublayer 2");
-    assert!(h.query_by_label("Sublayer 2").is_some());
-    assert!(h.query_by_label("Sublayer 1").is_none());
-    assert!(h.query_by_label("Sublayer 3").is_none());
-    assert!(
-        h.query_by_label_contains("Sublayer 4 (remainder)")
-            .is_none()
+        h.get_by_label("Lens blur (readout optics)")
+            .node()
+            .is_disabled()
     );
 
-    search(h, "");
-    // Clearing the search closes the sub-section again.
-    assert!(h.query_by_label("RMS density").is_none());
-    assert!(h.query_by_label("Softness").is_some());
-}
-
-// specs/gui-workflow/design.md: one persisted value keeps exactly one editable
-// entry. The grain engines share fields, so an engine group that is not
-// selected shows its set read-only instead of a second editable surface for
-// the same value.
-#[test]
-fn an_unselected_grain_engine_group_is_read_only() {
-    let mut s = session();
-    let h = &mut s.harness;
-    click(h, "FILM");
-    // The selected engine's group is the only open one, so the shared field
-    // appears once until another engine's group is expanded.
-    assert_eq!(h.query_all_by_label("rms granularity R").count(), 1);
-
-    click(h, "Dye");
-    h.run_steps(10);
-    let fields: Vec<_> = h.query_all_by_label("rms granularity R").collect();
-    assert_eq!(fields.len(), 2, "both engine groups show the shared field");
-    assert_eq!(
-        fields
-            .iter()
-            .filter(|node| !node.node().is_disabled())
-            .count(),
-        1,
-        "only the selected engine's copy is editable"
-    );
-    assert!(
-        h.query_by_label_contains("Inactive until this engine is selected")
-            .is_some(),
-        "the inactive group states why its controls are read-only"
-    );
-}
-
-// specs/gui-workflow/spec.md#control-search: a control whose visible label
-// extends the guard prefix stays reachable by the full label and keeps its
-// section visible, and the remaining scanner controls filter independently.
-#[test]
-fn control_search_reaches_scanner_controls_by_their_visible_labels() {
-    let mut s = session();
-    let h = &mut s.harness;
-    choose(h, "workflow", "input > film > scan");
-    h.state_mut().params.scanner.scan_output = "negative_to_positive".into();
-
-    search(h, "Lens blur");
-    assert!(h.query_by_label("Lens blur (readout optics)").is_some());
     assert!(
         h.query_by_label("Unsharp mask (digital sharpening) sigma")
             .is_none()
     );
+    assert_eq!(h.state().params, params);
 }
 
 #[test]
-fn a_section_reset_restores_the_factory_value_and_clears_the_mark() {
+fn individual_and_module_resets_restore_only_their_owned_values_and_are_reversible() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "MAIN");
+    set_route(h, "input > film > print > scan");
+    let factory = state::GuiState::factory().runtime_params().unwrap();
+    edit_control(h, "enlarger.print_exposure", "print exposure", "0.5");
+    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0.25");
+    edit_control(
+        h,
+        "enlarger.preflash_y_filter_shift",
+        "preflash y filter shift",
+        "1.5",
+    );
+    edit_control(
+        h,
+        "enlarger.preflash_m_filter_shift",
+        "preflash m filter shift",
+        "-0.75",
+    );
+    let edited = h.state().params.clone();
+    click(h, "Only modified");
+    assert_eq!(
+        h.state().params,
+        edited,
+        "Only modified is presentation, not an edit"
+    );
 
-    // The Camera section is open by default, so its rows are reachable without
-    // expanding it. The section starts at the factory state, so it is unmarked.
-    let factory = h.state().params.camera.exposure_compensation_ev;
-    edit(h, "exposure compensation ev", "0.75");
-    assert_ne!(h.state().params.camera.exposure_compensation_ev, factory);
-    assert!(h.query_by_label("modified").is_some());
+    reveal_control(h, "enlarger.preflash_y_filter_shift");
+    click(h, "Reset preflash y filter shift to factory");
+    let mut expected = edited.clone();
+    expected.enlarger.preflash_y_filter_shift = factory.enlarger.preflash_y_filter_shift;
+    assert_eq!(h.state().params, expected, "row reset owns only one leaf");
+    assert!(
+        h.query_by_label("preflash y filter shift").is_none(),
+        "factory row leaves Only modified results"
+    );
+    click(h, "Undo");
+    assert_eq!(h.state().params, edited);
+    assert!(h.query_by_label("preflash y filter shift").is_some());
+    click(h, "Only modified");
 
-    // A neighbouring section keeps an edit made after the last load, so the
-    // reset restores the section it belongs to and nothing else.
-    edit(h, "print exposure", "2.0");
-    let neighbour = h.state().params.enlarger.print_exposure;
-    assert_ne!(neighbour, 1.0, "the neighbour's edit landed");
+    reveal_control(h, "enlarger.preflash_exposure");
+    click(h, "reset Preflash");
+    expected = edited.clone();
+    expected.enlarger.preflash_exposure = factory.enlarger.preflash_exposure;
+    expected.enlarger.preflash_y_filter_shift = factory.enlarger.preflash_y_filter_shift;
+    expected.enlarger.preflash_m_filter_shift = factory.enlarger.preflash_m_filter_shift;
+    assert_eq!(
+        h.state().params,
+        expected,
+        "Preflash reset must not own main enlarger exposure or diffusion"
+    );
+    click(h, "Undo");
+    assert_eq!(h.state().params, edited);
+    reveal_control(h, "enlarger.print_exposure");
+    click(h, "reset Enlarger");
+    expected = edited.clone();
+    expected.enlarger.print_exposure = factory.enlarger.print_exposure;
+    assert_eq!(
+        h.state().params,
+        expected,
+        "Enlarger reset must retain separate Preflash controls"
+    );
+}
 
+#[test]
+fn global_search_locates_settings_and_export_without_mutation_or_filtering_the_dialog() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let params = h.state().params.clone();
+    let sections = h.state().gui_state.sections.clone();
+    let options = h.state().export_options.clone();
+    reveal_control(h, "settings.preview_max_size");
+    assert!(h.state().settings_open);
+    assert!(h.query_by_label("preview max size").is_some());
+    assert!(
+        h.query_by_label("auto preview").is_some(),
+        "the located Settings subsection must not inherit the photographic query"
+    );
+    assert!(!h.state().export_dialog.is_open());
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().gui_state.sections, sections);
+    close_settings(h);
+
+    reveal_control(h, "extras.rust.export_saving_color_space");
+    assert!(h.state().export_dialog.is_open());
+    assert!(!h.state().settings_open);
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Saving color space")
+            .is_some()
+    );
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Format")
+            .is_some(),
+        "Export must show its real unfiltered draft, not an inspector editor"
+    );
+    click(h, "Cancel");
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().gui_state.sections, sections);
+    let current = &h.state().export_options;
+    assert_eq!(current.backend, options.backend);
+    assert_eq!(current.format, options.format);
+    assert_eq!(current.depth, options.depth);
+    assert_eq!(current.jpeg_quality, options.jpeg_quality);
+    assert_eq!(current.jpeg_subsampling, options.jpeg_subsampling);
+    assert_eq!(current.compression, options.compression);
+    assert_eq!(current.saving_color_space, options.saving_color_space);
+    assert_eq!(current.saving_cctf_encoding, options.saving_cctf_encoding);
+}
+
+#[test]
+fn locating_another_export_control_preserves_the_open_draft() {
+    let mut s = session();
+    let h = &mut s.harness;
+    reveal_control(h, "extras.rust.export_saving_color_space");
+    let committed = h.state().export_options.clone();
+    choose(h, "Format", "TIFF");
+    choose(h, "Saving color space", "ACES2065-1");
+    search_controls(h, "extras.rust.export_saving_color_space");
+    click(h, "Locate Export: Export options");
+    choose(h, "Bit depth", "32 bit");
+    let destination = s.directory.path().join("located-draft.tif");
+    script(h, chooser::Chooser::chooser_path(&destination));
+    export_action(h, "Export file…");
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(destination.is_file());
+    assert_eq!(h.state().export_options.format, export::ExportFormat::Tiff);
+    assert_eq!(h.state().export_options.saving_color_space, "ACES2065-1");
+    assert_eq!(h.state().params.io.output_color_space, "sRGB");
+    assert_ne!(h.state().export_options, committed);
+}
+
+#[test]
+fn collapsed_grain_subsections_remain_accessible_and_shared_fields_have_one_active_editor() {
+    let mut s = session();
+    let h = &mut s.harness;
+    choose_control(h, "film_render.grain.engine", "Engine", "Fotufilm Film");
+    edit_control(
+        h,
+        "film_render.grain.fotufilm.rms_density",
+        "RMS density",
+        "0.04",
+    );
+    assert_eq!(
+        h.state().params.film_render.grain.fotufilm.rms_density,
+        0.04
+    );
+    reveal_control(h, "film_render.grain.fotufilm.sublayer_shares");
+    assert!(h.query_by_label("Sublayer 2").is_some());
+    let retained = h.state().params.film_render.grain.fotufilm.clone();
+    choose_control(h, "film_render.grain.engine", "Engine", "Spektra");
+    reveal_control(h, "film_render.grain.rms_granularity");
+    assert_eq!(
+        h.query_all_by_label("rms granularity R")
+            .filter(|node| !node.node().is_disabled())
+            .count(),
+        1,
+        "one persisted component has one active editor"
+    );
+    assert_eq!(
+        h.query_all_by_label("rms granularity R").count(),
+        1,
+        "inactive engines must not duplicate a shared editor"
+    );
+    assert_eq!(h.state().params.film_render.grain.fotufilm, retained);
+}
+
+#[test]
+fn film_material_selection_retains_the_independently_selected_print_material() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let print = h.state().print_name.clone();
+    let stock = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+    select_film(h, stock.info.name.as_deref().unwrap_or("kodak_portra_400"));
+    assert_eq!(h.state().film_name, "kodak_portra_400");
+    assert_eq!(h.state().print_name, print);
+    assert!(
+        h.state().params.validate().is_ok(),
+        "material defaulting must leave an admitted route and scanner configuration"
+    );
+}
+
+#[test]
+fn applied_look_materials_follow_factory_filtering_and_undo() {
+    let mut s = session();
+    let h = &mut s.harness;
+    if h.query_by_label("▶").is_some() {
+        click(h, "▶");
+    }
+    edit(h, "Search presets", "Kodak Portra 400");
+    click(h, "Kodak Portra 400");
+    assert_eq!(h.state().film_name, "kodak_portra_400");
+    search_controls(h, "extras.simulation.film_stock");
+    click(h, "Only modified");
+    assert!(h.query_by_label("Locate Film: Film material").is_some());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+            .is_some()
+    );
+    click(h, "Undo");
+    assert_eq!(h.state().film_name, state::GuiState::factory().film());
+    assert!(h.query_by_label("Locate Film: Film material").is_none());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+            .is_none()
+    );
+    click(h, "Redo");
+    assert_eq!(h.state().film_name, "kodak_portra_400");
+    assert!(h.query_by_label("Locate Film: Film material").is_some());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+            .is_some()
+    );
+}
+
+#[test]
+fn camera_module_reset_retains_camera_diffusion_and_other_stage_edits() {
+    let mut s = session();
+    let h = &mut s.harness;
+    set_route(h, "input > film > print > scan");
+    let factory = state::GuiState::factory().runtime_params().unwrap();
+    edit_control(
+        h,
+        "camera.exposure_compensation_ev",
+        "exposure compensation ev",
+        "0.75",
+    );
+    edit_control(h, "camera.diffusion_filter.strength", "strength", "0.5");
+    edit_control(h, "enlarger.print_exposure", "print exposure", "2.0");
+    let mut expected = h.state().params.clone();
+    expected.camera.exposure_compensation_ev = factory.camera.exposure_compensation_ev;
+    expected.camera.auto_exposure = factory.camera.auto_exposure;
+    reveal_control(h, "camera.exposure_compensation_ev");
     click(h, "reset Camera");
     assert_eq!(
-        h.state().params.camera.exposure_compensation_ev,
-        factory,
-        "the reset restores its own section"
-    );
-    assert_eq!(
-        h.state().params.enlarger.print_exposure,
-        neighbour,
-        "another section's reset does not revert the neighbour's live edit"
+        h.state().params,
+        expected,
+        "Camera reset must not replace its separately owned diffusion or another stage"
     );
 }
 
-/// Every parameter section the pages render presents a reset, so a section
-/// added to the UI without a reset scope cannot go unnoticed.
 #[test]
-fn every_parameter_section_presents_a_reset() {
+fn enlarger_section_preset_applies_preflash_but_retains_separate_diffusion_and_materials() {
+    use spektrafilm_core::presets::{Preset, Provenance, Section};
     let mut s = session();
     let h = &mut s.harness;
-    let mut seen = std::collections::BTreeSet::new();
-    for page in ["MAIN", "FILM", "PRINT", "ADVANCED"] {
-        click(h, page);
-        for node in h.query_all_by_label_contains("reset") {
-            if let Some(label) = node.label()
-                && let Some(section) = label.strip_prefix("reset ")
-                && section != "view"
-            {
-                seen.insert(section.to_owned());
-            }
-        }
-    }
-    let expected: &[&str] = &[
-        "Camera",
-        "Camera diffusion",
-        "Convert",
-        "Couplers",
-        "Crop and upscale",
-        "Enlarger",
-        "Enlarger diffusion",
-        "Film base",
-        "Film chemistry",
-        "Glare",
-        "Grain",
-        "Halation",
-        "Input",
-        "Input gamut compress",
-        "CMYK ink style",
-        "Output",
-        "Output gamut compress",
-        "Print base",
-        "Print chemistry",
-        "Scanner",
-        "Spectral upsampling",
-    ];
-    for section in expected {
+    set_route(h, "input > film > print > scan");
+    edit_control(h, "enlarger.print_exposure", "print exposure", "0.5");
+    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0.25");
+    edit_control(
+        h,
+        "enlarger.preflash_y_filter_shift",
+        "preflash y filter shift",
+        "1.5",
+    );
+    let accepted = h.state().params.clone();
+    let film = h.state().film_name.clone();
+    let paper = h.state().print_name.clone();
+    let preset = Preset::capture_section(
+        "Inspector enlarger",
+        Section::Enlarger,
+        &accepted,
+        Provenance {
+            implementation_version: env!("CARGO_PKG_VERSION").into(),
+            model_version: "spektrafilm".into(),
+            scanner: None,
+        },
+    )
+    .unwrap();
+    let directory = h.state().config_directory.join("presets");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("Inspector enlarger.toml"),
+        preset.to_toml().unwrap(),
+    )
+    .unwrap();
+    h.state_mut().presets.refresh();
+    edit_control(h, "enlarger.print_exposure", "print exposure", "2");
+    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0");
+    edit_control(
+        h,
+        "enlarger.preflash_y_filter_shift",
+        "preflash y filter shift",
+        "-0.5",
+    );
+    edit_control(h, "enlarger.diffusion_filter.strength", "strength", "0.375");
+    edit_control(
+        h,
+        "camera.exposure_compensation_ev",
+        "exposure compensation ev",
+        "0.75",
+    );
+    let before = h.state().params.clone();
+    reveal_control(h, "enlarger.print_exposure");
+    scroll_controls_into_view(h, "Section preset: custom");
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Section preset: custom")
+        .click();
+    h.run_steps(3);
+    h.get_by_role_and_label(
+        egui::accesskit::Role::Button,
+        "Apply My Presets / Inspector enlarger",
+    )
+    .focus();
+    h.run_steps(3);
+    h.press_key(egui::Key::Enter);
+    h.run_steps(3);
+    let mut expected = before.clone();
+    expected.enlarger = accepted.enlarger;
+    expected.enlarger.diffusion_filter = before.enlarger.diffusion_filter.clone();
+    let actual_consumers = serde_json::to_value(&h.state().params).unwrap();
+    let expected_consumers = serde_json::to_value(&expected).unwrap();
+    assert_eq!(
+        actual_consumers, expected_consumers,
+        "serialized Enlarger preset scope includes Preflash but not Enlarger diffusion or camera"
+    );
+    let before_preparation = before.render_preparation_state();
+    let after_preparation = h.state().params.render_preparation_state();
+    assert!(
+        before_preparation
+            .explicit_section_paths
+            .iter()
+            .all(|path| after_preparation.explicit_section_paths.contains(path)),
+        "section application preserves explicit ownership of prior independent edits"
+    );
+    assert_eq!(
+        after_preparation.neutral_print_filters_protected,
+        before_preparation.neutral_print_filters_protected
+    );
+    for path in [
+        "camera.exposure_compensation_ev",
+        "enlarger.diffusion_filter.strength",
+        "enlarger.preflash_exposure",
+        "enlarger.preflash_y_filter_shift",
+        "enlarger.print_exposure",
+    ] {
         assert!(
-            seen.contains(*section),
-            "no reset presented for section {section}; found {seen:?}"
+            after_preparation
+                .explicit_section_paths
+                .iter()
+                .any(|owned| owned == path),
+            "section application lost explicit ownership: {path}"
         );
     }
-}
-
-/// A toggle's guard must be the toggle's own visible label, so a search for that
-/// label reaches the control. The chemistry toggle is medium-specific and used a
-/// medium-agnostic guard, which made both toggles unreachable by search.
-#[test]
-fn the_chemistry_enable_toggle_is_reachable_by_its_own_label() {
-    let mut s = session();
-    let h = &mut s.harness;
-
-    click(h, "FILM");
-    search(h, "enable film density curves");
-    assert!(
-        h.query_by_label("Enable film density curves").is_some(),
-        "the film chemistry toggle is unreachable by its visible label"
-    );
-    search(h, "enable density curves");
-    assert!(
-        h.query_by_label("Enable film density curves").is_none(),
-        "the medium-agnostic label must not match the film toggle"
-    );
-    search(h, "");
-
-    click(h, "PRINT");
-    search(h, "enable print density curves");
-    assert!(
-        h.query_by_label("Enable print density curves").is_some(),
-        "the print chemistry toggle is unreachable by its visible label"
-    );
-    search(h, "enable density curves");
-    assert!(
-        h.query_by_label("Enable print density curves").is_none(),
-        "the medium-agnostic label must not match the print toggle"
-    );
-}
-
-/// specs/gui-workflow/spec.md#control-search: a control another page owns is
-/// reachable from the search, the result names the page and the section that
-/// own it, and selecting it switches the page and reveals the control. The
-/// filter stays transient and no parameter value moves.
-#[test]
-fn control_search_reaches_a_control_on_another_page_and_navigates_to_it() {
-    let mut s = session();
-    let h = &mut s.harness;
-    let params_before = h.state().params.clone();
-    let sections_before = h.state().gui_state.sections.clone();
-    // The MAIN page does not own halation; the search reports it elsewhere.
-    assert!(h.query_by_label("halation amount").is_none());
-
-    search(h, "halation amount");
-    let result = h
-        .query_all_by_label("FILM · Halation")
-        .next()
-        .expect("the search must report the owning page and section");
-    result.simulate_click();
-    h.run_steps(5);
-
+    assert_eq!(h.state().film_name, film);
+    assert_eq!(h.state().print_name, paper);
+    click(h, "Undo");
     assert_eq!(
-        h.state().gui_tab,
-        crate::ui::GuiTab::Film,
-        "selecting a result must switch to the owning page"
+        h.state().params,
+        before,
+        "multi-module section application is one reversible edit"
     );
-    assert!(
-        h.query_by_label("halation amount").is_some(),
-        "the owning page must reveal the control the filter matches"
+}
+
+#[test]
+fn halation_feature_profile_retains_other_controls_and_rgb_edit_undo_restores_identity() {
+    use spektrafilm_core::feature_profiles::{self, FeatureProfileFamily, FeatureProfileValues};
+    let mut s = session();
+    let h = &mut s.harness;
+    set_route(h, "input > film > print > scan");
+    // This fixture exercises real spatial controls rather than the shared
+    // deterministic render fixture's spatial-effect bypass.
+    h.state_mut().params.debug.deactivate_spatial_effects = false;
+    h.step();
+    if !h.state().params.film_render.halation.active {
+        toggle_control(h, "film_render.halation.active", "Enable halation");
+    }
+    edit_control(
+        h,
+        "camera.exposure_compensation_ev",
+        "exposure compensation ev",
+        "0.75",
+    );
+    edit_control(
+        h,
+        "film_render.halation.scatter_amount",
+        "scatter amount",
+        "0.25",
+    );
+    let family = FeatureProfileFamily::Halation;
+    let initial_name = feature_profiles::effective_name(family, &h.state().params);
+    let name = feature_profiles::names(family)
+        .iter()
+        .copied()
+        .find(|name| *name != initial_name)
+        .unwrap();
+    let before = h.state().params.clone();
+    let materials = (h.state().film_name.clone(), h.state().print_name.clone());
+    let FeatureProfileValues::Halation {
+        first_sigma_um,
+        strength,
+    } = feature_profiles::resolve(family, name).unwrap().values
+    else {
+        unreachable!()
+    };
+    let mut expected = before.clone();
+    expected.film_render.halation.halation_first_sigma_um = first_sigma_um;
+    expected.film_render.halation.halation_strength = strength;
+    choose_control(h, "action.halation_profile", "Halation Profiles", name);
+    assert_eq!(
+        serde_json::to_value(&h.state().params).unwrap(),
+        serde_json::to_value(&expected).unwrap(),
+        "a Halation feature profile owns only its declared strength and spread vectors"
     );
     assert_eq!(
-        h.state().filter,
-        "halation amount",
-        "the filter must stay transient and keep its text after the switch"
+        (&h.state().film_name, &h.state().print_name),
+        (&materials.0, &materials.1)
     );
-    assert_eq!(h.state().params, params_before);
-    assert_eq!(h.state().gui_state.sections, sections_before);
-}
+    assert!(h.state().params.film_render.halation.active);
+    assert!(!h.state().params.debug.deactivate_spatial_effects);
+    assert_eq!(
+        feature_profiles::effective_name(family, &h.state().params),
+        name
+    );
+    let named = h.state().params.clone();
 
-/// specs/gui-workflow/spec.md#control-search: the results list is not a second
-/// navigation surface for the pages. It exists only while a filter is non-empty
-/// and lists no page that has no matching control.
-#[test]
-fn the_search_results_are_transient_and_never_list_a_page_without_a_match() {
-    let mut s = session();
-    let h = &mut s.harness;
-    // Without a filter the results surface is absent entirely.
-    assert!(h.query_by_label("Also on other pages").is_none());
-
-    search(h, "gamma factor");
-    // Film chemistry and Print chemistry both own a matching control, and the
-    // current page (MAIN) does not.
-    assert!(
-        h.query_by_label("No control on MAIN matches.").is_some(),
-        "a page without a match must say so instead of listing itself"
+    edit_control(
+        h,
+        "film_render.halation.halation_strength",
+        "halation strength G",
+        "0.037",
     );
-    let rows: Vec<String> = h
-        .query_all_by_label_contains(" · ")
-        .filter_map(|node| node.label())
-        .collect();
-    assert!(
-        rows.iter().any(|row| row.starts_with("FILM · ")),
-        "the owning page must be named, got {rows:?}"
+    let mut expected_edit = serde_json::to_value(&named).unwrap();
+    expected_edit["film_render"]["halation"]["halation_strength"][1] = serde_json::json!(0.037);
+    assert_eq!(
+        serde_json::to_value(&h.state().params).unwrap(),
+        expected_edit,
+        "editing green must retain the independent red and blue channels and all other controls"
     );
-    assert!(
-        rows.iter().any(|row| row.starts_with("PRINT · ")),
-        "every owning page must be named, got {rows:?}"
+    assert_eq!(
+        feature_profiles::effective_name(family, &h.state().params),
+        "custom"
     );
-
-    search(h, "");
-    assert!(
-        h.query_by_label("Also on other pages").is_none(),
-        "clearing the filter must drop the results list"
+    click(h, "Undo");
+    assert_eq!(
+        h.state().params,
+        named,
+        "Undo restores the accepted named profile and its edit provenance"
     );
-}
-
-/// specs/gui-workflow/spec.md#control-search: a filter that matches nothing
-/// anywhere says so, and the panel keeps its other surfaces in place.
-#[test]
-fn the_search_states_clearly_when_no_control_matches() {
-    let mut s = session();
-    let h = &mut s.harness;
-    search(h, "no-such-control-label");
-    assert!(
-        h.query_by_label_contains("No control matches").is_some(),
-        "a filter with no match anywhere must state that"
+    assert_eq!(
+        feature_profiles::effective_name(family, &h.state().params),
+        name
     );
-    // The import surface and the page tabs keep their normal layout.
-    assert!(h.query_all_by_label("workflow").next().is_some());
-    assert!(h.query_by_label("MAIN").is_some());
-
-    search(h, "");
-    assert!(h.query_by_label_contains("No control matches").is_none());
-}
-
-/// specs/gui-presentation/spec.md#section-headers: a collapsed section states
-/// what it holds, so a page of bare headers still names its controls. The
-/// summary is display-only: it writes no value and stores no open state.
-#[test]
-fn collapsed_sections_state_what_they_hold() {
-    let mut s = session();
-    let h = &mut s.harness;
-    let params_before = h.state().params.clone();
-    let sections_before = h.state().gui_state.sections.clone();
-
-    // PRINT: Print base, Glare and Enlarger diffusion are collapsed by default,
-    // and both chemistry sections are too.
-    click(h, "PRINT");
-    assert!(
-        h.query_by_label_contains("Base density: scale and per-channel masks")
-            .is_some(),
-        "Print base must state what it holds while collapsed"
-    );
-    assert!(
-        h.query_by_label_contains("Print viewing glare: percent, roughness, blur")
-            .is_some(),
-        "Glare must state what it holds while collapsed"
-    );
-    assert!(
-        h.query_by_label_contains("Enlarger diffusion: core, tail, and warmth")
-            .is_some(),
-        "Enlarger diffusion must state what it holds while collapsed"
-    );
-    assert!(
-        h.query_by_label_contains("Density curves: development time")
-            .is_some(),
-        "the chemistry section must state what it holds while collapsed"
-    );
-
-    // ADVANCED: every section on the page is collapsed by default.
-    click(h, "ADVANCED");
-    assert!(
-        h.query_by_label_contains("Spectral reconstruction: method, adaptation, blur")
-            .is_some(),
-        "Spectral upsampling must state what it holds while collapsed"
-    );
-    assert!(
-        h.query_by_label_contains("Input gamut compression: algorithm, knee, hull detail")
-            .is_some(),
-        "Input gamut compress must state what it holds while collapsed"
-    );
-    assert!(
-        h.query_by_label_contains("Output gamut compression: algorithm, knee")
-            .is_some(),
-        "Output gamut compress must state what it holds while collapsed"
-    );
-
-    // FILM: the material sections are collapsed by default.
-    click(h, "FILM");
-    assert!(
-        h.query_by_label_contains("Base density: scale, tilt, and per-channel masks")
-            .is_some(),
-        "Film base must state what it holds while collapsed"
-    );
-    assert!(
-        h.query_by_label_contains("Highlight glow: halation, in-emulsion scatter, boost")
-            .is_some(),
-        "Halation must state what it holds while collapsed"
-    );
-    assert!(
-        h.query_by_label_contains("DIR couplers: inhibition and interlayer response")
-            .is_some(),
-        "Couplers must state what it holds while collapsed"
-    );
-    assert!(
-        h.query_by_label_contains("Convert-film calibration: base, matrix, controller actions")
-            .is_some(),
-        "Convert must state what it holds while collapsed"
-    );
-
-    // An open section shows its controls, not its summary, and no section was
-    // opened by rendering the summaries.
-    assert!(h.query_by_label("halation amount").is_none());
-    assert_eq!(h.state().params, params_before);
-    assert_eq!(h.state().gui_state.sections, sections_before);
 }

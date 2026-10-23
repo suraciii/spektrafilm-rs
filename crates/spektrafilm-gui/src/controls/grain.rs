@@ -2,14 +2,6 @@ use super::*;
 use egui::Ui;
 use egui::collapsing_header::CollapsingState;
 
-/// The grain engines, in the order the Engine combo lists them.
-const GRAIN_ENGINES: [GrainEngine; 4] = [
-    GrainEngine::Spektra,
-    GrainEngine::Procedural,
-    GrainEngine::Dye,
-    GrainEngine::Fotufilm,
-];
-
 /// The label the Engine combo and a group header use for one engine, so the
 /// group a parameter belongs to reads the same as the selection.
 fn engine_label(engine: GrainEngine) -> &'static str {
@@ -28,35 +20,8 @@ fn group_id(engine: GrainEngine) -> egui::Id {
     egui::Id::new(("grain_engine_parameters", engine_label(engine)))
 }
 
-/// Close every engine group but the newly selected one when the engine
-/// selection changes, so the accordion follows the selection. Between
-/// switches the user's own open and closed groups stand.
-fn follow_selection(ui: &Ui, selected: GrainEngine) {
-    let key = egui::Id::new("grain_engine_group_selection");
-    let previous: Option<GrainEngine> = ui.ctx().data(|d| d.get_temp(key));
-    if previous == Some(selected) {
-        return;
-    }
-    for engine in GRAIN_ENGINES {
-        if let Some(mut state) = CollapsingState::load(ui.ctx(), group_id(engine)) {
-            state.set_open(engine == selected);
-            state.store(ui.ctx());
-        }
-    }
-    ui.ctx().data_mut(|d| d.insert_temp(key, selected));
-}
-
-/// One grain engine's parameters under a collapsible header named for the
-/// engine.
-///
-/// Browsing shows every engine, so each parameter set is discoverable without
-/// switching engines. The control search shows only the selected engine's
-/// controls, because editing another engine's parameters has no effect until
-/// that engine is selected.
-///
-/// An engine that is not selected shows its set read-only: the engines share
-/// fields — rms granularity, particle scale, density minimum, and uniformity
-/// — so two editable copies would give one persisted value two entries.
+/// Search reveals every engine without selecting it. Inactive engines retain
+/// their readable controls, and disclosure state never follows engine changes.
 fn engine_group(
     ui: &mut Ui,
     filter: &mut ControlFilter<'_>,
@@ -64,39 +29,79 @@ fn engine_group(
     engine: GrainEngine,
     add_contents: impl FnOnce(&mut Ui, &mut ControlFilter<'_>),
 ) {
-    if filter.active() && engine != selected {
+    if filter.active()
+        && !filter.any_matching_entry(|entry| {
+            let engine_condition = match engine {
+                GrainEngine::Spektra => "film_render.grain.engine = spektra",
+                GrainEngine::Procedural => "film_render.grain.engine = procedural",
+                GrainEngine::Dye => "film_render.grain.engine = dye",
+                GrainEngine::Fotufilm => "film_render.grain.engine = fotufilm",
+            };
+            entry
+                .conditions
+                .iter()
+                .any(|condition| condition.starts_with(engine_condition))
+        })
+    {
         return;
     }
-    if filter.active() {
-        ui.label(egui::RichText::new(engine_label(engine)).strong());
-        add_contents(ui, filter);
-        return;
-    }
-    follow_selection(ui, selected);
-    let active = engine == selected;
-    let mut label_clicked = false;
-    let mut header = CollapsingState::load_with_default_open(ui.ctx(), group_id(engine), active)
-        .show_header(ui, |ui| {
-            label_clicked = ui
-                .add(egui::Label::new(engine_label(engine)).sense(egui::Sense::click()))
-                .clicked();
-        });
-    if label_clicked {
-        header.toggle();
-    }
-    header.body(|ui| {
-        if !active {
+    // Amount and Size are distinct leaves in multiple engines. Keep their
+    // widget identities separate when search reveals them together.
+    ui.push_id(group_id(engine), |ui| {
+        let active = engine == selected;
+        if filter.active() {
             ui.label(
-                egui::RichText::new(
-                    "Inactive until this engine is selected; stored values are retained.",
-                )
-                .small()
-                .color(theme::FG_MUTED),
+                egui::RichText::new(engine_label(engine))
+                    .color(if active { theme::FG } else { theme::FG_MUTED })
+                    .strong(),
             );
-            ui.add_enabled_ui(false, |ui| add_contents(ui, filter));
+            ui.add_enabled_ui(active, |ui| {
+                if !active {
+                    ui.label(
+                        egui::RichText::new(
+                            "Inactive until this engine is selected; stored values are retained.",
+                        )
+                        .color(theme::FG_MUTED),
+                    );
+                }
+                add_contents(ui, filter);
+            });
             return;
         }
-        add_contents(ui, filter);
+        let mut label_clicked = false;
+        let mut header =
+            CollapsingState::load_with_default_open(ui.ctx(), group_id(engine), active)
+                .show_header(ui, |ui| {
+                    label_clicked = ui
+                        .add(
+                            egui::Label::new(
+                                egui::RichText::new(engine_label(engine)).color(if active {
+                                    theme::FG
+                                } else {
+                                    theme::FG_MUTED
+                                }),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                        .clicked();
+                });
+        if label_clicked {
+            header.toggle();
+        }
+        header.body(|ui| {
+            if !active {
+                ui.label(
+                    egui::RichText::new(
+                        "Inactive until this engine is selected; stored values are retained.",
+                    )
+                    .small()
+                    .color(theme::FG_MUTED),
+                );
+                ui.add_enabled_ui(false, |ui| add_contents(ui, filter));
+                return;
+            }
+            add_contents(ui, filter);
+        });
     });
 }
 
@@ -193,21 +198,33 @@ pub(crate) fn sections(
                     .color(theme::FG_MUTED),
                 );
             let engine = grain.engine;
-            // Spektra's composite-layer controls sit outside the engine
-            // groups: they belong to one engine, so an engine group would
-            // either hide them from the other engines or duplicate them. The
-            // block stays editable for every engine, states the condition, and
-            // preserves inactive values.
             section_header(ui, filter, "Shared material controls", |ui, filter| {
-                if engine != GrainEngine::Spektra {
+                let active = matches!(engine, GrainEngine::Spektra | GrainEngine::Dye);
+                if !active {
                     ui.label(
                         egui::RichText::new(
-                            "Spektra controls; inactive until the Spektra engine is selected, stored values are retained.",
+                            "Shared by Spektra and Dye; inactive until either engine is selected, stored values are retained.",
                         )
                         .small()
                         .color(theme::FG_MUTED),
                     );
                 }
+                ui.add_enabled_ui(active, |ui| {
+                    if filter_matches(filter, "rms granularity") {
+                        flags.runtime_changed |= param_tuple_experimental(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel stock granularity: Dye scales event area relative to reference stock (6); upstream Spektra retains this value as a no-op. Distinct from Procedural Amount.");
+                    }
+                    if filter_matches(filter, "density min") {
+                        flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density shared by Spektra and Dye.");
+                    }
+                    if filter_matches(filter, "uniformity") {
+                        flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity shared by Spektra and Dye.");
+                    }
+                    if filter_matches(filter, "particle scale sublayers") {
+                        flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Positive relative particle scale per emulsion sublayer, shared by Spektra and Dye.");
+                    }
+                });
+            });
+            engine_group(ui, filter, engine, GrainEngine::Spektra, |ui, filter| {
                 if filter_matches(filter, "sublayers active") {
                     flags.runtime_changed |= toggle(
                         ui,
@@ -243,20 +260,6 @@ pub(crate) fn sections(
                         "Number of emulsion sub-layers the composite density is split into when sublayers active is off; each sub-layer draws its own grain realization. Spektra-only.",
                     );
                 }
-            });
-            engine_group(ui, filter, engine, GrainEngine::Spektra, |ui, filter| {
-                if filter_matches(filter, "rms granularity") {
-                    flags.runtime_changed |= param_tuple_experimental(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel RMS granularity.");
-                }
-                if filter_matches(filter, "density min") {
-                    flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density.");
-                }
-                if filter_matches(filter, "uniformity") {
-                    flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity.");
-                }
-                if filter_matches(filter, "particle scale sublayers") {
-                    flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Relative particle scale per emulsion sublayer.");
-                }
                 if filter_matches(filter, "blur") {
                     flags.runtime_changed |= param_numeric(ui, "blur", &mut grain.blur, "film_render.grain.blur", "Post-blur sigma.");
                 }
@@ -274,7 +277,11 @@ pub(crate) fn sections(
                 }
             });
             engine_group(ui, filter, engine, GrainEngine::Procedural, |ui, filter| {
-                if grain.v2_profile == "custom" {
+                let custom = grain.v2_profile == "custom";
+                if !custom {
+                    ui.label("Custom-only controls are inactive under a named profile; stored overrides are retained. Select Custom to edit them.");
+                }
+                ui.add_enabled_ui(custom, |ui| {
                     if filter_matches(filter, "film type") {
                         flags.runtime_changed |= enum_choice(ui, "Film Type", &mut grain.v2_film_type, &[
                             (GrainV2FilmType::Negative, "Negative"),
@@ -306,7 +313,7 @@ pub(crate) fn sections(
                     if filter_matches(filter, "chroma") {
                         flags.runtime_changed |= optional_numeric(ui, "Chroma", &mut grain.v2_chroma, resolved.color * 100.0, "film_render.grain.v2_chroma", "Chromatic grain amount.");
                     }
-                }
+                });
                 if filter_matches(filter, "resolution type") {
                     flags.runtime_changed |= param_numeric(ui, "Resolution Type", &mut grain.v2_resolution_type, "film_render.grain.v2_resolution_type", "Post-scan Procedural appearance resolution method: 0 = Optical Resolution; 1 = Fast Blur. This does not change scanner readout optics.");
                 }
@@ -327,18 +334,6 @@ pub(crate) fn sections(
                 }
                 if filter_matches(filter, "channel correlation") {
                     flags.runtime_changed |= param_numeric(ui, "Channel correlation", &mut grain.channel_correlation, "film_render.grain.channel_correlation", "Shared fraction of each emulsion layer's per-channel event rate; the realized channel correlation is a lower bound of this value, and no channel's strength changes.");
-                }
-                if filter_matches(filter, "rms granularity") {
-                    flags.runtime_changed |= param_tuple_experimental(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
-                }
-                if filter_matches(filter, "particle scale sublayers") {
-                    flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Positive relative particle scale per emulsion sublayer.");
-                }
-                if filter_matches(filter, "density min") {
-                    flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density.");
-                }
-                if filter_matches(filter, "uniformity") {
-                    flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity.");
                 }
             });
             engine_group(ui, filter, engine, GrainEngine::Fotufilm, |ui, filter| {
@@ -374,8 +369,17 @@ pub(crate) fn sections(
                     if filter_matches(filter, "radius span") {
                         flags.runtime_changed |= param_numeric(ui, "Radius span", &mut fotufilm.radius_span, "film_render.grain.fotufilm.radius_span", "Effective population radius span.");
                     }
-                    flags.runtime_changed |=
-                        fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares, filter);
+                    if filter_matches(filter, "sublayer shares") {
+                        // The shared editor owns the constraints and remainder.
+                        // A leaf-level search must reveal every component, not
+                        // just the heading that matches the inventory label.
+                        let mut cache = SectionLabelCache::default();
+                        let mut components = ControlFilter::new("", &mut cache);
+                        flags.runtime_changed |= fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares, &mut components);
+                        ui.label("Sublayer 4 is read-only: one minus the first three shares.");
+                    } else {
+                        flags.runtime_changed |= fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares, filter);
+                    }
                     if filter_matches(filter, "coating density scale") {
                         flags.runtime_changed |= param_numeric(ui, "Coating density scale", &mut fotufilm.coating_density_scale, "film_render.grain.fotufilm.coating_density_scale", "Effective coating density scale.");
                     }
@@ -393,5 +397,299 @@ pub(crate) fn sections(
                 });
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    struct GrainUi {
+        params: RuntimeParams,
+        query: String,
+    }
+
+    fn grain_ui(ui: &mut Ui, state: &mut GrainUi) {
+        let mut cache = SectionLabelCache::default();
+        let mut filter = ControlFilter::new(&state.query, &mut cache);
+        sections(
+            ui,
+            &mut state.params,
+            "Grain",
+            &mut ChangeFlags::default(),
+            &mut filter,
+        );
+        filter.finish();
+    }
+
+    #[test]
+    fn canonical_production_filter_keeps_equal_labels_as_independent_leaves() {
+        for modified in [false, true] {
+            let mut params = crate::state::GuiState::factory().runtime_params().unwrap();
+            params.film_render.grain.engine = GrainEngine::Fotufilm;
+            params.film_render.grain.fotufilm.size += 0.5;
+            let mut harness = Harness::new_ui_state(
+                move |ui, state: &mut GrainUi| {
+                    install_view_filter(ui.ctx(), modified);
+                    show(
+                        ui,
+                        &mut state.params,
+                        &mut crate::state::GuiState::factory().sections,
+                        "Grain",
+                        ScanMedium::Negative,
+                        &state.query,
+                        &mut SectionLabelCache::default(),
+                        "D65",
+                        &crate::profiles::pick_data_dir(),
+                    );
+                },
+                GrainUi {
+                    params,
+                    query: if modified {
+                        String::new()
+                    } else {
+                        "film_render.grain.fotufilm.size".into()
+                    },
+                },
+            );
+            harness.run();
+            assert_eq!(
+                harness
+                    .query_all_by_label("Size")
+                    .filter(|node| node.role() == egui::accesskit::Role::TextInput)
+                    .count(),
+                1
+            );
+            assert!(harness.query_by_label("Procedural").is_none());
+            assert!(harness.query_by_label("Spektra").is_none());
+            assert!(harness.query_by_label("Dye").is_none());
+        }
+    }
+
+    #[test]
+    fn component_queries_reveal_the_owning_production_vector() {
+        for query in ["rms granularity R", "Sublayer 1"] {
+            let harness = Harness::new_ui_state(
+                |ui, state: &mut GrainUi| {
+                    show(
+                        ui,
+                        &mut state.params,
+                        &mut crate::state::GuiState::factory().sections,
+                        "Grain",
+                        ScanMedium::Negative,
+                        &state.query,
+                        &mut SectionLabelCache::default(),
+                        "D65",
+                        &crate::profiles::pick_data_dir(),
+                    );
+                },
+                GrainUi {
+                    params: RuntimeParams::default(),
+                    query: query.into(),
+                },
+            );
+            assert_eq!(
+                harness.get_by_label(query).role(),
+                egui::accesskit::Role::TextInput
+            );
+        }
+    }
+
+    #[test]
+    fn search_reveals_inactive_engines_without_changing_values_or_selection() {
+        for (selected, query, label) in [
+            (
+                GrainEngine::Procedural,
+                "particle area",
+                "particle area (µm²)",
+            ),
+            (GrainEngine::Spektra, "shadows", "Shadows"),
+            (GrainEngine::Spektra, "dye support", "Dye support (µm)"),
+            (GrainEngine::Spektra, "rms density", "RMS density"),
+            (GrainEngine::Spektra, "sublayer shares", "Sublayer 1"),
+        ] {
+            let mut params = RuntimeParams::default();
+            params.film_render.grain.engine = selected;
+            let before = params.clone();
+            let harness = Harness::new_ui_state(
+                grain_ui,
+                GrainUi {
+                    params,
+                    query: query.into(),
+                },
+            );
+            assert!(harness.get_by_label(label).node().is_disabled(), "{label}");
+            assert_eq!(harness.state().params, before);
+        }
+    }
+
+    #[test]
+    fn shared_fields_have_one_editor_and_follow_material_engine_applicability() {
+        for selected in [
+            GrainEngine::Spektra,
+            GrainEngine::Dye,
+            GrainEngine::Procedural,
+            GrainEngine::Fotufilm,
+        ] {
+            for (query, label) in [
+                ("rms granularity", "rms granularity R"),
+                ("density min", "density min R"),
+                ("uniformity", "uniformity R"),
+                ("particle scale sublayers", "particle scale sublayers 0"),
+            ] {
+                let mut params = RuntimeParams::default();
+                params.film_render.grain.engine = selected;
+                let harness = Harness::new_ui_state(
+                    grain_ui,
+                    GrainUi {
+                        params,
+                        query: query.into(),
+                    },
+                );
+                assert_eq!(harness.query_all_by_label(label).count(), 1, "{label}");
+                assert_eq!(
+                    harness.get_by_label(label).node().is_disabled(),
+                    !matches!(selected, GrainEngine::Spektra | GrainEngine::Dye),
+                    "{label}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn named_profile_retains_custom_controls_but_allows_amount_override() {
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Procedural;
+        params.film_render.grain.v2_shadows = Some(72.0);
+        let mut harness = Harness::new_ui_state(
+            grain_ui,
+            GrainUi {
+                params,
+                query: "shadows".into(),
+            },
+        );
+        assert!(harness.get_by_label("Shadows").node().is_disabled());
+        assert_eq!(
+            harness.state().params.film_render.grain.v2_shadows,
+            Some(72.0)
+        );
+        harness.state_mut().query = "amount".into();
+        harness.run();
+        // Fotufilm's independent Amount is also discoverable, but inactive.
+        let amounts: Vec<_> = harness
+            .query_all_by_label("Amount")
+            .filter(|node| !node.node().is_disabled())
+            .collect();
+        assert_eq!(amounts.len(), 1);
+        amounts[0].focus();
+        drop(amounts);
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        let amounts: Vec<_> = harness
+            .query_all_by_label("Amount")
+            .filter(|node| !node.node().is_disabled())
+            .collect();
+        amounts[0].type_text("42");
+        drop(amounts);
+        harness.run();
+        let grain = &harness.state().params.film_render.grain;
+        assert_eq!(grain.v2_amount, Some(42.0));
+        assert_eq!(grain.v2_profile, "35mm250");
+        assert!((grain.resolved_grain_v2().amount - 0.42).abs() < 1e-6);
+        harness.state_mut().params.film_render.grain.v2_profile = "custom".into();
+        harness.state_mut().query = "shadows".into();
+        harness.run();
+        assert!(!harness.get_by_label("Shadows").node().is_disabled());
+    }
+
+    #[test]
+    fn fotufilm_fourth_share_is_read_only_and_owned_by_the_constrained_editor() {
+        let mut harness = Harness::new_ui_state(
+            |ui, shares: &mut [f64; 4]| {
+                let mut cache = SectionLabelCache::default();
+                let mut filter = ControlFilter::new("", &mut cache);
+                fotufilm_sublayer_shares(ui, shares, &mut filter);
+            },
+            [0.25; 4],
+        );
+        assert_eq!(
+            harness.get_by_label("Sublayer 1").role(),
+            egui::accesskit::Role::TextInput
+        );
+        assert_eq!(
+            harness
+                .query_all_by_label_contains("Sublayer 4 (remainder)")
+                .filter(|node| node.role() == egui::accesskit::Role::TextInput)
+                .count(),
+            0
+        );
+        harness.get_by_label("Sublayer 1").focus();
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Sublayer 1").type_text("0.4");
+        harness.run();
+        assert_eq!(harness.state()[0], 0.4);
+        assert!((harness.state()[3] - 0.1).abs() < 1e-12);
+        assert!((harness.state().iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        let accepted = *harness.state();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Sublayer 1").type_text("0.8");
+        harness.run();
+        assert_eq!(
+            *harness.state(),
+            accepted,
+            "the first share cannot consume the positive remainder"
+        );
+    }
+
+    #[test]
+    fn selection_changes_preserve_independent_engine_disclosure() {
+        let ctx = egui::Context::default();
+        for (engine, open) in [
+            (GrainEngine::Spektra, true),
+            (GrainEngine::Dye, true),
+            (GrainEngine::Fotufilm, false),
+        ] {
+            let mut state = CollapsingState::load_with_default_open(&ctx, group_id(engine), open);
+            state.set_open(open);
+            state.store(&ctx);
+        }
+        for selected in [
+            GrainEngine::Spektra,
+            GrainEngine::Dye,
+            GrainEngine::Fotufilm,
+        ] {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut cache = SectionLabelCache::default();
+                    let mut filter = ControlFilter::new("", &mut cache);
+                    for engine in [
+                        GrainEngine::Spektra,
+                        GrainEngine::Dye,
+                        GrainEngine::Fotufilm,
+                    ] {
+                        engine_group(ui, &mut filter, selected, engine, |ui, _| {
+                            ui.label("retained controls");
+                        });
+                    }
+                });
+            });
+            assert!(
+                CollapsingState::load(&ctx, group_id(GrainEngine::Spektra))
+                    .unwrap()
+                    .is_open()
+            );
+            assert!(
+                CollapsingState::load(&ctx, group_id(GrainEngine::Dye))
+                    .unwrap()
+                    .is_open()
+            );
+            assert!(
+                !CollapsingState::load(&ctx, group_id(GrainEngine::Fotufilm))
+                    .unwrap()
+                    .is_open()
+            );
+        }
     }
 }

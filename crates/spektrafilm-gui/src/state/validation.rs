@@ -5,6 +5,19 @@ use spektrafilm_core::params::RuntimeParams;
 
 use super::{overlay_runtime, translate_legacy_print_exposure};
 
+/// Stored operator values may be inactive; rendering validates the effective controls.
+pub(crate) fn validate_stored_runtime(params: &mut RuntimeParams) -> Result<()> {
+    params
+        .scanner
+        .operator
+        .validate()
+        .map_err(anyhow::Error::msg)?;
+    let operator = std::mem::take(&mut params.scanner.operator);
+    let result = params.validate();
+    params.scanner.operator = operator;
+    result.map_err(anyhow::Error::msg)
+}
+
 pub(super) fn normalize_grain_section(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;

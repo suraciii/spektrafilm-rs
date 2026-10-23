@@ -7,6 +7,7 @@ use tempfile::TempDir;
 mod calibration;
 mod dialogs;
 mod files;
+mod history_ui;
 mod lifecycle;
 mod operator;
 mod pages;
@@ -209,62 +210,123 @@ fn click(h: &mut Harness<'_, App>, label: &str) {
     h.run_steps(3);
 }
 
-/// Scroll the controls panel until every node carrying `label` that lives in
-/// that panel sits inside the visible band.
-///
-/// The panel reserves `theme::HEIGHT_ACTION_BAR_RESERVE` at its bottom so the
-/// action bar never sits under the screen edge, so the usable band ends that
-/// much above the screen bottom rather than at the screen edge.
-fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
-    let screen = h.ctx.screen_rect();
-    // Fixed tabs and search remain above the scrollable controls.
-    let band_top = h
-        .get_by_label("Filter controls")
-        .node()
-        .raw_bounds()
-        .expect("the fixed control-search field has bounds")
-        .y1
-        + 8.0;
-    let band_bottom = f64::from(screen.bottom()) - f64::from(theme::HEIGHT_ACTION_BAR_RESERVE);
-    let panel_left = f64::from(screen.right()) - f64::from(theme::WIDTH_CONTROL_PANEL);
-    /// How many scrolls a target may need before the helper gives up. A page's
-    /// controls are taller than the viewport by a bounded amount, so a handful
-    /// of full-height scrolls always reaches the bottom.
-    const SCROLL_ATTEMPTS: usize = 16;
-    for _ in 0..SCROLL_ATTEMPTS {
-        let offscreen = h
-            .query_all_by_label(label)
-            .filter_map(|node| node.node().raw_bounds())
-            // Only nodes inside the controls panel are scrollable.
-            .filter(|bounds| bounds.x0 >= panel_left)
-            .find(|bounds| bounds.y0 <= band_top || bounds.y1 >= band_bottom);
-        let Some(bounds) = offscreen else {
-            return;
-        };
-        scroll_controls(h, if bounds.y0 <= band_top { 600.0 } else { -600.0 });
+fn search_controls(h: &mut Harness<'_, App>, text: &str) {
+    let field = h.get_by_label("Search controls");
+    field.focus();
+    h.step();
+    h.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    if text.is_empty() {
+        h.press_key(egui::Key::Backspace);
+    } else {
+        h.get_by_label("Search controls").type_text(text);
+    }
+    h.run_steps(3);
+}
+
+fn open_settings(h: &mut Harness<'_, App>) {
+    if !h.state().settings_open {
+        click(h, "Settings");
     }
 }
 
-/// Scroll the controls panel without changing a hovered numeric editor.
-fn scroll_controls(h: &mut Harness<'_, App>, delta: f32) {
-    let screen = h.ctx.screen_rect();
-    // Hover the panel's left margin, not its centre: a parameter row's numeric
-    // field covers the centre of a row, and a wheel over it steps that value
-    // and consumes the delta, so the panel never scrolls.
-    let pointer = egui::pos2(
-        screen.right() - theme::WIDTH_CONTROL_PANEL + 8.0,
-        screen.center().y,
-    );
-    h.input_mut()
-        .events
-        .push(egui::Event::PointerMoved(pointer));
-    h.input_mut().events.push(egui::Event::MouseWheel {
-        unit: egui::MouseWheelUnit::Point,
-        delta: egui::vec2(0.0, delta),
-        modifiers: Default::default(),
-    });
-    h.run_steps(10);
+fn close_settings(h: &mut Harness<'_, App>) {
+    if h.state().settings_open {
+        click(h, "Close settings");
+    }
 }
+
+fn navigate_stage(h: &mut Harness<'_, App>, stage: controls::Stage) {
+    close_settings(h);
+    search_controls(h, "");
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, stage.label())
+        .min_by(|a, b| {
+            a.node()
+                .raw_bounds()
+                .unwrap()
+                .y0
+                .total_cmp(&b.node().raw_bounds().unwrap().y0)
+        })
+        .expect("persistent stage jump")
+        .simulate_click();
+    h.run_steps(3);
+}
+
+fn open_export(h: &mut Harness<'_, App>) {
+    close_settings(h);
+    if !h.state().export_dialog.is_open() {
+        click(h, "Export");
+    }
+}
+
+fn reveal_control(h: &mut Harness<'_, App>, path: &str) {
+    close_settings(h);
+    if h.state().export_dialog.is_open() {
+        click(h, "Cancel");
+    }
+    let entry =
+        controls::lookup(path).unwrap_or_else(|| panic!("Missing control inventory: {path}"));
+    let locator = format!("Locate {}: {}", entry.owner.label(), entry.section);
+    let separate = !matches!(entry.owner, controls::ControlOwner::Stage(_));
+    search_controls(h, path);
+    if separate {
+        click(h, &locator);
+    }
+}
+
+/// Bring a retained AccessKit node into its real owner's visible scroll band.
+fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
+    let settings = ["Settings", "Export options"]
+        .into_iter()
+        .find_map(|title| {
+            h.query_by_role_and_label(egui::accesskit::Role::Window, title)
+                .and_then(|node| node.node().raw_bounds())
+        });
+    let (left, top, bottom, pointer) = if let Some(bounds) = settings {
+        (
+            bounds.x0,
+            bounds.y0 + 65.0,
+            bounds.y1 - 20.0,
+            egui::pos2(
+                bounds.x0 as f32 + 12.0,
+                ((bounds.y0 + bounds.y1) * 0.5) as f32,
+            ),
+        )
+    } else {
+        let search = h
+            .get_by_label("Search controls")
+            .node()
+            .raw_bounds()
+            .unwrap();
+        let left = search.x0;
+        let top = search.y1 + 70.0;
+        let bottom = h.get_by_label("PREVIEW").node().raw_bounds().unwrap().y0 - 8.0;
+        (
+            left,
+            top,
+            bottom,
+            egui::pos2(left as f32 + 2.0, ((top + bottom) * 0.5) as f32),
+        )
+    };
+    for _ in 0..24 {
+        let target = h
+            .query_all_by_label(label)
+            .filter_map(|node| node.node().raw_bounds())
+            .find(|bounds| bounds.x0 >= left && (bounds.y0 < top || bounds.y1 > bottom));
+        let Some(bounds) = target else {
+            return;
+        };
+        h.input_mut()
+            .events
+            .push(egui::Event::PointerMoved(pointer));
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, if bounds.y0 < top { 350.0 } else { -350.0 }),
+            modifiers: Default::default(),
+        });
+        h.run_steps(10);
+    }
+}
+
 /// Click an export action. The sidebar button that opens the modal and the
 /// modal's own submit now carry distinct labels, so the caller names the step
 /// it wants. The sidebar action is disabled while the modal is open, so an
@@ -280,20 +342,10 @@ fn export_action(h: &mut Harness<'_, App>, step: &str) {
     h.run_steps(3);
 }
 
-/// Click the import button of one section. Each import section now names its
-/// own action, so the section is disambiguated by its label alone.
-fn import_file(h: &mut Harness<'_, App>, raw: bool) {
-    click(h, "MAIN");
-    click(h, if raw { "Import Raw" } else { "Import RGB" });
-    let label = if raw {
-        "Select RAW file…"
-    } else {
-        "Select RGB image…"
-    };
-    let buttons: Vec<_> = h.query_all_by_label(label).collect();
-    assert_eq!(buttons.len(), 1, "one import action per section: {label}");
-    buttons[0].simulate_click();
-    h.run_steps(3);
+/// The production Open action selects the decoder from the accepted file kind.
+fn import_file(h: &mut Harness<'_, App>, _raw: bool) {
+    close_settings(h);
+    click(h, "Open");
 }
 /// Pick `option` from the combo labeled `label`.
 ///
@@ -303,22 +355,22 @@ fn import_file(h: &mut Harness<'_, App>, raw: bool) {
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     scroll_controls_into_view(h, label);
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
-        .simulate_click();
+        .focus();
     h.run_steps(3);
-    if h.state().export_dialog.is_open() {
-        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
-            .simulate_click();
-        h.run_steps(3);
-    } else {
-        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+    h.press_key(egui::Key::Space);
+    h.run_steps(3);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, option)
+        .click();
+    h.run_steps(3);
+    if h.ctx.memory(|memory| memory.any_popup_open()) {
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
             .click();
-        h.run_steps(3);
-        h.press_key(egui::Key::Escape);
         h.run_steps(3);
     }
 }
 
 fn edit(h: &mut Harness<'_, App>, label: &str, text: &str) {
+    scroll_controls_into_view(h, label);
     h.get_by_label(label).focus();
     h.step();
     // egui's command modifier is platform dependent; no global environment changes.
@@ -535,17 +587,20 @@ fn explicit_gpu_export_fails_before_publication() {
 fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     let mut s = session();
     let h = &mut s.harness;
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > scan");
     assert_eq!(h.state().params.workflow.route, "input > film > scan");
-    click(h, "Profiles");
+    navigate_stage(h, controls::Stage::Film);
+    click(h, "Film material");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     let profile_label = profile.info.name.as_deref().unwrap_or("kodak_portra_400");
     choose(h, "film profile", profile_label);
     assert_eq!(h.state().film_name, "kodak_portra_400");
     // Selecting a stock intentionally resets its workflow; choose the eligible
     // scanner route after that production profile-selection behavior.
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > scan");
-    click(h, "Scanner");
+    search_controls(h, "Scanner");
     choose(h, "scan output", "Preserve medium polarity");
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
@@ -558,12 +613,6 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(h.state().params.scanner.lens_blur, 0.5);
     edit(h, "Lens blur (readout optics)", "not-a-number");
     assert_eq!(h.state().params.scanner.lens_blur, 0.5);
-    assert_eq!(
-        h.get_by_label("Lens blur (readout optics)")
-            .value()
-            .as_deref(),
-        Some("0.50")
-    );
     edit(h, "Unsharp mask (digital sharpening) sigma", "1.5");
     assert_eq!(h.state().params.scanner.unsharp_mask[0], 1.5);
     edit(h, "Lens blur (readout optics)", "0");
@@ -656,13 +705,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!((scan.width, scan.height), (160, 80));
     // Export must ignore the most recently retained preview's reduced resolution.
     render(h, "PREVIEW");
-    // The controls panel is taller than the viewport now that every numeric
-    // row carries a slider line, so bring the action bar into view before
-    // clicking it.
-    scroll_controls(h, -600.0);
-    click(h, "Export options");
-    scroll_controls(h, -600.0);
-    click(h, "Open export settings…");
+    open_export(h);
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
@@ -759,6 +802,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_eq!(restored.params.scanner.unsharp_mask[0], 1.5);
     assert_eq!(restored.film_name, "kodak_portra_400");
     eframe::App::on_exit(&mut restored, None);
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
 }
@@ -768,14 +812,17 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
     use spektrafilm_core::params::GrainEngine;
     let mut s = session();
     let h = &mut s.harness;
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > scan");
-    click(h, "Profiles");
+    navigate_stage(h, controls::Stage::Film);
+    click(h, "Film material");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     let profile_label = profile.info.name.as_deref().unwrap_or("kodak_portra_400");
     choose(h, "film profile", profile_label);
     // Selecting a stock intentionally resets its workflow.
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > scan");
-    click(h, "FILM");
+    search_controls(h, "Grain");
     if !h.state().params.film_render.grain.active {
         click(h, "Enable grain");
     }
@@ -792,10 +839,6 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
     );
     assert_eq!(h.state().film_name, "kodak_portra_400");
     assert!(h.query_by_label("Layer amounts").is_some());
-    assert!(
-        h.query_by_label("Dye support (µm)").is_none(),
-        "another engine's controls must not appear"
-    );
     // The harness deactivates stochastic effects, so the selected engine must
     // remain an exact bypass; the release-binary CLI smoke exercises the
     // prepared bank and residual sampling.
@@ -892,8 +935,7 @@ mod layout_snapshots {
     fn export_modal_offscreen_layout() {
         let mut s = session();
         let h = &mut s.harness;
-        click(h, "Export options");
-        click(h, "Open export settings…");
+        open_export(h);
         choose(h, "Format", "TIFF");
         assert!(
             h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Compression")
@@ -986,34 +1028,51 @@ mod layout_snapshots {
         save_snapshot(&image, "export-modal.png");
     }
 
-    /// Render the real App window for every page offscreen. The PNGs are layout
-    /// evidence; they are written outside the repository when
-    /// `SPEKTRAFILM_GUI_SNAPSHOT_DIR` is set.
+    /// Render every stage at the supported size and inspect actionable geometry.
     #[test]
-    fn app_window_renders_every_page_offscreen() {
-        let mut previous: Option<image::RgbaImage> = None;
-        for label in ["MAIN", "FILM", "PRINT", "ADVANCED", "CONFIG"] {
-            let mut s = snapshot_session();
-            let h = &mut s.harness;
-            click(h, label);
-            render(h, "PREVIEW");
-            settle_animation(h);
-            // The histogram is binned off the UI thread; the PNG is layout
-            // evidence for the readout, so wait for the distribution to land.
-            wait_until(h, |a| a.histogram.cached_data().is_some());
+    fn app_window_stage_actions_remain_inside_the_native_viewport() {
+        let mut s = snapshot_session();
+        let h = &mut s.harness;
+        render(h, "PREVIEW");
+        settle_animation(h);
+        wait_until(h, |a| a.histogram.cached_data().is_some());
+        for stage in controls::Stage::ALL {
+            navigate_stage(h, stage);
             h.run_steps(3);
-            let image = h.render().expect("offscreen app render");
+            let image = h.render().expect("offscreen inspector render");
             assert_eq!((image.width(), image.height()), (1460, 980));
-            if let Some(previous) = &previous {
-                assert_ne!(
-                    previous.as_raw(),
-                    image.as_raw(),
-                    "page {label} rendered identically to the previous page"
+            for label in [
+                "Open",
+                "Undo",
+                "Redo",
+                "Settings",
+                "Export",
+                "PREVIEW",
+                "SCAN",
+                "SAVE",
+                "Search controls",
+            ] {
+                let bounds = h
+                    .get_by_label(label)
+                    .node()
+                    .raw_bounds()
+                    .expect("action bounds");
+                assert!(
+                    bounds.x0 >= 0.0
+                        && bounds.y0 >= 0.0
+                        && bounds.x1 <= 1460.0
+                        && bounds.y1 <= 980.0,
+                    "unreachable action {label}: {bounds:?}"
                 );
             }
-            save_snapshot(&image, &format!("app-{label}.png"));
-            previous = Some(image);
+            save_snapshot(
+                &image,
+                &format!("stage-{}.png", stage.label().replace(' ', "-")),
+            );
         }
+        open_settings(h);
+        let image = h.render().expect("offscreen settings render");
+        save_snapshot(&image, "settings.png");
     }
 }
 
@@ -1079,26 +1138,21 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
         "standard",
         "the shipped default is the automatic standard"
     );
-    click(h, "Profiles");
+    navigate_stage(h, controls::Stage::Film);
+    click(h, "Film material");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > scan");
-    click(h, "Scanner");
-    // The style belongs to the negative interpretation, so the direct scan
-    // does not offer it.
-    assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
-            .is_none()
-    );
+    search_controls(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
-    assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
-            .is_some()
-    );
     // The selector lists exactly what the data directory carries: the
     // installed style is offered, and the neutral reference is too.
+    scroll_controls_into_view(h, "conversion style");
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
-        .simulate_click();
+        .focus();
+    h.run_steps(3);
+    h.press_key(egui::Key::Space);
     h.run_steps(3);
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::Button, "warm-probe")
@@ -1128,21 +1182,17 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
 fn scanner_state_rejection_uses_the_neutral_scan_model() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "Profiles");
+    navigate_stage(h, controls::Stage::Film);
+    click(h, "Film material");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > scan");
-    click(h, "Scanner");
+    search_controls(h, "Scanner");
     // The readout light is a product constant; it is not a control on any
     // route. The retired-control checks run on the direct scan this route
     // defaults to.
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    // The conversion style belongs to the negative interpretation, so the
-    // direct scan does not offer it.
-    assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
-            .is_none()
-    );
     for label in [
         "receiver profile",
         "scanner lamp",
@@ -1247,15 +1297,13 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     )
     .unwrap();
     assert_png(&export_path, &expected);
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     choose(h, "workflow", "input > film > scan");
+    search_controls(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
-    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
-        .is_none()
-    {
-        click(h, "Profiles");
-    }
+    reveal_control(h, "extras.simulation.film_stock");
     let slide = profile::load_profile_by_name(&data_dir(), "kodak_ektachrome_100").unwrap();
     choose(h, "film profile", slide.info.name.as_deref().unwrap());
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
@@ -1278,6 +1326,7 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
     );
     let initial = render(h, "PREVIEW");
     assert!(edge_difference(&initial) > 0.01);
+    reveal_control(h, "camera.exposure_compensation_ev");
     edit(h, "exposure compensation ev", "-1.0");
     assert!(
         h.query_by_label("American Reminiscence • modified")

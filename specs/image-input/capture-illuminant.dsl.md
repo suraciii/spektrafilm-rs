@@ -16,7 +16,7 @@ The leaf's semantics — optional value, profile inheritance, explicit override,
 | Unset resolves to | the selected film profile's `reference_illuminant` |
 | Explicit values | a catalog illuminant name, or `BB<kelvin>` |
 | Dedicated `process` flag | none — `--set` is the canonical surface |
-| Editing surface parity | MAIN → Camera in the GUI, per [GUI workflow](../gui-workflow/spec.md) |
+| Editing surface parity | Input and capture → Camera in the GUI, per [Stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership) |
 
 The accepted names come from the shared illuminant vocabulary that `describe --field` already reports for `enlarger.illuminant`: the catalog sources in `data/illuminants/catalog.json`, the bundled `T`, `TH-KG3`, `TH-KG3-L`, and `K75P` selections, and the analytic `BB<kelvin>` token. `BB` must be followed by a temperature the spectral service accepts; a name it does not accept fails with the permitted values and never falls back to the profile reference.
 
@@ -211,4 +211,4 @@ A winning non-active `--set` edit warns on stderr, names the canonical path, and
 3. `BB4000`, `T`, and any other accepted catalog name resolve to that illuminant and change only the camera-side conversion into film exposure.
 4. `BB900` and `Sunset` fail before output publication with the path, the supplied value, and the accepted vocabulary, identically in dry run, rendering, sparse files, presets, and GUI state import.
 5. The report distinguishes requested, effective, and source, and names the inherited profile reference illuminant rather than presenting it as an authored value.
-6. The GUI's MAIN → Camera control writes this same leaf with the same type, validator, and conditions, and the canonical `--set` path remains addressable through `describe`.
+6. The GUI's Input and capture → Camera control writes this same leaf with the same type, validator, and conditions, and the canonical `--set` path remains addressable through `describe`.

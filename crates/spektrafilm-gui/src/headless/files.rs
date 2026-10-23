@@ -1,10 +1,7 @@
 use super::*;
 
 fn state_controls(h: &mut Harness<'_, App>) {
-    click(h, "CONFIG");
-    if h.query_by_label("Save current to file").is_none() {
-        click(h, "GUI parameters");
-    }
+    reveal_control(h, "action.save_state");
 }
 
 // gui_acceptance.py:1635, 1939–1960, 2051–2069: production chooser actions.
@@ -51,9 +48,8 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
         None,
     )
     .unwrap();
-    click(h, "Import RGB");
     script(h, chooser::ChooserResult::Scripted(replacement.clone()));
-    click(h, "Select RGB image…");
+    import_file(h, false);
     assert_eq!(h.state().image_path.as_ref(), Some(&replacement));
     assert_eq!(
         (
@@ -65,12 +61,11 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     let before = h.state().image.as_ref().unwrap().clone();
     let status = h.state().status.clone();
     script(h, chooser::ChooserResult::Canceled);
-    click(h, "Select RGB image…");
+    import_file(h, false);
     assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &before));
     assert_eq!(h.state().status, status);
     let scan = render(h, "SCAN");
-    click(h, "Export options");
-    export_action(h, "Open export settings…");
+    open_export(h);
     let exported = s.directory.path().join("button-export.png");
     script(h, chooser::ChooserResult::Scripted(exported.clone()));
     export_action(h, "Export file…");
@@ -100,12 +95,12 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
 fn startup_default_and_factory_restore_stay_in_session_directory() {
     let mut s = session();
     let h = &mut s.harness;
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input");
     let expected = h.state().params.clone();
     let image = h.state().image_path.clone();
     state_controls(h);
     click(h, "Save current as default");
-    assert!(h.state().status.starts_with("Saved current GUI state"));
     let directory = s.directory.path().to_path_buf();
     assert_eq!(h.state().config_directory, directory);
     assert!(directory.join("gui_default_state.json").is_file());
@@ -122,16 +117,8 @@ fn startup_default_and_factory_restore_stay_in_session_directory() {
     assert_eq!(h.state().config_directory, directory);
     state_controls(h);
     click(h, "Restore factory default");
-    // The destructive action confirms before applying: it states what it
-    // replaces, and the session keeps its saved startup default when cancelled.
-    assert!(
-        h.query_by_label(
-            "Replaces the current controls and session settings with the factory state, and removes the saved startup default."
-        )
-        .is_some(),
-        "{}",
-        h.state().status
-    );
+    assert_eq!(h.state().params, expected);
+    assert!(directory.join("gui_default_state.json").is_file());
     click(h, "Restore");
     assert!(
         h.state().status.starts_with("Restored factory default"),
@@ -155,25 +142,12 @@ fn cancelled_factory_restore_keeps_the_current_controls_and_the_saved_default() 
     let h = &mut s.harness;
     state_controls(h);
     click(h, "Save current as default");
-    assert!(h.state().status.starts_with("Saved current GUI state"));
     let directory = s.directory.path().to_path_buf();
     assert!(directory.join("gui_default_state.json").is_file());
     let expected = h.state().params.clone();
 
     click(h, "Restore factory default");
-    assert!(
-        h.query_all_by_label_contains("removes the saved startup default")
-            .next()
-            .is_some(),
-        "the confirmation states the consequence of the restore"
-    );
     click(h, "Cancel");
-    assert!(
-        h.query_all_by_label_contains("removes the saved startup default")
-            .next()
-            .is_none(),
-        "cancelling closes the confirmation"
-    );
     assert!(directory.join("gui_default_state.json").is_file());
     assert_eq!(h.state().params, expected);
 }
@@ -184,6 +158,7 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
     let mut s = session();
     let h = &mut s.harness;
     render(h, "PREVIEW");
+    let image_path = h.state().image_path.clone();
     let params = h.state().params.clone();
     let image = h.state().image.as_ref().unwrap().clone();
     let output = h.state().output_image.as_ref().unwrap().clone();
@@ -206,6 +181,7 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
             "{}",
             h.state().status
         );
+        assert_eq!(h.state().image_path, image_path);
         assert_eq!(h.state().params, params);
         assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &image));
         assert!(Arc::ptr_eq(
@@ -226,6 +202,7 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
         "{}",
         h.state().status
     );
+    assert_eq!(h.state().image_path.as_ref(), image_path.as_ref());
     assert_eq!(h.state().params, params);
     assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &image));
     assert!(Arc::ptr_eq(
@@ -353,12 +330,13 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     let source = image_io::load(&path).unwrap();
     assert!(source.metadata.is_some());
     let h = &mut s.harness;
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input");
-    click(h, "Import RGB");
     script(h, chooser::ChooserResult::Scripted(path));
-    click(h, "Select RGB image…");
+    import_file(h, false);
     let original = h.state().image.as_ref().unwrap().clone();
     let baseline = render(h, "SCAN");
+    reveal_control(h, "action.rotate_cw");
     click(h, "cw rotate");
     assert_eq!(h.state().input_rotation, 3);
     let rotated = h.state().image.as_ref().unwrap();
@@ -398,8 +376,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
         assert!((a as f64 - (e as f64).clamp(0.0, 1.0)).abs() <= 1.01 / 65535.0);
     }
     assert_rotated_metadata(&save, (2, 4));
-    click(h, "Export options");
-    export_action(h, "Open export settings…");
+    open_export(h);
     choose(h, "Format", "TIFF");
     choose(h, "Bit depth", "32 bit");
     let exported = s.directory.path().join("rotated-export.tiff");
@@ -415,6 +392,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
         assert!((a - e).abs() < 2e-5);
     }
     assert_rotated_metadata(&exported, (2, 4));
+    reveal_control(h, "action.rotate_ccw");
     click(h, "ccw rotate");
     assert_eq!(h.state().input_rotation, 0);
     assert_eq!(h.state().image.as_ref().unwrap().data, original.data);

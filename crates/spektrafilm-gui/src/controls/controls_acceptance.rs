@@ -9,6 +9,10 @@ fn scanner_params() -> RuntimeParams {
 }
 
 fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+    scanner_changes(ui, params);
+}
+
+fn scanner_changes(ui: &mut egui::Ui, params: &mut RuntimeParams) -> super::ChangeFlags {
     super::show(
         ui,
         params,
@@ -19,7 +23,7 @@ fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         &mut Default::default(),
         "D55",
         &crate::profiles::pick_data_dir(),
-    );
+    )
 }
 
 fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
@@ -36,12 +40,12 @@ fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     );
 }
 
-fn enlarger(ui: &mut egui::Ui, params: &mut RuntimeParams) {
+fn preflash(ui: &mut egui::Ui, params: &mut RuntimeParams) {
     super::show(
         ui,
         params,
         &mut serde_json::Value::Null,
-        "Enlarger",
+        "Preflash",
         super::ScanMedium::Negative,
         "",
         &mut Default::default(),
@@ -75,7 +79,7 @@ mod headless {
         assert_eq!(harness.ctx.input(|input| input.raw_scroll_delta.y), 0.0);
         assert_eq!(harness.ctx.input(|input| input.smooth_scroll_delta.y), 0.0);
         let after_event = harness.state().scanner.clone();
-        harness.run();
+        harness.run_steps(10);
         assert_eq!(harness.state().scanner.lens_blur, after_event.lens_blur);
         assert_eq!(
             harness.state().scanner.unsharp_mask,
@@ -390,7 +394,7 @@ mod row_layout {
     fn the_longest_unit_row_stays_on_one_line() {
         let mut params = scanner_params();
         params.workflow.route = "input > film > print".into();
-        let harness = Harness::new_ui_state(enlarger, params);
+        let harness = Harness::new_ui_state(preflash, params);
         let node = harness.get_by_label("preflash exposure");
         let rect = node.raw_bounds().expect("row editor has no bounds");
         let label_rect = node
@@ -418,7 +422,15 @@ mod operator_interactions {
             .with_size(egui::vec2(720.0, 1400.0))
             .build_state(
                 |ctx, params| {
-                    egui::CentralPanel::default().show(ctx, |ui| scanner(ui, params));
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        if scanner_changes(ui, params).runtime_changed {
+                            ctx.data_mut(|data| {
+                                *data.get_temp_mut_or_default::<usize>(egui::Id::new(
+                                    "operator_changes",
+                                )) += 1;
+                            });
+                        }
+                    });
                 },
                 params,
             )
@@ -440,14 +452,8 @@ mod operator_interactions {
         h.run();
     }
 
-    fn settle(h: &mut Harness<'_, RuntimeParams>) {
-        h.input_mut().time = Some(h.ctx.input(|input| input.time) + 1.1);
-        h.step();
-        h.run();
-    }
-
     #[test]
-    fn operator_edit_reset_undo_redo_and_copy_apply_only_four_values() {
+    fn operator_edit_reset_restore_and_copy_apply_only_four_values() {
         let mut h = harness(scanner_params());
         for (label, value) in [
             ("Finished exposure", "1.25"),
@@ -467,10 +473,6 @@ mod operator_interactions {
         click(&mut h, "Copy operator correction");
         click(&mut h, "Restore automatic");
         assert_eq!(h.state().scanner.operator, ScanOperatorParams::default());
-        click(&mut h, "Undo operator correction");
-        assert_eq!(h.state().scanner.operator, copied);
-        click(&mut h, "Redo operator correction");
-        assert_eq!(h.state().scanner.operator, ScanOperatorParams::default());
 
         // A new frame/state has its own upstream settings. The clipboard lives
         // in the session context and must carry none of those settings.
@@ -485,55 +487,50 @@ mod operator_interactions {
         assert_eq!(h.state().camera.exposure_compensation_ev, -1.5);
         assert_eq!(h.state().film_render.convert.exposure_compensation_ev, 0.75);
         assert_eq!(h.state().scanner.lens_blur, 0.5);
-        click(&mut h, "Reset Warmth");
+        click(&mut h, "Reset Warmth to factory");
         let mut reset = copied;
         reset.warmth_ev = 0.0;
         assert_eq!(h.state().scanner.operator, reset);
     }
 
     #[test]
-    fn operator_reset_restore_and_paste_discard_abandoned_redo_branches() {
+    fn operator_resets_and_paste_report_runtime_edits_without_session_history() {
         let copied = ScanOperatorParams {
             exposure_ev: 0.25,
             warmth_ev: 0.35,
             tint_ev: -0.2,
             contrast: 1.4,
         };
-        let first = ScanOperatorParams {
-            exposure_ev: 1.0,
-            ..copied
-        };
         for (action, expected) in [
             (
-                "Reset Finished exposure",
+                "Reset Finished exposure to factory",
                 ScanOperatorParams {
                     exposure_ev: 0.0,
-                    ..first
+                    ..copied
                 },
             ),
             (
-                "Reset Warmth",
+                "Reset Warmth to factory",
                 ScanOperatorParams {
                     warmth_ev: 0.0,
-                    ..first
+                    ..copied
                 },
             ),
             (
-                "Reset Green–magenta tint",
+                "Reset Green–magenta tint to factory",
                 ScanOperatorParams {
                     tint_ev: 0.0,
-                    ..first
+                    ..copied
                 },
             ),
             (
-                "Reset Contrast",
+                "Reset Contrast to factory",
                 ScanOperatorParams {
                     contrast: 1.0,
-                    ..first
+                    ..copied
                 },
             ),
             ("Restore automatic", ScanOperatorParams::default()),
-            ("Paste operator correction", copied),
         ] {
             let mut params = scanner_params();
             params.scanner.operator = copied;
@@ -541,78 +538,64 @@ mod operator_interactions {
             params.scanner.lens_blur = 0.5;
             let mut h = harness(params);
             click(&mut h, "Copy operator correction");
-            edit(&mut h, "Finished exposure", "1");
-            settle(&mut h);
-            edit(&mut h, "Finished exposure", "2");
-            settle(&mut h);
-            click(&mut h, "Undo operator correction");
-            assert_eq!(h.state().scanner.operator, first, "{action}");
-            assert!(
-                !h.get_by_label("Redo operator correction")
-                    .node()
-                    .is_disabled()
-            );
-
-            // Branch from the undone state using each discrete correction action.
-            // The abandoned exposure=2 state must not reappear, even immediately.
+            assert_eq!(runtime_changes(&h), 0, "copy is not an adjustment");
             click(&mut h, action);
             assert_eq!(h.state().scanner.operator, expected, "{action}");
-            assert!(
-                h.get_by_label("Redo operator correction")
-                    .node()
-                    .is_disabled(),
-                "{action}"
+            assert_eq!(runtime_changes(&h), 1, "{action}");
+            let edited = super::super::take_edited_paths(&h.ctx);
+            for (path, before, after) in [
+                (
+                    "scanner.operator.exposure_ev",
+                    copied.exposure_ev,
+                    expected.exposure_ev,
+                ),
+                (
+                    "scanner.operator.warmth_ev",
+                    copied.warmth_ev,
+                    expected.warmth_ev,
+                ),
+                ("scanner.operator.tint_ev", copied.tint_ev, expected.tint_ev),
+                (
+                    "scanner.operator.contrast",
+                    copied.contrast,
+                    expected.contrast,
+                ),
+            ] {
+                assert_eq!(
+                    edited.iter().any(|edited| edited == path),
+                    before != after,
+                    "{action}: {path}"
+                );
+            }
+            click(&mut h, "Paste operator correction");
+            assert_eq!(h.state().scanner.operator, copied);
+            assert_eq!(runtime_changes(&h), 2, "paste is one runtime adjustment");
+            click(&mut h, "Paste operator correction");
+            assert_eq!(
+                runtime_changes(&h),
+                2,
+                "unchanged paste is not an adjustment"
             );
-            click(&mut h, "Redo operator correction");
-            assert_eq!(h.state().scanner.operator, expected, "{action}");
-
-            // Discarding redo must not discard older undo points or the new action.
-            click(&mut h, "Undo operator correction");
-            assert_eq!(h.state().scanner.operator, first, "{action}");
-            click(&mut h, "Redo operator correction");
-            assert_eq!(h.state().scanner.operator, expected, "{action}");
-            click(&mut h, "Undo operator correction");
-            click(&mut h, "Undo operator correction");
-            assert_eq!(h.state().scanner.operator, copied, "{action}");
             assert_eq!(h.state().camera.exposure_compensation_ev, -1.5);
             assert_eq!(h.state().scanner.lens_blur, 0.5);
 
-            // Only the corrections survive a new session, never history/clipboard.
             let fresh = harness(h.state().clone());
             assert_eq!(fresh.state().scanner.operator, copied);
-            for label in [
-                "Undo operator correction",
-                "Redo operator correction",
-                "Paste operator correction",
-            ] {
-                assert!(
-                    fresh.get_by_label(label).node().is_disabled(),
-                    "{action}: {label}"
-                );
-            }
+            assert!(
+                fresh
+                    .get_by_label("Paste operator correction")
+                    .node()
+                    .is_disabled()
+            );
+            assert!(fresh.query_by_label("Undo operator correction").is_none());
+            assert!(fresh.query_by_label("Redo operator correction").is_none());
         }
     }
 
-    #[test]
-    fn pasting_unchanged_operator_values_preserves_redo() {
-        let mut h = harness(scanner_params());
-        edit(&mut h, "Finished exposure", "1");
-        settle(&mut h);
-        click(&mut h, "Copy operator correction");
-        edit(&mut h, "Finished exposure", "2");
-        settle(&mut h);
-        click(&mut h, "Undo operator correction");
-        assert_eq!(h.state().scanner.operator.exposure_ev, 1.0);
-
-        click(&mut h, "Paste operator correction");
-        assert_eq!(h.state().scanner.operator.exposure_ev, 1.0);
-        assert!(
-            !h.get_by_label("Redo operator correction")
-                .node()
-                .is_disabled()
-        );
-        click(&mut h, "Redo operator correction");
-        assert_eq!(h.state().scanner.operator.exposure_ev, 2.0);
+    fn runtime_changes(h: &Harness<'_, RuntimeParams>) -> usize {
+        h.ctx
+            .data(|data| data.get_temp::<usize>(egui::Id::new("operator_changes")))
+            .unwrap_or_default()
     }
 
     #[test]
@@ -623,6 +606,7 @@ mod operator_interactions {
         for (route, output, style) in [
             ("input", "direct_scan", "standard"),
             ("input > film > scan", "direct_scan", "standard"),
+            ("input > film > print > scan", "direct_scan", "standard"),
             ("input > film > scan", "negative_to_positive", "custom"),
         ] {
             h.state_mut().workflow.route = route.into();
@@ -666,6 +650,10 @@ mod operator_interactions {
                             &mut Default::default(),
                             "D55",
                             &crate::profiles::pick_data_dir(),
+                        );
+                        assert!(
+                            !changes.runtime_changed,
+                            "comparison must not enter adjustment history"
                         );
                         if let Some(comparing) = changes.operator_compare {
                             state.1.push(comparing);

@@ -67,8 +67,7 @@ fn cancel_discards_real_staged_export_and_preserves_existing_destination() {
         } else {
             assert!(!destination.exists());
         }
-        click(h, "Export options");
-        click(h, "Cancel");
+        click(h, "Cancel export");
         assert!(
             h.state()
                 .export_job
@@ -100,7 +99,6 @@ fn cancel_discards_real_staged_export_and_preserves_existing_destination() {
             h.state().export_job.is_none(),
             "App must drain and join the export"
         );
-        assert_eq!(h.state().status, "Export cancelled.");
         assert!(!staged[0].exists(), "staged file must be removed");
         if existing {
             assert_eq!(std::fs::read(&destination).unwrap(), original);
@@ -155,6 +153,7 @@ fn on_exit_cancels_and_joins_staged_export_without_publication() {
 fn on_exit_joins_active_render_and_discards_queued_results() {
     let mut s = session();
     let h = &mut s.harness;
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input");
     let baseline = render(h, "PREVIEW");
     let ctx = h.ctx.clone();

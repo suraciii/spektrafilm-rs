@@ -1,8 +1,8 @@
 // Interactive spektrafilm preview and export GUI.
 //
-// The egui shell follows the pinned Python 0.3.4 workflow: a tabbed sidebar
-// groups the main, film, print, advanced and configuration controls, while
-// the central viewer owns the input/output/paper-back presentation.
+// A continuous photographic-stage inspector and collapsible preset browser
+// surround the retained-image viewer. Application settings and independent
+// export preferences keep separate editing owners.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

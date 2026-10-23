@@ -11,7 +11,7 @@ pub(crate) fn sections(
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
 ) {
-    if section == "Display" {
+    if section == "Session" {
         if filter_matches(filter, "preview max size")
             && param_numeric(
                 ui,
@@ -29,7 +29,9 @@ pub(crate) fn sections(
             );
         }
         if filter_matches(filter, "update") {
-            flags.preview_requested |= ui.button("update").clicked();
+            let update = ui.button("update");
+            locate_row(ui, "action.update_preview", &update);
+            flags.preview_requested |= update.clicked();
         }
     }
 }

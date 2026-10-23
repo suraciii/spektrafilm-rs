@@ -9,6 +9,7 @@ mod validation;
 
 pub use io::{default_path, reset_factory, startup};
 pub use spektrafilm_core::config::config_dir;
+pub(crate) use validation::validate_stored_runtime;
 use validation::{normalize_grain_section, validate_state_parameters};
 
 /// Version 5 removes scanner light controls and emits the canonical standard
