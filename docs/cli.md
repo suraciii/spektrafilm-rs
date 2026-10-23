@@ -38,6 +38,38 @@ See [source declarations](../specs/cli/spec.md#input-declaration) and the [image
 RAW examples retain automatic linear ACES2065-1 declaration.
 See [RAW input](raw.md) for decoding details and [scanning](scanning.md) for negative conversion.
 
+## Material stage input and output
+
+`--route` selects whether the primary output is an image or one resumable material state. A route ending at `film` or `print` writes a self-contained directory with a `stage.json` manifest and native density payloads; `.sfstage` is the recommended suffix. A route ending at `scan` writes an ordinary image. The destination extension never chooses the operations.
+
+```bash
+# Film-only processing does not require an unused print profile.
+spektrafilm process input.png --backend cpu --film kodak_portra_400 \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --route 'input > film' -o negative.sfstage
+
+# Continue the saved material without repeating film exposure or development.
+spektrafilm process negative.sfstage --backend cpu \
+    --route 'film > print > scan' --paper kodak_portra_endura -o final.tif
+
+# Save print separately, then scan it with downstream edits.
+spektrafilm process negative.sfstage --backend cpu \
+    --route 'film > print' --paper kodak_portra_endura -o print.sfstage
+spektrafilm process print.sfstage --backend cpu \
+    --route 'print > scan' --set scanner.lens_blur=0.5 -o print.tif
+```
+
+The six material routes are `input > film`, `input > film > print`, `film > scan`, `film > print`, `film > print > scan`, and `print > scan`. Artifact inputs require an explicit matching route and reject raster declarations, RAW loading controls, and diagnostic taps. Artifact destinations must not already exist. Image writer options such as `--format`, `--bit-depth`, compression, JPEG options, and saving color/transfer conversion do not apply to material output.
+
+Completed material and its interpretation are frozen. A different upstream edit must regenerate from the earlier input; later overrides cannot conceal the conflict. Downstream presets and `--set` retain their normal ordering. An omitted `--seed` inherits the artifact seed; an explicit seed changes only future stochastic operations. Geometry already performed is not repeated. Artifacts embed their material dependencies, so continuation does not depend on the original photograph or mutable profile library. Unsupported material boundaries fail with the model reason instead of disabling effects.
+
+Film-only output retains an explicit future print selection by name without loading that unused profile. Scanning the film does not require the future print library entry. A continuation that actually prints resolves the selected material and embeds its content in the resulting print state. Authored neutral-filter axes remain protected from database defaults across continuation. Writable destinations must not alias the manifest or numeric members, including through hard links.
+
+`--dry-run` resolves the artifact header without decoding large numeric payloads or creating outputs. Its report distinguishes inherited and planned operations, seed origin, and unchecked payload integrity. It is not proof of integrity or compute-device availability. See the [stage artifact contract](../specs/cli/stage-artifacts.md) for the persistence and precision rules.
+
+`--debug` is a Boolean stderr-only diagnostic flag. It accepts no directory or value and creates no files. It does not change parameters, results, stdout, dry-run reports, artifact contents, or GPU timing collection. Redirect stderr with the shell to save text. `--diagnostics report.json` remains an independent structured-report request. The retired public `--stage-evidence` option has no alias; dedicated instrument native observations remain research data, not resumable material artifacts.
+
+
 ## Backend and precision
 
 `process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`.
@@ -174,9 +206,15 @@ See the [CLI workflow contract](../specs/cli/spec.md#data-directory-selection).
 Profile metadata and array dimensions are validated before construction.
 Present but malformed neutral-filter JSON is an error.
 
-## Diagnostics
+## Debug and diagnostics
 
-`process` and `render` accept `--diagnostics REPORT.json`.
+The `process` interface accepts Boolean `--debug` for additional human-readable
+stderr messages. It takes no directory argument, writes no files, and captures no numerical
+buffers. It must not change parameters, routing, or numerical results. See the authoritative
+[debug and diagnostics contract](../specs/cli/spec.md#debug-diagnostics).
+
+`--diagnostics REPORT.json` is separate: `process` and `render` accept it to persist a
+structured execution report.
 Add `--gpu-timings` to collect compute-pass timestamps when the adapter supports them.
 The report includes operation outcomes, repeated simulation attempts, saving attribution, actual GPU work, and explicit availability reasons.
 Diagnostics do not change image parameters or machine-readable render output.
@@ -197,37 +235,56 @@ fail this configuration before publication.
 
 See [the telemetry contract](../specs/telemetry/spec.md) and [report metrics](../specs/telemetry/metrics/spec.md) for report semantics, bounded detail, and measurement limits.
 
-## Stage evidence
+## Process film and print states
 
-`process` accepts `--stage-evidence DIRECTORY` to publish native numerical evidence of the
-executed render: one lossless f64 buffer per pipeline stage (input, film log exposure, film
-density, print log exposure, print density, output) plus the terminal `stage-evidence.json`
-manifest that names every buffer's geometry, domain, precision, and hash. The output stage is
-the pre-saving pipeline output, byte-identical to `--raw-out`.
+The [stage-artifact contract](../specs/cli/stage-artifacts.md) owns route admission,
+the artifact format, frozen controls, and continuation semantics.
 
-Capture observes one CPU reference render; it never changes parameters, exposure, the
-execution route, or output pixels, and capture-off rendering is unaffected. The command needs
-`--backend cpu` (build `spektrafilm-f64` for f64 reference evidence), and it refuses preview
-mode because preview bounding resizes the source before metering. Crop and resize inside the
-pipeline are supported and described by each stage's geometry record. Route-skipped stages
-are explicitly `not_applicable`, not failures. A missing required stage or failed write makes
-capture fail; invalid or conflicting bundle paths are rejected before rendering. Bundle files
-and temporary files must not alias the input, output, raw dump, parameter sources, or diagnostics.
-Pixel evidence stays out of `--diagnostics`; a stage-evidence failure is reported separately
-from telemetry persistence.
+The command shape is `process INPUT --route ROUTE -o OUTPUT [--debug] [--diagnostics REPORT]`.
+A `.sfstage` directory with `stage.json` is one completed, always-resumable film or print
+state, not a directory of optional observations. An image-to-stage route stops after
+developing the selected material; a continuation starts from that completed state and
+executes only the remaining operations. A stage input always requires an explicit route.
 
 ```bash
-./target/release/spektrafilm-f64 process input.tif -o out.png \
-    --film kodak_portra_400 --paper kodak_portra_endura \
+# Develop an image into a retained film state.
+./target/release/spektrafilm-f64 process input.tif \
+    --route 'input > film' -o negative.sfstage \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
-    --backend cpu --stage-evidence evidence/ --data-dir data
+    --film kodak_portra_400 --backend cpu --data-dir data
+
+# Expose and develop a print from that completed film state.
+./target/release/spektrafilm-f64 process negative.sfstage \
+    --route 'film > print' -o print.sfstage \
+    --paper kodak_portra_endura --data-dir data
+
+# Scan that completed print; --debug writes messages only to stderr.
+./target/release/spektrafilm-f64 process print.sfstage \
+    --route 'print > scan' -o print.png --debug \
+    --diagnostics print-report.json --data-dir data
 ```
 
-See [the CLI stage-evidence contract](../specs/cli/spec.md#stage-evidence) for the bundle
-format and its wire fields.
+The added routes are `input > film`, `input > film > print`, `film > scan`,
+`film > print`, `film > print > scan`, and `print > scan`. Routes ending in `film` or
+`print` write one `.sfstage` state; routes ending in `scan` use the ordinary image writer.
+Existing image routes and real-negative `convert-film` behavior remain unchanged.
 
-The instrument binary reads the same bundle with `sample --from-evidence` and re-hashes a
-retained bundle with `verify --record`. See [measurement](measurement.md).
+A continuation inherits the source seed when no seed is supplied. Controls for completed
+operations are frozen: conflicting overrides fail rather than re-rendering the source.
+Only downstream controls remain editable. Geometry, metering, film development and its
+effects, and already completed print development must not run a second time. Loading a
+stage requires only the material dependencies used by the requested continuation; a film
+scan does not require a paper profile, and a print scan does not rerun film preparation.
+Downstream edits execute on the retained material grid. They cannot change completed
+crop or scale operations or recreate an upstream halo.
+
+There is no `--stage-evidence` process option or replacement capture flag. Stage output is
+selected by the route and `-o`, not by `--save-stage`, `--export-stage`, or a directory
+argument to `--debug`. Dedicated research observation and measurement workflows own
+numerical buffers through the core observer; those observations are not `.sfstage` files.
+See the [instrument native-observation contract](../specs/instrument/native-observations.md)
+and [measurement](measurement.md). Existing `sample --from-evidence` and `sample --from-run`
+remain research readers, not process-stage loaders.
 
 ## See also
 

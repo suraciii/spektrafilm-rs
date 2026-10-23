@@ -197,6 +197,7 @@ fn run_publishes_a_bundle_and_the_retained_records() {
         experiment.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
+        "--force",
     ]);
     assert!(
         output.status.success(),
@@ -220,11 +221,17 @@ fn run_publishes_a_bundle_and_the_retained_records() {
     let command = read_json(&out.join("command.json"));
     let argv = command["argv"].as_array().unwrap();
     let argv = argv.iter().map(|a| a.as_str().unwrap()).collect::<Vec<_>>();
-    assert_eq!(argv[0], "process");
-    assert!(argv.contains(&"--stage-evidence"));
-    assert!(argv.contains(&"cpu"));
-    assert!(!argv.contains(&"--experiment"));
-    assert!(argv.contains(&"--film"));
+    assert_eq!(&argv[..2], &["experiment", "run"]);
+    assert!(!argv.contains(&"--stage-evidence"));
+    assert!(argv.contains(&"--experiment"));
+    assert!(argv.contains(&experiment.to_str().unwrap()));
+    assert_eq!(command["observer"]["kind"], "native_stage_capture");
+    assert_eq!(command["observer"]["backend"], "cpu");
+    assert_eq!(command["observer"]["host_precision"], "f64");
+    assert_eq!(
+        command["observer"]["directory"],
+        out.join("bundle").to_str().unwrap()
+    );
 
     let report = read_json(&out.join("report.json"));
     assert_eq!(report["experiment"]["id"], "experiment");
@@ -235,34 +242,52 @@ fn run_publishes_a_bundle_and_the_retained_records() {
     assert_eq!(report["bundle"]["execution_status"], "completed");
     assert!(report["tool"]["version"].is_string());
 
-    // A repeated run with identical inputs is byte-identical.
-    let output = fixture.run(&[
-        "experiment",
-        "run",
-        "--experiment",
-        experiment.to_str().unwrap(),
-        "--out",
-        out.to_str().unwrap(),
-        "--force",
-    ]);
-    assert!(output.status.success());
-    let out2 = &out;
-    for name in ["report.json", "resolved.json", "command.json"] {
+    // Replay the owning invocation, not a fabricated process capture command.
+    let names = ["report.json", "resolved.json", "command.json"];
+    let before: Vec<_> = names
+        .iter()
+        .map(|name| std::fs::read(out.join(name)).unwrap())
+        .collect();
+    let buffers: Vec<_> = manifest["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|stage| stage["availability"] == "available")
+        .map(|stage| {
+            let file = stage["path"].as_str().unwrap();
+            (
+                file.to_owned(),
+                std::fs::read(out.join("bundle").join(file)).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(command["seed"], 7);
+    let dependencies = command["dependencies"].as_array().unwrap();
+    let declaration = dependencies
+        .iter()
+        .find(|entry| entry["role"] == "experiment")
+        .unwrap();
+    assert_eq!(declaration["sha256"], digest_of(&experiment));
+    let executable = Path::new(command["executable"]["path"].as_str().unwrap());
+    assert_eq!(command["executable"]["sha256"], digest_of(executable));
+    let output = fixture.run(&argv);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for (name, expected) in names.iter().zip(before) {
         assert_eq!(
             std::fs::read(out.join(name)).unwrap(),
-            std::fs::read(out2.join(name)).unwrap(),
+            expected,
             "{name} is not deterministic"
         );
     }
-    for stage in manifest["stages"].as_array().unwrap() {
-        if stage["availability"] != "available" {
-            continue;
-        }
-        let file = stage["path"].as_str().unwrap();
+    for (name, expected) in buffers {
         assert_eq!(
-            std::fs::read(out.join("bundle").join(file)).unwrap(),
-            std::fs::read(out2.join("bundle").join(file)).unwrap(),
-            "bundle buffer {file} is not deterministic"
+            std::fs::read(out.join("bundle").join(&name)).unwrap(),
+            expected,
+            "{name} changed on replay"
         );
     }
 }
@@ -562,7 +587,6 @@ fn export_converts_every_available_stage_and_records_each_array() {
     let output = fixture.run(&[
         "experiment",
         "export",
-        "--stage-evidence",
         run_out.join("bundle").to_str().unwrap(),
         "--out",
         arrays.to_str().unwrap(),
@@ -645,7 +669,6 @@ fn export_converts_every_available_stage_and_records_each_array() {
             .run(&[
                 "experiment",
                 "export",
-                "--stage-evidence",
                 run_out.join("bundle").to_str().unwrap(),
                 "--out",
                 arrays2.to_str().unwrap(),
@@ -693,7 +716,6 @@ fn export_preserves_each_stage_channel_order() {
             .run(&[
                 "experiment",
                 "export",
-                "--stage-evidence",
                 run_out.join("bundle").to_str().unwrap(),
                 "--out",
                 arrays.to_str().unwrap(),
@@ -864,7 +886,6 @@ fn export_selects_requested_stages_and_rejects_an_unknown_one() {
     let output = fixture.run(&[
         "experiment",
         "export",
-        "--stage-evidence",
         run_out.join("bundle").to_str().unwrap(),
         "--out",
         selected.to_str().unwrap(),
@@ -885,7 +906,6 @@ fn export_selects_requested_stages_and_rejects_an_unknown_one() {
     let output = fixture.run(&[
         "experiment",
         "export",
-        "--stage-evidence",
         run_out.join("bundle").to_str().unwrap(),
         "--out",
         rejected.to_str().unwrap(),
@@ -947,7 +967,6 @@ fn export_rejects_an_incomplete_bundle() {
     let output = fixture.run(&[
         "experiment",
         "export",
-        "--stage-evidence",
         bundle.to_str().unwrap(),
         "--out",
         arrays.to_str().unwrap(),
@@ -976,7 +995,6 @@ fn export_rejects_an_f32_bundle() {
     let output = fixture.run(&[
         "experiment",
         "export",
-        "--stage-evidence",
         bundle.to_str().unwrap(),
         "--out",
         arrays.to_str().unwrap(),
@@ -1020,7 +1038,6 @@ fn export_rejects_a_buffer_whose_digest_does_not_match() {
     let output = fixture.run(&[
         "experiment",
         "export",
-        "--stage-evidence",
         bundle.to_str().unwrap(),
         "--out",
         arrays.to_str().unwrap(),
@@ -1069,7 +1086,6 @@ fn export_replaces_an_existing_array_only_with_force() {
     let output = fixture.run(&[
         "experiment",
         "export",
-        "--stage-evidence",
         bundle.to_str().unwrap(),
         "--out",
         arrays.to_str().unwrap(),
@@ -1082,7 +1098,6 @@ fn export_replaces_an_existing_array_only_with_force() {
     let output = fixture.run(&[
         "experiment",
         "export",
-        "--stage-evidence",
         bundle.to_str().unwrap(),
         "--out",
         arrays.to_str().unwrap(),
@@ -1109,4 +1124,66 @@ fn export_replaces_an_existing_array_only_with_force() {
 fn digest_of_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
+}
+
+#[test]
+fn export_rejects_retired_option_and_resumable_material_input() {
+    let fixture = Fixture::new();
+    let artifact = fixture.root.join("film.sfstage");
+    std::fs::create_dir(&artifact).unwrap();
+    std::fs::write(
+        artifact.join("stage.json"),
+        r#"{"schema_version":1,"kind":"stage_artifact","state":"film"}"#,
+    )
+    .unwrap();
+    let arrays = fixture.root.join("arrays");
+    let retired = fixture.run(&[
+        "experiment",
+        "export",
+        "--stage-evidence",
+        artifact.to_str().unwrap(),
+        "--out",
+        arrays.to_str().unwrap(),
+    ]);
+    assert!(!retired.status.success());
+    assert!(String::from_utf8_lossy(&retired.stderr).contains("--stage-evidence"));
+    assert!(!arrays.exists());
+    let material = fixture.run(&[
+        "experiment",
+        "export",
+        artifact.to_str().unwrap(),
+        "--out",
+        arrays.to_str().unwrap(),
+    ]);
+    assert!(!material.status.success());
+    assert!(String::from_utf8_lossy(&material.stderr).contains("stage-evidence.json"));
+    assert!(!arrays.exists());
+}
+
+#[test]
+fn run_rejects_missing_observation_boundaries_before_publication() {
+    let fixture = Fixture::new();
+    fixture.write_input("input.png", 14, 14);
+    fixture.write_suite(CHART);
+    let experiment = fixture.write_experiment(FULL_PATCH, 2, 2);
+    for (name, edit) in [
+        ("entry", "taps.inject=cmy_film"),
+        ("terminal", "taps.collect=cmy_print"),
+    ] {
+        let out = fixture.root.join(name);
+        let result = fixture.run(&[
+            "experiment",
+            "run",
+            "--experiment",
+            experiment.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--set",
+            edit,
+        ]);
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("required experiment boundaries"));
+        assert!(!out.join("bundle/stage-evidence.json").exists());
+        assert!(!out.join("output.tiff").exists());
+    }
 }

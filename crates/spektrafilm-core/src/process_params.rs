@@ -18,6 +18,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
 
+mod continuation;
+pub use continuation::{ResolvedContinuation, resolve_continuation};
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DeclarationSource {
     pub kind: String,
@@ -172,7 +175,68 @@ fn resolve_with_preview_mode(
     let added_sources = !request.presets.is_empty() || !request.sources.is_empty();
     let profile_sources = !request.feature_profiles.is_empty();
     let mut resolved_profiles = None;
-    if supplies_film {
+    let image_stage_route = request
+        .route
+        .map(WorkflowRoute::parse)
+        .is_some_and(|route| route.artifact_output().is_some() && route.artifact_input().is_none());
+    if image_stage_route {
+        for source in request.sources {
+            let edits =
+                ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}"))?;
+            if edits
+                .paths()
+                .any(|p| matches!(p, "taps.inject" | "taps.collect"))
+            {
+                return Err(format!(
+                    "--set {source:?}: taps.inject and taps.collect are inapplicable to stage artifacts"
+                ));
+            }
+        }
+        if let Some(path) = request.params_file {
+            let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            let value = crate::params::sources::parse_carrier(&text, false)?;
+            if value.pointer("/taps/inject").is_some() || value.pointer("/taps/collect").is_some() {
+                return Err(format!(
+                    "--params {}: taps.inject and taps.collect are inapplicable to stage artifacts",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if supplies_film && image_stage_route {
+        for preset in request.presets {
+            preset.validate()?;
+            if let presets::PresetParameters::Look(look) = &preset.parameters {
+                let film_ref = preset.film_profile.as_ref().expect("validated look");
+                let film = load_referenced_profile(film_ref, data_dir)?;
+                if !film.is_film() || !film.is_filming() {
+                    return Err("film profile must have film/filming support/stage".into());
+                }
+                apply_film_specifics(&mut params, &film);
+                look.apply_to(&mut params);
+                let defaults = crate::params::EnlargerParams::default();
+                params.neutral_print_filters_protected = Some([
+                    look.enlarger.c_filter_neutral != defaults.c_filter_neutral,
+                    look.enlarger.m_filter_neutral != defaults.m_filter_neutral,
+                    look.enlarger.y_filter_neutral != defaults.y_filter_neutral,
+                ]);
+                let route = WorkflowRoute::parse(request.route.expect("stage route"));
+                let (print, print_name) = if route.prints() {
+                    let reference = preset.print_profile.as_ref().expect("validated look");
+                    let print = load_referenced_profile(reference, data_dir)?;
+                    if !print.is_print_stock() {
+                        return Err("print profile must have printing support/stage".into());
+                    }
+                    (print, reference.stock.clone())
+                } else {
+                    (film.clone(), String::new())
+                };
+                resolved_profiles = Some((film, print, film_ref.stock.clone(), print_name));
+            } else {
+                params = preset.overlay_section(&params)?;
+            }
+        }
+    } else if supplies_film {
         for preset in request.presets {
             preset.validate()?;
             // The requested route is part of the workflow context a look resolves
@@ -196,14 +260,18 @@ fn resolve_with_preview_mode(
         if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
             params.validate()?;
         }
-        let direct_scan = params.workflow.route_enum() == WorkflowRoute::FilmScan
+        let selected_route = params.workflow.route_enum();
+        let film_only = selected_route == WorkflowRoute::InputFilm;
+        let direct_scan = selected_route == WorkflowRoute::FilmScan
             || (!request.require_input_declaration && !added_sources && request.scan_film);
         let name = request
             .film
             .ok_or("--film is required when the preset set supplies no film reference")?;
         let film = profile::load_profile_by_name(data_dir, name)
             .map_err(|e| format!("loading film profile {name:?}: {e}"))?;
-        let print_name = if direct_scan {
+        let print_name = if film_only {
+            String::new()
+        } else if direct_scan {
             name.to_owned()
         } else if let Some(paper) = request.paper {
             paper.to_owned()
@@ -212,8 +280,14 @@ fn resolve_with_preview_mode(
                 "no paper specified and film has no target_print — use --paper or --scan-film",
             )?
         };
-        let print = profile::load_profile_by_name(data_dir, &print_name)
-            .map_err(|e| format!("loading print profile {print_name:?}: {e}"))?;
+        // A film terminal has no dependency on an unused future print selection.
+        // The existing result shape retains a harmless in-memory profile carrier.
+        let print = if film_only {
+            film.clone()
+        } else {
+            profile::load_profile_by_name(data_dir, &print_name)
+                .map_err(|e| format!("loading print profile {print_name:?}: {e}"))?
+        };
         // A print material is not a film: it converts no encoded input to a
         // film exposure, so it carries no sensitivity-adaptation parameters
         // (specs/film-chain/spec.md). Rejecting it here names the user's
@@ -225,7 +299,7 @@ fn resolve_with_preview_mode(
                 "--film {name:?}: incompatible support/stage; expected film/filming"
             ));
         }
-        if !direct_scan && !print.is_print_stock() {
+        if !direct_scan && !film_only && !print.is_print_stock() {
             return Err(format!(
                 "print profile {print_name:?}: incompatible support/stage; expected paper/printing or film/printing"
             ));
@@ -237,6 +311,11 @@ fn resolve_with_preview_mode(
         }
         (film, print, name.to_owned(), print_name)
     };
+    if image_stage_route && !supplies_film {
+        for preset in request.presets {
+            params = preset.overlay_section(&params)?;
+        }
+    }
 
     let mut feature_profile_feedback = Vec::new();
     if !request.feature_profiles.is_empty() {
@@ -598,5 +677,55 @@ fn baseline_declarations(
     Ok(declarations)
 }
 
+/// Read a retained image-input material route without exposing the carrier
+/// parser or admitting implicit continuation routes for artifact input.
+pub fn legacy_image_stage_route(path: &Path) -> Result<Option<WorkflowRoute>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("opening params file {}: {e}", path.display()))?;
+    let baseline = crate::params::sources::parse_carrier(&text, false)
+        .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
+    let route = baseline
+        .pointer("/workflow/route")
+        .and_then(Value::as_str)
+        .map(WorkflowRoute::parse);
+    Ok(route.filter(|route| route.artifact_output().is_some() && route.artifact_input().is_none()))
+}
+
 #[cfg(test)]
 mod tests;
+
+fn load_referenced_profile(
+    reference: &presets::ProfileRef,
+    data_dir: &Path,
+) -> Result<Profile, String> {
+    let profile =
+        profile::load_profile_by_name(data_dir, &reference.stock).map_err(|e| e.to_string())?;
+    if profile.info.stock.as_deref() != Some(reference.stock.as_str()) {
+        return Err(format!(
+            "profile {:?} does not declare its stock identifier",
+            reference.stock
+        ));
+    }
+    if reference
+        .version
+        .as_ref()
+        .is_some_and(|version| version != &profile.metadata.version)
+    {
+        return Err(format!("profile {:?} version mismatch", reference.stock));
+    }
+    if let Some(expected) = &reference.content_identity {
+        use sha2::{Digest, Sha256};
+        let path = data_dir
+            .join("profiles")
+            .join(format!("{}.json", reference.stock));
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let actual = format!("sha256-{:x}", Sha256::digest(bytes));
+        if &actual != expected {
+            return Err(format!(
+                "profile {:?} content identity mismatch",
+                reference.stock
+            ));
+        }
+    }
+    Ok(profile)
+}

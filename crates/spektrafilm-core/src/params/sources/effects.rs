@@ -1,5 +1,4 @@
 //! Conditions shared by field discovery and winning-edit feedback.
-use crate::WorkflowRoute;
 use crate::params::{GrainEngine, RuntimeParams};
 use crate::profile::Profile;
 
@@ -128,19 +127,10 @@ impl Condition {
             Self::Crop => p.io.crop,
             Self::CmykActive => p.cmyk.active,
             Self::CmykStrength => p.cmyk.strength > 0.0,
-            Self::FilmDevelopment => matches!(
-                p.workflow.route.as_str(),
-                "input > film > scan" | "input > film > print > scan"
-            ),
-            Self::PrintDevelopment => matches!(
-                p.workflow.route.as_str(),
-                "input > film > print > scan" | "input > convert-film > print > scan"
-            ),
+            Self::FilmDevelopment => p.workflow.route_enum().exposes_film(),
+            Self::PrintDevelopment => p.workflow.route_enum().prints(),
             Self::Preflash => p.enlarger.preflash_exposure > 0.0,
-            Self::CaptureIlluminant => matches!(
-                p.workflow.route_enum(),
-                WorkflowRoute::FilmScan | WorkflowRoute::FilmPrintScan
-            ),
+            Self::CaptureIlluminant => p.workflow.route_enum().exposes_film(),
             Self::Chemistry(print) => {
                 if print {
                     p.print_render.density_curves_morph.active

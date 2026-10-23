@@ -8,6 +8,8 @@ The instrument owns suite selection, target identity, dependency hashing, run is
 
 It is one binary over two libraries that stay separate: the evaluation library stays renderer-independent and depends only on the shared mathematics crate, and the command plumbing shared with the user binaries stays a library rather than forked code. A new development command lands in the instrument, not in `spektrafilm`, `spektrafilm-f64`, or the evaluation library.
 
+Ordinary suite/image execution must not offer optional native capture. Dedicated instrument endpoints own research observation. Human debug diagnostics and resumable film/print artifacts remain separate contracts.
+
 The instrument must keep rendering and evaluation separate. A run produces immutable render evidence. A comparison reads runs and produces immutable measurements. A report reads a retained comparison and produces review artifacts; the retained comparison selects the builder. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
 Preflight shares renderer configuration resolution with execution and publishes a separate validation record. It never enters the render-evidence lifecycle. Target construction owns executable pinning for both local commands and fixtures. The inspection view reads validated comparison records, projects existing measurements, and leaves metric computation and policy evaluation with their current owners.
 
@@ -99,7 +101,7 @@ The first implementation slice is therefore not a `sweep` command. It is the sma
 
 Instrument commands read declared inputs and write named outputs. They must not compare against budgets or emit pass/fail verdicts of their own; interpretation belongs to the caller or to a policy document. An execution must be a pure function of its inputs: identical inputs produce identical artifacts.
 
-The binary is built at f64 reference precision through the shared `precision-f64` gate, because a chain measurement must reproduce the reference path. Chain computation runs through the shared core, so a measurement reproduces the user binaries' path. A research render remains `spektrafilm-f64 process`; `experiment run` reaches it through the shared `process` entry rather than a second render path.
+The binary is built at f64 reference precision through the shared `precision-f64` gate, because a chain measurement must reproduce the reference path. Dedicated `experiment run` and `measure run` resolve with shared parameter plumbing and execute the shared core with its common observer. They do not drive research capture through `process` flags or a duplicate stage walk. Their records identify the owning replayable instrument invocation, dependencies, and actual observer configuration, not invented process argv. Ordinary image-domain suite/image orchestration still executes the real renderer CLI and retains image masters and diagnostics without optional native capture.
 
 Release packaging and its compatibility promise are defined by [Rust delivery](../benchmark/rust-delivery/spec.md).
 
@@ -125,7 +127,7 @@ A guard run is a frozen measurement artifact together with the stimuli that prod
 
 ## Artifact boundary
 
-A record is a directory: the record document carries the declarations and the identity, its table view carries the numbers with their identities, and `evidence/` carries the stage buffers of an executed run in the form the user binaries already write. A comparison, a verification, and a later reproduction all read that same directory, so the instrument must not invent a second record format for a retained reading.
+A record is a directory: the record document carries declarations and identity, its table view carries numbers with their identities, and dedicated research `evidence/` carries stage buffers under the instrument-owned [native observation contract](native-observations.md). Comparison, verification, and later reproduction read that same directory; there is no second retained-reading format. Native observations are not resumable `.sfstage` states and cannot be obtained from human debug output.
 
 A run publishes last. The stage capture runs into a hidden staging directory beside `--out`, and the artifacts are named only when every check has passed: a failed measurement leaves neither a record nor a half-published `evidence/`, so the same destination stays usable. A reader is therefore allowed to treat the presence of a record as the presence of a complete measurement.
 
@@ -133,7 +135,7 @@ A retained bundle is read through its own manifest: the buffer digest is verifie
 
 ## Chosen boundary options
 
-A renderer-integrated instrument would remove subprocess setup but would bind evaluation to the current simulation runtime. A standalone Rust CLI preserves comparisons across historical renderer executables and retained artifacts. The target design chooses the standalone CLI with the existing renderer process boundary.
+A renderer-integrated evaluation system would remove subprocess setup but bind historical image evaluation to the current runtime. A standalone instrument preserves image comparisons across renderer executables and retained artifacts. The selected boundary therefore keeps ordinary suite/image rendering behind the real renderer CLI while dedicated experiments and point-wise measurements use the shared core observer in-process. Ownership is explicit rather than a process capture option: instrument research owns retention, and the core owns executed values.
 
 The instrument must not add a second parameter DSL. Suite and target documents may reference the renderer's existing `--preset`, `--params`, and `--set` carriers. The instrument validates their shape and passes them to the renderer in the renderer's defined precedence order. Instrument-only settings use typed JSON fields and have no shell or expression evaluation.
 
@@ -176,7 +178,7 @@ The orchestrator must retain the command vector after path normalization, select
 
 The orchestrator must retain an observed floating decoded-input result for both raster and RAW cases through the renderer's input route. Source and simulation must use the same case geometry and decoding controls. Source output conversion and disabled CMYK ink style must be explicit overrides; image-input and simulation behavior retain their existing owners. Source dimensions and actual result geometry must remain independent.
 
-Explicit native-stage capture must remain renderer-owned. The orchestrator must request the supported capture route, validate the resulting bundle, and retain its actual exposure and profile-prepared normalization. It must not infer those values from authored controls or repeat the renderer's preparation mathematics. Intermediate coordinates must remain separate from completed-image regions.
+The ordinary run orchestrator must not request optional native-stage capture for simulation, source-only execution, or preflight, and it must retain explicit observation absence. Dedicated experiment and measurement endpoints own [native observations](native-observations.md) through the common core observer, including actual exposure and profile-prepared normalization. No endpoint may infer those values from authored controls, repeat preparation mathematics, or rerender to backfill an ordinary or historical run. Existing supported captured run records remain readable. Intermediate coordinates stay distinct from completed-image regions.
 
 Comparison retention must reuse the run validation already performed for that run. It must not reload and rehash every case for each selected case or role. Copying requested evidence must preserve the bundle's relative dependency layout and artifact identities.
 
@@ -216,7 +218,7 @@ Region inspection must not become a second evaluation pipeline; it must use reta
 
 A render result is reusable only when its suite, case, target, renderer executable, data inventory, source input, parameter files, protocol-independent render settings, selected environment, and seed identities match. A comparison result is reusable only when its two run identities, protocol digest, policy digest, and metric implementation identities match.
 
-The instrument implementation identity must cover local workspace dependencies that implement measurements, including shared color and Lab mathematics. A path dependency without a lockfile change must not escape this identity. Capture selection must be retained separately from image settings so observed stage availability is never inferred from a previously rendered image alone.
+The instrument implementation identity must cover local workspace dependencies that implement measurements, including shared color and Lab mathematics. A path dependency without a lockfile change must not escape this identity. Dedicated research observer configuration must be retained separately from image settings; ordinary suite/image records retain explicit absence. Observed stage availability must never be inferred from a rendered image or restored by an implicit rerender.
 
 The instrument must never reuse a stale result because a path stayed the same. It must reject a changed dependency before using the cache. It must not use a partial or failed run as a qualified baseline.
 

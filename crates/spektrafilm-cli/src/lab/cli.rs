@@ -105,9 +105,6 @@ pub struct EvaluationRunArgs {
     /// Resolve all selected configurations without decoding or rendering; retain preflight.json.
     #[arg(long)]
     pub dry_run: bool,
-    /// Retain native CPU stage buffers, applied exposure, and prepared print normalization.
-    #[arg(long, conflicts_with = "stimuli", help_heading = "Image-domain run")]
-    pub stage_evidence: bool,
 
     // ---- Chain run: one declared stimulus set executed through the chain ----
     /// Stimulus document: a measured-spectra manifest for `spectra`, a points
@@ -176,9 +173,6 @@ pub struct RunSuiteArgs {
     /// Resolve configurations without decoding or rendering.
     #[arg(long)]
     pub dry_run: bool,
-    /// Retain native CPU stage buffers.
-    #[arg(long)]
-    pub stage_evidence: bool,
 }
 
 /// Execute one local image through the image-domain runner.
@@ -223,9 +217,6 @@ pub struct RunImageArgs {
     /// Resolve configurations without decoding or rendering.
     #[arg(long)]
     pub dry_run: bool,
-    /// Retain native CPU stage buffers.
-    #[arg(long)]
-    pub stage_evidence: bool,
 }
 
 #[derive(Subcommand)]
@@ -809,9 +800,9 @@ pub struct ExperimentRunArgs {
 
 #[derive(Args)]
 pub struct ExperimentExportArgs {
-    /// Stage-evidence bundle directory holding the terminal manifest.
-    #[arg(long, value_name = "DIR", help_heading = "Export")]
-    pub stage_evidence: PathBuf,
+    /// Native observation bundle directory holding the terminal manifest.
+    #[arg(value_name = "INPUT", help_heading = "Export")]
+    pub input: PathBuf,
     /// Array destination; an existing array is never replaced without --force.
     #[arg(long, value_name = "DIR", help_heading = "Export")]
     pub out: PathBuf,

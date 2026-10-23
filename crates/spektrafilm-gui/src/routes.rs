@@ -1,10 +1,9 @@
 //! Workflow route choices offered by the GUI selector.
 //!
-//! The route vocabulary belongs to the workflow validator; this table adds the
-//! presentation (label and description) for the selector.
-//! `choices_match_the_supported_route_vocabulary` keeps the two in step, so a
-//! route added or removed by the validator cannot silently disappear from, or
-//! survive in, the selector.
+//! This selector exposes the GUI's image-input workflows. Core validation also
+//! accepts CLI-only `.sfstage` continuation routes, which are intentionally not
+//! GUI choices. The route test keeps that boundary explicit while ensuring that
+//! every visible route remains supported.
 
 use std::sync::LazyLock;
 
@@ -162,13 +161,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn choices_match_the_supported_route_vocabulary() {
+    fn choices_remain_the_supported_image_routes() {
+        const IMAGE_ROUTES: [&str; 6] = [
+            "input",
+            "input > film > scan",
+            "input > film > print > scan",
+            "input > convert-film > print > scan",
+            "input > convert-film > scan-minus-base",
+            "input > convert-film > scan",
+        ];
         let values: Vec<&str> = CHOICES.iter().map(|choice| choice.value).collect();
-        assert_eq!(
-            values,
-            spektrafilm_core::params::sources::supported_routes()
-        );
+        assert_eq!(values.as_slice(), IMAGE_ROUTES.as_slice());
+        let supported = spektrafilm_core::params::sources::supported_routes();
         for choice in &CHOICES {
+            assert!(
+                supported.contains(&choice.value),
+                "{} must remain a supported route",
+                choice.value
+            );
             assert!(
                 !choice.label.is_empty() && !choice.description.is_empty(),
                 "{} needs a label and a description",

@@ -4,9 +4,11 @@
 
 `spektrafilm-lab` is the Unix-style research command surface for declared rendering, retained evidence, point-wise sampling, and evidence comparison. It publishes immutable machine-readable records and named artifacts. It does not decide which candidate is better unless the caller selects an explicit policy.
 
-This specification owns the lab command grammar, endpoint boundaries, regions generation, and lab-specific migration rules. The [instrument machine interface](../instrument/spec.md) owns shared document fields, artifact publication, error status, schema discovery, and stdout/stderr behavior. The [benchmark specification](../benchmark/spec.md) owns metric meaning, reference scope, and policy evaluation. The renderer's [CLI specification](../cli/spec.md) owns renderer parameters and native stage evidence.
+This specification owns the lab command grammar, endpoint boundaries, regions generation, and lab-specific migration rules. The [instrument machine interface](../instrument/spec.md) owns shared document fields, artifact publication, error status, schema discovery, and stdout/stderr behavior. The [benchmark specification](../benchmark/spec.md) owns metric meaning, reference scope, and policy evaluation. The renderer's [CLI specification](../cli/spec.md) owns renderer parameters and human diagnostics; [native observations](../instrument/native-observations.md) owns instrument-retained scientific observations, and [stage artifacts](../cli/stage-artifacts.md) separately owns resumable film/print state.
 
 The lab product does not use a review manifest. A `review` document is not an instrument document kind, is not accepted by `spektrafilm-lab validate`, and is not a source for `sample` or `report`. A separately maintained benchmark viewer may retain a prepared-image input contract, but that contract is outside the lab product and must not be passed through this interface.
+
+The separation of ordinary rendering, debug diagnostics, resumable stage artifacts, and dedicated research observations is a normative target, not yet implemented. This specification-only revision does not claim that parser, observer plumbing, replay records, or artifact schemas already implement it.
 
 ## Product pipe
 
@@ -74,9 +76,11 @@ spektrafilm-lab fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [-
 
 The former flat forms may remain only as deprecated compatibility aliases during one migration revision. An alias must map to one canonical handler before endpoint execution, must accept no new options, and must reject mixed endpoint options with `argument_syntax`. The alias layer must not contain document-shape dispatch. New documentation and examples must use the canonical grammar. A later compatibility revision may remove the aliases.
 
-`experiment run`, `experiment export`, `spectral evaluate`, and `fit` remain experimental endpoints under their own specifications. They use the same document, artifact, and machine-output contracts. They must not add a review input, workflow graph, sweep language, optimizer language, or second renderer parameter DSL.
+`experiment run`, `experiment export`, `spectral evaluate`, and `fit` remain experimental endpoints under their own specifications. They use the same document, artifact, and machine-output contracts. `experiment export INPUT --out DIRECTORY [--stage ID ...] [--force]` takes a native observation bundle as positional `INPUT`; its authoritative grammar and validation are in [experiment runs](../instrument/experiment/spec.md). These endpoints must not add a review input, workflow graph, sweep language, optimizer language, or second renderer parameter DSL.
 
 Every command option must have a nonempty help description. Help, version, and schema discovery must not require a renderer, image decoder, input asset, or graphics device. `--help` must identify each canonical leaf operation.
+
+Ordinary `run suite` and `run image`, including preflight and source-only execution, do not offer optional native observation capture or an implicit replacement. New run rows must explicitly retain native-observation absence and leave unobserved exposure, print normalization, and stage values unavailable. Dedicated `experiment run` and `measure run` attach the common core observer to their own execution and retain their owning replayable invocation, declarations, dependencies, and actual observer configuration, never fabricated process capture argv. No reader may rerender or reconstruct missing observations. Debug text and resumable `.sfstage` artifacts are not research observation bundles.
 
 ## Documents and artifacts
 
@@ -137,7 +141,7 @@ Irregular geometry is authored directly as a `regions` document. The lab must no
 
 `sample` reads exactly one source and exactly one regions document. It accepts a declared raster source, one retained evidence directory and stage, or one retained image-domain run selected by `(case, seed, stage)`.
 
-For a raster source, the caller must provide the same explicit color-space and transfer-state declaration required by `process`. For retained evidence, the stage bundle is authoritative for domain, units, channel order, transfer state, coordinate space, layout, and buffer digest. For a retained run, the selected case must be completed, stage evidence must be requested and available, and the run artifact index, case reference, manifest path, and digest must agree. Unsafe paths, cross-seed references, missing stages, failed cases, unavailable capture, malformed bundles, and digest mismatches fail the operation without fallback.
+For a raster source, the caller must provide the same explicit color-space and transfer-state declaration required by `process`. For retained evidence, the instrument-owned native observation bundle is authoritative for domain, units, channel order, transfer state, coordinate space, layout, and buffer digest. The existing `--from-evidence` and `--from-run` readers remain research readers. For a retained run, the selected case must be completed, stage evidence must have been requested and retained as available by its producer, and the run artifact index, case reference, manifest path, and digest must agree. Unsafe paths, cross-seed references, missing stages, failed cases, absent or unavailable observations, malformed bundles, and digest mismatches fail without fallback. A new ordinary run's explicit absence is not permission to capture or rerender on demand.
 
 Before reading a value, `sample` must verify that every region is compatible with the source coordinate space and lies within the source bounds. It must report the region identity in a bounds failure. It must never clamp, pad, extrapolate, resize, crop, or infer a region from labels or image dimensions.
 
@@ -217,6 +221,9 @@ The benchmark may maintain a separate prepared-image review contract during migr
 10. Capturing stdout separately from stderr yields one parseable result object and does not remove progress or alter endpoint behavior.
 11. A document containing includes, environment substitution, expressions, shell commands, wildcard selectors, workflow edges, or optimizer instructions is rejected before endpoint execution.
 12. The fixture set contains one ordinary 45-region document and one irregular explicit regions document. Neither depends on a review manifest or a universal appearance score.
+13. Ordinary suite/image execution and preflight reject optional native capture, retain explicit observation absence, and do not synthesize a replacement through debug output, stage artifacts, or a hidden rerender.
+14. Dedicated experiment/measurement publication observes the common core and records the owning replayable invocation plus observer configuration without fabricated process capture argv. Existing supported native bundles and historical retained runs remain readable through the explicit research readers.
+15. Experiment export uses positional `INPUT --out DIRECTORY`, validates the native bundle, and rejects resumable stage artifacts as the wrong input kind without rendering.
 
 ## Laws
 
