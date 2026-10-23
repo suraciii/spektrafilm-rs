@@ -269,6 +269,20 @@ class ExperimentalDesktop(X11):
                     if len(text) >= len(expected):
                         break
         require(rows, f'Choice label not visible: {label}')
+        if not below and rows and all(
+                not any(words(word[0]) != ['experimental'] for word in row[1]) for row in rows):
+            from PIL import ImageOps
+            span, _, y = max(rows, key=lambda row: row[2])
+            left = int(max(word[1] + word[3] for word in span))
+            top = max(0, int(y - 11))
+            crop = ImageOps.invert(ImageOps.grayscale(
+                image.crop((left, top, image.width, int(y + 12)))))
+            data = self.ocr.image_to_data(crop.resize((crop.width * 5, crop.height * 5)),
+                                          config='--psm 7', output_type=self.ocr.Output.DICT)
+            values = [(text, left + data['left'][i] / 5, top + data['top'][i] / 5,
+                       data['width'][i] / 5, data['height'][i] / 5)
+                      for i, text in enumerate(data['text']) if text.strip()]
+            rows = [(span, values, y)]
         if not below:
             rows = [(span, [word for word in values
                             if words(word[0]) != ['experimental']], y)
