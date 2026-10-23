@@ -54,6 +54,9 @@ fn film_terminal_dry_run_has_no_print_or_image_writer_dependency_and_debug_prese
         assert!(report["output"]["path"].is_null());
         assert!(report["output"]["bit_depth"].is_null());
         assert_eq!(report["execution"]["planned_operations"], serde_json::json!(["film"]));
+        let explicit_capture = success(invoke(bin, root.path(), "input.png", &[flags.as_slice(), &["--set", "camera.capture_illuminant=D65"]].concat()));
+        let explicit_capture: Value = serde_json::from_slice(&explicit_capture.stdout).unwrap();
+        assert_eq!(explicit_capture["capture_illuminant"]["source"], "set");
         for flag in [vec!["--format", "tiff"], vec!["--bit-depth", "32"], vec!["--saving-cctf-encoding", "false"], vec!["--compression", "zip"]] {
             assert!(!invoke(bin, root.path(), "input.png", &[flags.as_slice(), &flag].concat()).status.success());
         }

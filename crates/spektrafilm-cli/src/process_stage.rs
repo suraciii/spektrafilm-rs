@@ -6,11 +6,14 @@ use spektrafilm_core::stage_artifact::{MaterialKind, StageHeader};
 pub(super) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
     if args.iters == 0 { bail!("--iters must be at least 1"); }
     if args.input.is_dir() { validate_read_only_input(args)?; }
+    let profile_sources: Vec<PathBuf> = args.film.iter().chain(args.paper.iter())
+        .map(|name| data.path.join("profiles").join(format!("{name}.json"))).collect();
     let mut protected = vec![args.input.as_path()];
     protected.extend(args.params.as_deref());
     protected.extend(args.raw_out.as_deref());
     protected.extend(args.preset.iter().filter(|p| p.ends_with(".json") || p.ends_with(".toml")).map(Path::new));
     protected.extend(args.sources.iter().filter(|p| p.ends_with(".json") || p.ends_with(".toml")).map(Path::new));
+    protected.extend(profile_sources.iter().map(PathBuf::as_path));
     let mut diagnostics_protected = protected.clone();
     diagnostics_protected.extend(args.output.as_deref());
     telemetry::run(spektrafilm_core::telemetry::OperationKind::Process,
@@ -257,8 +260,12 @@ fn dry_report(args: &ProcessArgs, data: &DataSelection, header: Option<&StageHea
     film_name: &str, print_name: Option<&str>, edits: &[process_params::EditFeedback], features: serde_json::Value,
     plan: Option<&OutputPlan>, input_is_raw: bool, seed_source: &str) -> Result<serde_json::Value> {
     let artifact_output = route.artifact_output().is_some();
-    let mut unchecked = vec!["compute_device", "metered_exposure", "output_geometry"];
-    if header.is_some() { unchecked.extend(["artifact_payload", "artifact_integrity"]); } else { unchecked.push("pixel_decode"); }
+    let mut unchecked = vec!["compute_device", "output_geometry"];
+    if header.is_some() {
+        unchecked.extend(["artifact_payload", "artifact_integrity"]);
+    } else {
+        unchecked.extend(["pixel_decode", "metered_exposure"]);
+    }
     if !artifact_output && plan.is_none() { unchecked.push("output_format"); }
     let artifact = header.map(|h| json!({
         "state": h.state, "boundary": h.boundary, "schema_version": h.schema_version,
@@ -277,11 +284,15 @@ fn dry_report(args: &ProcessArgs, data: &DataSelection, header: Option<&StageHea
         output["compression"] = json!(plan.compression.map(|v| match v {Compression::Zip=>"zip",Compression::None=>"none"}));
         output["jpeg_subsampling"] = json!(plan.jpeg_subsampling.map(|v| match v {JpegSubsampling::Yuv444=>"444",JpegSubsampling::Yuv420=>"420"}));
     }
+    let capture_source = if params.camera.capture_illuminant.is_none() { "unset" }
+        else if edits.iter().any(|edit| edit.path == "camera.capture_illuminant" && edit.source.kind == "set") { "set" }
+        else { "preset" };
+    let dye_active = spektrafilm_core::stages::grain_v3::active(params);
     Ok(json!({"data":{"path":data.path,"source":data.source},"film_profile":film_name,"print_profile":print_name,
         "parameters":params,"scanner_provenance":ScannerProvenance::from_params(params),"feature_profiles":features,
-        "film_grain_dye":{"active":spektrafilm_core::stages::grain_v3::active(params),"effective_backend":null},
+        "film_grain_dye":{"active":dye_active,"effective_backend":null,"note":dye_active.then_some("Dye executor resolves when rendering; compute-device availability is unchecked.")},
         "film_grain_fotufilm":spektrafilm_core::stages::grain_fotufilm::configuration_report(params),
-        "capture_illuminant":{"requested":params.camera.capture_illuminant,"effective":route.exposes_film().then(||params.camera.capture_illuminant.as_deref().unwrap_or(&film.info.reference_illuminant)),"source":if params.camera.capture_illuminant.is_none(){"unset"}else{"preset"},"profile_reference_illuminant":film.info.reference_illuminant,"status":if route.exposes_film(){"active"}else{"inactive"},"reason":if route.exposes_film(){None}else{Some("route computes no film exposure from scene RGB")}},
+        "capture_illuminant":{"requested":params.camera.capture_illuminant,"effective":route.exposes_film().then(||params.camera.capture_illuminant.as_deref().unwrap_or(&film.info.reference_illuminant)),"source":capture_source,"profile_reference_illuminant":film.info.reference_illuminant,"status":if route.exposes_film(){"active"}else{"inactive"},"reason":if route.exposes_film(){None}else{Some("route computes no film exposure from scene RGB")}},
         "readout_illuminant":{"effective":readout.readout_illuminant(),"rule":readout.readout_rule()},
         "input":input,"output":output,"execution":{"input_state":header.map_or("input",|h|kind_name(h.state)),"completed_operations":completed(header),"planned_operations":planned(route)},
         "seed":params.random_seed,"seed_source":seed_source,"edits":edits,"unchecked":unchecked,
