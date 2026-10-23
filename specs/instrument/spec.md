@@ -6,10 +6,12 @@ Normal image editing and delivery do not need it. It computes and publishes evid
 
 This document owns the command grammar, the [document registry](#document-registry), the machine-output contract, and the serialized documents. It does not change the renderer's [CLI parameter language](../cli/spec.md). The [benchmark product specification](../benchmark/spec.md) owns evaluation meaning, the [measurement protocol](../benchmark/metrics/spec.md) owns metric domains and algorithms, the [standard configurations](../benchmark/standard-configurations/spec.md) own their rendering purposes, the [profile authoring contract](../profile-authoring/spec.md) owns profile fitting, and [Rust delivery](../benchmark/rust-delivery/spec.md) owns distribution.
 
+The observation separation in this revision is a normative target and is not yet implemented: ordinary suite/image execution loses optional capture, dedicated experiment/measurement endpoints use the common core observer, and experiment export takes positional `INPUT`. No runtime implementation or verification is supplied by this specification revision. [Native observations](native-observations.md) owns the retained scientific wire contract; [stage artifacts](../cli/stage-artifacts.md) separately owns resumable film/print states, and [debug diagnostics](../cli/spec.md#debug-diagnostics) owns human process diagnostics.
+
 ## Authority
 
 - Owning module: the instrument binary and its command plumbing. The evaluation library it orchestrates stays renderer-independent and depends only on the shared mathematics crate.
-- Consumes: the renderer's public CLI and machine-readable output, the shared parameter resolver, the shared metric implementations, the shared document loader, the shared native-stage bundle format.
+- Consumes: the renderer's public CLI and machine-readable output for ordinary image runs, the shared parameter resolver, shared core observer for dedicated research, shared metric implementations, shared document loader, and [native observation bundle format](native-observations.md).
 - Must not own: rendering mathematics, a second parameter registry, a second metric implementation, a second record format, or a second chain-entry mechanism.
 
 ## Unix endpoint model
@@ -85,7 +87,7 @@ spektrafilm-lab report comparison --comparison DIRECTORY --out DIRECTORY
 spektrafilm-lab regions grid --id ID --rows N --columns N --origin X,Y --patch-size WxH --gap X,Y [--sample WxH] [--space SPACE] [--role ROLE] [--measurements FAMILY,...] --out FILE
 spektrafilm-lab fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [--natural-input FILE | --download-natural]
 spektrafilm-lab experiment run --experiment FILE --out DIRECTORY [CHAIN OPTIONS] [--output-format FORMAT] [--force]
-spektrafilm-lab experiment export --stage-evidence DIRECTORY --out DIRECTORY [--stage ID ...] [--force]
+spektrafilm-lab experiment export INPUT --out DIRECTORY [--stage ID ...] [--force]
 spektrafilm-lab spectral evaluate --spectra FILE {--preset NAME ... | --profile FILE} [--set PATH=VALUE|FILE ...] [--data-dir DIRECTORY] --out DIRECTORY
 spektrafilm-lab fit [FIT OPTIONS]
 ```
@@ -111,7 +113,7 @@ Every option of the instrument and of its `fixtures` command must have a nonempt
 
 The dry-run destination must retain `preflight.json`, suite and target snapshots, resolved configurations, logs, and hashed evidence. A successful preflight must identify `mode: dry_run` and `execution_status: validated`; a failed preflight must identify `execution_status: failed` and structured errors. It must never publish `run.json` or completed render masters. Its `unchecked` list must identify image decoding, compute-device availability, observed output geometry, and numerical results. Preflight does not qualify a run or replace execution-time checks.
 
-`--stage-evidence` must request the renderer's native stage bundle for each simulation. It must accept suite and single-input execution. Capture must require the CPU route with `settings.preview_mode` disabled; unsupported requests must fail with an actionable error, not silently change rendering settings. Preflight must resolve both simulation and source-only configurations, retain the capture request, and identify applied exposure and stage values as unobserved. The request must not enable capture for the separate source-only decode.
+Ordinary `run suite` and `run image` must not expose optional native-stage capture. Their simulation and source-only executions produce no native observation bundle, and preflight must not retain a capture request. Native stages, observed camera exposure, and prepared print normalization that are not independently retained remain explicitly unavailable; authored controls and ordinary diagnostics are not substitute numerical observations. No sampling, comparison, inspection, or reporting endpoint may rerender or reconstruct those absent values. Dedicated `experiment run` and `measure run` retain research observations through the shared core observer under the [native observation contract](native-observations.md), not through process flags. Existing supported run records with retained capture remain readable by `sample --from-run`; that reader does not restore a capture option.
 
 `run` must require exactly one of `--suite` and `--input`. Single-input options must conflict with `--suite`; `--case` must apply only to suite execution. `--configuration` must contain the existing case configuration object, with its file paths resolved relative to that file. `--input-kind` must default to `raster`; RAW must be selected explicitly and must use the renderer adapter. Raster input must require both source declaration flags. Repeated `--seed` must select distinct unsigned 32-bit seeds and default to `[0]`. `--regions` must contain the existing region array; omission must select no fixed regions. `--reference` and `--reference-info` must require each other. Reference info must contain the existing reference object except `path` and `sha256`, which the CLI must derive from the selected local file. Nested dependencies must resolve relative to the reference-info file.
 
@@ -196,7 +198,7 @@ Every JSON document the instrument reads or writes has one kind and one owning s
 | `provenance` | retained | [Standard configuration generation](#standard-configuration-generation) |
 | `report` | retained | [Commands](#commands) |
 | `resolved`, `command`, `export` | retained | [Experiment runs](experiment/spec.md) |
-| `evidence` | retained | [Stage evidence](../cli/spec.md#stage-evidence) |
+| `evidence` | retained | [Native observations](native-observations.md) |
 | `metrics` | vocabulary | [Measurement protocol](../benchmark/metrics/spec.md) |
 
 A kind's state decides which commands accept it: an authored kind is written by a person or another tool and may be validated; a retained kind is published by the instrument, is immutable, and is consumed by `compare`, `inspect`, `verify`, `report`, and the matching `sample` adapters (`--from-evidence` or `--from-run`). `metrics` is not a document: it is the closed vocabulary of metric identities a policy may name, and the same vocabulary the measurement protocol owns.
@@ -274,7 +276,7 @@ spektrafilm-lab measure run --stimuli PATH --enter BOUNDARY [--read STAGE ...] [
 - `--stimuli` declares a [stimulus document](#stimulus-document).
 - CHAIN OPTIONS are the parameter surface of `process`: `--preset`, `--film`, `--paper`, `--set`, `--route`, `--scan-output`, and `--data-dir`. The command must resolve them with the shared resolver. It must not accept a stored parameter document as the chain declaration.
 - `--read` selects stages from the existing tap vocabulary. Omitting `--read` must read every available stage.
-- The command must execute the core-owned pipeline path of the resolved chain. It must not walk the stages beside an executed run or reconstruct pipeline mathematics.
+- The command must execute the core-owned pipeline path of the resolved chain with the common core observer. The instrument owns requested readings, observer configuration, and publication under the [native observation contract](native-observations.md). It must not request process capture, walk stages beside an executed run, or reconstruct pipeline mathematics. The record must retain the owning replayable measurement invocation and observer configuration, not fabricated process argv.
 - The command must not write image output.
 - `--dry-run` must resolve the chain, evaluate the point-wise requirement, and write the identity record only. It must not execute the chain, write `readings.csv`, or publish a reading.
 
@@ -401,7 +403,7 @@ A run directory must contain `run.json`, the suite and target snapshots, resolve
 
 Each case result must identify case identity, seed, terminal status, input and output dimensions, configuration artifact, master artifact, diagnostics artifact, and errors when present. Actual backend, execution path, host precision, GPU precision, and adapter facts must come from observed diagnostics. Missing observations must remain unavailable.
 
-Each completed case must retain the full executed simulation command, including numerical-output, diagnostics, and requested stage-evidence arguments. The source-only command must remain separate. Required source evidence must remain required even when both source-master fields are absent; a valid manifest digest does not establish semantic completeness.
+Each completed case must retain the full executed simulation command, including numerical-output and diagnostics arguments, with no optional native-capture argument. The source-only command must remain separate. Required source evidence must remain required even when both source-master fields are absent; a valid manifest digest does not establish semantic completeness.
 
 Completed runs must retain a floating `source_raw` with `source_raw_metadata` from the real renderer's input route, including source color interpretation and observed dimensions. The input route must use the same RAW decoding options and case-owned geometry as simulation, force output to linear ACES2065-1, disable the independent CMYK ink style, and force `taps.inject=rgb_in` and `taps.collect=rgb_out`. Source configuration and observed diagnostics must remain retained dependencies of an input comparison. Original source dimensions and preparation metadata must remain separately identified. Input output geometry must be checked before declaring pixelwise correspondence with simulation.
 
@@ -409,19 +411,19 @@ Completed case artifact references must be objects with an indexed `path`. A mal
 
 The artifact index must identify relative path, content hash, media type, role, and dimensions or sample layout when applicable. All retained paths must resolve. Partial work must not be indexed as a complete master. A failed run must retain successfully completed cases and explicit failures, but must not be reused as a qualified baseline.
 
-A requested native stage bundle must be retained under the case's `stage_evidence` reference. Its manifest and every buffer must be indexed artifacts. Validation must check the producer schema version, terminal state, supported numerical layout, byte length, finite samples, content hashes, stage identities, geometry, and declared availability. A missing or failed required capture must prevent a completed run. A stage skipped by the selected workflow must remain not applicable rather than become zero-valued evidence. The renderer's native-stage contract owns buffer and preparation semantics; the instrument must not reconstruct them.
+New ordinary suite/image rows must explicitly identify native observation as absent (`requested: false`, `availability: "unavailable"`, `reason: "not_requested"`) with no manifest or buffer references. Their exposure and prepared print-normalization observations must likewise remain unavailable when not retained; neither authored controls nor a synthetic rerender may fill them. Historical supported rows that retained a native bundle keep their case `stage_evidence` reference and artifact index. Readers must validate the producer schema version, terminal state, numerical layout, byte length, finite samples, hashes, stage identities, geometry, and availability before use. The [native observation contract](native-observations.md) owns buffer and preparation semantics, not the process CLI or a resumable stage artifact.
 
 ### Chain runs
 
 A chain run writes the same `run` kind. It must carry `kind` set to `run` or `sample`, so `verify` can read a record without being told what it is.
 
-- `declaration`: the chain options, the entry boundary, the read stages, and the declared stimulus document with its hashes — everything needed to resolve the same chain again.
+- `declaration`: the owning replayable `measure run` invocation, chain options, entry boundary, requested read stages, observer configuration (selected taps, backend, host precision, bundle destination, and native schema version), and declared stimulus document with hashes — everything needed to resolve and observe the same chain again. It must not contain fabricated process capture argv.
 - `stimulus`: the stimulus manifest path and the array hashes. A sampled source records its own `source` block instead, because no chain was resolved to read it.
 - `identity` for an executed run: the renderer's path, content hash, and version, the selected data inventory digest, the profile identities, the declared parameter sources and the content hash of every parameter file they name, the stock-specific application, the effective parameter document, the execution precision, and the seed. `verify` diffs that document leaf by leaf, so a re-verification names the parameter that moved instead of only its digest.
 - `stages`: one record per read stage with its identity, domain, units, channel order, the declared color space and transfer state, the buffer hash, and its availability together with a stable reason when the stage did not run.
 - `groups` and `summaries`: the group identities and their per-channel statistics.
 - `executor`: the backend and the precision of an executed run.
-- `evidence/`: the retained stage buffers of the executed run, in the form the user binaries write.
+- `evidence/`: the retained stage buffers of the executed run under the instrument-owned [native observation contract](native-observations.md), not a `.sfstage` resume state.
 - `readings.csv`: one row per sample and stage — `sample_id`, `source`, `partition`, `stage`, `domain`, `units`, `channel_order`, the channel values, and `valid`. A value that is not finite is an empty field with `valid` false; a placeholder number must never be written in its place.
 
 A declaration must be replayable from any working directory: a declared parameter or preset file is recorded with its canonical path and content hash. Identity fields reuse the vocabulary the renderer and the image-domain records already use (`renderer`, `data_dir`, the backend) rather than inventing a competing name.
@@ -541,7 +543,7 @@ The packaged usage example must generate once, use `color-tone.json` and `appear
 - A command that fails must name a stable error code, the file the offending value lives in, and its JSON Pointer; a command that reads more than one document must name which document failed.
 - `validate` must decide every locally decidable condition, including a probe's point count and ordering and a policy rule's metric identity against the selected families, and must list every other check in `unchecked`.
 - Repeated runs on identical inputs must produce identical artifacts.
-- On the `log_e_film` stage, a reading must match the `log_e_film` buffer of `process --stage-evidence` within a relative tolerance of 1e-9, with the operations the guard names for that range off.
+- On the `log_e_film` stage, a measurement reading must match the `log_e_film` native observation of a dedicated `experiment run` within a relative tolerance of 1e-9, with the operations the guard names for that range off. Both producers must observe the same shared core rather than request process capture.
 - On a default chain, `measure run` must fail before executing and name every active operation in the measured range with its remediation, and a `--read log_e_film` range must list only the operations that reach `log_e_film`.
 - With a frozen chart image and a frozen regions document, `sample` must reproduce the frozen values, and sampling a retained encoded stage must record a linear reading beside the source's own encoded declaration.
 - A reference that is unmatched or ineligible must report an unavailable reason per pair, and the comparison must still publish its other measurements.
@@ -550,6 +552,9 @@ The packaged usage example must generate once, use `color-tone.json` and `appear
 - A run that fails after executing, and a sampling of a bundle whose buffer disagrees with its manifest, must leave no artifact behind.
 - A record must carry `kind`, and `verify --record` must read a run or a comparison without being told which one it is.
 - Every artifact must survive a round trip: a command must read back what it wrote, including identities that carry separators.
+- Ordinary suite and single-image runs, including preflight, expose no optional native capture or implicit replacement. New rows explicitly retain absence, and sampling/inspection/reporting never rerender or fabricate exposure, normalization, or native-stage readings.
+- Dedicated experiment and measurement records retain the owning replayable invocation and actual observer configuration; existing supported `sample --from-evidence` and `sample --from-run` inputs remain readable without restoring a process capture option.
+- `experiment export INPUT --out DIRECTORY` consumes a native observation bundle and never treats a `.sfstage` resume state or debug text as scientific observations.
 
 ## Laws
 

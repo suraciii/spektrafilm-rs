@@ -2,13 +2,13 @@
 
 ## Contract
 
-- The `input` workflow and film workflows accept a normalized image, a film profile, and runtime controls. Input processing follows the [CMYK ink style entry-point contract](../cmyk-style/spec.md#enablement).
-- A photographic print route must provide a photographic print profile.
+- Existing image-entry `input` and film workflows accept a normalized image, a film profile, and runtime controls. Input processing follows the [CMYK ink style entry-point contract](../cmyk-style/spec.md#enablement). Completed-material entry follows [Film and print continuation](#film-and-print-continuation-target) instead; it MUST NOT be interpreted as a new scene image.
+- A route that exposes and develops photographic print material must provide a photographic print profile. A film-only continuation MUST NOT acquire a paper dependency.
 - Optional CMYK ink style must satisfy the [CMYK ink style](../cmyk-style/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path is: source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → scanner interpretation → output gamut processing → unsharp masking → transfer encoding → Procedural grain → optional CMYK ink style → output mix → output handoff.
 - [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. CMYK ink style remains after all scanner-domain effects; overall output mix follows it before output handoff.
-- Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
+- Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid data input consumed by the selected route is an error before output publication. A continuation MUST NOT require unused material dependencies or prepare already completed operations merely to validate them.
 - A profile's `hanatos2025_adaptation_window_params` and `hanatos2025_adaptation_surface_params` are **conditional fields** of a filming-stage material. A `stage = printing` material — photographic paper and motion-picture print film — does not convert an encoded input to a film exposure, so it carries neither field and must not be selected as a film.
 - A filming-stage material whose `hanatos2025_adaptation_window_params` is absent runs the RGB-to-exposure conversion **without the sensitivity-adaptation window**. The conversion keeps white balance but models no ultraviolet or infrared cutoff, so that material's spectral response is idealized. The run must report the downgrade with the material identity instead of downgrading silently.
 - A filming-stage material that carries `hanatos2025_adaptation_surface_params` runs the log-exposure correction surface when the look enables it. An absent surface field runs no surface correction.
@@ -16,6 +16,72 @@
 - Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). GPU execution must cover the selected chain without replacing its model.
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
+
+## Film and print continuation (target)
+
+**Implementation gap:** the routes and material-state entry described in this section
+are normative target behavior, not implemented CLI capabilities. The
+[stage-artifact contract](../cli/stage-artifacts.md) is authoritative for the `.sfstage`
+format, validation, frozen controls, seed inheritance, and publication. This section owns
+the film-chain meaning of continuing from a developed medium. Existing image-entry and
+real-negative `convert-film` behavior remains unchanged.
+
+The added routes are `input > film`, `input > film > print`, `film > scan`, `film > print`,
+`film > print > scan`, and `print > scan`. A route ending in `film` or `print` produces
+one completed, always-resumable material state in a `.sfstage` directory containing
+`stage.json`; a route ending in `scan` produces the ordinary image output. A material
+input MUST declare its route explicitly. It is not an optional observation bundle, and
+it MUST NOT be accepted as an ordinary image or a captured-negative `convert-film` input.
+
+- A film state is developed film record density with its required geometry, material
+  identity, frozen source controls, resolved camera exposure compensation, and seed.
+  Source interpretation, metering, crop/resize, camera conversion, exposure, development,
+  halation, DIR, and film-domain grain have already run. `film > scan` runs only scan and
+  downstream output processing. `film > print` runs only print exposure and development;
+  `film > print > scan` then scans that developed print.
+- A print state is developed print record density with the context required to scan it.
+  `print > scan` MUST NOT repeat film preparation, enlarger exposure, print development,
+  or effects already represented by that state. A print state is not a scan image and
+  contains no already applied scanner/output effects to replay.
+- A continuation MUST preserve the stored geometry and physical pitch; it MUST NOT
+  re-meter, crop, resize, re-expose, or redevelop a completed source. Frozen-control
+  conflicts fail before output publication. Downstream controls remain editable. An
+  omitted seed inherits the source seed under the stage-artifact contract.
+- Dependency preparation follows the requested remaining operations, not the original
+  image route. Resolve material data needed to interpret the stored density, construct
+  a scan reference or inverse, or expose/develop a new print. A film scan needs no paper
+  profile; a print scan needs no film preparation or camera-side spectral resources.
+  Required source context MUST be carried by the artifact rather than recovered by
+  loading or reprocessing the original image.
+- On a negative `film > scan` with `scanner.scan_output = negative_to_positive`, the
+  conversion reads the stored film record densities directly and retains the simulated
+  negative's frozen camera exposure compensation. It subtracts that compensation just
+  as `input > film > scan` does. It MUST NOT estimate a new camera exposure from density,
+  zero the compensation merely because the input is a material state, or synthesize a
+  captured-negative recovery step. Real-negative `input > convert-film > scan` retains
+  its existing exposure semantics.
+- Numerical research observations are owned by dedicated instrument workflows and the
+  core observer under [Native observations](../instrument/native-observations.md).
+  They are not `.sfstage` states and MUST NOT be attached to ordinary processing through
+  an optional capture flag. Boolean `--debug` is stderr-only and `--diagnostics REPORT`
+  is execution reporting under [Debug and diagnostics](../cli/spec.md#debug-diagnostics);
+  neither changes chain numerics or selects observation/material files.
+
+### Continuation acceptance
+
+- Splitting an admitted image chain at film or print and resuming it with identical
+  downstream controls, inherited seed, computation precision, and backend MUST preserve
+  the completed densities and final scan result. Stage loading MUST NOT add another
+  geometry transform, metering pass, optical effect, or stochastic effect.
+- Film-only scanning MUST work without a paper selection or unused paper data. Print
+  scanning MUST work without invoking film preparation or requiring unused film data.
+  Missing dependencies actually used by the continuation MUST still fail.
+- A conflicting frozen override MUST fail; editing only an admitted downstream control
+  MUST leave the source state unchanged. Omitted seed MUST inherit rather than reset.
+- Negative `film > scan` conversion MUST match the corresponding unsplit simulated
+  negative chain with nonzero camera exposure compensation; real-negative conversion
+  MUST retain its existing behavior.
+
 
 ## Capture light and scan light
 
@@ -28,7 +94,7 @@ The capture illuminant MUST NOT change any of the following, and none of the fol
 - `enlarger.illuminant` and the enlarger filter pack, which belong to print exposure;
 - the output white point and transfer encoding.
 
-Stage preparation resolves the capture illuminant once for the selected profile and controls, before the camera-side spectral conversion. A route that computes no film exposure from scene RGB — the `input` route and a real negative-capture `input > convert-film > ...` route — does not consume it. A zero-balance negative conversion renders a grey lit by the profile reference illuminant neutral, and that rule continues to describe the conversion, not the capture declaration.
+Stage preparation resolves the capture illuminant once for the selected profile and controls, before the camera-side spectral conversion. A route that computes no film exposure from scene RGB — the `input` route, a real negative-capture `input > convert-film > ...` route, or a target continuation from completed film or print — does not consume it for a new camera conversion. A continuation retains the frozen source context rather than resolving a new capture declaration. A zero-balance negative conversion renders a grey lit by the profile reference illuminant neutral, and that rule continues to describe the conversion, not the capture declaration.
 
 The scanner lamp is resolved through the same shared illuminant service. Its accepted values are the illuminant vocabulary of `enlarger.illuminant`. An invalid lamp name fails before output publication.
 
@@ -112,9 +178,9 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 ## Direct negative-film scan output
 
 - `scanner.scan_output` is `direct_scan` by default. It preserves the selected medium's native scan polarity.
-- `negative_to_positive` is valid for a negative film profile on either the direct `input > film > scan` route or the real negative-capture `input > convert-film > scan` route. Paper profiles, print-paper routes, and `scan-minus-base` are not eligible.
-- Negative conversion input is record density. It reads each dye record's density, as a narrowband scanner does, and derives a per-record monotone inverse from the selected profile density curves. One record's output must not depend on another record's density. The simulated `input > film > scan` route hands it the film stage's record densities and inserts no synthetic capture.
-- Negative conversion estimates relative log exposure, subtracts camera exposure compensation only on the simulated `input > film > scan` route, applies the positive tone response selected by `scanner.conversion_style`, then emits output-space linear RGB. Zero balance renders a grey lit by the profile reference illuminant neutral.
+- `negative_to_positive` is valid for a negative film profile on either the direct `input > film > scan` route or the real negative-capture `input > convert-film > scan` route; the target continuation additionally admits `film > scan` under [Film and print continuation](#film-and-print-continuation-target). Paper profiles, print-paper routes, and `scan-minus-base` are not eligible.
+- Negative conversion input is record density. It reads each dye record's density, as a narrowband scanner does, and derives a per-record monotone inverse from the selected profile density curves. One record's output must not depend on another record's density. The simulated `input > film > scan` route hands it the film stage's record densities and inserts no synthetic capture; the target `film > scan` continuation reads those same stored densities.
+- Negative conversion estimates relative log exposure, subtracts camera exposure compensation on a simulated negative chain (`input > film > scan`, or its target `film > scan` continuation using the frozen source compensation), applies the positive tone response selected by `scanner.conversion_style`, then emits output-space linear RGB. It does not subtract simulated camera exposure compensation on the real-negative `input > convert-film > scan` route. Zero balance renders a grey lit by the profile reference illuminant neutral.
 - `scanner.conversion_style` is the declared stylization point of negative conversion. It accepts a style name; `neutral` is the default and is byte-identical to the frozen reference conversion. Any other name resolves to `data/scan-styles/<name>.json`.
 - A style file declares one tone triple per channel — `brightness_ev`, `contrast`, and `dmax` — of the same logistic curve family the `neutral` style uses. The per-channel triples are what allow a color tendency; they do not add a curve family and do not change the record-density reading or its monotone inverse.
 - A style is declared data. It is never fitted from image or chart data, and it must not be described as a measured or calibrated scanner response. The film's own tone stays visible under every style.
