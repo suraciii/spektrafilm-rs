@@ -26,21 +26,21 @@ particle_scale_sublayers = [1.0, 0.4, 0.25]
 
 # --- still color
 #
-# Per-channel granularity. The channel ratio of each stock below comes from the
-# measured field of a commercial film-simulation product, green-normalized; the
-# green value is the stock's own magnitude and stays as it was. Only stocks with
-# a measured source carry a ratio: `channel_correlation` and the remaining
-# `rms_granularity` entries stay uniform, because the available chart samples
-# (Portra 160 [1.046, 1.000, 1.101], Ektar 100 [0.992, 1.000, 1.012]) show no
-# channel ratio beyond scanner crosstalk and are limited to one scanner.
+# Relative per-channel Dye strength, not certified optical RMS targets.
+# Some channel ratios below come from commercial film-simulation outputs,
+# normalized to green; the existing green magnitudes remain unchanged.
+# These are valid appearance references, not film-material measurements.
+# Other entries and the default `channel_correlation` retain their existing
+# values; these choices do not identify material ratios or scanner causality.
 #
-# Entries marked "same class" map by stock class, not by name. The provenance of
-# these ratios, the normalization rule, and why the magnitude is a lower bound
-# are in specs/film-grain/v3/design.md#evidence-and-limits.
+# Source names below identify appearance references. Entries marked "same
+# class" map by stock class, not exact stock identity. Runtime semantics and
+# evidence limits are documented in docs/grain.md#field-controls; that section
+# is not a source dataset or a provenance record for these ratios.
 [kodak_gold_200] # KodakEliteColor200, same class
 rms_granularity = [3.765, 5.0, 4.9]
 
-[kodak_ultramax_400] # KodakEliteColor400, same class; a native scan [1.213, 1.000, 1.511] agrees on blue over green only
+[kodak_ultramax_400] # KodakEliteColor400, same class
 rms_granularity = [5.088, 6.0, 8.388]
 
 [kodak_ektar_100] # KodakEktar100
@@ -52,9 +52,9 @@ rms_granularity = [2.919, 3.5, 4.284]
 [kodak_portra_400] # KodakPortra400
 rms_granularity = [5.6385, 4.5, 5.544]
 
-# The reference stock of the Dye anchor. Its `k_c = 1` is what makes
-# `v3_event_area_um2` the validated absolute event area, so it stays uniform and
-# so do its pushes.
+# Reference stock for Dye's relative scale: `k_c = (G_c / 6)^2 = 1` here keeps
+# the configured `v3_event_area_um2`, not a validated absolute material area.
+# The reference stock and its pushes retain uniform channel presets.
 [kodak_portra_800]
 rms_granularity = [6.0, 6.0, 6.0]
 

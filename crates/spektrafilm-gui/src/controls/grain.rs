@@ -222,7 +222,7 @@ pub(crate) fn sections(
                 }
                 ui.add_enabled_ui(active, |ui| {
                     if filter_matches(filter, "rms granularity") {
-                        flags.runtime_changed |= param_tuple_experimental(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel stock granularity: Dye scales event area relative to reference stock (6); upstream Spektra retains this value as a no-op. Distinct from Procedural Amount.");
+                        flags.runtime_changed |= param_tuple_experimental(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel relative Dye strength: event-area scale k = (G / 6)^2, not a certified optical RMS target. Zero retains the reference-scale fallback; upstream Spektra retains this value as a no-op. Distinct from Procedural Amount.");
                     }
                     if filter_matches(filter, "density min") {
                         flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density shared by Spektra and Dye.");
@@ -231,7 +231,7 @@ pub(crate) fn sections(
                         flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity shared by Spektra and Dye.");
                     }
                     if filter_matches(filter, "particle scale sublayers") {
-                        flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Positive relative particle scale per emulsion sublayer, shared by Spektra and Dye.");
+                        flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Positive scale per component: Spektra uses relative particle scales per emulsion sublayer; Dye uses numerical curve components, changing event mass and rate, not separate cloud-kernel widths.");
                     }
                 });
             });
@@ -241,7 +241,7 @@ pub(crate) fn sections(
                         ui,
                         "sublayers active",
                         &mut grain.sublayers_active,
-                        "Split the developed density into the film profile's emulsion sublayers instead of applying grain to the composite density. Spektra-only; Dye always uses sublayers and Procedural and Fotufilm ignore it.",
+                        "Split the developed density into the film profile's emulsion sublayers instead of applying grain to the composite density. Spektra-only; Dye always uses numerical curve components, and Procedural and Fotufilm ignore it.",
                     );
                 }
                 if filter_matches(filter, "particle area (µm²)") {
@@ -344,7 +344,7 @@ pub(crate) fn sections(
                     flags.runtime_changed |= param_numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, "film_render.grain.v3_event_area_um2", "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
                 }
                 if filter_matches(filter, "channel correlation") {
-                    flags.runtime_changed |= param_numeric(ui, "Channel correlation", &mut grain.channel_correlation, "film_render.grain.channel_correlation", "Shared fraction of each emulsion layer's per-channel event rate; the realized channel correlation is a lower bound of this value, and no channel's strength changes.");
+                    flags.runtime_changed |= param_numeric(ui, "Channel correlation", &mut grain.channel_correlation, "film_render.grain.channel_correlation", "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios.");
                 }
             });
             engine_group(ui, filter, engine, GrainEngine::Fotufilm, |ui, filter| {

@@ -748,7 +748,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Per-channel same-layer DIR gamma (R, G, B). Effective gamma reduction of each layer's density curve." => {
             Some("controls.couplers.gamma_samelayer_help")
         }
-        "Per-channel stock granularity: Dye scales event area relative to reference stock (6); upstream Spektra retains this value as a no-op. Distinct from Procedural Amount." => {
+        "Per-channel relative Dye strength: event-area scale k = (G / 6)^2, not a certified optical RMS target. Zero retains the reference-scale fallback; upstream Spektra retains this value as a no-op. Distinct from Procedural Amount." => {
             Some("controls.grain.rms_granularity_help")
         }
         "Percentage of the glare light (typically 0.1-0.25)" => Some("controls.help.glare.percent"),
@@ -771,7 +771,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("surfaces.diagnostics.source")
         }
         "Positive" => Some("controls.grain.positive"),
-        "Positive relative particle scale per emulsion sublayer, shared by Spektra and Dye." => {
+        "Positive scale per component: Spektra uses relative particle scales per emulsion sublayer; Dye uses numerical curve components, changing event mass and rate, not separate cloud-kernel widths." => {
             Some("controls.grain.particle_scale_sublayers_help")
         }
         "Post-blur sigma." => Some("controls.grain.blur_help"),
@@ -975,7 +975,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Shared by Spektra and Dye; inactive until either engine is selected, stored values are retained." => {
             Some("controls.grain.inactive_shared_material")
         }
-        "Shared fraction of each emulsion layer's per-channel event rate; the realized channel correlation is a lower bound of this value, and no channel's strength changes." => {
+        "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios." => {
             Some("controls.grain.channel_correlation_help")
         }
         "Shared material controls" => Some("controls.grain.shared_material"),
@@ -1026,7 +1026,7 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Spectral upsampling" => Some("controls.upsampling.section"),
         "Spektra" => Some("controls.grain.spektra"),
-        "Split the developed density into the film profile's emulsion sublayers instead of applying grain to the composite density. Spektra-only; Dye always uses sublayers and Procedural and Fotufilm ignore it." => {
+        "Split the developed density into the film profile's emulsion sublayers instead of applying grain to the composite density. Spektra-only; Dye always uses numerical curve components, and Procedural and Fotufilm ignore it." => {
             Some("controls.grain.sublayers_active_help")
         }
         "Stages and CPU reasons" => Some("surfaces.diagnostics.stages"),
