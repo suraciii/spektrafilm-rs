@@ -231,13 +231,10 @@ pub fn resolve_continuation(
     if route.prints() && print.as_ref().is_some_and(|p| !p.is_print_stock()) {
         return Err("downstream print profile must have printing support/stage".into());
     }
-    if let (Some(selected), Some(retained)) = (&print, retained_print) {
-        if retained
-            .matches_source(selected)
-            .map_err(|e| e.to_string())?
-        {
-            print = None;
-        }
+    if let (Some(selected), Some(retained)) = (&print, retained_print)
+        && retained.matches_source(selected).map_err(|e| e.to_string())?
+    {
+        print = None;
     }
     params.workflow.route = route.as_str().into();
     params.io.scan_film = route.scans_film();

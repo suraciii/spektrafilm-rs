@@ -463,7 +463,7 @@ fn execute(
                         spektrafilm_backend::bind_backend(backend.as_ref(), observation.clone());
                     runtime
                         .process_stage(input, observed.as_ref(), seed)
-                        .map(stage_execution::StageResult::Material)
+                        .map(|state| stage_execution::StageResult::Material(Box::new(state)))
                         .map_err(anyhow::Error::msg)
                 });
             last = Some(result?);
