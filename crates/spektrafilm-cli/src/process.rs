@@ -500,6 +500,7 @@ pub(crate) fn run_with_data_dir(args: ProcessArgs, data: DataSelection) -> Resul
 }
 
 /// Instrument-owned native observation request, never a public parser option.
+#[cfg(feature = "precision-f64")]
 pub(crate) fn run_with_native_capture(
     args: ProcessArgs,
     data: DataSelection,
@@ -515,12 +516,14 @@ fn run_with_capture(
 ) -> Result<()> {
     // Legacy complete baselines may retain an image-input partial route. Do not
     // infer artifact continuation: that input always requires explicit --route.
-    if args.workflow.route.is_none() && !args.input.is_dir() && !args.scan_film {
-        if let Some(path) = &args.params {
-            args.workflow.route = spektrafilm_core::process_params::legacy_image_stage_route(path)
-                .map_err(anyhow::Error::msg)?
-                .map(|route| route.as_str().to_owned());
-        }
+    if args.workflow.route.is_none()
+        && !args.input.is_dir()
+        && !args.scan_film
+        && let Some(path) = &args.params
+    {
+        args.workflow.route = spektrafilm_core::process_params::legacy_image_stage_route(path)
+            .map_err(anyhow::Error::msg)?
+            .map(|route| route.as_str().to_owned());
     }
     let route = args
         .workflow
