@@ -212,6 +212,22 @@ fn explicit_gpu_request_fails_when_the_device_cannot_bind_the_route_image() {
         err.contains("explicit GPU request exceeds the device resource limits"),
         "{err}"
     );
+    // The observation wrapper must not mask the binding limits from the
+    // preflight either: every production render binds the backend through it.
+    let gpu = OvertaxedGpu { explicit: true };
+    let bound = spektrafilm_backend::bind_backend(
+        &gpu,
+        spektrafilm_backend::telemetry::ObservationContext::new(
+            spektrafilm_backend::telemetry::CollectionMode::Off,
+        ),
+    );
+    let err = pipeline
+        .process(ImageBuf::new(8, 6), bound.as_ref())
+        .unwrap_err();
+    assert!(
+        err.contains("explicit GPU request exceeds the device resource limits"),
+        "{err}"
+    );
     // The auto route completes instead: the same stages run their CPU work.
     let out = pipeline
         .process(ImageBuf::new(8, 6), &OvertaxedGpu { explicit: false })
