@@ -217,10 +217,14 @@ fn click(h: &mut Harness<'_, App>, label: &str) {
 /// much above the screen bottom rather than at the screen edge.
 fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
     let screen = h.ctx.screen_rect();
-    // The band starts below the panel's own top padding, and ends above the
-    // reserve the panel keeps clear for its action bar. The bounds kittest
-    // reports are f64, so the whole band is compared in f64.
-    let band_top = 40.0_f64;
+    // Fixed tabs and search remain above the scrollable controls.
+    let band_top = h
+        .get_by_label("Filter controls")
+        .node()
+        .raw_bounds()
+        .expect("the fixed control-search field has bounds")
+        .y1
+        + 8.0;
     let band_bottom = f64::from(screen.bottom()) - f64::from(theme::HEIGHT_ACTION_BAR_RESERVE);
     let panel_left = f64::from(screen.right()) - f64::from(theme::WIDTH_CONTROL_PANEL);
     /// How many scrolls a target may need before the helper gives up. A page's
@@ -228,21 +232,21 @@ fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
     /// of full-height scrolls always reaches the bottom.
     const SCROLL_ATTEMPTS: usize = 16;
     for _ in 0..SCROLL_ATTEMPTS {
-        let needs_scroll = h
+        let offscreen = h
             .query_all_by_label(label)
             .filter_map(|node| node.node().raw_bounds())
             // Only nodes inside the controls panel are scrollable.
             .filter(|bounds| bounds.x0 >= panel_left)
-            .any(|bounds| bounds.y0 <= band_top || bounds.y1 >= band_bottom);
-        if !needs_scroll {
+            .find(|bounds| bounds.y0 <= band_top || bounds.y1 >= band_bottom);
+        let Some(bounds) = offscreen else {
             return;
-        }
-        scroll_controls_down(h);
+        };
+        scroll_controls(h, if bounds.y0 <= band_top { 600.0 } else { -600.0 });
     }
 }
 
-/// Scroll the controls panel down so elements below the fold come into view.
-fn scroll_controls_down(h: &mut Harness<'_, App>) {
+/// Scroll the controls panel without changing a hovered numeric editor.
+fn scroll_controls(h: &mut Harness<'_, App>, delta: f32) {
     let screen = h.ctx.screen_rect();
     // Hover the panel's left margin, not its centre: a parameter row's numeric
     // field covers the centre of a row, and a wheel over it steps that value
@@ -256,7 +260,7 @@ fn scroll_controls_down(h: &mut Harness<'_, App>) {
         .push(egui::Event::PointerMoved(pointer));
     h.input_mut().events.push(egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
-        delta: egui::vec2(0.0, -600.0),
+        delta: egui::vec2(0.0, delta),
         modifiers: Default::default(),
     });
     h.run_steps(10);
@@ -655,9 +659,9 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // The controls panel is taller than the viewport now that every numeric
     // row carries a slider line, so bring the action bar into view before
     // clicking it.
-    scroll_controls_down(h);
+    scroll_controls(h, -600.0);
     click(h, "Export options");
-    scroll_controls_down(h);
+    scroll_controls(h, -600.0);
     click(h, "Open export settings…");
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");

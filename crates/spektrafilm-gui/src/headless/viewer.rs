@@ -388,13 +388,15 @@ fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
     let h = &mut s.harness;
     click(h, "Input");
     display_controls(h);
-    let baseline = composed(h, 30.0);
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    let baseline = composed(h, time);
     assert_eq!(
         baseline.pixels.as_ref().unwrap().pixels[0],
         egui::Color32::from_gray(118)
     );
     click(h, "gray 18% canvas");
-    let black = composed(h, 30.0);
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    let black = composed(h, time);
     assert_ne!(baseline.key, black.key);
     assert_ne!(
         baseline.pixels.as_ref().unwrap().pixels,
@@ -405,12 +407,14 @@ fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
         egui::Color32::BLACK
     );
     click(h, "gray 18% canvas");
+    let time = h.ctx.input(|input| input.time) + 1.0;
     assert_eq!(
         baseline.pixels.as_ref().unwrap().pixels,
-        composed(h, 30.0).pixels.unwrap().pixels
+        composed(h, time).pixels.unwrap().pixels
     );
     edit(h, "white padding", "0.2");
-    let padded = composed(h, 30.0);
+    let time = h.ctx.input(|input| input.time) + 1.0;
+    let padded = composed(h, time);
     assert!(padded.image_rect.width() < baseline.image_rect.width());
     let image = padded.pixels.as_ref().unwrap();
     let border_point = egui::pos2(padded.image_rect.left() - 5.0, padded.image_rect.center().y);
@@ -425,9 +429,10 @@ fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
         padded.pixels.unwrap().pixels
     );
     edit(h, "white padding", "0.03");
+    let time = h.ctx.input(|input| input.time) + 1.0;
     assert_eq!(
         baseline.pixels.unwrap().pixels,
-        composed(h, 30.0).pixels.unwrap().pixels
+        composed(h, time).pixels.unwrap().pixels
     );
 }
 
