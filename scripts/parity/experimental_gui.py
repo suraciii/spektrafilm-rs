@@ -277,8 +277,9 @@ class ExperimentalDesktop(X11):
             top = max(0, int(y - 11))
             crop = ImageOps.invert(ImageOps.grayscale(
                 image.crop((left, top, image.width, int(y + 12)))))
+            # Raw-line segmentation preserves text inside the combo frame.
             data = self.ocr.image_to_data(crop.resize((crop.width * 5, crop.height * 5)),
-                                          config='--psm 7', output_type=self.ocr.Output.DICT)
+                                          config='--psm 13', output_type=self.ocr.Output.DICT)
             values = [(text, left + data['left'][i] / 5, top + data['top'][i] / 5,
                        data['width'][i] / 5, data['height'][i] / 5)
                       for i, text in enumerate(data['text']) if text.strip()]
