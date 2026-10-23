@@ -292,11 +292,11 @@ impl Pipeline {
             header.provenance.backend = backend.name().to_string();
             header.provenance.producing_route =
                 pipeline.params.workflow.route_enum().as_str().into();
-            return Ok(StageResult::Material(MaterialState {
+            return Ok(StageResult::Material(Box::new(MaterialState {
                 header,
                 density: output,
                 prepared_source,
-            }));
+            })));
         }
         if let Some([x, y, width, height]) = header.geometry.pending_crop {
             output = crate::stages::grain_v3::crop_output(

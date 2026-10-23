@@ -1914,7 +1914,7 @@ fn continuing_print_reinitializes_replaced_material_and_retains_film_seed_lineag
     let mut params = print.header.baseline.clone();
     params.workflow.route = "print > scan".into();
     let StageResult::Image(actual) =
-        continue_stage(print, params, None, &data_dir(), &backend, 99).unwrap()
+        continue_stage(*print, params, None, &data_dir(), &backend, 99).unwrap()
     else {
         panic!("expected scan")
     };

@@ -7,7 +7,7 @@ use spektrafilm_math::image::ImageBuf;
 use std::path::Path;
 
 pub enum StageResult {
-    Material(MaterialState),
+    Material(Box<MaterialState>),
     Image(ImageBuf),
 }
 
