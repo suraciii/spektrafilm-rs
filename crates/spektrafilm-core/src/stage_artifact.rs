@@ -124,6 +124,8 @@ pub struct StageHeader {
     pub film: EmbeddedProfile,
     pub print: Option<EmbeddedProfile>,
     pub original_print: Option<EmbeddedProfile>,
+    /// Editable selection for an operation not yet run; never resolved by the reader.
+    pub downstream_print_name: Option<String>,
     pub geometry: StageGeometry,
     pub context: InterpretationContext,
     pub seed: u64,
@@ -150,19 +152,10 @@ impl StageHeader {
         let producing_route = baseline.workflow.route.clone();
         let preparation = baseline.render_preparation_state();
         Self {
-            schema_version: SCHEMA_VERSION,
-            kind: "stage_artifact".into(),
-            state,
-            boundary: state.boundary().into(),
-            representation_version: REPRESENTATION_VERSION,
-            baseline,
-            preparation,
-            film,
-            print,
-            original_print,
-            geometry,
-            context,
-            seed,
+            schema_version: SCHEMA_VERSION, kind: "stage_artifact".into(), state,
+            boundary: state.boundary().into(), representation_version: REPRESENTATION_VERSION,
+            baseline, preparation, film, print, original_print, geometry, context, seed,
+            downstream_print_name: None,
             provenance: StageProvenance {
                 producer_version: env!("CARGO_PKG_VERSION").into(),
                 numerical_model: NUMERICAL_MODEL.into(),
@@ -280,10 +273,8 @@ impl StageHeader {
                 .validate()
                 .map_err(anyhow::Error::msg)?;
         }
-        ensure!(
-            self.provenance.inherited_operations.is_empty() || !self.lineage.is_empty(),
-            "inherited material operations require original producing provenance"
-        );
+        ensure!(self.provenance.inherited_operations.is_empty() || !self.lineage.is_empty(), "inherited material operations require original producing provenance");
+        ensure!(self.downstream_print_name.as_ref().is_none_or(|name| !name.trim().is_empty()), "downstream print selection must not be empty");
         for path in &self.preparation.explicit_section_paths {
             crate::params::sources::describe_field(path).map_err(anyhow::Error::msg)?;
         }
@@ -318,54 +309,16 @@ impl StageHeader {
             "invalid artifact physical geometry"
         );
         let context = &self.context;
-        ensure!(
-            context.camera_compensation_ev.is_finite()
-                && context.print_exposure_factor.is_finite()
-                && context.print_exposure_factor > 0.0,
-            "invalid frozen exposure context"
-        );
-        ensure!(
-            context.exposure.metered_ev.is_finite() && !context.exposure.method.is_empty(),
-            "invalid actual upstream metering context"
-        );
-        ensure!(
-            context.exposure.auto_enabled || context.exposure.metered_ev == 0.0,
-            "disabled exposure metering must record zero metered EV"
-        );
-        ensure!(
-            context
-                .preflash_raw
-                .iter()
-                .chain(context.print_illuminant.iter())
-                .all(|v| v.is_finite()),
-            "non-finite interpretation context"
-        );
-        ensure!(
-            context
-                .midgray_density
-                .iter()
-                .chain(context.compensated_midgray_density.iter())
-                .all(|v| !v.is_infinite()),
-            "invalid infinite midgray spectral context"
-        );
-        ensure!(
-            self.state != MaterialKind::Print || !context.print_illuminant.is_empty(),
-            "print state is missing its prepared illuminant"
-        );
-        let expected_illuminant =
-            crate::spectral_service::SpectralShape::new(self.baseline.settings.spectral_shape)
-                .map_err(anyhow::Error::msg)?
-                .samples;
-        ensure!(
-            context.midgray_density.len() == expected_illuminant
-                && context.compensated_midgray_density.len() == expected_illuminant,
-            "frozen midgray spectral calibration disagrees with the working wavelength grid"
-        );
-        ensure!(
-            context.print_illuminant.is_empty()
-                || context.print_illuminant.len() == expected_illuminant,
-            "prepared print illuminant shape disagrees with working wavelength grid"
-        );
+        ensure!(context.camera_compensation_ev.is_finite() && context.print_exposure_factor.is_finite() && context.print_exposure_factor > 0.0, "invalid frozen exposure context");
+        ensure!(context.exposure.metered_ev.is_finite() && !context.exposure.method.is_empty(), "invalid actual upstream metering context");
+        ensure!(context.exposure.auto_enabled || context.exposure.metered_ev == 0.0, "disabled exposure metering must record zero metered EV");
+        ensure!(context.preflash_raw.iter().chain(context.print_illuminant.iter()).all(|v| v.is_finite()), "non-finite interpretation context");
+        ensure!(context.midgray_density.iter().chain(context.compensated_midgray_density.iter()).all(|v| !v.is_infinite()), "invalid infinite midgray spectral context");
+        ensure!(self.print.is_none() || !context.print_illuminant.is_empty(), "prepared print dependency is missing its prepared illuminant");
+        let expected_illuminant = crate::spectral_service::SpectralShape::new(self.baseline.settings.spectral_shape)
+            .map_err(anyhow::Error::msg)?.samples;
+        ensure!(context.midgray_density.len() == expected_illuminant && context.compensated_midgray_density.len() == expected_illuminant, "frozen midgray spectral calibration disagrees with the working wavelength grid");
+        ensure!(context.print_illuminant.is_empty() || context.print_illuminant.len() == expected_illuminant, "prepared print illuminant shape disagrees with working wavelength grid");
         if let Some(color_space) = &context.prepared_source_color_space {
             spektrafilm_math::colorspace::resolve(color_space).map_err(anyhow::Error::msg)?;
         }
@@ -468,12 +421,12 @@ pub struct MaterialState {
 /// decoding native payloads. Callers must report payload/integrity unchecked.
 pub fn read_header(path: impl AsRef<Path>) -> Result<StageHeader> {
     let root = publication::root(path.as_ref())?;
-    let file = publication::open_member(&root, "stage.json")
-        .context("reading completed stage manifest")?;
-    ensure!(
-        file.metadata()?.len() <= MAX_MANIFEST_BYTES,
-        "stage manifest exceeds maximum record size"
-    );
+    read_header_from_root(&root)
+}
+
+fn read_header_from_root(root: &publication::ArtifactRoot) -> Result<StageHeader> {
+    let file = publication::open_member(&root, "stage.json").context("reading completed stage manifest")?;
+    ensure!(file.metadata()?.len() <= MAX_MANIFEST_BYTES, "stage manifest exceeds maximum record size");
     let mut text = String::new();
     file.take(MAX_MANIFEST_BYTES + 1)
         .read_to_string(&mut text)
@@ -511,7 +464,7 @@ pub fn read_header(path: impl AsRef<Path>) -> Result<StageHeader> {
 /// Verifies hashes and finite native values before any stored state is used.
 pub fn read(path: impl AsRef<Path>) -> Result<MaterialState> {
     let root = publication::root(path.as_ref())?;
-    let mut header = read_header(&root)?;
+    let mut header = read_header_from_root(&root)?;
     let member = header.density.as_ref().context("missing material member")?;
     let storage = member.scalar_type;
     let (density, _) = payload::read_raster(&root, member, true)?.into_image()?;

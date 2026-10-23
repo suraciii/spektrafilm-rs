@@ -3,20 +3,19 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 fn profile() -> EmbeddedProfile {
-    // A tiny physically typed material avoids loading mutable external libraries.
+    // A deterministic in-memory material avoids mutable external libraries.
     let mut profile: crate::profile::Profile = serde_json::from_value(json!({
         "metadata": {}, "info": {},
         "data": {
-            "wavelengths": [400.0, 500.0, 600.0],
-            "log_sensitivity": [[0.0,0.0,0.0],[0.0,0.0,0.0],[0.0,0.0,0.0]],
-            "channel_density": [[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]],
-            "base_density": [0.1,0.1,0.1],
+            "wavelengths": (0..81).map(|i|380.0 + 5.0 * i as f64).collect::<Vec<_>>(),
+            "log_sensitivity": vec![vec![0.0;3];81],
+            "channel_density": vec![vec![1.0,0.5,0.25];81],
+            "base_density": vec![0.1;81],
             "log_exposure": [-1.0,1.0],
             "density_curves": [[0.1,0.1,0.1],[1.0,1.0,1.0]]
         }
-    }))
-    .unwrap();
-    profile.data.base_density = vec![0.1; 3];
+    })).unwrap();
+    profile.data.base_density = vec![0.1; 81];
     EmbeddedProfile::new(profile).unwrap()
 }
 
@@ -82,7 +81,7 @@ fn moved_artifact_preserves_values_profiles_and_seed_without_external_sources() 
     assert_eq!(loaded.density.data, expected.density.data);
     assert_eq!(loaded.header.seed, 42);
     assert_eq!(loaded.header.baseline.random_seed, 42);
-    assert_eq!(loaded.header.film.profile.data.base_density, vec![0.1; 3]);
+    assert_eq!(loaded.header.film.profile.data.base_density, vec![0.1; 81]);
     assert_eq!(loaded.header.context.camera_compensation_ev, 0.75);
     assert!(loaded.header.storage_conversion.is_none());
 }
@@ -108,7 +107,8 @@ fn native_f32_and_f64_preserve_bits_and_report_actual_conversion() {
         };
         write_native(&path, &state().header, &raster, None).unwrap();
         let header = read_header(&path).unwrap();
-        let restored = payload::read_raster(&path, header.density.as_ref().unwrap(), true).unwrap();
+        let pinned = publication::root(&path).unwrap();
+        let restored = payload::read_raster(&pinned, header.density.as_ref().unwrap(), true).unwrap();
         match (&raster.samples, restored.samples) {
             (NativeSamples::F32(a), NativeSamples::F32(b)) => assert_eq!(
                 a.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
@@ -401,9 +401,9 @@ fn nullable_profile_measurements_and_resolved_monochrome_are_not_rgb() {
     let mut material = state();
     let mut source = material.header.film.profile.clone();
     source.info.channel_model = "bw".into();
-    source.data.log_sensitivity = vec![vec![0.0]; 3];
-    source.data.channel_density = vec![vec![1.0]; 3];
-    source.data.density_curves = vec![vec![0.1], vec![1.0]];
+    source.data.log_sensitivity = vec![vec![0.0];81];
+    source.data.channel_density = vec![vec![1.0];81];
+    source.data.density_curves = vec![vec![0.1],vec![1.0]];
     source.data.base_density[0] = f64::NAN;
     source.data.base_density_rows[0][0] = f64::NAN;
     let prepared = crate::profile::resolve_for_render(source.clone(), None);
@@ -512,4 +512,89 @@ fn narrowing_f64_to_f32_rejects_overflow_instead_of_inventing_finite_density() {
     write_native(&path, &state().header, &raster, None).unwrap();
     assert!(read_header(&path).is_ok());
     assert!(read(&path).unwrap_err().to_string().contains("exceed f32"));
+}
+
+#[test]
+fn deferred_print_name_never_becomes_a_frozen_material_dependency() {
+    let root = tempfile::tempdir().unwrap();
+    let mut material = state();
+    material.header.downstream_print_name = Some("not-installed-future-print".into());
+    let path = root.path().join("film.sfstage");
+    write(&path, &material).unwrap();
+    let loaded = read(&path).unwrap();
+    assert_eq!(loaded.header.downstream_print_name.as_deref(), Some("not-installed-future-print"));
+    assert!(loaded.header.print.is_none());
+    assert!(loaded.header.original_print.is_none());
+    edit_manifest(&path, |v| v["downstream_print_name"] = json!("  "));
+    assert!(read_header(&path).is_err());
+}
+
+#[test]
+fn prepared_print_requires_complete_illumination_but_raw_selection_does_not() {
+    let root = tempfile::tempdir().unwrap();
+    let mut material = state();
+    let mut print = material.header.film.profile.clone();
+    print.info.stage = "printing".into();
+    print.info.support = "paper".into();
+    let selection = EmbeddedProfile::new(print).unwrap();
+    material.header.original_print = Some(selection.clone());
+    let selection_only = root.path().join("selection.sfstage");
+    write(&selection_only, &material).unwrap();
+    assert!(read(&selection_only).is_ok());
+    material.header.print = Some(selection);
+    let prepared = root.path().join("prepared.sfstage");
+    assert!(write(&prepared, &material).is_err());
+    assert!(!prepared.exists());
+    material.header.context.print_illuminant = vec![1.0;81];
+    write(&prepared, &material).unwrap();
+    edit_manifest(&prepared, |v| v["context"]["print_illuminant"] = json!([]));
+    assert!(read_header(&prepared).is_err());
+}
+
+#[test]
+fn profile_axes_cannot_relabel_a_different_spectral_sampling_grid() {
+    for wavelengths in [vec![400.0,500.0,600.0], (0..81).map(|i|381.0 + i as f64 * 5.0).collect()] {
+        let mut wrong = profile().profile;
+        let count = wavelengths.len();
+        wrong.data.wavelengths = wavelengths;
+        wrong.data.log_sensitivity = vec![vec![0.0;3];count];
+        wrong.data.channel_density = vec![vec![1.0;3];count];
+        wrong.data.base_density_rows = vec![vec![0.1];count];
+        wrong.data.base_density = vec![0.1;count];
+        assert!(EmbeddedProfile::new(wrong).unwrap_err().to_string().contains("wavelength axis"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pinned_root_survives_path_and_ancestor_symlink_substitution() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("parent");
+    std::fs::create_dir(&parent).unwrap();
+    let path = parent.join("film.sfstage");
+    let original = state();
+    write(&path, &original).unwrap();
+    let pinned = publication::root(&path).unwrap();
+    let header = read_header_from_root(&pinned).unwrap();
+    let moved_parent = root.path().join("original-parent");
+    std::fs::rename(&parent, &moved_parent).unwrap();
+    let outside = root.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    let mut different = state();
+    different.header.seed = 99;
+    different.density.data.fill(9.0);
+    write(outside.join("film.sfstage"), &different).unwrap();
+    symlink(&outside, &parent).unwrap();
+    // Existing read uses the acquired directory object, not either pathname.
+    assert_eq!(read_header_from_root(&pinned).unwrap().seed, 42);
+    let (density, _) = payload::read_raster(&pinned, header.density.as_ref().unwrap(), true).unwrap().into_image().unwrap();
+    assert_eq!(density.data, original.density.data);
+    // A new read refuses to follow the substituted ancestor at acquisition.
+    assert!(read_header(&path).is_err());
+    let moved = moved_parent.join("film.sfstage");
+    std::fs::rename(&moved, moved_parent.join("original.sfstage")).unwrap();
+    symlink(outside.join("film.sfstage"), &moved).unwrap();
+    assert_eq!(read_header_from_root(&pinned).unwrap().seed, 42);
+    assert!(read_header(&moved).is_err());
 }

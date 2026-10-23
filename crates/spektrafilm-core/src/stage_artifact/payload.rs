@@ -293,11 +293,7 @@ fn write_samples<const N: usize>(
     })
 }
 
-pub(super) fn read_raster(
-    root: &Path,
-    member: &RasterMember,
-    density: bool,
-) -> Result<NativeRaster> {
+pub(super) fn read_raster(root: &super::publication::ArtifactRoot, member: &RasterMember, density: bool) -> Result<NativeRaster> {
     member.validate(density)?;
     let file = super::publication::open_member(root, &member.path)?;
     ensure!(
