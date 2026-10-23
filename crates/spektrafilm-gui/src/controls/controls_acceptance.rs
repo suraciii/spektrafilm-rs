@@ -350,7 +350,7 @@ mod row_layout {
         let harness = Harness::new_ui_state(camera, params);
         // The label sits left of its editor and shares its vertical band, so
         // the pair reads as one row rather than a stacked pair.
-        let rows = ["film format mm", "exposure compensation ev"];
+        let rows = ["Frame Long Edge", "exposure compensation ev"];
         let mut left_edges: Vec<f64> = Vec::new();
         let mut value_lefts: Vec<f64> = Vec::new();
         for label in rows {
