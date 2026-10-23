@@ -5,7 +5,10 @@ pub struct Browser {
     pub state: BrowserState,
     /// Session-only presentation state; deliberately outside BrowserState.
     pub(crate) query: String,
-    search: Option<(String, Vec<usize>)>,
+    pub(super) search: Option<(String, Vec<usize>)>,
+    pub(crate) preferences: super::discovery::Preferences,
+    pub(super) preference_error: Option<String>,
+    thumbnails: super::thumbnails::Thumbnails,
     pub(crate) library: PresetLibrary,
     pub(crate) entries: Vec<LibraryEntry>,
     pub(crate) scan_error: Option<String>,
@@ -21,6 +24,9 @@ impl Browser {
             state: serde_json::from_value(extras["rust"]["presets"].clone()).unwrap_or_default(),
             query: String::new(),
             search: None,
+            preferences: Default::default(),
+            preference_error: None,
+            thumbnails: Default::default(),
             library,
             entries: vec![],
             scan_error: None,
@@ -31,10 +37,21 @@ impl Browser {
             dialog_composing: false,
         };
         browser.refresh();
+        let path = browser
+            .library
+            .directory()
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("preset_discovery_preferences.json");
+        match super::discovery::Preferences::load(&path) {
+            Ok(preferences) => browser.preferences = preferences,
+            Err(error) => browser.preference_error = Some(error.to_string()),
+        }
         browser
     }
     pub(crate) fn refresh(&mut self) {
         self.search = None;
+        self.thumbnails = Default::default();
         match self.library.scan() {
             Ok(entries) => {
                 self.entries = entries;
@@ -67,7 +84,7 @@ impl Browser {
                         .preset
                         .as_ref()
                         .is_some_and(|preset| preset.kind() == Ok(PresetKind::Look));
-                if !is_look {
+                if !is_look || !self.preferences.includes(entry) {
                     return None;
                 }
                 let stock_matches = |stock: &str, profiles: &[crate::profiles::ProfileEntry]| {
@@ -140,19 +157,59 @@ impl App {
                 self.save_preset_as();
             }
             let search_label = ui.label(crate::i18n::text(ui.ctx(), "surfaces.presets.search"));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.presets.query)
-                    .id_salt("preset search")
-                    .desired_width(ui.available_width())
-                    .hint_text(crate::i18n::text(ui.ctx(), "surfaces.presets.search_hint")),
-            )
-            .labelled_by(search_label.id);
+            let search_response = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.presets.query)
+                        .id_salt("preset search")
+                        .desired_width(ui.available_width())
+                        .hint_text(crate::i18n::text(ui.ctx(), "surfaces.presets.search_hint")),
+                )
+                .labelled_by(search_label.id);
+            crate::controls::locate_row(ui, "presets.discovery.search", &search_response);
             if !self.presets.query.is_empty()
                 && ui
                     .button(crate::i18n::text(ui.ctx(), "surfaces.presets.clear_search"))
                     .clicked()
             {
                 self.presets.query.clear();
+            }
+            ui.horizontal_wrapped(|ui| {
+                use super::discovery::Filter;
+                let mut changed = false;
+                for (filter, key, path) in [
+                    (
+                        Filter::All,
+                        "surfaces.presets.discovery_all",
+                        "presets.discovery.all",
+                    ),
+                    (
+                        Filter::Favorites,
+                        "surfaces.presets.discovery_favorites",
+                        "presets.discovery.favorites",
+                    ),
+                    (
+                        Filter::Recent,
+                        "surfaces.presets.discovery_recent",
+                        "presets.discovery.recent",
+                    ),
+                ] {
+                    let response = ui.selectable_value(
+                        &mut self.presets.preferences.filter,
+                        filter,
+                        crate::i18n::text(ui.ctx(), key),
+                    );
+                    crate::controls::locate_row(ui, path, &response);
+                    changed |= response.changed();
+                }
+                if changed {
+                    self.presets.save_preferences();
+                }
+            });
+            if let Some(error) = &self.presets.preference_error {
+                ui.colored_label(
+                    theme::ERROR,
+                    crate::tr!(ui.ctx(), "surfaces.presets.discovery_error", detail = error),
+                );
             }
             if let Some(applied) = &self.presets.state.applied {
                 let state = match marker(
@@ -183,12 +240,47 @@ impl App {
                 );
             }
             self.presets.update_search(&self.films, &self.papers);
-            if !self.presets.query.is_empty() && self.presets.visible_indices().is_empty() {
+            if (!self.presets.query.is_empty()
+                || self.presets.preferences.filter != super::discovery::Filter::All)
+                && self.presets.visible_indices().is_empty()
+            {
                 ui.label(crate::i18n::text(ui.ctx(), "surfaces.presets.no_matches"));
+                let reset = ui.button(crate::i18n::text(
+                    ui.ctx(),
+                    "surfaces.presets.discovery_reset",
+                ));
+                crate::controls::locate_row(ui, "presets.discovery.reset", &reset);
+                if reset.clicked() {
+                    self.presets.query.clear();
+                    self.presets.preferences.filter = super::discovery::Filter::All;
+                    self.presets.save_preferences();
+                }
             }
+            self.presets
+                .thumbnails
+                .prepare(ctx, &self.presets.entries, &self.data_dir);
             egui::ScrollArea::vertical()
                 .id_salt("preset browser scroll")
                 .show(ui, |ui| {
+                    if let Some(error) = &self.presets.scan_error {
+                        ui.colored_label(
+                            theme::ERROR,
+                            crate::tr!(ui.ctx(), "surfaces.presets.scan_error", detail = error),
+                        );
+                    }
+                    if self.presets.entries.iter().any(|e| e.fault.is_some()) {
+                        egui::CollapsingHeader::new(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.presets.issues",
+                        ))
+                        .id_salt("Issues")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            for entry in self.presets.entries.iter().filter(|e| e.fault.is_some()) {
+                                show_fault(ui, entry);
+                            }
+                        });
+                    }
                     for group in [PresetGroup::BuiltIn, PresetGroup::User] {
                         ui.separator();
                         ui.heading(crate::i18n::text(
@@ -199,6 +291,9 @@ impl App {
                                 "surfaces.presets.mine"
                             },
                         ));
+                        if group == PresetGroup::BuiltIn {
+                            super::thumbnails::Thumbnails::reference_credit(ui);
+                        }
                         if group == PresetGroup::User {
                             let directory = self.presets.library.directory().to_path_buf();
                             ui.add(egui::Label::new(directory.display().to_string()).wrap());
@@ -232,11 +327,13 @@ impl App {
                         }
                         self.presets.update_search(&self.films, &self.papers);
                         let mut action = None;
+                        let mut favorite = None;
                         let mut entries = self
                             .presets
-                            .visible_indices()
-                            .iter()
-                            .copied()
+                            .search
+                            .as_ref()
+                            .into_iter()
+                            .flat_map(|(_, matches)| matches.iter().copied())
                             .map(|index| (index, &self.presets.entries[index]))
                             .filter(|(_, entry)| entry.group == group)
                             .peekable();
@@ -292,127 +389,191 @@ impl App {
                                     .inner_margin(8.0)
                             };
                             card_frame.show(ui, |ui| {
-                                let response = ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(format!(
-                                            "{}{}",
-                                            entry.name,
-                                            crate::controls::localized(ui.ctx(), suffix)
-                                        ))
-                                        .color(if active {
-                                            theme::CONTRAST_ON_ACCENT
-                                        } else {
-                                            theme::FG_SECONDARY
-                                        })
-                                        .size(11.0),
-                                    )
-                                    .selected(active)
-                                    .wrap(),
-                                );
-                                if response.clicked() {
-                                    action = Some((index, PresetAction::Load));
-                                }
-                                response.context_menu(|ui| {
-                                    if let Some(selected) = self.preset_actions(ui, entry) {
-                                        action = Some((index, selected));
+                                ui.horizontal_top(|ui| {
+                                    if group == PresetGroup::BuiltIn {
+                                        self.presets.thumbnails.show(ui, entry);
                                     }
-                                });
-                                for (role, reference, profiles) in [
-                                    ("Film", &entry.film_profile, &self.films),
-                                    ("Print", &entry.print_profile, &self.papers),
-                                ] {
-                                    if let Some(reference) = reference {
-                                        let display = crate::profiles::selected_display(
-                                            profiles,
-                                            &reference.stock,
+                                    ui.vertical(|ui| {
+                                        ui.set_width(ui.available_width());
+                                        let selected =
+                                            self.presets.preferences.favorites.iter().any(
+                                                |identity| {
+                                                    identity.group == entry.group
+                                                        && identity.name == entry.name
+                                                },
+                                            );
+                                        let response = ui.selectable_label(
+                                            selected,
+                                            crate::i18n::text(
+                                                ui.ctx(),
+                                                if selected {
+                                                    "surfaces.presets.discovery_unfavorite"
+                                                } else {
+                                                    "surfaces.presets.discovery_favorite"
+                                                },
+                                            ),
                                         );
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(crate::tr!(
-                                                    ui.ctx(),
-                                                    "surfaces.presets.role",
-                                                    role =
-                                                        crate::controls::localized(ui.ctx(), role),
-                                                    name = display
+                                        let accessible_name = crate::tr!(
+                                            ui.ctx(),
+                                            "surfaces.presets.discovery_favorite_accessible",
+                                            action = crate::i18n::text(
+                                                ui.ctx(),
+                                                if selected {
+                                                    "surfaces.presets.discovery_unfavorite"
+                                                } else {
+                                                    "surfaces.presets.discovery_favorite"
+                                                }
+                                            ),
+                                            group = crate::i18n::text(
+                                                ui.ctx(),
+                                                if entry.group == PresetGroup::BuiltIn {
+                                                    "surfaces.presets.builtin"
+                                                } else {
+                                                    "surfaces.presets.mine"
+                                                }
+                                            ),
+                                            name = &entry.name
+                                        );
+                                        ui.ctx().accesskit_node_builder(response.id, |node| {
+                                            node.set_label(accessible_name)
+                                        });
+                                        if response.gained_focus() {
+                                            response.scroll_to_me(Some(egui::Align::Center));
+                                        }
+                                        if response.clicked() {
+                                            favorite = Some(AppliedPreset {
+                                                group: entry.group,
+                                                name: entry.name.clone(),
+                                            });
+                                        }
+                                        let response = ui.add(
+                                            egui::Button::new(
+                                                egui::RichText::new(format!(
+                                                    "{}{}",
+                                                    entry.name,
+                                                    crate::controls::localized(ui.ctx(), suffix)
                                                 ))
                                                 .color(if active {
                                                     theme::CONTRAST_ON_ACCENT
                                                 } else {
-                                                    theme::ACCENT_DIM
+                                                    theme::FG_SECONDARY
                                                 })
-                                                .size(theme::SIZE_HINT),
+                                                .size(11.0),
                                             )
+                                            .selected(active)
                                             .wrap(),
-                                        )
-                                        .on_hover_text(&reference.stock);
-                                    }
-                                }
-                                // A visible action control beside the entry name. The
-                                // context menu stays as an additional route, but the
-                                // same actions are reachable here by pointer and by
-                                // keyboard: the button takes focus, and Space or
-                                // Enter opens its menu.
-                                let entry_id = ui.id().with((
-                                    "preset actions",
-                                    entry.group == PresetGroup::User,
-                                    &entry.name,
-                                ));
-                                let actions = ui.push_id(entry_id, |ui| {
-                                    let actions = ui.menu_button(
-                                        egui::RichText::new(crate::i18n::text(
-                                            ui.ctx(),
-                                            "surfaces.presets.actions",
-                                        ))
-                                        .color(theme::FG_MUTED)
-                                        .size(theme::SIZE_HINT),
-                                        |ui| self.preset_actions(ui, entry),
-                                    );
-                                    // Name the control after its entry, so the
-                                    // action menu of one card is addressable among
-                                    // the cards.
-                                    let accessible_name = crate::tr!(
-                                        ui.ctx(),
-                                        "surfaces.presets.actions_name",
-                                        name = &entry.name
-                                    );
-                                    ui.ctx()
-                                        .accesskit_node_builder(actions.response.id, |node| {
-                                            node.set_label(accessible_name);
+                                        );
+                                        if response.gained_focus() {
+                                            response.scroll_to_me(Some(egui::Align::Center));
+                                        }
+                                        if response.clicked() {
+                                            action = Some((index, PresetAction::Load));
+                                        }
+                                        response.context_menu(|ui| {
+                                            if let Some(selected) = self.preset_actions(ui, entry) {
+                                                // The popup item disappears when it closes;
+                                                // dialogs must return to the persistent row.
+                                                response.request_focus();
+                                                action = Some((index, selected));
+                                            }
                                         });
-                                    actions.response.on_hover_text(crate::tr!(
-                                        ui.ctx(),
-                                        "surfaces.presets.actions_help",
-                                        name = &entry.name
-                                    ));
-                                    actions.inner.flatten()
+                                        for (role, reference, profiles) in [
+                                            ("Film", &entry.film_profile, &self.films),
+                                            ("Print", &entry.print_profile, &self.papers),
+                                        ] {
+                                            if let Some(reference) = reference {
+                                                let display = crate::profiles::selected_display(
+                                                    profiles,
+                                                    &reference.stock,
+                                                );
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(crate::tr!(
+                                                            ui.ctx(),
+                                                            "surfaces.presets.role",
+                                                            role = crate::controls::localized(
+                                                                ui.ctx(),
+                                                                role
+                                                            ),
+                                                            name = display
+                                                        ))
+                                                        .color(if active {
+                                                            theme::CONTRAST_ON_ACCENT
+                                                        } else {
+                                                            theme::ACCENT_DIM
+                                                        })
+                                                        .size(theme::SIZE_HINT),
+                                                    )
+                                                    .wrap(),
+                                                )
+                                                .on_hover_text(&reference.stock);
+                                            }
+                                        }
+                                        // A visible action control beside the entry name. The
+                                        // context menu stays as an additional route, but the
+                                        // same actions are reachable here by pointer and by
+                                        // keyboard: the button takes focus, and Space or
+                                        // Enter opens its menu.
+                                        let entry_id = ui.id().with((
+                                            "preset actions",
+                                            entry.group == PresetGroup::User,
+                                            &entry.name,
+                                        ));
+                                        let actions = ui.push_id(entry_id, |ui| {
+                                            let actions = ui.menu_button(
+                                                egui::RichText::new(crate::i18n::text(
+                                                    ui.ctx(),
+                                                    "surfaces.presets.actions",
+                                                ))
+                                                .color(theme::FG_MUTED)
+                                                .size(theme::SIZE_HINT),
+                                                |ui| self.preset_actions(ui, entry),
+                                            );
+                                            // Name the control after its entry, so the
+                                            // action menu of one card is addressable among
+                                            // the cards.
+                                            let accessible_name = crate::tr!(
+                                                ui.ctx(),
+                                                "surfaces.presets.actions_name",
+                                                name = &entry.name
+                                            );
+                                            ui.ctx().accesskit_node_builder(
+                                                actions.response.id,
+                                                |node| {
+                                                    node.set_label(accessible_name);
+                                                },
+                                            );
+                                            if actions.inner.as_ref().is_some_and(Option::is_some) {
+                                                // Capture the card control, not the transient
+                                                // focused menu item, as the dialog's invoker.
+                                                actions.response.request_focus();
+                                            }
+                                            if actions.response.gained_focus() {
+                                                actions
+                                                    .response
+                                                    .scroll_to_me(Some(egui::Align::Center));
+                                            }
+                                            actions.response.on_hover_text(crate::tr!(
+                                                ui.ctx(),
+                                                "surfaces.presets.actions_help",
+                                                name = &entry.name
+                                            ));
+                                            actions.inner.flatten()
+                                        });
+                                        if let Some(selected) = actions.inner {
+                                            action = Some((index, selected));
+                                        }
+                                    });
                                 });
-                                if let Some(selected) = actions.inner {
-                                    action = Some((index, selected));
-                                }
                             });
+                        }
+                        if let Some(identity) = favorite {
+                            self.presets.preferences.toggle_favorite(identity);
+                            self.presets.save_preferences();
                         }
                         if let Some((index, action)) = action {
                             self.apply_preset_action(index, action);
                         }
-                    }
-                    if let Some(error) = &self.presets.scan_error {
-                        ui.colored_label(
-                            theme::ERROR,
-                            crate::tr!(ui.ctx(), "surfaces.presets.scan_error", detail = error),
-                        );
-                    }
-                    if self.presets.entries.iter().any(|e| e.fault.is_some()) {
-                        egui::CollapsingHeader::new(crate::i18n::text(
-                            ui.ctx(),
-                            "surfaces.presets.issues",
-                        ))
-                        .id_salt("Issues")
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            for entry in self.presets.entries.iter().filter(|e| e.fault.is_some()) {
-                                show_fault(ui, entry);
-                            }
-                        });
                     }
                 });
         });
@@ -441,7 +602,7 @@ impl App {
         let mut action = None;
         let mut save = false;
         ui.push_id(("section preset", module), |ui| {
-            ui.menu_button(
+            let menu = ui.menu_button(
                 crate::tr!(ui.ctx(), "surfaces.presets.section", name = current),
                 |ui| {
                     ui.add(
@@ -545,6 +706,9 @@ impl App {
                     }
                 },
             );
+            if save || action.is_some() {
+                menu.response.request_focus();
+            }
         });
         if save {
             self.save_section_preset_as(section);
@@ -669,6 +833,12 @@ impl App {
         if opening {
             self.presets.dialog_focus = ctx.memory(|memory| memory.focused());
             self.presets.dialog_open = true;
+            // The key that activated a menu action belongs to that action,
+            // not to the newly opened dialog's editor or default Save button.
+            ctx.input_mut(|input| {
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Space);
+            });
         }
         if let Some(mut dialog) = self.presets.name_dialog.take() {
             let mut cancel = false;
@@ -755,6 +925,9 @@ impl App {
                             && active.name == *old
                         {
                             active.name = dialog.name.clone();
+                        }
+                        if let NameAction::Rename(old) = &dialog.action {
+                            self.presets.record_rename(old, &dialog.name);
                         }
                         if matches!(&dialog.action, NameAction::Save(preset) if preset.kind() == Ok(PresetKind::Look))
                         {

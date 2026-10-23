@@ -41,9 +41,9 @@ for license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
     test -s "$repo_root/licenses/$license" || { echo "missing benchmark license: $repo_root/licenses/$license" >&2; exit 1; }
     cp "$repo_root/licenses/$license" "$dist_root/licenses/$license"
 done
-for license in NotoSansSC-OFL.txt NotoSansSC-NOTICE.txt; do
-    test -s "$repo_root/crates/spektrafilm-gui/assets/$license" || { echo "missing font license: $license" >&2; exit 1; }
-    cp "$repo_root/crates/spektrafilm-gui/assets/$license" "$dist_root/licenses/$license"
+for gui_asset_notice in NotoSansSC-OFL.txt NotoSansSC-NOTICE.txt PRESET_REFERENCE_LICENSE.txt; do
+    test -s "$repo_root/crates/spektrafilm-gui/assets/$gui_asset_notice" || { echo "missing GUI asset notice: $gui_asset_notice" >&2; exit 1; }
+    cp "$repo_root/crates/spektrafilm-gui/assets/$gui_asset_notice" "$dist_root/licenses/$gui_asset_notice"
 done
  
 cp -R "$repo_root/data" "$dist_root/data"

@@ -1,6 +1,6 @@
 use super::*;
 use crate::state;
-fn test_app(label: &str) -> (App, PathBuf) {
+pub(super) fn test_app(label: &str) -> (App, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("spektrafilm-gui-{label}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
@@ -52,6 +52,7 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         let before = serde_json::to_value(&app.params).unwrap();
         let state = app.current_state().unwrap().sections;
         let browser = app.presets.state.clone();
+        let preferences = app.presets.preferences.clone();
         let film = app.film_name.clone();
         let print = app.print_name.clone();
         let film_times = app.film_dev_times.clone();
@@ -71,6 +72,7 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         assert_eq!(serde_json::to_value(&app.params).unwrap(), before);
         assert_eq!(app.current_state().unwrap().sections, state);
         assert_eq!(app.presets.state, browser);
+        assert_eq!(app.presets.preferences, preferences);
         assert_eq!(app.film_name, film);
         assert_eq!(app.print_name, print);
         assert_eq!(app.film_dev_times, film_times);
@@ -378,12 +380,27 @@ fn unusable_library_path_keeps_builtins_and_renders_fault() {
         .unwrap()
         .name
         .clone();
+    let missing_name = "Unavailable user look";
+    app.presets.state.applied = Some(AppliedPreset {
+        group: PresetGroup::User,
+        name: missing_name.into(),
+    });
+    assert_eq!(
+        marker(
+            app.presets.state.applied.as_ref().unwrap(),
+            &app.presets.entries,
+            &app.params,
+            &app.film_name,
+            &app.print_name
+        ),
+        Marker::Missing,
+    );
     let context = egui::Context::default();
     let output = context.run(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(1460.0, 2000.0),
+                egui::vec2(1460.0, 900.0),
             )),
             ..Default::default()
         },
@@ -412,6 +429,10 @@ fn unusable_library_path_keeps_builtins_and_renders_fault() {
     );
     assert!(
         rendered.iter().any(|text| text.contains(&builtin_name)),
+        "{rendered:?}"
+    );
+    assert!(
+        rendered.iter().any(|text| text.contains(missing_name)),
         "{rendered:?}"
     );
     std::fs::remove_dir_all(directory).unwrap();

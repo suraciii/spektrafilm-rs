@@ -58,6 +58,8 @@ fn edit_calibration(h: &mut Harness<'_, App>, text: &str) {
 
 /// Exercise the production Settings state writer and loader, not a runtime-only
 /// serialization roundtrip. Dialog navigation must not change accepted values.
+/// Saving GUI parameters is not saving the photograph record: reloading must
+/// preserve the current adjustment until the user explicitly discards it.
 fn save_mutate_and_reload(
     s: &mut Session,
     file_name: &str,
@@ -74,15 +76,6 @@ fn save_mutate_and_reload(
         chooser::ChooserResult::Scripted(path.clone()),
     );
     click(&mut s.harness, "Save current to file");
-    assert!(
-        s.harness
-            .state()
-            .status
-            .to_string()
-            .starts_with("Saved GUI state"),
-        "{}",
-        s.harness.state().status
-    );
     assert_eq!(
         state::GuiState::load(&path)
             .unwrap()
@@ -92,21 +85,19 @@ fn save_mutate_and_reload(
     );
     close_settings(&mut s.harness);
     between(&mut s.harness);
+    let changed = s.harness.state().params.clone();
+    let revision = s.harness.state().parameter_revision;
     open_settings(&mut s.harness);
     if s.harness.query_by_label("Load from file").is_none() {
         click(&mut s.harness, "GUI parameters");
     }
     script(&mut s.harness, chooser::ChooserResult::Scripted(path));
     click(&mut s.harness, "Load from file");
-    assert!(
-        s.harness
-            .state()
-            .status
-            .to_string()
-            .starts_with("Loaded GUI state"),
-        "{}",
-        s.harness.state().status
-    );
+    assert!(s.harness.query_by_label("Discard changes").is_some());
+    assert_eq!(s.harness.state().params, changed);
+    assert_eq!(s.harness.state().parameter_revision, revision);
+    click(&mut s.harness, "Discard changes");
+    assert!(s.harness.query_by_label("Discard changes").is_none());
     assert_eq!(s.harness.state().params, accepted);
     close_settings(&mut s.harness);
 }

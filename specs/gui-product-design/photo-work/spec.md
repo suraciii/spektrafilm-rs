@@ -2,7 +2,7 @@
 
 ## Authority
 
-This target extends [GUI product design](../spec.md). It owns comparison references, photograph adjustment records, and multi-photograph work. It does not claim that these capabilities are implemented.
+This target extends [GUI product design](../spec.md). It owns comparison references, photograph adjustment records, and multi-photograph work.
 
 [GUI workflow](../../gui-workflow/spec.md) owns edits, history, and render identity. [Presets](../../presets/spec.md) owns reusable looks. [Photo export](../../photo-export/spec.md) owns rendering and file publication.
 

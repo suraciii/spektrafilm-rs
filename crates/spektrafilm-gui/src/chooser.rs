@@ -59,6 +59,28 @@ impl Chooser {
         dialog.pick_file()
     }
 
+    pub(super) fn pick_files(&mut self, dialog: rfd::FileDialog) -> Option<Vec<PathBuf>> {
+        #[cfg(test)]
+        if self.strict {
+            return match self.scripted.pop_front() {
+                Some(ChooserResult::Scripted(path)) => Some(vec![path]),
+                Some(ChooserResult::Canceled) | None => None,
+            };
+        }
+        dialog.pick_files()
+    }
+
+    pub(super) fn pick_folder(&mut self, dialog: rfd::FileDialog) -> Option<PathBuf> {
+        #[cfg(test)]
+        if self.strict {
+            return match self.scripted.pop_front() {
+                Some(ChooserResult::Scripted(path)) => Some(path),
+                Some(ChooserResult::Canceled) | None => None,
+            };
+        }
+        dialog.pick_folder()
+    }
+
     /// Choose a destination file. Same contract as [`Self::pick_file`].
     pub(super) fn save_file(&mut self, dialog: rfd::FileDialog) -> Option<PathBuf> {
         #[cfg(test)]

@@ -251,11 +251,27 @@ impl ExportOptions {
     }
 }
 
-/// Pixel payload of the exported samples at the input's full resolution.
+/// Resolve delivery geometry using the same crop rectangle and rescale
+/// rounding as the renderer, without touching source pixels.
+pub(crate) fn output_dimensions(
+    source: [u32; 2],
+    io: &spektrafilm_core::params::IoParams,
+) -> Result<[u32; 2], String> {
+    let (_, _, width, height) =
+        spektrafilm_core::resizing::requested_crop_rect(source[0], source[1], io)?;
+    let (width, height) = spektrafilm_math::resize::rescaled_dimensions(
+        width as u32,
+        height as u32,
+        io.upscale_factor,
+    )?;
+    Ok([width, height])
+}
+
+/// Pixel payload of exported samples at the accepted delivery resolution.
 ///
-/// The export renders the retained input, so the row reflects the input's
-/// dimensions rather than the reduced-size preview. Every container writes
-/// three samples per pixel. Compressed containers write a smaller file whose
+/// The dimensions already include requested crop and upscale. Every
+/// container writes three samples per pixel. Compressed containers write a
+/// smaller file whose
 /// exact size depends on image content, so the payload is the
 /// content-independent bound the row can state without compressing.
 pub(crate) fn estimated_output_bytes(options: &ExportOptions, dimensions: [u32; 2]) -> u64 {
@@ -304,11 +320,16 @@ fn draft_reset<T: Clone + PartialEq>(
     if ui
         .add_enabled(
             applicable && value != factory,
-            egui::Button::new(crate::tr!(
-                ui.ctx(),
-                "surfaces.export.reset",
-                label = controls::localized(ui.ctx(), label)
-            )),
+            egui::Button::new(
+                egui::RichText::new(crate::tr!(
+                    ui.ctx(),
+                    "surfaces.export.reset",
+                    label = controls::localized(ui.ctx(), label)
+                ))
+                .color(theme::FG_SECONDARY)
+                .size(theme::SIZE_UNIT),
+            )
+            .small(),
         )
         .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.reset_help"))
         .clicked()
@@ -333,14 +354,14 @@ impl ExportDialog {
 
     /// Closing or cancelling drops the draft; only Export returns preferences.
     ///
-    /// `dimensions` is the resolution of the input the export renders. The
-    /// dialog is modal but does not block drag-and-drop, so a new image can
-    /// arrive while it is open; the estimate reads the current input every
-    /// frame instead of the one the dialog was opened with.
+    /// `dimensions` is the delivery resolution after crop and upscale. A new
+    /// accepted source or adjustment can arrive while the dialog is open, so
+    /// callers resolve the current geometry every frame.
     pub(crate) fn show(
         &mut self,
         ctx: &egui::Context,
         dimensions: [u32; 2],
+        source: Option<&Path>,
     ) -> Option<ExportOptions> {
         let draft = self.draft.as_mut()?;
         static FACTORY: std::sync::LazyLock<ExportOptions> = std::sync::LazyLock::new(|| {
@@ -363,6 +384,16 @@ impl ExportDialog {
                     .id_salt("export-options-scroll")
                     .max_height((ctx.screen_rect().height() - 160.0).max(80.0))
                     .show(ui, |ui| {
+                let source_name = source.and_then(Path::file_name)
+                    .map(|name| name.to_string_lossy())
+                    .unwrap_or_else(|| crate::i18n::text(ui.ctx(), "result.export.accepted_source"));
+                ui.label(crate::tr!(ui.ctx(), "result.export.source", source = source_name));
+                ui.label(crate::tr!(ui.ctx(), "result.export.dimensions",
+                    width = dimensions[0], height = dimensions[1]));
+                ui.label(egui::RichText::new(crate::i18n::text(
+                    ui.ctx(), "result.export.guidance",
+                )).small().color(theme::FG_SECONDARY));
+                ui.separator();
                 let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
                 enum_choice(ui, "Backend", &mut draft.backend, &[
                     (ExportBackend::Cpu, cpu_label),
@@ -487,7 +518,10 @@ impl ExportDialog {
                 ui.horizontal(|ui| {
                     // The sidebar opener and this submit are two steps of one
                     // flow, so they carry distinct labels.
-                    let export = ui.button(crate::i18n::text(ui.ctx(), "surfaces.export.submit")).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.submit_help"));
+                    let export = ui.add(egui::Button::new(
+                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.submit"))
+                            .color(theme::CONTRAST_ON_ACCENT),
+                    ).fill(theme::ACCENT)).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.submit_help"));
                     controls::locate_row(ui, "action.export", &export);
                     submit = export.clicked();
                     let discard = ui.button(crate::i18n::text(ui.ctx(), "surfaces.action.cancel")).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.discard_help"));

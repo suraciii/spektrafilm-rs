@@ -14,8 +14,10 @@ mod operator;
 mod pages;
 mod panels;
 mod raw;
+mod result;
 mod viewer;
 mod workflow;
+mod worklist;
 
 struct Session {
     harness: Harness<'static, App>,
@@ -945,7 +947,7 @@ mod layout_snapshots {
             .build_state(
                 |ctx, dialog: &mut ExportDialog| {
                     theme::apply(ctx);
-                    dialog.show(ctx, dimensions);
+                    dialog.show(ctx, dimensions, None);
                 },
                 std::mem::take(&mut h.state_mut().export_dialog),
             );

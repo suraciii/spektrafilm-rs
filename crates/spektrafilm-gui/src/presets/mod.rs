@@ -223,8 +223,13 @@ pub(crate) struct NameDialog {
 }
 
 mod actions;
+mod discovery;
 mod render;
+mod thumbnails;
 pub use render::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod discovery_tests;

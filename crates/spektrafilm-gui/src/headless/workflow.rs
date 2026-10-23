@@ -17,11 +17,6 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         reveal_control(h, "action.save_state");
         script(h, chooser::ChooserResult::Scripted(saved.clone()));
         click(h, "Save current to file");
-        assert!(
-            h.state().status.to_string().starts_with("Saved GUI state"),
-            "{}",
-            h.state().status
-        );
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&saved).unwrap()).unwrap();
         assert_eq!(value["simulation"]["route"], route);
@@ -31,11 +26,10 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         assert!(value["rust"]["runtime"]["io"].get("scan_film").is_none());
         script(h, chooser::ChooserResult::Scripted(saved));
         click(h, "Load from file");
-        assert!(
-            h.state().status.to_string().starts_with("Loaded GUI state"),
-            "{}",
-            h.state().status
-        );
+        assert!(h.query_by_label("Discard changes").is_some());
+        assert_eq!(h.state().params.workflow.route, route);
+        click(h, "Discard changes");
+        assert!(h.query_by_label("Discard changes").is_none());
         assert_eq!(h.state().params.workflow.route, route);
         close_settings(h);
         let reloaded = render(h, "SCAN");
@@ -43,11 +37,6 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         let destination = s.directory.path().join(format!("route-{index}.png"));
         script(h, chooser::ChooserResult::Scripted(destination.clone()));
         click(h, "SAVE");
-        assert!(
-            h.state().status.to_string().starts_with("Saved"),
-            "{}",
-            h.state().status
-        );
         let expected = image_io::convert_image(
             &reloaded,
             &h.state().output_color_space,
@@ -94,6 +83,10 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
     open_settings(h);
     script(h, chooser::ChooserResult::Scripted(path));
     click(h, "Load from file");
+    assert!(h.query_by_label("Discard changes").is_some());
+    assert!(h.state().scan_for_print_snapshot.is_some());
+    click(h, "Discard changes");
+    assert!(h.query_by_label("Discard changes").is_none());
     assert!(h.state().scan_for_print_snapshot.is_none());
     assert!(!h.state().params.print_render.glare.active);
     close_settings(h);

@@ -1,0 +1,27 @@
+Fixed preset reference photograph: Kiwi (Actinidia chinensis) 1 Luc Viatour.jpg
+Photographer: Luc Viatour / https://Lucnix.be (2008)
+Source and licensing record:
+https://commons.wikimedia.org/wiki/File:Kiwi_(Actinidia_chinensis)_1_Luc_Viatour.jpg
+Downloaded source rendition (960 pixels wide):
+https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Kiwi_%28Actinidia_chinensis%29_1_Luc_Viatour.jpg/960px-Kiwi_%28Actinidia_chinensis%29_1_Luc_Viatour.jpg
+Selected license: Creative Commons Attribution-ShareAlike 2.5 Generic
+https://creativecommons.org/licenses/by-sa/2.5/
+Legal code: https://creativecommons.org/licenses/by-sa/2.5/legalcode
+
+preset-reference.jpg is the Wikimedia downsampled photograph. The bundled
+preset-thumbnails.json images are adaptations: resized and processed through
+SpektraFilm's CPU simulation, with preset/material content fingerprints. These
+image adaptations are distributed under the same CC BY-SA 2.5 license. The
+photographer does not endorse this application. Code licensing is unchanged.
+The browser displays the credit and license next to every reference thumbnail.
+
+Regenerate actual thumbnails from the repository root after preset/material changes:
+cargo test -p spektrafilm-gui presets::thumbnails::tests::generate_fixed_reference_thumbnails -- --ignored --exact --nocapture
+Then rebuild the GUI to embed the newly generated bundle. This command uses the
+existing CPU Runtime and GUI output display transformation, never a current user
+photograph. It requires the repository data directory and normal native build
+prerequisites (the same as GUI tests). The runtime checks exact preset, photograph,
+film and print material bytes, selected spectral LUT descriptor and NPY, neutral
+filter bytes, applicable filter/style assets, recipe and app version. Dependency
+selection is shared with photograph record validation and runtime preparation.
+Missing or mismatched images are shown as unavailable, never substituted.

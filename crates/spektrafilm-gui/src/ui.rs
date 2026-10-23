@@ -37,10 +37,17 @@ impl App {
             &self.params.io.input_color_space,
             self.params.io.input_cctf_decoding,
         );
-        let (space, encoded) = self.operator_comparison.as_ref().map_or(
-            (self.output_color_space.as_str(), self.output_cctf_encoding),
-            |comparison| (comparison.color_space.as_str(), comparison.encoded),
-        );
+        let reference = self
+            .comparison_output()
+            .map(|a| (a.color_space.to_owned(), a.encoded));
+        let (space, encoded) = if let Some((space, encoded)) = &reference {
+            (space.as_str(), *encoded)
+        } else {
+            self.operator_comparison.as_ref().map_or(
+                (self.output_color_space.as_str(), self.output_cctf_encoding),
+                |comparison| (comparison.color_space.as_str(), comparison.encoded),
+            )
+        };
         self.viewer.set_output_display_source(
             space,
             encoded,
@@ -81,18 +88,27 @@ impl App {
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            let save = ui.button(crate::i18n::text(ui.ctx(), "surfaces.state.save_file"));
+            let save = ui.add(egui::Button::new(
+                egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.state.save_file"))
+                    .color(theme::FG_SECONDARY),
+            ));
             controls::locate_row(ui, "action.save_state", &save);
             if save.clicked() {
                 self.save_state_with_dialog();
             }
-            let load = ui.button(crate::i18n::text(ui.ctx(), "surfaces.state.load_file"));
+            let load = ui.add(egui::Button::new(
+                egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.state.load_file"))
+                    .color(theme::FG_SECONDARY),
+            ));
             controls::locate_row(ui, "action.load_state", &load);
             if load.clicked() {
                 self.load_state_with_dialog();
             }
             let startup = ui
-                .button(crate::i18n::text(ui.ctx(), "surfaces.state.save_default"))
+                .add(egui::Button::new(
+                    egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.state.save_default"))
+                        .color(theme::FG_SECONDARY),
+                ))
                 .on_hover_text(crate::i18n::text(
                     ui.ctx(),
                     "surfaces.state.save_default_help",
@@ -109,9 +125,12 @@ impl App {
                 };
             }
             let restore = ui
-                .button(crate::i18n::text(
-                    ui.ctx(),
-                    "surfaces.state.restore_factory",
+                .add(egui::Button::new(
+                    egui::RichText::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.state.restore_factory",
+                    ))
+                    .color(theme::FG_SECONDARY),
                 ))
                 .on_hover_text(crate::i18n::text(
                     ui.ctx(),
@@ -191,23 +210,7 @@ impl App {
             .chooser
             .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
         {
-            let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
-            self.status = match result {
-                Ok(()) => {
-                    self.remember_dialog("state", &path);
-                    match self.last_state_normalization.take() {
-                        Some(detail) => {
-                            crate::app::Message::new("surfaces.status.state_loaded_detail")
-                                .arg("path", path.display())
-                                .message_arg("detail", detail)
-                        }
-                        None => crate::app::Message::new("surfaces.status.state_loaded")
-                            .arg("path", path.display()),
-                    }
-                }
-                Err(e) => crate::app::Message::new("surfaces.status.state_load_error")
-                    .message_arg("error", crate::app::Message::error(&e)),
-            };
+            self.request_photo_action(crate::photograph::PhotoAction::LoadState(path));
         }
     }
 
@@ -252,14 +255,14 @@ impl App {
                 self.force_preview = true;
                 self.full_scan_requested = true;
             }
-            if ui
+            let save = ui
                 .add_enabled(
                     self.output_image.is_some() && !busy,
                     egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.save_retained")),
                 )
-                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.save_help"))
-                .clicked()
-            {
+                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.save_help"));
+            controls::locate_row(ui, "action.save_retained", &save);
+            if save.clicked() {
                 self.save_dialog();
             }
         });
@@ -414,31 +417,50 @@ impl App {
         let t = Instant::now();
         let raw = image_io::is_raw(path);
         let mut raw_lens_info = None;
-        let loaded = if raw {
-            let settings = &self.gui_state.sections["load_raw"];
-            let options = spektrafilm_raw::RawOptions {
-                white_balance: match settings["white_balance"].as_str().unwrap_or("as_shot") {
-                    "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
-                    "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
-                    "custom" => spektrafilm_raw::WhiteBalance::Custom,
-                    _ => spektrafilm_raw::WhiteBalance::AsShot,
-                },
-                temperature: settings["temperature"].as_f64(),
-                tint: settings["tint"].as_f64(),
-                lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
-            };
-            spektrafilm_raw::load(path, &options)
-                .map(|result| {
-                    raw_lens_info = Some(result.lens_info);
-                    LoadedImage {
-                        image: result.image,
-                        metadata: image_io::read_metadata(path),
-                    }
-                })
-                .map_err(anyhow::Error::msg)
-        } else {
-            image_io::load(path).map_err(anyhow::Error::from)
-        };
+        let mut lens_model_identity = None;
+        let source_digest = Self::accepted_source_digest(path);
+        let reprocess = self.image_path.as_deref() == Some(path);
+        let previous_baseline = self.photograph.baseline.clone();
+        let previous_record = self.photograph.record_path.clone();
+        let loaded = source_digest
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("{error:#}"))
+            .and_then(|_| {
+                if raw {
+                    let settings = &self.gui_state.sections["load_raw"];
+                    let options = spektrafilm_raw::RawOptions {
+                        white_balance: match settings["white_balance"].as_str().unwrap_or("as_shot")
+                        {
+                            "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
+                            "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
+                            "custom" => spektrafilm_raw::WhiteBalance::Custom,
+                            _ => spektrafilm_raw::WhiteBalance::AsShot,
+                        },
+                        temperature: settings["temperature"].as_f64(),
+                        tint: settings["tint"].as_f64(),
+                        lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
+                    };
+                    spektrafilm_raw::load(path, &options)
+                        .map(|result| {
+                            raw_lens_info = Some(result.lens_info);
+                            lens_model_identity = result.lens_model_identity;
+                            LoadedImage {
+                                image: result.image,
+                                metadata: image_io::read_metadata(path),
+                            }
+                        })
+                        .map_err(anyhow::Error::msg)
+                } else {
+                    image_io::load(path).map_err(anyhow::Error::from)
+                }
+            })
+            .and_then(|loaded| {
+                anyhow::ensure!(
+                    source_digest.as_ref().ok() == Some(&Self::accepted_source_digest(path)?),
+                    crate::app::Message::new("photo.error.source_changed")
+                );
+                Ok(loaded)
+            });
         match loaded {
             Ok(LoadedImage {
                 image: img,
@@ -451,6 +473,7 @@ impl App {
                 self.source_metadata = metadata;
                 self.input_rotation = 0;
                 self.raw_lens_info = raw_lens_info;
+                self.photograph.lens_model_identity = lens_model_identity;
                 let mut loaded = crate::app::Message::new(if raw {
                     "surfaces.status.loaded_raw"
                 } else {
@@ -484,8 +507,20 @@ impl App {
                 self.output_image = None;
                 self.output_metadata = None;
                 self.source_render = None;
+                self.retained_kind = None;
+                self.stale_save_confirmation = false;
+                self.clear_comparison();
                 self.dirty = true;
                 self.reset_adjustment_history();
+                if let Some(ctx) = &self.photograph.context {
+                    crate::numeric::NumericDrafts::take(ctx);
+                }
+                self.mark_photograph_baseline();
+                self.photograph.source_digest = source_digest.ok();
+                if reprocess {
+                    self.photograph.baseline = previous_baseline;
+                    self.photograph.record_path = previous_record;
+                }
             }
             Err(e) => {
                 self.status = crate::app::Message::new("surfaces.status.load_error")
@@ -721,7 +756,14 @@ impl App {
                         "Reset print profile to factory"
                     };
                     if ui
-                        .small_button(controls::localized(ui.ctx(), reset_label))
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(controls::localized(ui.ctx(), reset_label))
+                                    .color(theme::FG_SECONDARY)
+                                    .size(theme::SIZE_UNIT),
+                            )
+                            .small(),
+                        )
                         .clicked()
                     {
                         let factory = state::GuiState::factory();
@@ -999,6 +1041,17 @@ impl App {
                     }
                 }
                 controls::ControlOwner::Viewer => {
+                    self.pending_scroll = None;
+                }
+                controls::ControlOwner::Header | controls::ControlOwner::Result => {
+                    self.pending_scroll = None;
+                }
+                controls::ControlOwner::WorkList => {
+                    self.photograph.work_list.open = true;
+                    self.pending_scroll = None;
+                }
+                controls::ControlOwner::Presets => {
+                    self.presets.state.expanded = true;
                     self.pending_scroll = None;
                 }
             }
@@ -1434,8 +1487,36 @@ impl App {
                 .add_filter("Image", &image_io::accepted_extensions()),
         ) {
             self.remember_dialog("load", &path);
-            self.load_image_from_path(&path);
+            self.request_photo_action(crate::photograph::PhotoAction::Open(path));
         }
+    }
+
+    /// Result identity is independent from the current worker's operation.
+    /// In particular, a pending Scan must not relabel a retained Preview.
+    pub(crate) fn retained_result_identity(&self, ctx: &egui::Context) -> String {
+        let Some(output) = self.output_image.as_ref() else {
+            return crate::i18n::text(ctx, "result.identity.empty").into_owned();
+        };
+        let operation = self.retained_kind.map_or_else(
+            || crate::i18n::text(ctx, "result.identity.result").into_owned(),
+            |kind| kind.message().localized(ctx),
+        );
+        crate::tr!(
+            ctx,
+            "result.identity.summary",
+            operation = operation,
+            width = output.width,
+            height = output.height,
+            currency = crate::i18n::text(
+                ctx,
+                if self.accepted_frame_is_stale() {
+                    "result.identity.stale"
+                } else {
+                    "result.identity.current"
+                }
+            )
+        )
+        .into_owned()
     }
 
     /// One header owns global actions, read-only context, and operation status.
@@ -1447,6 +1528,7 @@ impl App {
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(egui::RichText::new("spektrafilm").strong());
+                    self.photograph_toolbar(ui);
                     if ui
                         .button(crate::i18n::text(ui.ctx(), "surfaces.action.open"))
                         .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.open_help"))
@@ -1514,10 +1596,14 @@ impl App {
                             self.image.is_some()
                                 && self.calibration_job.is_none()
                                 && !self.export_dialog.is_open(),
-                            egui::Button::new(crate::i18n::text(
-                                ui.ctx(),
-                                "surfaces.action.export",
-                            )),
+                            egui::Button::new(
+                                egui::RichText::new(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.action.export",
+                                ))
+                                .color(theme::CONTRAST_ON_ACCENT),
+                            )
+                            .fill(theme::ACCENT),
                         );
                         if export.clicked() {
                             self.export_return_focus = Some(export.id);
@@ -1539,6 +1625,9 @@ impl App {
                         "surfaces.header.source",
                         source = source
                     ));
+                    if self.photograph_has_unsaved_changes() {
+                        ui.label(crate::i18n::text(ui.ctx(), "photo.record.unsaved"));
+                    }
                     ui.label(crate::tr!(
                         ui.ctx(),
                         "surfaces.header.film",
@@ -1560,27 +1649,37 @@ impl App {
                     ));
                 });
                 ui.horizontal_wrapped(|ui| {
+                    let color = if self.accepted_frame_is_stale() {
+                        theme::WARNING
+                    } else {
+                        theme::FG_SECONDARY
+                    };
                     ui.label(
-                        egui::RichText::new(self.operation_status_localized(ui.ctx())).small(),
+                        egui::RichText::new(self.retained_result_identity(ui.ctx())).color(color),
                     );
-                    if self.accepted_frame_is_stale() {
+                    if self.output_image.is_some()
+                        && self.retained_kind == Some(RenderKind::Preview)
+                    {
                         ui.label(
                             egui::RichText::new(crate::i18n::text(
                                 ui.ctx(),
-                                "surfaces.state.stale_frame",
+                                "result.identity.preview_caveat",
                             ))
-                            .color(theme::WARNING)
-                            .small(),
+                            .small()
+                            .color(theme::FG_SECONDARY),
                         );
                     }
                 });
+                ui.label(egui::RichText::new(self.operation_status_localized(ui.ctx())).small());
             });
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.photograph.context = Some(ctx.clone());
         self.bind_language(ctx);
+        self.protect_photograph_close(ctx);
         self.render_progress.bind_context(ctx);
         if controls::release_operator_compare(ctx) {
             self.set_operator_compare(false);
@@ -1608,6 +1707,7 @@ impl eframe::App for App {
             && self.image.is_some()
             && self.calibration_job.is_none()
             && !self.export_dialog.is_open()
+            && !self.stale_save_confirmation
             && (self.gui_state.auto_preview() || self.force_preview)
         {
             let now = Instant::now();
@@ -1629,7 +1729,11 @@ impl eframe::App for App {
         let editing_text = ctx
             .memory(|memory| memory.focused())
             .is_some_and(|id| egui::text_edit::TextEditState::load(ctx, id).is_some());
-        if !editing_text && !self.settings_open && !self.export_dialog.is_open() {
+        if !editing_text
+            && !self.settings_open
+            && !self.export_dialog.is_open()
+            && !self.stale_save_confirmation
+        {
             if ctx.input_mut(|input| {
                 input.consume_key(
                     egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
@@ -1643,15 +1747,20 @@ impl eframe::App for App {
                 self.undo_adjustment();
             }
         }
-        // The export renders the retained input, so the dialog's estimate
-        // reads that image's dimensions while the dialog is open.
+        // Share the renderer's exact crop and rescale rounding without
+        // allocating an image just to describe its delivered dimensions.
         let export_dimensions = self
             .image
             .as_ref()
-            .map(|image| [image.width, image.height])
+            .and_then(|image| {
+                crate::export::output_dimensions([image.width, image.height], &self.params.io).ok()
+            })
             .unwrap_or([0, 0]);
         let export_was_open = self.export_dialog.is_open();
-        if let Some(options) = self.export_dialog.show(ctx, export_dimensions) {
+        if let Some(options) =
+            self.export_dialog
+                .show(ctx, export_dimensions, self.image_path.as_deref())
+        {
             self.start_export(ctx, options);
         }
         if export_was_open
@@ -1662,6 +1771,9 @@ impl eframe::App for App {
         }
         self.window_header(ctx);
         self.factory_reset_confirmation(ctx);
+        self.show_stale_save_confirmation(ctx);
+        self.photograph_dialogs(ctx);
+        self.work_list_controls(ctx);
         self.preset_panel(ctx);
         self.sync_display_controls();
         controls::begin_control_frame(ctx, &self.params, &self.gui_state.sections);
@@ -1779,6 +1891,7 @@ impl eframe::App for App {
         // Central viewer
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
+                self.comparison_controls(ui);
                 ui.horizontal_wrapped(|ui| {
                     self.viewer.layer_controls(ui);
                     ui.checkbox(
@@ -1911,6 +2024,7 @@ impl eframe::App for App {
                     .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.zoom_help"));
                 });
             });
+            self.prepare_comparison_viewer();
             self.viewer
                 .set_display_max_size(self.params.settings.preview_max_size);
             self.viewer.set_compare_split(if self.compare_active {
@@ -1918,12 +2032,16 @@ impl eframe::App for App {
             } else {
                 None
             });
-            let displayed_output = self
-                .operator_comparison
-                .as_ref()
-                .map(|comparison| &comparison.image)
-                .or(self.output_image.as_ref());
-            self.viewer.show(ui, self.image.as_ref(), displayed_output);
+            let displayed_output = match self.comparison_output() {
+                Some(reference) => reference.output.cloned(),
+                None => self
+                    .operator_comparison
+                    .as_ref()
+                    .map(|comparison| comparison.image.clone())
+                    .or_else(|| self.output_image.clone()),
+            };
+            self.viewer
+                .show(ui, self.image.as_ref(), displayed_output.as_ref());
             // Before/after compare divider overlay
             if self.compare_active {
                 let rect = ui.max_rect();
@@ -1960,7 +2078,7 @@ impl eframe::App for App {
                 .collect()
         });
         if let Some(path) = dropped.into_iter().next() {
-            self.load_image_from_path(&path);
+            self.request_photo_action(crate::photograph::PhotoAction::Open(path));
         }
         self.end_adjustment_frame(ctx);
         self.settings_dialog(ctx);

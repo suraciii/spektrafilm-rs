@@ -1,9 +1,10 @@
 //! Spectral LUT descriptors, asset loading, shape contracts and cache.
 use super::{SpectralShape, default_spectral_shape};
+use sha2::{Digest, Sha256};
 use spektrafilm_math::npy;
 use spektrafilm_math::spectral::N_WAVELENGTHS;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 /// Descriptor for one shipped spectral upsampler.  The sidecar format is
 /// deliberately small; keeping this representation local avoids making the
 /// runtime depend on a TOML parser just to select a LUT.
@@ -206,8 +207,14 @@ pub fn lut_descriptor(data_dir: &Path, identifier: &str) -> Result<LutDescriptor
     ))
 }
 
-static SPECTRA_CACHE: OnceLock<Mutex<std::collections::HashMap<String, SpectraLut>>> =
-    OnceLock::new();
+struct CachedSpectra {
+    content_sha256: [u8; 32],
+    descriptor: LutDescriptor,
+    lut: SpectraLut,
+}
+
+static SPECTRA_CACHE: LazyLock<Mutex<std::collections::HashMap<String, CachedSpectra>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
 fn spectral_cache_key(identifier: &str, shape: [f64; 3]) -> String {
     format!(
@@ -225,33 +232,63 @@ pub fn load_lut_on_grid(
     requested: SpectralShape,
 ) -> Result<SpectraLut, String> {
     let desc = lut_descriptor(data_dir, identifier)?;
-    let cache = SPECTRA_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-    let key = spectral_cache_key(identifier, requested.bounds);
-    if let Some(lut) = cache
-        .lock()
-        .map_err(|_| "spectral cache poisoned".to_string())?
-        .get(&key)
-        .cloned()
-    {
-        return Ok(lut);
-    }
     let path = data_dir
         .join("luts")
         .join("spectral_upsampling")
         .join(&desc.file);
-    let (shape, data) = npy::load_npy_f32(std::io::BufReader::new(
-        std::fs::File::open(&path)
-            .map_err(|e| format!("opening spectral LUT {}: {e}", path.display()))?,
-    ))
-    .map_err(|e| format!("loading spectral LUT {}: {e}", path.display()))?;
+    // Hash the same acquired bytes that parsing consumes. Method/grid alone
+    // is not an asset identity: another data directory or an on-disk edit
+    // must never inherit a previously prepared LUT.
+    let mut file = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&path)
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::File::open(&path)
+        }
+    }
+    .map_err(|e| format!("opening spectral LUT {}: {e}", path.display()))?;
+    if !file
+        .metadata()
+        .map_err(|e| format!("reading spectral LUT {}: {e}", path.display()))?
+        .is_file()
+    {
+        return Err(format!(
+            "spectral LUT {} is not a regular file",
+            path.display()
+        ));
+    }
+    let cache = &SPECTRA_CACHE;
+    let key = spectral_cache_key(identifier, requested.bounds);
+    // A streaming pass keeps cache hits allocation-free apart from the
+    // existing returned LUT clone. A miss rewinds the same descriptor.
+    let mut hash = Sha256::new();
+    use std::io::Read;
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|e| format!("reading spectral LUT {}: {e}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    let content_sha256: [u8; 32] = hash.finalize().into();
     let expected_bands = ((desc.spectral_shape[1] - desc.spectral_shape[0])
         / desc.spectral_shape[2])
         .round() as usize
         + 1;
-    if shape != vec![desc.lut_size, desc.lut_size, desc.bands] || desc.bands != expected_bands {
+    if desc.bands != expected_bands {
         return Err(format!(
-            "{identifier} descriptor/data shape mismatch: descriptor {:?}, bands {}, data shape {:?}",
-            desc.spectral_shape, desc.bands, shape
+            "{identifier} descriptor shape mismatch: descriptor {:?}, bands {}",
+            desc.spectral_shape, desc.bands
         ));
     }
     if desc.spectral_shape != requested.bounds || desc.bands != requested.samples {
@@ -259,6 +296,34 @@ pub fn load_lut_on_grid(
             "{identifier} spectral grid mismatch: asset {:?} ({} bands), requested {:?} ({} samples); \
              resampling LUTs is unsupported because profile sensitivities and CMFs must share this grid",
             desc.spectral_shape, desc.bands, requested.bounds, requested.samples
+        ));
+    }
+    if let Some(cached) = cache
+        .lock()
+        .map_err(|_| "spectral cache poisoned".to_string())?
+        .get(&key)
+        && cached.content_sha256 == content_sha256
+        && cached.descriptor == desc
+    {
+        return Ok(cached.lut.clone());
+    }
+    use std::io::Seek;
+    file.rewind()
+        .map_err(|e| format!("reading spectral LUT {}: {e}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| format!("reading spectral LUT {}: {e}", path.display()))?;
+    if <[u8; 32]>::from(Sha256::digest(&bytes)) != content_sha256 {
+        return Err(format!(
+            "spectral LUT {} changed while being read",
+            path.display()
+        ));
+    }
+    let (shape, data) = npy::load_npy_f32(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("loading spectral LUT {}: {e}", path.display()))?;
+    if shape != vec![desc.lut_size, desc.lut_size, desc.bands] {
+        return Err(format!(
+            "{identifier} descriptor/data shape mismatch: data shape {shape:?}"
         ));
     }
     let lut = SpectraLut {
@@ -269,7 +334,14 @@ pub fn load_lut_on_grid(
     cache
         .lock()
         .map_err(|_| "spectral cache poisoned".to_string())?
-        .insert(key, lut.clone());
+        .insert(
+            key,
+            CachedSpectra {
+                content_sha256,
+                descriptor: desc,
+                lut: lut.clone(),
+            },
+        );
     Ok(lut)
 }
 
@@ -326,5 +398,71 @@ impl SpectraCube {
     pub fn spectrum(&self, i: usize, j: usize) -> &[f64] {
         let start = (i * self.size + j) * self.n_wavelengths;
         &self.data[start..start + self.n_wavelengths]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn asset(directory: &Path, value: f64) {
+        let root = directory.join("luts/spectral_upsampling");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("cache-probe.toml"),
+            r#"
+identifier = "record-cache-probe"
+file = "cache-probe.npy"
+kind = "reflectance"
+title = "Cache identity regression"
+[array]
+lut_size = 2
+bands = 81
+spectral_shape = [380, 780, 5]
+"#,
+        )
+        .unwrap();
+        npy::save_npy_f64(
+            &root.join("cache-probe.npy"),
+            &vec![value; 2 * 2 * 81],
+            &[2, 2, 81],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn cached_lut_uses_current_file_content_and_descriptor() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        asset(first.path(), 0.25);
+        asset(second.path(), 0.75);
+        assert_eq!(
+            load_lut(first.path(), "record-cache-probe").unwrap().data[0],
+            0.25
+        );
+        assert_eq!(
+            load_lut(second.path(), "record-cache-probe").unwrap().data[0],
+            0.75
+        );
+        asset(first.path(), 0.5);
+        assert_eq!(
+            load_lut(first.path(), "record-cache-probe").unwrap().data[0],
+            0.5
+        );
+        let path = first
+            .path()
+            .join("luts/spectral_upsampling/cache-probe.toml");
+        let descriptor = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("lut_size = 2", "lut_size = 3");
+        std::fs::write(path, descriptor).unwrap();
+        assert!(load_lut(first.path(), "record-cache-probe").is_err());
+        std::fs::remove_file(
+            first
+                .path()
+                .join("luts/spectral_upsampling/cache-probe.npy"),
+        )
+        .unwrap();
+        assert!(load_lut(first.path(), "record-cache-probe").is_err());
     }
 }

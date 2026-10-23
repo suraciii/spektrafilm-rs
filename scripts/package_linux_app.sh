@@ -207,9 +207,9 @@ done
 ((database_files > 0)) || fail "no Lensfun XML files in $lensfun_database"
 
 cp LICENSE "$DIST_DIR/share/licenses/spektrafilm-GPL-3.0.txt"
-for font_license in NotoSansSC-OFL.txt NotoSansSC-NOTICE.txt; do
-    [[ -s "crates/spektrafilm-gui/assets/$font_license" ]] || fail "font license missing: $font_license"
-    cp "crates/spektrafilm-gui/assets/$font_license" "$DIST_DIR/share/licenses/$font_license"
+for gui_asset_notice in NotoSansSC-OFL.txt NotoSansSC-NOTICE.txt PRESET_REFERENCE_LICENSE.txt; do
+    [[ -s "crates/spektrafilm-gui/assets/$gui_asset_notice" ]] || fail "GUI asset notice missing: $gui_asset_notice"
+    cp "crates/spektrafilm-gui/assets/$gui_asset_notice" "$DIST_DIR/share/licenses/$gui_asset_notice"
 done
 for benchmark_license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
     [[ -s "licenses/$benchmark_license" ]] || fail "benchmark license missing: licenses/$benchmark_license"

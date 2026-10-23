@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -33,6 +33,9 @@ pub(super) struct ExportJob {
         Option<Arc<Mutex<Option<spektrafilm_core::telemetry::RenderConfiguration>>>>,
     pub(super) backend: ExportBackend,
     pub(super) operation: Operation,
+    pub(crate) destination: PathBuf,
+    pub(crate) replace_existing: bool,
+    pub(crate) queue_entry: Option<usize>,
     #[cfg(test)]
     pub(super) pause: Option<Arc<ExportPause>>,
 }
@@ -179,8 +182,54 @@ impl App {
         self.search_index.reset();
         let snapshot = self.render_snapshot(params);
         self.remember_dialog("export", &out_path);
+        self.launch_export(
+            ctx,
+            crate::app::export_queue::QueueSubmission {
+                source_name: self
+                    .image_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+                image,
+                snapshot,
+                metadata: self.source_metadata.clone(),
+                options,
+                destination: out_path,
+            },
+            true,
+            None,
+            operation,
+            #[cfg(test)]
+            pause,
+        );
+    }
+
+    /// All export callers share rendering, staging, cancellation and publication.
+    pub(crate) fn launch_export(
+        &mut self,
+        ctx: &egui::Context,
+        submission: crate::app::export_queue::QueueSubmission,
+        replace_existing: bool,
+        queued: Option<(
+            usize,
+            Result<Vec<crate::photograph::record::Dependency>, crate::app::Message>,
+        )>,
+        mut operation: Operation,
+        #[cfg(test)] pause: Option<Arc<ExportPause>>,
+    ) {
+        let (queue_entry, dependencies) = queued.map_or((None, None), |(index, identities)| {
+            (Some(index), Some(identities))
+        });
+        let crate::app::export_queue::QueueSubmission {
+            image,
+            snapshot,
+            metadata,
+            options,
+            destination: out_path,
+            ..
+        } = submission;
+        let destination = out_path.clone();
         let selected_backend = self.backend.clone();
-        let metadata = self.source_metadata.clone();
         let export_backend = options.backend;
         let (tx, rx) = mpsc::channel();
         let ctx_for_worker = ctx.clone();
@@ -207,10 +256,51 @@ impl App {
                         }
                         let snapshot =
                             snapshot.with_cancellation(Some(Arc::clone(&cancel_for_worker)));
+                        if let Some(expected) = &dependencies {
+                            let expected = expected.as_ref().map_err(|message| {
+                                observation.issue(
+                                    IssueCategory::Configuration,
+                                    IssueBoundary::RuntimePrepare,
+                                );
+                                anyhow::Error::new(message.clone())
+                            })?;
+                            let actual = snapshot.export_dependencies().inspect_err(|_| {
+                                observation.issue(
+                                    IssueCategory::Configuration,
+                                    IssueBoundary::RuntimePrepare,
+                                );
+                            })?;
+                            if &actual != expected {
+                                observation.issue(
+                                    IssueCategory::Configuration,
+                                    IssueBoundary::RuntimePrepare,
+                                );
+                                return Err(anyhow::Error::new(crate::app::Message::new(
+                                    "photo.queue.dependencies_changed",
+                                )));
+                            }
+                        }
                         let pipeline =
                             super::build_runtime_observed(&snapshot, false, &observation)
                                 .map_err(anyhow::Error::new)?
                                 .with_cancellation(Some(Arc::clone(&cancel_for_worker)));
+                        if let Some(Ok(expected)) = &dependencies {
+                            let actual = snapshot.export_dependencies().inspect_err(|_| {
+                                observation.issue(
+                                    IssueCategory::Configuration,
+                                    IssueBoundary::RuntimePrepare,
+                                );
+                            })?;
+                            if &actual != expected {
+                                observation.issue(
+                                    IssueCategory::Configuration,
+                                    IssueBoundary::RuntimePrepare,
+                                );
+                                return Err(anyhow::Error::new(crate::app::Message::new(
+                                    "photo.queue.dependencies_changed",
+                                )));
+                            }
+                        }
                         if let Some(slot) = &worker_configuration {
                             *slot.lock() = Some(pipeline.telemetry_configuration());
                         }
@@ -351,6 +441,9 @@ impl App {
             backend: export_backend,
             operation,
             configuration,
+            destination,
+            replace_existing,
+            queue_entry,
             #[cfg(test)]
             pause,
         });
@@ -376,9 +469,11 @@ impl App {
     /// If the job finished, drains the result into the status bar and
     /// joins the worker thread.
     pub(super) fn poll_export_job(&mut self, ctx: &egui::Context) {
-        let Some(job) = self.export_job.as_mut() else {
+        if self.export_job.is_none() {
+            self.start_next_queued_export(ctx);
             return;
-        };
+        }
+        let job = self.export_job.as_mut().expect("export job exists");
         let msg = match job.rx.try_recv() {
             Ok(m) => m,
             Err(mpsc::TryRecvError::Empty) => {
@@ -411,6 +506,8 @@ impl App {
                 job.operation
                     .issue(IssueCategory::Backend, IssueBoundary::Operation);
                 self.diagnostics.finish(job.operation, Outcome::Failed);
+                self.finish_queued_export(job.queue_entry, Outcome::Failed, self.status.clone());
+                self.start_next_queued_export(ctx);
                 return;
             }
         };
@@ -437,7 +534,7 @@ impl App {
             Ok(result) => {
                 let publication =
                     operation.scope("publication", ObservationKind::Phase, Purpose::Image);
-                let published = result.staged.publish(true);
+                let published = result.staged.publish(job.replace_existing);
                 let published = observed_result(
                     publication,
                     published,
@@ -482,5 +579,7 @@ impl App {
             operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
         }
         self.diagnostics.finish(operation, outcome);
+        self.finish_queued_export(job.queue_entry, outcome, self.status.clone());
+        self.start_next_queued_export(ctx);
     }
 }

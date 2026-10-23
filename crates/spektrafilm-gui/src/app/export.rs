@@ -4,13 +4,60 @@ use crate::*;
 use super::state::App;
 
 impl App {
-    /// Save the latest accepted float output using current saving color settings.
-    /// The typed extension selects the format; this never rerenders.
+    /// Save retained pixels, asking before choosing a destination if they no
+    /// longer match accepted adjustments. This never rerenders.
     pub(crate) fn save_dialog(&mut self) {
         if self.output_image.is_none() {
             self.status = crate::app::Message::new("operations.nothing_to_save");
             return;
         }
+        if self.accepted_frame_is_stale() {
+            self.stale_save_confirmation = true;
+            return;
+        }
+        self.choose_retained_save_path();
+    }
+
+    /// The UI-only confirmation precedes both the chooser and publication.
+    /// Canceling changes no photograph controls, retained pixels, or status.
+    pub(crate) fn show_stale_save_confirmation(&mut self, ctx: &egui::Context) {
+        if !self.stale_save_confirmation {
+            return;
+        }
+        let Some(output) = self.output_image.as_ref() else {
+            self.stale_save_confirmation = false;
+            return;
+        };
+        let mut confirmed = false;
+        let mut canceled = false;
+        let response = egui::Modal::new(egui::Id::new("stale-retained-save")).show(ctx, |ui| {
+            ui.set_max_width(theme::WIDTH_CONTROL_PANEL);
+            ui.heading(crate::i18n::text(ui.ctx(), "result.save.title"));
+            ui.label(crate::tr!(
+                ui.ctx(),
+                "result.save.stale_warning",
+                width = output.width,
+                height = output.height
+            ));
+            ui.label(crate::i18n::text(ui.ctx(), "result.save.export_guidance"));
+            ui.horizontal_wrapped(|ui| {
+                let cancel = ui.button(crate::i18n::text(ui.ctx(), "surfaces.action.cancel"));
+                controls::locate_row(ui, "action.cancel_stale_save", &cancel);
+                canceled = cancel.clicked();
+                let continue_save = ui.button(crate::i18n::text(ui.ctx(), "result.save.continue"));
+                controls::locate_row(ui, "action.confirm_stale_save", &continue_save);
+                confirmed = continue_save.clicked();
+            });
+        });
+        if canceled || response.should_close() {
+            self.stale_save_confirmation = false;
+        } else if confirmed {
+            self.stale_save_confirmation = false;
+            self.choose_retained_save_path();
+        }
+    }
+
+    fn choose_retained_save_path(&mut self) {
         let default_name = match &self.image_path {
             Some(p) => {
                 let stem = p
@@ -35,7 +82,8 @@ impl App {
         self.save_to_path(&path);
     }
 
-    /// Save the retained output; `path` is the native chooser's confirmed result.
+    /// Save retained output directly. Consumers own any UI confirmation; this
+    /// raw pixel-writing boundary deliberately does not ask or rerender.
     pub(crate) fn save_to_path(&mut self, path: &Path) {
         if self.output_image.is_none() {
             self.status = crate::app::Message::new("operations.nothing_to_save");

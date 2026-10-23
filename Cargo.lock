@@ -4109,6 +4109,7 @@ dependencies = [
  "foreign-types",
  "image",
  "lcms2",
+ "libc",
  "log",
  "objc2 0.5.2",
  "parking_lot",

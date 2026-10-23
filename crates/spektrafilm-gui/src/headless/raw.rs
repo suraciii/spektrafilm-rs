@@ -19,7 +19,7 @@ const RAW_WIDTH: u32 = 768;
 const RAW_HEIGHT: u32 = 512;
 
 #[cfg(feature = "gui-raw")]
-fn raw_fixture() -> PathBuf {
+pub(super) fn raw_fixture() -> PathBuf {
     use sha2::{Digest, Sha256};
     let path = std::env::var_os("SPEKTRAFILM_GUI_RAW_FIXTURE")
         .expect("SPEKTRAFILM_GUI_RAW_FIXTURE is not set; run the RAW acceptance fixture");
@@ -59,15 +59,6 @@ fn raw_import_through_the_app_sets_linear_aces_and_renders() {
     assert_eq!(
         h.state().image_path.as_deref().and_then(|p| p.file_name()),
         fixture.file_name(),
-    );
-    // The fixture has no lens model, so correction is reported as skipped.
-    assert!(
-        h.state()
-            .status
-            .to_string()
-            .contains("Lens correction not applied"),
-        "{}",
-        h.state().status
     );
 
     let scan = render(h, "SCAN");
@@ -118,6 +109,9 @@ fn raw_import_failure_keeps_the_previous_image_and_state() {
     let h = &mut s.harness;
     let before = h.state().image.clone().unwrap();
     let params_before = h.state().params.clone();
+    let path_before = h.state().image_path.clone();
+    let revision_before = h.state().parameter_revision;
+    let history_before = (h.state().can_undo(), h.state().can_redo());
     let corrupt = s.directory.path().join("corrupt.KDC");
     std::fs::write(&corrupt, b"not a raw file").unwrap();
     script(h, chooser::Chooser::chooser_path(&corrupt));
@@ -127,9 +121,7 @@ fn raw_import_failure_keeps_the_previous_image_and_state() {
         "a failed RAW import must retain the previous image"
     );
     assert_eq!(&h.state().params, &params_before);
-    assert!(
-        h.state().status.to_string().starts_with("Load error:"),
-        "{}",
-        h.state().status
-    );
+    assert_eq!(h.state().image_path, path_before);
+    assert_eq!(h.state().parameter_revision, revision_before);
+    assert_eq!((h.state().can_undo(), h.state().can_redo()), history_before);
 }

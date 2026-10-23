@@ -38,6 +38,7 @@ mod histogram;
 mod i18n;
 rust_i18n::i18n!("locales", fallback = "en");
 mod numeric;
+mod photograph;
 mod platform;
 mod presets;
 mod profiles;

@@ -41,6 +41,11 @@ pub(crate) struct App {
     pub(crate) operator_compare: bool,
     pub(crate) operator_comparison: Option<super::render::OperatorComparison>,
     pub(crate) adjustment_history: super::history::AdjustmentHistory,
+    pub(crate) comparison: super::comparison::Comparison,
+    pub(crate) photograph: crate::photograph::PhotographWork,
+    pub(crate) retained_kind: Option<RenderKind>,
+    pub(crate) stale_save_confirmation: bool,
+    pub(crate) export_queue: super::export_queue::ExportQueue,
     pub(crate) image_path: Option<PathBuf>,
     pub(crate) image: Option<Arc<ImageBuf>>,
     pub(crate) raw_lens_info: Option<String>,
@@ -242,6 +247,11 @@ impl App {
             operator_compare: false,
             operator_comparison: None,
             adjustment_history: super::history::AdjustmentHistory::default(),
+            comparison: super::comparison::Comparison::default(),
+            photograph: crate::photograph::PhotographWork::default(),
+            retained_kind: None,
+            stale_save_confirmation: false,
+            export_queue: super::export_queue::ExportQueue::default(),
             image_path: None,
             input_rotation: 0,
             image: None,
@@ -413,6 +423,11 @@ impl App {
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         // Decode the candidate source before replacing any accepted controls.
         // A missing/corrupt source leaves both the state and history untouched.
+        let source_digest = self
+            .image_path
+            .as_deref()
+            .map(Self::accepted_source_digest)
+            .transpose()?;
         let loaded = if let Some(path) = &self.image_path {
             if image_io::is_raw(path) {
                 let settings = &state.sections["load_raw"];
@@ -434,14 +449,21 @@ impl App {
                     result.image,
                     image_io::read_metadata(path),
                     Some(result.lens_info),
+                    result.lens_model_identity,
                 ))
             } else {
                 let result = image_io::load(path)?;
-                Some((result.image, result.metadata, None))
+                Some((result.image, result.metadata, None, None))
             }
         } else {
             None
         };
+        if let Some(path) = &self.image_path {
+            anyhow::ensure!(
+                source_digest.as_deref() == Some(Self::accepted_source_digest(path)?.as_str()),
+                crate::app::Message::new("photo.error.source_changed")
+            );
+        }
         let film_medium = scan_medium(&film);
         let film_reference_illuminant = film.info.reference_illuminant.clone();
         let before_scanner = params.scanner.clone();
@@ -481,10 +503,11 @@ impl App {
         self.force_preview = true;
         self.full_scan_requested = false;
         self.render_worker.cancel_active();
-        if let Some((image, metadata, lens_info)) = loaded {
+        if let Some((image, metadata, lens_info, lens_model_identity)) = loaded {
             self.image = Some(Arc::new(image));
             self.source_metadata = metadata;
             self.raw_lens_info = lens_info;
+            self.photograph.lens_model_identity = lens_model_identity;
             self.raw_applied_settings = self
                 .image_path
                 .as_ref()
@@ -501,7 +524,15 @@ impl App {
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);
         self.histogram
             .restore_state(&self.gui_state.sections["rust"]["histogram"]);
+        if let Some(ctx) = &self.photograph.context {
+            crate::numeric::NumericDrafts::take(ctx);
+        }
         self.reset_adjustment_history();
+        self.clear_comparison();
+        self.stale_save_confirmation = false;
+        self.retained_kind = None;
+        self.mark_photograph_baseline();
+        self.photograph.source_digest = source_digest;
         Ok(())
     }
 

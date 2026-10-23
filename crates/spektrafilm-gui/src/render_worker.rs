@@ -84,6 +84,7 @@ pub(super) struct RenderWorker {
     pub(super) handle: Option<JoinHandle<()>>,
     pub(super) next_request_id: u64,
     pub(super) active_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    invalidate_cache: Arc<AtomicBool>,
 }
 
 pub(super) struct RenderResult {
@@ -104,6 +105,8 @@ impl RenderWorker {
         let shutdown = Arc::new(AtomicBool::new(false));
         let active = Arc::new(Mutex::new(None));
         let active_cancel = Arc::new(Mutex::new(None::<Arc<AtomicBool>>));
+        let invalidate_cache = Arc::new(AtomicBool::new(false));
+        let invalidate_cache_for_worker = invalidate_cache.clone();
         let active_cancel_for_worker = active_cancel.clone();
         let active_for_worker = active.clone();
         let (tx, rx) = mpsc::channel();
@@ -132,6 +135,10 @@ impl RenderWorker {
                         request
                     };
                     drop(request.worker_wait);
+                    if invalidate_cache_for_worker.swap(false, Ordering::SeqCst) {
+                        runtime_cache = RuntimeCache::default();
+                        scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
+                    }
                     let mut operation = request.operation;
                     let attempt = operation.attempt(1);
                     let observation = attempt.context().clone();
@@ -270,6 +277,7 @@ impl RenderWorker {
             handle: Some(handle.expect("OS thread spawn")),
             next_request_id: 0,
             active_cancel,
+            invalidate_cache,
         }
     }
 
@@ -289,6 +297,11 @@ impl RenderWorker {
         drop(queued);
         wake.notify_one();
         (job, replaced)
+    }
+
+    /// The next request must reload assets after an accepted context replacement.
+    pub(crate) fn invalidate_runtime_cache(&self) {
+        self.invalidate_cache.store(true, Ordering::SeqCst);
     }
 
     /// Cancel the active and queued work after the input identity changed.

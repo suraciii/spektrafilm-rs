@@ -5,24 +5,23 @@ use crate::*;
 use std::rc::Rc;
 
 #[derive(Clone, PartialEq)]
-struct AdjustmentState {
-    params: RuntimeParams,
-    film_name: String,
-    print_name: String,
+pub(super) struct AdjustmentState {
+    pub(super) params: RuntimeParams,
+    pub(super) film_name: String,
+    pub(super) print_name: String,
     film_reference_illuminant: String,
     film_medium: controls::ScanMedium,
     film_dev_times: Vec<f64>,
     print_dev_times: Vec<f64>,
-    special: serde_json::Value,
-    raw_settings: serde_json::Value,
+    pub(super) special: serde_json::Value,
+    pub(super) raw_settings: serde_json::Value,
     applied: Option<presets::AppliedPreset>,
     scan_for_print: Option<bool>,
-    rotation: i32,
+    pub(super) rotation: i32,
 }
 
 impl AdjustmentState {
-    fn capture(app: &App) -> Self {
-        let mut params = app.params.clone();
+    fn photographic_params(mut params: RuntimeParams) -> RuntimeParams {
         // Session execution preferences are not photographic adjustments.
         params.settings.preview_max_size = 0;
         params.settings.preview_mode = false;
@@ -34,8 +33,12 @@ impl AdjustmentState {
         params.debug = Default::default();
         params.taps = Default::default();
         params.random_seed = 0;
+        params
+    }
+
+    fn capture(app: &App) -> Self {
         Self {
-            params,
+            params: Self::photographic_params(app.params.clone()),
             film_name: app.film_name.clone(),
             print_name: app.print_name.clone(),
             film_reference_illuminant: app.film_reference_illuminant.clone(),
@@ -51,7 +54,7 @@ impl AdjustmentState {
     }
 
     /// Borrowed comparisons keep idle UI frames allocation-free.
-    fn controls_match(&self, app: &App) -> bool {
+    pub(super) fn controls_match(&self, app: &App) -> bool {
         let a = &self.params;
         let b = &app.params;
         a.camera == b.camera
@@ -81,7 +84,7 @@ impl AdjustmentState {
             && self.rotation == app.input_rotation
     }
 
-    fn restore(&self, app: &mut App) {
+    pub(super) fn runtime_params(&self, app: &App) -> RuntimeParams {
         let settings = &app.params.settings;
         let mut params = self.params.clone();
         params.settings.preview_max_size = settings.preview_max_size;
@@ -95,7 +98,11 @@ impl AdjustmentState {
         params.debug = app.params.debug.clone();
         params.taps = app.params.taps.clone();
         params.random_seed = app.params.random_seed;
-        app.params = params;
+        params
+    }
+
+    fn restore(&self, app: &mut App) {
+        app.params = self.runtime_params(app);
         app.film_name.clone_from(&self.film_name);
         app.print_name.clone_from(&self.print_name);
         app.film_reference_illuminant
@@ -151,7 +158,137 @@ pub(crate) struct AdjustmentHistory {
     label: Option<crate::app::Message>,
 }
 
+impl AdjustmentHistory {
+    pub(crate) fn from_photograph(
+        settings: &crate::photograph::record::PhotographSettings,
+        film: &profile::Profile,
+        print: &profile::Profile,
+    ) -> Self {
+        let mut params = AdjustmentState::photographic_params(settings.params.clone());
+        params.restore_render_preparation_state(&settings.preparation);
+        Self {
+            accepted: Some(Rc::new(AdjustmentState {
+                params,
+                film_name: settings.film.clone(),
+                print_name: settings.print.clone(),
+                film_reference_illuminant: film.info.reference_illuminant.clone(),
+                film_medium: scan_medium(film),
+                film_dev_times: film.data.development_time.clone(),
+                print_dev_times: print.data.development_time.clone(),
+                special: settings.special.clone(),
+                raw_settings: settings.raw.clone(),
+                applied: settings.applied.clone(),
+                scan_for_print: None,
+                rotation: settings.rotation,
+            })),
+            ..Default::default()
+        }
+    }
+
+    /// The caller validates the copy against destination materials before
+    /// committing it. Destination source interpretation and geometry live in
+    /// the retained baseline and are not reconstructed from a preset file.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_copied_params(
+        &mut self,
+        params: RuntimeParams,
+        film_name: String,
+        print_name: String,
+        film: &profile::Profile,
+        print: &profile::Profile,
+        applied: Option<presets::AppliedPreset>,
+    ) -> bool {
+        let Some(before) = self.accepted.clone() else {
+            return false;
+        };
+        let mut after = (*before).clone();
+        after.params = AdjustmentState::photographic_params(params);
+        after.film_name = film_name;
+        after.print_name = print_name;
+        after.film_reference_illuminant = film.info.reference_illuminant.clone();
+        after.film_medium = scan_medium(film);
+        after.film_dev_times = film.data.development_time.clone();
+        after.print_dev_times = print.data.development_time.clone();
+        after.applied = applied;
+        let after = Rc::new(after);
+        if before == after {
+            return false;
+        }
+        if let Some((initial, label)) = self.gesture.take()
+            && initial != before
+        {
+            self.undo.push(Entry {
+                before: initial,
+                after: before.clone(),
+                label,
+            });
+        }
+        self.undo.push(Entry {
+            before,
+            after: after.clone(),
+            label: crate::app::Message::new("photo_work.compare.copy_history"),
+        });
+        self.redo.clear();
+        self.accepted = Some(after);
+        true
+    }
+}
+
 impl App {
+    /// Reuse the last validated endpoint, never an in-progress numeric draft.
+    pub(super) fn accepted_adjustment(&self) -> Rc<AdjustmentState> {
+        self.adjustment_history
+            .accepted
+            .clone()
+            .unwrap_or_else(|| Rc::new(AdjustmentState::capture(self)))
+    }
+
+    /// Records and scoped copy share the accepted endpoint, never draft controls.
+    pub(crate) fn accepted_photograph_settings(
+        &self,
+    ) -> crate::photograph::record::PhotographSettings {
+        let accepted = self.accepted_adjustment();
+        let params = accepted.runtime_params(self);
+        crate::photograph::record::PhotographSettings {
+            preparation: params.render_preparation_state(),
+            params,
+            film: accepted.film_name.clone(),
+            print: accepted.print_name.clone(),
+            special: accepted.special.clone(),
+            raw: self
+                .raw_applied_settings
+                .as_ref()
+                .unwrap_or(&accepted.raw_settings)
+                .clone(),
+            rotation: accepted.rotation,
+            applied: accepted.applied.clone(),
+        }
+    }
+    /// A comparison adoption is one history transaction, independent of the
+    /// preset library and independent of whether A has rendered yet.
+    pub(super) fn adopt_adjustment(&mut self, target: Rc<AdjustmentState>) -> bool {
+        let before = self.accepted_adjustment();
+        if before == target {
+            return false;
+        }
+        if let Some((initial, label)) = self.adjustment_history.gesture.take() {
+            self.commit_adjustment(initial, before.clone(), label);
+        }
+        target.restore(self);
+        self.commit_adjustment(
+            before,
+            target.clone(),
+            crate::app::Message::new("photo_work.compare.adopt_history"),
+        );
+        self.adjustment_history.accepted = Some(target);
+        self.adjustment_history.label = None;
+        self.mark_parameters_changed_invalidating_calibration();
+        self.render_worker.cancel_active();
+        self.dirty_since = Some(Instant::now());
+        self.full_scan_requested = false;
+        true
+    }
+
     pub(crate) fn reset_adjustment_history(&mut self) {
         self.adjustment_history = AdjustmentHistory {
             accepted: Some(Rc::new(AdjustmentState::capture(self))),
@@ -859,6 +996,81 @@ mod tests {
                 app.image.as_ref().unwrap().height
             ),
             (1, 2)
+        );
+    }
+}
+
+#[cfg(test)]
+mod external_copy_tests {
+    use super::*;
+
+    #[test]
+    fn inactive_copy_records_one_reversible_destination_local_transaction() {
+        let factory = state::GuiState::factory();
+        let mut params = factory.runtime_params().unwrap();
+        params.camera.exposure_compensation_ev = 0.0;
+        let film =
+            profile::load_profile_by_name(&crate::headless::data_dir(), factory.film()).unwrap();
+        let print =
+            profile::load_profile_by_name(&crate::headless::data_dir(), factory.paper()).unwrap();
+        let settings = crate::photograph::record::PhotographSettings {
+            preparation: params.render_preparation_state(),
+            params: params.clone(),
+            film: factory.film().into(),
+            print: factory.paper().into(),
+            raw: factory.sections["load_raw"].clone(),
+            special: factory.sections["special"].clone(),
+            rotation: 1,
+            applied: None,
+        };
+        let mut history = AdjustmentHistory::from_photograph(&settings, &film, &print);
+        params.camera.exposure_compensation_ev = 1.0;
+        assert!(history.record_copied_params(
+            params,
+            settings.film.clone(),
+            settings.print.clone(),
+            &film,
+            &print,
+            None
+        ));
+        assert_eq!(history.undo.len(), 1);
+        let entry = history.undo.last().unwrap();
+        assert_eq!(entry.before.params.camera.exposure_compensation_ev, 0.0);
+        assert_eq!(entry.after.params.camera.exposure_compensation_ev, 1.0);
+        assert_eq!(entry.before.rotation, entry.after.rotation);
+        assert_eq!(entry.before.raw_settings, entry.after.raw_settings);
+        assert_eq!(entry.before.special, entry.after.special);
+        assert_eq!(
+            history
+                .accepted
+                .as_ref()
+                .unwrap()
+                .params
+                .camera
+                .exposure_compensation_ev,
+            1.0
+        );
+        assert!(history.record_copied_params(
+            settings.params.clone(),
+            settings.film.clone(),
+            settings.print.clone(),
+            &film,
+            &print,
+            None
+        ));
+        assert_eq!(history.undo.len(), 2);
+        assert!(!history.record_copied_params(
+            settings.params.clone(),
+            settings.film.clone(),
+            settings.print.clone(),
+            &film,
+            &print,
+            None
+        ));
+        assert_eq!(
+            history.undo.len(),
+            2,
+            "unchanged copy cannot add another history entry"
         );
     }
 }

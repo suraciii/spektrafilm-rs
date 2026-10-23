@@ -56,10 +56,12 @@ fn build_with_projection(
         return Vec::new();
     }
     let query = query.to_lowercase();
+    let exact_path = super::lookup(&query).map(|entry| entry.path.as_str());
     let mut results: Vec<SearchResult> = Vec::new();
     for entry in inventory() {
         if !entry.searchable()
             || !entry.matches(&query)
+            || exact_path.is_some_and(|path| entry.path != path)
             || projection.is_some_and(|projection| {
                 !entry.is_modified(&projection.runtime, &projection.extras)
             })
@@ -344,6 +346,138 @@ mod tests {
                 found
                     .iter()
                     .any(|result| result.owner == owner && result.section == section)
+            );
+        }
+    }
+
+    #[test]
+    fn photograph_commands_locate_actual_owners_and_exact_paths() {
+        let (params, extras) = factory();
+        for (path, owner, section) in [
+            (
+                "action.save_retained",
+                ControlOwner::Result,
+                "Retained image",
+            ),
+            (
+                "action.confirm_stale_save",
+                ControlOwner::Result,
+                "Retained image",
+            ),
+            (
+                "action.cancel_stale_save",
+                ControlOwner::Result,
+                "Retained image",
+            ),
+            (
+                "action.save_photo_record",
+                ControlOwner::Header,
+                "Photograph records",
+            ),
+            (
+                "action.reopen_photo_record",
+                ControlOwner::Header,
+                "Photograph records",
+            ),
+            ("action.work_list", ControlOwner::Header, "Work list"),
+            (
+                "photo_work.compare.a",
+                ControlOwner::Viewer,
+                "A/B comparison",
+            ),
+            (
+                "photo_work.compare.adopt",
+                ControlOwner::Viewer,
+                "A/B comparison",
+            ),
+            ("photo_work.list.copy", ControlOwner::WorkList, "Work list"),
+            (
+                "photo_work.list.copy_scope",
+                ControlOwner::WorkList,
+                "Work list",
+            ),
+            (
+                "photo_work.list.submit",
+                ControlOwner::WorkList,
+                "Work list",
+            ),
+            ("photo.queue.retry", ControlOwner::WorkList, "Export queue"),
+            (
+                "presets.discovery.favorites",
+                ControlOwner::Presets,
+                "Preset discovery",
+            ),
+        ] {
+            let found = build_filtered(&path.to_uppercase(), &params, &extras, false);
+            assert_eq!(found.len(), 1, "{path}");
+            assert_eq!(found[0].target_path, path);
+            assert_eq!(found[0].owner, owner);
+            assert_eq!(found[0].section, section);
+            assert_eq!(
+                found[0].labels.len(),
+                1,
+                "exact paths must not select a similarly named command"
+            );
+        }
+    }
+
+    #[test]
+    fn workflow_commands_are_bilingual_without_dynamic_inventory_entries() {
+        let (params, extras) = factory();
+        for path in [
+            "action.save_photo_record",
+            "photo_work.compare.capture",
+            "photo_work.list.add",
+            "photo.queue.retry",
+            "presets.discovery.favorites",
+        ] {
+            let entry = lookup(path).unwrap();
+            for locale in [
+                crate::i18n::Locale::English,
+                crate::i18n::Locale::SimplifiedChinese,
+            ] {
+                let label = super::super::localized_for(locale, &entry.label);
+                let found = build_filtered(&label, &params, &extras, false);
+                assert!(
+                    found
+                        .iter()
+                        .any(|result| result.paths.iter().any(|found| found == path)),
+                    "{label}"
+                );
+            }
+            assert!(build_filtered(path, &params, &extras, true).is_empty());
+        }
+        assert!(lookup("photo.queue.retry.0").is_none());
+        assert!(lookup("presets.discovery.favorite.BuiltIn.example").is_none());
+    }
+
+    #[test]
+    fn workflow_locator_focuses_without_executing_commands() {
+        let ctx = egui::Context::default();
+        for path in [
+            "action.save_photo_record",
+            "action.save_retained",
+            "photo_work.compare.a",
+            "photo_work.list.copy",
+            "photo.queue.retry",
+            "presets.discovery.favorites",
+        ] {
+            let entry = lookup(path).unwrap();
+            let request_id = egui::Id::new("control_focus_request");
+            ctx.data_mut(|data| {
+                data.insert_temp(request_id, (entry.section.to_owned(), path.to_owned()))
+            });
+            let _ = ctx.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let response = ui.button(&entry.label);
+                    super::super::locate_row(ui, path, &response);
+                    assert!(!response.clicked(), "locating must not execute {path}");
+                    assert!(response.has_focus(), "{path}");
+                });
+            });
+            assert!(
+                ctx.data(|data| data.get_temp::<(String, String)>(request_id))
+                    .is_none()
             );
         }
     }

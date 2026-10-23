@@ -35,7 +35,14 @@ pub(crate) fn offer_reset(ui: &mut Ui, label: &str, path: Option<&str>) {
         label = super::localized(ui.ctx(), label)
     );
     let response = ui
-        .small_button(crate::i18n::text(ui.ctx(), "controls.reset.action"))
+        .add(
+            egui::Button::new(
+                egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.reset.action"))
+                    .color(crate::theme::FG_SECONDARY)
+                    .size(crate::theme::SIZE_UNIT),
+            )
+            .small(),
+        )
         .on_hover_text(action.as_ref());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &action)
