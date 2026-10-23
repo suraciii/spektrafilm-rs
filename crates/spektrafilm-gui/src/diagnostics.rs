@@ -10,8 +10,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use spektrafilm_core::params::RuntimeParams;
-
 #[derive(Default)]
 pub(crate) struct Diagnostics {
     pub mode: CollectionMode,
@@ -120,72 +118,191 @@ impl Diagnostics {
         export: Option<(&str, CollectionMode)>,
     ) -> bool {
         let mut save = false;
-        egui::CollapsingHeader::new("Diagnostics").default_open(true).show(ui, |ui| {
-            let mode_response = egui::ComboBox::from_id_salt("diagnostics-mode").selected_text(mode_label(self.mode)).show_ui(ui, |ui| {
-                for mode in [CollectionMode::Off, CollectionMode::Summary, CollectionMode::GpuTiming] { ui.selectable_value(&mut self.mode, mode, mode_label(mode)); }
-            }).response;
-            crate::controls::locate_row(ui, "diagnostics.collection_mode", &mode_response);
-            ui.small("Session only. Changes apply to the next accepted operation; they do not render.");
-            for (kind, mode) in render.into_iter().chain(export) { ui.label(format!("{kind} in flight · {} (captured)", mode_label(mode))); }
-            if let Some((kind, mode)) = queued { ui.label(format!("{kind} queued · {} (captured)", mode_label(mode))); }
-            if self.history.is_empty() { ui.label("No completed reports. Collection applies to the next operation."); }
-            for report in &self.history {
-                let label = format!("#{} {} · {}", report.operation.id, words(&report.operation.kind), words(&report.operation.outcome));
-                if ui.selectable_value(&mut self.selected, Some(report.operation.id), label).clicked() {
-                    self.user_selected = true;
+        egui::CollapsingHeader::new(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.title"))
+            .id_salt("Diagnostics")
+            .default_open(true)
+            .show(ui, |ui| {
+                let mode_response = egui::ComboBox::from_id_salt("diagnostics-mode")
+                    .selected_text(mode_label(ui.ctx(), self.mode))
+                    .show_ui(ui, |ui| {
+                        for mode in [
+                            CollectionMode::Off,
+                            CollectionMode::Summary,
+                            CollectionMode::GpuTiming,
+                        ] {
+                            ui.selectable_value(&mut self.mode, mode, mode_label(ui.ctx(), mode));
+                        }
+                    })
+                    .response;
+                crate::controls::locate_row(ui, "diagnostics.collection_mode", &mode_response);
+                ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.session"));
+                for (kind, mode) in render.into_iter().chain(export) {
+                    ui.label(crate::tr!(
+                        ui.ctx(),
+                        "surfaces.diagnostics.in_flight",
+                        kind = crate::controls::localized(ui.ctx(), kind),
+                        mode = mode_label(ui.ctx(), mode)
+                    ));
                 }
-            }
-            if let Some(report) = self.history.iter().find(|report| Some(report.operation.id) == self.selected) {
-                let summary = report.summary();
-                let dimensions = summary.working_dimensions.map_or_else(|| "working dimensions unavailable".into(), |[w,h]| format!("{w} × {h}"));
-                let duration = summary.duration_seconds.map_or_else(|| "duration unavailable".into(), |value| format!("{:.1} ms", value * 1000.0));
-                ui.label(format!("{} · {} · {dimensions} · {duration}", words(&summary.kind), words(&summary.outcome)));
-                ui.label(format!("Requested: {} · Selected: {} · Route: {}", optional_words(summary.backend_requested), optional_words(summary.backend_selected), optional_words(summary.path)));
-                if let Some((phase, duration)) = summary.largest_phase { ui.label(format!("Largest nonnested phase: {} · {:.1} ms", phase.replace('_', " "), duration * 1000.0)); }
-                if summary.software_adapter { ui.label("Software compute adapter — not a hardware GPU."); }
-                for reason in summary.resident_decline_reasons { ui.label(format!("Resident route declined: {}", words(&reason))); }
-                for (stage, reason) in summary.cpu_stage_reasons { ui.label(format!("CPU {}: {}", stage.replace('_', " "), words(&reason))); }
-                if let Some(source) = &report.source_render { ui.label(format!("Pixels from render #{} · {} × {} · diagnostics {}", source.operation_id, source.dimensions[0], source.dimensions[1], if source.diagnostics_collected { "collected" } else { "not collected" })); }
-                ui.collapsing("Phase durations (inclusive; nested costs are not additive)", |ui| { details(ui, &report.phases); });
-                ui.collapsing("Stages and CPU reasons", |ui| { details(ui, &report.stages); });
-                ui.collapsing("Logical transfers and work counters", |ui| { ui.small("Logical bytes are not physical bus traffic. Host waits are not shader time."); details(ui, &report.measurements); });
-                ui.collapsing("GPU passes and measurement availability", |ui| { ui.small("Pass intervals are not operation GPU duration. Unavailable values are not zero."); details(ui, &report.gpu_batches); details(ui, &report.execution); details(ui, &report.coverage); details(ui, &report.diagnostic_issues); });
-                let response = ui.button("Save report…");
-                crate::controls::locate_row(ui, "action.save_report", &response);
-                save = response.clicked();
-            }
-        });
+                if let Some((kind, mode)) = queued {
+                    ui.label(crate::tr!(
+                        ui.ctx(),
+                        "surfaces.diagnostics.queued",
+                        kind = crate::controls::localized(ui.ctx(), kind),
+                        mode = mode_label(ui.ctx(), mode)
+                    ));
+                }
+                if self.history.is_empty() {
+                    ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.empty"));
+                }
+                for report in &self.history {
+                    let label = format!(
+                        "#{} {} · {}",
+                        report.operation.id,
+                        words(&report.operation.kind),
+                        words(&report.operation.outcome)
+                    );
+                    if ui
+                        .selectable_value(&mut self.selected, Some(report.operation.id), label)
+                        .clicked()
+                    {
+                        self.user_selected = true;
+                    }
+                }
+                if let Some(report) = self
+                    .history
+                    .iter()
+                    .find(|report| Some(report.operation.id) == self.selected)
+                {
+                    let summary = report.summary();
+                    let dimensions = summary.working_dimensions.map_or_else(
+                        || {
+                            crate::i18n::text(ui.ctx(), "surfaces.diagnostics.dimensions_missing")
+                                .into_owned()
+                        },
+                        |[w, h]| format!("{w} × {h}"),
+                    );
+                    let duration = summary.duration_seconds.map_or_else(
+                        || {
+                            crate::i18n::text(ui.ctx(), "surfaces.diagnostics.duration_missing")
+                                .into_owned()
+                        },
+                        |value| format!("{:.1} ms", value * 1000.0),
+                    );
+                    ui.label(format!(
+                        "{} · {} · {dimensions} · {duration}",
+                        words(&summary.kind),
+                        words(&summary.outcome)
+                    ));
+                    ui.label(crate::tr!(
+                        ui.ctx(),
+                        "surfaces.diagnostics.backend",
+                        requested = optional_words(ui.ctx(), summary.backend_requested),
+                        selected = optional_words(ui.ctx(), summary.backend_selected),
+                        route = optional_words(ui.ctx(), summary.path)
+                    ));
+                    if let Some((phase, duration)) = summary.largest_phase {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.phase",
+                            phase = phase,
+                            ms = format!("{:.1}", duration * 1000.0)
+                        ));
+                    }
+                    if summary.software_adapter {
+                        ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.software"));
+                    }
+                    for reason in summary.resident_decline_reasons {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.declined",
+                            reason = words(&reason)
+                        ));
+                    }
+                    for (stage, reason) in summary.cpu_stage_reasons {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.cpu_reason",
+                            stage = stage,
+                            reason = words(&reason)
+                        ));
+                    }
+                    if let Some(source) = &report.source_render {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.source",
+                            id = source.operation_id,
+                            width = source.dimensions[0],
+                            height = source.dimensions[1],
+                            state = crate::i18n::text(
+                                ui.ctx(),
+                                if source.diagnostics_collected {
+                                    "surfaces.diagnostics.collected"
+                                } else {
+                                    "surfaces.diagnostics.not_collected"
+                                }
+                            )
+                        ));
+                    }
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.phases",
+                    ))
+                    .id_salt("diagnostics.phases")
+                    .show(ui, |ui| {
+                        details(ui, &report.phases);
+                    });
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.stages",
+                    ))
+                    .id_salt("diagnostics.stages")
+                    .show(ui, |ui| {
+                        details(ui, &report.stages);
+                    });
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.transfers",
+                    ))
+                    .id_salt("diagnostics.transfers")
+                    .show(ui, |ui| {
+                        ui.small(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.diagnostics.transfers_help",
+                        ));
+                        details(ui, &report.measurements);
+                    });
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.gpu",
+                    ))
+                    .id_salt("diagnostics.gpu")
+                    .show(ui, |ui| {
+                        ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.gpu_help"));
+                        details(ui, &report.gpu_batches);
+                        details(ui, &report.execution);
+                        details(ui, &report.coverage);
+                        details(ui, &report.diagnostic_issues);
+                    });
+                    let response =
+                        ui.button(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.save"));
+                    crate::controls::locate_row(ui, "action.save_report", &response);
+                    save = response.clicked();
+                }
+            });
         save
     }
 }
 
-/// Effective backend label for Scan and Export reports. An active Dye field
-/// resolves on the device whenever the render backend has one and the
-/// request is device-representable, and on the host with its fallback reason
-/// otherwise (`grain_v3::effective_field_backend` is the authority), so the
-/// selected backend name alone would misreport where the grain runs.
-pub(crate) fn effective_backend_name(
-    backend: &dyn spektrafilm_backend::ComputeBackend,
-    params: &RuntimeParams,
-) -> String {
-    if spektrafilm_core::stages::grain_v3::active(params) {
-        let executor =
-            spektrafilm_core::stages::grain_v3::effective_field_backend(params, backend.is_gpu());
-        let executor = if executor == "gpu" { "GPU" } else { "CPU" };
-        format!("{} · grain Dye on {executor}", backend.name())
-    } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
-        format!("{} · grain Fotufilm on CPU", backend.name())
-    } else {
-        backend.name().to_owned()
-    }
-}
-
-fn mode_label(mode: CollectionMode) -> &'static str {
-    match mode {
-        CollectionMode::Off => "Off",
-        CollectionMode::Summary => "Summary",
-        CollectionMode::GpuTiming => "GPU timing",
-    }
+fn mode_label(ctx: &egui::Context, mode: CollectionMode) -> std::borrow::Cow<'static, str> {
+    crate::i18n::text(
+        ctx,
+        match mode {
+            CollectionMode::Off => "surfaces.diagnostics.off",
+            CollectionMode::Summary => "surfaces.diagnostics.summary",
+            CollectionMode::GpuTiming => "surfaces.diagnostics.gpu_timing",
+        },
+    )
 }
 fn words(value: &impl serde::Serialize) -> String {
     serde_json::to_value(value)
@@ -193,21 +310,22 @@ fn words(value: &impl serde::Serialize) -> String {
             value
                 .as_str()
                 .map_or_else(|| value.to_string(), str::to_owned)
-                .replace('_', " ")
         })
         .unwrap_or_else(|_| "unavailable".into())
 }
-fn optional_words<T: serde::Serialize>(value: Option<T>) -> String {
-    value
-        .as_ref()
-        .map(words)
-        .unwrap_or_else(|| "not applicable / not reached".into())
+fn optional_words<T: serde::Serialize>(ctx: &egui::Context, value: Option<T>) -> String {
+    value.as_ref().map(words).unwrap_or_else(|| {
+        crate::i18n::text(ctx, "surfaces.diagnostics.not_applicable").into_owned()
+    })
 }
 fn details(ui: &mut egui::Ui, value: &impl serde::Serialize) {
     match serde_json::to_value(value) {
         Ok(value) => show_value(ui, None, &value),
         Err(_) => {
-            ui.label("Diagnostic details unavailable.");
+            ui.label(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.diagnostics.unavailable",
+            ));
         }
     }
 }
@@ -217,7 +335,7 @@ fn show_value(ui: &mut egui::Ui, key: Option<&str>, value: &serde_json::Value) {
             for (key, value) in fields {
                 ui.push_id(key, |ui| {
                     if value.is_object() || value.is_array() {
-                        ui.collapsing(key.replace('_', " "), |ui| show_value(ui, None, value));
+                        ui.collapsing(key, |ui| show_value(ui, None, value));
                     } else {
                         show_value(ui, Some(key), value);
                     }
@@ -226,7 +344,10 @@ fn show_value(ui: &mut egui::Ui, key: Option<&str>, value: &serde_json::Value) {
         }
         serde_json::Value::Array(values) => {
             if values.is_empty() {
-                ui.label("No observations in this scope.");
+                ui.label(crate::i18n::text(
+                    ui.ctx(),
+                    "surfaces.diagnostics.no_observations",
+                ));
             }
             for (index, value) in values.iter().enumerate() {
                 ui.push_id(index, |ui| show_value(ui, None, value));
@@ -235,10 +356,10 @@ fn show_value(ui: &mut egui::Ui, key: Option<&str>, value: &serde_json::Value) {
         _ => {
             ui.label(format!(
                 "{}{}",
-                key.map_or_else(String::new, |key| format!("{}: ", key.replace('_', " "))),
+                key.map_or_else(String::new, |key| format!("{key}: ")),
                 value
                     .as_str()
-                    .map_or_else(|| value.to_string(), |text| text.replace('_', " "))
+                    .map_or_else(|| value.to_string(), str::to_owned)
             ));
         }
     }

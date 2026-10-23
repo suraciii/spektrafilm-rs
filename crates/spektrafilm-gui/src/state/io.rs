@@ -1,5 +1,5 @@
 //! State file loading, saving, and startup defaults.
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -7,9 +7,16 @@ use super::GuiState;
 
 impl GuiState {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("Read GUI state {}", path.display()))?;
-        Self::from_value(serde_json::from_str(&text).context("Invalid GUI state JSON")?)
+        let text = std::fs::read_to_string(path).map_err(|error| {
+            crate::app::Message::new("operations.state.read")
+                .arg("path", path.display())
+                .context(error)
+        })?;
+        Self::from_value(
+            serde_json::from_str(&text).map_err(|error| {
+                crate::app::Message::new("operations.state.json").context(error)
+            })?,
+        )
     }
     pub fn save(&self, path: &Path) -> Result<()> {
         self.validate()?;
@@ -39,7 +46,7 @@ pub fn startup(directory: &Path) -> Result<GuiState> {
     if directories.exists() {
         let value: Value = serde_json::from_str(&std::fs::read_to_string(directories)?)?;
         if !value.is_object() {
-            bail!("File dialog directories must be a JSON object");
+            bail!(crate::app::Message::new("operations.state.dialog_object"));
         }
         if !state.sections["rust"].is_object() {
             state.sections["rust"] = json!({"version":1});

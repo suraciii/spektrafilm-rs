@@ -1,7 +1,7 @@
 //! Portable look and section documents. Library operations are shared by both frontends.
 mod library;
 mod sections;
-use crate::params::sources::{ParameterEdits, parse_carrier};
+use crate::params::sources::{ParameterEdits, parse_carrier_detailed};
 use crate::params::{
     CmykParams, DiffusionFilterParams, EnlargerParams, FilmRenderingParams, OutputMixParams,
     PrintRenderingParams, RuntimeParams, ScannerParams, SettingsParams,
@@ -16,6 +16,130 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub const PRESET_SCHEMA_VERSION: u32 = 6;
+/// Preset-owned validation identity; English diagnostics remain the CLI contract.
+#[derive(Debug, Clone)]
+pub enum PresetDocumentReason {
+    Parser {
+        detail: String,
+    },
+    Read {
+        path: std::path::PathBuf,
+        detail: String,
+    },
+    Carrier {
+        path: std::path::PathBuf,
+    },
+    Schema {
+        version: u32,
+    },
+    Name {
+        name: String,
+    },
+    ProvenanceVersions,
+    Shape,
+    Stock {
+        kind: String,
+        stock: String,
+    },
+    ContentIdentity {
+        kind: String,
+        identity: String,
+    },
+    ScannerProvenance,
+    RootObject,
+    ParametersObject,
+    LegacyField {
+        field: &'static str,
+    },
+    UnownedField {
+        path: String,
+    },
+    RetiredField {
+        path: &'static str,
+        replacement: &'static str,
+    },
+    EmptySection,
+    MultipleSections,
+    TomlNull {
+        paths: Vec<String>,
+    },
+    ExpectedLook,
+    ExpectedSection,
+    Profile {
+        kind: String,
+        stock: String,
+        error: std::sync::Arc<profile::ProfileError>,
+    },
+    ProfileRead {
+        stock: String,
+        path: std::path::PathBuf,
+        detail: String,
+    },
+    ProfileIdentity {
+        stock: String,
+        expected: String,
+        actual: String,
+    },
+    ProfileStock {
+        kind: String,
+        stock: String,
+    },
+    ProfileSupport {
+        kind: String,
+        stock: String,
+    },
+    ProfileVersion {
+        kind: String,
+        stock: String,
+        expected: String,
+        actual: String,
+    },
+    ProfileUnverified {
+        kind: String,
+        stock: String,
+    },
+    Runtime(crate::params::ValidationError),
+}
+#[derive(Debug, Clone)]
+pub struct PresetDocumentError {
+    pub reason: PresetDocumentReason,
+    diagnostic: String,
+}
+impl PresetDocumentError {
+    fn new(reason: PresetDocumentReason, diagnostic: impl Into<String>) -> Self {
+        Self {
+            reason,
+            diagnostic: diagnostic.into(),
+        }
+    }
+    pub fn profile_load(
+        kind: &str,
+        stock: &str,
+        error: profile::ProfileError,
+        diagnostic: String,
+    ) -> Self {
+        Self::new(
+            PresetDocumentReason::Profile {
+                kind: kind.into(),
+                stock: stock.into(),
+                error: std::sync::Arc::new(error),
+            },
+            diagnostic,
+        )
+    }
+}
+impl From<crate::params::ValidationError> for PresetDocumentError {
+    fn from(error: crate::params::ValidationError) -> Self {
+        let diagnostic = error.to_string();
+        Self::new(PresetDocumentReason::Runtime(error), diagnostic)
+    }
+}
+impl std::fmt::Display for PresetDocumentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.diagnostic)
+    }
+}
+impl std::error::Error for PresetDocumentError {}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRef {
@@ -120,7 +244,7 @@ fn remove_null_values(value: &mut Value) {
         _ => {}
     }
 }
-pub(crate) fn reject_unowned_preset_fields(value: &Value) -> Result<(), String> {
+fn reject_unowned_preset_fields_detailed(value: &Value) -> Result<(), PresetDocumentError> {
     for &(group, fields) in UNOWNED_PRESET_FIELDS {
         let object = group
             .split('.')
@@ -129,7 +253,12 @@ pub(crate) fn reject_unowned_preset_fields(value: &Value) -> Result<(), String> 
         if let Some(object) = object {
             for field in fields {
                 if object.contains_key(*field) {
-                    return Err(format!("preset field {group}.{field} is not preset-owned"));
+                    return Err(PresetDocumentError::new(
+                        PresetDocumentReason::UnownedField {
+                            path: format!("{group}.{field}"),
+                        },
+                        format!("preset field {group}.{field} is not preset-owned"),
+                    ));
                 }
             }
         }
@@ -146,7 +275,7 @@ const RETIRED_PRESET_FIELDS: &[(&str, &str)] = &[
     ("magazine_print_color.strength", "cmyk.strength"),
 ];
 
-pub(crate) fn reject_retired_preset_fields(value: &Value) -> Result<(), String> {
+fn reject_retired_preset_fields_detailed(value: &Value) -> Result<(), PresetDocumentError> {
     for &(retired, replacement) in RETIRED_PRESET_FIELDS {
         let present = match retired.rsplit_once('.') {
             Some((group, leaf)) => value
@@ -156,10 +285,14 @@ pub(crate) fn reject_retired_preset_fields(value: &Value) -> Result<(), String> 
             None => value.get(retired).is_some(),
         };
         if present {
-            return Err(format!(
-                "preset field {retired} was retired; use {replacement} instead; a versioned \
-                 legacy preset document may migrate it, but current-schema documents must use \
-                 the canonical field"
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::RetiredField {
+                    path: retired,
+                    replacement,
+                },
+                format!(
+                    "preset field {retired} was retired; use {replacement} instead; a versioned legacy preset document may migrate it, but current-schema documents must use the canonical field"
+                ),
             ));
         }
     }
@@ -188,10 +321,21 @@ impl Serialize for LookParameters {
 impl<'de> Deserialize<'de> for LookParameters {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = Value::deserialize(deserializer)?;
-        reject_unowned_preset_fields(&value).map_err(serde::de::Error::custom)?;
-        reject_retired_preset_fields(&value).map_err(serde::de::Error::custom)?;
-        let wire = serde_json::from_value::<LookParametersWire>(value)
-            .map_err(serde::de::Error::custom)?;
+        Self::from_value_detailed(value).map_err(serde::de::Error::custom)
+    }
+}
+impl LookParameters {
+    fn from_value_detailed(value: Value) -> Result<Self, PresetDocumentError> {
+        reject_unowned_preset_fields_detailed(&value)?;
+        reject_retired_preset_fields_detailed(&value)?;
+        let wire = serde_json::from_value::<LookParametersWire>(value).map_err(|error| {
+            PresetDocumentError::new(
+                PresetDocumentReason::Parser {
+                    detail: error.to_string(),
+                },
+                error.to_string(),
+            )
+        })?;
         Ok(Self {
             camera: wire.camera,
             enlarger: wire.enlarger,
@@ -425,12 +569,23 @@ impl Preset {
         }
     }
     pub fn from_json_str(text: &str) -> Result<Self, String> {
-        Self::from_value(parse_carrier(text, false)?)
+        Self::from_json_str_detailed(text).map_err(|error| error.to_string())
     }
     pub fn from_toml_str(text: &str) -> Result<Self, String> {
-        Self::from_value(parse_carrier(text, true)?)
+        Self::from_toml_str_detailed(text).map_err(|error| error.to_string())
     }
-    fn from_value(mut value: Value) -> Result<Self, String> {
+    pub fn from_json_str_detailed(text: &str) -> Result<Self, PresetDocumentError> {
+        let value = parse_carrier_detailed(text, false)?;
+        Self::from_value_detailed(value)
+    }
+    pub fn from_toml_str_detailed(text: &str) -> Result<Self, PresetDocumentError> {
+        let value = parse_carrier_detailed(text, true)?;
+        Self::from_value_detailed(value)
+    }
+    fn from_value(value: Value) -> Result<Self, String> {
+        Self::from_value_detailed(value).map_err(|error| error.to_string())
+    }
+    fn from_value_detailed(mut value: Value) -> Result<Self, PresetDocumentError> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Wire {
@@ -446,11 +601,16 @@ impl Preset {
         if value["schema_version"].as_u64() == Some(5)
             && let Some(parameters) = value.get("parameters")
         {
-            reject_retired_preset_fields(parameters)?;
+            reject_retired_preset_fields_detailed(parameters)?;
         }
         if matches!(value["schema_version"].as_u64(), Some(1..=5)) {
             let version = value["schema_version"].as_u64().unwrap();
-            let object = value.as_object_mut().ok_or("preset must be an object")?;
+            let object = value.as_object_mut().ok_or_else(|| {
+                PresetDocumentError::new(
+                    PresetDocumentReason::RootObject,
+                    "preset must be an object",
+                )
+            })?;
             if version == 1 {
                 object.remove("id");
             }
@@ -460,19 +620,22 @@ impl Preset {
                     .and_then(|p| p.get("output_mix"))
                     .is_some()
                 {
-                    return Err(
-                        "legacy preset parameters.output_mix is unknown; use schema_version 5"
-                            .into(),
-                    );
+                    return Err(PresetDocumentError::new(
+                        PresetDocumentReason::LegacyField {
+                            field: "output_mix",
+                        },
+                        "legacy preset parameters.output_mix is unknown; use schema_version 5",
+                    ));
                 }
                 if object
                     .get("parameters")
                     .and_then(|p| p.get("camera"))
                     .is_some()
                 {
-                    return Err(
-                        "legacy preset parameters.camera is unknown; use schema_version 5".into(),
-                    );
+                    return Err(PresetDocumentError::new(
+                        PresetDocumentReason::LegacyField { field: "camera" },
+                        "legacy preset parameters.camera is unknown; use schema_version 5",
+                    ));
                 }
                 if object.get("film_profile").is_some_and(|v| !v.is_null())
                     || object.get("print_profile").is_some_and(|v| !v.is_null())
@@ -480,11 +643,22 @@ impl Preset {
                     let parameters = object
                         .get_mut("parameters")
                         .and_then(Value::as_object_mut)
-                        .ok_or("preset parameters must be an object")?;
+                        .ok_or_else(|| {
+                            PresetDocumentError::new(
+                                PresetDocumentReason::ParametersObject,
+                                "preset parameters must be an object",
+                            )
+                        })?;
                     parameters.insert(
                         "output_mix".into(),
-                        serde_json::to_value(OutputMixParams::default())
-                            .map_err(|e| e.to_string())?,
+                        serde_json::to_value(OutputMixParams::default()).map_err(|e| {
+                            PresetDocumentError::new(
+                                PresetDocumentReason::Parser {
+                                    detail: e.to_string(),
+                                },
+                                e.to_string(),
+                            )
+                        })?,
                     );
                 }
             }
@@ -493,10 +667,13 @@ impl Preset {
                     .get("parameters")
                     .and_then(Value::as_object)
                     .is_some_and(|parameters| parameters.len() > 1);
-                let parameters = object
-                    .get_mut("parameters")
-                    .ok_or("preset parameters must be an object")?;
-                crate::params::sources::normalize_legacy_conversion_paths(
+                let parameters = object.get_mut("parameters").ok_or_else(|| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::ParametersObject,
+                        "preset parameters must be an object",
+                    )
+                })?;
+                crate::params::sources::normalize_legacy_conversion_paths_detailed(
                     parameters,
                     settings_allowed,
                 )?;
@@ -506,10 +683,13 @@ impl Preset {
                 // accepted legacy preset version. The pass also applies the
                 // output lightness retirement rule, so a retired gamut leaf
                 // aborts the whole migration transactionally.
-                let parameters = object
-                    .get_mut("parameters")
-                    .ok_or("preset parameters must be an object")?;
-                crate::params::sources::normalize_legacy_complete_params(parameters)?;
+                let parameters = object.get_mut("parameters").ok_or_else(|| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::ParametersObject,
+                        "preset parameters must be an object",
+                    )
+                })?;
+                crate::params::sources::normalize_legacy_complete_params_detailed(parameters)?;
             }
             // Version 6 removes the scanner lamp and makes the old built-in
             // spelling an input alias. Validate historical scanner provenance
@@ -523,7 +703,8 @@ impl Preset {
                 .and_then(|p| p.get("scanner"))
                 .filter(|scanner| !scanner.is_null())
             {
-                let current = crate::ScannerProvenance::migrate_legacy(scanner, lamp.as_ref())?;
+                let current =
+                    crate::ScannerProvenance::migrate_legacy_detailed(scanner, lamp.as_ref())?;
                 object["provenance"]["scanner"] = current;
                 object["provenance"]["model_version"] = crate::runtime::MODEL_VERSION.into();
             }
@@ -533,7 +714,7 @@ impl Preset {
                     .and_then(|p| p.get("film_render"))
                     .is_some();
             if let Some(parameters) = object.get_mut("parameters") {
-                crate::params::sources::normalize_legacy_scan_readout(
+                crate::params::sources::normalize_legacy_scan_readout_detailed(
                     parameters,
                     preserve_capture,
                 )?;
@@ -547,12 +728,20 @@ impl Preset {
         {
             value["parameters"]["scanner"]["conversion_style"] = "standard".into();
         }
-        let wire: Wire =
-            serde_json::from_value(value).map_err(|e| format!("invalid preset: {e}"))?;
+        let wire: Wire = serde_json::from_value(value).map_err(|e| {
+            PresetDocumentError::new(
+                PresetDocumentReason::Parser {
+                    detail: e.to_string(),
+                },
+                format!("invalid preset: {e}"),
+            )
+        })?;
         let parameters = if wire.film_profile.is_some() || wire.print_profile.is_some() {
             PresetParameters::Look(
-                serde_json::from_value(wire.parameters)
-                    .map_err(|e| format!("invalid look: {e}"))?,
+                LookParameters::from_value_detailed(wire.parameters).map_err(|mut error| {
+                    error.diagnostic = format!("invalid look: {}", error.diagnostic);
+                    error
+                })?,
             )
         } else {
             PresetParameters::Section(wire.parameters)
@@ -567,34 +756,79 @@ impl Preset {
             parameters,
             provenance: wire.provenance,
         };
-        preset.validate()?;
+        preset.validate_detailed()?;
         Ok(preset)
     }
     pub fn kind(&self) -> Result<PresetKind, String> {
+        self.kind_detailed().map_err(|error| error.to_string())
+    }
+    pub fn kind_detailed(&self) -> Result<PresetKind, PresetDocumentError> {
         match &self.parameters {
-            PresetParameters::Look(_) if self.film_profile.is_some() && self.print_profile.is_some()=>Ok(PresetKind::Look),
-            PresetParameters::Section(payload) if self.film_profile.is_none() && self.print_profile.is_none()=>Ok(PresetKind::Section(section_from_payload(payload)?)),
-            _=>Err("a preset must carry a complete look with both profiles or exactly one section without profiles".into()),
+            PresetParameters::Look(_)
+                if self.film_profile.is_some() && self.print_profile.is_some() =>
+            {
+                Ok(PresetKind::Look)
+            }
+            PresetParameters::Section(payload)
+                if self.film_profile.is_none() && self.print_profile.is_none() =>
+            {
+                Ok(PresetKind::Section(section_from_payload_detailed(payload)?))
+            }
+            _ => Err(PresetDocumentError::new(
+                PresetDocumentReason::Shape,
+                "a preset must carry a complete look with both profiles or exactly one section without profiles",
+            )),
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_detailed().map_err(|error| error.to_string())
+    }
+    pub fn validate_detailed(&self) -> Result<(), PresetDocumentError> {
         if self.schema_version != PRESET_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported preset schema version {}",
-                self.schema_version
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::Schema {
+                    version: self.schema_version,
+                },
+                format!("unsupported preset schema version {}", self.schema_version),
             ));
         }
-        validate_name(&self.name)?;
+        validate_name(&self.name).map_err(|detail| {
+            PresetDocumentError::new(
+                PresetDocumentReason::Name {
+                    name: self.name.clone(),
+                },
+                detail,
+            )
+        })?;
         if self.provenance.implementation_version.trim().is_empty()
             || self.provenance.model_version.trim().is_empty()
         {
-            return Err("preset provenance versions must not be empty".into());
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::ProvenanceVersions,
+                "preset provenance versions must not be empty",
+            ));
         }
-        self.kind()?;
+        self.kind_detailed()?;
         for (kind, reference) in [("film", &self.film_profile), ("print", &self.print_profile)] {
             if let Some(reference) = reference {
-                validate_stock_id(kind, &reference.stock)?;
-                validate_content_identity(kind, reference)?;
+                validate_stock_id(kind, &reference.stock).map_err(|detail| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::Stock {
+                            kind: kind.into(),
+                            stock: reference.stock.clone(),
+                        },
+                        detail,
+                    )
+                })?;
+                validate_content_identity(kind, reference).map_err(|detail| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::ContentIdentity {
+                            kind: kind.into(),
+                            identity: reference.content_identity.clone().unwrap_or_default(),
+                        },
+                        detail,
+                    )
+                })?;
             }
         }
         // Presets do not carry workflow routing. Validate scanner-owned values
@@ -604,27 +838,62 @@ impl Preset {
         params.io.scan_film = true;
         match &self.parameters {
             PresetParameters::Look(look) => look.apply_to(&mut params),
-            PresetParameters::Section(payload) => parameter_edits(payload)?.apply(&mut params)?,
+            PresetParameters::Section(payload) => {
+                parameter_edits_detailed(payload)?.apply_detailed(&mut params)?
+            }
         }
         if let Some(scanner) = &self.provenance.scanner {
             let expected = serde_json::to_value(crate::ScannerProvenance::from_params(&params))
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::Parser {
+                            detail: e.to_string(),
+                        },
+                        e.to_string(),
+                    )
+                })?;
             if scanner != &expected {
-                return Err(
-                    "scanner provenance does not match the typed scanner parameters".into(),
-                );
+                return Err(PresetDocumentError::new(
+                    PresetDocumentReason::ScannerProvenance,
+                    "scanner provenance does not match the typed scanner parameters",
+                ));
             }
         }
-        crate::params::sources::validate_finite(&params)?;
-        params.validate()
+        crate::params::sources::validate_finite_detailed(&params)?;
+        params.validate_detailed().map_err(|error| {
+            PresetDocumentError::new(
+                PresetDocumentReason::Runtime(error.clone()),
+                error.to_string(),
+            )
+        })
     }
     pub fn to_json(&self) -> Result<String, String> {
-        self.validate()?;
-        serde_json::to_string_pretty(self).map_err(|e| e.to_string())
+        self.to_json_detailed().map_err(|error| error.to_string())
+    }
+    pub fn to_json_detailed(&self) -> Result<String, PresetDocumentError> {
+        self.validate_detailed()?;
+        serde_json::to_string_pretty(self).map_err(|e| {
+            PresetDocumentError::new(
+                PresetDocumentReason::Parser {
+                    detail: e.to_string(),
+                },
+                e.to_string(),
+            )
+        })
     }
     pub fn to_toml(&self) -> Result<String, String> {
-        self.validate()?;
-        let mut value = serde_json::to_value(self).map_err(|e| e.to_string())?;
+        self.to_toml_detailed().map_err(|error| error.to_string())
+    }
+    pub fn to_toml_detailed(&self) -> Result<String, PresetDocumentError> {
+        self.validate_detailed()?;
+        let mut value = serde_json::to_value(self).map_err(|e| {
+            PresetDocumentError::new(
+                PresetDocumentReason::Parser {
+                    detail: e.to_string(),
+                },
+                e.to_string(),
+            )
+        })?;
         if matches!(self.parameters, PresetParameters::Look(_)) {
             remove_null_values(&mut value);
         } else if let PresetParameters::Section(payload) = &self.parameters {
@@ -645,32 +914,80 @@ impl Preset {
             let mut paths = Vec::new();
             null_paths("", payload, &mut paths);
             if !paths.is_empty() {
-                return Err(format!(
-                    "TOML cannot represent explicit null at {}; use --format json or a .json extension",
-                    paths.join(", ")
+                return Err(PresetDocumentError::new(
+                    PresetDocumentReason::TomlNull {
+                        paths: paths.clone(),
+                    },
+                    format!(
+                        "TOML cannot represent explicit null at {}; use --format json or a .json extension",
+                        paths.join(", ")
+                    ),
                 ));
             }
         }
-        let value = toml::Value::try_from(value).map_err(|e| e.to_string())?;
-        toml::to_string_pretty(&value).map_err(|e| e.to_string())
+        let value = toml::Value::try_from(value).map_err(|e| {
+            PresetDocumentError::new(
+                PresetDocumentReason::Parser {
+                    detail: e.to_string(),
+                },
+                e.to_string(),
+            )
+        })?;
+        toml::to_string_pretty(&value).map_err(|e| {
+            PresetDocumentError::new(
+                PresetDocumentReason::Parser {
+                    detail: e.to_string(),
+                },
+                e.to_string(),
+            )
+        })
     }
     pub fn resolve(
         &self,
         data_dir: &Path,
         current: &RuntimeParams,
     ) -> Result<ResolvedPreset, String> {
-        self.validate()?;
+        self.resolve_detailed(data_dir, current)
+            .map_err(|error| error.to_string())
+    }
+    pub fn resolve_detailed(
+        &self,
+        data_dir: &Path,
+        current: &RuntimeParams,
+    ) -> Result<ResolvedPreset, PresetDocumentError> {
+        self.validate_detailed()?;
         let (Some(film_ref), Some(print_ref), PresetParameters::Look(look)) =
             (&self.film_profile, &self.print_profile, &self.parameters)
         else {
-            return Err("section presets use apply_section, not look resolution".into());
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::ExpectedLook,
+                "section presets use apply_section, not look resolution",
+            ));
         };
         let film_identity = profile_content_identity_if_requested(data_dir, film_ref)?;
         let print_identity = profile_content_identity_if_requested(data_dir, print_ref)?;
-        let film =
-            profile::load_profile_by_name(data_dir, &film_ref.stock).map_err(|e| e.to_string())?;
-        let print =
-            profile::load_profile_by_name(data_dir, &print_ref.stock).map_err(|e| e.to_string())?;
+        let film = profile::load_profile_by_name(data_dir, &film_ref.stock).map_err(|error| {
+            let diagnostic = error.to_string();
+            PresetDocumentError::new(
+                PresetDocumentReason::Profile {
+                    kind: "film".into(),
+                    stock: film_ref.stock.clone(),
+                    error: std::sync::Arc::new(error),
+                },
+                diagnostic,
+            )
+        })?;
+        let print = profile::load_profile_by_name(data_dir, &print_ref.stock).map_err(|error| {
+            let diagnostic = error.to_string();
+            PresetDocumentError::new(
+                PresetDocumentReason::Profile {
+                    kind: "print".into(),
+                    stock: print_ref.stock.clone(),
+                    error: std::sync::Arc::new(error),
+                },
+                diagnostic,
+            )
+        })?;
         validate_profile_ref("film", film_ref, &film, film_identity.as_deref())?;
         validate_profile_ref("print", print_ref, &print, print_identity.as_deref())?;
         let mut params = current.clone();
@@ -708,8 +1025,8 @@ impl Preset {
         {
             params.scanner.scan_output = "direct_scan".into();
         }
-        crate::pipeline_calibration::validate_scan_output_route(&params)?;
-        params.validate()?;
+        crate::pipeline_calibration::validate_scan_output_route_detailed(&params)?;
+        params.validate_detailed()?;
         Ok(ResolvedPreset {
             film_name: film_ref.stock.clone(),
             print_name: print_ref.stock.clone(),
@@ -753,14 +1070,31 @@ impl Preset {
         name: impl Into<String>,
         section: Section,
         params: &RuntimeParams,
-        mut provenance: Provenance,
+        provenance: Provenance,
     ) -> Result<Self, String> {
-        let payload = extract_section(section, params)?;
+        Self::capture_section_detailed(name, section, params, provenance)
+            .map_err(|error| error.to_string())
+    }
+    pub fn capture_section_detailed(
+        name: impl Into<String>,
+        section: Section,
+        params: &RuntimeParams,
+        mut provenance: Provenance,
+    ) -> Result<Self, PresetDocumentError> {
+        let payload = extract_section_detailed(section, params)?;
         let mut captured = RuntimeParams::default();
-        parameter_edits(&payload)?.apply(&mut captured)?;
+        parameter_edits_detailed(&payload)?.apply_detailed(&mut captured)?;
         provenance.scanner = Some(
-            serde_json::to_value(crate::ScannerProvenance::from_params(&captured))
-                .map_err(|e| e.to_string())?,
+            serde_json::to_value(crate::ScannerProvenance::from_params(&captured)).map_err(
+                |e| {
+                    PresetDocumentError::new(
+                        PresetDocumentReason::Parser {
+                            detail: e.to_string(),
+                        },
+                        e.to_string(),
+                    )
+                },
+            )?,
         );
         let preset = Self {
             schema_version: PRESET_SCHEMA_VERSION,
@@ -772,7 +1106,7 @@ impl Preset {
             parameters: PresetParameters::Section(payload),
             provenance,
         };
-        preset.validate()?;
+        preset.validate_detailed()?;
         Ok(preset)
     }
     /// Returns a candidate validated against the current film and scan configuration.
@@ -782,8 +1116,16 @@ impl Preset {
         current: &RuntimeParams,
         film: &Profile,
     ) -> Result<RuntimeParams, String> {
-        let params = self.overlay_section(current)?;
-        params.validate()?;
+        self.apply_section_detailed(current, film)
+            .map_err(|error| error.to_string())
+    }
+    pub fn apply_section_detailed(
+        &self,
+        current: &RuntimeParams,
+        film: &Profile,
+    ) -> Result<RuntimeParams, PresetDocumentError> {
+        let params = self.overlay_section_detailed(current)?;
+        params.validate_detailed()?;
         let scan_changed = params.scanner.scan_output != current.scanner.scan_output
             || params.film_render.grain.active != current.film_render.grain.active
             || params.film_render.grain.engine != current.film_render.grain.engine;
@@ -791,7 +1133,7 @@ impl Preset {
             || !params.scanner.operator.is_default()
             || crate::pipeline_calibration::validate_scan_output(current, film).is_ok()
         {
-            crate::pipeline_calibration::validate_scan_output(&params, film)?;
+            crate::pipeline_calibration::validate_scan_output_detailed(&params, film)?;
         }
         Ok(params)
     }
@@ -799,20 +1141,32 @@ impl Preset {
     /// Compose independently validated leaves without validating intermediate controls.
     /// The caller must validate the complete candidate before applying it.
     pub(crate) fn overlay_section(&self, current: &RuntimeParams) -> Result<RuntimeParams, String> {
-        self.validate()?;
+        self.overlay_section_detailed(current)
+            .map_err(|error| error.to_string())
+    }
+    pub fn overlay_section_detailed(
+        &self,
+        current: &RuntimeParams,
+    ) -> Result<RuntimeParams, PresetDocumentError> {
+        self.validate_detailed()?;
         let PresetParameters::Section(payload) = &self.parameters else {
-            return Err("expected a section preset".into());
+            return Err(PresetDocumentError::new(
+                PresetDocumentReason::ExpectedSection,
+                "expected a section preset",
+            ));
         };
-        let edits = parameter_edits(payload)?;
+        let edits = parameter_edits_detailed(payload)?;
         let mut params = current.clone();
-        edits.apply(&mut params)?;
+        edits.apply_detailed(&mut params)?;
         for path in edits.paths() {
             params.explicit_section_paths.insert(path.to_owned());
         }
         Ok(params)
     }
 }
-fn parameter_edits(payload: &Value) -> Result<ParameterEdits, String> {
+fn parameter_edits_detailed(
+    payload: &Value,
+) -> Result<ParameterEdits, crate::params::ValidationError> {
     let mut value = payload.clone();
     if let Some(filter) = value
         .as_object_mut()
@@ -820,7 +1174,7 @@ fn parameter_edits(payload: &Value) -> Result<ParameterEdits, String> {
     {
         value["camera"] = serde_json::json!({"diffusion_filter":filter});
     }
-    ParameterEdits::from_value(value)
+    ParameterEdits::from_value_detailed(value)
 }
 include!(concat!(env!("OUT_DIR"), "/preset_assets.rs"));
 pub fn builtin_presets() -> Vec<Preset> {
@@ -867,20 +1221,35 @@ fn validate_content_identity(kind: &str, reference: &ProfileRef) -> Result<(), S
 fn profile_content_identity_if_requested(
     data_dir: &Path,
     reference: &ProfileRef,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, PresetDocumentError> {
     let Some(expected) = &reference.content_identity else {
         return Ok(None);
     };
     let path = data_dir
         .join("profiles")
         .join(format!("{}.json", reference.stock));
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("reading profile content for {:?}: {e}", reference.stock))?;
+    let bytes = std::fs::read(&path).map_err(|e| {
+        PresetDocumentError::new(
+            PresetDocumentReason::ProfileRead {
+                stock: reference.stock.clone(),
+                path: path.clone(),
+                detail: e.to_string(),
+            },
+            format!("reading profile content for {:?}: {e}", reference.stock),
+        )
+    })?;
     let actual = format!("sha256-{:x}", Sha256::digest(bytes));
     if actual != *expected {
-        return Err(format!(
-            "profile {:?} content identity mismatch: expected {expected:?}, got {actual:?}",
-            reference.stock
+        return Err(PresetDocumentError::new(
+            PresetDocumentReason::ProfileIdentity {
+                stock: reference.stock.clone(),
+                expected: expected.clone(),
+                actual: actual.clone(),
+            },
+            format!(
+                "profile {:?} content identity mismatch: expected {expected:?}, got {actual:?}",
+                reference.stock
+            ),
         ));
     }
     Ok(Some(actual))
@@ -891,11 +1260,17 @@ fn validate_profile_ref(
     reference: &ProfileRef,
     profile: &Profile,
     content_identity: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), PresetDocumentError> {
     if profile.info.stock.as_deref() != Some(reference.stock.as_str()) {
-        return Err(format!(
-            "{kind} profile {:?} does not declare the requested stock identifier",
-            reference.stock
+        return Err(PresetDocumentError::new(
+            PresetDocumentReason::ProfileStock {
+                kind: kind.into(),
+                stock: reference.stock.clone(),
+            },
+            format!(
+                "{kind} profile {:?} does not declare the requested stock identifier",
+                reference.stock
+            ),
         ));
     }
     let valid = if kind == "film" {
@@ -904,25 +1279,45 @@ fn validate_profile_ref(
         profile.is_paper() && profile.is_printing()
     };
     if !valid {
-        return Err(format!(
-            "{kind} profile {:?} has incompatible support/stage",
-            reference.stock
+        return Err(PresetDocumentError::new(
+            PresetDocumentReason::ProfileSupport {
+                kind: kind.into(),
+                stock: reference.stock.clone(),
+            },
+            format!(
+                "{kind} profile {:?} has incompatible support/stage",
+                reference.stock
+            ),
         ));
     }
     if let Some(version) = &reference.version
         && &profile.metadata.version != version
     {
-        return Err(format!(
-            "{kind} profile {:?} version mismatch: expected {version:?}, got {:?}",
-            reference.stock, profile.metadata.version
+        return Err(PresetDocumentError::new(
+            PresetDocumentReason::ProfileVersion {
+                kind: kind.into(),
+                stock: reference.stock.clone(),
+                expected: version.clone(),
+                actual: profile.metadata.version.clone(),
+            },
+            format!(
+                "{kind} profile {:?} version mismatch: expected {version:?}, got {:?}",
+                reference.stock, profile.metadata.version
+            ),
         ));
     }
     if let Some(expected) = content_identity
         && Some(expected) != reference.content_identity.as_deref()
     {
-        return Err(format!(
-            "{kind} profile {:?} content identity was not verified",
-            reference.stock
+        return Err(PresetDocumentError::new(
+            PresetDocumentReason::ProfileUnverified {
+                kind: kind.into(),
+                stock: reference.stock.clone(),
+            },
+            format!(
+                "{kind} profile {:?} content identity was not verified",
+                reference.stock
+            ),
         ));
     }
     Ok(())

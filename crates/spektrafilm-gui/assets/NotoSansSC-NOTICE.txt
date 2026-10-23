@@ -1,0 +1,14 @@
+Noto Sans SC Regular, Version 2.004
+© 2014-2021 Adobe (http://www.adobe.com/).
+
+This unmodified font is distributed under the SIL Open Font License 1.1.
+See the accompanying NotoSansSC-OFL.txt for the complete license.
+
+Upstream: https://github.com/notofonts/noto-cjk
+Source: Sans/SubsetOTF/SC/NotoSansSC-Regular.otf
+Upstream Git blob: fc0fda9394367c16c1af7555a2ae4d5e2e6a6f02
+
+The upstream region-specific Simplified Chinese font includes general Chinese
+text and user-input coverage; it is not a subset of application labels.
+The font is embedded into the GUI executable and used offline as a fallback
+for proportional, monospace, and mixed Chinese/Latin interface text.

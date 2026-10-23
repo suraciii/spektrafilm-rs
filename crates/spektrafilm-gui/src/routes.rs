@@ -5,8 +5,6 @@
 //! GUI choices. The route test keeps that boundary explicit while ensuring that
 //! every visible route remains supported.
 
-use std::sync::LazyLock;
-
 /// The GUI-owned presentation vocabulary.
 ///
 /// One map holds every visible word the GUI writes for the workflow selector
@@ -92,68 +90,38 @@ pub(crate) mod vocabulary {
 pub(crate) struct RouteChoice {
     pub value: &'static str,
     pub label: &'static str,
-    pub description: &'static str,
 }
 
 pub(crate) const CHOICES: [RouteChoice; 6] = [
     RouteChoice {
         value: "input",
         label: "input",
-        description: vocabulary::INPUT,
     },
     RouteChoice {
         value: "input > film > scan",
         label: "input > film > scan",
-        description: vocabulary::FILM_SCAN,
     },
     RouteChoice {
         value: "input > film > print > scan",
         label: "input > film > print > scan",
-        description: vocabulary::FILM_PRINT_SCAN,
     },
     RouteChoice {
         value: "input > convert-film > print > scan",
         label: "input > convert-film > print > scan",
-        description: vocabulary::CONVERT_FILM_PRINT_SCAN,
     },
     RouteChoice {
         value: "input > convert-film > scan-minus-base",
         label: "input > convert-film > scan-minus-base",
-        description: vocabulary::CONVERT_FILM_SCAN_MINUS_BASE,
     },
     RouteChoice {
         value: "input > convert-film > scan",
         label: "input > convert-film > scan",
-        description: vocabulary::CONVERT_FILM_SCAN,
     },
 ];
 
 /// Selector entries in the order the validator declares them.
 pub(crate) fn entries() -> impl Iterator<Item = (&'static str, &'static str)> + Clone {
     CHOICES.iter().map(|choice| (choice.value, choice.label))
-}
-
-pub(crate) fn tooltip() -> &'static str {
-    static TOOLTIP: LazyLock<String> = LazyLock::new(|| {
-        let routes = CHOICES
-            .iter()
-            .map(|choice| {
-                let conditional = match choice.value {
-                    "input > film > scan" => " The scanned medium is the selected film; a negative film may preserve its native negative polarity or use Negative to positive conversion, while a slide film retains its native positive polarity.",
-                    "input > film > print > scan" | "input > convert-film > print > scan" => " The scanned medium is photographic paper and reads as a positive image.",
-                    "input > convert-film > scan" => " The scanned medium is negative film; preserve medium polarity delivers the native negative, while Negative to positive performs negative conversion to a positive image.",
-                    "input > convert-film > scan-minus-base" => " The scanned medium is negative film with its base removed; it remains in native negative polarity.",
-                    _ => "",
-                };
-                format!("{} ({}){}", choice.label, choice.description, conditional)
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        format!(
-            "Which physical path the image takes through the pipeline: {routes} CMYK ink style can be enabled independently for every workflow."
-        )
-    });
-    &TOOLTIP
 }
 
 #[cfg(test)]
@@ -179,27 +147,17 @@ mod tests {
                 "{} must remain a supported route",
                 choice.value
             );
-            assert!(
-                !choice.label.is_empty() && !choice.description.is_empty(),
-                "{} needs a label and a description",
-                choice.value
-            );
+            assert!(!choice.label.is_empty(), "{} needs a label", choice.value);
         }
     }
 
     #[test]
     fn every_route_description_names_its_process_sequence() {
         for choice in &CHOICES {
-            assert_eq!(
-                choice.description,
-                vocabulary::route_description(choice.value),
-                "{} must read its description from the vocabulary",
-                choice.value
-            );
             // A direct physical description states the sequence the image takes;
             // it must not invent a look category or hide a scan.
             assert!(
-                !choice.description.is_empty(),
+                !vocabulary::route_description(choice.value).is_empty(),
                 "{} needs a direct physical description",
                 choice.value
             );
@@ -223,14 +181,5 @@ mod tests {
                 "scanner sequence must mention {group}"
             );
         }
-    }
-
-    #[test]
-    fn route_tooltip_names_conditional_scanned_medium_and_polarity() {
-        let tooltip = tooltip();
-        assert!(tooltip.contains("scanned medium is photographic paper"));
-        assert!(tooltip.contains("negative film may preserve"));
-        assert!(tooltip.contains("slide film retains its native positive polarity"));
-        assert!(tooltip.contains("remains in native negative polarity"));
     }
 }

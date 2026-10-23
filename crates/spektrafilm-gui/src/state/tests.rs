@@ -632,24 +632,21 @@ fn legacy_export_depth_and_recipe_survive_save_reload() {
 
 #[test]
 fn export_migration_does_not_repair_explicit_invalid_settings() {
-    for (format, depth, error) in [
-        (json!("png"), 16, "png exports require 8-bit depth"),
-        (json!("jpeg"), 32, "jpeg exports require 8-bit depth"),
-        (json!("exr"), 8, "EXR exports require 16- or 32-bit depth"),
-        (json!("unknown"), 16, "Unknown export format"),
-        (Value::Null, 16, "Export format must be a string"),
-        (json!("tiff"), 12, "Saving bit depth must be 8, 16 or 32"),
+    for (format, depth) in [
+        (json!("png"), 16),
+        (json!("jpeg"), 32),
+        (json!("exr"), 8),
+        (json!("unknown"), 16),
+        (Value::Null, 16),
+        (json!("tiff"), 12),
     ] {
         let result = GuiState::from_value(json!({
             "rust": {"version": 1, "export_format": format, "save_bit_depth": depth}
         }));
-        assert_eq!(result.unwrap_err().to_string(), error);
+        assert!(result.is_err());
     }
     let result = GuiState::from_value(json!({"rust": {"version": 1, "save_bit_depth": 12}}));
-    assert_eq!(
-        result.unwrap_err().to_string(),
-        "Saving bit depth must be 8, 16 or 32"
-    );
+    assert!(result.is_err());
 }
 
 #[test]

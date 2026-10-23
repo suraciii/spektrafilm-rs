@@ -14,15 +14,26 @@ pub(crate) struct SearchResult {
     pub(crate) section: &'static str,
     pub(crate) labels: Vec<String>,
     pub(crate) target_path: String,
-    details: String,
+    paths: Vec<String>,
 }
 impl SearchResult {
-    pub(crate) fn locator_label(&self) -> String {
-        format!("Locate {}: {}", self.owner.label(), self.section)
+    pub(crate) fn localized_locator_label(&self, ctx: &egui::Context) -> String {
+        crate::tr!(
+            ctx,
+            "controls.search.locate",
+            owner = super::localized(ctx, self.owner.label()),
+            section = super::localized(ctx, self.section)
+        )
+        .into_owned()
     }
 
-    pub(crate) fn details(&self) -> &str {
-        &self.details
+    pub(crate) fn localized_details(&self, ctx: &egui::Context) -> String {
+        self.paths
+            .iter()
+            .filter_map(|path| super::lookup(path))
+            .map(|entry| entry.localized_description(ctx))
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 }
 
@@ -66,17 +77,14 @@ fn build_with_projection(
                 section: entry.section,
                 labels: Vec::new(),
                 target_path: entry.path.clone(),
-                details: String::new(),
+                paths: Vec::new(),
             });
             results.last_mut().expect("just inserted result")
         };
         if !result.labels.contains(&entry.label) {
             result.labels.push(entry.label.clone());
         }
-        if !result.details.is_empty() {
-            result.details.push_str("\n\n");
-        }
-        result.details.push_str(&entry.description());
+        result.paths.push(entry.path.clone());
     }
     results
 }
@@ -253,7 +261,6 @@ mod tests {
             let located = build_filtered(path, &params, &extras, false);
             assert_eq!(located.len(), 1, "{path}");
             assert_eq!(located[0].target_path, path);
-            assert_eq!(located[0].locator_label(), "Locate Scan: Scanner");
             if editor == EditorKind::Action {
                 assert_eq!(entry.affected_paths.len(), 4, "{path}");
             }
@@ -491,10 +498,6 @@ mod tests {
         let found = build_filtered("Preflash", &params, &extras, false);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].owner, ControlOwner::Stage(Stage::Print));
-        assert_eq!(
-            found[0].locator_label(),
-            format!("Locate {}: Preflash", Stage::Print.label())
-        );
         assert!(
             found[0]
                 .labels

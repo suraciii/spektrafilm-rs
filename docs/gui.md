@@ -34,7 +34,17 @@ The right inspector contains one continuous list, not mutually exclusive pages. 
 | Scan | Scanner, Print viewing glare |
 | Output | Output, Output gamut compress, CMYK ink style |
 
-The persistent **PREVIEW**, **SCAN**, and **SAVE** action bar stays below the inspector. **Settings** owns application/session preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
+The persistent **PREVIEW**, **SCAN**, and **SAVE** action bar stays below the inspector. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
+
+## Interface language
+
+Open **Settings → General → 语言 / Language** (**设置 → 通用** in Simplified Chinese). Choose **跟随系统 / System**, **简体中文**, or **English**. System follows supported operating-system language preferences and otherwise uses English. The selector keeps its bilingual label so it remains recognizable after switching.
+
+Language changes apply immediately and persist independently of photographic GUI state. Loading a state, applying a preset, restoring startup controls, and adjustment Undo/Redo do not change the language. Switching language does not rerender the photograph, alter numeric parsing, or clear existing editing and Export drafts. A preference write failure reports that the choice could not be saved while keeping it active for the current run.
+
+Control search accepts Chinese labels, English labels, and canonical paths in either language. For example, **胶片规格**, **Film Format**, **画面长边**, and `camera.film_format_mm` locate the same control. Brand and film-stock names, `35mm`/`120`/`4×5`, standard color-space names, paths, and user-authored preset text keep their original identities. Native file choosers follow the operating system's language.
+
+Chinese fonts are bundled for offline use; no system font installation is required. The interface supports native input-method composition in editable text. The CLI, serialized state, recipes, and diagnostic reports retain their existing machine vocabulary. The product contract is [GUI language](../specs/gui-language/spec.md#interface-language).
 
 ## Input and controls
 
@@ -60,7 +70,7 @@ Simulated exposure remains a separate control at **Input and capture → Camera 
 
 ### Editing, search, and reset
 
-**Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits follow **Settings → Session → auto preview**. Incomplete or invalid text keeps the last valid parameter value and remains visible as an editing draft until Escape or focus leaves the field. Escape cancels the uncommitted edit. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
+**Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits follow **Settings → General → auto preview**. Incomplete or invalid text keeps the last valid parameter value and remains visible as an editing draft until Escape or ordinary focus loss. Opening language settings suspends the draft instead of finishing it; return to the field to continue or cancel it. Escape cancels the uncommitted edit. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
 
 Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. A modified row shows a gold marker and value; the marker uses the same section-reset baseline as the section `modified` chip. Tuple, optional, extra, and boolean rows use the same marker rule. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
 
@@ -124,7 +134,7 @@ Accepting another source, completing RAW reprocessing, or loading a complete GUI
 
 ## Preview and Scan
 
-**PREVIEW** renders a bounded image using the configured preview long-edge limit and current runtime controls. Set **preview max size** and **auto preview** in **Settings → Session**. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active. Explicitly update it when auto preview is disabled.
+**PREVIEW** renders a bounded image using the configured preview long-edge limit and current runtime controls. Set **preview max size** and **auto preview** in **Settings → General**. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active. Explicitly update it when auto preview is disabled.
 
 New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates skip the development animation; explicit Preview and Scan retain it.
 
@@ -222,9 +232,9 @@ Each preset card carries its own `preset actions` control beside the entry name.
 
 Launching with `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` set to an existing directory publishes every completed operation's report there as a new `operation-<id>.json`. It selects summary collection for the session, as a CLI report request does. See the [telemetry specification](../specs/telemetry/spec.md) for report semantics.
 
-## Session configuration
+## Application configuration
 
-**Settings** contains **Session**, **GUI parameters**, **Display**, and **Diagnostics**. It is separate from photographic adjustments and independent Export options. **Close settings**, Escape, or the window close action returns to the workspace and restores focus to the invoking control. Closing Export options likewise returns focus to its invoking control.
+**Settings** contains **General**, **GUI parameters**, **Display**, and **Diagnostics**. It is separate from photographic adjustments and independent Export options. **Close settings**, Escape, or the window close action returns to the workspace and restores focus to the invoking control. Closing Export options likewise returns focus to its invoking control.
 
 The viewer interpolation mode, canvas, white padding, and display transform affect the disposable viewer raster. See [Viewer](#viewer).
 

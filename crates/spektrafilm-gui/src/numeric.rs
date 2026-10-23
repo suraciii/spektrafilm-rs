@@ -14,6 +14,7 @@ use crate::theme;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AdjustmentSignals {
     pub started: bool,
+    pub resumed: bool,
     pub active: bool,
     pub completed: bool,
     pub canceled: bool,
@@ -51,6 +52,7 @@ fn signal_adjustment(ctx: &egui::Context, label: &str, signals: AdjustmentSignal
             .map(|frame| frame.signals)
             .unwrap_or_default();
         frame.started |= signals.started;
+        frame.resumed |= signals.resumed;
         frame.active |= signals.active;
         frame.completed |= signals.completed;
         frame.canceled |= signals.canceled;
@@ -118,6 +120,8 @@ struct NumericEditState {
     edit_start: f64,
     focused: bool,
     editing: bool,
+    suspended_for_language: bool,
+    resumed_after_language: bool,
     wheel_events: VecDeque<f32>,
 }
 
@@ -126,6 +130,79 @@ struct SliderEditState {
     start: Option<f64>,
     canceled: bool,
     deferred: Option<f64>,
+}
+
+/// Record the language control's stable focus/pointer target. The inspector
+/// renders before Settings, so pending numeric edits inspect the previous
+/// frame's target before the language selector receives a click.
+pub(crate) fn register_language_selector(ctx: &egui::Context, response: &egui::Response) {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|data| {
+        *data.get_temp_mut_or_insert_with(egui::Id::new("numeric-language-selector"), || {
+            (response.id, response.rect, pass)
+        }) = (response.id, response.rect, pass);
+    });
+}
+
+/// Opening the language settings is presentation navigation, not completion of
+/// a photographic edit. Keep its pending draft until its editor is resumed.
+pub(crate) fn suspend_numeric_draft(ctx: &egui::Context) {
+    ctx.data_mut(|data| {
+        if let Some(id) = data.get_temp::<egui::Id>(egui::Id::new("numeric-active-text"))
+            && let Some(mut state) = data.get_temp::<NumericEditState>(id)
+        {
+            state.suspended_for_language = true;
+            data.insert_temp(egui::Id::new("numeric-suspended-text"), id);
+            state.wheel_events.clear();
+            if data.get_temp::<egui::Id>(egui::Id::new("numeric-active-text")) == Some(id) {
+                data.remove::<egui::Id>(egui::Id::new("numeric-active-text"));
+            }
+            data.insert_temp(id, state);
+        }
+    });
+}
+
+/// A pending presentation-suspended draft can outlive the editor's visibility.
+pub(crate) fn has_suspended_adjustment(ctx: &egui::Context) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<egui::Id>(egui::Id::new("numeric-suspended-text"))
+            .is_some()
+    })
+}
+
+/// History closes the suspended gesture before accepting an unrelated edit.
+/// Its draft remains available, but later cancellation restores only its field.
+pub(crate) fn detach_suspended_adjustment(ctx: &egui::Context) {
+    ctx.data_mut(|data| {
+        let owner_id = egui::Id::new("numeric-suspended-text");
+        let owner = data.get_temp::<egui::Id>(owner_id);
+        data.remove::<egui::Id>(owner_id);
+        if let Some(id) = owner
+            && let Some(mut state) = data.get_temp::<NumericEditState>(id)
+        {
+            state.resumed_after_language = true;
+            data.insert_temp(id, state);
+        }
+    });
+}
+
+fn language_selector_interaction(ctx: &egui::Context) -> bool {
+    let Some((id, rect, pass)) = ctx.data(|data| {
+        data.get_temp::<(egui::Id, egui::Rect, u64)>(egui::Id::new("numeric-language-selector"))
+    }) else {
+        return false;
+    };
+    if ctx.cumulative_pass_nr().saturating_sub(pass) > 1 {
+        return false;
+    }
+    ctx.memory(|memory| memory.focused() == Some(id))
+        || ctx.input(|input| {
+            input.pointer.any_pressed()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|position| rect.contains(position))
+        })
 }
 
 /// Unit suffix for a parameter path, from core parameter discovery.
@@ -258,7 +335,9 @@ pub(crate) fn numeric_marked<T: egui::emath::Numeric>(
     let mut changed = false;
     ui.horizontal(|ui| {
         let label_response = crate::controls::row_label(ui, label, experimental);
-        label_response.clone().on_hover_text(tooltip);
+        label_response
+            .clone()
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         mark.paint(ui, &label_response);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             changed |= mark.gold(ui, |ui| {
@@ -321,7 +400,7 @@ fn row_slider<T: egui::emath::Numeric>(
                         .logarithmic(true)
                         .smallest_positive(step.max(f64::MIN_POSITIVE));
                 }
-                ui.add(slider).on_hover_text(tooltip_for(label))
+                ui.add(slider).on_hover_text(tooltip_for(ui.ctx(), label))
             },
         )
         .inner;
@@ -392,8 +471,13 @@ fn row_slider<T: egui::emath::Numeric>(
 
 /// Tooltip text for a row slider: the value field carries the parameter's own
 /// tooltip, so the slider names the interaction instead.
-fn tooltip_for(label: &str) -> String {
-    format!("Drag to change {label}")
+fn tooltip_for(ctx: &egui::Context, label: &str) -> String {
+    crate::tr!(
+        ctx,
+        "controls.numeric.drag",
+        label = crate::controls::localized(ctx, label)
+    )
+    .into_owned()
 }
 
 // Numeric widgets keep their existing parameter interfaces.
@@ -462,6 +546,8 @@ where
             edit_start: current,
             focused: false,
             editing: false,
+            suspended_for_language: false,
+            resumed_after_language: false,
             wheel_events: VecDeque::new(),
         });
 
@@ -487,25 +573,28 @@ where
             // Invalid state is colour plus a border, never colour alone.
             text_edit = text_edit.text_color(theme::ERROR);
         }
-        let mut response = ui.add(text_edit).on_hover_text(tooltip);
+        let mut response = ui
+            .add(text_edit)
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         crate::controls::focus_response(ui, label, &response);
         // Name the editor itself, so assistive technology and the
         // accessibility tree's label lookup both find the field rather than a
         // separate label node, and declare the visible label as the field's
         // labelling node so the two read as one control.
+        let accessible_label = crate::controls::localized(ui.ctx(), label);
         ui.ctx().accesskit_node_builder(id, |node| {
-            node.set_label(label);
+            node.set_label(accessible_label.as_ref());
         });
         if let Some(label_id) = labelled_by {
             response = response.labelled_by(label_id);
         }
         if let Some(unit) = unit {
             ui.label(
-                egui::RichText::new(unit)
+                egui::RichText::new(crate::controls::localized(ui.ctx(), unit))
                     .color(theme::FG_MUTED)
                     .size(theme::SIZE_UNIT),
             )
-            .on_hover_text(tooltip);
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         }
         if is_invalid {
             ui.painter().rect_stroke(
@@ -553,11 +642,22 @@ fn value_row_events<T: egui::emath::Numeric>(
     valid: impl Fn(T) -> bool,
     changed: &mut bool,
 ) {
-    if response.gained_focus() || (!state.focused && response.has_focus()) {
-        state.edit_start = value.to_f64();
-    }
     let mut signals = AdjustmentSignals::default();
-    let escape = (state.focused || response.has_focus() || response.gained_focus())
+    if state.editing && language_selector_interaction(ui.ctx()) {
+        state.suspended_for_language = true;
+        state.wheel_events.clear();
+    }
+    if response.gained_focus() || (!state.focused && response.has_focus()) {
+        if state.suspended_for_language {
+            signals.resumed = state.editing && !state.resumed_after_language;
+            signals.started = state.editing && state.resumed_after_language;
+        } else {
+            state.edit_start = value.to_f64();
+        }
+        state.suspended_for_language = false;
+    }
+    let escape = !state.suspended_for_language
+        && (state.focused || response.has_focus() || response.gained_focus())
         && ui.input(|input| input.key_pressed(egui::Key::Escape));
     if escape {
         let start = T::from_f64(state.edit_start);
@@ -565,12 +665,16 @@ fn value_row_events<T: egui::emath::Numeric>(
             *value = start;
             *changed = true;
         }
-        signals.canceled = state.editing;
+        // Once an unrelated edit detached this draft, cancellation restores only
+        // its field rather than rolling back the newer accepted document.
+        signals.canceled = state.editing && !state.resumed_after_language;
+        signals.completed = state.editing && state.resumed_after_language;
+        state.resumed_after_language = false;
         state.editing = false;
         state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
         response.surrender_focus();
     } else {
-        if response.changed() {
+        if response.changed() && !state.suspended_for_language {
             if !state.editing {
                 state.editing = true;
                 signals.started = true;
@@ -587,7 +691,9 @@ fn value_row_events<T: egui::emath::Numeric>(
             }
         }
 
-        collect_wheel_events(ui, response, &mut state.wheel_events);
+        if !state.suspended_for_language {
+            collect_wheel_events(ui, response, &mut state.wheel_events);
+        }
         let finish_for_wheel = state.editing && !state.wheel_events.is_empty();
         if !state.editing
             && !adjustment_ended(ui.ctx())
@@ -608,7 +714,11 @@ fn value_row_events<T: egui::emath::Numeric>(
             }
         }
 
-        if response.lost_focus() || (state.focused && !response.has_focus()) || finish_for_wheel {
+        if !state.suspended_for_language
+            && (response.lost_focus()
+                || (state.focused && !response.has_focus())
+                || finish_for_wheel)
+        {
             let final_value = parse_value::<T>(&state.text, min, max).map(T::from_f64);
             let target = match final_value {
                 // Commit a valid draft deferred while focused (e.g. a bare "0").
@@ -629,18 +739,20 @@ fn value_row_events<T: egui::emath::Numeric>(
                 if final_value.is_some_and(&valid) {
                     signals.completed = true;
                 } else {
-                    signals.canceled = true;
+                    signals.canceled = !state.resumed_after_language;
+                    signals.completed = state.resumed_after_language;
                 }
             }
+            state.resumed_after_language = false;
             state.editing = false;
             state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
             state.edit_start = value.to_f64();
         }
     }
-    if !state.wheel_events.is_empty() {
+    if !state.suspended_for_language && !state.wheel_events.is_empty() {
         ui.ctx().request_repaint();
     }
-    signals.active = state.editing;
+    signals.active = state.editing && !state.suspended_for_language;
     if signals != AdjustmentSignals::default() {
         signal_adjustment(ui.ctx(), label, signals);
     }
@@ -648,10 +760,18 @@ fn value_row_events<T: egui::emath::Numeric>(
     state.focused = response.has_focus() && !escape;
     ui.ctx().data_mut(|data| {
         let active_id = egui::Id::new("numeric-active-text");
-        if state.editing {
+        if state.editing && !state.suspended_for_language {
             data.insert_temp(active_id, id);
         } else if data.get_temp::<egui::Id>(active_id) == Some(id) {
             data.remove::<egui::Id>(active_id);
+        }
+        let suspended_id = egui::Id::new("numeric-suspended-text");
+        if state.editing && state.suspended_for_language && !state.resumed_after_language {
+            if data.get_temp::<egui::Id>(suspended_id) != Some(id) {
+                data.insert_temp(suspended_id, id);
+            }
+        } else if data.get_temp::<egui::Id>(suspended_id) == Some(id) {
+            data.remove::<egui::Id>(suspended_id);
         }
         data.insert_temp(id, state.clone());
     });

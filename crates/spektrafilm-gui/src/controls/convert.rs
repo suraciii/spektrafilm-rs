@@ -13,7 +13,7 @@ pub(crate) fn sections(
     if section == "Convert" {
         ui.scope(|ui| {
             ui.label(
-                egui::RichText::new("Workflow: 1) Detect base → 2) Blind calibration (vibrant frame) → 3) Neutralize filters")
+                egui::RichText::new(localized(ui.ctx(), "Workflow: 1) Detect base → 2) Blind calibration (vibrant frame) → 3) Neutralize filters"))
                     .small()
                     .color(theme::FG_MUTED),
             );
@@ -27,7 +27,7 @@ pub(crate) fn sections(
                 flags.runtime_changed |= param_numeric(ui, "base percentile", &mut params.film_render.convert.base_percentile, "film_render.convert.base_percentile", "Brightest-pixels percentile used by 'Detect base' to sample the clear / unexposed film (99 = brightest 1%). Detect base fits the film Base so that clear film maps to density 0 (unexposed -> neutral).");
             }
             if filter_matches(filter, "calibration") {
-                ui.label("calibration").on_hover_text("3x3 device-correction matrix (9 numbers, row-major) applied to the input before inversion, to undo the scanner/camera colour rendering vs the standard observer over the film dyes (the cross-channel cast that the scan illuminant and base cannot reach). Use 'Blind calibration' to fit it from the current image.");
+                ui.label(localized(ui.ctx(), "calibration")).on_hover_text(localized(ui.ctx(), "3x3 device-correction matrix (9 numbers, row-major) applied to the input before inversion, to undo the scanner/camera colour rendering vs the standard observer over the film dyes (the cross-channel cast that the scan illuminant and base cannot reach). Use 'Blind calibration' to fit it from the current image."));
                 flags.runtime_changed |= calibration_matrix(ui, &mut params.film_render.convert.calibration);
                 flags.runtime_changed |= ui.text_edit_singleline(&mut params.film_render.convert.calibration).changed();
             }
@@ -42,7 +42,7 @@ pub(crate) fn sections(
                         ("neutralize print filters", "action.neutralize_filters", CalibrationAction::NeutralizeFilters, "Solve main enlarger M/Y shifts so the current film base midgray prints neutral. Writes the Enlarger controls."),
                     ] {
                         if filter_matches(filter, label) {
-                            let response = ui.button(label).on_hover_text(help);
+                            let response = ui.push_id(path, |ui| ui.button(localized(ui.ctx(), label)).on_hover_text(localized(ui.ctx(), help))).inner;
                             locate_row(ui, path, &response);
                             if response.clicked() { flags.action = Some(action); }
                         }
@@ -95,11 +95,16 @@ fn scan_illuminant(ui: &mut Ui, value: &mut String) -> bool {
         .add(
             egui::TextEdit::singleline(&mut draft)
                 .desired_width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
-                .hint_text("custom BB<kelvin>"),
+                .hint_text(localized(ui.ctx(), "custom BB<kelvin>")),
         )
-        .on_hover_text("Enter any shared catalog illuminant or BB<kelvin> (1667..=25000).");
-    ui.ctx()
-        .accesskit_node_builder(response.id, |node| node.set_label("custom scan illuminant"));
+        .on_hover_text(localized(
+            ui.ctx(),
+            "Enter any shared catalog illuminant or BB<kelvin> (1667..=25000).",
+        ));
+    let accessible_label = localized(ui.ctx(), "custom scan illuminant");
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_label(accessible_label.as_ref())
+    });
     if response.changed()
         && draft != *value
         && spektrafilm_core::spectral_service::is_supported_illuminant(&draft)

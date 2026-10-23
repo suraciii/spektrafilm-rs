@@ -70,7 +70,7 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     script(h, chooser::ChooserResult::Scripted(exported.clone()));
     export_action(h, "Export file…");
     wait_until(h, |a| {
-        a.export_job.is_none() && a.status.starts_with("Exported")
+        a.export_job.is_none() && a.status.to_string().starts_with("Exported")
     });
     let expected = image_io::convert_image(
         &scan,
@@ -121,7 +121,10 @@ fn startup_default_and_factory_restore_stay_in_session_directory() {
     assert!(directory.join("gui_default_state.json").is_file());
     click(h, "Restore");
     assert!(
-        h.state().status.starts_with("Restored factory default"),
+        h.state()
+            .status
+            .to_string()
+            .starts_with("Restored factory default"),
         "{}",
         h.state().status
     );
@@ -177,7 +180,10 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
         script(h, chooser::ChooserResult::Scripted(path));
         click(h, "Load from file");
         assert!(
-            h.state().status.starts_with("State load error:"),
+            h.state()
+                .status
+                .to_string()
+                .starts_with("State load error:"),
             "{}",
             h.state().status
         );
@@ -198,7 +204,7 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
     script(h, chooser::ChooserResult::Scripted(corrupt));
     import_file(h, false);
     assert!(
-        h.state().status.starts_with("Load error:"),
+        h.state().status.to_string().starts_with("Load error:"),
         "{}",
         h.state().status
     );
@@ -383,7 +389,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     script(h, chooser::ChooserResult::Scripted(exported.clone()));
     export_action(h, "Export file…");
     wait_until(h, |a| {
-        a.export_job.is_none() && a.status.starts_with("Exported")
+        a.export_job.is_none() && a.status.to_string().starts_with("Exported")
     });
     assert_float_tiff(&exported);
     let actual = image_io::load(&exported).unwrap().image;

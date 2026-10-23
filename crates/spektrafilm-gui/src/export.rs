@@ -301,9 +301,18 @@ fn draft_reset<T: Clone + PartialEq>(
     factory: &T,
     applicable: bool,
 ) {
-    if ui.add_enabled(applicable && value != factory, egui::Button::new(format!("Reset {label} to factory")))
-        .on_hover_text("Reset only this Export draft option. Cancel discards the draft; this does not edit the photograph.")
-        .clicked() {
+    if ui
+        .add_enabled(
+            applicable && value != factory,
+            egui::Button::new(crate::tr!(
+                ui.ctx(),
+                "surfaces.export.reset",
+                label = controls::localized(ui.ctx(), label)
+            )),
+        )
+        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.reset_help"))
+        .clicked()
+    {
         value.clone_from(factory);
     }
 }
@@ -341,7 +350,7 @@ impl ExportDialog {
         let mut open = true;
         let mut submit = false;
         let mut cancel = false;
-        egui::Window::new("Export options")
+        egui::Window::new(crate::i18n::text(ctx, "surfaces.export.title")).id(egui::Id::new("Export options"))
             .id(egui::Id::new("full_render_export_options"))
             .open(&mut open)
             .collapsible(false)
@@ -374,7 +383,7 @@ impl ExportDialog {
                     ExportFormat::Exr => &[(BitDepth::Sixteen, "16 bit"), (BitDepth::ThirtyTwo, "32 bit")],
                 };
                 if depth_choices.is_empty() {
-                    let response = ui.add(egui::Label::new("Bit depth: 8 bit — required by JPEG and PNG")
+                    let response = ui.add(egui::Label::new(crate::i18n::text(ui.ctx(), "surfaces.export.depth_fixed"))
                         .sense(egui::Sense::focusable_noninteractive()));
                     controls::locate_row(ui, "extras.rust.save_bit_depth", &response);
                 } else {
@@ -383,11 +392,10 @@ impl ExportDialog {
                 draft_reset(ui, "Bit depth", &mut draft.depth, &factory.depth, !depth_choices.is_empty());
                 let jpeg = draft.format == ExportFormat::Jpeg;
                 if jpeg {
-                    ui.label("JPEG uses lossy compression, including at quality 100. Use PNG, TIFF or EXR to preserve image detail.");
+                    ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_warning"));
                 }
                 let quality = ui.add_enabled(jpeg,
-                    egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text("JPEG quality"))
-                    .on_disabled_hover_text("JPEG quality applies only to JPEG. The stored quality is retained for the next JPEG export.");
+                    egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality"))).on_disabled_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality_help"));
                 controls::locate_row(ui, "extras.rust.jpeg_quality", &quality);
                 draft_reset(ui, "JPEG quality", &mut draft.jpeg_quality, &factory.jpeg_quality, jpeg);
                 ui.add_enabled_ui(jpeg, |ui| {
@@ -398,7 +406,7 @@ impl ExportDialog {
                 });
                 draft_reset(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &factory.jpeg_subsampling, jpeg);
                 if !jpeg {
-                    ui.label(egui::RichText::new("JPEG quality and subsampling apply only to JPEG; stored values are retained.").small().color(theme::FG_MUTED));
+                    ui.label(egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_inactive")).small().color(theme::FG_MUTED));
                 }
                 match draft.format {
                     ExportFormat::Tiff => {
@@ -414,18 +422,18 @@ impl ExportDialog {
                             ExportFormat::Png => "Compression: PNG lossless — fixed by the PNG writer",
                             ExportFormat::Tiff => unreachable!(),
                         };
-                        let response = ui.add(egui::Label::new(text)
+                        let response = ui.add(egui::Label::new(controls::localized(ui.ctx(), text))
                             .sense(egui::Sense::focusable_noninteractive()));
                         controls::locate_row(ui, "extras.rust.export_compression", &response);
                     }
                 }
                 draft_reset(ui, "Compression", &mut draft.compression, &factory.compression, draft.format == ExportFormat::Tiff);
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
-                let color_space = egui::ComboBox::from_label("Saving color space")
+                let color_space = egui::ComboBox::new("Saving color space", crate::i18n::text(ui.ctx(), "surfaces.export.color_space"))
                     .selected_text(&draft.saving_color_space)
                     .show_ui(ui, |ui| {
                     ui.label(
-                        egui::RichText::new("sRGB for web · Adobe RGB for print · ACES2065-1 for archival")
+                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.space_hint"))
                             .small()
                             .color(theme::FG_MUTED),
                     );
@@ -433,22 +441,18 @@ impl ExportDialog {
                         ui.selectable_value(&mut draft.saving_color_space, space.to_owned(), space);
                     }
                 })
-                .response
-                .on_hover_text("Color space and transfer encoding of the file Export writes. This is file conversion, distinct from the output color space of the runtime digital output and from the display transform, which is viewer-only.");
+                .response.on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.space_help"));
                 controls::locate_row(ui, "extras.rust.export_saving_color_space", &color_space);
                 draft_reset(ui, "Saving color space", &mut draft.saving_color_space, &factory.saving_color_space, true);
                 let encoding = ui.add_enabled(draft.format == ExportFormat::Tiff,
-                    egui::Checkbox::new(&mut draft.saving_cctf_encoding, "Apply saving CCTF encoding"))
-                    .on_hover_text(format!(
-                        "CCTF is the {}. Apply the saving transfer encoding to the samples Export writes; off writes linear samples. This file conversion is independent of the viewer-only display transform.",
-                        crate::routes::vocabulary::CCTF
-                    ));
+                    egui::Checkbox::new(&mut draft.saving_cctf_encoding, controls::localized(ui.ctx(), "Apply saving CCTF encoding")))
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help"));
                 controls::locate_row(ui, "extras.rust.export_saving_cctf_encoding", &encoding);
                 draft_reset(ui, "Apply saving CCTF encoding", &mut draft.saving_cctf_encoding, &factory.saving_cctf_encoding, draft.format == ExportFormat::Tiff);
                 draft.normalize();
                 match draft.format {
-                    ExportFormat::Exr => { ui.label("EXR uses linear color and ZIP compression; encoding is fixed off."); }
-                    ExportFormat::Jpeg | ExportFormat::Png => { ui.label("JPEG and PNG use encoded color; encoding is fixed on."); }
+                    ExportFormat::Exr => { ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.exr_fixed")); }
+                    ExportFormat::Jpeg | ExportFormat::Png => { ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.encoded_fixed")); }
                     ExportFormat::Tiff => {}
                 }
                 let depth_label = match draft.depth {
@@ -458,42 +462,35 @@ impl ExportDialog {
                 };
                 let format_label = draft.format.label();
                 let summary = match draft.format {
-                    ExportFormat::Exr => format!("{format_label} · {depth_label} · {} · linear · ZIP", draft.saving_color_space),
-                    ExportFormat::Jpeg => format!("{format_label} · 8 bit · {} · quality {} · {}", draft.saving_color_space, draft.jpeg_quality, draft.jpeg_subsampling.as_str()),
-                    ExportFormat::Png => format!("{format_label} · 8 bit · {} · encoded", draft.saving_color_space),
-                    ExportFormat::Tiff => format!("{format_label} · {depth_label} · {} · {} · {}", draft.saving_color_space, if draft.saving_cctf_encoding { "CCTF" } else { "linear" }, match draft.compression { ExportCompression::Zip => "ZIP", ExportCompression::None => "None" }),
+                    ExportFormat::Exr => crate::tr!(ui.ctx(), "surfaces.export.summary_exr", format = format_label, depth = depth_label, space = &draft.saving_color_space),
+                    ExportFormat::Jpeg => crate::tr!(ui.ctx(), "surfaces.export.summary_jpeg", format = format_label, space = &draft.saving_color_space, quality = draft.jpeg_quality, subsampling = draft.jpeg_subsampling.as_str()),
+                    ExportFormat::Png => crate::tr!(ui.ctx(), "surfaces.export.summary_png", format = format_label, space = &draft.saving_color_space),
+                    ExportFormat::Tiff => crate::tr!(ui.ctx(), "surfaces.export.summary_tiff", format = format_label, depth = depth_label, space = &draft.saving_color_space, encoding = if draft.saving_cctf_encoding { std::borrow::Cow::Borrowed("CCTF") } else { crate::i18n::text(ui.ctx(), "surfaces.export.linear") }, compression = match draft.compression { ExportCompression::Zip => std::borrow::Cow::Borrowed("ZIP"), ExportCompression::None => crate::i18n::text(ui.ctx(), "surfaces.export.none") }),
                 };
-                ui.label(egui::RichText::new(format!("Summary: {summary}")).small().color(theme::FG_MUTED))
-                    .on_hover_text(format!(
-                        "What these settings will write: format, bit depth, saving color space, and the transfer encoding (CCTF, the {}, or linear) plus compression. Save writes the retained output with the current simulation saving settings instead, without rerendering.",
-                        crate::routes::vocabulary::CCTF
-                    ));
+                ui.label(egui::RichText::new(crate::tr!(ui.ctx(), "surfaces.export.summary", summary = summary)).small().color(theme::FG_MUTED))
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.summary_help"));
                 let compressed = container_compresses(draft);
                 let estimate = format_size(estimated_output_bytes(draft, dimensions));
                 let row = if compressed {
-                    format!("Estimated output size: ≈ {estimate} before compression")
+                    crate::tr!(ui.ctx(), "surfaces.export.size_compressed", size = estimate)
                 } else {
-                    format!("Estimated output size: ≈ {estimate}")
+                    crate::tr!(ui.ctx(), "surfaces.export.size", size = estimate)
                 };
                 ui.label(egui::RichText::new(row).small().color(theme::FG_MUTED))
                     .on_hover_text(if compressed {
-                        "Pixel payload at the input's full resolution. This container compresses the samples, so the file is smaller; the exact size depends on image content."
+                        crate::i18n::text(ui.ctx(), "surfaces.export.size_compressed_help")
                     } else {
-                        "Pixel payload at the input's full resolution. This container stores the samples uncompressed, so the file matches apart from headers."
+                        crate::i18n::text(ui.ctx(), "surfaces.export.size_help")
                     });
                     });
                 ui.separator();
                 ui.horizontal(|ui| {
                     // The sidebar opener and this submit are two steps of one
                     // flow, so they carry distinct labels.
-                    let export = ui
-                        .button("Export file…")
-                        .on_hover_text("Start an independent export: render the full-resolution input with the current runtime controls and these saving settings, then write the file. Export never reads or writes the retained output, so it is a different operation from Save.");
+                    let export = ui.button(crate::i18n::text(ui.ctx(), "surfaces.export.submit")).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.submit_help"));
                     controls::locate_row(ui, "action.export", &export);
                     submit = export.clicked();
-                    let discard = ui
-                        .button("Cancel")
-                        .on_hover_text("Discard these export settings. The retained output is unchanged.");
+                    let discard = ui.button(crate::i18n::text(ui.ctx(), "surfaces.action.cancel")).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.discard_help"));
                     controls::locate_row(ui, "action.cancel_export_draft", &discard);
                     cancel = discard.clicked();
                 });

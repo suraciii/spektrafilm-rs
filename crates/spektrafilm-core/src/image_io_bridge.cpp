@@ -18,6 +18,12 @@
 #include <vector>
 
 namespace {
+// Semantic authored failures are retained separately from unchanged CLI prose.
+thread_local uint32_t failure_codes = 0;
+thread_local std::string diagnostic_detail;
+void reset_failure() { failure_codes = 0; diagnostic_detail.clear(); }
+void failure(unsigned code) { failure_codes |= uint32_t(1) << code; }
+struct AuthoredFailure : std::runtime_error { using std::runtime_error::runtime_error; };
 struct Metadata { Exiv2::ExifData exif; Exiv2::IptcData iptc; Exiv2::XmpData xmp; };
 std::once_flag xmp_initialization;
 std::mutex xmp_namespace_mutex;
@@ -49,16 +55,17 @@ struct FileCloser {
 // is identified from its own magic bytes before OIIO is asked to open it.
 bool supported_container(const std::string& path, std::string& reason) {
     std::unique_ptr<FILE, FileCloser> file(OIIO::Filesystem::fopen(path.c_str(), "rb"));
-    if (!file) { reason = "Cannot open image file"; return false; }
+    if (!file) { failure(0); reason = "Cannot open image file"; return false; }
     unsigned char magic[16] = {0};
     const auto read = std::fread(magic, 1, sizeof(magic), file.get());
-    if (read < 4) { reason = "File is too small to be an image"; return false; }
+    if (read < 4) { failure(1); reason = "File is too small to be an image"; return false; }
     // JPEG, PNG, TIFF (both byte orders) and OpenEXR.
     if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) return true;
     if (magic[0] == 0x89 && magic[1] == 'P' && magic[2] == 'N' && magic[3] == 'G') return true;
     if ((magic[0] == 'I' && magic[1] == 'I' && magic[2] == 0x2A && magic[3] == 0x00) ||
         (magic[0] == 'M' && magic[1] == 'M' && magic[2] == 0x00 && magic[3] == 0x2A)) return true;
     if (magic[0] == 0x76 && magic[1] == 0x2F && magic[2] == 0x31 && magic[3] == 0x01) return true;
+    failure(2);
     reason = "Unrecognized image container";
     return false;
 }
@@ -72,8 +79,10 @@ void initialize_xmp() {
     // before metadata reads/writes, and protect later namespace registration
     // with the callback supported by Exiv2 rather than serializing image I/O.
     std::call_once(xmp_initialization, [] {
-        if (!Exiv2::XmpParser::initialize(lock_xmp_namespace, &xmp_namespace_mutex))
-            throw std::runtime_error("Exiv2 XMP toolkit initialization failed");
+        if (!Exiv2::XmpParser::initialize(lock_xmp_namespace, &xmp_namespace_mutex)) {
+            failure(3);
+            throw AuthoredFailure("Exiv2 XMP toolkit initialization failed");
+        }
     });
 }
 // Imath's half constructor and OIIO's conversion both pass through float.
@@ -107,11 +116,25 @@ void error(char** target, const std::string& text) {
     *target = static_cast<char*>(std::malloc(text.size() + 1));
     if (*target) std::memcpy(*target, text.c_str(), text.size() + 1);
 }
+void external_error(char** target, const std::string& text) {
+    diagnostic_detail = text;
+    error(target, text);
+}
+void owned_error(char** target, unsigned code, const std::string& text) {
+    failure(code);
+    error(target, text);
+}
 }
 extern "C" {
 void sf_io_free(void* pointer) { std::free(pointer); }
+void sf_io_take_failure(uint32_t* codes, char** detail) {
+    *codes = failure_codes;
+    if (failure_codes) error(detail, diagnostic_detail);
+    reset_failure();
+}
 void sf_metadata_free(void* pointer) { delete static_cast<Metadata*>(pointer); }
 void* sf_metadata_read(const char* path) {
+    reset_failure();
     try {
         initialize_xmp();
         auto image = Exiv2::ImageFactory::open(path);
@@ -121,6 +144,7 @@ void* sf_metadata_read(const char* path) {
     } catch (...) { return nullptr; }
 }
 int sf_image_load(const char* path, unsigned* width, unsigned* height, double** samples, char** err) {
+    reset_failure();
     try {
         std::string container_reason;
         if (!supported_container(path, container_reason)) {
@@ -128,12 +152,12 @@ int sf_image_load(const char* path, unsigned* width, unsigned* height, double** 
             return 0;
         }
         auto input = OIIO::ImageInput::open(path);
-        if (!input) { error(err, OIIO::geterror()); return 0; }
+        if (!input) { external_error(err, OIIO::geterror()); return 0; }
         auto spec = input->spec();
-        if (spec.width <= 0 || spec.height <= 0 || spec.nchannels < 1) { error(err, "Invalid image dimensions/channels"); return 0; }
+        if (spec.width <= 0 || spec.height <= 0 || spec.nchannels < 1) { owned_error(err, 4, "Invalid image dimensions/channels"); return 0; }
         std::vector<double> native(size_t(spec.width) * spec.height * spec.nchannels);
-        if (!input->read_image(0, 0, 0, spec.nchannels, OIIO::TypeDesc::DOUBLE, native.data())) { error(err, input->geterror()); return 0; }
-        if (!input->close()) { error(err, input->geterror()); return 0; }
+        if (!input->read_image(0, 0, 0, spec.nchannels, OIIO::TypeDesc::DOUBLE, native.data())) { external_error(err, input->geterror()); return 0; }
+        if (!input->close()) { external_error(err, input->geterror()); return 0; }
         auto count = size_t(spec.width) * spec.height * 3;
         auto rgb = static_cast<double*>(std::malloc(count * sizeof(double)));
         if (!rgb) throw std::bad_alloc();
@@ -143,12 +167,14 @@ int sf_image_load(const char* path, unsigned* width, unsigned* height, double** 
                 rgb[p * 3 + c] = native[p * spec.nchannels + (spec.nchannels < 3 ? 0 : c)];
         *width = spec.width; *height = spec.height; *samples = rgb;
         return 1;
-    } catch (const std::exception& ex) { error(err, ex.what()); return 0; }
+    } catch (const AuthoredFailure& ex) { error(err, ex.what()); return 0; }
+      catch (const std::exception& ex) { diagnostic_detail = ex.what(); error(err, ex.what()); return 0; }
 }
 int sf_image_save(const char* path, unsigned width, unsigned height, const double* samples,
                   int depth, int format, int jpeg_quality, int jpeg_subsampling,
                   int compression, const char* color_space, bool export_metadata,
                   const unsigned char* icc, size_t icc_len, char** err) {
+    reset_failure();
     try {
         // format: JPEG=0, PNG=1, TIFF=2, EXR=3. Quantization truncates, like numpy astype.
         OIIO::TypeDesc type = OIIO::TypeDesc::UINT8;
@@ -173,21 +199,21 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         if (icc && icc_len && format != 3)
             spec.attribute("ICCProfile", OIIO::TypeDesc(OIIO::TypeDesc::UINT8, int(icc_len)), icc);
         std::unique_ptr<FILE, FileCloser> file(OIIO::Filesystem::fopen(path, "wb"));
-        if (!file) { error(err, std::string("Cannot open image output: ") + std::strerror(errno)); return 0; }
+        if (!file) { diagnostic_detail = std::strerror(errno); owned_error(err, 5, std::string("Cannot open image output: ") + diagnostic_detail); return 0; }
         CheckedOutput proxy(file.get());
         auto output = OIIO::ImageOutput::create(path);
         if (!output) {
             auto message = OIIO::geterror();
-            error(err, message.empty() ? "Cannot create image output plugin" : message);
+            if (message.empty()) owned_error(err, 6, "Cannot create image output plugin"); else external_error(err, message);
             return 0;
         }
         if (!output->set_ioproxy(&proxy)) {
-            error(err, "Image output plugin does not support checked file writes");
+            owned_error(err, 7, "Image output plugin does not support checked file writes");
             return 0;
         }
         if (!output->open(path, spec)) {
             auto message = output->geterror();
-            error(err, message.empty() ? "Cannot open image container" : message);
+            if (message.empty()) owned_error(err, 8, "Cannot open image container"); else external_error(err, message);
             return 0;
         }
         size_t count = size_t(width) * height * 3;
@@ -210,14 +236,17 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
             ok = output->write_image(OIIO::TypeDesc::FLOAT, data.data());
         }
         std::string message = output->geterror();
-        if (!ok && message.empty()) message = "Native image data write failed";
+        diagnostic_detail = message;
+        if (!ok && message.empty()) { failure(9); message = "Native image data write failed"; }
         const bool closed = output->close();
         const auto close_message = output->geterror();
         if (!close_message.empty()) {
             if (!message.empty()) message += "; ";
             message += close_message;
+            if (!diagnostic_detail.empty()) diagnostic_detail += "; ";
+            diagnostic_detail += close_message;
         }
-        if (!closed && message.empty()) message = "Native image container finalization failed";
+        if (!closed && message.empty()) { failure(10); message = "Native image container finalization failed"; }
         output.reset();
         const bool flushed = std::fflush(file.get()) == 0;
         const bool stream_failed = std::ferror(file.get()) != 0;
@@ -226,14 +255,17 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         // the publishing rename while this handle is open.
         const bool stream_closed = std::fclose(file.release()) == 0;
         if (proxy.failed || !flushed || stream_failed || !stream_closed) {
+            failure(11);
             if (!message.empty()) message += "; ";
             message += "Native image file write/finalization failed";
         }
         if (!ok || !closed || !message.empty()) { error(err, message); return 0; }
         return 1;
-    } catch (const std::exception& ex) { error(err, ex.what()); return 0; }
+    } catch (const AuthoredFailure& ex) { error(err, ex.what()); return 0; }
+      catch (const std::exception& ex) { diagnostic_detail = ex.what(); error(err, ex.what()); return 0; }
 }
 int sf_image_validate(const char* path, char** err) {
+    reset_failure();
     try {
         std::string container_reason;
         if (!supported_container(path, container_reason)) {
@@ -241,24 +273,26 @@ int sf_image_validate(const char* path, char** err) {
             return 0;
         }
         auto input = OIIO::ImageInput::open(path);
-        if (!input) { error(err, "Image container is unreadable after metadata failure"); return 0; }
+        if (!input) { owned_error(err, 12, "Image container is unreadable after metadata failure"); return 0; }
         const auto spec = input->spec();
         if (spec.width <= 0 || spec.height <= 0 || spec.nchannels < 3) {
-            error(err, "Invalid image container after metadata failure"); return 0;
+            owned_error(err, 13, "Invalid image container after metadata failure"); return 0;
         }
         std::vector<float> row(size_t(spec.width) * spec.nchannels);
         for (int y = spec.y; y < spec.y + spec.height; ++y) {
             if (!input->read_scanline(y, spec.z, OIIO::TypeDesc::FLOAT, row.data())) {
                 auto message = input->geterror();
-                error(err, message.empty() ? "Incomplete image after metadata failure" : message); return 0;
+                if (message.empty()) owned_error(err, 14, "Incomplete image after metadata failure"); else external_error(err, message); return 0;
             }
         }
-        if (!input->close()) { error(err, "Image read finalization failed after metadata failure"); return 0; }
+        if (!input->close()) { owned_error(err, 15, "Image read finalization failed after metadata failure"); return 0; }
         return 1;
-    } catch (const std::exception& ex) { error(err, ex.what()); return 0; }
+    } catch (const AuthoredFailure& ex) { error(err, ex.what()); return 0; }
+      catch (const std::exception& ex) { diagnostic_detail = ex.what(); error(err, ex.what()); return 0; }
 }
 int sf_metadata_write(const char* path, const void* source, unsigned width, unsigned height,
                       const char* space, bool encoded, char** err) {
+    reset_failure();
     try {
         initialize_xmp();
         auto image = Exiv2::ImageFactory::open(path);
@@ -275,7 +309,7 @@ int sf_metadata_write(const char* path, const void* source, unsigned width, unsi
 #else
         const bool time_ok = localtime_r(&now, &local) != nullptr;
 #endif
-        if (!time_ok) throw std::runtime_error("Cannot obtain metadata timestamp");
+        if (!time_ok) { failure(16); throw AuthoredFailure("Cannot obtain metadata timestamp"); }
         std::strftime(timestamp, sizeof(timestamp), "%Y:%m:%d %H:%M:%S", &local);
         exif["Exif.Image.DateTime"] = timestamp;
         exif["Exif.Image.Software"] = "spektrafilm";
@@ -292,6 +326,7 @@ int sf_metadata_write(const char* path, const void* source, unsigned width, unsi
         image->xmpData()["Xmp.photoshop.ICCProfile"] = color + (encoded ? "" : " (linear)");
         image->writeMetadata();
         return 1;
-    } catch (const std::exception& ex) { error(err, ex.what()); return 0; }
+    } catch (const AuthoredFailure& ex) { error(err, ex.what()); return 0; }
+      catch (const std::exception& ex) { diagnostic_detail = ex.what(); error(err, ex.what()); return 0; }
 }
 }

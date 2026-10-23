@@ -65,7 +65,7 @@ pub(super) struct DisplaySource {
 
 struct FitCacheEntry {
     prepared: PreparedDisplay,
-    status: Option<String>,
+    status: Option<crate::app::Message>,
 }
 
 #[derive(Default)]
@@ -80,7 +80,7 @@ pub(super) struct DisplayResponse {
     pub(super) key: Vec<u64>,
     pub(super) generation: u64,
     pub(super) image: egui::ColorImage,
-    pub(super) status: Option<String>,
+    pub(super) status: Option<crate::app::Message>,
     pub(super) prepared: Option<PreparedDisplay>,
 }
 impl DisplayResponse {
@@ -193,7 +193,7 @@ impl DisplaySource {
         texture_size: [usize; 2],
         interpolation: Interpolation,
         cache: &mut TransformCache,
-    ) -> Option<(DisplayRaster, Option<String>)> {
+    ) -> Option<(DisplayRaster, Option<crate::app::Message>)> {
         if source.width == 0 || source.height == 0 {
             return None;
         }
@@ -234,9 +234,9 @@ impl DisplaySource {
                 match built {
                     Ok(transform) => Some(transform),
                     Err(e) => {
-                        status = Some(format!(
-                            "Display transform: ICC failed ({e}); viewing sRGB preview"
-                        ));
+                        status = Some(
+                            crate::app::Message::new("surfaces.display.failed").arg("error", e),
+                        );
                         None
                     }
                 }
@@ -366,7 +366,10 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
                         status: message,
                     })
                 }
-                Err(error) => status = Some(format!("Display transform: {error}")),
+                Err(error) => {
+                    status =
+                        Some(crate::app::Message::new("surfaces.display.error").arg("error", error))
+                }
             }
         }
         if let Some(entry) = fit.as_ref()

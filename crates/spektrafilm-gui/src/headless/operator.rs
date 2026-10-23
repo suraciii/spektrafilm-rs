@@ -63,7 +63,7 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     script(h, chooser::ChooserResult::Scripted(save_before.clone()));
     click(h, "SAVE");
     assert!(
-        h.state().status.starts_with("Saved"),
+        h.state().status.to_string().starts_with("Saved"),
         "{}",
         h.state().status
     );
@@ -85,7 +85,10 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
             && !app.force_preview
             && !app.dirty
             && app.render_job.is_none()
-            && app.status.starts_with("Comparing automatic baseline")
+            && app
+                .status
+                .to_string()
+                .starts_with("Comparing automatic baseline")
     });
     settle_animation(h);
     let compared_display = h.state().viewer.output.as_ref().unwrap();
@@ -125,7 +128,7 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
         .join("operator-while-comparing.exr");
     h.state_mut().save_to_path(&save_while_held);
     assert!(
-        h.state().status.starts_with("Saved"),
+        h.state().status.to_string().starts_with("Saved"),
         "{}",
         h.state().status
     );

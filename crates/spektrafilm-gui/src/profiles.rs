@@ -105,7 +105,9 @@ pub(super) fn dev_time_combo(
     let current_idx = profile::development_time_index(times, *selection);
     let mut changed = false;
     let tooltip = "Development time for a BW development-time family: selects the density curve and base+fog to render. '—' uses the representative middle development; ignored for single-curve and color stocks.";
-    let label_response = ui.label(label).on_hover_text(tooltip);
+    let label_response = ui
+        .label(crate::controls::localized(ui.ctx(), label))
+        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
     egui::ComboBox::from_id_salt(salt)
         .selected_text(format!("{} min", times[current_idx]))
         .width(ui.available_width().min(280.0))
@@ -122,7 +124,7 @@ pub(super) fn dev_time_combo(
             }
         })
         .response
-        .on_hover_text(tooltip);
+        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
     if let Some(response) = ui
         .ctx()
         .read_response(ui.make_persistent_id(egui::Id::new(salt)))
@@ -163,7 +165,9 @@ pub(super) fn profile_combo(
     } else {
         "Print stock to simulate"
     };
-    let label_response = ui.label(label).on_hover_text(tooltip);
+    let label_response = ui
+        .label(crate::controls::localized(ui.ctx(), label))
+        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
     let display = selected_display(entries, selected_stock);
     let prev = selected_stock.clone();
     egui::ComboBox::from_id_salt(salt)
@@ -175,7 +179,7 @@ pub(super) fn profile_combo(
             }
         })
         .response
-        .on_hover_text(tooltip);
+        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
     if let Some(response) = ui
         .ctx()
         .read_response(ui.make_persistent_id(egui::Id::new(salt)))

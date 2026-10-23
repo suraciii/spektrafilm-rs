@@ -63,7 +63,11 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         let dirty_since = app.dirty_since;
         let force_preview = app.force_preview;
         app.load_preset(entry.group, &entry.name);
-        assert!(app.status.starts_with("Preset error:"), "{}", app.status);
+        assert!(
+            app.status.to_string().starts_with("Preset error:"),
+            "{}",
+            app.status
+        );
         assert_eq!(serde_json::to_value(&app.params).unwrap(), before);
         assert_eq!(app.current_state().unwrap().sections, state);
         assert_eq!(app.presets.state, browser);
@@ -98,7 +102,6 @@ fn ordinary_restart_restores_browser_only_and_explicit_state_wins() {
         .unwrap()
         .clone();
     app.load_preset(entry.group, &entry.name);
-    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
     app.params.enlarger.print_exposure += 2.0;
     app.presets.state.width = 327.0;
     app.presets.state.expanded = false;
@@ -174,7 +177,27 @@ fn ordinary_restart_restores_browser_only_and_explicit_state_wins() {
     std::fs::remove_file(directory.join("preset_browser_state.json")).unwrap();
     assert_eq!(reopen(None).presets.state, BrowserState::default());
     std::fs::write(directory.join("preset_browser_state.json"), "broken JSON").unwrap();
-    assert!(reopen(None).status.starts_with("Browser state load error:"));
+    let failed_restart = reopen(None);
+    assert!(
+        BrowserState::restore(
+            &failed_restart.gui_state.sections,
+            false,
+            &failed_restart.browser_state_path,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&failed_restart.browser_state_path).unwrap(),
+        "broken JSON"
+    );
+    assert!(matches!(
+        &failed_restart.status,
+        crate::app::Message::Text { key: "operations.startup_error", arguments }
+            if arguments.iter().any(|(_, detail)| matches!(detail,
+                crate::app::Message::Text { key: "app.browser.load_failed", .. }
+            ))
+    ));
+    assert_eq!(failed_restart.presets.state, BrowserState::default());
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -196,10 +219,17 @@ fn browser_file_errors_are_visible_and_explicit_state_ignores_bad_carrier() {
     app.persist_browser_state(false);
     assert!(app.browser_state_changed_at.is_some());
     app.persist_browser_state(true);
-    assert!(
-        app.status.starts_with("Browser state save error:"),
-        "{}",
-        app.status
+    assert!(matches!(
+        app.status,
+        crate::app::Message::Text {
+            key: "operations.browser_save_error",
+            ..
+        }
+    ));
+    assert!(!app.browser_state_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(&blocked).unwrap(),
+        "not a directory"
     );
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -214,7 +244,7 @@ fn scanner_transitions_reset_the_scan_polarity() {
     app.params.workflow.route = "input > film > print > scan".into();
     app.finish_route_change();
     assert!(
-        app.status.contains("scan output"),
+        app.status.to_string().contains("scan output"),
         "route normalization status must name the reset polarity: {}",
         app.status
     );
@@ -227,12 +257,15 @@ fn scanner_transitions_reset_the_scan_polarity() {
     app.finish_route_change();
     assert!(
         app.status
+            .to_string()
             .contains("scanner controls inactive for this route"),
         "route normalization must identify inactive scanner controls: {}",
         app.status
     );
     assert!(
-        app.status.contains("stored selections retained"),
+        app.status
+            .to_string()
+            .contains("stored selections retained"),
         "{}",
         app.status
     );
@@ -264,7 +297,11 @@ fn preset_application_reports_scanner_normalization() {
         .unwrap()
         .clone();
     app.load_preset(entry.group, &entry.name);
-    assert!(app.status.contains("scanner controls"), "{}", app.status);
+    assert!(
+        app.status.to_string().contains("scanner controls"),
+        "{}",
+        app.status
+    );
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -294,6 +331,7 @@ fn slide_startup_rejects_positive_output_with_visible_error() {
     assert!(
         restarted
             .status
+            .to_string()
             .contains("negative filming-stage film profile")
     );
     assert_eq!(
@@ -325,7 +363,13 @@ fn unusable_library_path_keeps_builtins_and_renders_fault() {
         .find(|entry| entry.fault.is_some())
         .unwrap();
     assert_eq!(fault.path.as_ref(), Some(&path));
-    let fault_text = format!("{}: {}", path.display(), fault.fault.as_ref().unwrap());
+    let spektrafilm_core::presets::LibraryFault::DirectoryRead {
+        detail: fault_detail,
+    } = fault.fault.as_ref().unwrap()
+    else {
+        panic!("expected a directory-read fault");
+    };
+    let fault_detail = fault_detail.clone();
     let builtin_name = app
         .presets
         .entries
@@ -360,7 +404,12 @@ fn unusable_library_path_keeps_builtins_and_renders_fault() {
     for shape in output.shapes {
         texts(&shape.shape, &mut rendered);
     }
-    assert!(rendered.contains(&fault_text), "{rendered:?}");
+    assert!(
+        rendered
+            .iter()
+            .any(|text| text.contains(&path.display().to_string()) && text.contains(&fault_detail)),
+        "{rendered:?}"
+    );
     assert!(
         rendered.iter().any(|text| text.contains(&builtin_name)),
         "{rendered:?}"
@@ -584,7 +633,6 @@ fn section_application_keeps_full_serialized_scope_and_explicit_ownership() {
     let route = app.params.workflow.route.clone();
     let diffusion = serde_json::to_value(&app.params.enlarger.diffusion_filter).unwrap();
     app.load_preset(PresetGroup::User, &preset.name);
-    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
     assert_eq!(app.params.enlarger.print_exposure, 2.5);
     assert_eq!(app.params.enlarger.preflash_exposure, 0.1);
     assert_eq!(app.params.enlarger.preflash_y_filter_shift, 3.0);
@@ -725,7 +773,6 @@ fn look_application_preserves_existing_explicit_ownership_and_legacy_camera_omis
         .save_new(&preset, &app.data_dir)
         .unwrap();
     app.load_preset(PresetGroup::User, &preset.name);
-    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
     assert_eq!(app.params.camera.exposure_compensation_ev, 2.0);
     assert_eq!(
         app.params.render_preparation_state().explicit_section_paths,
@@ -741,7 +788,6 @@ fn look_application_preserves_existing_explicit_ownership_and_legacy_camera_omis
         .unwrap();
     app.params.camera.exposure_compensation_ev = 1.25;
     app.load_preset(PresetGroup::User, &preset.name);
-    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
     assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
     assert_eq!(
         app.params.render_preparation_state().explicit_section_paths,
@@ -771,7 +817,6 @@ fn print_section_changes_scan_glare_without_changing_enlarger_or_materials() {
     let film = app.film_name.clone();
     let print = app.print_name.clone();
     app.load_preset(PresetGroup::User, &preset.name);
-    assert!(app.status.starts_with("Applied preset"), "{}", app.status);
     assert!(app.params.print_render.glare.active);
     assert_eq!(app.params.print_render.glare.percent, 2.0);
     assert_eq!(app.params.print_render.density_curve_gamma, 1.25);

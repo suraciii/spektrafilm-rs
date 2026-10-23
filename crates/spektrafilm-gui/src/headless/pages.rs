@@ -75,7 +75,11 @@ fn save_mutate_and_reload(
     );
     click(&mut s.harness, "Save current to file");
     assert!(
-        s.harness.state().status.starts_with("Saved GUI state"),
+        s.harness
+            .state()
+            .status
+            .to_string()
+            .starts_with("Saved GUI state"),
         "{}",
         s.harness.state().status
     );
@@ -95,7 +99,11 @@ fn save_mutate_and_reload(
     script(&mut s.harness, chooser::ChooserResult::Scripted(path));
     click(&mut s.harness, "Load from file");
     assert!(
-        s.harness.state().status.starts_with("Loaded GUI state"),
+        s.harness
+            .state()
+            .status
+            .to_string()
+            .starts_with("Loaded GUI state"),
         "{}",
         s.harness.state().status
     );
@@ -692,7 +700,7 @@ fn simulation_blend_scales_render_between_prepared_source_and_complete_result() 
     let resized = h.state().output_image.as_ref().unwrap();
     assert_eq!((resized.width, resized.height), (160, 80));
     assert!(
-        h.state().status.starts_with("Preview ·"),
+        h.state().status.to_string().starts_with("Preview ·"),
         "{}",
         h.state().status
     );

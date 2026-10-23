@@ -48,7 +48,7 @@ pub struct Viewer {
     pub output: Option<DisplayRaster>,
     pub input_size: Option<[usize; 2]>,
     pub output_size: Option<[usize; 2]>,
-    pub transform_status: String,
+    pub transform_status: crate::app::Message,
     display_max_size: usize,
     transition: Option<Transition>,
     texture: Option<TextureHandle>,
@@ -350,35 +350,65 @@ impl Viewer {
     pub fn layer_controls(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.settings.layer;
         ui.horizontal_wrapped(|ui| {
-            let input = ui.selectable_value(&mut self.settings.layer, ViewLayer::Input, "Input")
-                .on_hover_text("Show the retained input, decoded from its input color space and transfer decoding. The viewer layer does not change the retained image itself.");
+            let input = ui
+                .selectable_value(
+                    &mut self.settings.layer,
+                    ViewLayer::Input,
+                    crate::i18n::text(ui.ctx(), "surfaces.viewer.input"),
+                )
+                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.input_help"));
             crate::controls::locate_row(ui, "viewer.layer.input", &input);
             ui.add_enabled_ui(self.output.is_some(), |ui| {
-                let output = ui.selectable_value(&mut self.settings.layer, ViewLayer::Output, "Output")
-                    .on_hover_text("Show the retained output of the latest Preview or Scan. The viewer layer does not change the retained image itself.")
-                    .on_disabled_hover_text("Run Preview or Scan to create a retained output before selecting the Output layer.");
+                let output = ui
+                    .selectable_value(
+                        &mut self.settings.layer,
+                        ViewLayer::Output,
+                        crate::i18n::text(ui.ctx(), "surfaces.viewer.output"),
+                    )
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.output_help"))
+                    .on_disabled_hover_text(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.viewer.output_disabled",
+                    ));
                 crate::controls::locate_row(ui, "viewer.layer.output", &output);
             });
-            let paper_back = ui.selectable_value(&mut self.settings.layer, ViewLayer::PaperBack, "Paper back")
-                .on_hover_text("Viewer-only: show the virtual paper-back rendering generated from paper texture, watermark, and noise. It is not an editable material stage and changes no retained, saved or exported pixels.");
+            let paper_back = ui
+                .selectable_value(
+                    &mut self.settings.layer,
+                    ViewLayer::PaperBack,
+                    crate::i18n::text(ui.ctx(), "surfaces.viewer.paper_back"),
+                )
+                .on_hover_text(crate::i18n::text(
+                    ui.ctx(),
+                    "surfaces.viewer.paper_back_help",
+                ));
             crate::controls::locate_row(ui, "viewer.layer.paper_back", &paper_back);
         });
         before != self.settings.layer
     }
     pub fn interpolation_control(&mut self, ui: &mut egui::Ui) {
-        let response = egui::ComboBox::from_label("output interpolation")
-            .selected_text(self.settings.interpolation.name())
-            .show_ui(ui, |ui| {
-                for name in INTERPOLATIONS {
-                    ui.selectable_value(
-                        &mut self.settings.interpolation,
-                        Interpolation::parse(name),
-                        name,
-                    );
-                }
-            })
-            .response
-            .on_hover_text("Interpolation used to display the output layer in the viewer. It resamples viewer pixels only; retained, saved and exported pixels are unchanged. The input layer always uses nearest and the paper back always uses spline36.");
+        let response = egui::ComboBox::new(
+            "output interpolation",
+            crate::i18n::text(ui.ctx(), "surfaces.viewer.interpolation"),
+        )
+        .selected_text(crate::controls::localized(
+            ui.ctx(),
+            self.settings.interpolation.name(),
+        ))
+        .show_ui(ui, |ui| {
+            for name in INTERPOLATIONS {
+                ui.selectable_value(
+                    &mut self.settings.interpolation,
+                    Interpolation::parse(name),
+                    crate::controls::localized(ui.ctx(), name),
+                );
+            }
+        })
+        .response
+        .on_hover_text(crate::i18n::text(
+            ui.ctx(),
+            "surfaces.viewer.interpolation_help",
+        ));
         crate::controls::locate_row(ui, "extras.display.output_interpolation", &response);
     }
     fn display_source(&self, layer: ViewLayer) -> DisplaySource {
@@ -407,7 +437,7 @@ impl Viewer {
         rect: Rect,
         size: [usize; 2],
         interpolation: Interpolation,
-    ) -> Option<(DisplayRaster, Option<String>)> {
+    ) -> Option<(DisplayRaster, Option<crate::app::Message>)> {
         self.display_source(layer).full_source_view(
             source,
             layer,
@@ -712,7 +742,7 @@ impl Viewer {
         }
         if input_float.is_none() {
             let painter = ui.painter_at(rect);
-            let message = "No image loaded\nDrop an image here, or choose Open in the header";
+            let message = crate::i18n::text(ui.ctx(), "surfaces.viewer.empty");
             let galley = painter.layout(
                 message.to_string(),
                 egui::FontId::proportional(16.0),
@@ -750,15 +780,36 @@ impl Viewer {
             self.observed_geometry = Some((rect, image_rect, interpolation, inspection));
         }
         let text = if let Some(p) = inspection {
-            format!(
-                "{:?} ({}, {}) RGB {:.6}, {:.6}, {:.6}",
-                p.layer, p.x, p.y, p.rgb[0], p.rgb[1], p.rgb[2]
+            crate::tr!(
+                ui.ctx(),
+                "surfaces.viewer.inspection",
+                layer = crate::i18n::text(
+                    ui.ctx(),
+                    match p.layer {
+                        ViewLayer::Input => "surfaces.viewer.input",
+                        ViewLayer::Output => "surfaces.viewer.output",
+                        ViewLayer::PaperBack => "surfaces.viewer.paper_back",
+                    }
+                ),
+                x = p.x,
+                y = p.y,
+                r = format!("{:.6}", p.rgb[0]),
+                g = format!("{:.6}", p.rgb[1]),
+                b = format!("{:.6}", p.rgb[2])
             )
         } else {
-            format!(
-                "{:?} · zoom {:.2}% · click: zoom · drag: pan · shift-drag: select · double-click: fit",
-                layer,
-                self.zoom_percent.unwrap_or(self.zoom * 100.0)
+            crate::tr!(
+                ui.ctx(),
+                "surfaces.viewer.gestures",
+                layer = crate::i18n::text(
+                    ui.ctx(),
+                    match layer {
+                        ViewLayer::Input => "surfaces.viewer.input",
+                        ViewLayer::Output => "surfaces.viewer.output",
+                        ViewLayer::PaperBack => "surfaces.viewer.paper_back",
+                    }
+                ),
+                zoom = format!("{:.2}", self.zoom_percent.unwrap_or(self.zoom * 100.0))
             )
         };
         let painter = ui.painter_at(rect);

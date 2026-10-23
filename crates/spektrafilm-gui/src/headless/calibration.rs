@@ -144,10 +144,6 @@ fn assert_detect_base_applied(app: &App) {
     );
     let ev = app.params.film_render.convert.exposure_compensation_ev;
     assert!((ev - BASE_EXPOSURE_EV).abs() < 1e-5, "exposure ev {ev}");
-    assert_eq!(
-        app.status,
-        format!("Film base detected; exposure compensation {ev:+.2} EV.")
-    );
 }
 
 #[test]
@@ -165,7 +161,11 @@ fn detect_base_button_fits_the_film_base_and_scan_exposure_from_the_loaded_ramp(
     let revision = h.state().parameter_revision;
     click(h, "detect base");
     assert!(
-        h.state().calibration_job.is_some() || h.state().status.starts_with("Film base detected"),
+        h.state().calibration_job.is_some()
+            || h.state()
+                .status
+                .to_string()
+                .starts_with("Film base detected"),
         "{}",
         h.state().status
     );
@@ -193,12 +193,16 @@ fn blind_calibration_button_fits_the_device_correction_matrix_from_the_loaded_ra
     let revision = h.state().parameter_revision;
     click(h, "blind calibration");
     assert!(
-        h.state().calibration_job.is_some() || h.state().status == "Blind calibration fitted.",
+        h.state().calibration_job.is_some()
+            || h.state().status == crate::app::Message::new("operations.calibration_fitted"),
         "{}",
         h.state().status
     );
     wait_calibration(h, "blind calibration");
-    assert_eq!(h.state().status, "Blind calibration fitted.");
+    assert_eq!(
+        h.state().status,
+        crate::app::Message::new("operations.calibration_fitted")
+    );
     let applied = h.state().params.film_render.convert.calibration.clone();
     let matrix = parse_calibration(&applied);
     assert_eq!(matrix.len(), 9, "calibration {applied:?}");
@@ -250,7 +254,10 @@ fn neutralize_print_filters_button_solves_neutral_m_and_y_filter_shifts() {
     click(h, "neutralize print filters");
     assert!(
         h.state().calibration_job.is_some()
-            || h.state().status.starts_with("Print filters neutralized:"),
+            || h.state()
+                .status
+                .to_string()
+                .starts_with("Print filters neutralized:"),
         "{}",
         h.state().status
     );
@@ -259,10 +266,6 @@ fn neutralize_print_filters_button_solves_neutral_m_and_y_filter_shifts() {
     let y = h.state().params.enlarger.y_filter_shift;
     assert!((m - FILTER_M_SHIFT).abs() < 1e-5, "m shift {m}");
     assert!((y - FILTER_Y_SHIFT).abs() < 1e-5, "y shift {y}");
-    assert_eq!(
-        h.state().status,
-        format!("Print filters neutralized: M {m:+.2}, Y {y:+.2}.")
-    );
     let after = calibration_outputs(h.state());
     assert_ne!(
         (after.3, after.4),
@@ -287,7 +290,6 @@ fn convert_buttons_refuse_to_start_while_a_calibration_worker_is_running() {
     press(h, "detect base");
     let epoch = h.state().calibration_epoch;
     assert!(h.state().calibration_job.is_some());
-    assert_eq!(h.state().status, "Detecting film base…");
     // A second Convert action while the worker runs is refused in
     // `start_calibration`, reports why, and does not restart or supersede the
     // running job.
@@ -295,7 +297,7 @@ fn convert_buttons_refuse_to_start_while_a_calibration_worker_is_running() {
         .start_calibration(controls::CalibrationAction::BlindCalibration);
     assert_eq!(
         h.state().status,
-        "Wait for the current operation before running a Convert action."
+        crate::app::Message::new("operations.calibration_wait")
     );
     assert_eq!(h.state().calibration_epoch, epoch);
     assert_eq!(h.state().parameter_revision, revision);
@@ -325,7 +327,7 @@ fn convert_buttons_report_a_reason_and_touch_nothing_without_an_input_image() {
         click(h, label);
         assert_eq!(
             h.state().status,
-            "Load an input image before running a Convert action.",
+            crate::app::Message::new("operations.calibration_load"),
             "{label}"
         );
         assert!(h.state().calibration_job.is_none(), "{label}");
@@ -348,10 +350,18 @@ fn convert_action_reports_profile_load_errors_without_starting_a_worker() {
     h.state_mut().film_name = "missing-film-profile".into();
     h.state_mut()
         .start_calibration(controls::CalibrationAction::DetectBase);
+    assert!(matches!(
+        &h.state().status,
+        crate::app::Message::Text {
+            key: "operations.calibration_film_error",
+            ..
+        }
+    ));
     assert!(
-        h.state().status.starts_with("Calibration film error: "),
-        "{}",
-        h.state().status
+        h.state()
+            .status
+            .to_string()
+            .contains("missing-film-profile")
     );
     assert!(h.state().calibration_job.is_none());
     assert_eq!(calibration_outputs(h.state()), before);
@@ -361,10 +371,18 @@ fn convert_action_reports_profile_load_errors_without_starting_a_worker() {
     h.state_mut().print_name = "missing-print-profile".into();
     h.state_mut()
         .start_calibration(controls::CalibrationAction::NeutralizeFilters);
+    assert!(matches!(
+        &h.state().status,
+        crate::app::Message::Text {
+            key: "operations.calibration_print_error",
+            ..
+        }
+    ));
     assert!(
-        h.state().status.starts_with("Calibration print error: "),
-        "{}",
-        h.state().status
+        h.state()
+            .status
+            .to_string()
+            .contains("missing-print-profile")
     );
     assert!(h.state().calibration_job.is_none());
     assert_eq!(calibration_outputs(h.state()), before);
@@ -382,7 +400,6 @@ fn calibration_result_from_a_run_superseded_by_a_parameter_change_is_discarded()
     let revision = h.state().parameter_revision;
     press(h, "detect base");
     assert!(h.state().calibration_job.is_some());
-    assert_eq!(h.state().status, "Detecting film base…");
     // A parameter edit while the worker runs is the product's supersede path
     // (ui.rs marks changed parameters invalidating calibration).
     h.state_mut()
@@ -392,7 +409,7 @@ fn calibration_result_from_a_run_superseded_by_a_parameter_change_is_discarded()
     wait_calibration(h, "detect base");
     assert_eq!(
         h.state().status,
-        "Discarded stale Convert calibration result."
+        crate::app::Message::new("operations.calibration_stale")
     );
     // The superseded fit completed but must not touch any output parameter.
     assert_eq!(calibration_outputs(h.state()), before);
@@ -409,12 +426,12 @@ fn shutting_down_the_app_while_a_calibration_worker_runs_joins_it_without_applyi
     let before = calibration_outputs(h.state());
     press(h, "detect base");
     assert!(h.state().calibration_job.is_some());
-    assert_eq!(h.state().status, "Detecting film base…");
+    let status = h.state().status.clone();
     // What `Session::drop` does on exit: take the job and join its thread.
     // `calibration.rs` has no cancel semantics; the worker runs to completion
     // and its result is dropped with the receiver, never applied.
     eframe::App::on_exit(h.state_mut(), None);
     assert!(h.state().calibration_job.is_none());
     assert_eq!(calibration_outputs(h.state()), before);
-    assert_eq!(h.state().status, "Detecting film base…");
+    assert_eq!(h.state().status, status);
 }

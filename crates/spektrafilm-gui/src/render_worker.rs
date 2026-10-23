@@ -28,6 +28,13 @@ impl RenderKind {
             Self::Scan => "Scan",
         }
     }
+
+    pub(super) fn message(self) -> crate::app::Message {
+        crate::app::Message::new(match self {
+            Self::Preview => "operations.preview",
+            Self::Scan => "operations.scan",
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -37,7 +44,6 @@ pub(super) struct RenderJob {
     pub(super) request_id: u64,
     pub(super) kind: RenderKind,
     pub(super) animate: bool,
-    pub(super) backend_name: String,
     pub(super) collection_mode: CollectionMode,
 }
 
@@ -69,7 +75,11 @@ pub(super) struct RenderRequest {
 pub(super) struct RenderWorker {
     pub(super) state: Arc<(Mutex<Option<RenderRequest>>, Condvar)>,
     pub(super) active: Arc<Mutex<Option<(u64, RenderKind, CollectionMode)>>>,
-    pub(super) rx: mpsc::Receiver<(RenderJob, Operation, Result<RenderResult, String>)>,
+    pub(super) rx: mpsc::Receiver<(
+        RenderJob,
+        Operation,
+        Result<RenderResult, crate::app::Message>,
+    )>,
     pub(super) shutdown: Arc<AtomicBool>,
     pub(super) handle: Option<JoinHandle<()>>,
     pub(super) next_request_id: u64,
@@ -79,7 +89,7 @@ pub(super) struct RenderWorker {
 pub(super) struct RenderResult {
     pub(super) output: ImageBuf,
     pub(super) preview: display::DisplayRaster,
-    pub(super) display_status: String,
+    pub(super) display_status: crate::app::Message,
     pub(super) display_enabled: bool,
     pub(super) display_max_size: u32,
     pub(super) output_color_space: String,
@@ -186,7 +196,11 @@ impl RenderWorker {
                             processed,
                             IssueCategory::Simulation,
                             IssueBoundary::Simulation,
-                        )?;
+                        )
+                        .map_err(|error| {
+                            crate::app::Message::new("operations.simulation_error")
+                                .arg("detail", error)
+                        })?;
                         let display_prepare = observation.scope(
                             "display_prepare",
                             ObservationKind::Phase,
@@ -208,7 +222,11 @@ impl RenderWorker {
                             display_result,
                             IssueCategory::Backend,
                             IssueBoundary::DisplayPrepare,
-                        )?;
+                        )
+                        .map_err(|error| {
+                            crate::app::Message::new("operations.display_error")
+                                .arg("detail", error)
+                        })?;
                         Ok(RenderResult {
                             operator_compare: request.snapshot.operator_compare(),
                             source_metadata: request.source_metadata,
@@ -227,7 +245,7 @@ impl RenderWorker {
                         .cancellation()
                         .is_some_and(|token| token.load(Ordering::SeqCst));
                     let result = if cancelled {
-                        Err("operation cancelled".to_owned())
+                        Err(crate::app::Message::new("operations.operation_cancelled"))
                     } else {
                         result
                     };
@@ -340,12 +358,12 @@ pub(super) fn observed_result<T, E>(
 /// Extract the human-readable payload from a caught panic. Panics carry
 /// either a `&str` (literal messages) or a `String` (formatted ones);
 /// anything else gets a generic label.
-pub(super) fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+pub(super) fn panic_message(panic: &(dyn std::any::Any + Send)) -> crate::app::Message {
     if let Some(s) = panic.downcast_ref::<&str>() {
-        format!("panic: {s}")
+        crate::app::Message::new("operations.worker_panic").arg("detail", s)
     } else if let Some(s) = panic.downcast_ref::<String>() {
-        format!("panic: {s}")
+        crate::app::Message::new("operations.worker_panic").arg("detail", s)
     } else {
-        "panic (no message)".to_string()
+        crate::app::Message::new("operations.worker_panic_no_detail")
     }
 }

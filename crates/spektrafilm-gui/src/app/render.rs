@@ -36,24 +36,30 @@ impl App {
             })
     }
 
-    /// The one header status line: the work unit that executes now, or the
-    /// last accepted operation status when no render runs. A newer queued
-    /// job only names the status once its attempt starts.
-    pub(crate) fn operation_status(&self) -> String {
-        // Never block on the worker's start marker: fall back to the
-        // submitted job while the marker is held elsewhere.
+    pub(crate) fn operation_status_localized(&self, ctx: &egui::Context) -> String {
         let active_kind = self
             .render_worker
             .active
             .try_lock()
             .and_then(|active| (*active).map(|(_, kind, _)| kind));
-        let kind = active_kind.or_else(|| self.render_job.as_ref().map(|job| job.kind));
-        let Some(kind) = kind else {
-            return self.status.clone();
+        let Some(kind) = active_kind.or_else(|| self.render_job.as_ref().map(|job| job.kind))
+        else {
+            return self.status.localized(ctx);
         };
         match self.render_progress.unit() {
-            Some(unit) => format!("{} · {}", kind.label(), progress::stage_label(unit)),
-            None => format!("{} …", kind.label()),
+            Some(unit) => crate::tr!(
+                ctx,
+                "operations.running_stage",
+                operation = kind.message().localized(ctx),
+                stage = progress::stage_label_localized(ctx, unit)
+            )
+            .into_owned(),
+            None => crate::tr!(
+                ctx,
+                "operations.running",
+                operation = kind.message().localized(ctx)
+            )
+            .into_owned(),
         }
     }
 
@@ -94,14 +100,14 @@ impl App {
         {
             Ok(params) => params,
             Err(error) => {
-                self.status = format!("{} state error: {error:#}", kind.label());
+                self.status = crate::app::Message::new("operations.render_state_error")
+                    .message_arg("operation", kind.message())
+                    .message_arg("detail", crate::app::Message::error(&error));
                 operation.issue(IssueCategory::Configuration, IssueBoundary::Operation);
                 self.diagnostics.finish(operation, Outcome::Failed);
                 return;
             }
         };
-        // Report the Dye field's effective path next to the selected backend.
-        let backend_name = effective_backend_name(&*self.backend, &params);
         let parameter_revision = self.parameter_revision;
         let snapshot = self
             .render_snapshot(params)
@@ -116,7 +122,6 @@ impl App {
                 animate: self.force_preview
                     || self.full_scan_requested
                     || self.output_image.is_none(),
-                backend_name,
                 collection_mode: operation.mode(),
             },
             image,
@@ -143,7 +148,7 @@ impl App {
                 Err(mpsc::TryRecvError::Empty) => return,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.render_job = None;
-                    self.status = "Render error: worker thread vanished".into();
+                    self.status = crate::app::Message::new("operations.render_worker_vanished");
                     return;
                 }
             };
@@ -164,7 +169,6 @@ impl App {
             }
             self.render_job = None;
             let kind = response_job.kind;
-            let backend_name = response_job.backend_name;
             match result {
                 Ok(r) => {
                     let handoff = operation.scope(
@@ -200,8 +204,7 @@ impl App {
                             color_space: r.output_color_space,
                             encoded: r.output_cctf_encoding,
                         });
-                        self.status =
-                            "Comparing automatic baseline · Save retains corrected output".into();
+                        self.status = crate::app::Message::new("operations.comparing_baseline");
                         drop(handoff);
                         self.diagnostics.finish(operation, Outcome::Succeeded);
                         continue;
@@ -235,14 +238,14 @@ impl App {
                         self.viewer.settings.use_display_transform,
                         self.gui_state.display_profile().map(Path::new),
                     );
-                    self.status = format!(
-                        "{} · {} · {} × {} ({:.1} MP)",
-                        kind.label(),
-                        backend_name,
-                        r.output.width,
-                        r.output.height,
-                        r.output.pixel_count() as f64 / 1e6
-                    );
+                    self.status = crate::app::Message::new("operations.rendered")
+                        .message_arg("operation", kind.message())
+                        .arg("width", r.output.width)
+                        .arg("height", r.output.height)
+                        .arg(
+                            "megapixels",
+                            format!("{:.1}", r.output.pixel_count() as f64 / 1e6),
+                        );
                     let output = Arc::new(r.output);
                     self.viewer.seed_prepared_output(
                         output.clone(),
@@ -258,7 +261,8 @@ impl App {
                 }
                 Err(msg) => {
                     eprintln!("[spektrafilm] render error: {msg}");
-                    self.status = format!("Render error: {msg}");
+                    self.status = crate::app::Message::new("operations.render_error")
+                        .message_arg("detail", msg);
                     self.diagnostics.finish(operation, Outcome::Failed);
                 }
             }

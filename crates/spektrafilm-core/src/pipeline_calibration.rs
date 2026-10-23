@@ -262,8 +262,10 @@ pub(crate) fn apply_film_chemistry(
     profile.data.density_curves_layers = layers;
     Ok(())
 }
-pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), String> {
-    crate::params::validation::validate_enum_value(
+pub(crate) fn validate_scan_output_route_detailed(
+    params: &RuntimeParams,
+) -> Result<(), crate::params::ValidationError> {
+    crate::params::validation::validate_enum_value_detailed(
         "scanner.scan_output",
         &params.scanner.scan_output,
     )?;
@@ -275,31 +277,43 @@ pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), S
     let direct_film_scan = params.workflow.route_enum().scans_film();
     let convert_scan = params.workflow.route_enum() == WorkflowRoute::ConvertFilmScan;
     if !direct_film_scan && !convert_scan {
-        return Err(
-            "scanner.scan_output=negative_to_positive requires a direct film scan route (input > film > scan, film > scan, or input > convert-film > scan)".into(),
-        );
+        return Err(crate::params::ValidationError::new(
+            crate::params::ValidationReason::ScanRoute,
+            "scanner.scan_output",
+            "scanner.scan_output=negative_to_positive requires a direct film scan route (input > film > scan, film > scan, or input > convert-film > scan)",
+        ));
     }
     Ok(())
 }
 
 pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
-    validate_scan_output_route(params)?;
+    validate_scan_output_detailed(params, film).map_err(|error| error.to_string())
+}
+
+pub fn validate_scan_output_detailed(
+    params: &RuntimeParams,
+    film: &Profile,
+) -> Result<(), crate::params::ValidationError> {
+    use crate::params::{ValidationError as Error, ValidationReason as Reason};
+    validate_scan_output_route_detailed(params)?;
     if params.scanner.scan_output != "negative_to_positive"
         || params.workflow.route_enum().artifact_output().is_some()
     {
         return Ok(());
     }
     if !film.is_negative() || !film.is_film() || !film.is_filming() {
-        return Err(
-            "scanner.scan_output=negative_to_positive requires a negative filming-stage film profile; positive film and paper scans use direct_scan".into(),
-        );
+        return Err(Error::new(
+            Reason::ScanNegativeProfile,
+            "scanner.scan_output",
+            "scanner.scan_output=negative_to_positive requires a negative filming-stage film profile; positive film and paper scans use direct_scan",
+        ));
     }
     for channel in 0..3 {
         for row in &film.data.density_curves {
             if !row[channel].is_finite() {
-                return Err(format!(
+                return Err(Error::new(Reason::ScanFiniteDensity, "scanner.scan_output", format!(
                     "scanner.scan_output=negative_to_positive requires finite density curves (channel {channel})"
-                ));
+                )).arg("channel", channel).arg("value", row[channel]));
             }
         }
     }
@@ -309,10 +323,11 @@ pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<()
             crate::params::grain::GrainEngine::Procedural
         )
     {
-        return Err(
-            "scanner.scan_output=negative_to_positive cannot be combined with active Grain Procedural"
-                .into(),
-        );
+        return Err(Error::new(
+            Reason::ScanProceduralGrain,
+            "scanner.scan_output",
+            "scanner.scan_output=negative_to_positive cannot be combined with active Grain Procedural",
+        ));
     }
     Ok(())
 }
@@ -666,7 +681,7 @@ pub(crate) fn prepare_continued_print(
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_scan_output, validate_scan_output_route};
+    use super::{validate_scan_output, validate_scan_output_route_detailed};
     use crate::params::{RuntimeParams, grain::GrainEngine};
     use crate::profile::Profile;
 
@@ -734,11 +749,13 @@ mod tests {
         params.scanner.scan_output = "negative_to_positive".into();
         params.io.scan_film = true;
         params.workflow.route = "input > film > print > scan".into();
-        let error = validate_scan_output_route(&params).unwrap_err();
+        let error = validate_scan_output_route_detailed(&params)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("scanner.scan_output=negative_to_positive"));
         assert!(error.contains("direct film scan route"));
         params.workflow.route = "input > film > scan".into();
-        assert!(validate_scan_output_route(&params).is_ok());
+        assert!(validate_scan_output_route_detailed(&params).is_ok());
     }
 
     #[test]

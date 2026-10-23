@@ -24,20 +24,109 @@ pub enum ImageIoError {
     #[error("Invalid {format} export settings: {reason}")]
     InvalidExport {
         format: &'static str,
-        reason: &'static str,
+        reason: SaveOptionViolation,
     },
     #[error("Image path contains a null byte")]
     InvalidPath,
     #[error("Invalid RGB buffer dimensions or sample count")]
     InvalidImage,
-    #[error("{0}")]
+    #[error("unknown RGB colour space {0:?}")]
     InvalidColorSpace(String),
     #[error("Image {operation} failed for {path}: {message}")]
     Native {
         operation: &'static str,
         path: String,
-        message: String,
+        message: BridgeError,
     },
+}
+
+/// Authored bridge failures and genuine codec/OS detail travel independently.
+/// Display preserves the original CLI diagnostic verbatim.
+#[derive(Debug, Clone)]
+pub struct BridgeError {
+    original: String,
+    failure_codes: u32,
+    diagnostic_detail: String,
+}
+impl BridgeError {
+    pub fn reasons(&self) -> impl Iterator<Item = BridgeReason> {
+        BridgeReason::ALL
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, reason)| {
+                (self.failure_codes & (1 << index) != 0).then_some(reason)
+            })
+    }
+    pub fn diagnostic_detail(&self) -> &str {
+        if self.failure_codes == 0 {
+            &self.original
+        } else {
+            &self.diagnostic_detail
+        }
+    }
+}
+impl From<String> for BridgeError {
+    fn from(value: String) -> Self {
+        Self {
+            original: value,
+            failure_codes: 0,
+            diagnostic_detail: String::new(),
+        }
+    }
+}
+impl From<&str> for BridgeError {
+    fn from(value: &str) -> Self {
+        value.to_owned().into()
+    }
+}
+impl std::fmt::Display for BridgeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.original)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeReason {
+    OpenInput,
+    TooSmall,
+    Container,
+    XmpInitialization,
+    Dimensions,
+    OpenOutput,
+    OutputPlugin,
+    CheckedWrites,
+    OpenContainer,
+    WriteData,
+    FinalizeContainer,
+    FinalizeFile,
+    UnreadableAfterMetadata,
+    InvalidAfterMetadata,
+    IncompleteAfterMetadata,
+    FinalizeRead,
+    Timestamp,
+    MissingDiagnostic,
+}
+impl BridgeReason {
+    const ALL: [Self; 18] = [
+        Self::OpenInput,
+        Self::TooSmall,
+        Self::Container,
+        Self::XmpInitialization,
+        Self::Dimensions,
+        Self::OpenOutput,
+        Self::OutputPlugin,
+        Self::CheckedWrites,
+        Self::OpenContainer,
+        Self::WriteData,
+        Self::FinalizeContainer,
+        Self::FinalizeFile,
+        Self::UnreadableAfterMetadata,
+        Self::InvalidAfterMetadata,
+        Self::IncompleteAfterMetadata,
+        Self::FinalizeRead,
+        Self::Timestamp,
+        Self::MissingDiagnostic,
+    ];
 }
 
 /// A complete unpublished image. Dropping it removes only its owned temporary file.
@@ -67,7 +156,7 @@ impl PreparedImageOutput {
         result.map_err(|error| ImageIoError::Native {
             operation: "publication",
             path: destination.display().to_string(),
-            message: error.error.to_string(),
+            message: error.error.to_string().into(),
         })?;
         Ok(report)
     }
@@ -257,6 +346,22 @@ pub enum SaveOptionViolation {
     ExrCompression,
 }
 
+impl std::fmt::Display for SaveOptionViolation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Depth => "only 8-bit output is supported",
+            Self::RequiresEncoded => "JPEG and PNG require encoded output",
+            Self::RequiresLinear => "EXR output must be linear",
+            Self::ExrColorSpace => "EXR color space must be sRGB or ACES2065-1",
+            Self::JpegQualityNotApplicable => "JPEG quality is only valid for JPEG",
+            Self::JpegSubsamplingNotApplicable => "JPEG subsampling is only valid for JPEG",
+            Self::CompressionNotConfigurable => "compression is not configurable for JPEG or PNG",
+            Self::ExrCompression => "EXR compression is always zip",
+            Self::JpegQualityRange => "quality must be between 1 and 100",
+        })
+    }
+}
+
 /// Every writer-contract violation of one [`SaveOptions`] value, in the order
 /// the writer used to check them so the first error stays stable. `rendered_output`
 /// selects the GUI save path, which preserves the selected transfer encoding for
@@ -327,50 +432,51 @@ pub fn validate_save_options(
         }
         Some(SaveOptionViolation::Depth) => Err(ImageIoError::InvalidExport {
             format: name,
-            reason: "only 8-bit output is supported",
+            reason: SaveOptionViolation::Depth,
         }),
         Some(SaveOptionViolation::RequiresEncoded) => Err(ImageIoError::InvalidExport {
             format: name,
-            reason: "JPEG and PNG require encoded output",
+            reason: SaveOptionViolation::RequiresEncoded,
         }),
         Some(SaveOptionViolation::RequiresLinear) => Err(ImageIoError::InvalidExport {
             format: "EXR",
-            reason: "EXR output must be linear",
+            reason: SaveOptionViolation::RequiresLinear,
         }),
         Some(SaveOptionViolation::ExrColorSpace) => Err(ImageIoError::InvalidExport {
             format: "EXR",
-            reason: "EXR color space must be sRGB or ACES2065-1",
+            reason: SaveOptionViolation::ExrColorSpace,
         }),
         Some(SaveOptionViolation::JpegQualityNotApplicable) => Err(ImageIoError::InvalidExport {
             format: name,
-            reason: "JPEG quality is only valid for JPEG",
+            reason: SaveOptionViolation::JpegQualityNotApplicable,
         }),
         Some(SaveOptionViolation::JpegSubsamplingNotApplicable) => {
             Err(ImageIoError::InvalidExport {
                 format: name,
-                reason: "JPEG subsampling is only valid for JPEG",
+                reason: SaveOptionViolation::JpegSubsamplingNotApplicable,
             })
         }
         Some(SaveOptionViolation::CompressionNotConfigurable) => Err(ImageIoError::InvalidExport {
             format: name,
-            reason: "compression is not configurable for JPEG or PNG",
+            reason: SaveOptionViolation::CompressionNotConfigurable,
         }),
         Some(SaveOptionViolation::ExrCompression) => Err(ImageIoError::InvalidExport {
             format: "EXR",
-            reason: "EXR compression is always zip",
+            reason: SaveOptionViolation::ExrCompression,
         }),
         Some(SaveOptionViolation::JpegQualityRange) => Err(ImageIoError::InvalidExport {
             format: "JPEG",
-            reason: "quality must be between 1 and 100",
+            reason: SaveOptionViolation::JpegQualityRange,
         }),
     }
 }
 #[derive(Debug, Default)]
 pub struct SaveReport {
-    pub metadata_warning: Option<String>,
+    pub metadata_warning: Option<BridgeError>,
 }
 unsafe extern "C" {
     fn sf_io_free(pointer: *mut c_void);
+    fn sf_io_take_failure(codes: *mut u32, detail: *mut *mut c_char);
     fn sf_metadata_free(pointer: *mut c_void);
     fn sf_metadata_read(path: *const c_char) -> *mut c_void;
     fn sf_image_load(
@@ -410,18 +516,32 @@ unsafe extern "C" {
 fn cpath(path: &Path) -> Result<CString, ImageIoError> {
     CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| ImageIoError::InvalidPath)
 }
-fn take_error(pointer: *mut c_char) -> String {
+fn take_string(pointer: *mut c_char) -> String {
     if pointer.is_null() {
-        return "Native codec did not provide an error".into();
+        return String::new();
     }
     let result = unsafe { CStr::from_ptr(pointer) }
         .to_string_lossy()
         .into_owned();
     unsafe { sf_io_free(pointer.cast()) };
-    if result.is_empty() {
-        "Native codec did not provide an error".into()
-    } else {
-        result
+    result
+}
+fn take_error(pointer: *mut c_char) -> BridgeError {
+    let mut failure_codes = 0;
+    let mut detail = std::ptr::null_mut();
+    // Capture and clear on the executing thread before freeing error storage
+    // or making any other foreign call.
+    unsafe { sf_io_take_failure(&mut failure_codes, &mut detail) };
+    let mut original = take_string(pointer);
+    let diagnostic_detail = take_string(detail);
+    if original.is_empty() {
+        original = "Native codec did not provide an error".into();
+        failure_codes |= 1 << 17;
+    }
+    BridgeError {
+        original,
+        failure_codes,
+        diagnostic_detail,
     }
 }
 /// Metadata read failures are nonfatal, matching upstream read_image_metadata.
@@ -597,7 +717,7 @@ fn prepare_inner(
         .map_err(|error| ImageIoError::Native {
             operation: "staging",
             path: path.display().to_string(),
-            message: error.to_string(),
+            message: error.to_string().into(),
         })?
         .into_temp_path();
     let name = cpath(&temporary)?;
@@ -694,8 +814,9 @@ pub fn convert_image(
 ) -> Result<ImageBuf, ImageIoError> {
     use rayon::prelude::*;
     use spektrafilm_math::colorspace::{conversion_matrix, convert_rgb, resolve};
-    let source = resolve(source).map_err(ImageIoError::InvalidColorSpace)?;
-    let destination = resolve(destination).map_err(ImageIoError::InvalidColorSpace)?;
+    let source = resolve(source).map_err(|_| ImageIoError::InvalidColorSpace(source.to_owned()))?;
+    let destination = resolve(destination)
+        .map_err(|_| ImageIoError::InvalidColorSpace(destination.to_owned()))?;
     // Pinned Python skips the transform entirely when the saving space and
     // encoding already match the output layer (controller.py save guard).
     // Re-running the 4-digit sRGB round trip would shift pixels by ~2e-5.

@@ -397,11 +397,19 @@ pub(crate) fn optional_numeric(
     let mut inherited_selected = false;
     ui.horizontal(|ui| {
         ui.label(if value.is_none() {
-            format!("Inherited: {inherited}")
+            crate::tr!(ui.ctx(), "controls.optional.inherited", value = inherited)
         } else {
-            "Explicit override".to_owned()
+            crate::i18n::text(ui.ctx(), "controls.optional.explicit")
         });
-        if value.is_some() && ui.small_button(format!("Inherit {label}")).clicked() {
+        if value.is_some()
+            && ui
+                .small_button(crate::tr!(
+                    ui.ctx(),
+                    "controls.optional.inherit",
+                    label = super::localized(ui.ctx(), label)
+                ))
+                .clicked()
+        {
             *value = None;
             super::record_edited_path(ui.ctx(), path);
             inherited_selected = true;
@@ -426,7 +434,7 @@ pub(crate) fn fotufilm_sublayer_shares(
     filter: &mut ControlFilter<'_>,
 ) -> bool {
     if filter_matches(filter, "sublayer shares") {
-        ui.label("Sublayer shares").on_hover_text("Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive.");
+        ui.label(super::localized(ui.ctx(), "Sublayer shares")).on_hover_text(super::localized(ui.ctx(), "Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive."));
     }
     let mut changed = false;
     for index in 0..3 {
@@ -454,7 +462,11 @@ pub(crate) fn fotufilm_sublayer_shares(
         }
     }
     if filter_matches(filter, "sublayer 4 (remainder)") {
-        ui.label(format!("Sublayer 4 (remainder): {:.6}", shares[3]));
+        ui.label(crate::tr!(
+            ui.ctx(),
+            "controls.grain.remainder_value",
+            value = format!("{:.6}", shares[3])
+        ));
     }
     row_modified::offer_reset(
         ui,
@@ -473,7 +485,9 @@ pub(crate) fn fotufilm_sublayer_shares(
 pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        let label_response = ui.label(label).on_hover_text(tooltip);
+        let label_response = ui
+            .label(crate::controls::localized(ui.ctx(), label))
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         let mark = row_modified::RowMark::resolve(ui.ctx(), Some(label));
         mark.paint(ui, &label_response);
         mark.gold(ui, |ui| {
@@ -484,24 +498,29 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
             };
             let response = ui
                 .add(
-                    egui::Button::new(egui::RichText::new(text).color(knob).size(theme::SIZE_HINT))
-                        .fill(fill)
-                        .corner_radius(theme::RADIUS_CARD)
-                        .min_size(egui::vec2(44.0, 18.0))
-                        .selected(*value),
+                    egui::Button::new(
+                        egui::RichText::new(super::localized(ui.ctx(), text))
+                            .color(knob)
+                            .size(theme::SIZE_HINT),
+                    )
+                    .fill(fill)
+                    .corner_radius(theme::RADIUS_CARD)
+                    .min_size(egui::vec2(44.0, 18.0))
+                    .selected(*value),
                 )
-                .on_hover_text(tooltip);
+                .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
             super::focus_response(ui, label, &response);
             if response.clicked() {
                 *value = !*value;
                 changed = true;
             }
+            let accessible_label = super::localized(ui.ctx(), label);
             response.widget_info(|| {
                 egui::WidgetInfo::selected(
                     egui::WidgetType::Checkbox,
                     ui.is_enabled(),
                     *value,
-                    label,
+                    accessible_label.as_ref(),
                 )
             });
             // Name the switch and declare the visible label as its labelling
@@ -515,7 +534,7 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
                 } else {
                     egui::accesskit::Toggled::False
                 });
-                node.set_label(label);
+                node.set_label(accessible_label.as_ref());
             });
         });
     });
@@ -533,7 +552,7 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
 /// parameter name.
 pub(crate) fn experimental_badge(ui: &mut Ui) {
     ui.label(
-        egui::RichText::new("experimental")
+        egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.row.experimental"))
             .color(theme::WARNING)
             .size(theme::SIZE_UNIT),
     );
@@ -546,7 +565,7 @@ pub(crate) fn experimental_badge(ui: &mut Ui) {
 pub(crate) fn row_label(ui: &mut Ui, label: &str, experimental: bool) -> egui::Response {
     let response = ui.add(
         egui::Label::new(
-            egui::RichText::new(label)
+            egui::RichText::new(crate::controls::localized(ui.ctx(), label))
                 .color(theme::FG_SECONDARY)
                 .size(theme::SIZE_LABEL),
         )
@@ -572,11 +591,12 @@ pub(crate) fn optional_choice_tip(
     let mut changed = false;
     let mut selected = value.clone().unwrap_or_else(|| unset.to_owned());
     ui.vertical(|ui| {
-        ui.label(label).on_hover_text(tooltip);
+        ui.label(crate::controls::localized(ui.ctx(), label))
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         let selector = egui::ComboBox::from_id_salt(label)
             .width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
             .wrap_mode(egui::TextWrapMode::Truncate)
-            .selected_text(selected.clone())
+            .selected_text(crate::controls::localized(ui.ctx(), &selected))
             .show_ui(ui, |ui| {
                 let entries =
                     std::iter::once((unset, unset)).chain(choices.iter().map(|c| (*c, *c)));
@@ -587,8 +607,11 @@ pub(crate) fn optional_choice_tip(
                         selected == option
                     };
                     if ui
-                        .selectable_label(is_selected, display_label)
-                        .on_hover_text(tooltip)
+                        .selectable_label(
+                            is_selected,
+                            crate::controls::localized(ui.ctx(), display_label),
+                        )
+                        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip))
                         .clicked()
                         && selected != option
                     {
@@ -603,7 +626,7 @@ pub(crate) fn optional_choice_tip(
                 }
             })
             .response
-            .on_hover_text(tooltip);
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         super::focus_response(ui, label, &selector);
         name_choice(ui, label);
         let draft_id = ui.make_persistent_id(("optional-illuminant-draft", label));
@@ -615,11 +638,18 @@ pub(crate) fn optional_choice_tip(
             .add(
                 egui::TextEdit::singleline(&mut text_value)
                     .desired_width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
-                    .hint_text("custom BB<kelvin>"),
+                    .hint_text(crate::i18n::text(
+                        ui.ctx(),
+                        "controls.illuminant.custom_hint",
+                    )),
             )
-            .on_hover_text("Enter any shared catalog illuminant or BB<kelvin> (1667..=25000).");
+            .on_hover_text(super::localized(
+                ui.ctx(),
+                "Enter any shared catalog illuminant or BB<kelvin> (1667..=25000).",
+            ));
+        let accessible_label = crate::i18n::text(ui.ctx(), "controls.illuminant.custom_capture");
         ui.ctx().accesskit_node_builder(response.id, |node| {
-            node.set_label("custom capture illuminant")
+            node.set_label(accessible_label.as_ref())
         });
         if response.changed()
             && (text_value.is_empty()
@@ -657,6 +687,7 @@ pub fn choice_tip(
         choices.iter().map(|&option| (option, option)),
         tooltip,
         false,
+        true,
     )
 }
 
@@ -675,6 +706,7 @@ pub fn choice_tip_experimental(
         choices.iter().map(|&option| (option, option)),
         tooltip,
         true,
+        true,
     )
 }
 
@@ -687,7 +719,18 @@ pub fn choice_tip_entries<'a>(
     choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
     tooltip: &str,
 ) -> bool {
-    choice_tip_options(ui, label, value, choices, tooltip, false)
+    choice_tip_options(ui, label, value, choices, tooltip, false, true)
+}
+
+/// User/profile identities are not product-language choice labels.
+pub(crate) fn choice_tip_profile_entries<'a>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    tooltip: &str,
+) -> bool {
+    choice_tip_options(ui, label, value, choices, tooltip, false, false)
 }
 
 pub(crate) fn choice_tip_options<'a>(
@@ -697,6 +740,7 @@ pub(crate) fn choice_tip_options<'a>(
     choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
     tooltip: &str,
     experimental: bool,
+    translate_options: bool,
 ) -> bool {
     let selected_label = choices
         .clone()
@@ -712,7 +756,8 @@ pub(crate) fn choice_tip_options<'a>(
     // after it. The width is capped so a selector sharing a row with another
     // control leaves room for it.
     ui.horizontal(|ui| {
-        row_label(ui, label, experimental).on_hover_text(tooltip);
+        row_label(ui, label, experimental)
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         // The selector takes the width still unclaimed in its row, capped, so a
         // selector sharing a row with another control leaves room for it and
         // never pushes the row past its container.
@@ -720,7 +765,11 @@ pub(crate) fn choice_tip_options<'a>(
             .available_width()
             .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
         let response = egui::ComboBox::from_id_salt(label)
-            .selected_text(&selected_label)
+            .selected_text(if translate_options {
+                crate::controls::localized(ui.ctx(), &selected_label)
+            } else {
+                std::borrow::Cow::Borrowed(selected_label.as_str())
+            })
             .width(width)
             // Truncate rather than extend: an extending selector takes its
             // text's full width and pushes whatever shares the row past the
@@ -731,8 +780,15 @@ pub(crate) fn choice_tip_options<'a>(
                     // Allocate only when a selection changes, not for every
                     // option each frame.
                     if ui
-                        .selectable_label(value.as_str() == option, display_label)
-                        .on_hover_text(tooltip)
+                        .selectable_label(
+                            value.as_str() == option,
+                            if translate_options {
+                                crate::controls::localized(ui.ctx(), display_label)
+                            } else {
+                                std::borrow::Cow::Borrowed(display_label)
+                            },
+                        )
+                        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip))
                         .clicked()
                         && value.as_str() != option
                     {
@@ -741,7 +797,7 @@ pub(crate) fn choice_tip_options<'a>(
                 }
             })
             .response
-            .on_hover_text(tooltip);
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         super::focus_response(ui, label, &response);
         name_choice(ui, label);
     });
@@ -759,8 +815,9 @@ pub(crate) fn choice_tip_options<'a>(
 /// returns, so the selector is named directly instead.
 pub(crate) fn name_choice(ui: &Ui, label: &str) {
     let id = ui.make_persistent_id(egui::Id::new(label));
+    let accessible_label = super::localized(ui.ctx(), label);
     ui.ctx().accesskit_node_builder(id, |node| {
-        node.set_label(label);
+        node.set_label(accessible_label.as_ref());
     });
 }
 
@@ -782,14 +839,17 @@ pub(crate) fn extra_choice(
     // parameter row. The selector paints in its own horizontal row inside a
     // vertical section body, so both share one explicit row here.
     ui.horizontal(|ui| {
-        row_label(ui, label, false).on_hover_text(tooltip);
+        row_label(ui, label, false).on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         egui::ComboBox::from_id_salt(label)
-            .selected_text(current)
+            .selected_text(crate::controls::localized(ui.ctx(), current))
             .show_ui(ui, |ui| {
                 for &option in choices {
                     if ui
-                        .selectable_label(current == option, option)
-                        .on_hover_text(tooltip)
+                        .selectable_label(
+                            current == option,
+                            crate::controls::localized(ui.ctx(), option),
+                        )
+                        .on_hover_text(crate::controls::localized(ui.ctx(), tooltip))
                         .clicked()
                         && current != option
                     {
@@ -798,7 +858,7 @@ pub(crate) fn extra_choice(
                 }
             })
             .response
-            .on_hover_text(tooltip);
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         name_choice(ui, label);
     });
     row_modified::offer_reset(ui, label, Some(&format!("extras.{section}.{key}")));
@@ -844,7 +904,8 @@ fn tuple_marked<T: egui::emath::Numeric, const N: usize>(
     mark: row_modified::RowMark,
 ) -> bool {
     ui.push_id(label, |ui| {
-        let label_response = row_label(ui, label, experimental).on_hover_text(tooltip);
+        let label_response = row_label(ui, label, experimental)
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         mark.paint(ui, &label_response);
         mark.gold(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -857,11 +918,11 @@ fn tuple_marked<T: egui::emath::Numeric, const N: usize>(
                             .copied()
                             .unwrap_or_else(|| index_identifier(index));
                         let identifier_response = ui.label(
-                            egui::RichText::new(identifier)
+                            egui::RichText::new(crate::controls::localized(ui.ctx(), identifier))
                                 .color(theme::FG_MUTED)
                                 .size(theme::SIZE_HINT),
                         );
-                        numeric_field(
+                        let changed = numeric_field(
                             ui,
                             &format!("{label} {identifier}"),
                             (label, index),
@@ -873,7 +934,18 @@ fn tuple_marked<T: egui::emath::Numeric, const N: usize>(
                             tooltip,
                             None,
                             Some(identifier_response.id),
-                        )
+                        );
+                        let field_id = ui.make_persistent_id(("numeric-field", (label, index)));
+                        let accessible_label = crate::tr!(
+                            ui.ctx(),
+                            "controls.component.name",
+                            label = super::localized(ui.ctx(), label),
+                            component = super::localized(ui.ctx(), identifier)
+                        );
+                        ui.ctx().accesskit_node_builder(field_id, |node| {
+                            node.set_label(accessible_label.as_ref());
+                        });
+                        changed
                     })
                     .fold(false, |changed, field_changed| changed | field_changed)
             })
@@ -920,7 +992,7 @@ pub(crate) fn extra_channels(
         }
     }
     let mut changed = false;
-    ui.label(label).on_hover_text("Permutation of film density channels. Selecting a channel swaps its prior position so no record is duplicated or dropped.");
+    ui.label(crate::controls::localized(ui.ctx(), label)).on_hover_text(super::localized(ui.ctx(), "Permutation of film density channels. Selecting a channel swaps its prior position so no record is duplicated or dropped."));
     ui.horizontal(|ui| {
         for index in 0..3 {
             egui::ComboBox::from_id_salt((path, index))

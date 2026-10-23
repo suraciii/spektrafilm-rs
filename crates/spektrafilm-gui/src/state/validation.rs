@@ -1,5 +1,5 @@
 //! State normalization and typed runtime validation.
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use spektrafilm_core::params::RuntimeParams;
 
@@ -10,12 +10,12 @@ pub(crate) fn validate_stored_runtime(params: &mut RuntimeParams) -> Result<()> 
     params
         .scanner
         .operator
-        .validate()
-        .map_err(anyhow::Error::msg)?;
+        .validate_detailed()
+        .map_err(anyhow::Error::new)?;
     let operator = std::mem::take(&mut params.scanner.operator);
-    let result = params.validate();
+    let result = params.validate_detailed();
     params.scanner.operator = operator;
-    result.map_err(anyhow::Error::msg)
+    result.map_err(anyhow::Error::new)
 }
 
 pub(super) fn normalize_grain_section(section: &mut Value) {
@@ -47,7 +47,9 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     const LEGACY_GROUP: &str = "magazine_print_color";
     const RETIRED_ROUTE: &str = "input > film > scan > magazine";
     if value.get("output_mix").is_some() {
-        bail!("output_mix belongs in rust.runtime.output_mix in GUI state");
+        bail!(crate::app::Message::new(
+            "operations.state.output_mix_owner"
+        ));
     }
     if !legacy_cmyk {
         if value.get(LEGACY_GROUP).is_some()
@@ -56,7 +58,8 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 .is_some()
         {
             bail!(
-                "current GUI state carries retired {LEGACY_GROUP}; use cmyk.active and cmyk.strength"
+                crate::app::Message::new("operations.state.retired_group")
+                    .arg("group", LEGACY_GROUP)
             );
         }
         if value.pointer("/simulation/route").and_then(Value::as_str) == Some(RETIRED_ROUTE)
@@ -66,7 +69,8 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 == Some(RETIRED_ROUTE)
         {
             bail!(
-                "current GUI state carries retired route {RETIRED_ROUTE}; use input > film > scan and cmyk.active = true"
+                crate::app::Message::new("operations.state.retired_route")
+                    .arg("route", RETIRED_ROUTE)
             );
         }
     }
@@ -77,9 +81,9 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         .and_then(Value::as_object)
         .is_some_and(|group| group.contains_key("active"));
     if legacy_cmyk && legacy_route && legacy_group_has_active {
-        bail!(
-            "legacy GUI state carries both the retired route input > film > scan > magazine and magazine_print_color.active; keep exactly one spelling"
-        );
+        bail!(crate::app::Message::new(
+            "operations.state.legacy_route_conflict"
+        ));
     }
     // Migrate the retired CMYK group and route of a legacy complete document
     // before any typed validation reads it. The mapping is transactional and
@@ -87,12 +91,14 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     if legacy_cmyk {
         if let Some(magazine) = value.get("magazine_print_color") {
             if !magazine.is_object() {
-                bail!("legacy GUI state carries a non-object magazine_print_color group");
+                bail!(crate::app::Message::new(
+                    "operations.state.legacy_group_object"
+                ));
             }
             if value.get("cmyk").is_some() {
-                bail!(
-                    "legacy GUI state carries both magazine_print_color and cmyk; keep exactly one spelling"
-                );
+                bail!(crate::app::Message::new(
+                    "operations.state.legacy_groups_conflict"
+                ));
             }
             let migrated = magazine.clone();
             value
@@ -117,24 +123,30 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         explicit = json!({});
     }
     if legacy_conversion {
-        spektrafilm_core::params::sources::normalize_legacy_conversion_paths(value, true)
-            .map_err(anyhow::Error::msg)?;
-        spektrafilm_core::params::sources::normalize_legacy_conversion_paths(&mut explicit, true)
-            .map_err(anyhow::Error::msg)?;
+        spektrafilm_core::params::sources::normalize_legacy_conversion_paths_detailed(value, true)
+            .map_err(anyhow::Error::new)?;
+        spektrafilm_core::params::sources::normalize_legacy_conversion_paths_detailed(
+            &mut explicit,
+            true,
+        )
+        .map_err(anyhow::Error::new)?;
         if let Some(runtime) = value["rust"].get_mut("runtime") {
-            spektrafilm_core::params::sources::normalize_legacy_conversion_paths(runtime, true)
-                .map_err(anyhow::Error::msg)?;
+            spektrafilm_core::params::sources::normalize_legacy_conversion_paths_detailed(
+                runtime, true,
+            )
+            .map_err(anyhow::Error::new)?;
         }
     }
     if legacy {
-        spektrafilm_core::params::sources::normalize_legacy_complete_params(value)
-            .map_err(anyhow::Error::msg)?;
+        spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(value)
+            .map_err(anyhow::Error::new)?;
     } else if value["io"]["output_gamut_compress"]
         .get("lightness_compression")
         .is_some()
     {
         bail!(
-            "io.output_gamut_compress.lightness_compression is retired; explicitly remove this setting from the document"
+            crate::app::Message::new("operations.state.retired_lightness")
+                .arg("path", "io.output_gamut_compress.lightness_compression")
         );
     }
     if !legacy
@@ -146,23 +158,26 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 .is_some())
     {
         bail!(
-            "io.output_gamut_compress.lightness_compression is retired; explicitly remove this setting from the document"
+            crate::app::Message::new("operations.state.retired_lightness")
+                .arg("path", "io.output_gamut_compress.lightness_compression")
         );
     }
     if legacy {
-        spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut explicit)
-            .map_err(anyhow::Error::msg)?;
+        spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(&mut explicit)
+            .map_err(anyhow::Error::new)?;
     } else if legacy_cmyk {
         // The runtime carrier of a legacy complete document may also carry the
         // retired group; migrate it onto the canonical name.
         if let Some(magazine) = explicit.get("magazine_print_color") {
             if !magazine.is_object() {
-                bail!("legacy GUI runtime carries a non-object magazine_print_color group");
+                bail!(crate::app::Message::new(
+                    "operations.state.legacy_group_object"
+                ));
             }
             if explicit.get("cmyk").is_some() {
-                bail!(
-                    "legacy GUI runtime carries both magazine_print_color and cmyk; keep exactly one spelling"
-                );
+                bail!(crate::app::Message::new(
+                    "operations.state.legacy_groups_conflict"
+                ));
             }
             let migrated = magazine.clone();
             explicit
@@ -175,8 +190,11 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 .remove("magazine_print_color");
         }
     }
-    let _: RuntimeParams =
-        serde_json::from_value(explicit.clone()).context("Invalid GUI Rust runtime parameters")?;
+    let _: RuntimeParams = serde_json::from_value(explicit.clone()).map_err(|error| {
+        crate::app::Message::new("operations.state.invalid_parameters")
+            .arg("path", "rust.runtime")
+            .context(error)
+    })?;
     for (section, group, leaf) in [
         ("output_gamut_compress", "io", "output_gamut_compress"),
         ("preflashing", "enlarger", ""),
@@ -243,18 +261,26 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     if let Some(io) = value["simulation"].get("io") {
         let mut projected = json!({"io": io});
         if legacy {
-            spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut projected)
-                .map_err(anyhow::Error::msg)?;
+            spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(
+                &mut projected,
+            )
+            .map_err(anyhow::Error::new)?;
         } else if io["output_gamut_compress"]
             .get("lightness_compression")
             .is_some()
         {
             bail!(
-                "simulation.io.output_gamut_compress.lightness_compression is retired; explicitly remove this setting from the document"
+                crate::app::Message::new("operations.state.retired_lightness").arg(
+                    "path",
+                    "simulation.io.output_gamut_compress.lightness_compression"
+                )
             );
         }
-        let _: RuntimeParams = serde_json::from_value(projected.clone())
-            .context("Invalid GUI simulation.io parameters")?;
+        let _: RuntimeParams = serde_json::from_value(projected.clone()).map_err(|error| {
+            crate::app::Message::new("operations.state.invalid_parameters")
+                .arg("path", "simulation.io")
+                .context(error)
+        })?;
         if legacy {
             value["simulation"]["io"] = projected["io"].clone();
         }
@@ -264,32 +290,43 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
     // scanner keys fail the document instead of being silently dropped.
     if let Some(fields) = value.get("scanner") {
         let projected = json!({"scanner": fields});
-        let params: RuntimeParams =
-            serde_json::from_value(projected).context("Invalid GUI scanner parameters")?;
+        let params: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
+            crate::app::Message::new("operations.state.invalid_parameters")
+                .arg("path", "scanner")
+                .context(error)
+        })?;
         params
             .scanner
             .operator
-            .validate()
-            .map_err(anyhow::Error::msg)?;
+            .validate_detailed()
+            .map_err(anyhow::Error::new)?;
     }
     if let Some(fields) = value["rust"]["runtime"].get("scanner") {
         let projected = json!({"scanner": fields});
-        let params: RuntimeParams = serde_json::from_value(projected)
-            .context("Invalid GUI Rust runtime scanner parameters")?;
+        let params: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
+            crate::app::Message::new("operations.state.invalid_parameters")
+                .arg("path", "rust.runtime.scanner")
+                .context(error)
+        })?;
         params
             .scanner
             .operator
-            .validate()
-            .map_err(anyhow::Error::msg)?;
+            .validate_detailed()
+            .map_err(anyhow::Error::new)?;
     }
     if let Some(output) = value.get_mut("output_gamut_compress") {
         let mut projected = json!({"io": {"output_gamut_compress": output.clone()}});
         if legacy {
-            spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut projected)
-                .map_err(anyhow::Error::msg)?;
+            spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(
+                &mut projected,
+            )
+            .map_err(anyhow::Error::new)?;
         }
-        let _: RuntimeParams =
-            serde_json::from_value(projected).context("Invalid GUI io.output_gamut_compress")?;
+        let _: RuntimeParams = serde_json::from_value(projected).map_err(|error| {
+            crate::app::Message::new("operations.state.invalid_parameters")
+                .arg("path", "io.output_gamut_compress")
+                .context(error)
+        })?;
         if legacy {
             output
                 .as_object_mut()
@@ -297,23 +334,25 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         }
     }
     if legacy {
-        spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut explicit)
-            .map_err(anyhow::Error::msg)?;
+        spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(&mut explicit)
+            .map_err(anyhow::Error::new)?;
         if let Some(runtime) = value["rust"].get_mut("runtime") {
-            spektrafilm_core::params::sources::normalize_legacy_complete_params(runtime)
-                .map_err(anyhow::Error::msg)?;
+            spektrafilm_core::params::sources::normalize_legacy_complete_params_detailed(runtime)
+                .map_err(anyhow::Error::new)?;
         }
     } else if legacy_cmyk {
         // The persisted runtime carrier of a legacy complete document may also
         // carry the retired group; migrate it onto the canonical name.
         if let Some(magazine) = explicit.get("magazine_print_color") {
             if !magazine.is_object() {
-                bail!("legacy GUI runtime carries a non-object magazine_print_color group");
+                bail!(crate::app::Message::new(
+                    "operations.state.legacy_group_object"
+                ));
             }
             if explicit.get("cmyk").is_some() {
-                bail!(
-                    "legacy GUI runtime carries both magazine_print_color and cmyk; keep exactly one spelling"
-                );
+                bail!(crate::app::Message::new(
+                    "operations.state.legacy_groups_conflict"
+                ));
             }
             let migrated = magazine.clone();
             explicit
@@ -329,12 +368,14 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
             && let Some(magazine) = runtime.get("magazine_print_color")
         {
             if !magazine.is_object() {
-                bail!("legacy GUI runtime carries a non-object magazine_print_color group");
+                bail!(crate::app::Message::new(
+                    "operations.state.legacy_group_object"
+                ));
             }
             if runtime.get("cmyk").is_some() {
-                bail!(
-                    "legacy GUI runtime carries both magazine_print_color and cmyk; keep exactly one spelling"
-                );
+                bail!(crate::app::Message::new(
+                    "operations.state.legacy_groups_conflict"
+                ));
             }
             let migrated = magazine.clone();
             runtime
@@ -347,7 +388,10 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
                 .remove("magazine_print_color");
         }
     }
-    let _: RuntimeParams =
-        serde_json::from_value(explicit).context("Invalid GUI runtime parameters")?;
+    let _: RuntimeParams = serde_json::from_value(explicit).map_err(|error| {
+        crate::app::Message::new("operations.state.invalid_parameters")
+            .arg("path", "rust.runtime")
+            .context(error)
+    })?;
     Ok(())
 }

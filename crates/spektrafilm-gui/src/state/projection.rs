@@ -1,5 +1,5 @@
 //! State ⇄ runtime projection.
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde_json::{Value, json};
 use spektrafilm_core::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams};
 
@@ -113,18 +113,22 @@ impl GuiState {
         ] {
             runtime["settings"][key] = value;
         }
-        let mut params: RuntimeParams =
-            serde_json::from_value(runtime).context("Invalid GUI control value")?;
+        let mut params: RuntimeParams = serde_json::from_value(runtime).map_err(|error| {
+            crate::app::Message::new("operations.state.control_value").context(error)
+        })?;
         if let Some(preparation) = s["rust"].get("render_preparation") {
-            let preparation = serde_json::from_value(preparation.clone())
-                .context("Invalid render preparation ownership")?;
+            let preparation = serde_json::from_value(preparation.clone()).map_err(|error| {
+                crate::app::Message::new("operations.state.preparation").context(error)
+            })?;
             params.restore_render_preparation_state(&preparation);
         }
         super::validate_stored_runtime(&mut params)?;
         for name in ["film_channel_swap", "print_channel_swap"] {
-            let order = s["special"][name]
-                .as_array()
-                .context("Channel swap must be an array")?;
+            let order = s["special"][name].as_array().ok_or_else(|| {
+                anyhow::Error::new(
+                    crate::app::Message::new("operations.state.channel_array").arg("name", name),
+                )
+            })?;
             if order.len() != 3 || order.iter().any(|v| v.as_u64().is_none_or(|x| x > 2)) || {
                 let mut seen = [false; 3];
                 let mut duplicate = false;
@@ -138,14 +142,20 @@ impl GuiState {
                 }
                 duplicate
             } {
-                bail!("{name} must be a permutation of [0, 1, 2]");
+                bail!(
+                    crate::app::Message::new("operations.state.channel_permutation")
+                        .arg("name", name)
+                );
             }
         }
         if !matches!(
             s["load_raw"]["white_balance"].as_str(),
             Some("as_shot" | "as-shot" | "daylight" | "tungsten" | "custom")
         ) {
-            bail!("Unknown RAW white balance");
+            bail!(
+                crate::app::Message::new("operations.state.raw_white_balance")
+                    .arg("value", &s["load_raw"]["white_balance"])
+            );
         }
         for (section, key) in [
             ("simulation", "auto_preview"),
@@ -155,7 +165,11 @@ impl GuiState {
             ("load_raw", "lens_correction"),
         ] {
             if !s[section][key].is_boolean() {
-                bail!("{section}.{key} must be a boolean");
+                bail!(
+                    crate::app::Message::new("operations.state.boolean")
+                        .arg("path", format!("{section}.{key}"))
+                        .arg("value", &s[section][key])
+                );
             }
         }
         for (section, key) in [
@@ -164,23 +178,35 @@ impl GuiState {
             ("load_raw", "tint"),
         ] {
             if s[section][key].as_f64().is_none_or(|v| !v.is_finite()) {
-                bail!("{section}.{key} must be a finite number");
+                bail!(
+                    crate::app::Message::new("operations.state.finite")
+                        .arg("path", format!("{section}.{key}"))
+                        .arg("value", &s[section][key])
+                );
             }
         }
         if s["simulation"]["film_stock"].as_str().is_none()
             || s["simulation"]["print_paper"].as_str().is_none()
         {
-            bail!("Film and paper selections must be strings");
+            bail!(crate::app::Message::new(
+                "operations.state.material_strings"
+            ));
         }
         let saving_space = s["simulation"]["saving_color_space"]
             .as_str()
-            .context("Saving color space must be a string")?;
-        spektrafilm_math::colorspace::resolve(saving_space).map_err(anyhow::Error::msg)?;
+            .ok_or_else(|| {
+                anyhow::Error::new(crate::app::Message::new("operations.state.saving_space"))
+            })?;
+        spektrafilm_math::colorspace::resolve(saving_space).map_err(|_| {
+            anyhow::Error::new(spektrafilm_core::image_io::ImageIoError::InvalidColorSpace(
+                saving_space.to_owned(),
+            ))
+        })?;
         if let Some(rust) = s["rust"].as_object() {
             if let Some(depth) = rust.get("save_bit_depth")
                 && !matches!(depth.as_u64(), Some(8 | 16 | 32))
             {
-                bail!("Saving bit depth must be 8, 16 or 32");
+                bail!(crate::app::Message::new("operations.state.bit_depth").arg("value", depth));
             }
             use spektrafilm_core::image_io::{
                 BitDepth, ImageFormat, SaveOptionViolation as V, SaveOptions,
@@ -210,10 +236,14 @@ impl GuiState {
                 }
             }
             if let Some(space) = rust.get("export_saving_color_space") {
-                let space = space
-                    .as_str()
-                    .context("Export saving color space must be a string")?;
-                spektrafilm_math::colorspace::resolve(space).map_err(anyhow::Error::msg)?;
+                let space = space.as_str().ok_or_else(|| {
+                    anyhow::Error::new(crate::app::Message::new("operations.state.export_space"))
+                })?;
+                spektrafilm_math::colorspace::resolve(space).map_err(|_| {
+                    anyhow::Error::new(spektrafilm_core::image_io::ImageIoError::InvalidColorSpace(
+                        space.to_owned(),
+                    ))
+                })?;
                 if format == Some(ImageFormat::Exr)
                     && save_option_violations(
                         ImageFormat::Exr,
@@ -222,13 +252,15 @@ impl GuiState {
                     )
                     .contains(&V::ExrColorSpace)
                 {
-                    bail!("EXR saving color space must be sRGB or ACES2065-1");
+                    bail!(
+                        crate::app::Message::new("operations.state.exr_space").arg("value", space)
+                    );
                 }
             }
             if let Some(encoded) = rust.get("export_saving_cctf_encoding") {
-                let encoded = encoded
-                    .as_bool()
-                    .context("Export saving CCTF encoding must be a boolean")?;
+                let encoded = encoded.as_bool().ok_or_else(|| {
+                    anyhow::Error::new(crate::app::Message::new("operations.state.export_encoding"))
+                })?;
                 if let Some(format) = format {
                     for violation in save_option_violations(
                         format,
@@ -236,9 +268,11 @@ impl GuiState {
                         false,
                     ) {
                         match violation {
-                            V::RequiresLinear => bail!("EXR exports must use linear color"),
+                            V::RequiresLinear => {
+                                bail!(crate::app::Message::new("operations.state.exr_linear"))
+                            }
                             V::RequiresEncoded => {
-                                bail!("JPEG and PNG exports require encoded color")
+                                bail!(crate::app::Message::new("operations.state.encoded"))
                             }
                             _ => {}
                         }
@@ -246,30 +280,48 @@ impl GuiState {
                 }
             }
             if let Some(export_format) = rust.get("export_format") {
-                let export_format = export_format
-                    .as_str()
-                    .context("Export format must be a string")?;
+                let export_format = export_format.as_str().ok_or_else(|| {
+                    anyhow::Error::new(crate::app::Message::new(
+                        "operations.state.export_format_string",
+                    ))
+                })?;
                 if !matches!(export_format, "jpeg" | "png" | "tiff" | "exr") {
-                    bail!("Unknown export format");
+                    bail!(
+                        crate::app::Message::new("operations.state.export_format")
+                            .arg("value", export_format)
+                    );
                 }
                 let quality = rust
                     .get("jpeg_quality")
                     .and_then(Value::as_u64)
-                    .context("JPEG quality must be an integer")?;
+                    .ok_or_else(|| {
+                        anyhow::Error::new(crate::app::Message::new(
+                            "operations.state.jpeg_quality_integer",
+                        ))
+                    })?;
                 if !(1..=100).contains(&quality) {
-                    bail!("JPEG quality must be 1..=100");
+                    bail!(
+                        crate::app::Message::new("operations.state.jpeg_quality")
+                            .arg("value", quality)
+                    );
                 }
                 if !matches!(
                     rust.get("jpeg_subsampling").and_then(Value::as_str),
                     Some("444" | "420")
                 ) {
-                    bail!("JPEG subsampling must be 444 or 420");
+                    bail!(
+                        crate::app::Message::new("operations.state.jpeg_subsampling")
+                            .arg("value", &rust["jpeg_subsampling"])
+                    );
                 }
                 if !matches!(
                     rust.get("export_compression").and_then(Value::as_str),
                     Some("zip" | "none")
                 ) {
-                    bail!("Unknown export compression");
+                    bail!(
+                        crate::app::Message::new("operations.state.compression")
+                            .arg("value", &rust["export_compression"])
+                    );
                 }
                 let depth = match rust
                     .get("save_bit_depth")
@@ -287,14 +339,19 @@ impl GuiState {
                     .contains(&V::Depth)
                 {
                     if format == ImageFormat::Exr {
-                        bail!("EXR exports require 16- or 32-bit depth");
+                        bail!(crate::app::Message::new("operations.state.exr_depth"));
                     }
-                    bail!("{export_format} exports require 8-bit depth");
+                    bail!(
+                        crate::app::Message::new("operations.state.eight_bit")
+                            .arg("format", export_format)
+                    );
                 }
             }
         }
         if s["display"]["output_interpolation"].as_str().is_none() {
-            bail!("Output interpolation must be a string");
+            bail!(crate::app::Message::new(
+                "operations.state.output_interpolation"
+            ));
         }
         Ok(params)
     }
@@ -304,7 +361,7 @@ impl GuiState {
         if !params.scanner.requires_full_frame() {
             params.scanner.operator = Default::default();
         }
-        params.validate().map_err(anyhow::Error::msg)?;
+        params.validate_detailed().map_err(anyhow::Error::new)?;
         Ok(params)
     }
 

@@ -8,7 +8,7 @@ impl App {
     /// The typed extension selects the format; this never rerenders.
     pub(crate) fn save_dialog(&mut self) {
         if self.output_image.is_none() {
-            self.status = "Nothing to save yet — load an image first.".into();
+            self.status = crate::app::Message::new("operations.nothing_to_save");
             return;
         }
         let default_name = match &self.image_path {
@@ -23,7 +23,11 @@ impl App {
         };
         let Some(path) = self.chooser.save_file(
             self.file_dialog("save_output")
-                .add_filter("Image", &image_io::container_extensions())
+                .add_filter(
+                    crate::i18n::text_for(self.resolved_locale, "operations.image_filter")
+                        .into_owned(),
+                    &image_io::container_extensions(),
+                )
                 .set_file_name(&default_name),
         ) else {
             return;
@@ -34,7 +38,7 @@ impl App {
     /// Save the retained output; `path` is the native chooser's confirmed result.
     pub(crate) fn save_to_path(&mut self, path: &Path) {
         if self.output_image.is_none() {
-            self.status = "Nothing to save yet — load an image first.".into();
+            self.status = crate::app::Message::new("operations.nothing_to_save");
             return;
         }
         let mut operation = Operation::new(OperationKind::Save, self.diagnostics.mode);
@@ -48,7 +52,8 @@ impl App {
         let actual_format = match image_io::ImageFormat::detect(path) {
             Ok(format) => format,
             Err(error) => {
-                self.status = format!("Save error: {error}");
+                self.status = crate::app::Message::new("operations.save_error")
+                    .message_arg("detail", crate::app::Message::image_io(&error));
                 operation.issue(IssueCategory::Writing, IssueBoundary::Operation);
                 self.diagnostics.finish(operation, Outcome::Failed);
                 return;
@@ -91,7 +96,8 @@ impl App {
         ) {
             Ok(image) => image,
             Err(error) => {
-                self.status = format!("Save error: {error}");
+                self.status = crate::app::Message::new("operations.save_error")
+                    .message_arg("detail", crate::app::Message::image_io(&error));
                 saving_convert
                     .context()
                     .issue(IssueCategory::Writing, IssueBoundary::SavingConvert);
@@ -117,22 +123,30 @@ impl App {
         );
         match result {
             Ok(report) => {
-                self.status = format!(
-                    "Saved {} in {:.0} ms",
-                    path.file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("(file)"),
-                    t.elapsed().as_secs_f32() * 1000.0
-                );
-                if let Some(warning) = report.metadata_warning {
-                    self.status
-                        .push_str(&format!(" — Metadata warning: {warning}"));
-                }
+                let saved = crate::app::Message::new("operations.saved")
+                    .arg(
+                        "file",
+                        path.file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("(file)"),
+                    )
+                    .arg(
+                        "milliseconds",
+                        format!("{:.0}", t.elapsed().as_secs_f32() * 1000.0),
+                    );
+                self.status = if let Some(warning) = report.metadata_warning {
+                    crate::app::Message::new("operations.metadata_warning")
+                        .message_arg("operation", saved)
+                        .message_arg("detail", crate::app::Message::bridge_error(&warning))
+                } else {
+                    saved
+                };
                 operation.set_published_dimensions(converted.width, converted.height);
                 self.diagnostics.finish(operation, Outcome::Succeeded);
             }
             Err(e) => {
-                self.status = format!("Save error: {e:#}");
+                self.status = crate::app::Message::new("operations.save_error")
+                    .message_arg("detail", crate::app::Message::image_io(&e));
                 self.diagnostics.finish(operation, Outcome::Failed);
             }
         }

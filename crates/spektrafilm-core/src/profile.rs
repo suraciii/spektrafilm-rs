@@ -14,6 +14,7 @@ pub use io::{
 };
 pub use model::{DensityCurvesModel, Profile, ProfileData, ProfileInfo, ProfileMetadata};
 pub use render::{development_time_index, resolve_for_render};
+pub use validation::ProfileValidationError;
 pub(crate) use validation::validate_profile;
 
 #[derive(Debug, thiserror::Error)]
@@ -25,13 +26,20 @@ pub enum ProfileError {
     #[error("serializing profile {0}: {1}")]
     Serialize(String, serde_json::Error),
     #[error("invalid profile: {0}")]
-    Validation(String),
+    Validation(ProfileValidationError),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::data_dir;
+
+    #[test]
+    fn validation_error_preserves_display_without_adding_a_source() {
+        let error = ProfileError::Validation(ProfileValidationError::Empty("wavelengths"));
+        assert_eq!(error.to_string(), "invalid profile: wavelengths is empty");
+        assert!(std::error::Error::source(&error).is_none());
+    }
 
     fn data_profile(name: &str) -> Option<Profile> {
         let path = data_dir().join(format!("profiles/{name}.json"));

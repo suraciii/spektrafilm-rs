@@ -12,7 +12,7 @@ pub(crate) fn sections(
     if section == "Couplers" {
         ui.scope(|ui| {
             ui.label(
-                egui::RichText::new("Key controls: inhibition samelayer (contrast) · inhibition interlayer (saturation) · inhibition amount (global)")
+                egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.couplers.key_controls"))
                     .small()
                     .color(theme::FG_MUTED),
             );

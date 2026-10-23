@@ -10,6 +10,7 @@ pub use discovery::{
 };
 
 use super::RuntimeParams;
+use super::{ValidationError as Error, ValidationReason as Reason};
 use crate::suggest::error_suffix;
 use metadata::{nullable, rust_type};
 use serde_json::{Map, Value};
@@ -31,15 +32,19 @@ pub fn non_settable_leaves() -> &'static [(&'static str, &'static str)] {
 /// a migrated document carries only canonical `cmyk` fields and the canonical
 /// base route, and re-running the migration is a no-op.
 pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String> {
+    normalize_legacy_complete_params_detailed(value).map_err(|error| error.to_string())
+}
+
+pub fn normalize_legacy_complete_params_detailed(value: &mut Value) -> Result<(), Error> {
     // Reject the retired leaf before renaming anything so a rejected
     // document stays byte-identical.
     let has_retired = match value.pointer("/io/output_gamut_compress/lightness_compression") {
-        Some(retired) if !retired.is_null() => return Err(retired_lightness_error()),
+        Some(retired) if !retired.is_null() => return Err(retired_lightness_error_detailed()),
         Some(_) => true,
         None => false,
     };
-    normalize_legacy_conversion_paths(value, true)?;
-    normalize_legacy_cmyk(value)?;
+    normalize_legacy_conversion_paths_detailed(value, true)?;
+    normalize_legacy_cmyk_detailed(value)?;
     if has_retired {
         value
             .pointer_mut("/io/output_gamut_compress")
@@ -58,7 +63,7 @@ pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String>
 /// idempotent, and preserves unrelated fields. A document supplying both a
 /// legacy field and its new counterpart is rejected. A document naming the
 /// retired route migrates to `input > film > scan` with `cmyk.active = true`.
-pub(crate) fn normalize_legacy_cmyk(value: &mut Value) -> Result<(), String> {
+fn normalize_legacy_cmyk_detailed(value: &mut Value) -> Result<(), Error> {
     const LEGACY_GROUP: &str = "magazine_print_color";
     const NEW_GROUP: &str = "cmyk";
     const RETIRED_ROUTE: &str = "input > film > scan > magazine";
@@ -72,15 +77,16 @@ pub(crate) fn normalize_legacy_cmyk(value: &mut Value) -> Result<(), String> {
     // byte-identical.
     if let Some(legacy) = object.get(LEGACY_GROUP) {
         if !legacy.is_object() {
-            return Err(format!(
-                "legacy complete params carry a non-object {LEGACY_GROUP} group"
+            return Err(Error::new(
+                Reason::LegacyGroupObject,
+                LEGACY_GROUP,
+                format!("legacy complete params carry a non-object {LEGACY_GROUP} group"),
             ));
         }
         if object.contains_key(NEW_GROUP) {
-            return Err(format!(
-                "legacy complete params carry both {LEGACY_GROUP} and {NEW_GROUP}; \
-                 keep exactly one spelling"
-            ));
+            return Err(Error::new(Reason::LegacyConflict, LEGACY_GROUP, format!(
+                "legacy complete params carry both {LEGACY_GROUP} and {NEW_GROUP}; keep exactly one spelling"
+            )).arg("other", NEW_GROUP));
         }
         for leaf in ["active", "strength"] {
             if legacy.as_object().unwrap().contains_key(leaf)
@@ -89,10 +95,9 @@ pub(crate) fn normalize_legacy_cmyk(value: &mut Value) -> Result<(), String> {
                     .and_then(Value::as_object)
                     .is_some_and(|new| new.contains_key(leaf))
             {
-                return Err(format!(
-                    "legacy complete params carry both {LEGACY_GROUP}.{leaf} and \
-                     {NEW_GROUP}.{leaf}; keep exactly one spelling"
-                ));
+                return Err(Error::new(Reason::LegacyConflict, format!("{LEGACY_GROUP}.{leaf}"), format!(
+                    "legacy complete params carry both {LEGACY_GROUP}.{leaf} and {NEW_GROUP}.{leaf}; keep exactly one spelling"
+                )).arg("other", format!("{NEW_GROUP}.{leaf}")));
             }
         }
     }
@@ -110,10 +115,9 @@ pub(crate) fn normalize_legacy_cmyk(value: &mut Value) -> Result<(), String> {
         && let Some(legacy) = object.get(LEGACY_GROUP).and_then(Value::as_object)
         && legacy.contains_key("active")
     {
-        return Err(format!(
-            "legacy complete params carry both the retired route {RETIRED_ROUTE} and \
-             {LEGACY_GROUP}.active; keep exactly one spelling"
-        ));
+        return Err(Error::new(Reason::LegacyRouteConflict, format!("{LEGACY_GROUP}.active"), format!(
+            "legacy complete params carry both the retired route {RETIRED_ROUTE} and {LEGACY_GROUP}.active; keep exactly one spelling"
+        )).arg("route", RETIRED_ROUTE));
     }
 
     // Migrate the legacy group onto the canonical name.
@@ -148,13 +152,27 @@ pub fn normalize_legacy_scan_readout(
     value: &mut Value,
     preserve_capture: bool,
 ) -> Result<(), String> {
+    normalize_legacy_scan_readout_detailed(value, preserve_capture)
+        .map_err(|error| error.to_string())
+}
+
+pub fn normalize_legacy_scan_readout_detailed(
+    value: &mut Value,
+    preserve_capture: bool,
+) -> Result<(), Error> {
     let Some(lamp) = value.pointer("/scanner/lamp").cloned() else {
         return Ok(());
     };
     let name = lamp
         .as_str()
         .filter(|name| crate::spectral_service::is_supported_illuminant(name))
-        .ok_or("legacy scanner.lamp must name a supported illuminant")?;
+        .ok_or_else(|| {
+            Error::new(
+                Reason::LegacyLamp,
+                "scanner.lamp",
+                "legacy scanner.lamp must name a supported illuminant",
+            )
+        })?;
     let mut candidate = value.clone();
     candidate["scanner"]
         .as_object_mut()
@@ -167,16 +185,34 @@ pub fn normalize_legacy_scan_readout(
     {
         let film = candidate
             .as_object_mut()
-            .ok_or("legacy parameters must be an object")?
+            .ok_or_else(|| {
+                Error::new(
+                    Reason::ObjectRequired,
+                    "",
+                    "legacy parameters must be an object",
+                )
+            })?
             .entry("film_render")
             .or_insert_with(|| serde_json::json!({}))
             .as_object_mut()
-            .ok_or("film_render must be an object")?;
+            .ok_or_else(|| {
+                Error::new(
+                    Reason::ObjectRequired,
+                    "film_render",
+                    "film_render must be an object",
+                )
+            })?;
         let convert = film
             .entry("convert")
             .or_insert_with(|| serde_json::json!({}))
             .as_object_mut()
-            .ok_or("film_render.convert must be an object")?;
+            .ok_or_else(|| {
+                Error::new(
+                    Reason::ObjectRequired,
+                    "film_render.convert",
+                    "film_render.convert must be an object",
+                )
+            })?;
         convert.insert("scan_illuminant".into(), name.into());
     }
     *value = candidate;
@@ -194,6 +230,14 @@ pub fn normalize_legacy_conversion_paths(
     value: &mut Value,
     settings_allowed: bool,
 ) -> Result<(), String> {
+    normalize_legacy_conversion_paths_detailed(value, settings_allowed)
+        .map_err(|error| error.to_string())
+}
+
+pub fn normalize_legacy_conversion_paths_detailed(
+    value: &mut Value,
+    settings_allowed: bool,
+) -> Result<(), Error> {
     let Some(object) = value.as_object_mut() else {
         return Ok(());
     };
@@ -202,18 +246,22 @@ pub fn normalize_legacy_conversion_paths(
         let has_legacy = enlarger.contains_key("normalize_print_exposure")
             || enlarger.contains_key("print_exposure_compensation");
         if has_legacy && enlarger.contains_key("print_exposure_mode") {
-            return Err(
-                "legacy complete params carry both the print exposure pair and \
-                 enlarger.print_exposure_mode; keep exactly one spelling"
-                    .into(),
-            );
+            return Err(Error::new(
+                Reason::LegacyExposureConflict,
+                "enlarger.print_exposure_mode",
+                "legacy complete params carry both the print exposure pair and enlarger.print_exposure_mode; keep exactly one spelling",
+            ));
         }
         if has_legacy {
-            let leaf = |value: Option<&Value>| -> Result<bool, String> {
+            let leaf = |value: Option<&Value>| -> Result<bool, Error> {
                 match value {
                     None => Ok(true),
                     Some(Value::Bool(b)) => Ok(*b),
-                    Some(_) => Err("legacy enlarger print exposure leaves must be booleans".into()),
+                    Some(_) => Err(Error::new(
+                        Reason::LegacyExposureBoolean,
+                        "enlarger",
+                        "legacy enlarger print exposure leaves must be booleans",
+                    )),
                 }
             };
             let normalize = leaf(enlarger.get("normalize_print_exposure"))?;
@@ -230,13 +278,11 @@ pub fn normalize_legacy_conversion_paths(
         && tracking.is_some()
         && !settings_allowed
     {
-        return Err(
-            "the legacy enlarger print exposure pair mixes normalization and \
-             compensation; this document cannot carry \
-             settings.print_exposure_ev_tracking, so set \
-             enlarger.print_exposure_mode explicitly"
-                .into(),
-        );
+        return Err(Error::new(
+            Reason::LegacyExposureMixed,
+            "enlarger.print_exposure_mode",
+            "the legacy enlarger print exposure pair mixes normalization and compensation; this document cannot carry settings.print_exposure_ev_tracking, so set enlarger.print_exposure_mode explicitly",
+        ));
     }
     // A mixed pair writes into `settings`; an existing non-object there
     // cannot carry the leaf, and this must fail before any mutation.
@@ -244,10 +290,11 @@ pub fn normalize_legacy_conversion_paths(
         && tracking.is_some()
         && matches!(object.get("settings"), Some(value) if !value.is_object())
     {
-        return Err("the legacy enlarger print exposure pair needs the \
-             settings.print_exposure_ev_tracking leaf, but settings is not an \
-             object"
-            .into());
+        return Err(Error::new(
+            Reason::LegacySettingsObject,
+            "settings",
+            "the legacy enlarger print exposure pair needs the settings.print_exposure_ev_tracking leaf, but settings is not an object",
+        ));
     }
     if let Some((mode, tracking)) = mixed_state {
         let enlarger = object
@@ -271,6 +318,14 @@ pub fn normalize_legacy_conversion_paths(
 
 pub(crate) fn retired_lightness_error() -> String {
     "io.output_gamut_compress.lightness_compression was retired; no automatic replacement exists; explicitly remove this field from the document".into()
+}
+
+fn retired_lightness_error_detailed() -> Error {
+    Error::new(
+        Reason::RetiredLightness,
+        "io.output_gamut_compress.lightness_compression",
+        retired_lightness_error(),
+    )
 }
 
 /// Ordered sparse edits to runtime parameter leaves.
@@ -314,16 +369,29 @@ impl ParameterEdits {
     }
 
     pub(crate) fn from_value(value: Value) -> Result<Self, String> {
-        let root = value
-            .as_object()
-            .ok_or_else(|| "parameter document root must be an object".to_string())?;
+        Self::from_value_detailed(value).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn from_value_detailed(value: Value) -> Result<Self, Error> {
+        let root = value.as_object().ok_or_else(|| {
+            Error::new(
+                Reason::DocumentObject,
+                "",
+                "parameter document root must be an object",
+            )
+        })?;
         let mut out = Self::default();
         flatten_object("", root, &mut out)?;
         Ok(out)
     }
 
     fn push(&mut self, path: &str, value: Value) -> Result<(), String> {
-        let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
+        self.push_detailed(path, value)
+            .map_err(|error| error.to_string())
+    }
+
+    fn push_detailed(&mut self, path: &str, value: Value) -> Result<(), Error> {
+        let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path_detailed(path))?;
         validate_leaf(path, &value, expected)?;
         self.edits.push((path.to_owned(), value));
         Ok(())
@@ -355,23 +423,40 @@ impl ParameterEdits {
     }
 
     pub fn apply(&self, params: &mut RuntimeParams) -> Result<(), String> {
+        self.apply_detailed(params)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn apply_detailed(&self, params: &mut RuntimeParams) -> Result<(), Error> {
         // serde_json turns non-finite floats into null; reject the typed
         // baseline before that conversion can erase an invalid Option value.
-        validate_finite(params)?;
+        validate_finite_detailed(params)?;
         let seed = params.random_seed;
         let particle_layers = params.film_render.grain.particle_scale_layers;
         let explicit_section_paths = params.explicit_section_paths.clone();
-        let mut root =
-            serde_json::to_value(&*params).map_err(|e| format!("serialize parameters: {e}"))?;
+        let mut root = serde_json::to_value(&*params).map_err(|error| {
+            Error::new(
+                Reason::SerializeParameters,
+                "",
+                format!("serialize parameters: {error}"),
+            )
+            .arg("detail", error)
+        })?;
         for (path, value) in &self.edits {
-            set_value(&mut root, path, value.clone())?;
+            set_value_detailed(&mut root, path, value.clone())?;
         }
-        *params =
-            serde_json::from_value(root).map_err(|e| format!("apply parameter edits: {e}"))?;
+        *params = serde_json::from_value(root).map_err(|error| {
+            Error::new(
+                Reason::ApplyParameters,
+                "",
+                format!("apply parameter edits: {error}"),
+            )
+            .arg("detail", error)
+        })?;
         params.random_seed = seed;
         params.film_render.grain.particle_scale_layers = particle_layers;
         params.explicit_section_paths = explicit_section_paths;
-        validate_finite(params)
+        validate_finite_detailed(params)
     }
 
     /// Reject RAW-incompatible explicit values before composition can overwrite them.
@@ -392,10 +477,14 @@ fn flatten_object(
     prefix: &str,
     object: &Map<String, Value>,
     out: &mut ParameterEdits,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     for (key, value) in object {
         if !valid_ident(key) {
-            return Err(format!("invalid parameter field: {key}"));
+            return Err(Error::new(
+                Reason::InvalidField,
+                key,
+                format!("invalid parameter field: {key}"),
+            ));
         }
         let path = if prefix.is_empty() {
             key.clone()
@@ -408,11 +497,15 @@ fn flatten_object(
                     .and_then(Value::as_object)
                     .is_none()
                 {
-                    return Err(format!("unknown parameter group: {path}"));
+                    return Err(Error::new(
+                        Reason::UnknownGroup,
+                        &path,
+                        format!("unknown parameter group: {path}"),
+                    ));
                 }
                 flatten_object(&path, map, out)?;
             }
-            _ => out.push(&path, value.clone())?,
+            _ => out.push_detailed(&path, value.clone())?,
         }
     }
     Ok(())
@@ -434,22 +527,34 @@ pub(crate) fn lookup<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.')
         .try_fold(root, |v, key| v.as_object()?.get(key))
 }
-pub(crate) fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
+fn set_value_detailed(root: &mut Value, path: &str, value: Value) -> Result<(), Error> {
     let mut cur = root;
     let mut parts = path.split('.').peekable();
     while let Some(key) = parts.next() {
-        let map = cur
-            .as_object_mut()
-            .ok_or_else(|| format!("parameter group is not an object: {key}"))?;
+        let map = cur.as_object_mut().ok_or_else(|| {
+            Error::new(
+                Reason::ObjectRequired,
+                key,
+                format!("parameter group is not an object: {key}"),
+            )
+        })?;
         if parts.peek().is_none() {
             map.insert(key.to_owned(), value);
             return Ok(());
         }
-        cur = map
-            .get_mut(key)
-            .ok_or_else(|| format!("unknown parameter path: {path}"))?;
+        cur = map.get_mut(key).ok_or_else(|| {
+            Error::new(
+                Reason::UnknownPath,
+                path,
+                format!("unknown parameter path: {path}"),
+            )
+        })?;
     }
-    Err(format!("invalid parameter path: {path}"))
+    Err(Error::new(
+        Reason::UnknownPath,
+        path,
+        format!("invalid parameter path: {path}"),
+    ))
 }
 
 /// Insert `value` at `path`, creating intermediate objects as needed.
@@ -517,6 +622,35 @@ mod inline_value_tests {
     use super::*;
 
     #[test]
+    fn strict_carrier_and_sparse_errors_retain_owned_causes() {
+        let error = parse_carrier_detailed(
+            r#"{"camera":{"auto_exposure":true,"auto_exposure":false}}"#,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(error.reason, Reason::DuplicateJsonKey);
+        assert_eq!(
+            error.arguments[0],
+            ("value", "\"auto_exposure\"".to_owned())
+        );
+        assert_eq!(error.arguments[1], ("line", "1".to_owned()));
+        assert_eq!(error.arguments[2].0, "column");
+        assert!(error.arguments[2].1.parse::<usize>().unwrap() > 0);
+        let error = parse_carrier_detailed("when = 1979-05-27T07:32:00Z", true).unwrap_err();
+        assert_eq!(error.reason, Reason::TomlDatetime);
+        assert_eq!(error.path, "when");
+        let error = ParameterEdits::from_value_detailed(
+            serde_json::json!({"camera": {"film_format_mm": 0}}),
+        )
+        .unwrap_err();
+        assert_eq!(error.reason, Reason::FilmFormat);
+        assert_eq!(error.path, "camera.film_format_mm");
+        let mut value = serde_json::json!({"enlarger": {"normalize_print_exposure": "yes"}});
+        let error = normalize_legacy_conversion_paths_detailed(&mut value, true).unwrap_err();
+        assert_eq!(error.reason, Reason::LegacyExposureBoolean);
+    }
+
+    #[test]
     fn plain_values_follow_parameter_types_and_preserve_quoted_forms() {
         let source = "film_render.grain.engine=procedural,film_render.grain.v2_profile=custom,io.output_color_space=ProPhoto RGB,camera.auto_exposure=false,camera.exposure_compensation_ev=+.5,camera.filter_uv=[1,2,3],film_render.grain.v2_amount=null";
         let mut params = RuntimeParams::default();
@@ -581,24 +715,32 @@ mod inline_value_tests {
     }
 }
 
-fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), String> {
+fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Error> {
     if value.is_null() {
         if nullable(path) {
             return Ok(());
         }
-        return Err(format!(
-            "{path}: null is only valid for nullable parameters"
+        return Err(Error::new(
+            Reason::NullNotAllowed,
+            path,
+            format!("{path}: null is only valid for nullable parameters"),
         ));
     }
     if !finite_json(value) {
-        return Err(format!("{path}: non-finite numbers are not allowed"));
+        return Err(Error::new(
+            Reason::NonFinite,
+            path,
+            format!("{path}: non-finite numbers are not allowed"),
+        ));
     }
     if expected.is_object() {
-        return Err(group_rejected(path));
+        return Err(group_rejected_detailed(path));
     }
     if value.is_object() {
-        return Err(format!(
-            "{path}: assignments must address scalar or array leaves"
+        return Err(Error::new(
+            Reason::LeafRequired,
+            path,
+            format!("{path}: assignments must address scalar or array leaves"),
         ));
     }
     let ty = rust_type(path);
@@ -627,7 +769,13 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
         value.is_string()
     };
     if !ok {
-        return Err(format!("{path}: expected {ty}, supplied {value}"));
+        return Err(Error::new(
+            Reason::TypeMismatch,
+            path,
+            format!("{path}: expected {ty}, supplied {value}"),
+        )
+        .arg("expected", &ty)
+        .arg("value", value));
     }
     if base_ty.contains("f32") {
         let fits = |v: &Value| v.as_f64().is_some_and(|n| (n as f32).is_finite());
@@ -636,16 +784,21 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
             .map(|a| a.iter().all(fits))
             .unwrap_or_else(|| fits(value))
         {
-            return Err(format!("{path}: value exceeds finite f32 range"));
+            return Err(Error::new(
+                Reason::F32Range,
+                path,
+                format!("{path}: value exceeds finite f32 range"),
+            )
+            .arg("value", value));
         }
     }
     if path == "camera.film_format_mm" {
         let wire = value.as_f64().unwrap();
-        super::validation::validate_film_format_mm(wire)?;
+        super::validation::validate_film_format_mm_detailed(wire)?;
         if (wire as f32) <= 0.0 {
-            return Err(format!(
+            return Err(Error::new(Reason::F32Underflow, path, format!(
                 "{path}: {wire} is below the smallest positive value the stored f32 field can hold"
-            ));
+            )).arg("value", wire));
         }
     }
     enum_check(path, value)?;
@@ -662,8 +815,14 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
         cur = cur.get_mut(*p).unwrap().as_object_mut().unwrap();
     }
     cur.insert(parts[parts.len() - 1].into(), value.clone());
-    serde_json::from_value::<RuntimeParams>(Value::Object(overlay))
-        .map_err(|e| format!("{path}: value cannot be represented by parameter type: {e}"))?;
+    serde_json::from_value::<RuntimeParams>(Value::Object(overlay)).map_err(|error| {
+        Error::new(
+            Reason::Representation,
+            path,
+            format!("{path}: value cannot be represented by parameter type: {error}"),
+        )
+        .arg("detail", error)
+    })?;
     Ok(())
 }
 
@@ -675,28 +834,34 @@ fn finite_json(v: &Value) -> bool {
     }
 }
 
-fn enum_check(path: &str, value: &Value) -> Result<(), String> {
+fn enum_check(path: &str, value: &Value) -> Result<(), Error> {
     if let Some(s) = value.as_str() {
-        super::validation::validate_enum_value(path, s)?;
+        super::validation::validate_enum_value_detailed(path, s)?;
     }
     Ok(())
 }
-fn range_check(path: &str, value: &Value) -> Result<(), String> {
+fn range_check(path: &str, value: &Value) -> Result<(), Error> {
     if path.starts_with("scanner.operator.") {
-        return super::validation::validate_scan_operator_value(
+        return super::validation::validate_scan_operator_value_detailed(
             path,
             value.as_f64().expect("numeric operator leaf"),
         );
     }
     if super::validation::gamut_component_domains(path).is_some() {
-        let values: [f32; 3] = serde_json::from_value(value.clone())
-            .map_err(|e| format!("{path}: invalid gamut triplet: {e}"))?;
-        super::validation::validate_gamut_triplet(path, values)?;
+        let values: [f32; 3] = serde_json::from_value(value.clone()).map_err(|error| {
+            Error::new(
+                Reason::GamutRepresentation,
+                path,
+                format!("{path}: invalid gamut triplet: {error}"),
+            )
+            .arg("detail", error)
+        })?;
+        super::validation::validate_gamut_triplet_detailed(path, values)?;
         return Ok(());
     }
     if path == "film_render.grain.v2_timer" {
         if let Some(n) = value.as_f64() {
-            super::validation::validate_v2_timer(f64::from(n as f32))?;
+            super::validation::validate_v2_timer_detailed(f64::from(n as f32))?;
         }
         return Ok(());
     }
@@ -709,42 +874,50 @@ fn range_check(path: &str, value: &Value) -> Result<(), String> {
         _ => vec![],
     };
     if path.starts_with("film_render.grain.fotufilm.") {
-        return super::validation::validate_fotufilm_values(path, &nums);
+        return super::validation::validate_fotufilm_values_detailed(path, &nums);
     }
     let too_low = nums
         .iter()
         .any(|x| *x < min || (path == "io.input_gamut_compress.hull_detail" && *x <= 0.0));
     let too_high = max.is_some_and(|hi| nums.iter().any(|x| *x > hi));
     if too_low || too_high {
-        return Err(format!(
-            "{path}: value outside [{min}, {}]",
-            max.map(|m| m.to_string()).unwrap_or_else(|| "inf".into())
-        ));
+        let maximum = max.map(|m| m.to_string()).unwrap_or_else(|| "inf".into());
+        return Err(Error::new(
+            Reason::OutsideRange,
+            path,
+            format!("{path}: value outside [{min}, {maximum}]"),
+        )
+        .arg("min", min)
+        .arg("max", maximum)
+        .arg("value", value));
     }
     Ok(())
 }
 
 pub(crate) fn parse_carrier(text: &str, toml: bool) -> Result<Value, String> {
+    parse_carrier_detailed(text, toml).map_err(|error| error.to_string())
+}
+
+pub(crate) fn parse_carrier_detailed(text: &str, toml: bool) -> Result<Value, Error> {
     if toml {
-        toml_to_json(
-            text.parse::<toml::Value>()
-                .map_err(|e| format!("invalid TOML: {e}"))?,
-        )
+        toml_to_json(text.parse::<toml::Value>().map_err(|error| {
+            Error::new(Reason::NativeToml, "", format!("invalid TOML: {error}"))
+                .arg("detail", error)
+        })?)
     } else {
-        use serde::Deserialize;
         // Strict JSON: serde_json's Value keeps the last duplicate key
         // silently, so decode through a visitor that rejects duplicates
         // after full escape decoding.
-        struct StrictValue;
+        struct StrictValue<'a>(&'a std::cell::RefCell<Option<(Reason, String)>>);
         // Nested objects also go through StrictValue; serde_json's own Value
         // deserialization would silently keep the last duplicate key.
-        struct StrictWrapper(Value);
-        impl<'de> Deserialize<'de> for StrictWrapper {
-            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-                d.deserialize_any(StrictValue).map(StrictWrapper)
+        impl<'de> serde::de::DeserializeSeed<'de> for StrictValue<'_> {
+            type Value = Value;
+            fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
+                d.deserialize_any(self)
             }
         }
-        impl<'de> serde::de::Visitor<'de> for StrictValue {
+        impl<'de> serde::de::Visitor<'de> for StrictValue<'_> {
             type Value = Value;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str("a JSON value without duplicate object keys")
@@ -756,11 +929,12 @@ pub(crate) fn parse_carrier(text: &str, toml: bool) -> Result<Value, String> {
                 let mut map = Map::new();
                 while let Some(key) = access.next_key::<String>()? {
                     if map.contains_key(&key) {
+                        *self.0.borrow_mut() = Some((Reason::DuplicateJsonKey, key.clone()));
                         return Err(serde::de::Error::custom(format!(
                             "duplicate JSON object key {key:?}"
                         )));
                     }
-                    let StrictWrapper(value) = access.next_value::<StrictWrapper>()?;
+                    let value = access.next_value_seed(StrictValue(self.0))?;
                     map.insert(key, value);
                 }
                 Ok(Value::Object(map))
@@ -777,7 +951,10 @@ pub(crate) fn parse_carrier(text: &str, toml: bool) -> Result<Value, String> {
             fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Value, E> {
                 serde_json::Number::from_f64(v)
                     .map(Value::Number)
-                    .ok_or_else(|| E::custom("non-finite numbers are not allowed"))
+                    .ok_or_else(|| {
+                        *self.0.borrow_mut() = Some((Reason::NonFinite, String::new()));
+                        E::custom("non-finite numbers are not allowed")
+                    })
             }
             fn visit_str<E>(self, v: &str) -> Result<Value, E> {
                 Ok(Value::String(v.to_owned()))
@@ -792,40 +969,57 @@ pub(crate) fn parse_carrier(text: &str, toml: bool) -> Result<Value, String> {
                 Ok(Value::Null)
             }
             fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
-                d.deserialize_any(StrictValue)
+                d.deserialize_any(self)
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(
                 self,
                 mut access: A,
             ) -> Result<Value, A::Error> {
                 let mut items = Vec::new();
-                while let Some(StrictWrapper(item)) = access.next_element::<StrictWrapper>()? {
+                while let Some(item) = access.next_element_seed(StrictValue(self.0))? {
                     items.push(item);
                 }
                 Ok(Value::Array(items))
             }
         }
+        let owned = std::cell::RefCell::new(None);
+        let failure = |error: serde_json::Error| {
+            let english = format!("invalid JSON: {error}");
+            match owned.borrow_mut().take() {
+                Some((reason, path)) => Error::new(reason, &path, english)
+                    .arg("value", format!("{path:?}"))
+                    .arg("line", error.line())
+                    .arg("column", error.column()),
+                None => Error::new(Reason::NativeJson, "", english).arg("detail", error),
+            }
+        };
         let mut deserializer = serde_json::Deserializer::from_str(text);
-        let value = serde::de::Deserializer::deserialize_any(&mut deserializer, StrictValue)
-            .map_err(|e| format!("invalid JSON: {e}"))?;
-        deserializer
-            .end()
-            .map_err(|e| format!("invalid JSON: {e}"))?;
+        let value = serde::de::DeserializeSeed::deserialize(StrictValue(&owned), &mut deserializer)
+            .map_err(failure)?;
+        deserializer.end().map_err(failure)?;
         Ok(value)
     }
 }
-fn toml_to_json(v: toml::Value) -> Result<Value, String> {
-    fn convert(v: toml::Value, path: &str) -> Result<Value, String> {
+fn toml_to_json(v: toml::Value) -> Result<Value, Error> {
+    fn convert(v: toml::Value, path: &str) -> Result<Value, Error> {
         match v {
             toml::Value::String(s) => Ok(Value::String(s)),
             toml::Value::Integer(i) => Ok(Value::Number(i.into())),
             toml::Value::Float(f) => serde_json::Number::from_f64(f)
                 .map(Value::Number)
-                .ok_or_else(|| format!("{path}: TOML non-finite float is not allowed")),
+                .ok_or_else(|| {
+                    Error::new(
+                        Reason::TomlNonFinite,
+                        path,
+                        format!("{path}: TOML non-finite float is not allowed"),
+                    )
+                }),
             toml::Value::Boolean(b) => Ok(Value::Bool(b)),
-            toml::Value::Datetime(_) => {
-                Err(format!("{path}: TOML datetime values are not allowed"))
-            }
+            toml::Value::Datetime(_) => Err(Error::new(
+                Reason::TomlDatetime,
+                path,
+                format!("{path}: TOML datetime values are not allowed"),
+            )),
             toml::Value::Array(a) => Ok(Value::Array(
                 a.into_iter()
                     .enumerate()
@@ -842,7 +1036,7 @@ fn toml_to_json(v: toml::Value) -> Result<Value, String> {
                         };
                         Ok((key, convert(value, &next)?))
                     })
-                    .collect::<Result<_, String>>()?,
+                    .collect::<Result<_, Error>>()?,
             )),
         }
     }
@@ -905,26 +1099,30 @@ fn split_top_level(s: &str) -> Result<Vec<&str>, String> {
     Ok(out)
 }
 fn unknown_path(path: &str) -> String {
+    unknown_path_detailed(path).to_string()
+}
+
+fn unknown_path_detailed(path: &str) -> Error {
     if path == "io.output_gamut_compress.lightness_compression" {
-        return retired_lightness_error();
+        return retired_lightness_error_detailed();
     }
     if let Some(replacement) = retired_cmyk_replacement(path) {
-        return format!(
+        return Error::new(Reason::RetiredPath, path, format!(
             "{path} was retired; use {replacement} instead; a versioned legacy complete document may migrate it, but current-schema documents and sparse sources must use the canonical path"
-        );
+        )).arg("replacement", replacement);
     }
     if let Some((_, reason)) = non_settable_leaves().iter().find(|(leaf, _)| *leaf == path) {
-        return format!(
-            "{path} is a runtime field outside the settable parameter surface; {reason}"
+        return Error::new(
+            Reason::NonSettable,
+            path,
+            format!("{path} is a runtime field outside the settable parameter surface; {reason}"),
         );
     }
-    format!(
-        "unknown parameter path: {path}; {}",
-        error_suffix(
-            &suggest_parameter_paths(path),
-            "use spektrafilm describe --module MODULE --format text to list fields, then --field PATH to describe one"
-        )
-    )
+    let suggestions = suggest_parameter_paths(path);
+    Error::new(Reason::UnknownPath, path, format!(
+        "unknown parameter path: {path}; {}", error_suffix(&suggestions,
+            "use spektrafilm describe --module MODULE --format text to list fields, then --field PATH to describe one")
+    )).arg("suggestions", suggestions.join(", "))
 }
 
 /// The canonical replacement for a retired `magazine_print_color` leaf, or
@@ -940,16 +1138,34 @@ fn retired_cmyk_replacement(path: &str) -> Option<&'static str> {
 
 /// One shared rejection for a value assigned to a parameter group.
 fn group_rejected(path: &str) -> String {
-    format!(
-        "{path}: assign a parameter within this group, not the whole group; spektrafilm describe --module {path} lists its fields"
+    group_rejected_detailed(path).to_string()
+}
+
+fn group_rejected_detailed(path: &str) -> Error {
+    Error::new(
+        Reason::GroupAssignment,
+        path,
+        format!(
+            "{path}: assign a parameter within this group, not the whole group; spektrafilm describe --module {path} lists its fields"
+        ),
     )
 }
 
 pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
-    let value = serde_json::to_value(params).map_err(|e| e.to_string())?;
-    fn check(path: &str, value: &Value) -> Result<(), String> {
+    validate_finite_detailed(params).map_err(|error| error.to_string())
+}
+
+pub fn validate_finite_detailed(params: &RuntimeParams) -> Result<(), Error> {
+    let value = serde_json::to_value(params).map_err(|error| {
+        Error::new(Reason::SerializeParameters, "", error.to_string()).arg("detail", error)
+    })?;
+    fn check(path: &str, value: &Value) -> Result<(), Error> {
         match value {
-            Value::Null if !nullable(path) => Err(format!("{path}: numeric value must be finite")),
+            Value::Null if !nullable(path) => Err(Error::new(
+                Reason::NumericFinite,
+                path,
+                format!("{path}: numeric value must be finite"),
+            )),
             Value::Object(m) => {
                 for (key, v) in m {
                     check(
@@ -965,7 +1181,11 @@ pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
             }
             Value::Array(a) => {
                 if a.iter().any(Value::is_null) {
-                    Err(format!("{path}: array values must be finite"))
+                    Err(Error::new(
+                        Reason::ArrayFinite,
+                        path,
+                        format!("{path}: array values must be finite"),
+                    ))
                 } else {
                     Ok(())
                 }
@@ -985,8 +1205,10 @@ pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
         ("v2_resolution_factor", grain.v2_resolution_factor),
     ] {
         if value.is_some_and(|v| !v.is_finite()) {
-            return Err(format!(
-                "film_render.grain.{path}: numeric value must be finite"
+            return Err(Error::new(
+                Reason::NumericFinite,
+                format!("film_render.grain.{path}"),
+                format!("film_render.grain.{path}: numeric value must be finite"),
             ));
         }
     }
@@ -1001,7 +1223,11 @@ pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
         ),
     ] {
         if value.is_some_and(|v| !v.is_finite()) {
-            return Err(format!("{path}: numeric value must be finite"));
+            return Err(Error::new(
+                Reason::NumericFinite,
+                path,
+                format!("{path}: numeric value must be finite"),
+            ));
         }
     }
     if params
@@ -1034,9 +1260,13 @@ pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
         .iter()
         .any(|x| !x.is_finite())
     {
-        return Err("parameter array values must be finite".into());
+        return Err(Error::new(
+            Reason::ArrayFinite,
+            "",
+            "parameter array values must be finite",
+        ));
     }
-    params.film_render.grain.fotufilm.validate()?;
+    params.film_render.grain.fotufilm.validate_detailed()?;
     Ok(())
 }
 
@@ -1514,12 +1744,13 @@ mod tests {
                 let mut root = serde_json::json!({"io": {
                     "input_gamut_compress": {}, "output_gamut_compress": {}
                 }});
-                set_value(&mut root, path, serde_json::from_str(invalid).unwrap()).unwrap();
+                set_value_detailed(&mut root, path, serde_json::from_str(invalid).unwrap())
+                    .unwrap();
                 assert!(
                     ParameterEdits::from_value(root.clone()).is_err(),
                     "{path}={invalid}"
                 );
-                set_value(&mut root, path, serde_json::json!([0.9, 1, 1])).unwrap();
+                set_value_detailed(&mut root, path, serde_json::json!([0.9, 1, 1])).unwrap();
                 ParameterEdits::from_value(root).unwrap();
                 // Valid boundary values remain accepted in the typed domain.
                 ParameterEdits::parse(&format!("{path}=[0,1,1]"))

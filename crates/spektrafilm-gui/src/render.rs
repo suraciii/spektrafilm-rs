@@ -104,7 +104,7 @@ impl RenderSnapshot {
         mut print: profile::Profile,
         params: RuntimeParams,
         context: &ObservationContext,
-    ) -> Result<Runtime, String> {
+    ) -> Result<Runtime, crate::app::Message> {
         for (profile, key) in [
             (&mut film, "film_channel_swap"),
             (&mut print, "print_channel_swap"),
@@ -120,8 +120,9 @@ impl RenderSnapshot {
                 }
             }
         }
-        Runtime::new_observed(film, print, params, &self.data_dir, context)
-            .map_err(|e| format!("runtime build: {e}"))
+        Runtime::new_observed(film, print, params, &self.data_dir, context).map_err(|e| {
+            crate::app::Message::new("operations.runtime_build_error").arg("detail", e)
+        })
     }
 }
 #[derive(Clone, PartialEq)]
@@ -152,7 +153,7 @@ impl RuntimeCache {
         snapshot: &RenderSnapshot,
         preview: bool,
         context: &ObservationContext,
-    ) -> Result<&mut Runtime, String> {
+    ) -> Result<&mut Runtime, crate::app::Message> {
         let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
         let result = self.prepare(snapshot, preview, prepare.context());
         observed_result(
@@ -168,7 +169,7 @@ impl RuntimeCache {
         snapshot: &RenderSnapshot,
         preview: bool,
         context: &ObservationContext,
-    ) -> Result<&mut Runtime, String> {
+    ) -> Result<&mut Runtime, crate::app::Message> {
         if let Some(mut cached) = self.entry.take() {
             let digested = snapshot.digested_params(
                 preview,
@@ -185,19 +186,32 @@ impl RuntimeCache {
                 special: snapshot.special.clone(),
             };
             if cached.key == key {
-                cached.runtime = cached.runtime.with_params(digested)?;
+                cached.runtime = cached.runtime.with_params(digested).map_err(|error| {
+                    crate::app::Message::new("operations.runtime_update_error").arg("detail", error)
+                })?;
                 self.entry = Some(cached);
                 return Ok(&mut self.entry.as_mut().expect("runtime cache restored").runtime);
             }
             self.entry = Some(cached);
         }
 
-        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
-            .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
+        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name).map_err(
+            |e| {
+                crate::app::Message::new("operations.film_profile_error")
+                    .arg("name", &snapshot.film_name)
+                    .arg("detail", e)
+            },
+        )?;
         let digest_print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
-            .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
+            .map_err(|e| {
+                crate::app::Message::new("operations.print_profile_error")
+                    .arg("name", &snapshot.print_name)
+                    .arg("detail", e)
+            })?;
         let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(&snapshot.data_dir)
-            .map_err(|e| format!("neutral filters: {e}"))?;
+            .map_err(|e| {
+            crate::app::Message::new("operations.neutral_filters_error").arg("detail", e)
+        })?;
         let digested = snapshot.digested_params(preview, &film, &digest_print, &neutral);
         let runtime_print_name = snapshot.runtime_print_name(&digested);
         let runtime_film = film.clone();
@@ -228,21 +242,41 @@ pub(super) fn build_runtime_observed(
     snapshot: &RenderSnapshot,
     preview: bool,
     context: &ObservationContext,
-) -> Result<Runtime, String> {
+) -> Result<Runtime, crate::app::Message> {
     let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
     let result = (|| {
-        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
-            .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
+        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name).map_err(
+            |e| {
+                crate::app::Message::new("operations.film_profile_error")
+                    .arg("name", &snapshot.film_name)
+                    .arg("detail", e)
+            },
+        )?;
         let print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
-            .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
+            .map_err(|e| {
+                crate::app::Message::new("operations.print_profile_error")
+                    .arg("name", &snapshot.print_name)
+                    .arg("detail", e)
+            })?;
         let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(&snapshot.data_dir)
-            .map_err(|e| format!("parameter digest: {e}"))?;
+            .map_err(|e| {
+            crate::app::Message::new("operations.neutral_filters_error").arg("detail", e)
+        })?;
         let params = snapshot.digested_params(preview, &film, &print, &neutral);
-        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
-            .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
+        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name).map_err(
+            |e| {
+                crate::app::Message::new("operations.film_profile_error")
+                    .arg("name", &snapshot.film_name)
+                    .arg("detail", e)
+            },
+        )?;
         let effective_print_name = snapshot.runtime_print_name(&params);
         let print = profile::load_profile_by_name(&snapshot.data_dir, effective_print_name)
-            .map_err(|e| format!("print profile '{effective_print_name}': {e}"))?;
+            .map_err(|e| {
+                crate::app::Message::new("operations.print_profile_error")
+                    .arg("name", effective_print_name)
+                    .arg("detail", e)
+            })?;
         snapshot.build_runtime(film, print, params, prepare.context())
     })();
     observed_result(
@@ -310,7 +344,8 @@ mod tests {
                 .prepare_observed(&failed_profile, false, &context)
                 .err()
                 .unwrap()
-                .contains("film profile 'kodak_portra_400'")
+                .to_string()
+                .contains("kodak_portra_400")
         );
         assert!(cache.entry.is_some());
         let recovered = cache
@@ -327,6 +362,7 @@ mod tests {
                 .prepare_observed(&failed_update, false, &context)
                 .err()
                 .unwrap()
+                .to_string()
                 .contains("conversion_style")
         );
         assert!(cache.entry.is_none());

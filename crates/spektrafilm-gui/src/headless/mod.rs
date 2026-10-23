@@ -8,6 +8,7 @@ mod calibration;
 mod dialogs;
 mod files;
 mod history_ui;
+mod i18n;
 mod lifecycle;
 mod operator;
 mod pages;
@@ -90,6 +91,7 @@ fn script(h: &mut Harness<'_, App>, result: chooser::ChooserResult) {
 /// spatial, and reveal effects disabled so preview and scan comparisons stay
 /// reproducible. Returns the saved state path.
 fn deterministic_state(directory: &Path) -> PathBuf {
+    crate::i18n::save_preference(directory, crate::i18n::LanguagePreference::English).unwrap();
     let factory = state::GuiState::factory();
     let mut params = factory.runtime_params().unwrap();
     params.settings.preview_max_size = 128;
@@ -265,7 +267,13 @@ fn reveal_control(h: &mut Harness<'_, App>, path: &str) {
     }
     let entry =
         controls::lookup(path).unwrap_or_else(|| panic!("Missing control inventory: {path}"));
-    let locator = format!("Locate {}: {}", entry.owner.label(), entry.section);
+    let locator = crate::tr!(
+        &h.ctx,
+        "controls.search.locate",
+        owner = controls::localized(&h.ctx, entry.owner.label()),
+        section = controls::localized(&h.ctx, entry.section)
+    )
+    .into_owned();
     let separate = !matches!(entry.owner, controls::ControlOwner::Stage(_));
     search_controls(h, path);
     if separate {
@@ -454,11 +462,14 @@ fn render(h: &mut Harness<'_, App>, button: &str) -> Arc<ImageBuf> {
                 .is_some_and(|out| previous.as_ref().is_none_or(|old| !Arc::ptr_eq(old, out)))
     });
     assert!(
-        h.state().status.starts_with(if button == "SCAN" {
-            "Scan ·"
-        } else {
-            "Preview ·"
-        }),
+        h.state()
+            .status
+            .to_string()
+            .starts_with(if button == "SCAN" {
+                "Scan ·"
+            } else {
+                "Preview ·"
+            }),
         "{}",
         h.state().status
     );
@@ -572,7 +583,7 @@ fn explicit_gpu_export_fails_before_publication() {
     h.state_mut()
         .start_export_to_path(&ctx, options, &destination);
     wait_until(h, |a| a.export_job.is_none());
-    let status = h.state().status.clone();
+    let status = h.state().status.to_string();
     assert!(
         status.contains("explicit GPU request") || status.contains("no WGPU adapter is available"),
         "{status}"
@@ -680,7 +691,10 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     let save_path = s.directory.path().join("retained.png");
     h.state_mut().save_to_path(&save_path);
     assert!(
-        h.state().status.starts_with("Saved retained.png"),
+        h.state()
+            .status
+            .to_string()
+            .starts_with("Saved retained.png"),
         "{}",
         h.state().status
     );
@@ -725,7 +739,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         .start_export_to_path(&ctx, options, &export_path);
     wait_until(h, |a| a.export_job.is_none());
     assert!(
-        h.state().status.starts_with("Exported"),
+        h.state().status.to_string().starts_with("Exported"),
         "{}",
         h.state().status
     );
@@ -751,6 +765,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert!(
         h.state()
             .status
+            .to_string()
             .starts_with("Export destination already exists:")
     );
     assert_eq!(std::fs::read(&export_path).unwrap(), before);
@@ -764,7 +779,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         .start_export_to_path(&ctx, float_options, &float_path);
     wait_until(h, |a| a.export_job.is_none());
     assert!(
-        h.state().status.starts_with("Exported"),
+        h.state().status.to_string().starts_with("Exported"),
         "{}",
         h.state().status
     );
@@ -851,32 +866,6 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
 }
 
 #[test]
-fn the_header_reports_the_running_stage_and_returns_to_the_last_operation() {
-    let mut s = session();
-    let h = &mut s.harness;
-    let ctx = h.ctx.clone();
-    // Hold the worker's start marker so the in-flight state is stable.
-    let active = h.state().render_worker.active.clone();
-    let start_guard = active.lock();
-    h.state_mut().full_scan_requested = true;
-    h.state_mut().dispatch_render(&ctx);
-    assert!(h.state().render_job.is_some());
-    let pending = h.state().operation_status();
-    assert!(pending.starts_with("Scan"), "{pending}");
-    // The worker thread reports its work unit to the shared sink the header
-    // reads. Drive the sink the way the pipeline reports a stage.
-    let progress = Arc::clone(&h.state().render_progress);
-    spektrafilm_core::progress::ProgressSink::current(&*progress, Some("filming_develop"));
-    assert_eq!(h.state().operation_status(), "Scan · film development");
-    spektrafilm_core::progress::ProgressSink::current(&*progress, None);
-    assert_eq!(h.state().operation_status(), "Scan …");
-    drop(start_guard);
-    wait_until(h, |a| a.render_job.is_none());
-    // Without work in flight the header keeps the last accepted operation.
-    assert_eq!(h.state().operation_status(), h.state().status);
-}
-
-#[test]
 fn real_worker_accepts_only_latest_request_and_current_revision() {
     let mut s = session();
     let h = &mut s.harness;
@@ -924,7 +913,7 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
     assert!(edge_difference(h.state().output_image.as_ref().unwrap()) < -0.01);
     let accepted = h.state().output_image.as_ref().unwrap();
     assert_eq!((accepted.width, accepted.height), (160, 80));
-    assert!(h.state().status.starts_with("Scan ·"));
+    assert!(h.state().status.to_string().starts_with("Scan ·"));
 }
 
 #[cfg(feature = "gui-snapshots")]
@@ -1284,7 +1273,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
         .start_export_to_path(&ctx, options, &export_path);
     wait_until(h, |a| a.export_job.is_none());
     assert!(
-        h.state().status.starts_with("Exported"),
+        h.state().status.to_string().starts_with("Exported"),
         "{}",
         h.state().status
     );

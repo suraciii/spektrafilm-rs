@@ -65,6 +65,8 @@ Packages must distribute the native shared libraries and their transitive depend
 
 LibRaw is dual LGPL 2.1/CDDL 1.0. Lensfun's library is LGPL 3.0, and its database is CC BY-SA 3.0. Exiv2 is GPL 2.0 or later. GLib is LGPL 2.1 or later. Packages must include applicable license texts. The application remains GPL 3.0.
 
+The GUI embeds its English and Simplified Chinese translation catalogs and Noto Sans SC fallback font. Runtime language switching needs no downloads or installed CJK fonts. Platform packages must include the font's OFL license and source notice alongside existing third-party notices; see [font attribution](attribution.md#gui-chinese-font).
+
 On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after `just build`. This builds the CLI, f64 exporter, GUI, RAW helper, and the instrument. `BUILD_TARGET_DIR` selects Cargo's output directory. `DIST_DIR` selects the generated package directory. The script copies recursive ELF dependencies, LittleCMS, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML, and native license notices. It verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`.
 
 Extract the entire archive and launch the wrappers in `bin/`. They locate bundled data and libraries relative to their own location. The host supplies glibc, the display server, and graphics drivers. Windows and macOS use `scripts/package_windows_app.ps1` and `scripts/package_macos_app.sh`.

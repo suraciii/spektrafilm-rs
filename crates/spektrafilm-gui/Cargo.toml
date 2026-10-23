@@ -40,6 +40,13 @@ rayon.workspace = true
 raw-window-handle = "0.6"
 lcms2 = { version = "6.1", features = ["static"] }
 parking_lot = "0.12"
+rust-i18n = { version = "3.1", features = ["log-miss-tr"] }
+sys-locale = "0.3"
+tempfile = "3"
+log = "0.4"
+
+[build-dependencies]
+serde_json.workspace = true
 
 # macOS-only: tag the CAMetalLayer's colorspace as sRGB so the OS
 # colour-manages the window correctly on wide-gamut external displays.
@@ -52,7 +59,6 @@ foreign-types = "0.5"
 
 [dev-dependencies]
 egui_kittest = { version = "=0.31.1", default-features = false, features = ["eframe"] }
-tempfile = "3"
 sha2 = "0.10"
 
 [lints]

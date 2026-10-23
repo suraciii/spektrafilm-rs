@@ -29,7 +29,11 @@ pub(crate) fn sections(
             );
         }
         if filter_matches(filter, "update") {
-            let update = ui.button("update");
+            let update = ui
+                .push_id("action.update_preview", |ui| {
+                    ui.button(localized(ui.ctx(), "update"))
+                })
+                .inner;
             locate_row(ui, "action.update_preview", &update);
             flags.preview_requested |= update.clicked();
         }
