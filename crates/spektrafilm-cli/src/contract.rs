@@ -160,6 +160,10 @@ pub fn normalize_parameters(value: Value) -> Result<RuntimeParams> {
     let params: RuntimeParams = serde_json::from_value(canonical_parameters(value)?)
         .context("parameters do not match the spektrafilm-rs RuntimeParams schema")?;
     params.validate().map_err(anyhow::Error::msg)?;
+    let route = params.workflow.route_enum();
+    if route.artifact_input().is_some() || route.artifact_output().is_some() {
+        bail!("RenderRecipe supports image routes only; material artifact routes require process");
+    }
     Ok(params)
 }
 

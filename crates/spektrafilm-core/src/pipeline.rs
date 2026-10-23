@@ -5,6 +5,12 @@
 ///   2. Process virtual gray card through filming to get midgray spectral density
 ///   3. Compute print exposure normalization factor from midgray spectral density
 ///   4. Pass all calibration data to the pipeline stages
+///
+/// Completed material execution shares these stage nodes with image rendering.
+/// `process_stage` captures native density plus frozen interpretation and physical
+/// geometry; `stage_execution::continue_stage` enters after development without
+/// replaying exposure, material grain, or completed geometry. Only the artifact
+/// module owns persistence; diagnostic taps never establish resumability.
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{
@@ -20,6 +26,7 @@ use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_math::spectral::TcLut;
 
 mod execution;
+mod material;
 mod exposure;
 mod output_mix;
 mod resident;
@@ -94,6 +101,8 @@ pub struct Pipeline {
     /// Constant preflash raw 3-vector added to the print exposure before the
     /// inner log10. `[0; 3]` unless the enlarger preflash is active.
     preflash_raw: [f64; 3],
+    midgray_density: Vec<f64>,
+    compensated_midgray_density: Vec<f64>,
     /// Resolved positive-conversion tone triple for the negative-to-positive
     /// interpretation (`scanner.conversion_style`).
     pub(crate) conversion_tones: [crate::stages::scanning::ChannelTone; 3],
@@ -106,6 +115,7 @@ pub struct Pipeline {
     data_dir: Option<std::path::PathBuf>,
     /// Original film reference captured before calibration mutates the render profile.
     original_film: Arc<Profile>,
+    original_print: Arc<Profile>,
     fotufilm_prepared: crate::stages::grain_fotufilm::Prepared,
     cancellation: Option<Arc<AtomicBool>>,
 }
@@ -225,6 +235,7 @@ impl Pipeline {
     /// without paying LUT construction.
     #[cfg(test)]
     pub fn new(film: Profile, print: Profile, params: RuntimeParams) -> Self {
+        let original_print = Arc::new(print.clone());
         let original_film = Arc::new(film.clone());
         let fotufilm_prepared = crate::stages::grain_fotufilm::Prepared::new(
             &original_film,
@@ -277,10 +288,13 @@ impl Pipeline {
             print_exposure_factor: 1.0,
             print_illuminant,
             preflash_raw: [0.0; 3],
+            midgray_density: Vec::new(),
+            compensated_midgray_density: Vec::new(),
             conversion_tones,
             output_gamut,
             data_dir: None,
             original_film,
+            original_print,
             fotufilm_prepared,
             cancellation: None,
         }
@@ -293,6 +307,7 @@ impl Pipeline {
         params: RuntimeParams,
         data_dir: &Path,
     ) -> Result<Self, String> {
+        let original_print = Arc::new(print.clone());
         let original_film = Arc::new(film.clone());
         let fotufilm_prepared = crate::stages::grain_fotufilm::Prepared::new(
             &original_film,
@@ -313,10 +328,13 @@ impl Pipeline {
             print_exposure_factor: calibrated.print_exposure_factor,
             print_illuminant: calibrated.print_illuminant,
             preflash_raw: calibrated.preflash_raw,
+            midgray_density: calibrated.midgray_density,
+            compensated_midgray_density: calibrated.compensated_midgray_density,
             conversion_tones,
             output_gamut: calibrated.output_gamut,
             data_dir: calibrated.data_dir,
             original_film,
+            original_print,
             fotufilm_prepared,
             cancellation: None,
         })

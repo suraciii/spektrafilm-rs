@@ -34,6 +34,10 @@ impl Pipeline {
         mut timings: Option<&mut BTreeMap<String, f64>>,
         mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
+        let route = self.params.workflow.route_enum();
+        if route.artifact_input().is_some() || route.artifact_output().is_some() {
+            return Err("material routes require the stage execution API, not image processing or diagnostic taps".into());
+        }
         if capture.is_some() {
             crate::stage_evidence::ensure_supported_backend(backend)?;
             crate::stage_evidence::ensure_supported_params(&self.params)?;
@@ -146,6 +150,7 @@ impl Pipeline {
             None,
             timings,
             capture.as_deref_mut(),
+            None,
         )?;
         if collect == Tap::RgbOut
             && let Some(capture) = capture
@@ -435,6 +440,7 @@ impl Pipeline {
             Some((pixel_size_um, ae_ev)),
             timings,
             capture,
+            None,
         )
     }
 

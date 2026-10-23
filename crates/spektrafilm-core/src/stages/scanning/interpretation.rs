@@ -1,5 +1,4 @@
 use super::developed_density_curves;
-use crate::WorkflowRoute;
 use crate::{params::RuntimeParams, profile::Profile};
 
 struct DensityAxis {
@@ -104,7 +103,7 @@ fn prepare_axes(profile: &Profile) -> Result<[DensityAxis; 3], String> {
 }
 
 pub(super) fn camera_ev(params: &RuntimeParams) -> f64 {
-    if params.workflow.route_enum() == WorkflowRoute::FilmScan {
+    if params.workflow.route_enum().scans_film() {
         params.camera.exposure_compensation_ev as f64
     } else {
         0.0

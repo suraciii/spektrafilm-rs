@@ -186,9 +186,12 @@ impl Pipeline {
         physical_context: Option<(f64, f64)>,
         stage_timings: Option<&mut BTreeMap<String, f64>>,
         mut capture: Option<&mut crate::stage_evidence::StageCapture>,
+        mut material_geometry: Option<&mut crate::stage_artifact::StageGeometry>,
     ) -> Result<ImageBuf, String> {
         self.check_cancelled()?;
-        crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
+        if matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm) {
+            crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
+        }
         let order = self.tap_order();
         let Some(ip) = order.iter().position(|t| *t == inject) else {
             return Err(format!(
@@ -221,8 +224,9 @@ impl Pipeline {
                  explicit CPU request"
             ));
         }
-        let aperture_factor = crate::stages::grain_v3::validate_aperture(&self.params)?;
-        let cell_spectral = crate::stages::grain_v3::validate_cell_spectral(&self.params)?;
+        let forms_film = matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm);
+        let aperture_factor = if forms_film { crate::stages::grain_v3::validate_aperture(&self.params)? } else { None };
+        let cell_spectral = forms_film && crate::stages::grain_v3::validate_cell_spectral(&self.params)?;
         Self::validate_grain_v3_taps(
             cell_spectral,
             aperture_factor,
@@ -299,19 +303,19 @@ impl Pipeline {
                 let geometry =
                     crate::stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
                 let glare = &self.params.print_render.glare;
-                let scan_spatial = collect == Tap::RgbOut
+                let scan_spatial = (collect == Tap::RgbOut || material_geometry.is_some())
                     && (self.params.scanner.lens_blur > 0.0
                         || self.params.scanner.unsharp_mask.iter().all(|&v| v > 0.0)
                         || (!self.params.io.scan_film && glare.active && glare.percent > 0.0));
                 let print_spatial = !self.params.io.scan_film
-                    && collect != Tap::CmyFilm
+                    && (collect != Tap::CmyFilm || material_geometry.is_some())
                     && self.params.enlarger.diffusion_filter.active;
                 let (grid, readout_space) = if let Some(factor) = aperture_factor {
                     (
                         crate::stages::grain_v3::aperture_grid(&geometry, factor)?,
                         CoordinateSpace::GrainAperture,
                     )
-                } else if self.params.io.crop && (scan_spatial || print_spatial) {
+                } else if self.params.io.crop && (scan_spatial || print_spatial || material_geometry.is_some()) {
                     let (grid, crop) = geometry.full_film_grid(&cur)?;
                     output_crop = Some(crop);
                     (grid, CoordinateSpace::FilmFrame)
@@ -415,15 +419,15 @@ impl Pipeline {
                 let geometry =
                     crate::stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
                 let glare = &self.params.print_render.glare;
-                let scan_spatial = collect == Tap::RgbOut
+                let scan_spatial = (collect == Tap::RgbOut || material_geometry.is_some())
                     && (self.params.scanner.lens_blur > 0.0
                         || self.params.scanner.unsharp_mask.iter().all(|&v| v > 0.0)
                         || (!self.params.io.scan_film && glare.active && glare.percent > 0.0));
                 let print_spatial = !self.params.io.scan_film
-                    && collect != Tap::CmyFilm
+                    && (collect != Tap::CmyFilm || material_geometry.is_some())
                     && self.params.enlarger.diffusion_filter.active;
                 let (grid, readout_space) =
-                    if self.params.io.crop && (scan_spatial || print_spatial) {
+                    if self.params.io.crop && (scan_spatial || print_spatial || material_geometry.is_some()) {
                         let (grid, crop) = geometry.full_film_grid(&cur)?;
                         output_crop = Some(crop);
                         (grid, CoordinateSpace::FilmFrame)
@@ -469,6 +473,11 @@ impl Pipeline {
                 capture.record_boundary(id, &cur, stage_space);
             }
             i += 1;
+        }
+        if let Some(geometry) = material_geometry.as_mut() {
+            geometry.pixel_size_um = pixel_size_um;
+            geometry.pending_crop = output_crop.map(|r| [r.x, r.y, r.width, r.height]);
+            return Ok(cur);
         }
         Ok(match output_crop {
             Some(rect) => crate::stages::grain_v3::crop_output(cur, rect),

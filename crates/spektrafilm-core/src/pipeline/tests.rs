@@ -757,6 +757,7 @@ fn v3_final_crop_preserves_scanner_and_print_boundaries() {
                         Some((3.1, 0.0)),
                         None,
                         None,
+                        None,
                     )
                     .unwrap()
             };
@@ -1687,4 +1688,126 @@ fn standard_setup_reads_the_frame_without_rewriting_density_evidence() {
         assert_eq!(rgb.data, repeated.data);
     }
     assert!(means.windows(2).all(|w| w[0] < w[1]), "{means:?}");
+}
+
+#[test]
+fn completed_film_and_print_splits_preserve_exact_cpu_math_and_source_geometry() {
+    use crate::params::GrainEngine;
+    use crate::stage_execution::{StageResult, continue_stage};
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let input = ImageBuf::from_data(16, 12, (0..16 * 12 * 3).map(|i| from_f64(0.03 + (i % 53) as f64 / 90.0)).collect());
+    for engine in [GrainEngine::Spektra, GrainEngine::Procedural, GrainEngine::Dye, GrainEngine::Fotufilm] {
+        let mut full = build();
+        full.params.camera.auto_exposure = true;
+        full.params.camera.film_format_mm = if engine == GrainEngine::Dye { 8.0 } else { 35.0 };
+        full.params.random_seed = 42;
+        full.params.film_render.grain.active = true;
+        full.params.film_render.grain.engine = engine;
+        full.params.io.crop = true;
+        full.params.io.crop_size = [0.75, 0.625];
+        full.params.io.upscale_factor = 0.5;
+        full.params.scanner.lens_blur = 0.0;
+        full.params.scanner.unsharp_mask = [0.0; 2];
+        full.params.print_render.glare.active = false;
+        full.params.enlarger.diffusion_filter.active = false;
+        full.params.output_mix.amount = 0.35;
+        let expected = full.process(input.clone(), &backend).unwrap();
+        let mut film_pipeline = full.clone();
+        film_pipeline.params.workflow.route = "input > film".into();
+        let film = film_pipeline.process_stage(input.clone(), &backend, 42).unwrap();
+        let frozen = film.density.data.clone();
+        let mut continuation = film.header.baseline.clone();
+        continuation.workflow.route = "film > print > scan".into();
+        let result = continue_stage(film.clone(), continuation, Some((*full.original_print).clone()), &data_dir(), &backend, 42).unwrap();
+        let StageResult::Image(actual) = result else { panic!("expected scanned image") };
+        assert_eq!(actual.data, expected.data, "film split {engine:?}");
+        assert_eq!(film.density.data, frozen, "stored grain must not be regenerated");
+        let mut print_pipeline = full.clone();
+        print_pipeline.params.workflow.route = "input > film > print".into();
+        let print = print_pipeline.process_stage(input.clone(), &backend, 42).unwrap();
+        let mut continuation = print.header.baseline.clone();
+        continuation.workflow.route = "print > scan".into();
+        let StageResult::Image(actual) = continue_stage(print, continuation, None, &data_dir(), &backend, 42).unwrap() else { panic!("expected scanned image") };
+        assert_eq!(actual.data, expected.data, "print split {engine:?}");
+    }
+}
+
+#[test]
+fn negative_scan_split_keeps_standard_frame_setup_and_fixed_style_compensation() {
+    use crate::stage_execution::{StageResult, continue_stage};
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let input = ImageBuf::from_data(9, 5, (0..9 * 5 * 3).map(|i| from_f64(0.02 + (i % 19) as f64 / 40.0)).collect());
+    for style in ["standard", "neutral"] {
+        let mut full = build();
+        full.params.workflow.route = "input > film > scan".into();
+        full.params.io.scan_film = true;
+        full.params.film_render.grain.active = false;
+        full.params.camera.auto_exposure = false;
+        full.params.camera.exposure_compensation_ev = 0.75;
+        full.params.scanner.scan_output = "negative_to_positive".into();
+        full.params.scanner.conversion_style = style.into();
+        let expected = full.process(input.clone(), &backend).unwrap();
+        let mut producing = full.clone();
+        producing.params.workflow.route = "input > film".into();
+        producing.params.scanner.scan_output = "direct_scan".into();
+        let film = producing.process_stage(input.clone(), &backend, 7).unwrap();
+        let mut params = film.header.baseline.clone();
+        params.workflow.route = "film > scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
+        let StageResult::Image(actual) = continue_stage(film, params, None, &data_dir(), &backend, 7).unwrap() else { panic!("expected scan") };
+        assert_eq!(actual.data, expected.data, "scan style {style}");
+    }
+}
+
+#[test]
+fn completed_density_rejects_camera_reinterpretation_but_allows_future_procedural_grain() {
+    use crate::stage_execution::{StageResult, continue_stage};
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let mut producing = build();
+    producing.params.workflow.route = "input > film".into();
+    producing.params.film_render.grain.active = false;
+    let film = producing.process_stage(ImageBuf::from_data(4,3,vec![from_f64(0.2);36]), &backend, 12).unwrap();
+    let mut params = film.header.baseline.clone();
+    params.workflow.route = "film > scan".into();
+    params.camera.exposure_compensation_ev += 1.0;
+    let error = crate::stage_execution::validate_continuation(&film.header,&params).unwrap_err();
+    assert!(error.contains("camera.exposure_compensation_ev"));
+    params.camera.exposure_compensation_ev = film.header.baseline.camera.exposure_compensation_ev;
+    params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
+    params.film_render.grain.active = true;
+    let StageResult::Image(actual) = continue_stage(film,params,None,&data_dir(),&backend,99).unwrap() else { panic!("expected scan") };
+    assert!(actual.data.iter().all(|v| v.is_finite()));
+}
+
+#[test]
+fn continuing_print_reinitializes_replaced_material_and_retains_film_seed_lineage() {
+    use crate::stage_execution::{StageResult, continue_stage};
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let input = ImageBuf::from_data(5, 3, (0..45).map(|i| from_f64(0.04 + (i % 11) as f64 / 30.0)).collect());
+    let mut producing = build();
+    producing.params.workflow.route = "input > film".into();
+    producing.params.film_render.grain.active = false;
+    let film = producing.process_stage(input.clone(), &backend, 42).unwrap();
+    let replacement = crate::profile::load_profile_by_name(&data_dir(), "kodak_2393").unwrap();
+    let mut params = film.header.baseline.clone();
+    params.workflow.route = "film > print".into();
+    let StageResult::Material(print) = continue_stage(film.clone(), params, Some(replacement.clone()), &data_dir(), &backend, 99).unwrap() else { panic!("expected print") };
+    assert_eq!(print.header.seed, 99);
+    assert_eq!(print.header.lineage.len(), 1);
+    assert_eq!(print.header.lineage[0].seed, 42);
+    assert_eq!(print.header.provenance.inherited_operations, ["film"]);
+    assert_eq!(print.header.print.as_ref().unwrap().profile.info.stock.as_deref(), Some("kodak_2393"));
+    let mut full_params = producing.params.clone();
+    full_params.workflow.route = "input > film > print > scan".into();
+    full_params.random_seed = 99;
+    let full = Pipeline::new_with_spectral((*producing.original_film).clone(), replacement, full_params, &data_dir()).unwrap();
+    let expected = full.process(input, &backend).unwrap();
+    let mut params = print.header.baseline.clone();
+    params.workflow.route = "print > scan".into();
+    let StageResult::Image(actual) = continue_stage(print, params, None, &data_dir(), &backend, 99).unwrap() else { panic!("expected scan") };
+    assert_eq!(actual.data, expected.data);
+    let mut no_source = film.header.baseline.clone();
+    no_source.workflow.route = "film > scan".into();
+    no_source.output_mix.amount = 0.5;
+    assert!(crate::stage_execution::validate_continuation(&film.header, &no_source).unwrap_err().contains("prepared-source"));
 }
