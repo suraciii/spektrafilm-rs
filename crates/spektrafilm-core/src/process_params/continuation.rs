@@ -136,15 +136,7 @@ pub fn resolve_continuation(
         }
         let mut candidate = params.clone();
         match &preset.parameters {
-            presets::PresetParameters::Look(look) => {
-                look.apply_to(&mut candidate);
-                let defaults = crate::params::EnlargerParams::default();
-                candidate.neutral_print_filters_protected = Some([
-                    look.enlarger.c_filter_neutral != defaults.c_filter_neutral,
-                    look.enlarger.m_filter_neutral != defaults.m_filter_neutral,
-                    look.enlarger.y_filter_neutral != defaults.y_filter_neutral,
-                ]);
-            }
+            presets::PresetParameters::Look(look) => look.apply_to(&mut candidate),
             presets::PresetParameters::Section(_) => candidate = preset.overlay_section(&params)?,
         }
         // Presets own only their documented leaves. Use the shared overlay to

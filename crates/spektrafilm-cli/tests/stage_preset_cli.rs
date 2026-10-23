@@ -38,7 +38,8 @@ fn provenance() -> Provenance {
 }
 
 #[test]
-fn authored_look_filters_match_onepass_print_boundary_and_atomic_grain_section_applies() {
+fn look_and_authored_sparse_filters_match_onepass_print_boundary_and_atomic_grain_section_applies()
+{
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     image::save_buffer(
@@ -51,8 +52,6 @@ fn authored_look_filters_match_onepass_print_boundary_and_atomic_grain_section_a
     .unwrap();
     let mut params = RuntimeParams::default();
     params.film_render.grain.active = false;
-    params.enlarger.c_filter_neutral = 13.0;
-    params.enlarger.m_filter_neutral = 20.0;
     let preset = Preset::capture(
         "Authored filters",
         "kodak_portra_400",
@@ -68,6 +67,8 @@ fn authored_look_filters_match_onepass_print_boundary_and_atomic_grain_section_a
         "sRGB",
         "--input-cctf-decoding",
         "true",
+        "--set",
+        "enlarger.c_filter_neutral=13,enlarger.m_filter_neutral=20",
     ];
     success(run(
         root,
@@ -162,55 +163,6 @@ fn authored_look_filters_match_onepass_print_boundary_and_atomic_grain_section_a
     let mut completed = spektrafilm_core::stage_artifact::read_header(root.join("grain.sfstage"))
         .unwrap()
         .baseline;
-    // A complete look resetting an authored axis to its default must restore
-    // database ownership, not promote that changed default to an authored axis.
-    let mut reset = completed.clone();
-    reset.film_render.grain.engine = GrainEngine::Procedural;
-    reset.film_render.grain.active = false;
-    reset.enlarger.c_filter_neutral =
-        spektrafilm_core::params::EnlargerParams::default().c_filter_neutral;
-    let look = Preset::capture(
-        "Reset filter ownership",
-        "kodak_portra_400",
-        "kodak_portra_endura",
-        &reset,
-        provenance(),
-    );
-    fs::write(root.join("reset.json"), look.to_json().unwrap()).unwrap();
-    success(run(
-        root,
-        "input.png",
-        &[
-            "--film",
-            "kodak_portra_400",
-            "--input-color-space",
-            "sRGB",
-            "--input-cctf-decoding",
-            "true",
-            "--set",
-            "enlarger.c_filter_neutral=11",
-            "--route",
-            "input > film",
-            "-o",
-            "altered.sfstage",
-        ],
-    ));
-    let reset = success(run(
-        root,
-        "altered.sfstage",
-        &[
-            "--route",
-            "film > print",
-            "--preset",
-            "reset.json",
-            "--dry-run",
-        ],
-    ));
-    let reset: Value = serde_json::from_slice(&reset.stdout).unwrap();
-    assert_eq!(
-        reset["parameters"]["neutral_print_filters_protected"][0],
-        false
-    );
     completed.film_render.grain.engine = GrainEngine::Procedural;
     completed.film_render.grain.active = false;
     let section = Preset::capture_section(
