@@ -1,4 +1,7 @@
-use crate::{params::RuntimeParams, profile::Profile};
+use crate::{
+    params::{RuntimeParams, ScanOperatorParams},
+    profile::Profile,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -318,6 +321,8 @@ pub struct RenderConfiguration {
     #[serde(default = "default_conversion_style")]
     pub conversion_style: String,
     #[serde(default)]
+    pub scan_operator: ScanOperatorParams,
+    #[serde(default)]
     pub scan_model: ScanModelConfiguration,
     #[serde(default = "default_output_mix_amount")]
     pub output_mix_amount: f64,
@@ -363,6 +368,7 @@ impl RenderConfiguration {
                 ScanOutput::DirectScan
             },
             conversion_style: params.scanner.conversion_style_name().to_owned(),
+            scan_operator: params.scanner.operator.clone(),
             scan_model: ScanModelConfiguration::from_runtime(params, film, print),
             output_mix_amount: params.output_mix.amount,
             model_version: crate::runtime::MODEL_VERSION.into(),

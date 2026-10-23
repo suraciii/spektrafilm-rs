@@ -16,6 +16,13 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
     params.workflow.route = "input > film > scan".into();
     params.io.scan_film = true;
     params.scanner.scan_output = "negative_to_positive".into();
+    params.scanner.operator = spektrafilm_core::params::ScanOperatorParams {
+        exposure_ev: 0.5000000000000001,
+        warmth_ev: -0.25,
+        tint_ev: 0.125,
+        contrast: 1.2,
+    };
+    let operator = params.scanner.operator.clone();
     let runtime =
         Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
     let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
@@ -42,19 +49,24 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
     old_model.remove("readout_illuminant");
     old_model.remove("readout_rule");
     old_model.insert("lamp".into(), "D65".into());
+    historical["configuration"]["render"]
+        .as_object_mut()
+        .unwrap()
+        .remove("scan_operator");
     let old = spektrafilm_core::telemetry::Report::from_json(&historical.to_string()).unwrap();
+    let old_render = old.configuration.render.unwrap();
+    assert!(old_render.scan_operator.is_default());
     assert!(
-        old.configuration
-            .render
-            .unwrap()
-            .scan_model
-            .readout_illuminant
-            .is_empty(),
+        old_render.scan_model.readout_illuminant.is_empty(),
         "historical reports must not invent a material-category readout fact"
     );
     let decoded =
         spektrafilm_core::telemetry::Report::from_json(&report.to_json().unwrap()).unwrap();
     let actual = decoded.configuration.render.unwrap();
+    assert_eq!(actual.scan_operator, operator);
+    let mut invalid: serde_json::Value = serde_json::from_str(&report.to_json().unwrap()).unwrap();
+    invalid["configuration"]["render"]["scan_operator"]["contrast"] = 0.into();
+    assert!(spektrafilm_core::telemetry::Report::from_json(&invalid.to_string()).is_err());
     assert_eq!(
         serde_json::to_value(actual.scan_output).unwrap(),
         "negative_to_positive"

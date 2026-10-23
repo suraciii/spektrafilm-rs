@@ -2,7 +2,178 @@ use super::*;
 use crate::routes::vocabulary;
 use egui::Ui;
 use serde_json::Value;
+use spektrafilm_core::params::ScanOperatorParams;
 use std::path::Path;
+
+/// Session-only interaction state. The runtime operator remains the only
+/// correction; clipboard/history contain no automatic setup or image data.
+#[derive(Clone, Default)]
+struct OperatorEditor {
+    history: egui::util::undoer::Undoer<ScanOperatorParams>,
+    clipboard: Option<ScanOperatorParams>,
+    comparing: bool,
+}
+
+fn operator_editor_id() -> egui::Id {
+    egui::Id::new("scanner.operator.editor")
+}
+
+/// End a held comparison even if its section has since been hidden.
+pub(crate) fn release_operator_compare(ctx: &egui::Context) -> bool {
+    let holding =
+        ctx.input(|input| input.pointer.primary_down() || input.key_down(egui::Key::Space));
+    if holding {
+        return false;
+    }
+    ctx.data_mut(|data| {
+        let editor = data.get_temp_mut_or_default::<OperatorEditor>(operator_editor_id());
+        std::mem::take(&mut editor.comparing)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn operator_row(
+    ui: &mut Ui,
+    filter: &mut ControlFilter<'_>,
+    label: &'static str,
+    reset_label: &'static str,
+    value: &mut f64,
+    path: &str,
+    default: f64,
+    tooltip: &str,
+) -> bool {
+    if !filter_matches(filter, label) {
+        return false;
+    }
+    param_numeric(ui, label, value, path, tooltip);
+    let reset = ui
+        .add_enabled(*value != default, egui::Button::new(reset_label))
+        .on_hover_text("Restore only this operator control to its automatic value.")
+        .clicked();
+    if reset {
+        *value = default;
+    }
+    reset
+}
+
+fn operator_controls(
+    ui: &mut Ui,
+    params: &mut RuntimeParams,
+    active: bool,
+    flags: &mut ChangeFlags,
+    filter: &mut ControlFilter<'_>,
+) {
+    if !filter_matches_any(
+        filter,
+        &[
+            "finished exposure",
+            "warmth",
+            "green–magenta tint",
+            "contrast",
+            "restore automatic",
+            "undo operator correction",
+            "redo operator correction",
+            "copy operator correction",
+            "paste operator correction",
+            "hold automatic comparison",
+        ],
+    ) {
+        return;
+    }
+    ui.separator();
+    ui.label("Operator correction");
+    if !active {
+        ui.label("Inactive: requires a negative film, an eligible negative-to-positive route and standard conversion style. Stored corrections are retained.");
+    }
+    let mut editor = ui.ctx().data_mut(|data| {
+        data.remove_temp::<OperatorEditor>(operator_editor_id())
+            .unwrap_or_default()
+    });
+    let time = ui.input(|input| input.time);
+    let operator = &mut params.scanner.operator;
+    editor.history.feed_state(time, operator);
+    let before = operator.clone();
+    ui.add_enabled_ui(active, |ui| {
+        let mut reset = operator_row(ui, filter, "Finished exposure", "Reset Finished exposure", &mut operator.exposure_ev,
+            "scanner.operator.exposure_ev", 0.0,
+            "Finished-positive exposure in stops. Positive values brighten the result after automatic setup, before the fixed tone curve; this does not change camera exposure or film density.");
+        reset |= operator_row(ui, filter, "Warmth", "Reset Warmth", &mut operator.warmth_ev,
+            "scanner.operator.warmth_ev", 0.0,
+            "Red-minus-blue exposure difference in EV. Positive values are warmer; negative values are cooler. This is not Kelvin and does not change capture white balance.");
+        reset |= operator_row(ui, filter, "Green–magenta tint", "Reset Green–magenta tint", &mut operator.tint_ev,
+            "scanner.operator.tint_ev", 0.0,
+            "Mean red/blue minus green exposure difference in EV. Positive values add magenta; negative values add green.");
+        reset |= operator_row(ui, filter, "Contrast", "Reset Contrast", &mut operator.contrast,
+            "scanner.operator.contrast", 1.0,
+            "Common exposure contrast around the fixed reference exposure. Above 1 is harder; below 1 is softer. Channel differences and automatic setup are unchanged.");
+        if reset {
+            editor.history.add_undo(&before);
+            editor.history.add_undo(operator);
+        }
+        ui.horizontal_wrapped(|ui| {
+            if filter_matches(filter, "restore automatic")
+                && ui.add_enabled(*operator != ScanOperatorParams::default(), egui::Button::new("Restore automatic"))
+                    .on_hover_text("Reset the four operator values only; keep this frame's own automatic setup.")
+                    .clicked()
+            {
+                editor.history.add_undo(operator);
+                *operator = ScanOperatorParams::default();
+                editor.history.add_undo(operator);
+            }
+            if filter_matches(filter, "undo operator correction")
+                && ui.add_enabled(editor.history.has_undo(operator), egui::Button::new("Undo operator correction")).clicked()
+                && let Some(previous) = editor.history.undo(operator).cloned()
+            {
+                *operator = previous;
+            }
+            if filter_matches(filter, "redo operator correction")
+                && ui.add_enabled(editor.history.has_redo(operator), egui::Button::new("Redo operator correction")).clicked()
+                && let Some(next) = editor.history.redo(operator).cloned()
+            {
+                *operator = next;
+            }
+            if filter_matches(filter, "copy operator correction")
+                && ui.button("Copy operator correction")
+                    .on_hover_text("Copy only the four operator values for this session, not automatic setup, film density or capture settings.")
+                    .clicked()
+            {
+                editor.clipboard = Some(operator.clone());
+            }
+            if filter_matches(filter, "paste operator correction")
+                && ui.add_enabled(editor.clipboard.is_some(), egui::Button::new("Paste operator correction"))
+                    .on_hover_text("Apply the copied four values to this frame's own automatic setup.")
+                    .clicked()
+                && let Some(copied) = &editor.clipboard
+            {
+                editor.history.add_undo(operator);
+                *operator = copied.clone();
+                editor.history.add_undo(operator);
+            }
+            if filter_matches(filter, "hold automatic comparison") {
+                let response = ui.button("Hold automatic comparison")
+                    .on_hover_text("Hold the primary mouse button or focused Space to view this same frame with default operator values. Release to restore the corrected view. Saved and exported corrections are unchanged.");
+                let comparing = response.is_pointer_button_down_on()
+                    || (response.has_focus() && ui.input(|input| input.key_down(egui::Key::Space)));
+                if comparing != editor.comparing {
+                    editor.comparing = comparing;
+                    flags.operator_compare = Some(comparing);
+                }
+            }
+        });
+    });
+    if !active && editor.comparing {
+        editor.comparing = false;
+        flags.operator_compare = Some(false);
+    }
+    flags.runtime_changed |= before != *operator;
+    editor.history.feed_state(time, operator);
+    if editor.history.is_in_flux() {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(operator_editor_id(), editor));
+}
 
 /// Conversion-style names the selector offers.
 ///
@@ -139,6 +310,7 @@ pub(crate) fn sections(
                     .color(theme::FG_MUTED),
             );
             if medium == ScanMedium::None {
+                operator_controls(ui, params, false, flags, filter);
                 return;
             }
             if positive_route
@@ -182,6 +354,10 @@ pub(crate) fn sections(
             if filter_matches(filter, "unsharp mask (digital sharpening)") {
                 flags.runtime_changed |= param_tuple(ui, "Unsharp mask (digital sharpening)", &mut params.scanner.unsharp_mask, "scanner.unsharp_mask", "Digital scan sharpening after interpretation and output gamut processing: [sigma in pixels, amount].");
             }
+            let operator_active = positive_route
+                && params.scanner.scan_output == "negative_to_positive"
+                && params.scanner.conversion_style == vocabulary::CONVERSION_STYLE_STANDARD;
+            operator_controls(ui, params, operator_active, flags, filter);
         });
     }
     if section == "Import Raw" {

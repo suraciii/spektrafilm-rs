@@ -780,6 +780,9 @@ impl App {
         if changes.runtime_changed {
             self.mark_parameters_changed_invalidating_calibration();
         }
+        if let Some(comparing) = changes.operator_compare {
+            self.set_operator_compare(comparing);
+        }
         if let Some(action) = changes.action {
             self.start_calibration(action);
         }
@@ -1134,6 +1137,9 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.render_progress.bind_context(ctx);
+        if controls::release_operator_compare(ctx) {
+            self.set_operator_compare(false);
+        }
         // First-paint hook: tag the wgpu Metal layer's colorspace as sRGB.
         // Has to happen here (not in `App::new`) because the CAMetalLayer
         // isn't wired up at construction time.

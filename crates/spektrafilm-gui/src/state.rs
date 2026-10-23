@@ -241,7 +241,7 @@ impl GuiState {
             }
         }
         // Promote extension-only controls before canonical factory defaults merge.
-        for key in ["scan_output", "conversion_style"] {
+        for key in ["scan_output", "conversion_style", "operator"] {
             if normalized["scanner"].get(key).is_none()
                 && let Some(selection) = value["rust"]["runtime"]["scanner"].get(key)
             {

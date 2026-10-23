@@ -23,6 +23,7 @@ mod execution;
 mod exposure;
 mod output_mix;
 mod resident;
+pub(crate) mod scan_frame;
 mod stages;
 
 #[cfg(test)]

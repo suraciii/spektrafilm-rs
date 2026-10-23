@@ -417,6 +417,52 @@ mod tests {
         assert!(read_recipe(&path).is_err());
     }
 
+    #[test]
+    fn recipe_operator_roundtrip_defaults_and_rejections_use_the_real_loader() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("operator.json");
+        let operator =
+            json!({"exposure_ev":0.5000000000000001,"warmth_ev":-0.2,"tint_ev":0.1,"contrast":1.2});
+        let mut document = json!({
+            "schemaVersion":PARAMETER_SCHEMA_VERSION,"filmProfile":"kodak_portra_400",
+            "parameters":{"workflow":{"route":"input > film > scan"},
+                "scanner":{"scan_output":"negative_to_positive","operator":operator}},
+            "output":default_output("png")
+        });
+        std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        let accepted = read_recipe(&path).unwrap();
+        assert_eq!(accepted.parameters["scanner"]["operator"], operator);
+        std::fs::write(&path, serde_json::to_vec(&accepted).unwrap()).unwrap();
+        assert_eq!(read_recipe(&path).unwrap().parameters, accepted.parameters);
+        document["parameters"]["scanner"]
+            .as_object_mut()
+            .unwrap()
+            .remove("operator");
+        std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        assert!(
+            normalize_parameters(read_recipe(&path).unwrap().parameters)
+                .unwrap()
+                .scanner
+                .operator
+                .is_default()
+        );
+        for scanner in [
+            json!({"operator":{"exposure_ev":0.5}}),
+            json!({"scan_output":"negative_to_positive","conversion_style":"fixed","operator":{"warmth_ev":0.2}}),
+            json!({"scan_output":"negative_to_positive","operator":{"contrast":0}}),
+            json!({"scan_output":"negative_to_positive","operator":{"unknown":1}}),
+            json!({"conversion_exposure_ev":0}),
+            json!({"auto_setup":"full"}),
+            json!({"finish":"lab_scan"}),
+        ] {
+            document["parameters"]["scanner"] = scanner;
+            let source = serde_json::to_vec(&document).unwrap();
+            std::fs::write(&path, &source).unwrap();
+            assert!(read_recipe(&path).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), source);
+        }
+    }
+
     use super::*;
 
     #[test]

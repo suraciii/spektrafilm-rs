@@ -85,6 +85,7 @@ pub(super) struct RenderResult {
     pub(super) output_color_space: String,
     pub(super) output_cctf_encoding: bool,
     pub(super) source_metadata: Option<ImageMetadata>,
+    pub(super) operator_compare: bool,
 }
 
 impl RenderWorker {
@@ -105,6 +106,7 @@ impl RenderWorker {
                 // reports every unit the render reaches.
                 let _progress = spektrafilm_core::progress::ProgressScope::new(progress);
                 let mut runtime_cache = RuntimeCache::default();
+                let mut scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
                 loop {
                     let request = {
                         let (lock, wake) = &*state_for_worker;
@@ -148,13 +150,15 @@ impl RenderWorker {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let working_image = if runtime_params.settings.preview_mode {
-                            spektrafilm_core::params_builder::resize_for_preview(
+                        let working_image = if runtime_params.scanner.requires_full_frame() {
+                            None
+                        } else if runtime_params.settings.preview_mode {
+                            Some(spektrafilm_core::params_builder::resize_for_preview(
                                 &request.image,
                                 runtime_params.settings.preview_max_size,
-                            )
+                            ))
                         } else {
-                            (*request.image).clone()
+                            Some((*request.image).clone())
                         };
                         drop(input_prepare);
                         drop(prepare_unit);
@@ -162,11 +166,20 @@ impl RenderWorker {
                             observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
                         let processed = {
                             let _unit = spektrafilm_core::progress::report("simulation");
-                            pipeline_template.process_observed(
-                                working_image,
-                                request.backend.as_ref(),
-                                simulation.context(),
-                            )
+                            if runtime_params.scanner.requires_full_frame() {
+                                pipeline_template.process_scan_cached_observed(
+                                    &request.image,
+                                    &mut scan_cache,
+                                    &request.backend,
+                                    simulation.context(),
+                                )
+                            } else {
+                                pipeline_template.process_observed(
+                                    working_image.expect("non-standard working image prepared"),
+                                    request.backend.as_ref(),
+                                    simulation.context(),
+                                )
+                            }
                         };
                         let output = observed_result(
                             simulation,
@@ -197,6 +210,7 @@ impl RenderWorker {
                             IssueBoundary::DisplayPrepare,
                         )?;
                         Ok(RenderResult {
+                            operator_compare: request.snapshot.operator_compare(),
                             source_metadata: request.source_metadata,
                             output_color_space: runtime_params.io.output_color_space.clone(),
                             output_cctf_encoding: runtime_params.io.output_cctf_encoding,

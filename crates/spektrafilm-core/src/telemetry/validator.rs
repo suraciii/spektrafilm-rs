@@ -106,6 +106,29 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
         if !(0.0..=1.0).contains(&render.output_mix_amount) {
             return Err(ValidationError::InvalidMeasurement);
         }
+        for (value, field) in [
+            (
+                render.scan_operator.exposure_ev,
+                "configuration.render.scan_operator.exposure_ev",
+            ),
+            (
+                render.scan_operator.warmth_ev,
+                "configuration.render.scan_operator.warmth_ev",
+            ),
+            (
+                render.scan_operator.tint_ev,
+                "configuration.render.scan_operator.tint_ev",
+            ),
+            (
+                render.scan_operator.contrast,
+                "configuration.render.scan_operator.contrast",
+            ),
+        ] {
+            validate_finite(value, field)?;
+        }
+        if render.scan_operator.contrast <= 0.0 {
+            return Err(ValidationError::InvalidMeasurement);
+        }
         validate_text(&render.model_version)?;
         for stock in [&render.film_stock, &render.print_stock]
             .into_iter()

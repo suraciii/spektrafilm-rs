@@ -59,18 +59,44 @@ fn positive_tone(log_e: f64, tone: &ChannelTone, params: &RuntimeParams) -> f64 
     (positive + denominator) / denominator
 }
 
-/// Record-density interpretation: the narrowband lab-scanner inverse of the
-/// film's own characteristic curves. Scanner optics blur transmitted light
-/// record by record, before the sensor reads density, so the blur runs here in
-fn interpret_negative_density(
-    density_cmy: &ImageBuf,
-    calibration: &interpretation::DensityCalibration,
-    tones: &[ChannelTone; 3],
+/// Immutable reconstructed exposure after the full-frame setup. Deliberately
+/// f64 even in f32 builds: tone is evaluated only after operator correction.
+pub(crate) struct PreparedNegative {
+    width: u32,
+    height: u32,
+    exposure: Vec<[f64; 3]>,
+}
+
+impl PreparedNegative {
+    pub(crate) fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    pub(crate) fn cached_bytes(&self) -> usize {
+        self.exposure.capacity() * std::mem::size_of::<[f64; 3]>()
+    }
+}
+
+/// Reconstruct the complete working frame once, before any operator controls.
+pub(crate) fn prepare_negative(
+    density: &ImageBuf,
+    profile: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
-) -> Result<ImageBuf, String> {
-    let mut rgb = if params.scanner.lens_blur > 0.0 {
-        let mut transmitted = density_cmy.clone();
+) -> Result<PreparedNegative, String> {
+    let observation = super::StageObservation::cpu(
+        backend,
+        "negative_reconstruction",
+        spektrafilm_backend::telemetry::CpuReason::NegativeToPositiveOutput,
+    );
+    let backend = observation.backend(backend);
+    params.validate()?;
+    crate::pipeline_calibration::validate_scan_output(params, profile)?;
+    let calibration = interpretation::DensityCalibration::prepare(profile)?;
+    // Blur transmitted light, never density. The unblurred path borrows the
+    // input instead of allocating a second density frame.
+    let density = if params.scanner.lens_blur > 0.0 {
+        let mut transmitted = density.clone();
         transmitted
             .data
             .par_iter_mut()
@@ -80,45 +106,173 @@ fn interpret_negative_density(
             .data
             .par_iter_mut()
             .for_each(|value| *value = from_f64(-to_f64(*value).log10()));
-        blurred
+        std::borrow::Cow::Owned(blurred)
     } else {
-        density_cmy.clone()
+        std::borrow::Cow::Borrowed(density)
     };
     let offset = if params.scanner.uses_standard() {
         let _setup = super::StageObservation::new(backend, "standard_setup");
-        setup::FrameSetup::measure(&rgb, calibration)?.offset
+        setup::FrameSetup::measure(&density, &calibration)?.offset
     } else {
         [0.0; 3]
     };
-    rgb.data
-        .par_chunks_exact_mut(3)
-        .try_for_each(|px| -> Result<(), String> {
-            let density = [to_f64(px[0]), to_f64(px[1]), to_f64(px[2])];
-            let exposure = calibration.estimate(density)?;
+    let mut exposure = Vec::new();
+    let pixels = density.data.len() / 3;
+    exposure
+        .try_reserve_exact(pixels)
+        .map_err(|error| format!("cannot allocate full-frame negative reconstruction: {error}"))?;
+    exposure.resize(pixels, [0.0; 3]);
+    exposure
+        .par_iter_mut()
+        .zip(density.data.par_chunks_exact(3))
+        .try_for_each(|(dst, px)| -> Result<(), String> {
+            let reconstructed =
+                calibration.estimate([to_f64(px[0]), to_f64(px[1]), to_f64(px[2])])?;
             for channel in 0..3 {
-                px[channel] = from_f64(positive_tone(exposure[channel] + offset[channel], &tones[channel], params));
-                if !px[channel].is_finite() {
-                    return Err(
-                        "density interpretation output is not representable in the selected precision"
-                            .into(),
-                    );
+                dst[channel] = reconstructed[channel] + offset[channel];
+                if !dst[channel].is_finite() {
+                    return Err("negative reconstruction coordinate must be finite".into());
                 }
             }
             Ok(())
         })?;
-    Ok(rgb)
+    Ok(PreparedNegative {
+        width: density.width,
+        height: density.height,
+        exposure,
+    })
+}
+
+/// Frame-invariant operator terms, prepared once rather than per pixel.
+struct PreparedOperator {
+    no_op: bool,
+    pivot: f64,
+    contrast_delta: f64,
+    exposure_ev: f64,
+    color: [f64; 3],
+}
+
+impl PreparedOperator {
+    fn new(operator: &crate::params::ScanOperatorParams) -> Self {
+        let tint = operator.tint_ev / 3.0;
+        Self {
+            no_op: operator.is_default(),
+            pivot: (0.16_f64 / 0.184).log10(),
+            contrast_delta: operator.contrast - 1.0,
+            exposure_ev: operator.exposure_ev,
+            color: [
+                operator.warmth_ev / 2.0 + tint,
+                -2.0 * tint,
+                -operator.warmth_ev / 2.0 + tint,
+            ],
+        }
+    }
+
+    /// Correct common contrast without scaling record color differences.
+    /// The exact default branch avoids a coordinate round trip.
+    fn apply(&self, baseline: [f64; 3]) -> Result<[f64; 3], String> {
+        if self.no_op {
+            return Ok(baseline);
+        }
+        let stops = baseline.map(|value| (value - self.pivot) / std::f64::consts::LOG10_2);
+        let mean = (stops[0] + stops[1] + stops[2]) / 3.0;
+        let common = self.contrast_delta * mean + self.exposure_ev;
+        let corrected = std::array::from_fn(|channel| {
+            self.pivot + std::f64::consts::LOG10_2 * (stops[channel] + common + self.color[channel])
+        });
+        if !mean.is_finite()
+            || !common.is_finite()
+            || corrected.iter().any(|value| !value.is_finite())
+        {
+            return Err(
+                "scanner.operator: combined exposure coordinate overflow; corrections are not clamped"
+                    .into(),
+            );
+        }
+        Ok(corrected)
+    }
+}
+
+#[cfg(test)]
+fn operator_exposure(
+    baseline: [f64; 3],
+    operator: &crate::params::ScanOperatorParams,
+) -> Result<[f64; 3], String> {
+    PreparedOperator::new(operator).apply(baseline)
+}
+
+/// Render output-space linear RGB, before the ordinary scan tail. Both CPU
+/// and the resident acquisition fence use this same reconstruction and tone.
+pub(crate) fn render_prepared_negative(
+    prepared: &PreparedNegative,
+    tones: &[ChannelTone; 3],
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+) -> Result<ImageBuf, String> {
+    let _observation = super::StageObservation::cpu(
+        backend,
+        "negative_to_positive_tone",
+        spektrafilm_backend::telemetry::CpuReason::NegativeToPositiveOutput,
+    );
+    params.validate()?;
+    let output = colorspace::resolve(&params.io.output_color_space)?;
+    // The fixed tone defines linear sRGB, not arbitrary destination RGB.
+    // Bypass the rounded sRGB matrix product for an exact identity.
+    let matrix = (!std::ptr::eq(output, &colorspace::SRGB))
+        .then(|| colorspace::conversion_matrix(&colorspace::SRGB, output));
+    let operator = PreparedOperator::new(&params.scanner.operator);
+    let samples = prepared
+        .exposure
+        .len()
+        .checked_mul(3)
+        .ok_or("negative output allocation size overflow")?;
+    let mut data = Vec::new();
+    data.try_reserve_exact(samples)
+        .map_err(|error| format!("cannot allocate negative output: {error}"))?;
+    data.resize(samples, from_f64(0.0));
+    data.par_chunks_exact_mut(3)
+        .zip(prepared.exposure.par_iter())
+        .try_for_each(|(dst, &baseline)| -> Result<(), String> {
+            let exposure = operator.apply(baseline)?;
+            let mut linear_srgb = [0.0; 3];
+            for channel in 0..3 {
+                let tone = &tones[channel];
+                let ev = exposure[channel] / std::f64::consts::LOG10_2
+                    - if params.scanner.uses_standard() { 0.0 } else { interpretation::camera_ev(params) }
+                    + tone.brightness_ev;
+                if !ev.is_finite() || !(tone.contrast * ev).is_finite() {
+                    return Err("negative conversion combined tone coordinate overflow".into());
+                }
+                linear_srgb[channel] = positive_tone(exposure[channel], tone, params);
+            }
+            let rgb = matrix.as_ref().map_or(linear_srgb, |matrix| {
+                std::array::from_fn(|channel| {
+                    matrix[channel][0] * linear_srgb[0]
+                        + matrix[channel][1] * linear_srgb[1]
+                        + matrix[channel][2] * linear_srgb[2]
+                })
+            });
+            for channel in 0..3 {
+                dst[channel] = from_f64(rgb[channel]);
+                if !dst[channel].is_finite() {
+                    return Err("density interpretation output is not representable in the selected precision".into());
+                }
+            }
+            Ok(())
+        })?;
+    Ok(ImageBuf::from_data(prepared.width, prepared.height, data))
 }
 
 /// Record-density acquisition for the assembled scanner acquisition fence.
 pub(crate) fn interpret_negative_density_stage(
-    density_cmy: &ImageBuf,
+    density: &ImageBuf,
     profile: &Profile,
     tones: &[ChannelTone; 3],
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    let calibration = interpretation::DensityCalibration::prepare(profile)?;
-    interpret_negative_density(density_cmy, &calibration, tones, params, backend)
+    let prepared = prepare_negative(density, profile, params, backend)?;
+    render_prepared_negative(&prepared, tones, params, backend)
 }
 
 // Scan options preserve the existing stage interface.
@@ -207,8 +361,7 @@ fn scan_with_capture(
     // negative density reading acquires no capture: it reads the record
     // densities through the film's own curves.
     let mut rgb = if negative_to_positive {
-        let calibration = interpretation::DensityCalibration::prepare(profile)?;
-        interpret_negative_density(density, &calibration, tones, params, backend)?
+        interpret_negative_density_stage(density, profile, tones, params, backend)?
     } else {
         capture.unwrap_or_else(|| {
             scan_spectral_rgb(
@@ -529,12 +682,13 @@ mod tests {
     }
 
     #[test]
-    fn fixed_style_output_reads_only_its_own_record() {
+    fn fixed_style_source_srgb_reads_only_its_own_record() {
         let data = data_dir();
         let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         let mut params = film_scan_params();
         params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.conversion_style = "fixed-probe".into();
+        params.io.output_color_space = "sRGB".into();
         let base = scan(&[0.4, 0.4, 0.4], &film, &style::STANDARD, &params);
         for channel in 0..3 {
             let mut density = [0.4; 3];
@@ -551,9 +705,8 @@ mod tests {
         }
     }
 
-    /// A declared style is an interpretation-side tone: it changes the
-    /// negative-to-positive render without touching the scanner readout, and
-    /// keeps per-record independence and density monotonicity.
+    /// Fixed tones preserve per-record independence in their source sRGB;
+    /// destination RGB conversion may mix these channels.
     #[test]
     fn conversion_style_tones_the_positive_without_breaking_invariants() {
         let data = data_dir();
@@ -580,6 +733,7 @@ mod tests {
         let mut params = film_scan_params();
         params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.conversion_style = "fixed-probe".into();
+        params.io.output_color_space = "sRGB".into();
 
         let density = [0.55, 0.45, 0.35];
         let neutral = scan(&density, &film, &style::STANDARD, &params);
@@ -613,6 +767,152 @@ mod tests {
                         "record {channel} leaked into channel {other}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn operator_axes_preserve_color_differences_and_declared_stops() {
+        use crate::params::ScanOperatorParams;
+        let pivot = (0.16_f64 / 0.184).log10();
+        let baseline = [-1.25, 0.5, 2.25].map(|ev| pivot + ev * std::f64::consts::LOG10_2);
+        assert_eq!(
+            operator_exposure(baseline, &ScanOperatorParams::default()).unwrap(),
+            baseline
+        );
+        for contrast in [0.5, 1.0, 2.0] {
+            let operator = ScanOperatorParams {
+                exposure_ev: 0.7,
+                warmth_ev: 0.4,
+                tint_ev: -0.3,
+                contrast,
+            };
+            let corrected = operator_exposure(baseline, &operator)
+                .unwrap()
+                .map(|x| (x - pivot) / std::f64::consts::LOG10_2);
+            let mean = corrected.iter().sum::<f64>() / 3.0;
+            assert!((mean - (contrast * 0.5 + 0.7)).abs() < 1e-14);
+            assert!((corrected[0] - corrected[2] - (-3.5 + 0.4)).abs() < 1e-14);
+            assert!(((corrected[0] + corrected[2]) / 2.0 - corrected[1] - (-0.3)).abs() < 1e-14);
+        }
+        // A balanced pixel remains neutral under common exposure and contrast.
+        let operator = ScanOperatorParams {
+            exposure_ev: -0.6,
+            contrast: 1.7,
+            ..ScanOperatorParams::default()
+        };
+        let corrected = operator_exposure([pivot + 0.4; 3], &operator).unwrap();
+        assert_eq!(corrected, [corrected[0]; 3]);
+    }
+
+    #[test]
+    fn combined_finite_operator_values_reject_overflow_instead_of_clamping() {
+        let operator = crate::params::ScanOperatorParams {
+            exposure_ev: f64::MAX,
+            contrast: f64::MAX,
+            ..crate::params::ScanOperatorParams::default()
+        };
+        assert!(operator.validate().is_ok());
+        assert!(
+            operator_exposure([1.0; 3], &operator)
+                .unwrap_err()
+                .contains("overflow")
+        );
+    }
+
+    #[test]
+    fn prepared_render_keeps_f64_baseline_and_default_tone_exact() {
+        let film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        let mut params = film_scan_params();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.io.output_color_space = "sRGB".into();
+        let density = ImageBuf::from_data(
+            2,
+            1,
+            vec![
+                from_f64(0.3),
+                from_f64(0.5),
+                from_f64(0.7),
+                from_f64(1.2),
+                from_f64(1.0),
+                from_f64(0.8),
+            ],
+        );
+        let original_density = density.data.clone();
+        let backend = &spektrafilm_backend::cpu_backend::CpuBackend;
+        let prepared = prepare_negative(&density, &film, &params, backend).unwrap();
+        let calibration = interpretation::DensityCalibration::prepare(&film).unwrap();
+        let offset = setup::FrameSetup::measure(&density, &calibration)
+            .unwrap()
+            .offset;
+        for (baseline, px) in prepared.exposure.iter().zip(density.data.chunks_exact(3)) {
+            let inverse = calibration
+                .estimate([to_f64(px[0]), to_f64(px[1]), to_f64(px[2])])
+                .unwrap();
+            assert_eq!(*baseline, std::array::from_fn(|c| inverse[c] + offset[c]));
+        }
+        let baseline = prepared.exposure.clone();
+        let original =
+            render_prepared_negative(&prepared, &style::STANDARD, &params, backend).unwrap();
+        let expected: Vec<_> = baseline
+            .iter()
+            .flat_map(|px| {
+                std::array::from_fn::<_, 3, _>(|c| {
+                    from_f64(positive_tone(px[c], &style::STANDARD[c], &params))
+                })
+            })
+            .collect();
+        assert_eq!(original.data, expected);
+        params.scanner.operator.exposure_ev = 0.5;
+        let moved =
+            render_prepared_negative(&prepared, &style::STANDARD, &params, backend).unwrap();
+        assert!(moved.data.iter().zip(&original.data).all(|(a, b)| a > b));
+        params.scanner.operator = crate::params::ScanOperatorParams::default();
+        assert_eq!(
+            render_prepared_negative(&prepared, &style::STANDARD, &params, backend)
+                .unwrap()
+                .data,
+            original.data
+        );
+        assert_eq!(prepared.exposure, baseline);
+        assert_eq!(density.data, original_density);
+    }
+
+    #[test]
+    fn standard_and_fixed_tone_are_converted_from_linear_srgb_before_tail() {
+        let backend = &spektrafilm_backend::cpu_backend::CpuBackend;
+        // Deliberately non-f32 coordinates catch an intermediate tone cast.
+        let prepared = PreparedNegative {
+            width: 1,
+            height: 1,
+            exposure: vec![[-0.173456789123, 0.287654321987, 0.731234567891]],
+        };
+        for style in ["standard", "fixed-probe"] {
+            let mut params = film_scan_params();
+            params.scanner.scan_output = "negative_to_positive".into();
+            params.scanner.conversion_style = style.into();
+            let tone_rgb = std::array::from_fn::<_, 3, _>(|c| {
+                positive_tone(prepared.exposure[0][c], &super::style::STANDARD[c], &params)
+            });
+            for space in ["sRGB", "Display P3", "ProPhoto RGB"] {
+                params.io.output_color_space = space.into();
+                let rendered =
+                    render_prepared_negative(&prepared, &super::style::STANDARD, &params, backend)
+                        .unwrap();
+                let expected = if space == "sRGB" {
+                    tone_rgb
+                } else {
+                    let matrix = colorspace::conversion_matrix(
+                        &colorspace::SRGB,
+                        colorspace::resolve(space).unwrap(),
+                    );
+                    std::array::from_fn(|c| {
+                        matrix[c][0] * tone_rgb[0]
+                            + matrix[c][1] * tone_rgb[1]
+                            + matrix[c][2] * tone_rgb[2]
+                    })
+                };
+                assert_eq!(rendered.data, expected.map(from_f64), "{style} -> {space}");
             }
         }
     }

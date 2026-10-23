@@ -323,6 +323,9 @@ fn unit(path: &str) -> Option<&'static str> {
     if path == "output_mix.amount" || path.ends_with(".developer_exhaustion") {
         return Some("dimensionless");
     }
+    if path == "scanner.operator.contrast" {
+        return Some("dimensionless");
+    }
     if path.starts_with("film_render.grain.fotufilm.") && !path.ends_with(".material") {
         Some(if path.ends_with(".clump_radius_um") {
             "µm"
@@ -371,6 +374,14 @@ fn conditions(path: &str) -> Vec<String> {
                 .into(),
         );
     }
+    if path.starts_with("scanner.operator.") {
+        out.push("nondefault corrections require standard negative_to_positive on an eligible negative film route; applied after immutable full-frame setup and before fixed tone; never changes density or setup".into());
+        out.push(if path == "scanner.operator.contrast" {
+            "finite and strictly positive; no schema upper bound".into()
+        } else {
+            "finite differential exposure coordinate; no schema range clamp".into()
+        });
+    }
     if path.starts_with("film_render.grain.fotufilm.") {
         out.push("authored effective-appearance control; not measured stock calibration".into());
         if super::super::validation::fotufilm_minimum_exclusive(path) {
@@ -388,6 +399,18 @@ fn conditions(path: &str) -> Vec<String> {
 
 fn description(path: &str) -> Option<&'static str> {
     match path {
+        "scanner.operator.exposure_ev" => Some(
+            "Common reconstructed exposure correction in stops; positive values make the positive image brighter.",
+        ),
+        "scanner.operator.warmth_ev" => Some(
+            "R minus B reconstructed exposure difference in stops; positive values are warmer, not Kelvin.",
+        ),
+        "scanner.operator.tint_ev" => Some(
+            "Mean R/B minus G reconstructed exposure difference in stops; positive values are more magenta.",
+        ),
+        "scanner.operator.contrast" => Some(
+            "Positive ratio scaling common exposure distance from the reference pivot without scaling channel differences.",
+        ),
         "output_mix.amount" => Some(
             "Overall effect amount: blends the prepared source with the complete result in linear output RGB; zero retains a negative capture as negative, one retains the full effect.",
         ),

@@ -120,7 +120,14 @@ impl GuiState {
                 .context("Invalid render preparation ownership")?;
             params.restore_render_preparation_state(&preparation);
         }
+        params
+            .scanner
+            .operator
+            .validate()
+            .map_err(anyhow::Error::msg)?;
+        let operator = std::mem::take(&mut params.scanner.operator);
         params.validate().map_err(anyhow::Error::msg)?;
+        params.scanner.operator = operator;
         for name in ["film_channel_swap", "print_channel_swap"] {
             let order = s["special"][name]
                 .as_array()
@@ -298,6 +305,16 @@ impl GuiState {
         }
         Ok(params)
     }
+    /// Resolve retained editing intent into the core render contract.
+    pub fn effective_runtime_params(&self) -> Result<RuntimeParams> {
+        let mut params = self.runtime_params()?;
+        if !params.scanner.requires_full_frame() {
+            params.scanner.operator = Default::default();
+        }
+        params.validate().map_err(anyhow::Error::msg)?;
+        Ok(params)
+    }
+
     pub fn from_runtime(
         params: &RuntimeParams,
         film: &str,

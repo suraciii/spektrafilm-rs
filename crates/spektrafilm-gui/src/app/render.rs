@@ -4,6 +4,16 @@ use crate::*;
 use super::state::App;
 
 impl App {
+    pub(crate) fn set_operator_compare(&mut self, comparing: bool) {
+        let comparing = comparing && self.params.scanner.requires_full_frame();
+        if self.operator_compare != comparing {
+            self.operator_compare = comparing;
+            self.mark_parameters_changed();
+            self.force_preview = true;
+            self.dirty_since = None;
+        }
+    }
+
     /// The one header status line: the work unit that executes now, or the
     /// last accepted operation status when no render runs. A newer queued
     /// job only names the status once its attempt starts.
@@ -58,7 +68,7 @@ impl App {
         operation.set_backend_requested(diagnostics::preview_backend_requested());
         let params = match self
             .current_state()
-            .and_then(|state| state.runtime_params())
+            .and_then(|state| state.effective_runtime_params())
         {
             Ok(params) => params,
             Err(error) => {
@@ -73,6 +83,7 @@ impl App {
         let parameter_revision = self.parameter_revision;
         let snapshot = self
             .render_snapshot(params)
+            .with_operator_compare(self.operator_compare)
             .with_cancellation(Some(Arc::new(AtomicBool::new(false))));
         let request = RenderRequest {
             job: RenderJob {
@@ -139,6 +150,34 @@ impl App {
                         ObservationKind::Phase,
                         Purpose::Image,
                     );
+                    if r.operator_compare {
+                        self.viewer.transform_status = r.display_status;
+                        self.viewer.set_output(
+                            r.preview,
+                            [r.output.width as usize, r.output.height as usize],
+                            ctx.input(|i| i.time),
+                            false,
+                        );
+                        self.viewer.set_output_display_source(
+                            &r.output_color_space,
+                            r.output_cctf_encoding,
+                            self.viewer.settings.use_display_transform,
+                            self.gui_state.display_profile().map(Path::new),
+                        );
+                        self.viewer.seed_prepared_output(
+                            Arc::new(r.output),
+                            &r.output_color_space,
+                            r.output_cctf_encoding,
+                            r.display_enabled,
+                            self.gui_state.display_profile().map(Path::new),
+                            r.display_max_size,
+                        );
+                        self.status =
+                            "Comparing automatic baseline · Save retains corrected output".into();
+                        drop(handoff);
+                        self.diagnostics.finish(operation, Outcome::Succeeded);
+                        continue;
+                    }
                     self.source_render = Some(SourceRender::new(
                         operation.id(),
                         Some(response_job.input_epoch),

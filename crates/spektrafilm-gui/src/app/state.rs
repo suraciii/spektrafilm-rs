@@ -33,6 +33,8 @@ pub(crate) struct App {
     /// Original print-glare switch captured while Scan-for-print is active.
     /// This transient workflow state is deliberately excluded from persistence.
     pub(crate) scan_for_print_snapshot: Option<bool>,
+    /// Temporary automatic-baseline display. Never enters saved parameters.
+    pub(crate) operator_compare: bool,
     pub(crate) image_path: Option<PathBuf>,
     pub(crate) image: Option<Arc<ImageBuf>>,
     pub(crate) raw_lens_info: Option<String>,
@@ -217,6 +219,7 @@ impl App {
             force_preview: false,
             full_scan_requested: false,
             scan_for_print_snapshot: None,
+            operator_compare: false,
             image_path: None,
             input_rotation: 0,
             image: None,

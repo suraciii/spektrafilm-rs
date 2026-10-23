@@ -12,12 +12,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Numerical model revision shared by image, recipe and LUT provenance.
-/// `lab_scan_standard_v1` adds frame-level automatic negative setup and the
-/// material-category readout illuminant. Fixed styles retain their tone.
-pub const MODEL_VERSION: &str = "lab_scan_standard_v1";
+/// Operator controls follow full-frame standard setup. Negative tone has fixed
+/// linear-sRGB primaries before conversion to the selected output space.
+pub const MODEL_VERSION: &str = "lab_scan_operator_v1";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
+
+pub use crate::pipeline::scan_frame::ScanFrameCache;
 /// Selects whether profile-specific defaults are applied when building a runtime.
 ///
 /// GUI edits use `PreserveUserEdits`; batch and LUT construction use
@@ -218,6 +220,29 @@ impl Runtime {
         self.process_with_taps_observed(image, backend, None, None, context)
     }
 
+    /// Reuse an immutable full-workframe scan baseline for operator edits.
+    /// The input Arc identifies the loaded frame; no automatic offset crosses frames.
+    pub fn process_scan_cached_observed(
+        &self,
+        image: &Arc<ImageBuf>,
+        cache: &mut ScanFrameCache,
+        backend: &Arc<dyn ComputeBackend>,
+        context: &ObservationContext,
+    ) -> Result<ImageBuf, String> {
+        let started = Instant::now();
+        let result = if context.enabled() {
+            let _span = context.span().map(|span| span.enter());
+            let bound = spektrafilm_backend::bind_backend(backend.as_ref(), context.clone());
+            self.pipeline
+                .process_scan_cached(image, cache, bound.as_ref(), backend)
+        } else {
+            self.pipeline
+                .process_scan_cached(image, cache, backend.as_ref(), backend)
+        };
+        self.record_elapsed(started, None);
+        result
+    }
+
     pub fn process_with_taps_observed(
         &self,
         image: ImageBuf,
@@ -312,8 +337,13 @@ impl Runtime {
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
-        let preview = crate::params_builder::resize_for_preview(&image, max_size);
-        self.process(preview, backend)
+        if self.params().scanner.requires_full_frame() {
+            let output = self.process(image, backend)?;
+            Ok(crate::params_builder::resize_for_preview(&output, max_size))
+        } else {
+            let preview = crate::params_builder::resize_for_preview(&image, max_size);
+            self.process(preview, backend)
+        }
     }
 
     /// Process using `settings.preview_max_size`, matching upstream
@@ -467,9 +497,19 @@ pub fn simulate_preview(
     digest_params_first: bool,
     print_timings: bool,
 ) -> Result<ImageBuf, String> {
-    let preview =
-        crate::params_builder::resize_for_preview(&image, photo.params.settings.preview_max_size);
-    simulate(preview, photo, backend, digest_params_first, print_timings)
+    if photo.params.scanner.requires_full_frame() {
+        let output = simulate(image, photo, backend, digest_params_first, print_timings)?;
+        Ok(crate::params_builder::resize_for_preview(
+            &output,
+            photo.params.settings.preview_max_size,
+        ))
+    } else {
+        let preview = crate::params_builder::resize_for_preview(
+            &image,
+            photo.params.settings.preview_max_size,
+        );
+        simulate(preview, photo, backend, digest_params_first, print_timings)
+    }
 }
 
 /// Legacy ART compatibility name.
@@ -522,6 +562,78 @@ mod tests {
                 .flat_map(|i| [from_f64(0.08 + i as f64 * 0.02); 3])
                 .collect(),
         )
+    }
+
+    #[test]
+    fn operator_cache_matches_fresh_render_across_edits_and_frames() {
+        let mut params = scanner_params();
+        params.io.output_cctf_encoding = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.scanner.unsharp_mask = [0.0; 2];
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let backend: Arc<dyn ComputeBackend> = Arc::new(CpuBackend);
+        let image = Arc::new(scanner_image());
+        let mut cache = ScanFrameCache::default();
+        let render = |runtime: &Runtime, image: &Arc<ImageBuf>, cache: &mut ScanFrameCache| {
+            let cached = runtime
+                .process_scan_cached_observed(
+                    image,
+                    cache,
+                    &backend,
+                    &ObservationContext::default(),
+                )
+                .unwrap();
+            let fresh = runtime
+                .process(image.as_ref().clone(), backend.as_ref())
+                .unwrap();
+            assert_eq!(cached.data, fresh.data);
+        };
+        render(&runtime, &image, &mut cache);
+        let mut corrected = runtime.params().clone();
+        corrected.scanner.operator.exposure_ev = 0.5;
+        corrected.scanner.operator.warmth_ev = 0.25;
+        corrected.scanner.operator.contrast = 0.75;
+        let corrected = runtime.clone().with_params(corrected).unwrap();
+        render(&corrected, &image, &mut cache);
+        let mut upstream = corrected.params().clone();
+        upstream.camera.exposure_compensation_ev = 1.0;
+        let upstream = corrected.with_params(upstream).unwrap();
+        render(&upstream, &image, &mut cache);
+        let mut second = scanner_image();
+        second.data[..3].fill(from_f64(8.0));
+        render(&upstream, &Arc::new(second), &mut cache);
+    }
+
+    #[test]
+    fn standard_preview_resamples_finished_full_workframe() {
+        let mut params = scanner_params();
+        params.taps.inject = Some("cmy_film".into());
+        params.scanner.unsharp_mask = [0.0; 2];
+        params.settings.preview_max_size = 2;
+        params.io.crop = false;
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let mut density = ImageBuf::from_data(16, 16, vec![from_f64(0.6); 16 * 16 * 3]);
+        density.data[..3].fill(from_f64(3.0));
+        let backend = CpuBackend;
+        let full = runtime.process(density.clone(), &backend).unwrap();
+        let expected = crate::params_builder::resize_for_preview(&full, 2);
+        let preview = runtime
+            .process_configured_preview(density, &backend)
+            .unwrap();
+        assert_eq!((preview.width, preview.height), (2, 2));
+        assert_eq!(preview.data, expected.data);
     }
 
     #[test]

@@ -207,6 +207,103 @@ fn output_mix_edits_are_discoverable_and_invalid_sources_preserve_outputs() {
 }
 
 #[test]
+fn scanner_operator_cli_discovery_rendering_and_rejection_share_the_contract() {
+    let f = Fixture::new();
+    let discovery = f.run(&[
+        "describe",
+        "--module",
+        "scanner.operator",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        discovery.status.success(),
+        "{}",
+        String::from_utf8_lossy(&discovery.stderr)
+    );
+    let fields: Value = serde_json::from_slice(&discovery.stdout).unwrap();
+    for (name, default) in [
+        ("exposure_ev", 0.0),
+        ("warmth_ev", 0.0),
+        ("tint_ev", 0.0),
+        ("contrast", 1.0),
+    ] {
+        let path = format!("scanner.operator.{name}");
+        let field = fields["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["path"] == path)
+            .unwrap();
+        assert_eq!(field["default"], default);
+    }
+    let common = [
+        "--film",
+        "kodak_portra_400",
+        "--backend",
+        "cpu",
+        "--scan-film",
+        "--scan-output",
+        "negative_to_positive",
+        "--set",
+        "camera.auto_exposure=false,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true",
+    ];
+    let baseline = f.process(&common);
+    assert!(
+        baseline.status.success(),
+        "{}",
+        String::from_utf8_lossy(&baseline.stderr)
+    );
+    let baseline = image::open(f.root.join("output.tif")).unwrap().to_rgb32f();
+    let mut corrected = common.to_vec();
+    corrected.extend_from_slice(&["--set", "scanner.operator.exposure_ev=1"]);
+    let result = f.process(&corrected);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let positive = image::open(f.root.join("output.tif")).unwrap().to_rgb32f();
+    assert_eq!(positive.dimensions(), baseline.dimensions());
+    assert!(positive.as_raw().iter().sum::<f32>() > baseline.as_raw().iter().sum::<f32>());
+    let sentinel = std::fs::read(f.root.join("output.tif")).unwrap();
+    for edit in [
+        "scanner.operator.contrast=0",
+        "scanner.operator.contrast=-1",
+        "scanner.operator.unknown=0",
+        "scanner.auto_setup=full",
+        "scanner.finish=lab_scan",
+        "scanner.conversion_exposure_ev=0",
+        "scanner.conversion_style=fixed,scanner.operator.warmth_ev=0.2",
+    ] {
+        let mut args = common.to_vec();
+        args.extend_from_slice(&["--set", edit, "--dry-run"]);
+        assert!(!f.process(&args).status.success(), "{edit}");
+        assert_eq!(std::fs::read(f.root.join("output.tif")).unwrap(), sentinel);
+    }
+    assert!(
+        !f.process(&[
+            "--film",
+            "kodak_portra_400",
+            "--scan-film",
+            "--set",
+            "scanner.operator.exposure_ev=0.5",
+            "--dry-run"
+        ])
+        .status
+        .success()
+    );
+    let report = f.report(&[
+        "--film", "kodak_portra_400", "--scan-film", "--scan-output", "negative_to_positive",
+        "--set", "scanner.operator.exposure_ev=0.5000000000000001,scanner.operator.warmth_ev=-0.25,scanner.operator.tint_ev=0.125,scanner.operator.contrast=1.2", "--dry-run",
+    ]);
+    assert_eq!(
+        report["parameters"]["scanner"]["operator"]["exposure_ev"],
+        0.5000000000000001
+    );
+}
+
+#[test]
 fn sources_compose_in_order_and_dry_run_preserves_existing_outputs() {
     let f = Fixture::new();
     let sparse = f.root.join("edits.toml");

@@ -40,11 +40,17 @@ A resettable section presents a `modified` chip while any of its parameters diff
 
 The GUI shows scanner controls for the scanned medium:
 
-- Every route exposes scan polarity; the readout illuminant follows the material category.
-- The negative interpretation additionally exposes the conversion style: `neutral` is the frozen reference tone, and any other name is a declared style in `data/scan-styles/`.
+- The negative-to-positive interpretation is available for eligible negative film scans; the readout illuminant follows the material category.
+- Negative-to-positive exposes conversion style. `standard` is the canonical automatic interpretation; `neutral` is a legacy input alias for it. Other names refer to declared styles in `data/scan-styles/`.
 - Scanner lens blur and unsharp masking expose the readout optics and digital sharpening.
 
-Changing the route resets an ineligible scan polarity; leaving the negative interpretation resets the conversion style to `neutral`. See [scanning](scanning.md) for scanner mode semantics.
+Changing the route resets an ineligible scan polarity; leaving negative-to-positive resets conversion style to `standard`. See [scanning](scanning.md) for scanner mode semantics.
+
+**MAIN → Scanner → Operator correction** adjusts the finished positive after this frame's automatic setup, before the fixed tone curve. **Finished exposure** is ±3 EV (positive is brighter); **Warmth** and **Green–magenta tint** are ±1 differential EV (positive is warmer and more magenta respectively, not Kelvin); **Contrast** spans 0.5–2 (1 is unchanged). These are editor ranges, not document limits. The controls are disabled outside eligible negative-to-positive `standard` scans, with their stored values retained.
+
+Each operator row has its own **Reset** action. **Restore automatic** resets only the four operator values to 0, 0, 0, 1. **Undo operator correction** and **Redo operator correction** affect only those values. **Hold automatic comparison** (primary mouse button, or Space while focused) shows the same prepared frame with default operator values until release; it does not change saved corrections or the retained pixels used by Save. This is separate from the viewer's input/output split comparison.
+
+**Copy operator correction** and **Paste operator correction** use a session-local clipboard containing only the four values. Load another frame and paste to apply them over that frame's own automatic setup; no offsets, film density, capture calibration, or other settings are copied. The clipboard and undo history are not saved in presets or GUI state.
 
 **MAIN → Output → Simulation blend** blends the complete result with the decoded, geometrically aligned source in linear output RGB. Amount `1` keeps the complete result. Amount `0` returns the prepared source before virtual camera exposure. A negative capture stays negative at zero. Preview, Scan, Export, and complete source-to-output LUTs share this operation. Segmented LUTs require amount `1`. See [the output mix specification](../specs/output-mix/spec.md#output-mix) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
 

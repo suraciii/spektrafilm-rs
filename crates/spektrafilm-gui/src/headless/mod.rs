@@ -8,6 +8,7 @@ mod calibration;
 mod dialogs;
 mod files;
 mod lifecycle;
+mod operator;
 mod pages;
 mod panels;
 mod raw;

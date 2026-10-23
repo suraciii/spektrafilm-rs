@@ -144,6 +144,10 @@ pub static ALL_PATHS: &[&str] = &[
     "print_render.glare.blur",
     "scanner.lens_blur",
     "scanner.unsharp_mask",
+    "scanner.operator.exposure_ev",
+    "scanner.operator.warmth_ev",
+    "scanner.operator.tint_ev",
+    "scanner.operator.contrast",
     "settings.preview_max_size",
     "settings.spectral_gaussian_blur",
     "extras.load_raw.temperature",
@@ -339,6 +343,9 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         // Scanner
         "scanner.lens_blur" => Some((0.0, 5.0, 0.05, 2)),
         "scanner.unsharp_mask" => Some((0.0, 1000000.0, 0.05, 2)),
+        "scanner.operator.exposure_ev" => Some((-3.0, 3.0, 0.05, 2)),
+        "scanner.operator.warmth_ev" | "scanner.operator.tint_ev" => Some((-1.0, 1.0, 0.05, 2)),
+        "scanner.operator.contrast" => Some((0.5, 2.0, 0.05, 2)),
 
         // Settings
         "settings.preview_max_size" => Some((128.0, 4096.0, 128.0, 2)),

@@ -185,6 +185,7 @@ mod tests {
         params.scanner.scan_output = "negative_to_positive".into();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
+        params.io.output_color_space = "sRGB".into();
         params.scanner.unsharp_mask = [0.0; 2];
         let run = |params: &crate::params::RuntimeParams| {
             super::super::interpret_negative_density_stage(
@@ -309,6 +310,7 @@ mod stock_tests {
             params.workflow.route = "input > film > scan".into();
             params.io.scan_film = true;
             params.scanner.scan_output = "negative_to_positive".into();
+            params.io.output_color_space = "sRGB".into();
             params.scanner.unsharp_mask = [0.0; 2];
             let render = |frame: &ImageBuf| {
                 super::super::interpret_negative_density_stage(
