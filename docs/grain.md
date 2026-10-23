@@ -106,6 +106,15 @@ See [the Dye specification](../specs/film-grain/v3/spec.md) for experimental rea
 
 Cine profiles such as Kodak VISION3 500T can use Dye with their existing stock controls. This availability does not establish cine photographic calibration or optical-readout acceptance. Receiver, aperture, density convention, wavelength range, and viewing condition remain required before a cine optical claim.
 
+### Standalone measurement compatibility
+
+The independent `DyeOpticalOracle` measures declared fixed CMY realizations. Normal rendering does not invoke it. It rejects negative absolute total spectral density, non-finite absorption, and transmission underflow without clamping. Negative CMY coefficients remain valid when the combined total is nonnegative. Receiver density relative to a non-unit reference may also be negative.
+
+Population `measure` now requires at least two realizations. A one-seed protocol still supports `read_realization`. Descriptive covariance and RMS keep divisor `N`; the mean-density SEM now uses `sqrt(C_pop[j,j] / (N - 1))`. For readings `[0, 2]`, the mean, RMS, and SEM are each `1 D`. SEM assumes independent realizations and does not bound systematic error or uncertainty in the RMS. Convert explicitly when comparing with manufacturer granularity in `1000 sigma_D`.
+
+New records automatically carry `dye-measurement-v2:` before the caller's algorithm revision in the existing `protocol.algorithm_revision` field. Old JSON fields remain readable without changing their stored revision or uncertainty. The prior estimator was `rms_density / sqrt(N)`; old records must retain that interpretation according to their generating version. No measurement field, runtime parameter, preset value, formation law, or random stream changes in this repair. See [the measurement contract](../specs/film-grain/v3/design.md#measurement-statistics-and-revision).
+
+
 ## Fotufilm Film
 
 Select Fotufilm Film with `film_render.grain.engine: "fotufilm"`. This adapted appearance population model fits resolved film curves. It is opt-in and uses `film_render.grain.fotufilm.*` controls.
