@@ -271,7 +271,7 @@ pub struct ScanModelConfiguration {
 impl Default for ScanModelConfiguration {
     fn default() -> Self {
         Self {
-            model: "neutral_scan_v2".into(),
+            model: "lab_scan_v1".into(),
             sensor: "cie_1931_cmf".into(),
             white_reference: "clear_film_base".into(),
             output_white: "output_color_space_white".into(),
@@ -359,7 +359,7 @@ impl RenderConfiguration {
             } else {
                 ScanOutput::DirectScan
             },
-            conversion_style: params.scanner.conversion_style.clone(),
+            conversion_style: params.scanner.conversion_style_name().to_owned(),
             scan_model: ScanModelConfiguration::from_runtime(params, film, print),
             output_mix_amount: params.output_mix.amount,
             model_version: crate::runtime::MODEL_VERSION.into(),

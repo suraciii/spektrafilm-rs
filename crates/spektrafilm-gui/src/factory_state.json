@@ -249,7 +249,7 @@
   },
   "scanner": {
     "scan_output": "direct_scan",
-    "conversion_style": "neutral",
+    "conversion_style": "standard",
     "lens_blur": 0.0,
     "unsharp_mask": [
       0.7,

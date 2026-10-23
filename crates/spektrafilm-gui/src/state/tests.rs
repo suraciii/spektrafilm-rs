@@ -6,7 +6,7 @@ fn output_mix_state_roundtrip_and_legacy_retirement_are_atomic() {
     params.output_mix.amount = 0.25;
     let saved = GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
         .unwrap();
-    assert_eq!(saved.sections["rust"]["version"], 4);
+    assert_eq!(saved.sections["rust"]["version"], CURRENT_STATE_VERSION);
     let restored = GuiState::from_value(saved.sections.clone()).unwrap();
     assert_eq!(restored.runtime_params().unwrap().output_mix.amount, 0.25);
     for version in [1, 2] {
@@ -129,7 +129,10 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
         // upstream boolean mirror stays in step on save.
         let saved =
             GuiState::from_runtime(&params, state.film(), state.paper(), &state.sections).unwrap();
-        assert_eq!(saved.sections["rust"]["version"], json!(4));
+        assert_eq!(
+            saved.sections["rust"]["version"],
+            json!(CURRENT_STATE_VERSION)
+        );
         let runtime = serde_json::to_string(&saved.sections["rust"]["runtime"]).unwrap();
         assert!(runtime.contains("negative_to_positive"));
         assert_eq!(
@@ -187,7 +190,10 @@ fn legacy_cmyk_state_migration_is_transactional_and_idempotent() {
         assert!(state.sections.get("magazine_print_color").is_none());
         assert_eq!(state.sections["cmyk"]["active"], json!(true));
         assert_eq!(state.sections["cmyk"]["strength"], json!(0.75));
-        assert_eq!(state.sections["rust"]["version"], json!(4));
+        assert_eq!(
+            state.sections["rust"]["version"],
+            json!(CURRENT_STATE_VERSION)
+        );
 
         // Re-serializing a migrated document emits only the canonical group.
         let saved =
@@ -905,7 +911,7 @@ fn negative_to_positive_convert_route_roundtrip() -> anyhow::Result<()> {
     );
     assert_eq!(
         saved.sections["rust"]["scanner_provenance"]["model"],
-        "neutral_scan_v2"
+        "lab_scan_v1"
     );
     assert_eq!(
         saved.sections["rust"]["scanner_provenance"]["sensor"],
@@ -1047,7 +1053,7 @@ fn scanner_provenance_is_rederived_from_builtin_selection() {
     .unwrap();
     assert_eq!(
         state.sections["rust"]["scanner_provenance"]["model"],
-        "neutral_scan_v2"
+        "lab_scan_v1"
     );
     assert_eq!(
         state.sections["rust"]["scanner_provenance"]["sensor"],
@@ -1149,4 +1155,29 @@ fn malformed_controls_and_future_extensions_fail_before_application() {
     ] {
         assert!(GuiState::from_value(value).is_err());
     }
+}
+
+#[test]
+fn legacy_scanner_state_migrates_light_and_style_but_current_unknown_fields_still_fail() {
+    for version in 1..=4 {
+        let state = GuiState::from_value(json!({
+            "rust": {"version": version, "runtime": {"scanner": {
+                "lamp": "D65", "conversion_style": "neutral"
+            }}},
+            "scanner": {"lamp": "D65", "conversion_style": "neutral"}
+        }))
+        .unwrap();
+        assert_eq!(
+            state.runtime_params().unwrap().scanner.conversion_style,
+            "standard"
+        );
+        assert_eq!(state.sections["scanner"]["conversion_style"], "standard");
+        assert!(state.sections["scanner"].get("lamp").is_none());
+        let round = GuiState::from_value(state.sections.clone()).unwrap();
+        assert_eq!(state.sections, round.sections);
+    }
+    let current = GuiState::from_value(json!({
+        "rust": {"version": super::CURRENT_STATE_VERSION}, "scanner": {"lamp": "D50"}
+    }));
+    assert!(current.is_err());
 }

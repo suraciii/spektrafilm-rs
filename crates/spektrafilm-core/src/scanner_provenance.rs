@@ -6,7 +6,7 @@ use serde::Serialize;
 /// Provenance of the one built-in scanner model.
 #[derive(Debug, Clone, Serialize)]
 pub struct ScannerProvenance {
-    /// Model identity: neutral scan model v2.
+    /// Model identity: lab scan readout v1.
     pub model: &'static str,
     /// Sensor model: CIE 1931 colorimetric reading.
     pub sensor: &'static str,
@@ -20,11 +20,11 @@ pub struct ScannerProvenance {
 
 impl ScannerProvenance {
     pub fn from_params(_params: &crate::params::RuntimeParams) -> Self {
-        Self::NEUTRAL_SCAN_V2
+        Self::LAB_SCAN_V1
     }
 
-    const NEUTRAL_SCAN_V2: Self = Self {
-        model: "neutral_scan_v2",
+    const LAB_SCAN_V1: Self = Self {
+        model: "lab_scan_v1",
         sensor: "cie_1931_cmf",
         white_reference: "clear_film_base",
         output_white: "output_color_space_white",
@@ -40,7 +40,7 @@ mod tests {
     fn provenance_is_derived_from_the_builtin_model() {
         let params = crate::params::RuntimeParams::default();
         let provenance = ScannerProvenance::from_params(&params);
-        assert_eq!(provenance.model, "neutral_scan_v2");
+        assert_eq!(provenance.model, "lab_scan_v1");
         assert_eq!(provenance.white_reference, "clear_film_base");
         assert_eq!(provenance.output_white, "output_color_space_white");
         assert_eq!(provenance.matrix, "identity");

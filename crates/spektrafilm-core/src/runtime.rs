@@ -12,10 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Numerical model revision shared by image, recipe and LUT provenance.
-/// `conversion_language_v1` renames the conversion-control paths
-/// (`enlarger.print_exposure_mode`, `settings.print_exposure_ev_tracking`)
-/// without changing rendered pixels.
-pub const MODEL_VERSION: &str = "conversion_language_v1";
+/// `lab_scan_standard_v1` adds frame-level automatic negative setup and the
+/// material-category readout illuminant. Fixed styles retain their tone.
+pub const MODEL_VERSION: &str = "lab_scan_standard_v1";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;

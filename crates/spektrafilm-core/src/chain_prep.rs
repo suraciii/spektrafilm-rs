@@ -102,8 +102,6 @@ pub(crate) fn dir_matrix(dir: &crate::params::couplers::DirCouplersParams) -> [[
 pub struct ScanColorContext {
     /// Effective readout illuminant, f64 per wavelength: the product constant
     /// selected by the material category, without a device filter.
-    /// research `k64-neutral-scan-v2`) folded in. Every kernel multiplies
-    /// this spectrum, so the cut needs no separate plumbing.
     pub illuminant: Vec<f64>,
     /// Wavelength count shared by the lamp, the profile's dye and base
     /// densities, and the CMF tables.
@@ -113,7 +111,7 @@ pub struct ScanColorContext {
     pub base_xyz: [f64; 3],
     /// `base_xyz[1]` — the scalar every scan kernel divides the capture by.
     pub normalization: f64,
-    /// Lamp XYZ integrated against the CMFs (with the IR cut applied); the
+    /// Readout-light XYZ integrated against the CMFs; the
     /// glare offset colour source.
     pub lamp_xyz: [f64; 3],
     /// Clear-film white (Y = 1) the chromatic adaptation starts from.

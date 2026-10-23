@@ -42,14 +42,14 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
         "negative_to_positive"
     );
     let scan_model = actual.scan_model;
-    assert_eq!(scan_model.model, "neutral_scan_v2");
+    assert_eq!(scan_model.model, "lab_scan_v1");
     assert_eq!(scan_model.sensor, "cie_1931_cmf");
     assert_eq!(scan_model.white_reference, "clear_film_base");
     assert_eq!(scan_model.output_white, "output_color_space_white");
     assert_eq!(scan_model.matrix, "identity");
     assert_eq!(scan_model.readout_illuminant, "D50");
     assert_eq!(scan_model.readout_rule, "default");
-    assert_eq!(actual.conversion_style, "neutral");
+    assert_eq!(actual.conversion_style, "standard");
 }
 
 #[test]
@@ -158,6 +158,15 @@ fn negative_to_positive_cpu_override_preserves_stage_reports() {
         let report = operation.finish(Outcome::Succeeded).unwrap();
         report.validate().unwrap();
         assert_eq!(output.data, expected.data);
+        assert_eq!(
+            report
+                .stages
+                .iter()
+                .filter(|stage| stage.name == "standard_setup")
+                .count(),
+            1
+        );
+
         assert_eq!(
             report.execution.backend_selected,
             Some(if backend.is_gpu() {

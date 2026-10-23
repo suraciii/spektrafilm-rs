@@ -15,7 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub const PRESET_SCHEMA_VERSION: u32 = 5;
+pub const PRESET_SCHEMA_VERSION: u32 = 6;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRef {
@@ -443,7 +443,12 @@ impl Preset {
             parameters: Value,
             provenance: Provenance,
         }
-        if matches!(value["schema_version"].as_u64(), Some(1..=4)) {
+        if value["schema_version"].as_u64() == Some(5)
+            && let Some(parameters) = value.get("parameters")
+        {
+            reject_retired_preset_fields(parameters)?;
+        }
+        if matches!(value["schema_version"].as_u64(), Some(1..=5)) {
             let version = value["schema_version"].as_u64().unwrap();
             let object = value.as_object_mut().ok_or("preset must be an object")?;
             if version == 1 {
@@ -506,7 +511,50 @@ impl Preset {
                     .ok_or("preset parameters must be an object")?;
                 crate::params::sources::normalize_legacy_complete_params(parameters)?;
             }
+            // Version 6 removes the scanner lamp and makes the old built-in
+            // spelling an input alias. Validate historical scanner provenance
+            // before replacing it; arbitrary metadata is not a migration.
+            let lamp = object
+                .get("parameters")
+                .and_then(|p| p.pointer("/scanner/lamp"))
+                .cloned();
+            if let Some(scanner) = object
+                .get("provenance")
+                .and_then(|p| p.get("scanner"))
+                .filter(|scanner| !scanner.is_null())
+            {
+                let current = serde_json::to_value(crate::ScannerProvenance::from_params(
+                    &RuntimeParams::default(),
+                ))
+                .map_err(|e| e.to_string())?;
+                let mut legacy = current.clone();
+                legacy["model"] = "neutral_scan_v2".into();
+                let mut with_lamp = legacy.clone();
+                with_lamp["lamp"] = lamp.clone().unwrap_or_else(|| "D55".into());
+                if scanner != &legacy && scanner != &with_lamp && scanner != &current {
+                    return Err(
+                        "legacy scanner provenance does not match the built-in readout model"
+                            .into(),
+                    );
+                }
+                object["provenance"]["scanner"] = current;
+                object["provenance"]["model_version"] = crate::runtime::MODEL_VERSION.into();
+            }
+            if let Some(scanner) = object
+                .get_mut("parameters")
+                .and_then(|p| p.get_mut("scanner"))
+                .and_then(Value::as_object_mut)
+            {
+                scanner.remove("lamp");
+            }
             object.insert("schema_version".into(), PRESET_SCHEMA_VERSION.into());
+        }
+        if value
+            .pointer("/parameters/scanner/conversion_style")
+            .and_then(Value::as_str)
+            == Some("neutral")
+        {
+            value["parameters"]["scanner"]["conversion_style"] = "standard".into();
         }
         let wire: Wire =
             serde_json::from_value(value).map_err(|e| format!("invalid preset: {e}"))?;

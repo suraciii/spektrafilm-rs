@@ -174,11 +174,15 @@ pub struct ScannerParams {
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,
     /// Named positive-conversion style applied by the negative-to-positive
-    /// interpretation: `neutral` is the frozen reference tone; any other
+    /// interpretation: `standard` is the automatic built-in; any other
     /// name resolves to `data/scan-styles/<name>.json` (declared
     /// per-channel tone parameters, never fitted). Meaningful only with
     /// `scan_output = negative_to_positive`.
-    #[serde(default = "default_conversion_style")]
+    #[serde(
+        default = "default_conversion_style",
+        deserialize_with = "deserialize_conversion_style",
+        serialize_with = "serialize_conversion_style"
+    )]
     pub conversion_style: String,
     #[serde(default)]
     pub lens_blur: f32,
@@ -198,7 +202,37 @@ impl Default for ScannerParams {
 }
 
 fn default_conversion_style() -> String {
-    "neutral".into()
+    "standard".into()
+}
+
+impl ScannerParams {
+    /// The built-in automatic style. `neutral` is an input-only migration alias.
+    pub fn uses_standard(&self) -> bool {
+        matches!(self.conversion_style.as_str(), "standard" | "neutral")
+    }
+
+    pub fn conversion_style_name(&self) -> &str {
+        if self.uses_standard() {
+            "standard"
+        } else {
+            &self.conversion_style
+        }
+    }
+}
+
+fn deserialize_conversion_style<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<String, D::Error> {
+    let name = String::deserialize(d)?;
+    Ok(if name == "neutral" {
+        "standard".into()
+    } else {
+        name
+    })
+}
+
+fn serialize_conversion_style<S: serde::Serializer>(name: &str, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(if name == "neutral" { "standard" } else { name })
 }
 
 fn default_one_f64() -> f64 {
@@ -942,6 +976,37 @@ fn default_route() -> String {
 #[cfg(test)]
 mod tests {
     use super::{CameraParams, RuntimeParams};
+    #[test]
+    fn standard_is_canonical_for_defaults_legacy_sources_and_snapshots() {
+        assert_eq!(super::ScannerParams::default().conversion_style, "standard");
+        let mut params: RuntimeParams = serde_json::from_value(serde_json::json!({
+            "scanner": {"conversion_style": "neutral"}
+        }))
+        .unwrap();
+        assert_eq!(params.scanner.conversion_style, "standard");
+        super::sources::ParameterEdits::parse("scanner.conversion_style=neutral")
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert_eq!(params.scanner.conversion_style, "standard");
+        params.scanner.conversion_style = "neutral".into();
+        assert_eq!(
+            serde_json::to_value(&params).unwrap()["scanner"]["conversion_style"],
+            "standard"
+        );
+        params.debug.lut_mode = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        assert!(params.validate().unwrap_err().contains("point-wise LUT"));
+        params.scanner.conversion_style = "fixed-probe".into();
+        params.validate().unwrap();
+        assert!(
+            serde_json::from_value::<super::ScannerParams>(
+                serde_json::json!({"conversion_style": null})
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn scanner_defaults_and_sparse_edits_are_compatible() {
         let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();

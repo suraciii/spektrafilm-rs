@@ -8,7 +8,7 @@ use std::path::Path;
 ///
 /// Resolved from the same data directory the pipeline reads, so the selector
 /// lists exactly the styles a render would accept. Nothing ships a style, so
-/// the installed set is `neutral` alone until the user drops a
+/// the installed set is `standard` alone until the user drops a
 /// `scan-styles/<name>.json` into their data directory.
 fn conversion_styles(data_dir: &Path) -> Vec<String> {
     crate::profiles::scan_conversion_styles(data_dir)

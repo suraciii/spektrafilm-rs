@@ -612,6 +612,12 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         &params.camera.auto_exposure_method,
     )?;
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
+    if params.debug.lut_mode
+        && params.scanner.scan_output == "negative_to_positive"
+        && params.scanner.uses_standard()
+    {
+        return Err("scanner.conversion_style=standard measures the whole frame and cannot be baked into a point-wise LUT; select a declared fixed conversion style".into());
+    }
     let style = &params.scanner.conversion_style;
     if style.is_empty()
         || style.contains('/')
@@ -623,7 +629,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             "scanner.conversion_style: {style:?} is not a valid style name"
         ));
     }
-    if style != "neutral" && params.scanner.scan_output != "negative_to_positive" {
+    if !params.scanner.uses_standard() && params.scanner.scan_output != "negative_to_positive" {
         return Err(
             "scanner.conversion_style requires scanner.scan_output=negative_to_positive".into(),
         );

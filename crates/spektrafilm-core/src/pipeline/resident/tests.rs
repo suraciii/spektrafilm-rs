@@ -51,20 +51,6 @@ fn observed_render(
     context.snapshot()
 }
 
-/// Run a render through an observed backend and return the recorded
-/// execution path: a fence check that silently ran on the per-stage CPU
-/// route would satisfy its budget vacuously.
-fn observed_execution_path(
-    pipeline: &Pipeline,
-    image: ImageBuf,
-    backend: &dyn spektrafilm_backend::ComputeBackend,
-) -> spektrafilm_backend::telemetry::ExecutionPath {
-    observed_render(pipeline, image, backend)
-        .execution
-        .path
-        .expect("resident renders record their execution path")
-}
-
 /// Params for the film-render resident parity checks: the slide-style
 /// `input > film > scan` route with every optional device-heavy stage
 /// off, so the comparison isolates the film develop chain (density
@@ -606,13 +592,24 @@ fn n2p_density_reading_fence_matches_cpu() {
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
+    eprintln!("standard setup CPU/resident output parity mean={mean:.9} max={max_diff:.9}");
     assert!(
         mean < 5e-2 && max_diff < 5e-1,
         "density reading fence: mean={mean:.6} max={max_diff:.6}"
     );
+    let snapshot = observed_render(&pipeline, image.clone(), gpu.backend());
     assert_eq!(
-        observed_execution_path(&pipeline, image.clone(), gpu.backend()),
-        spektrafilm_backend::telemetry::ExecutionPath::GpuResident
+        snapshot.execution.path,
+        Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident)
+    );
+    assert_eq!(
+        snapshot
+            .observations
+            .iter()
+            .filter(|stage| stage.name == "standard_setup")
+            .count(),
+        1,
+        "resident acquisition must measure the complete frame exactly once"
     );
 
     // The reading changes the image (a direct scan of the same negative

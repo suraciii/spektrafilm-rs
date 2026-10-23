@@ -1070,8 +1070,8 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
     let h = &mut s.harness;
     assert_eq!(
         h.state().params.scanner.conversion_style,
-        "neutral",
-        "the shipped default stays the frozen reference tone"
+        "standard",
+        "the shipped default is the automatic standard"
     );
     click(h, "Profiles");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
@@ -1099,7 +1099,7 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
             .is_some()
     );
     assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::Button, "neutral")
+        h.query_by_role_and_label(egui::accesskit::Role::Button, "standard")
             .is_some()
     );
     h.press_key(egui::Key::Escape);
@@ -1112,8 +1112,8 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
         styled.data, reference.data,
         "an installed style must change the rendered capture"
     );
-    choose(h, "conversion style", "neutral");
-    assert_eq!(h.state().params.scanner.conversion_style, "neutral");
+    choose(h, "conversion style", "standard");
+    assert_eq!(h.state().params.scanner.conversion_style, "standard");
     let unstyled = render(h, "PREVIEW");
     assert_eq!(unstyled.data, reference.data);
 }

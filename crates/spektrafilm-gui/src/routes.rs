@@ -39,13 +39,13 @@ pub(crate) mod vocabulary {
     /// selector lists only what the user has installed, and that it applies
     /// only to the negative interpretation.
     pub(crate) const CONVERSION_STYLE_HELP: &str = "Named positive-conversion tone of the \
-         negative-to-positive interpretation. `neutral` is the frozen reference tone; any other \
+         negative-to-positive interpretation. `standard` measures the whole frame for automatic exposure and color balance before the frozen tone; any other \
          name is a declared style you place in data/scan-styles/, never a fitted surface. The \
          selector lists the styles found there. A style applies only with scan output set to \
          Negative to positive.";
 
-    /// `neutral`, the frozen reference tone every style is measured against.
-    pub(crate) const CONVERSION_STYLE_NEUTRAL: &str = "neutral";
+    /// The automatic built-in style; aliases are never offered as choices.
+    pub(crate) const CONVERSION_STYLE_STANDARD: &str = "standard";
 
     /// `scan output`: native polarity or negative conversion.
     pub(crate) const SCAN_OUTPUT: &str = "scan output";

@@ -10,7 +10,7 @@ The readout light is a product constant selected by the material category: `BB58
 
 The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white, and the scan chromatically adapts from that clear-film white to the output white. The scan matrix is the identity. The readout light is part of the final colour transform, not an acquisition control.
 
-The scanner controls are `scanner.scan_output`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. White/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, automatic setup, scanner finish, and Digital Reference are removed; their field names fail validation at the current schema version.
+The scanner controls are `scanner.scan_output`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. White/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, automatic setup controls, scanner finish, and Digital Reference are removed; their field names fail validation at the current schema version.
 
 ## Experimental workflow routes and output modes
 
@@ -47,9 +47,15 @@ For a real negative scanner capture on `input > convert-film > scan`, disable vi
 
 ## Conversion styles
 
-`scanner.conversion_style` names the stylization of the negative-to-positive tone. It defaults to `neutral`, which is the frozen reference tone and renders byte-identically to the conversion without a style slot. `neutral` needs no data directory.
+`scanner.conversion_style` defaults to `standard`. It measures the whole developed frame for automatic exposure and color balance, then applies the existing positive tone. It needs no data directory. `neutral` is an input-only migration alias; saved parameters report `standard`. This rename changes pixels because setup is now automatic.
 
-Any other name resolves to `data/scan-styles/<name>.json` in your data directory. No style ships with the product: with a stock data directory, only `neutral` resolves, and every other name fails with an error that lists the available styles.
+Standard setup uses a weighted mean/minimum/maximum density estimate and a partial exposure correction. Color correction compares the frame to the stock's neutral locus and reduces correction for dominant colors. These are declared product choices, not measured Frontier/Noritsu settings. Bright backgrounds can still darken a subject. No scene classifier or local tone mapper rescues it.
+
+Standard setup does not subtract simulated camera exposure compensation a second time. Fixed styles retain the historical camera compensation. Setup runs after scanner lens blur, before tone and output processing.
+
+A frame-dependent scan cannot be represented by a point-wise LUT. LUT baking and point-wise measurements that reach this setup fail and request a fixed style. Upstream density and exposure taps remain measurable.
+
+Any other name resolves to `data/scan-styles/<name>.json` in your data directory. No extra fixed style ships with the product. With a stock data directory, only `standard` is listed. A fixed style runs no automatic setup.
 
 A style file is user-authored declared data. It declares one tone triple per channel:
 
@@ -67,9 +73,9 @@ The three triples are what let a style carry a color tendency on top of the tone
 
 Every value must be finite, and `contrast` and `dmax` must be positive. A parse error names the offending field.
 
-A style parameterizes the constants of the same logistic curve family the `neutral` style uses, and it never adds a curve family. It is never fitted from a photograph or a chart, and it is not a measured or calibrated scanner response. The film's own tone stays visible under every style, and per-record independence and density monotonicity hold.
+A style parameterizes the constants of the same logistic curve family the built-in style uses, and it never adds a curve family. It is never fitted from a photograph or a chart, and it is not a measured or calibrated scanner response. The per-record reconstruction remains unchanged. Fixed styles preserve per-record independence; standard setup depends on the complete frame.
 
-A non-neutral style requires `scanner.scan_output = negative_to_positive`. A `direct_scan` does not read the style slot, so the style is inert there. Style names must not be empty and must not contain `/`, `\`, `..`, or `:`. The style resolves once when the pipeline is built.
+A custom fixed style requires `scanner.scan_output = negative_to_positive`. A `direct_scan` does not read the style slot, so the style is inert there. Style names must not be empty and must not contain `/`, `\`, `..`, or `:`. The style resolves once when the pipeline is built.
 
 ```bash
 # Write the style file into your data directory
