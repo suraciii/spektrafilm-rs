@@ -114,7 +114,8 @@ fn operator_controls(
                 let response = ui.button("Hold automatic comparison")
                     .on_hover_text("Hold the primary mouse button or focused Space to view this same frame with default operator values. Release to restore the corrected view. Saved and exported corrections are unchanged.");
                 focus_response(ui, "Hold automatic comparison", &response);
-                let comparing = response.is_pointer_button_down_on()
+                let comparing = (response.is_pointer_button_down_on()
+                    && ui.input(|input| input.pointer.primary_down()))
                     || (response.has_focus() && ui.input(|input| input.key_down(egui::Key::Space)));
                 if comparing != editor.comparing {
                     editor.comparing = comparing;

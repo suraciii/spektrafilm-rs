@@ -405,3 +405,48 @@ fn neighboring_leaf_reset_retains_inactive_operator_and_uses_global_history() {
     assert_eq!(h.state().params, expected);
     assert_eq!(h.state().params.scanner.operator, stored);
 }
+
+#[test]
+fn nonprimary_pointer_holds_do_not_compare_or_invalidate_the_corrected_frame() {
+    let mut s = session();
+    let h = &mut s.harness;
+    standard_operator(h);
+    operator_edit(h, "Finished exposure", "0.5");
+    let corrected = render(h, "PREVIEW");
+    scroll_controls_into_view(h, "Hold automatic comparison");
+    let bounds = h
+        .get_by_label("Hold automatic comparison")
+        .node()
+        .raw_bounds()
+        .unwrap();
+    let position = egui::pos2(
+        ((bounds.x0 + bounds.x1) * 0.5) as f32,
+        ((bounds.y0 + bounds.y1) * 0.5) as f32,
+    );
+    let revision = h.state().parameter_revision;
+    for button in [egui::PointerButton::Secondary, egui::PointerButton::Middle] {
+        h.input_mut()
+            .events
+            .push(egui::Event::PointerMoved(position));
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: position,
+            button,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(4);
+        assert!(!h.state().operator_compare);
+        assert_eq!(h.state().parameter_revision, revision);
+        assert!(Arc::ptr_eq(
+            h.state().output_image.as_ref().unwrap(),
+            &corrected
+        ));
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: position,
+            button,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(3);
+    }
+}
