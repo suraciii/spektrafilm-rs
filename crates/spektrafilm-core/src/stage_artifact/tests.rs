@@ -14,7 +14,8 @@ fn profile() -> EmbeddedProfile {
             "log_exposure": [-1.0,1.0],
             "density_curves": [[0.1,0.1,0.1],[1.0,1.0,1.0]]
         }
-    })).unwrap();
+    }))
+    .unwrap();
     profile.data.base_density = vec![0.1; 81];
     EmbeddedProfile::new(profile).unwrap()
 }
@@ -108,7 +109,8 @@ fn native_f32_and_f64_preserve_bits_and_report_actual_conversion() {
         write_native(&path, &state().header, &raster, None).unwrap();
         let header = read_header(&path).unwrap();
         let pinned = publication::root(&path).unwrap();
-        let restored = payload::read_raster(&pinned, header.density.as_ref().unwrap(), true).unwrap();
+        let restored =
+            payload::read_raster(&pinned, header.density.as_ref().unwrap(), true).unwrap();
         match (&raster.samples, restored.samples) {
             (NativeSamples::F32(a), NativeSamples::F32(b)) => assert_eq!(
                 a.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
@@ -401,9 +403,9 @@ fn nullable_profile_measurements_and_resolved_monochrome_are_not_rgb() {
     let mut material = state();
     let mut source = material.header.film.profile.clone();
     source.info.channel_model = "bw".into();
-    source.data.log_sensitivity = vec![vec![0.0];81];
-    source.data.channel_density = vec![vec![1.0];81];
-    source.data.density_curves = vec![vec![0.1],vec![1.0]];
+    source.data.log_sensitivity = vec![vec![0.0]; 81];
+    source.data.channel_density = vec![vec![1.0]; 81];
+    source.data.density_curves = vec![vec![0.1], vec![1.0]];
     source.data.base_density[0] = f64::NAN;
     source.data.base_density_rows[0][0] = f64::NAN;
     let prepared = crate::profile::resolve_for_render(source.clone(), None);
@@ -522,7 +524,10 @@ fn deferred_print_name_never_becomes_a_frozen_material_dependency() {
     let path = root.path().join("film.sfstage");
     write(&path, &material).unwrap();
     let loaded = read(&path).unwrap();
-    assert_eq!(loaded.header.downstream_print_name.as_deref(), Some("not-installed-future-print"));
+    assert_eq!(
+        loaded.header.downstream_print_name.as_deref(),
+        Some("not-installed-future-print")
+    );
     assert!(loaded.header.print.is_none());
     assert!(loaded.header.original_print.is_none());
     edit_manifest(&path, |v| v["downstream_print_name"] = json!("  "));
@@ -545,7 +550,7 @@ fn prepared_print_requires_complete_illumination_but_raw_selection_does_not() {
     let prepared = root.path().join("prepared.sfstage");
     assert!(write(&prepared, &material).is_err());
     assert!(!prepared.exists());
-    material.header.context.print_illuminant = vec![1.0;81];
+    material.header.context.print_illuminant = vec![1.0; 81];
     write(&prepared, &material).unwrap();
     edit_manifest(&prepared, |v| v["context"]["print_illuminant"] = json!([]));
     assert!(read_header(&prepared).is_err());
@@ -553,15 +558,23 @@ fn prepared_print_requires_complete_illumination_but_raw_selection_does_not() {
 
 #[test]
 fn profile_axes_cannot_relabel_a_different_spectral_sampling_grid() {
-    for wavelengths in [vec![400.0,500.0,600.0], (0..81).map(|i|381.0 + i as f64 * 5.0).collect()] {
+    for wavelengths in [
+        vec![400.0, 500.0, 600.0],
+        (0..81).map(|i| 381.0 + i as f64 * 5.0).collect(),
+    ] {
         let mut wrong = profile().profile;
         let count = wavelengths.len();
         wrong.data.wavelengths = wavelengths;
-        wrong.data.log_sensitivity = vec![vec![0.0;3];count];
-        wrong.data.channel_density = vec![vec![1.0;3];count];
-        wrong.data.base_density_rows = vec![vec![0.1];count];
-        wrong.data.base_density = vec![0.1;count];
-        assert!(EmbeddedProfile::new(wrong).unwrap_err().to_string().contains("wavelength axis"));
+        wrong.data.log_sensitivity = vec![vec![0.0; 3]; count];
+        wrong.data.channel_density = vec![vec![1.0; 3]; count];
+        wrong.data.base_density_rows = vec![vec![0.1]; count];
+        wrong.data.base_density = vec![0.1; count];
+        assert!(
+            EmbeddedProfile::new(wrong)
+                .unwrap_err()
+                .to_string()
+                .contains("wavelength axis")
+        );
     }
 }
 
@@ -588,7 +601,10 @@ fn pinned_root_survives_path_and_ancestor_symlink_substitution() {
     symlink(&outside, &parent).unwrap();
     // Existing read uses the acquired directory object, not either pathname.
     assert_eq!(read_header_from_root(&pinned).unwrap().seed, 42);
-    let (density, _) = payload::read_raster(&pinned, header.density.as_ref().unwrap(), true).unwrap().into_image().unwrap();
+    let (density, _) = payload::read_raster(&pinned, header.density.as_ref().unwrap(), true)
+        .unwrap()
+        .into_image()
+        .unwrap();
     assert_eq!(density.data, original.density.data);
     // A fresh invocation may intentionally select the ancestor alias, but
     // that selection cannot replace the already pinned original root.
@@ -614,7 +630,10 @@ fn writer_and_reader_admit_selected_symlink_parent_aliases() {
     validate_destination(&path).unwrap();
     write(&path, &material).unwrap();
     assert_eq!(read(&path).unwrap().density.data, material.density.data);
-    assert_eq!(read(real.join("film.sfstage")).unwrap().density.data, material.density.data);
+    assert_eq!(
+        read(real.join("film.sfstage")).unwrap().density.data,
+        material.density.data
+    );
     symlink(real.join("film.sfstage"), alias.join("root-link.sfstage")).unwrap();
     assert!(read(alias.join("root-link.sfstage")).is_err());
 }
@@ -629,7 +648,9 @@ fn writer_rejects_reparse_parent_before_creating_staging_or_destination() {
     let alias = root.path().join("alias");
     // Creating symlinks requires Developer Mode or administrative privilege.
     if let Err(error) = symlink_dir(&real, &alias) {
-        if error.kind() == std::io::ErrorKind::PermissionDenied { return; }
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            return;
+        }
         panic!("creating parent alias fixture: {error}");
     }
     let path = alias.join("film.sfstage");

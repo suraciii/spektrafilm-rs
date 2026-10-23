@@ -85,14 +85,35 @@ impl EmbeddedProfile {
                 "embedded profile {name} contains non-finite values"
             );
         }
-        let grid = crate::spectral_service::SpectralShape::new(crate::spectral_service::default_spectral_shape())
-            .map_err(anyhow::Error::msg)?;
-        ensure!(data.wavelengths.len() == grid.samples
-            && data.wavelengths.iter().enumerate().all(|(index, wavelength)| *wavelength == grid.wavelength(index)),
-            "embedded profile wavelength axis does not match the supported numerical-model grid");
-        ensure!(self.profile.info.log_sensitivity_density_over_min.is_finite(), "embedded profile sensitivity density is non-finite");
-        for matrix in [&data.log_sensitivity, &data.density_curves, &data.hanatos2025_adaptation_surface_params] {
-            ensure!(matrix.iter().flatten().all(|v| v.is_finite()), "embedded profile required matrix contains non-finite values");
+        let grid = crate::spectral_service::SpectralShape::new(
+            crate::spectral_service::default_spectral_shape(),
+        )
+        .map_err(anyhow::Error::msg)?;
+        ensure!(
+            data.wavelengths.len() == grid.samples
+                && data
+                    .wavelengths
+                    .iter()
+                    .enumerate()
+                    .all(|(index, wavelength)| *wavelength == grid.wavelength(index)),
+            "embedded profile wavelength axis does not match the supported numerical-model grid"
+        );
+        ensure!(
+            self.profile
+                .info
+                .log_sensitivity_density_over_min
+                .is_finite(),
+            "embedded profile sensitivity density is non-finite"
+        );
+        for matrix in [
+            &data.log_sensitivity,
+            &data.density_curves,
+            &data.hanatos2025_adaptation_surface_params,
+        ] {
+            ensure!(
+                matrix.iter().flatten().all(|v| v.is_finite()),
+                "embedded profile required matrix contains non-finite values"
+            );
         }
         ensure!(
             data.density_curves_layers

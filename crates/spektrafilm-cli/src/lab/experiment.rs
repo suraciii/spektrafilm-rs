@@ -220,12 +220,21 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
     // owns declarations that must not be overwritten by observer publication.
     let protected = [document_path.as_path(), suite_path.as_path()];
     for name in std::iter::once("stage-evidence.json".to_owned()).chain(
-        spektrafilm_core::stage_evidence::StageId::ORDER.iter()
+        spektrafilm_core::stage_evidence::StageId::ORDER
+            .iter()
             .map(|stage| format!("{}.f64", stage.id())),
     ) {
-        for destination in [bundle_dir.join(&name), bundle_dir.join(format!("{name}.tmp"))] {
+        for destination in [
+            bundle_dir.join(&name),
+            bundle_dir.join(format!("{name}.tmp")),
+        ] {
             spektrafilm_core::telemetry::validate_report_destination(&destination, &protected)
-                .with_context(|| format!("observation destination conflicts: {}", destination.display()))?;
+                .with_context(|| {
+                    format!(
+                        "observation destination conflicts: {}",
+                        destination.display()
+                    )
+                })?;
         }
     }
     process::run_with_native_capture(process_args, data, &bundle_dir)?;

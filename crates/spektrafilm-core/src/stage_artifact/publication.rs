@@ -1,9 +1,9 @@
 //! Filesystem boundary: no followed member symlinks and atomic no-replace publication.
 
 use std::fs::File;
-use std::path::{Component, Path};
 #[cfg(windows)]
 use std::path::PathBuf;
+use std::path::{Component, Path};
 
 use anyhow::{Context, Result, bail, ensure};
 
@@ -74,7 +74,12 @@ pub(super) struct ArtifactRoot {
 
 pub(super) fn root(path: &Path) -> Result<ArtifactRoot> {
     ensure!(path != Path::new("-"), "artifact streams are not supported");
-    ensure!(!path.file_name().is_some_and(|n| n.to_string_lossy().starts_with(".sfstage-staging-")), "incomplete artifact staging directories are not inputs");
+    ensure!(
+        !path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with(".sfstage-staging-")),
+        "incomplete artifact staging directories are not inputs"
+    );
     #[cfg(unix)]
     {
         use std::ffi::CString;
@@ -83,12 +88,17 @@ pub(super) fn root(path: &Path) -> Result<ArtifactRoot> {
         let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
         let start = CString::new(if path.is_absolute() { "/" } else { "." })?;
         let fd = unsafe { libc::open(start.as_ptr(), flags) };
-        if fd < 0 { return Err(std::io::Error::last_os_error()).context("pinning artifact root ancestor"); }
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error()).context("pinning artifact root ancestor");
+        }
         let mut directory = unsafe { File::from_raw_fd(fd) };
         // Ancestor aliases are ordinary input selection: open and pin their
         // resolved directory atomically. Only the final artifact root and its
         // members forbid symlinks. Never check then canonicalize/reopen.
-        let mut components = path.components().filter(|part| !matches!(part, Component::RootDir | Component::CurDir)).peekable();
+        let mut components = path
+            .components()
+            .filter(|part| !matches!(part, Component::RootDir | Component::CurDir))
+            .peekable();
         while let Some(component) = components.next() {
             let name = match component {
                 Component::Normal(name) => name,
@@ -97,9 +107,17 @@ pub(super) fn root(path: &Path) -> Result<ArtifactRoot> {
                 Component::Prefix(_) => bail!("unsupported artifact root prefix"),
             };
             let name = CString::new(name.as_bytes())?;
-            let component_flags = flags | if components.peek().is_none() { libc::O_NOFOLLOW } else { 0 };
+            let component_flags = flags
+                | if components.peek().is_none() {
+                    libc::O_NOFOLLOW
+                } else {
+                    0
+                };
             let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), component_flags) };
-            if fd < 0 { return Err(std::io::Error::last_os_error()).context("opening and pinning selected artifact root"); }
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error())
+                    .context("opening and pinning selected artifact root");
+            }
             directory = unsafe { File::from_raw_fd(fd) };
         }
         Ok(ArtifactRoot { directory })
@@ -111,12 +129,20 @@ pub(super) fn root(path: &Path) -> Result<ArtifactRoot> {
         let mut ancestors = Vec::new();
         for component in absolute.components() {
             current.push(component);
-            if matches!(component, Component::Prefix(_)) { continue; }
+            if matches!(component, Component::Prefix(_)) {
+                continue;
+            }
             let directory = open_windows(&current)?;
-            ensure!(directory.metadata()?.is_dir(), "artifact root ancestor must be a directory");
+            ensure!(
+                directory.metadata()?.is_dir(),
+                "artifact root ancestor must be a directory"
+            );
             ancestors.push(directory);
         }
-        Ok(ArtifactRoot { path: absolute, _ancestors: ancestors })
+        Ok(ArtifactRoot {
+            path: absolute,
+            _ancestors: ancestors,
+        })
     }
     #[cfg(not(any(unix, windows)))]
     bail!("safe artifact root opening is unsupported on this platform")
@@ -158,9 +184,15 @@ pub(super) fn open_member(root: &ArtifactRoot, path: &str) -> Result<File> {
 #[cfg(windows)]
 fn open_windows(path: &Path) -> Result<File> {
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-    let file = std::fs::OpenOptions::new().read(true).share_mode(1)
-        .custom_flags(0x00200000 | 0x02000000).open(path)?;
-    ensure!(file.metadata()?.file_attributes() & 0x400 == 0, "artifact reparse points are forbidden");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .custom_flags(0x00200000 | 0x02000000)
+        .open(path)?;
+    ensure!(
+        file.metadata()?.file_attributes() & 0x400 == 0,
+        "artifact reparse points are forbidden"
+    );
     Ok(file)
 }
 
