@@ -18,7 +18,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         script(h, chooser::ChooserResult::Scripted(saved.clone()));
         click(h, "Save current to file");
         assert!(
-            h.state().status.starts_with("Saved GUI state"),
+            h.state().status.to_string().starts_with("Saved GUI state"),
             "{}",
             h.state().status
         );
@@ -32,7 +32,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         script(h, chooser::ChooserResult::Scripted(saved));
         click(h, "Load from file");
         assert!(
-            h.state().status.starts_with("Loaded GUI state"),
+            h.state().status.to_string().starts_with("Loaded GUI state"),
             "{}",
             h.state().status
         );
@@ -44,7 +44,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         script(h, chooser::ChooserResult::Scripted(destination.clone()));
         click(h, "SAVE");
         assert!(
-            h.state().status.starts_with("Saved"),
+            h.state().status.to_string().starts_with("Saved"),
             "{}",
             h.state().status
         );
@@ -122,12 +122,15 @@ fn loaded_state_reports_scanner_normalization_in_header_status() {
     choose(h, "workflow", "input > film > print > scan");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert!(
-        h.state().status.contains("normalized scanner controls"),
+        h.state()
+            .status
+            .to_string()
+            .contains("normalized scanner controls"),
         "{}",
         h.state().status
     );
     assert!(
-        h.state().status.contains("scan output"),
+        h.state().status.to_string().contains("scan output"),
         "{}",
         h.state().status
     );

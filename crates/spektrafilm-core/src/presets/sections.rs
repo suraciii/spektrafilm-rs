@@ -107,8 +107,21 @@ fn flatten(prefix: &str, value: &Value, out: &mut Vec<(String, Value)>) {
     }
 }
 pub fn extract_section(section: Section, params: &RuntimeParams) -> Result<Value, String> {
-    crate::params::sources::validate_finite(params)?;
-    let root = serde_json::to_value(LookParameters::capture(params)).map_err(|e| e.to_string())?;
+    extract_section_detailed(section, params).map_err(|error| error.to_string())
+}
+pub fn extract_section_detailed(
+    section: Section,
+    params: &RuntimeParams,
+) -> Result<Value, PresetDocumentError> {
+    crate::params::sources::validate_finite_detailed(params)?;
+    let root = serde_json::to_value(LookParameters::capture(params)).map_err(|e| {
+        PresetDocumentError::new(
+            PresetDocumentReason::Parser {
+                detail: e.to_string(),
+            },
+            e.to_string(),
+        )
+    })?;
     let mut leaves = Vec::new();
     flatten("", &root, &mut leaves);
     let mut payload = serde_json::json!({});
@@ -126,34 +139,63 @@ pub fn extract_section(section: Section, params: &RuntimeParams) -> Result<Value
     Ok(payload)
 }
 pub fn section_from_payload(payload: &Value) -> Result<Section, String> {
-    super::reject_unowned_preset_fields(payload)?;
-    parameter_edits(payload)?;
+    section_from_payload_detailed(payload).map_err(|error| error.to_string())
+}
+pub(super) fn section_from_payload_detailed(
+    payload: &Value,
+) -> Result<Section, PresetDocumentError> {
+    super::reject_unowned_preset_fields_detailed(payload)?;
+    parameter_edits_detailed(payload)?;
     let mut leaves = Vec::new();
     flatten("", payload, &mut leaves);
     if leaves.is_empty() {
-        return Err("section payload is empty".into());
+        return Err(PresetDocumentError::new(
+            PresetDocumentReason::EmptySection,
+            "section payload is empty",
+        ));
     }
     SECTIONS
         .iter()
         .copied()
         .find(|section| leaves.iter().all(|(path, _)| section.owns(path)))
         .ok_or_else(|| {
-            "preset payload must carry editable leaves inside exactly one section".into()
+            PresetDocumentError::new(
+                PresetDocumentReason::MultipleSections,
+                "preset payload must carry editable leaves inside exactly one section",
+            )
         })
 }
 pub fn section_matches(preset: &Preset, params: &RuntimeParams) -> Result<bool, String> {
-    let PresetKind::Section(_) = preset.kind()? else {
+    section_matches_detailed(preset, params).map_err(|error| error.to_string())
+}
+pub fn section_matches_detailed(
+    preset: &Preset,
+    params: &RuntimeParams,
+) -> Result<bool, PresetDocumentError> {
+    let PresetKind::Section(_) = preset.kind_detailed()? else {
         return Ok(false);
     };
     let PresetParameters::Section(payload) = &preset.parameters else {
         unreachable!()
     };
-    crate::params::sources::validate_finite(params)?;
-    let applied = preset.overlay_section(params)?;
-    let expected =
-        serde_json::to_value(LookParameters::capture(&applied)).map_err(|e| e.to_string())?;
-    let current =
-        serde_json::to_value(LookParameters::capture(params)).map_err(|e| e.to_string())?;
+    crate::params::sources::validate_finite_detailed(params)?;
+    let applied = preset.overlay_section_detailed(params)?;
+    let expected = serde_json::to_value(LookParameters::capture(&applied)).map_err(|e| {
+        PresetDocumentError::new(
+            PresetDocumentReason::Parser {
+                detail: e.to_string(),
+            },
+            e.to_string(),
+        )
+    })?;
+    let current = serde_json::to_value(LookParameters::capture(params)).map_err(|e| {
+        PresetDocumentError::new(
+            PresetDocumentReason::Parser {
+                detail: e.to_string(),
+            },
+            e.to_string(),
+        )
+    })?;
     let mut leaves = Vec::new();
     flatten("", payload, &mut leaves);
     Ok(leaves.iter().all(|(path, _)| {
@@ -166,9 +208,18 @@ pub fn matching_section_preset<'a>(
     presets: impl IntoIterator<Item = &'a Preset>,
     params: &RuntimeParams,
 ) -> Result<Option<&'a Preset>, String> {
+    matching_section_preset_detailed(section, presets, params).map_err(|error| error.to_string())
+}
+pub fn matching_section_preset_detailed<'a>(
+    section: Section,
+    presets: impl IntoIterator<Item = &'a Preset>,
+    params: &RuntimeParams,
+) -> Result<Option<&'a Preset>, PresetDocumentError> {
     let mut matches = Vec::new();
     for preset in presets {
-        if preset.kind()? == PresetKind::Section(section) && section_matches(preset, params)? {
+        if preset.kind_detailed()? == PresetKind::Section(section)
+            && section_matches_detailed(preset, params)?
+        {
             matches.push(preset);
         }
     }

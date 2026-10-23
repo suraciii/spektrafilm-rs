@@ -51,16 +51,28 @@ pub struct SpectralShape {
 
 impl SpectralShape {
     pub fn new(bounds: [f64; 3]) -> Result<Self, String> {
+        Self::new_detailed(bounds).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn new_detailed(bounds: [f64; 3]) -> Result<Self, crate::params::ValidationError> {
+        use crate::params::{ValidationError as Error, ValidationReason as Reason};
         let [start, end, step] = bounds;
         if !bounds.iter().all(|v| v.is_finite()) || start <= 0.0 || end <= start || step <= 0.0 {
-            return Err("expected finite positive wavelengths, end > start and step > 0".into());
+            return Err(Error::new(
+                Reason::SpectralBounds,
+                "",
+                "expected finite positive wavelengths, end > start and step > 0",
+            )
+            .arg("value", format!("{bounds:?}")));
         }
         let intervals = (end - start) / step;
         if intervals > 100_000.0 || (intervals - intervals.round()).abs() > 1e-8 {
-            return Err(
-                "grid must contain an integral number of intervals and at most 100001 samples"
-                    .into(),
-            );
+            return Err(Error::new(
+                Reason::SpectralIntervals,
+                "",
+                "grid must contain an integral number of intervals and at most 100001 samples",
+            )
+            .arg("value", format!("{bounds:?}")));
         }
         Ok(Self {
             bounds,

@@ -6,7 +6,7 @@ use spektrafilm_core::{
     params::RuntimeParams,
     presets::{
         LibraryEntry, Preset, PresetGroup, PresetKind, PresetLibrary, Provenance, Section,
-        matching_section_preset, validate_name,
+        validate_name,
     },
 };
 use std::path::{Path, PathBuf};
@@ -51,7 +51,9 @@ impl BrowserState {
         let carrier: serde_json::Value = serde_json::from_str(&text)?;
         anyhow::ensure!(
             carrier["rust"]["version"] == 1,
-            "Unsupported browser state extension version"
+            crate::app::Message::new("surfaces.presets.browser_version")
+                .arg("version", &carrier["rust"]["version"])
+                .arg("path", path.display())
         );
         Ok(serde_json::from_value(carrier["rust"]["presets"].clone())?)
     }
@@ -111,17 +113,22 @@ pub fn name_error(
     name: &str,
     entries: &[LibraryEntry],
     rename_from: Option<&str>,
-) -> Option<String> {
-    validate_name(name).err().or_else(|| {
-        entries
-            .iter()
-            .any(|e| {
-                e.group == PresetGroup::User
-                    && e.name.to_lowercase() == name.to_lowercase()
-                    && Some(e.name.as_str()) != rename_from
-            })
-            .then(|| format!("My Presets already contains '{name}'. Choose another name."))
-    })
+) -> Option<crate::app::Message> {
+    validate_name(name)
+        .err()
+        .map(|_| crate::app::Message::new("surfaces.presets.name_guidance").arg("name", name))
+        .or_else(|| {
+            entries
+                .iter()
+                .any(|e| {
+                    e.group == PresetGroup::User
+                        && e.name.to_lowercase() == name.to_lowercase()
+                        && Some(e.name.as_str()) != rename_from
+                })
+                .then(|| {
+                    crate::app::Message::new("surfaces.presets.duplicate_name").arg("name", name)
+                })
+        })
 }
 pub fn reveal_command(path: &Path) -> std::process::Command {
     if cfg!(target_os = "macos") {
@@ -144,14 +151,18 @@ pub fn reveal_command(path: &Path) -> std::process::Command {
         command
     }
 }
-fn reveal(path: &Path) -> Result<(), String> {
-    let status = reveal_command(path)
-        .status()
-        .map_err(|e| format!("Cannot reveal {}: {e}", path.display()))?;
+fn reveal(path: &Path) -> Result<(), crate::app::Message> {
+    let status = reveal_command(path).status().map_err(|e| {
+        crate::app::Message::new("surfaces.presets.reveal_error")
+            .arg("path", path.display())
+            .arg("detail", e)
+    })?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("Cannot reveal {}: {status}", path.display()))
+        Err(crate::app::Message::new("surfaces.presets.reveal_error")
+            .arg("path", path.display())
+            .arg("detail", status))
     }
 }
 fn provenance() -> Provenance {
@@ -208,7 +219,7 @@ pub(crate) enum NameAction {
 pub(crate) struct NameDialog {
     pub(crate) action: NameAction,
     pub(crate) name: String,
-    pub(crate) error: Option<String>,
+    pub(crate) error: Option<crate::app::Message>,
 }
 
 mod actions;

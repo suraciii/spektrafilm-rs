@@ -304,46 +304,48 @@ impl HistogramStrip {
     /// Render the histogram strip. The header row stays visible when the strip
     /// is collapsed so the readout can be re-expanded.
     pub fn render(&mut self, ui: &mut Ui) {
-        let response = egui::CollapsingHeader::new("Tonal distribution")
-            .open(Some(self.visible))
-            .show(ui, |ui| {
-                let available_width = ui.available_width();
-                let height = 80.0;
-                let rect =
-                    Rect::from_min_size(ui.cursor().min, egui::vec2(available_width, height));
-                ui.allocate_rect(rect, egui::Sense::hover());
-                if let Some(data) = &self.data {
-                    data.render(ui, rect);
-                } else {
-                    let painter = ui.painter_at(rect);
-                    painter.rect_filled(rect, theme::RADIUS_CARD, theme::SURFACE2);
-                    painter.text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "No output",
-                        theme::text(theme::TEXT_READOUT, theme::SIZE_CHART_AXIS),
-                        theme::FG_MUTED,
-                    );
-                }
-                // Legend
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("R")
-                            .color(theme::SERIES1)
-                            .size(theme::SIZE_HINT),
-                    );
-                    ui.label(
-                        egui::RichText::new("G")
-                            .color(theme::SERIES2)
-                            .size(theme::SIZE_HINT),
-                    );
-                    ui.label(
-                        egui::RichText::new("B")
-                            .color(theme::SERIES3)
-                            .size(theme::SIZE_HINT),
-                    );
+        let response =
+            egui::CollapsingHeader::new(crate::i18n::text(ui.ctx(), "surfaces.histogram.title"))
+                .id_salt("Tonal distribution")
+                .open(Some(self.visible))
+                .show(ui, |ui| {
+                    let available_width = ui.available_width();
+                    let height = 80.0;
+                    let rect =
+                        Rect::from_min_size(ui.cursor().min, egui::vec2(available_width, height));
+                    ui.allocate_rect(rect, egui::Sense::hover());
+                    if let Some(data) = &self.data {
+                        data.render(ui, rect);
+                    } else {
+                        let painter = ui.painter_at(rect);
+                        painter.rect_filled(rect, theme::RADIUS_CARD, theme::SURFACE2);
+                        painter.text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            crate::i18n::text(ui.ctx(), "surfaces.histogram.empty"),
+                            theme::text(theme::TEXT_READOUT, theme::SIZE_CHART_AXIS),
+                            theme::FG_MUTED,
+                        );
+                    }
+                    // Legend
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("R")
+                                .color(theme::SERIES1)
+                                .size(theme::SIZE_HINT),
+                        );
+                        ui.label(
+                            egui::RichText::new("G")
+                                .color(theme::SERIES2)
+                                .size(theme::SIZE_HINT),
+                        );
+                        ui.label(
+                            egui::RichText::new("B")
+                                .color(theme::SERIES3)
+                                .size(theme::SIZE_HINT),
+                        );
+                    });
                 });
-            });
         // `.open(Some(..))` makes egui mirror our state instead of owning it,
         // so the strip is the single source of truth for the collapse state.
         if response.header_response.clicked() {

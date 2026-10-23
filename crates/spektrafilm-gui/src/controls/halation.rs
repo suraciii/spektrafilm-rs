@@ -13,13 +13,13 @@ pub(crate) fn sections(
         ui.scope(|ui| {
             let halation_active = params.film_render.halation.active;
             ui.label(
-                egui::RichText::new("Key controls: halation amount (strength) · halation spatial scale (size) · scatter amount (highlight glow)")
+                egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.halation.key_controls"))
                     .small()
                     .color(theme::FG_MUTED),
             );
             if filter_matches(filter, "Halation Profiles") {
                 if !halation_active {
-                    ui.label(egui::RichText::new("Halation is inactive; stored profile values retained and available when enabled.").color(theme::FG_MUTED));
+                    ui.label(egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.halation.inactive_profile")).color(theme::FG_MUTED));
                 }
                 let current = feature_profiles::effective_name(FeatureProfileFamily::Halation, params);
                 let mut selected = current.to_owned();
@@ -42,7 +42,7 @@ pub(crate) fn sections(
                             flags.runtime_changed = true;
                         }
                         Err(error) => {
-                            ui.label(egui::RichText::new(error).color(theme::FG_MUTED));
+                            ui.label(egui::RichText::new(crate::tr!(ui.ctx(), "controls.halation.profile_apply_error", error = error)).color(theme::FG_MUTED));
                         }
                     }
                 }

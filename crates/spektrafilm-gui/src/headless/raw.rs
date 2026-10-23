@@ -62,7 +62,10 @@ fn raw_import_through_the_app_sets_linear_aces_and_renders() {
     );
     // The fixture has no lens model, so correction is reported as skipped.
     assert!(
-        h.state().status.contains("Lens correction not applied"),
+        h.state()
+            .status
+            .to_string()
+            .contains("Lens correction not applied"),
         "{}",
         h.state().status
     );
@@ -92,7 +95,7 @@ fn raw_import_through_the_app_sets_linear_aces_and_renders() {
     wait_until(h, |a| a.export_job.is_some());
     wait_until(h, |a| a.export_job.is_none());
     assert!(
-        h.state().status.starts_with("Exported"),
+        h.state().status.to_string().starts_with("Exported"),
         "{}",
         h.state().status
     );
@@ -125,7 +128,7 @@ fn raw_import_failure_keeps_the_previous_image_and_state() {
     );
     assert_eq!(&h.state().params, &params_before);
     assert!(
-        h.state().status.starts_with("Load error:"),
+        h.state().status.to_string().starts_with("Load error:"),
         "{}",
         h.state().status
     );

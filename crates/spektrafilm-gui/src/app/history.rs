@@ -128,7 +128,7 @@ impl AdjustmentState {
 struct Entry {
     before: Rc<AdjustmentState>,
     after: Rc<AdjustmentState>,
-    label: String,
+    label: crate::app::Message,
 }
 
 #[derive(Clone, Copy)]
@@ -146,9 +146,9 @@ pub(crate) struct AdjustmentHistory {
     accepted: Option<Rc<AdjustmentState>>,
     undo: Vec<Entry>,
     redo: Vec<Entry>,
-    gesture: Option<(Rc<AdjustmentState>, String)>,
+    gesture: Option<(Rc<AdjustmentState>, crate::app::Message)>,
     frame: Option<FrameBoundary>,
-    label: Option<String>,
+    label: Option<crate::app::Message>,
 }
 
 impl App {
@@ -177,7 +177,11 @@ impl App {
     }
 
     pub(crate) fn label_adjustment(&mut self, label: &str) {
-        self.adjustment_history.label = Some(label.to_owned());
+        self.label_adjustment_message(history_message(label));
+    }
+
+    pub(crate) fn label_adjustment_message(&mut self, label: crate::app::Message) {
+        self.adjustment_history.label = Some(label);
     }
 
     fn validate_adjustment(&self) -> Result<()> {
@@ -187,9 +191,7 @@ impl App {
                 .film_medium
                 .positive_output_eligible(&self.params.workflow.route)
         {
-            anyhow::bail!(
-                "scanner.scan_output: negative_to_positive requires negative film and an eligible scan route"
-            );
+            anyhow::bail!(crate::app::Message::new("operations.state.positive_route"));
         }
         Ok(())
     }
@@ -211,6 +213,13 @@ impl App {
                 && (before.params.render_preparation_state()
                     != self.params.render_preparation_state()
                     || before.applied != self.presets.state.applied));
+        let suspended = numeric::has_suspended_adjustment(ctx) && !signal.resumed;
+        if suspended && signal.canceled {
+            if let Some((initial, label)) = self.adjustment_history.gesture.take() {
+                self.commit_adjustment(initial, before.clone(), label);
+            }
+            numeric::detach_suspended_adjustment(ctx);
+        }
         if signal.canceled {
             let initial = self
                 .adjustment_history
@@ -238,9 +247,26 @@ impl App {
             self.dirty_since = frame.dirty_since;
             self.force_preview = frame.force_preview;
             self.full_scan_requested = frame.full_scan;
-            self.status = format!("Adjustment rejected: {error:#}");
+            self.status = crate::app::Message::new("operations.adjustment_rejected")
+                .message_arg("detail", crate::app::Message::error(&error));
             self.adjustment_history.label = None;
             return;
+        }
+        if suspended && !signal.canceled {
+            if changed || signal.started || signal.active || signal.completed {
+                // A real edit owns a new transaction. Close the suspended
+                // numeric transaction at its last accepted endpoint, before
+                // incorporating the unrelated edit from this frame.
+                if let Some((initial, label)) = self.adjustment_history.gesture.take() {
+                    self.commit_adjustment(initial, before.clone(), label);
+                }
+                numeric::detach_suspended_adjustment(ctx);
+            } else {
+                // Settings/language navigation is presentation only. Keep the
+                // transaction pending even when its numeric editor is hidden.
+                self.adjustment_history.label = None;
+                return;
+            }
         }
         if !paths.is_empty() && changed {
             let mut ownership = self.params.render_preparation_state();
@@ -281,7 +307,7 @@ impl App {
             .adjustment_history
             .label
             .take()
-            .or(signal.label)
+            .or_else(|| signal.label.as_deref().map(crate::app::Message::control))
             .unwrap_or_else(|| self.adjustment_label(&before));
         // Finish the preceding gesture before a new active field starts.
         if signal.completed
@@ -322,8 +348,8 @@ impl App {
         }
     }
 
-    fn adjustment_label(&self, before: &AdjustmentState) -> String {
-        if before.film_name != self.film_name {
+    fn adjustment_label(&self, before: &AdjustmentState) -> crate::app::Message {
+        history_message(if before.film_name != self.film_name {
             "Change film material"
         } else if before.print_name != self.print_name {
             "Change print material"
@@ -337,15 +363,14 @@ impl App {
             "Scan for print"
         } else {
             "Adjust photograph"
-        }
-        .to_owned()
+        })
     }
 
     fn commit_adjustment(
         &mut self,
         before: Rc<AdjustmentState>,
         after: Rc<AdjustmentState>,
-        label: String,
+        label: crate::app::Message,
     ) {
         // Compare recorded endpoints, not the mutable UI (a new gesture can
         // already have started when the preceding one completes).
@@ -366,18 +391,19 @@ impl App {
     pub(crate) fn can_redo(&self) -> bool {
         !self.adjustment_history.redo.is_empty()
     }
-    /// The next operation, without an "Undo" / "Redo" prefix.
-    pub(crate) fn undo_label(&self) -> Option<&str> {
+
+    pub(crate) fn undo_label_localized(&self, ctx: &egui::Context) -> Option<String> {
         self.adjustment_history
             .undo
             .last()
-            .map(|entry| entry.label.as_str())
+            .map(|entry| entry.label.localized(ctx))
     }
-    pub(crate) fn redo_label(&self) -> Option<&str> {
+
+    pub(crate) fn redo_label_localized(&self, ctx: &egui::Context) -> Option<String> {
         self.adjustment_history
             .redo
             .last()
-            .map(|entry| entry.label.as_str())
+            .map(|entry| entry.label.localized(ctx))
     }
 
     pub(crate) fn undo_adjustment(&mut self) -> bool {
@@ -412,7 +438,12 @@ impl App {
         // Recorded states were validated on acceptance; no preset/profile file
         // is consulted here, so edits to a library cannot change Redo.
         self.adjustment_history.accepted = Some(target);
-        self.status = format!("{} {}", if redo { "Redid" } else { "Undid" }, entry.label);
+        self.status = crate::app::Message::new(if redo {
+            "operations.redid"
+        } else {
+            "operations.undid"
+        })
+        .message_arg("action", entry.label.clone());
         if redo {
             self.adjustment_history.undo.push(entry);
         } else {
@@ -424,6 +455,26 @@ impl App {
         self.full_scan_requested = false;
         true
     }
+}
+
+fn history_message(label: &str) -> crate::app::Message {
+    let key = match label {
+        "Change film material" => "operations.history.change_film",
+        "Change print material" => "operations.history.change_print",
+        "Apply look preset" => "operations.history.apply_look",
+        "Change workflow" => "operations.history.change_workflow",
+        "Rotate source" => "operations.history.rotate",
+        "Scan for print" => "operations.history.scan_for_print",
+        "Adjust photograph" => "operations.history.adjust",
+        "Reset film profile to factory" => "operations.history.reset_film",
+        "Reset print profile to factory" => "operations.history.reset_print",
+        "Rotate source counter-clockwise" => "operations.history.rotate_ccw",
+        "Rotate source clockwise" => "operations.history.rotate_cw",
+        "Toggle scan for print" => "operations.history.toggle_scan_for_print",
+        "Reset control to factory" => "operations.history.reset_control",
+        _ => return crate::app::Message::control(label),
+    };
+    crate::app::Message::new(key)
 }
 
 #[cfg(test)]
@@ -454,9 +505,97 @@ mod tests {
                 active,
                 completed,
                 canceled,
+                resumed: false,
                 label: Some("Camera exposure".into()),
             },
         );
+    }
+
+    #[test]
+    fn language_suspension_preserves_the_pending_numeric_transaction() {
+        let (mut app, _directory, ctx) = app();
+        let original = app.params.camera.exposure_compensation_ev;
+        app.begin_adjustment_frame(&ctx);
+        app.params.camera.exposure_compensation_ev = original + 1.0;
+        signals(&ctx, true, false, false);
+        app.end_adjustment_frame(&ctx);
+        let accepted = app.params.clone();
+        let revision = app.parameter_revision;
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("numeric-suspended-text"),
+                egui::Id::new("test-draft"),
+            )
+        });
+        for _ in 0..3 {
+            app.begin_adjustment_frame(&ctx);
+            app.end_adjustment_frame(&ctx);
+            assert!(!app.can_undo());
+            assert!(app.adjustment_history.gesture.is_some());
+            assert_eq!(app.params, accepted);
+            assert_eq!(app.parameter_revision, revision);
+        }
+        app.begin_adjustment_frame(&ctx);
+        ctx.data_mut(|data| data.remove::<egui::Id>(egui::Id::new("numeric-suspended-text")));
+        app.params.camera.exposure_compensation_ev = original;
+        numeric::signal_for_test(
+            &ctx,
+            "Camera exposure",
+            numeric::AdjustmentSignals {
+                canceled: true,
+                resumed: true,
+                ..Default::default()
+            },
+        );
+        app.end_adjustment_frame(&ctx);
+        assert_eq!(app.params.camera.exposure_compensation_ev, original);
+        assert!(!app.can_undo());
+        assert!(!app.can_redo());
+        assert!(app.adjustment_history.gesture.is_none());
+    }
+
+    #[test]
+    fn unrelated_edit_closes_suspended_gesture_before_its_own_transaction() {
+        let (mut app, _directory, ctx) = app();
+        let original = app.params.camera.exposure_compensation_ev;
+        let initial_mix = app.params.output_mix.amount;
+        app.begin_adjustment_frame(&ctx);
+        app.params.camera.exposure_compensation_ev = original + 1.0;
+        signals(&ctx, true, false, false);
+        app.end_adjustment_frame(&ctx);
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("numeric-suspended-text"),
+                egui::Id::new("test-draft"),
+            )
+        });
+        app.begin_adjustment_frame(&ctx);
+        app.params.output_mix.amount = 0.5;
+        app.end_adjustment_frame(&ctx);
+        assert_eq!(app.adjustment_history.undo.len(), 2);
+        assert!(!numeric::has_suspended_adjustment(&ctx));
+        app.begin_adjustment_frame(&ctx);
+        app.params.camera.exposure_compensation_ev = original;
+        numeric::signal_for_test(
+            &ctx,
+            "Camera exposure",
+            numeric::AdjustmentSignals {
+                started: true,
+                completed: true,
+                ..Default::default()
+            },
+        );
+        app.end_adjustment_frame(&ctx);
+        assert_eq!(app.params.output_mix.amount, 0.5);
+        assert_eq!(app.adjustment_history.undo.len(), 3);
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params.camera.exposure_compensation_ev, original + 1.0);
+        assert_eq!(app.params.output_mix.amount, 0.5);
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params.output_mix.amount, initial_mix);
+        assert_eq!(app.params.camera.exposure_compensation_ev, original + 1.0);
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params.camera.exposure_compensation_ev, original);
     }
 
     fn exposure(app: &mut App, ctx: &egui::Context, value: f32) {
@@ -514,7 +653,7 @@ mod tests {
         assert_eq!(app.params.film_render.convert.scan_illuminant, "BB4321");
         assert_eq!(app.params.scanner, scanner);
         assert_eq!(app.parameter_revision, revision);
-        assert!(app.status.starts_with("Adjustment rejected:"));
+        assert!(app.status.to_string().contains("BB1000"));
     }
 
     #[test]
@@ -536,7 +675,7 @@ mod tests {
         assert_eq!(app.adjustment_history.undo.len(), 1);
         assert!(app.undo_adjustment());
         assert_eq!(app.params, original);
-        let redo = app.redo_label().map(str::to_owned);
+        let redo = app.redo_label_localized(&ctx);
         app.begin_adjustment_frame(&ctx);
         app.params.camera.exposure_compensation_ev += 0.75;
         controls::record_edited_path(&ctx, "camera.exposure_compensation_ev");
@@ -549,7 +688,7 @@ mod tests {
         assert_eq!(app.params, original);
         assert!(app.parameter_revision > revision);
         assert!(!app.can_undo());
-        assert_eq!(app.redo_label(), redo.as_deref());
+        assert_eq!(app.redo_label_localized(&ctx), redo);
     }
 
     #[test]
@@ -602,7 +741,13 @@ mod tests {
         assert_eq!(app.parameter_revision, revision);
         assert_eq!(app.calibration_epoch, calibration);
         assert_eq!(app.adjustment_history.undo.len(), entries);
-        assert!(app.status.starts_with("Adjustment rejected:"));
+        assert!(matches!(
+            app.status,
+            crate::app::Message::Text {
+                key: "operations.adjustment_rejected",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -668,7 +813,6 @@ mod tests {
             request_id: 1,
             kind: RenderKind::Preview,
             animate: false,
-            backend_name: "CPU".into(),
             collection_mode: CollectionMode::Off,
         };
         app.output_image = Some(Arc::new(ImageBuf::new(2, 1)));

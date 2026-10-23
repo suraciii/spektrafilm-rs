@@ -3,7 +3,9 @@
 use std::path::Path;
 
 use super::render::base_density_column;
-use super::{Profile, ProfileError, development_time_index, validate_profile};
+use super::{
+    Profile, ProfileError, ProfileValidationError, development_time_index, validate_profile,
+};
 
 /// Load a profile from a JSON file on disk.
 pub fn load_profile(path: &Path) -> Result<Profile, ProfileError> {
@@ -36,7 +38,7 @@ pub fn load_profile_bytes(bytes: &[u8], source: &str) -> Result<Profile, Profile
                 }));
         if curves_stale {
             profile.data.density_curves =
-                spektrafilm_model::density_curves::evaluate_density_curves(
+                spektrafilm_model::density_curves::evaluate_density_curves_detailed(
                     &profile.data.log_exposure,
                     &model.model_type,
                     &model.centers,
@@ -45,11 +47,13 @@ pub fn load_profile_bytes(bytes: &[u8], source: &str) -> Result<Profile, Profile
                     model.alphas.as_deref(),
                     profile.is_positive(),
                 )
-                .map_err(ProfileError::Validation)?;
+                .map_err(|error| {
+                    ProfileError::Validation(ProfileValidationError::DensityModel(error))
+                })?;
         }
         if expected_layers > 1 && (curves_stale || layers_stale) {
             profile.data.density_curves_layers =
-                spektrafilm_model::density_curves::evaluate_density_curves_layers(
+                spektrafilm_model::density_curves::evaluate_density_curves_layers_detailed(
                     &profile.data.log_exposure,
                     &model.model_type,
                     &model.centers,
@@ -58,7 +62,9 @@ pub fn load_profile_bytes(bytes: &[u8], source: &str) -> Result<Profile, Profile
                     model.alphas.as_deref(),
                     profile.is_positive(),
                 )
-                .map_err(ProfileError::Validation)?;
+                .map_err(|error| {
+                    ProfileError::Validation(ProfileValidationError::DensityModel(error))
+                })?;
         } else if expected_layers <= 1 && curves_stale {
             profile.data.density_curves_layers.clear();
         }
@@ -82,16 +88,14 @@ pub fn save_profile(
     suffix: &str,
 ) -> Result<std::path::PathBuf, ProfileError> {
     if suffix.contains(['/', '\\']) {
-        return Err(ProfileError::Validation(
-            "profile suffix must not contain path separators".into(),
-        ));
+        return Err(ProfileError::Validation(ProfileValidationError::Suffix(
+            suffix.to_owned(),
+        )));
     }
     let mut saved = profile.clone();
-    let stock = saved
-        .info
-        .stock
-        .as_mut()
-        .ok_or_else(|| ProfileError::Validation("profile stock is missing".into()))?;
+    let stock = saved.info.stock.as_mut().ok_or(ProfileError::Validation(
+        ProfileValidationError::MissingStock,
+    ))?;
     stock.push_str(suffix);
     let path = data_dir.join("profiles").join(format!("{stock}.json"));
     save_profile_to(&path, &saved)?;

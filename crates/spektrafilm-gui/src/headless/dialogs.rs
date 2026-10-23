@@ -762,7 +762,7 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     assert_eq!((loaded.width, loaded.height), (7, 3));
     assert_eq!(loaded.data, expected.data);
     assert!(h.state().output_image.is_none());
-    assert!(h.state().status.starts_with("Loaded 7 × 3"));
+    assert!(h.state().status.to_string().starts_with("Loaded 7 × 3"));
 
     let mut imported = session();
     script(
@@ -785,7 +785,7 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     std::fs::write(&corrupt, b"not an image").unwrap();
     drop_file(h, &corrupt);
     assert!(
-        h.state().status.starts_with("Load error:"),
+        h.state().status.to_string().starts_with("Load error:"),
         "{}",
         h.state().status
     );
@@ -831,7 +831,7 @@ fn empty_session_for_guards() -> Session {
     Session { harness, directory }
 }
 
-fn stage_export(h: &mut Harness<'_, App>, destination: &Path) -> Arc<ExportPause> {
+pub(super) fn stage_export(h: &mut Harness<'_, App>, destination: &Path) -> Arc<ExportPause> {
     let (staged, ready) = mpsc::channel();
     let pause = Arc::new(ExportPause {
         staged,
@@ -887,6 +887,12 @@ fn guarded_operations_and_unknown_save_extension_create_no_file() {
     let unsupported = s.directory.path().join("unsupported-container.xyz");
     script(h, chooser::ChooserResult::Scripted(unsupported.clone()));
     click(h, "SAVE");
-    assert!(h.state().status.starts_with("Save error:"));
+    assert!(matches!(
+        &h.state().status,
+        crate::app::Message::Text {
+            key: "operations.save_error",
+            ..
+        }
+    ));
     assert!(!unsupported.exists());
 }

@@ -85,7 +85,6 @@ fn render_chemistry(
     } else {
         &PRINT_CHEMISTRY_PATHS
     };
-    let what = if film { "film" } else { "print" };
     let (enable_key, enable_label) = if film {
         ("enable film density curves", "Enable film density curves")
     } else {
@@ -96,7 +95,11 @@ fn render_chemistry(
             ui,
             enable_label,
             &mut params.active,
-            &format!("Enable {what} density-curve morphing."),
+            if film {
+                "Enable film density-curve morphing."
+            } else {
+                "Enable print density-curve morphing."
+            },
         );
     }
     if filter_matches(filter, "gamma factor") {
@@ -105,7 +108,11 @@ fn render_chemistry(
             "gamma factor",
             &mut params.gamma_factor,
             paths.gamma_factor,
-            &format!("Global coupled gamma multiplier for the {what} density curves."),
+            if film {
+                "Global coupled gamma multiplier for the film density curves."
+            } else {
+                "Global coupled gamma multiplier for the print density curves."
+            },
         );
     }
     if filter_matches(filter, "gamma factor fast") {
@@ -159,9 +166,11 @@ fn render_chemistry(
             "developer exhaustion",
             &mut params.developer_exhaustion,
             paths.developer_exhaustion,
-            &format!(
-                "Blend all three {what} sub-layers toward the matched Gumbel shoulder while preserving midgray via a common horizontal offset."
-            ),
+            if film {
+                "Blend all three film sub-layers toward the matched Gumbel shoulder while preserving midgray via a common horizontal offset."
+            } else {
+                "Blend all three print sub-layers toward the matched Gumbel shoulder while preserving midgray via a common horizontal offset."
+            },
         );
     }
 }

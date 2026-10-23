@@ -204,6 +204,10 @@ bundle_native_licenses() {
     local source cellar formula version root file relative found required directory
     mkdir -p "$output"
     cp LICENSE "$output/spektrafilm-GPL-3.0.txt"
+    for font_license in NotoSansSC-OFL.txt NotoSansSC-NOTICE.txt; do
+        [[ -s "crates/spektrafilm-gui/assets/$font_license" ]] || fail "font license missing: $font_license"
+        cp "crates/spektrafilm-gui/assets/$font_license" "$output/$font_license"
+    done
     for benchmark_license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
         [[ -s "licenses/$benchmark_license" ]] || fail "benchmark license missing: licenses/$benchmark_license"
         cp "licenses/$benchmark_license" "$output/$benchmark_license"

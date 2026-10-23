@@ -18,6 +18,7 @@ use glare::GlareParams;
 pub use grain::{FotufilmGrainParams, FotufilmMaterial};
 pub use grain::{GrainEngine, GrainParams};
 pub use halation::HalationParams;
+pub use validation::{ValidationError, ValidationReason};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -670,8 +671,17 @@ impl Default for OutputMixParams {
 
 impl OutputMixParams {
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_detailed().map_err(|error| error.to_string())
+    }
+
+    pub fn validate_detailed(&self) -> Result<(), ValidationError> {
         if !self.amount.is_finite() || !(0.0..=1.0).contains(&self.amount) {
-            return Err("output_mix.amount: must be finite and in 0..=1".into());
+            return Err(ValidationError::new(
+                ValidationReason::OutputMix,
+                "output_mix.amount",
+                "output_mix.amount: must be finite and in 0..=1",
+            )
+            .arg("value", self.amount));
         }
         Ok(())
     }
@@ -848,6 +858,11 @@ impl RuntimeParams {
         validation::validate(self)
     }
 
+    /// Validate using the same rules while retaining semantic failures for adapters.
+    pub fn validate_detailed(&self) -> Result<(), ValidationError> {
+        validation::validate_detailed(self)
+    }
+
     /// Snapshot preparation ownership for state carriers that keep it beside
     /// the parameters. The filter flags also persist in the parameter
     /// document itself so replays reproduce their render.
@@ -936,12 +951,29 @@ impl RuntimeParams {
     /// Resolve colour transforms and reject unsupported gamut configurations
     /// before the pipeline can produce an image or LUT.
     pub fn validate_color(&self) -> Result<(), String> {
-        spektrafilm_math::colorspace::resolve(&self.io.input_color_space)
-            .map_err(|e| format!("io.input_color_space: {e}"))?;
-        spektrafilm_math::colorspace::resolve(&self.io.output_color_space)
-            .map_err(|e| format!("io.output_color_space: {e}"))?;
-        crate::input_gamut::InputGamutCompress::build(&self.io.input_gamut_compress)?;
-        crate::gamut_compression::OutputGamutCompress::build(
+        self.validate_color_detailed()
+            .map_err(|error| error.to_string())
+    }
+
+    fn validate_color_detailed(&self) -> Result<(), ValidationError> {
+        spektrafilm_math::colorspace::resolve(&self.io.input_color_space).map_err(|error| {
+            ValidationError::new(
+                ValidationReason::ColorSpace,
+                "io.input_color_space",
+                format!("io.input_color_space: {error}"),
+            )
+            .arg("value", format!("{:?}", self.io.input_color_space))
+        })?;
+        spektrafilm_math::colorspace::resolve(&self.io.output_color_space).map_err(|error| {
+            ValidationError::new(
+                ValidationReason::ColorSpace,
+                "io.output_color_space",
+                format!("io.output_color_space: {error}"),
+            )
+            .arg("value", format!("{:?}", self.io.output_color_space))
+        })?;
+        crate::input_gamut::InputGamutCompress::build_detailed(&self.io.input_gamut_compress)?;
+        crate::gamut_compression::OutputGamutCompress::build_detailed(
             &self.io.output_gamut_compress,
             &self.io.output_color_space,
         )?;

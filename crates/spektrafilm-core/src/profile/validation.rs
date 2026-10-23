@@ -2,6 +2,42 @@
 
 use super::{Profile, ProfileError};
 
+#[derive(Debug, thiserror::Error)]
+pub enum ProfileValidationError {
+    #[error("unsupported {field} value {value:?}")]
+    Unsupported {
+        field: &'static str,
+        value: String,
+        allowed: &'static [&'static str],
+    },
+    #[error("{0} is empty")]
+    Empty(&'static str),
+    #[error("density_curves length must match log_exposure length")]
+    DensityLength { actual: usize, expected: usize },
+    #[error("{field} must be {rows}×{channels}")]
+    Shape {
+        field: &'static str,
+        rows: usize,
+        channels: usize,
+    },
+    #[error("base_density must have one non-empty row per wavelength")]
+    BaseRows { expected: usize },
+    #[error("midscale_neutral_density length must match wavelengths")]
+    MidscaleLength { actual: usize, expected: usize },
+    #[error("bw profile density_curves columns must match development_time length")]
+    BwDensityColumns { expected: usize },
+    #[error("bw profile base_density columns must be 1 or match development_time")]
+    BwBaseColumns { expected: usize },
+    #[error("color profile density_curves must have 3 channels")]
+    ColorChannels,
+    #[error("profile suffix must not contain path separators")]
+    Suffix(String),
+    #[error("profile stock is missing")]
+    MissingStock,
+    #[error("{0}")]
+    DensityModel(#[source] spektrafilm_model::density_curves::DensityCurveError),
+}
+
 pub(crate) fn validate_profile(profile: &Profile) -> Result<(), ProfileError> {
     let info = &profile.info;
     let data = &profile.data;
@@ -26,62 +62,79 @@ pub(crate) fn validate_profile(profile: &Profile) -> Result<(), ProfileError> {
         ),
     ] {
         if !allowed.contains(&value) {
-            return Err(ProfileError::Validation(format!(
-                "unsupported {field} value {value:?}"
-            )));
+            return Err(ProfileError::Validation(
+                ProfileValidationError::Unsupported {
+                    field,
+                    value: value.to_owned(),
+                    allowed,
+                },
+            ));
         }
     }
     if !matches!(
         info.reference_illuminant.as_str(),
         "D50" | "D55" | "D65" | "T" | "TH-KG3" | "K75P"
     ) {
-        return Err(ProfileError::Validation(format!(
-            "unsupported reference_illuminant value {:?}",
-            info.reference_illuminant
-        )));
+        return Err(ProfileError::Validation(
+            ProfileValidationError::Unsupported {
+                field: "reference_illuminant",
+                value: info.reference_illuminant.clone(),
+                allowed: &["D50", "D55", "D65", "T", "TH-KG3", "K75P"],
+            },
+        ));
     }
     if data.wavelengths.is_empty() {
-        return Err(ProfileError::Validation("wavelengths is empty".into()));
+        return Err(ProfileError::Validation(ProfileValidationError::Empty(
+            "wavelengths",
+        )));
     }
     if data.log_exposure.is_empty() {
-        return Err(ProfileError::Validation("log_exposure is empty".into()));
+        return Err(ProfileError::Validation(ProfileValidationError::Empty(
+            "log_exposure",
+        )));
     }
     if data.density_curves.len() != data.log_exposure.len() {
         return Err(ProfileError::Validation(
-            "density_curves length must match log_exposure length".into(),
+            ProfileValidationError::DensityLength {
+                actual: data.density_curves.len(),
+                expected: data.log_exposure.len(),
+            },
         ));
     }
     let channels = if profile.is_bw() { 1 } else { 3 };
     if data.log_sensitivity.len() != data.wavelengths.len()
         || data.log_sensitivity.iter().any(|row| row.len() != channels)
     {
-        return Err(ProfileError::Validation(format!(
-            "log_sensitivity must be {}×{}",
-            data.wavelengths.len(),
-            channels
-        )));
+        return Err(ProfileError::Validation(ProfileValidationError::Shape {
+            field: "log_sensitivity",
+            rows: data.wavelengths.len(),
+            channels,
+        }));
     }
     if data.channel_density.len() != data.wavelengths.len()
         || data.channel_density.iter().any(|row| row.len() != channels)
     {
-        return Err(ProfileError::Validation(format!(
-            "channel_density must be {}×{}",
-            data.wavelengths.len(),
-            channels
-        )));
+        return Err(ProfileError::Validation(ProfileValidationError::Shape {
+            field: "channel_density",
+            rows: data.wavelengths.len(),
+            channels,
+        }));
     }
     if data.base_density_rows.len() != data.wavelengths.len()
         || data.base_density_rows.iter().any(|row| row.is_empty())
     {
-        return Err(ProfileError::Validation(
-            "base_density must have one non-empty row per wavelength".into(),
-        ));
+        return Err(ProfileError::Validation(ProfileValidationError::BaseRows {
+            expected: data.wavelengths.len(),
+        }));
     }
     if !data.midscale_neutral_density.is_empty()
         && data.midscale_neutral_density.len() != data.wavelengths.len()
     {
         return Err(ProfileError::Validation(
-            "midscale_neutral_density length must match wavelengths".into(),
+            ProfileValidationError::MidscaleLength {
+                actual: data.midscale_neutral_density.len(),
+                expected: data.wavelengths.len(),
+            },
         ));
     }
     if profile.is_bw() {
@@ -93,7 +146,9 @@ pub(crate) fn validate_profile(profile: &Profile) -> Result<(), ProfileError> {
             .any(|r| r.len() != data.development_time.len().max(1))
         {
             return Err(ProfileError::Validation(
-                "bw profile density_curves columns must match development_time length".into(),
+                ProfileValidationError::BwDensityColumns {
+                    expected: data.development_time.len().max(1),
+                },
             ));
         }
         let n_times = data.development_time.len().max(1);
@@ -103,12 +158,12 @@ pub(crate) fn validate_profile(profile: &Profile) -> Result<(), ProfileError> {
             .any(|r| r.len() != 1 && r.len() != n_times)
         {
             return Err(ProfileError::Validation(
-                "bw profile base_density columns must be 1 or match development_time".into(),
+                ProfileValidationError::BwBaseColumns { expected: n_times },
             ));
         }
     } else if data.density_curves.iter().any(|r| r.len() != 3) {
         return Err(ProfileError::Validation(
-            "color profile density_curves must have 3 channels".into(),
+            ProfileValidationError::ColorChannels,
         ));
     }
     Ok(())

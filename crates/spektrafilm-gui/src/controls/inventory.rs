@@ -78,7 +78,9 @@ impl ControlEntry {
     }
 
     pub(crate) fn is_modified(&self, runtime: &Value, extras: &Value) -> bool {
-        if matches!(self.editor, EditorKind::Action | EditorKind::Excluded(_)) {
+        if self.path == "preference.interface_language"
+            || matches!(self.editor, EditorKind::Action | EditorKind::Excluded(_))
+        {
             return false;
         }
         if self.affected_paths.is_empty() {
@@ -91,40 +93,96 @@ impl ControlEntry {
     }
 
     /// Human-readable inspection of the same canonical metadata used by editors.
-    pub(crate) fn description(&self) -> String {
-        let mut text = format!(
-            "{}\n{} → {}\nEditor: {:?}\nValidator: {}",
-            self.path,
-            self.owner.label(),
-            self.section,
-            self.editor,
-            self.validator
-        );
+    pub(crate) fn localized_description(&self, ctx: &egui::Context) -> String {
+        let mut text = crate::tr!(
+            ctx,
+            "controls.description.header",
+            path = &self.path,
+            owner = super::localized(ctx, self.owner.label()),
+            section = super::localized(ctx, self.section),
+            editor = super::localized(ctx, &format!("{:?}", self.editor)),
+            validator = self.validator
+        )
+        .into_owned();
         if let Some(validation) = &self.validation {
             for key in [
                 "type", "unit", "minimum", "maximum", "step", "enum", "nullable",
             ] {
                 if let Some(value) = validation.get(key) {
-                    text.push_str(&format!("\n{key}: {value}"));
+                    text.push_str(&crate::tr!(
+                        ctx,
+                        "controls.description.field",
+                        field = super::localized(ctx, key),
+                        value = value
+                    ));
                 }
             }
         }
         for condition in &self.conditions {
-            text.push_str(&format!("\nCondition: {condition}"));
+            text.push_str(&crate::tr!(
+                ctx,
+                "controls.description.condition",
+                condition = super::localized(ctx, condition)
+            ));
         }
         for component in &self.components {
-            text.push_str(&format!(
-                "\nComponent {} [{}]: {}",
-                component.index, component.id, component.label
+            text.push_str(&crate::tr!(
+                ctx,
+                "controls.description.component",
+                index = component.index,
+                id = &component.id,
+                label = self.localized_component_label(ctx, component)
             ));
-            if let Some(derived) = component.derived {
-                text.push_str(&format!(" — read-only: {derived}"));
+            if component.derived.is_some() {
+                text.push_str(&crate::tr!(
+                    ctx,
+                    "controls.description.derived",
+                    formula = crate::i18n::text(ctx, "controls.description.remainder")
+                ));
             }
         }
         if !self.affected_paths.is_empty() {
-            text.push_str(&format!("\nScope: {}", self.affected_paths.join(", ")));
+            text.push_str(&crate::tr!(
+                ctx,
+                "controls.description.scope",
+                paths = self.affected_paths.join(", ")
+            ));
         }
         text
+    }
+
+    fn localized_component_label(
+        &self,
+        ctx: &egui::Context,
+        component: &ControlComponent,
+    ) -> String {
+        self.localized_component_label_for(crate::i18n::locale(ctx), component)
+    }
+
+    fn localized_component_label_for(
+        &self,
+        locale: crate::i18n::Locale,
+        component: &ControlComponent,
+    ) -> String {
+        if self.path == "film_render.grain.fotufilm.sublayer_shares" {
+            return super::localized_for(
+                locale,
+                [
+                    "Sublayer 1",
+                    "Sublayer 2",
+                    "Sublayer 3",
+                    "Sublayer 4 (remainder)",
+                ][component.index],
+            )
+            .into_owned();
+        }
+        rust_i18n::t!(
+            "controls.component.name",
+            locale = locale.as_str(),
+            label = super::localized_for(locale, &self.label),
+            component = super::localized_for(locale, &component.id)
+        )
+        .into_owned()
     }
 }
 
@@ -163,6 +221,18 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
             &[],
         ));
         append_nonruntime(&mut entries);
+        entries.push(nonruntime(
+            SurfaceEntry {
+                path: "preference.interface_language",
+                label: "语言 / Language",
+                owner: ControlOwner::Settings,
+                section: "Session",
+                editor: EditorKind::Choice,
+                validator: "i18n::LanguagePreference",
+                conditions: &[],
+            },
+            &[],
+        ));
         for entry in &mut entries {
             let module = if entry.section == "Glare" {
                 "Print viewing glare"
@@ -188,6 +258,26 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
             for component in &entry.components {
                 text.push('\n');
                 text.push_str(&component.label);
+            }
+            for locale in [
+                crate::i18n::Locale::English,
+                crate::i18n::Locale::SimplifiedChinese,
+            ] {
+                for label in [&entry.label[..], entry.section, module, entry.owner.label()] {
+                    text.push('\n');
+                    text.push_str(&super::localized_for(locale, label));
+                }
+                if entry.path == "camera.film_format_mm" {
+                    text.push('\n');
+                    text.push_str(&super::localized_for(locale, "Frame Long Edge"));
+                }
+                if entry.path == "preference.interface_language" {
+                    text.push_str("\nGeneral\n通用\nLanguage\n语言");
+                }
+                for component in &entry.components {
+                    text.push('\n');
+                    text.push_str(&entry.localized_component_label_for(locale, component));
+                }
             }
             entry.search_text = text.to_lowercase();
         }

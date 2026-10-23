@@ -29,13 +29,19 @@ pub(crate) fn offer_reset(ui: &mut Ui, label: &str, path: Option<&str>) {
     if section_reset::factory_value(&entry.path).is_none() {
         return;
     }
-    let action = format!("Reset {label} to factory");
-    let response = ui.small_button("Reset").on_hover_text(&action);
+    let action = crate::tr!(
+        ui.ctx(),
+        "controls.reset.target",
+        label = super::localized(ui.ctx(), label)
+    );
+    let response = ui
+        .small_button(crate::i18n::text(ui.ctx(), "controls.reset.action"))
+        .on_hover_text(action.as_ref());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &action)
     });
     ui.ctx()
-        .accesskit_node_builder(response.id, |node| node.set_label(action.as_str()));
+        .accesskit_node_builder(response.id, |node| node.set_label(action.as_ref()));
     if response.clicked() {
         ui.ctx().data_mut(|data| {
             let paths =

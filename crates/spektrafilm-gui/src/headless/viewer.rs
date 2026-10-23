@@ -512,7 +512,7 @@ fn display_row_resets_restore_only_the_live_owned_field_without_adjustment_histo
         display::DisplaySettings::from_json(&state::GuiState::factory().sections["display"]);
     let params = h.state().params.clone();
     let revision = h.state().parameter_revision;
-    let undo_label = h.state().undo_label().map(str::to_owned);
+    let undo_label = h.state().undo_label_localized(&h.ctx);
     reveal_control(h, "extras.display.use_display_transform");
     click(h, "use display transform");
     click(h, "gray 18% canvas");
@@ -577,7 +577,7 @@ fn display_row_resets_restore_only_the_live_owned_field_without_adjustment_histo
     );
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().parameter_revision, revision);
-    assert_eq!(h.state().undo_label(), undo_label.as_deref());
+    assert_eq!(h.state().undo_label_localized(&h.ctx), undo_label);
 }
 
 #[test]

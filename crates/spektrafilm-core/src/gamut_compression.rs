@@ -212,7 +212,18 @@ impl OutputGamutCompress {
         params: &OutputGamutCompressParams,
         output_color_space: &str,
     ) -> Result<Self, String> {
-        let destination = resolve(output_color_space)?;
+        Self::build_detailed(params, output_color_space).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn build_detailed(
+        params: &OutputGamutCompressParams,
+        output_color_space: &str,
+    ) -> Result<Self, crate::params::ValidationError> {
+        use crate::params::{ValidationError as Error, ValidationReason as Reason};
+        let destination = resolve(output_color_space).map_err(|error| {
+            Error::new(Reason::ColorSpace, "io.output_color_space", error)
+                .arg("value", format!("{output_color_space:?}"))
+        })?;
         let kind = match params.algorithm.as_str() {
             "off" => Kind::Off,
             "aces_rgc" => Kind::AcesRgc,
@@ -221,13 +232,22 @@ impl OutputGamutCompress {
             "jzazbz" => Kind::Perceptual(Space::Jzazbz),
             "cam16ucs" => Kind::Perceptual(Space::Cam16ucs),
             other => {
-                return Err(format!(
-                    "unknown output gamut compression algorithm {other:?}"
-                ));
+                return Err(Error::new(
+                    Reason::OutputAlgorithm,
+                    "io.output_gamut_compress.algorithm",
+                    format!("unknown output gamut compression algorithm {other:?}"),
+                )
+                .arg("value", format!("{other:?}")));
             }
         };
-        let knee =
-            crate::params::validation::validate_gamut_triplet("output gamut knee", params.knee)?;
+        let knee = crate::params::validation::validate_gamut_triplet_detailed(
+            "output gamut knee",
+            params.knee,
+        )
+        .map_err(|mut error| {
+            error.path = "io.output_gamut_compress.knee".into();
+            error
+        })?;
         let cam = Cam16Viewing::new(destination.whitepoint_xyz());
         let mut result = Self {
             kind,

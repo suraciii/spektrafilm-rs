@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use eframe::egui;
 use parking_lot::Mutex;
 use spektrafilm_backend::ComputeBackend;
@@ -17,7 +17,7 @@ use spektrafilm_core::telemetry::{Operation, Outcome};
 use spektrafilm_math::image::ImageBuf;
 
 use super::App;
-use super::diagnostics::{BackendRequested, effective_backend_name};
+use super::diagnostics::BackendRequested;
 use super::export::{ExportBackend, ExportOptions};
 use super::render_worker::{observed_result, panic_message};
 
@@ -25,7 +25,7 @@ use super::render_worker::{observed_result, panic_message};
 /// Cancellation discards its staged file once the current operation completes.
 /// The UI alone publishes successful, uncancelled work.
 pub(super) struct ExportJob {
-    pub(super) rx: mpsc::Receiver<Result<ExportResult, String>>,
+    pub(super) rx: mpsc::Receiver<Result<ExportResult, crate::app::Message>>,
     pub(super) handle: Option<JoinHandle<()>>,
     pub(super) cancel: Arc<AtomicBool>,
     pub(super) started_at: Instant,
@@ -61,7 +61,6 @@ impl ExportPause {
 pub(super) struct ExportResult {
     pub(super) elapsed: f32,
     pub(super) filename: String,
-    pub(super) backend_name: String,
     pub(super) size: [u32; 2],
     pub(super) staged: image_io::PreparedImageOutput,
 }
@@ -97,13 +96,13 @@ impl App {
 
     pub(super) fn export_input(&mut self) -> Option<Arc<ImageBuf>> {
         if self.export_job.is_some() || self.calibration_job.is_some() {
-            self.status = "Wait for the current operation before exporting.".into();
+            self.status = crate::app::Message::new("operations.export_wait");
             return None;
         }
         match self.image.as_ref().cloned() {
             Some(image) => Some(image),
             None => {
-                self.status = "Load an image before exporting.".into();
+                self.status = crate::app::Message::new("operations.export_load");
                 None
             }
         }
@@ -153,10 +152,8 @@ impl App {
         }
         let out_path = options.format.output_path(chosen_path);
         if out_path != chosen_path && out_path.exists() {
-            self.status = format!(
-                "Export destination already exists: {}. Choose that exact filename to confirm replacement.",
-                out_path.display()
-            );
+            self.status = crate::app::Message::new("operations.export_exists")
+                .arg("path", out_path.display());
             self.last_export_error = Some(self.status.clone());
             operation.issue(IssueCategory::Publication, IssueBoundary::Operation);
             self.diagnostics.finish(operation, Outcome::Failed);
@@ -168,7 +165,8 @@ impl App {
         {
             Ok(params) => params,
             Err(error) => {
-                self.status = format!("Export state error: {error:#}");
+                self.status = crate::app::Message::new("operations.export_state_error")
+                    .message_arg("detail", crate::app::Message::error(&error));
                 self.last_export_error = Some(self.status.clone());
                 operation.issue(IssueCategory::Configuration, IssueBoundary::Operation);
                 self.diagnostics.finish(operation, Outcome::Failed);
@@ -211,7 +209,7 @@ impl App {
                             snapshot.with_cancellation(Some(Arc::clone(&cancel_for_worker)));
                         let pipeline =
                             super::build_runtime_observed(&snapshot, false, &observation)
-                                .map_err(anyhow::Error::msg)?
+                                .map_err(anyhow::Error::new)?
                                 .with_cancellation(Some(Arc::clone(&cancel_for_worker)));
                         if let Some(slot) = &worker_configuration {
                             *slot.lock() = Some(pipeline.telemetry_configuration());
@@ -241,7 +239,11 @@ impl App {
                                     spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit()
                                         .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
                                 })
-                                .context("GPU export requested but no WGPU adapter is available"),
+                                .ok_or_else(|| {
+                                    anyhow::Error::new(crate::app::Message::new(
+                                        "operations.gpu_unavailable",
+                                    ))
+                                }),
                         };
                         let backend = observed_result(
                             backend_init,
@@ -321,13 +323,12 @@ impl App {
                                 .and_then(|s| s.to_str())
                                 .unwrap_or("(file)")
                                 .to_owned(),
-                            backend_name: effective_backend_name(&*backend, pipeline.params()),
                             size: [output.width, output.height],
                             staged,
                         })
                     },
                 ))
-                .unwrap_or_else(|panic| Err(anyhow::anyhow!(panic_message(&panic))));
+                .unwrap_or_else(|panic| Err(anyhow::Error::new(panic_message(&panic))));
                 attempt.finish(if res.is_ok() {
                     Outcome::Succeeded
                 } else if cancel_for_worker.load(Ordering::SeqCst) {
@@ -335,12 +336,13 @@ impl App {
                 } else {
                     Outcome::Failed
                 });
-                let msg = res.map_err(|e| format!("{e:#}"));
+                let msg = res.map_err(|e| crate::app::Message::error(&e));
                 let _ = tx.send(msg);
                 ctx_for_worker.request_repaint();
             })
             .expect("OS thread spawn");
-        self.status = format!("Exporting with {}…", export_backend.label());
+        self.status = crate::app::Message::new("operations.export_starting")
+            .arg("backend", export_backend.label());
         self.export_job = Some(ExportJob {
             rx,
             handle: Some(handle),
@@ -364,7 +366,7 @@ impl App {
             if let Some(pause) = &job.pause {
                 pause.notify_cancelled();
             }
-            self.status = "Cancelling export…".into();
+            self.status = crate::app::Message::new("operations.export_cancelling");
         }
     }
 
@@ -382,16 +384,19 @@ impl App {
             Err(mpsc::TryRecvError::Empty) => {
                 let secs = job.started_at.elapsed().as_secs();
                 self.status = if job.cancel.load(Ordering::SeqCst) {
-                    format!("Cancelling export… ({secs}s)")
+                    crate::app::Message::new("operations.export_cancelling_elapsed")
+                        .arg("seconds", secs)
                 } else {
-                    format!("Exporting with {}… ({secs}s)", job.backend.label())
+                    crate::app::Message::new("operations.export_running")
+                        .arg("backend", job.backend.label())
+                        .arg("seconds", secs)
                 };
                 ctx.request_repaint_after(Duration::from_secs(1));
                 return;
             }
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.status = "Export error: worker thread vanished".into();
-                self.last_export_error = Some("Export error: worker thread vanished".into());
+                self.status = crate::app::Message::new("operations.export_worker_vanished");
+                self.last_export_error = Some(self.status.clone());
                 let mut job = self.export_job.take().expect("export job exists");
                 if let Some(handle) = job.handle.take() {
                     let _ = handle.join();
@@ -428,7 +433,7 @@ impl App {
             Outcome::Failed
         };
         self.status = match msg {
-            Ok(_) if cancelled => "Export cancelled.".into(),
+            Ok(_) if cancelled => crate::app::Message::new("operations.export_cancelled"),
             Ok(result) => {
                 let publication =
                     operation.scope("publication", ObservationKind::Phase, Purpose::Image);
@@ -444,29 +449,31 @@ impl App {
                         outcome = Outcome::Succeeded;
                         self.last_export_error = None;
                         operation.set_published_dimensions(result.size[0], result.size[1]);
-                        let mut status = format!(
-                            "Exported ({}) {} · {} × {} in {:.1} s",
-                            result.backend_name,
-                            result.filename,
-                            result.size[0],
-                            result.size[1],
-                            result.elapsed
-                        );
+                        let exported = crate::app::Message::new("operations.exported")
+                            .arg("file", result.filename)
+                            .arg("width", result.size[0])
+                            .arg("height", result.size[1])
+                            .arg("seconds", format!("{:.1}", result.elapsed));
                         if let Some(warning) = report.metadata_warning {
-                            status.push_str(&format!(" — Metadata warning: {warning}"));
+                            crate::app::Message::new("operations.metadata_warning")
+                                .message_arg("operation", exported)
+                                .message_arg("detail", crate::app::Message::bridge_error(&warning))
+                        } else {
+                            exported
                         }
-                        status
                     }
                     Err(e) => {
-                        let msg = format!("Export error: {e:#}");
+                        let msg = crate::app::Message::new("operations.export_error")
+                            .message_arg("detail", crate::app::Message::image_io(&e));
                         self.last_export_error = Some(msg.clone());
                         msg
                     }
                 }
             }
-            Err(_) if cancelled => "Export cancelled.".into(),
+            Err(_) if cancelled => crate::app::Message::new("operations.export_cancelled"),
             Err(e) => {
-                let msg = format!("Export error: {e}");
+                let msg =
+                    crate::app::Message::new("operations.export_error").message_arg("detail", e);
                 self.last_export_error = Some(msg.clone());
                 msg
             }

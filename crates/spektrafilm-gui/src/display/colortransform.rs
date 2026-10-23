@@ -77,17 +77,17 @@ pub fn prepare_display_raster(
     srgb_preview: Option<DisplayRaster>,
     enabled: bool,
     selected_profile: Option<&std::path::Path>,
-) -> (DisplayRaster, String) {
+) -> (DisplayRaster, crate::app::Message) {
     if !enabled {
         return (
             raw_output,
-            "Display transform: disabled; viewing output-space values".into(),
+            crate::app::Message::new("surfaces.display.disabled"),
         );
     }
     let Some(srgb) = srgb_preview else {
         return (
             raw_output,
-            "Display transform: missing sRGB preview; viewing output-space values".into(),
+            crate::app::Message::new("surfaces.display.missing_preview"),
         );
     };
     #[cfg(windows)]
@@ -105,20 +105,21 @@ pub fn prepare_display_raster(
                 Ok(raster) => {
                     return (
                         raster,
-                        format!("Display transform: active ({})", path.display()),
+                        crate::app::Message::new("surfaces.display.active")
+                            .arg("path", path.display()),
                     );
                 }
                 Err(e) => {
                     return (
                         srgb,
-                        format!("Display transform: ICC failed ({e}); viewing sRGB preview"),
+                        crate::app::Message::new("surfaces.display.failed").arg("error", e),
                     );
                 }
             }
         }
         return (
             srgb,
-            "Display transform: sRGB preview; no display profile".into(),
+            crate::app::Message::new("surfaces.display.no_profile"),
         );
     }
     #[cfg(not(windows))]
@@ -128,20 +129,21 @@ pub fn prepare_display_raster(
                 Ok(raster) => {
                     return (
                         raster,
-                        format!("Display transform: active ({})", path.display()),
+                        crate::app::Message::new("surfaces.display.active")
+                            .arg("path", path.display()),
                     );
                 }
                 Err(e) => {
                     return (
                         srgb,
-                        format!("Display transform: ICC failed ({e}); viewing sRGB preview"),
+                        crate::app::Message::new("surfaces.display.failed").arg("error", e),
                     );
                 }
             }
         }
         (
             srgb,
-            "Display transform: sRGB preview; no display profile".into(),
+            crate::app::Message::new("surfaces.display.no_profile"),
         )
     }
 }
@@ -172,7 +174,7 @@ pub fn output_display_raster(
     enabled: bool,
     profile: Option<&std::path::Path>,
     max_edge: usize,
-) -> Result<(DisplayRaster, String), String> {
+) -> Result<(DisplayRaster, crate::app::Message), String> {
     let raw = capped_raster(image, max_edge)?;
     let srgb = enabled
         .then(|| input_display_raster(image, space, encoded, max_edge))
@@ -198,7 +200,7 @@ mod tests {
         for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
             assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
         }
-        assert!(status.contains("sRGB preview"));
+        assert!(status.to_string().contains("sRGB preview"));
         assert_eq!(image.data, source);
     }
 
@@ -234,6 +236,6 @@ mod tests {
             output_display_raster(&image, "Display P3", false, false, None, 1).unwrap();
 
         assert_eq!(raster.rgb[0], [1.3, -0.2, 0.4]);
-        assert!(status.contains("output-space values"));
+        assert!(status.to_string().contains("output-space values"));
     }
 }

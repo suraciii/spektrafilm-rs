@@ -142,11 +142,14 @@ impl GuiState {
     }
     pub fn from_value(mut value: Value) -> Result<Self> {
         if !value.is_object() {
-            bail!("GUI state must be a JSON object");
+            bail!(crate::app::Message::new("operations.state.object"));
         }
         let version = value["rust"].get("version").and_then(Value::as_u64);
         if value.get("rust").is_some() && !matches!(version, Some(1..=CURRENT_STATE_VERSION)) {
-            bail!("Unsupported Rust GUI state extension version");
+            bail!(
+                crate::app::Message::new("operations.state.version")
+                    .arg("value", &value["rust"]["version"])
+            );
         }
         if matches!(version, Some(1..=4)) {
             let mut top = json!({"scanner": value["scanner"].clone(),
@@ -270,7 +273,10 @@ impl GuiState {
                 extension["version"].as_u64(),
                 Some(1..=CURRENT_STATE_VERSION)
             ) {
-                bail!("Unsupported Rust GUI state extension version");
+                bail!(
+                    crate::app::Message::new("operations.state.version")
+                        .arg("value", &extension["version"])
+                );
             }
             if let Some(fields) = extension.as_object() {
                 for (key, value) in fields {

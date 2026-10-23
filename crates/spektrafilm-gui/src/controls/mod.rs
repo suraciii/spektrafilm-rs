@@ -1,7 +1,9 @@
 //! Editors for the pinned experimental GUI sections.
 use crate::routes::vocabulary;
 use crate::theme;
+mod localization;
 use egui::Ui;
+pub(crate) use localization::{localized, localized_for};
 use serde_json::Value;
 use spektrafilm_core::feature_profiles::{self, FeatureProfileFamily, FeatureProfileSelection};
 use spektrafilm_core::params::{
@@ -170,16 +172,17 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     // parameter row. The selector paints in its own horizontal row inside a
     // vertical section body, so both share one explicit row here.
     ui.horizontal(|ui| {
-        ui.label(label).on_hover_text(tooltip);
+        ui.label(crate::controls::localized(ui.ctx(), label))
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         let response = egui::ComboBox::from_id_salt(label)
-            .selected_text(selected)
+            .selected_text(crate::controls::localized(ui.ctx(), selected))
             .show_ui(ui, |ui| {
                 for &(option, label) in choices {
-                    ui.selectable_value(value, option, label);
+                    ui.selectable_value(value, option, crate::controls::localized(ui.ctx(), label));
                 }
             })
             .response
-            .on_hover_text(tooltip);
+            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         if let Some(entry) = inventory().iter().find(|entry| {
             entry.owner == ControlOwner::Export && entry.label.eq_ignore_ascii_case(label)
         }) {
@@ -229,7 +232,7 @@ pub(crate) fn section_header<R>(
             return;
         }
         ui.label(
-            egui::RichText::new(title)
+            egui::RichText::new(crate::controls::localized(ui.ctx(), title))
                 .color(theme::FG)
                 .size(theme::SIZE_TITLE)
                 .strong(),
@@ -238,18 +241,23 @@ pub(crate) fn section_header<R>(
         return;
     }
     let response = egui::CollapsingHeader::new(
-        egui::RichText::new(title)
+        egui::RichText::new(crate::controls::localized(ui.ctx(), title))
             .color(theme::FG)
             .size(theme::SIZE_TITLE)
             .strong(),
     )
+    .id_salt(title)
     .show(ui, |ui| add_contents(ui, filter));
     // A closed sub-section states what it holds, so a page of collapsed
     // headers still names its controls. Display-only: it reads no value.
     if response.openness <= 0.0
         && let Some(summary) = section_summary(title)
     {
-        ui.label(egui::RichText::new(summary).color(theme::FG_MUTED).small());
+        ui.label(
+            egui::RichText::new(crate::controls::localized(ui.ctx(), summary))
+                .color(theme::FG_MUTED)
+                .small(),
+        );
     }
 }
 

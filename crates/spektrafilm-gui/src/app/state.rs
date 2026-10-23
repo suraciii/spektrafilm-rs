@@ -15,6 +15,10 @@ pub(crate) struct App {
     /// the preset library. Production resolves it to the platform
     /// configuration directory; acceptance supplies an isolated one.
     pub(crate) config_directory: PathBuf,
+    /// Independent application preferences; never projected into photographic state.
+    pub(crate) language_preference: i18n::LanguagePreference,
+    pub(crate) resolved_locale: i18n::Locale,
+    pub(crate) language_preference_error: Option<i18n::PreferenceError>,
     /// Native chooser boundary; acceptance scripts its result.
     pub(crate) chooser: chooser::Chooser,
     pub(crate) observed_browser_state: presets::BrowserState,
@@ -60,9 +64,9 @@ pub(crate) struct App {
     pub(crate) export_return_focus: Option<egui::Id>,
     pub(crate) output_color_space: String,
     pub(crate) output_cctf_encoding: bool,
-    pub(crate) status: String,
-    pub(crate) last_state_normalization: Option<String>,
-    pub(crate) last_export_error: Option<String>,
+    pub(crate) status: crate::app::Message,
+    pub(crate) last_state_normalization: Option<crate::app::Message>,
+    pub(crate) last_export_error: Option<crate::app::Message>,
     /// Controls changed since the latest submitted render snapshot.
     pub(crate) dirty: bool,
     pub(crate) dirty_since: Option<Instant>,
@@ -144,6 +148,9 @@ impl App {
             .filter(|directory| !directory.as_os_str().is_empty())
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
+        let (language_preference, language_preference_error) =
+            i18n::load_preference(&config_directory);
+        let resolved_locale = language_preference.resolve();
         let (films, papers) = scan_profiles(&data_dir);
         let mut startup_error = None;
         let gui_state = match initial_state {
@@ -160,7 +167,7 @@ impl App {
             Ok(state)
         })
         .unwrap_or_else(|error| {
-            startup_error = Some(format!("Startup state error: {error:#}"));
+            startup_error = Some(crate::app::Message::error(&error));
             state::GuiState::factory()
         });
         let film_name = gui_state.film().to_owned();
@@ -195,9 +202,12 @@ impl App {
         ) {
             Ok(browser_state) => presets.state = browser_state,
             Err(error) => {
-                let message = format!("Browser state load error: {error:#}");
+                let message = crate::app::Message::new("app.browser.load_failed")
+                    .message_arg("detail", crate::app::Message::error(&error));
                 startup_error = Some(match startup_error {
-                    Some(previous) => format!("{previous}; {message}"),
+                    Some(previous) => crate::app::Message::new("operations.error_chain")
+                        .message_arg("context", previous)
+                        .message_arg("detail", message),
                     None => message,
                 });
             }
@@ -211,6 +221,9 @@ impl App {
             papers,
             browser_state_path,
             config_directory,
+            language_preference,
+            resolved_locale,
+            language_preference_error,
             observed_browser_state: presets.state.clone(),
             browser_state_changed_at: explicit_state.then(Instant::now),
             film_reference_illuminant,
@@ -255,7 +268,12 @@ impl App {
             render_worker: RenderWorker::new(render_progress.clone()),
             render_progress,
             export_job: None,
-            status: startup_error.unwrap_or_else(|| String::from("Load an image to start.")),
+            status: startup_error
+                .map(|error| {
+                    crate::app::Message::new("operations.startup_error")
+                        .message_arg("detail", error)
+                })
+                .unwrap_or_else(|| crate::app::Message::new("operations.load_to_start")),
             last_export_error: None,
             dirty: false,
             #[cfg(target_os = "macos")]
@@ -290,6 +308,61 @@ impl App {
             .restore_state(&app.gui_state.sections["rust"]["histogram"]);
         app.reset_adjustment_history();
         app
+    }
+
+    pub(crate) fn bind_language(&self, ctx: &egui::Context) {
+        self.resolved_locale.install(ctx);
+    }
+
+    /// Relabel immediately, even if publishing the independent preference fails.
+    pub(crate) fn select_language(
+        &mut self,
+        ctx: &egui::Context,
+        preference: i18n::LanguagePreference,
+    ) -> std::result::Result<(), i18n::PreferenceError> {
+        self.language_preference = preference;
+        self.resolved_locale = preference.resolve();
+        self.bind_language(ctx);
+        let saved = i18n::save_preference(&self.config_directory, preference);
+        self.language_preference_error = saved.as_ref().err().cloned();
+        ctx.request_repaint();
+        saved
+    }
+
+    pub(crate) fn language_selector(&mut self, ui: &mut egui::Ui) {
+        let mut selected = self.language_preference;
+        let mut chosen = None;
+        let response = egui::ComboBox::from_id_salt("application.language_preference")
+            .selected_text(selected.label())
+            .show_ui(ui, |ui| {
+                for preference in i18n::LanguagePreference::ALL {
+                    if ui
+                        .selectable_value(&mut selected, preference, preference.label())
+                        .clicked()
+                    {
+                        chosen = Some(preference);
+                    }
+                }
+            })
+            .response
+            .on_hover_text(i18n::text(ui.ctx(), "app.language.help"));
+        crate::numeric::register_language_selector(ui.ctx(), &response);
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::ComboBox,
+                ui.is_enabled(),
+                "语言 / Language",
+            )
+        });
+        controls::locate_row(ui, "preference.interface_language", &response);
+        if let Some(preference) = chosen {
+            // A repeated System choice re-resolves the OS preferences; a
+            // repeated explicit choice also retries failed publication.
+            let _ = self.select_language(ui.ctx(), preference);
+        }
+        if let Some(error) = &self.language_preference_error {
+            ui.colored_label(ui.visuals().error_fg_color, error.localized(ui.ctx()));
+        }
     }
 
     pub(crate) fn current_state(&self) -> Result<state::GuiState> {
@@ -328,10 +401,14 @@ impl App {
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
         let print = profile::load_profile_by_name(&self.data_dir, state.paper())?;
         if !film.is_film() || !film.is_filming() {
-            anyhow::bail!("simulation.film_stock: selected profile is not a filming film");
+            return Err(crate::app::Message::new("app.state.invalid_film_profile")
+                .arg("profile", state.film())
+                .into());
         }
         if !print.is_print_stock() {
-            anyhow::bail!("simulation.print_paper: selected profile is not a print stock");
+            return Err(crate::app::Message::new("app.state.invalid_print_profile")
+                .arg("profile", state.paper())
+                .into());
         }
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         // Decode the candidate source before replacing any accepted controls.
@@ -439,7 +516,8 @@ impl App {
         {
             self.browser_state_changed_at = None;
             if let Err(error) = self.presets.state.save(&self.browser_state_path) {
-                self.status = format!("Browser state save error: {error:#}");
+                self.status = crate::app::Message::new("operations.browser_save_error")
+                    .message_arg("detail", crate::app::Message::error(&error));
                 if closing {
                     eprintln!("{}", self.status);
                 }

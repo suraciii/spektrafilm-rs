@@ -35,6 +35,8 @@ mod export_job;
 #[cfg(test)]
 mod headless;
 mod histogram;
+mod i18n;
+rust_i18n::i18n!("locales", fallback = "en");
 mod numeric;
 mod platform;
 mod presets;
@@ -51,7 +53,6 @@ use app::App;
 use backend::{gui_backend, gui_renderer};
 use calibration::CalibrationJob;
 use controls::{normalize_scanner_selections, scan_medium};
-use diagnostics::effective_backend_name;
 #[cfg(test)]
 use export::ExportBackend;
 use export::{ExportDialog, ExportOptions};
@@ -162,12 +163,9 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|_cc| {
             theme::apply(&_cc.egui_ctx);
-            Ok(Box::new(App::new(
-                backend,
-                initial_image,
-                initial_state,
-                diagnostics_dir,
-            )))
+            let app = App::new(backend, initial_image, initial_state, diagnostics_dir);
+            app.bind_language(&_cc.egui_ctx);
+            Ok(Box::new(app))
         }),
     )
 }
@@ -398,7 +396,6 @@ mod telemetry_lifecycle_tests {
             request_id,
             kind: RenderKind::Preview,
             animate: false,
-            backend_name: "CPU".into(),
             collection_mode: CollectionMode::Summary,
         }
     }

@@ -22,9 +22,12 @@ pub(crate) fn sections(
             );
         }
         ui.label(
-            egui::RichText::new("1.0 = full simulation · 0.0 = original")
-                .small()
-                .color(theme::FG_MUTED),
+            egui::RichText::new(localized(
+                ui.ctx(),
+                "1.0 = full simulation · 0.0 = original",
+            ))
+            .small()
+            .color(theme::FG_MUTED),
         );
         if filter_matches(filter, "output color space") {
             flags.runtime_changed |= choice_tip(
@@ -56,6 +59,11 @@ pub(crate) fn sections(
             );
         }
         if filter_matches(filter, "saving cctf encoding") {
+            let help = crate::tr!(
+                ui.ctx(),
+                "controls.output.saving_cctf_help",
+                cctf = localized(ui.ctx(), crate::routes::vocabulary::CCTF)
+            );
             extra_bool_tip(
                 ui,
                 extras,
@@ -63,10 +71,7 @@ pub(crate) fn sections(
                 "saving_cctf_encoding",
                 "saving cctf encoding",
                 true,
-                &format!(
-                    "Add or not the CCTF — {} — encoding to the samples Save writes. Off writes linear samples. This file-conversion setting is independent of the output color space and of the viewer-only display transform.",
-                    crate::routes::vocabulary::CCTF
-                ),
+                &help,
             );
         }
     }

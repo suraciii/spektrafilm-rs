@@ -11,6 +11,58 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{ONE, Scalar, ZERO, from_f64};
 
 const SEPT_K: f64 = 5.8013;
+
+#[derive(Debug, Clone)]
+pub enum DensityCurveError {
+    AlphaValue(f64),
+    ModelType(String),
+    ChannelCounts,
+    LayerCounts(usize),
+    Sigma {
+        channel: usize,
+        layer: usize,
+        value: f64,
+    },
+    EqualLayers,
+    AlphaShape,
+    AlphaBounds(f64),
+}
+
+impl std::fmt::Display for DensityCurveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlphaValue(value) => write!(
+                f,
+                "septic density-curve alpha must satisfy |alpha| < 1 (got {value})"
+            ),
+            Self::ModelType(value) => write!(
+                f,
+                "unknown density-curve model_type {value:?}; expected \"norm_cdfs\" or \"sept_norm_cdfs\""
+            ),
+            Self::ChannelCounts => {
+                f.write_str("density-curve model arrays must have matching channel counts")
+            }
+            Self::LayerCounts(channel) => write!(
+                f,
+                "density-curve model channel {channel} has inconsistent layer counts"
+            ),
+            Self::Sigma { channel, layer, .. } => write!(
+                f,
+                "density-curve model sigma must be finite and positive (channel {channel}, layer {layer})"
+            ),
+            Self::EqualLayers => {
+                f.write_str("density-curve model channels must have equal layer counts")
+            }
+            Self::AlphaShape => {
+                f.write_str("septic density-curve alphas must match the channel and layer counts")
+            }
+            Self::AlphaBounds(_) => {
+                f.write_str("septic density-curve alpha must satisfy |alpha| < 1")
+            }
+        }
+    }
+}
+impl std::error::Error for DensityCurveError {}
 /// Evaluate upstream's six-parameter parametric H-D density model.
 ///
 /// The returned layout is `[exposure][channel]`. The logarithmic sum is
@@ -69,6 +121,10 @@ fn septic_warp(z: f64, alpha: f64) -> (f64, f64) {
 /// Evaluate one layer's sigmoid. Unknown model names are rejected rather than
 /// silently changing the profile's characteristic curve.
 pub fn layer_cdf(z: f64, model_type: &str, alpha: f64) -> Result<f64, String> {
+    layer_cdf_detailed(z, model_type, alpha).map_err(|error| error.to_string())
+}
+
+pub fn layer_cdf_detailed(z: f64, model_type: &str, alpha: f64) -> Result<f64, DensityCurveError> {
     match model_type {
         "norm_cdfs" | "cdfs" => {
             let x = z * std::f64::consts::FRAC_1_SQRT_2;
@@ -81,15 +137,11 @@ pub fn layer_cdf(z: f64, model_type: &str, alpha: f64) -> Result<f64, String> {
         }
         "sept_norm_cdfs" => {
             if !alpha.is_finite() || alpha.abs() >= 1.0 {
-                return Err(format!(
-                    "septic density-curve alpha must satisfy |alpha| < 1 (got {alpha})"
-                ));
+                return Err(DensityCurveError::AlphaValue(alpha));
             }
             Ok(septic_smoothstep(septic_warp(z, alpha).0))
         }
-        other => Err(format!(
-            "unknown density-curve model_type {other:?}; expected \"norm_cdfs\" or \"sept_norm_cdfs\""
-        )),
+        other => Err(DensityCurveError::ModelType(other.to_owned())),
     }
 }
 
@@ -104,22 +156,43 @@ pub fn evaluate_density_curves(
     alphas: Option<&[Vec<f64>]>,
     positive: bool,
 ) -> Result<Vec<Vec<f64>>, String> {
+    evaluate_density_curves_detailed(
+        log_exposure,
+        model_type,
+        centers,
+        amplitudes,
+        sigmas,
+        alphas,
+        positive,
+    )
+    .map_err(|error| error.to_string())
+}
+
+pub fn evaluate_density_curves_detailed(
+    log_exposure: &[f64],
+    model_type: &str,
+    centers: &[Vec<f64>],
+    amplitudes: &[Vec<f64>],
+    sigmas: &[Vec<f64>],
+    alphas: Option<&[Vec<f64>]>,
+    positive: bool,
+) -> Result<Vec<Vec<f64>>, DensityCurveError> {
     if centers.len() != amplitudes.len() || centers.len() != sigmas.len() {
-        return Err("density-curve model arrays must have matching channel counts".into());
+        return Err(DensityCurveError::ChannelCounts);
     }
     validate_alphas(model_type, centers, alphas)?;
     let mut out = vec![vec![0.0; centers.len()]; log_exposure.len()];
     for (ch, ((cs, amps), ss)) in centers.iter().zip(amplitudes).zip(sigmas).enumerate() {
         if cs.len() != amps.len() || cs.len() != ss.len() {
-            return Err(format!(
-                "density-curve model channel {ch} has inconsistent layer counts"
-            ));
+            return Err(DensityCurveError::LayerCounts(ch));
         }
         for (layer, ((&center, &amp), &sigma)) in cs.iter().zip(amps).zip(ss).enumerate() {
             if !sigma.is_finite() || sigma <= 0.0 {
-                return Err(format!(
-                    "density-curve model sigma must be finite and positive (channel {ch}, layer {layer})"
-                ));
+                return Err(DensityCurveError::Sigma {
+                    channel: ch,
+                    layer,
+                    value: sigma,
+                });
             }
             let alpha = alphas
                 .and_then(|a| a.get(ch).and_then(|r| r.get(layer)))
@@ -131,7 +204,7 @@ pub fn evaluate_density_curves(
                 } else {
                     (x - center) / sigma
                 };
-                row[ch] += amp * layer_cdf(z, model_type, alpha)?;
+                row[ch] += amp * layer_cdf_detailed(z, model_type, alpha)?;
             }
         }
     }
@@ -148,9 +221,30 @@ pub fn evaluate_density_curves_layers(
     alphas: Option<&[Vec<f64>]>,
     positive: bool,
 ) -> Result<Vec<Vec<Vec<f64>>>, String> {
+    evaluate_density_curves_layers_detailed(
+        log_exposure,
+        model_type,
+        centers,
+        amplitudes,
+        sigmas,
+        alphas,
+        positive,
+    )
+    .map_err(|error| error.to_string())
+}
+
+pub fn evaluate_density_curves_layers_detailed(
+    log_exposure: &[f64],
+    model_type: &str,
+    centers: &[Vec<f64>],
+    amplitudes: &[Vec<f64>],
+    sigmas: &[Vec<f64>],
+    alphas: Option<&[Vec<f64>]>,
+    positive: bool,
+) -> Result<Vec<Vec<Vec<f64>>>, DensityCurveError> {
     let n_layers = centers.first().map_or(0, Vec::len);
     if centers.iter().any(|r| r.len() != n_layers) {
-        return Err("density-curve model channels must have equal layer counts".into());
+        return Err(DensityCurveError::EqualLayers);
     }
     validate_alphas(model_type, centers, alphas)?;
     let mut out = vec![vec![vec![0.0; centers.len()]; n_layers]; log_exposure.len()];
@@ -158,9 +252,7 @@ pub fn evaluate_density_curves_layers(
         if amplitudes.get(ch).is_none_or(|r| r.len() != n_layers)
             || sigmas.get(ch).is_none_or(|r| r.len() != n_layers)
         {
-            return Err(format!(
-                "density-curve model channel {ch} has inconsistent layer counts"
-            ));
+            return Err(DensityCurveError::LayerCounts(ch));
         }
         for layer in 0..n_layers {
             let alpha = alphas
@@ -170,16 +262,19 @@ pub fn evaluate_density_curves_layers(
             for (k, &x) in log_exposure.iter().enumerate() {
                 let sigma = sigmas[ch][layer];
                 if !sigma.is_finite() || sigma <= 0.0 {
-                    return Err(format!(
-                        "density-curve model sigma must be finite and positive (channel {ch}, layer {layer})"
-                    ));
+                    return Err(DensityCurveError::Sigma {
+                        channel: ch,
+                        layer,
+                        value: sigma,
+                    });
                 }
                 let z = if positive {
                     -(x - centers[ch][layer]) / sigma
                 } else {
                     (x - centers[ch][layer]) / sigma
                 };
-                out[k][layer][ch] = amplitudes[ch][layer] * layer_cdf(z, model_type, alpha)?;
+                out[k][layer][ch] =
+                    amplitudes[ch][layer] * layer_cdf_detailed(z, model_type, alpha)?;
             }
         }
     }
@@ -190,23 +285,21 @@ fn validate_alphas(
     model_type: &str,
     centers: &[Vec<f64>],
     alphas: Option<&[Vec<f64>]>,
-) -> Result<(), String> {
+) -> Result<(), DensityCurveError> {
     if model_type == "sept_norm_cdfs"
         && let Some(alphas) = alphas
     {
         if alphas.len() != centers.len()
             || alphas.iter().zip(centers).any(|(a, c)| a.len() != c.len())
         {
-            return Err(
-                "septic density-curve alphas must match the channel and layer counts".into(),
-            );
+            return Err(DensityCurveError::AlphaShape);
         }
-        if alphas
+        if let Some(&value) = alphas
             .iter()
             .flatten()
-            .any(|a| !a.is_finite() || a.abs() >= 1.0)
+            .find(|a| !a.is_finite() || a.abs() >= 1.0)
         {
-            return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
+            return Err(DensityCurveError::AlphaBounds(value));
         }
     }
     Ok(())
@@ -350,6 +443,60 @@ pub fn interp_density_cmy_layers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detailed_density_failures_keep_english_and_rejected_facts() {
+        let centers = vec![vec![0.0]];
+        let amplitudes = vec![vec![1.0]];
+        let sigmas = vec![vec![0.0]];
+        let error = evaluate_density_curves_detailed(
+            &[0.0],
+            "norm_cdfs",
+            &centers,
+            &amplitudes,
+            &sigmas,
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DensityCurveError::Sigma {
+                channel: 0,
+                layer: 0,
+                value: 0.0
+            }
+        ));
+        assert_eq!(
+            error.to_string(),
+            evaluate_density_curves(
+                &[0.0],
+                "norm_cdfs",
+                &centers,
+                &amplitudes,
+                &sigmas,
+                None,
+                false
+            )
+            .unwrap_err()
+        );
+        let alphas = vec![vec![f64::NAN]];
+        let error = evaluate_density_curves_detailed(
+            &[0.0],
+            "sept_norm_cdfs",
+            &centers,
+            &amplitudes,
+            &[vec![1.0]],
+            Some(&alphas),
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(error, DensityCurveError::AlphaBounds(value) if value.is_nan()));
+        assert_eq!(
+            error.to_string(),
+            "septic density-curve alpha must satisfy |alpha| < 1"
+        );
+    }
 
     #[test]
     fn test_interp_density_cmy_layers_sums_to_composite() {

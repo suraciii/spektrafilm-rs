@@ -359,6 +359,11 @@ function Copy-NativeBundle([string]$Destination) {
     }
     Copy-Item -LiteralPath "licenses\lensfun-cc-by-sa-3.0.txt" -Destination (Join-Path $licenses "lensfun-database-CC-BY-SA-3.0.txt")
     Copy-Item -LiteralPath "LICENSE" -Destination (Join-Path $licenses "spektrafilm-GPL-3.0.txt")
+    foreach ($license in @("NotoSansSC-OFL.txt", "NotoSansSC-NOTICE.txt")) {
+        $source = Join-Path "crates\spektrafilm-gui\assets" $license
+        if (-not (Test-Path -LiteralPath $source)) { throw "Font license missing: $license" }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $licenses $license)
+    }
     foreach ($license in @("nvlabs-flip-bsd-3-clause.txt", "littlecms-mit.txt")) {
         if (-not (Test-Path -LiteralPath (Join-Path "licenses" $license))) { throw "Benchmark license missing: $license" }
         Copy-Item -LiteralPath (Join-Path "licenses" $license) -Destination (Join-Path $licenses $license)

@@ -29,15 +29,32 @@ impl ScannerProvenance {
         value: &serde_json::Value,
         lamp: Option<&serde_json::Value>,
     ) -> Result<serde_json::Value, String> {
-        let current = serde_json::to_value(Self::LAB_SCAN_V1).map_err(|e| e.to_string())?;
+        Self::migrate_legacy_detailed(value, lamp).map_err(|error| error.to_string())
+    }
+
+    pub fn migrate_legacy_detailed(
+        value: &serde_json::Value,
+        lamp: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value, crate::params::ValidationError> {
+        use crate::params::{ValidationError as Error, ValidationReason as Reason};
+        let current = serde_json::to_value(Self::LAB_SCAN_V1).map_err(|error| {
+            Error::new(
+                Reason::SerializeParameters,
+                "scanner_provenance",
+                error.to_string(),
+            )
+            .arg("detail", error)
+        })?;
         let mut legacy = current.clone();
         legacy["model"] = "neutral_scan_v2".into();
         let mut with_lamp = legacy.clone();
         with_lamp["lamp"] = lamp.cloned().unwrap_or_else(|| "D55".into());
         if value != &legacy && value != &with_lamp && value != &current {
-            return Err(
-                "legacy scanner provenance does not match the built-in readout model".into(),
-            );
+            return Err(Error::new(
+                Reason::LegacyProvenance,
+                "scanner_provenance",
+                "legacy scanner provenance does not match the built-in readout model",
+            ));
         }
         Ok(current)
     }

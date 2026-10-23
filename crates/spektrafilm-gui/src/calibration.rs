@@ -30,11 +30,11 @@ impl App {
     pub(super) fn start_calibration(&mut self, action: controls::CalibrationAction) {
         if self.calibration_job.is_some() || self.render_job.is_some() || self.export_job.is_some()
         {
-            self.status = "Wait for the current operation before running a Convert action.".into();
+            self.status = crate::app::Message::new("operations.calibration_wait");
             return;
         }
         let Some(image) = self.image.as_ref().map(|image| (**image).clone()) else {
-            self.status = "Load an input image before running a Convert action.".into();
+            self.status = crate::app::Message::new("operations.calibration_load");
             return;
         };
         let mut params = match self
@@ -43,21 +43,24 @@ impl App {
         {
             Ok(params) => params,
             Err(error) => {
-                self.status = format!("Calibration state error: {error:#}");
+                self.status = crate::app::Message::new("operations.calibration_state_error")
+                    .message_arg("detail", crate::app::Message::error(&error));
                 return;
             }
         };
         let film = match profile::load_profile_by_name(&self.data_dir, &self.film_name) {
             Ok(profile) => profile,
             Err(error) => {
-                self.status = format!("Calibration film error: {error:#}");
+                self.status = crate::app::Message::new("operations.calibration_film_error")
+                    .arg("detail", error);
                 return;
             }
         };
         let print = match profile::load_profile_by_name(&self.data_dir, &self.print_name) {
             Ok(profile) => profile,
             Err(error) => {
-                self.status = format!("Calibration print error: {error:#}");
+                self.status = crate::app::Message::new("operations.calibration_print_error")
+                    .arg("detail", error);
                 return;
             }
         };
@@ -66,12 +69,11 @@ impl App {
         let epoch = self.calibration_epoch.wrapping_add(1);
         self.calibration_epoch = epoch;
         let (tx, rx) = mpsc::channel();
-        let action_name = match action {
-            controls::CalibrationAction::DetectBase => "Detecting film base…",
-            controls::CalibrationAction::BlindCalibration => "Fitting blind calibration…",
-            controls::CalibrationAction::NeutralizeFilters => "Neutralizing print filters…",
-        };
-        self.status = action_name.into();
+        self.status = crate::app::Message::new(match action {
+            controls::CalibrationAction::DetectBase => "operations.detecting_base",
+            controls::CalibrationAction::BlindCalibration => "operations.fitting_calibration",
+            controls::CalibrationAction::NeutralizeFilters => "operations.neutralizing_filters",
+        });
         let handle = std::thread::Builder::new()
             .name("spektrafilm-calibration".into())
             .spawn(move || {
@@ -115,7 +117,8 @@ impl App {
                 });
             }
             Err(error) => {
-                self.status = format!("Calibration worker error: {error}");
+                self.status = crate::app::Message::new("operations.calibration_worker_error")
+                    .arg("detail", error);
             }
         }
     }
@@ -135,7 +138,7 @@ impl App {
                 if let Some(handle) = job.handle.take() {
                     let _ = handle.join();
                 }
-                self.status = "Calibration worker vanished.".into();
+                self.status = crate::app::Message::new("operations.calibration_worker_vanished");
                 return;
             }
         };
@@ -145,7 +148,7 @@ impl App {
             let _ = handle.join();
         }
         if epoch != self.calibration_epoch {
-            self.status = "Discarded stale Convert calibration result.".into();
+            self.status = crate::app::Message::new("operations.calibration_stale");
             return;
         }
         match result {
@@ -157,25 +160,27 @@ impl App {
                 self.params.film_render.convert.exposure_compensation_ev = exposure_ev;
                 self.mark_parameters_changed();
                 self.force_preview = true;
-                self.status =
-                    format!("Film base detected; exposure compensation {exposure_ev:+.2} EV.");
+                self.status = crate::app::Message::new("operations.base_detected")
+                    .arg("exposure", format!("{exposure_ev:+.2}"));
             }
             Ok(CalibrationResult::BlindCalibration(calibration)) => {
                 self.params.film_render.convert.calibration = calibration;
                 self.mark_parameters_changed();
                 self.force_preview = true;
-                self.status = "Blind calibration fitted.".into();
+                self.status = crate::app::Message::new("operations.calibration_fitted");
             }
             Ok(CalibrationResult::NeutralizeFilters { m_shift, y_shift }) => {
                 self.params.enlarger.m_filter_shift = m_shift;
                 self.params.enlarger.y_filter_shift = y_shift;
                 self.mark_parameters_changed();
                 self.force_preview = true;
-                self.status =
-                    format!("Print filters neutralized: M {m_shift:+.2}, Y {y_shift:+.2}.");
+                self.status = crate::app::Message::new("operations.filters_neutralized")
+                    .arg("magenta", format!("{m_shift:+.2}"))
+                    .arg("yellow", format!("{y_shift:+.2}"));
             }
             Err(error) => {
-                self.status = format!("Calibration failed: {error}");
+                self.status =
+                    crate::app::Message::new("operations.calibration_failed").arg("detail", error);
             }
         }
         ctx.request_repaint();

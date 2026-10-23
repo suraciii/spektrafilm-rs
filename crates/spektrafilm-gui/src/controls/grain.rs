@@ -51,16 +51,17 @@ fn engine_group(
         let active = engine == selected;
         if filter.active() {
             ui.label(
-                egui::RichText::new(engine_label(engine))
+                egui::RichText::new(localized(ui.ctx(), engine_label(engine)))
                     .color(if active { theme::FG } else { theme::FG_MUTED })
                     .strong(),
             );
             ui.add_enabled_ui(active, |ui| {
                 if !active {
                     ui.label(
-                        egui::RichText::new(
-                            "Inactive until this engine is selected; stored values are retained.",
-                        )
+                        egui::RichText::new(crate::i18n::text(
+                            ui.ctx(),
+                            "controls.grain.inactive_engine",
+                        ))
                         .color(theme::FG_MUTED),
                     );
                 }
@@ -75,11 +76,8 @@ fn engine_group(
                     label_clicked = ui
                         .add(
                             egui::Label::new(
-                                egui::RichText::new(engine_label(engine)).color(if active {
-                                    theme::FG
-                                } else {
-                                    theme::FG_MUTED
-                                }),
+                                egui::RichText::new(localized(ui.ctx(), engine_label(engine)))
+                                    .color(if active { theme::FG } else { theme::FG_MUTED }),
                             )
                             .sense(egui::Sense::click()),
                         )
@@ -91,9 +89,10 @@ fn engine_group(
         header.body(|ui| {
             if !active {
                 ui.label(
-                    egui::RichText::new(
-                        "Inactive until this engine is selected; stored values are retained.",
-                    )
+                    egui::RichText::new(crate::i18n::text(
+                        ui.ctx(),
+                        "controls.grain.inactive_engine",
+                    ))
                     .small()
                     .color(theme::FG_MUTED),
                 );
@@ -126,8 +125,13 @@ fn feature_profile_selector(
         .chain(std::iter::once(("custom", "Custom")));
     if let Some(reason) = unavailable_reason {
         ui.label(
-            egui::RichText::new(format!("{label}: {reason}; stored values retained."))
-                .color(theme::FG_MUTED),
+            egui::RichText::new(crate::tr!(
+                ui.ctx(),
+                "controls.grain.unavailable_profile",
+                label = localized(ui.ctx(), label),
+                reason = localized(ui.ctx(), reason)
+            ))
+            .color(theme::FG_MUTED),
         );
         ui.add_enabled_ui(false, |ui| {
             choice_tip_entries(
@@ -154,7 +158,14 @@ fn feature_profile_selector(
                 flags.runtime_changed = true;
             }
             Err(error) => {
-                ui.label(egui::RichText::new(error).color(theme::FG_MUTED));
+                ui.label(
+                    egui::RichText::new(crate::tr!(
+                        ui.ctx(),
+                        "controls.grain.profile_apply_error",
+                        error = error
+                    ))
+                    .color(theme::FG_MUTED),
+                );
             }
         }
     }
@@ -193,7 +204,7 @@ pub(crate) fn sections(
                 ], "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model.");
             }
             ui.label(
-                egui::RichText::new("Recommended: Spektra (material grain) · Procedural (post-scan, lightweight)")
+                egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.grain.recommended_engines"))
                     .small()
                     .color(theme::FG_MUTED),
                 );
@@ -203,7 +214,7 @@ pub(crate) fn sections(
                 if !active {
                     ui.label(
                         egui::RichText::new(
-                            "Shared by Spektra and Dye; inactive until either engine is selected, stored values are retained.",
+                            crate::i18n::text(ui.ctx(), "controls.grain.inactive_shared_material"),
                         )
                         .small()
                         .color(theme::FG_MUTED),
@@ -279,7 +290,7 @@ pub(crate) fn sections(
             engine_group(ui, filter, engine, GrainEngine::Procedural, |ui, filter| {
                 let custom = grain.v2_profile == "custom";
                 if !custom {
-                    ui.label("Custom-only controls are inactive under a named profile; stored overrides are retained. Select Custom to edit them.");
+                    ui.label(crate::i18n::text(ui.ctx(), "controls.grain.named_profile_custom_controls"));
                 }
                 ui.add_enabled_ui(custom, |ui| {
                     if filter_matches(filter, "film type") {
@@ -376,7 +387,7 @@ pub(crate) fn sections(
                         let mut cache = SectionLabelCache::default();
                         let mut components = ControlFilter::new("", &mut cache);
                         flags.runtime_changed |= fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares, &mut components);
-                        ui.label("Sublayer 4 is read-only: one minus the first three shares.");
+                        ui.label(crate::i18n::text(ui.ctx(), "controls.grain.fourth_sublayer_remainder"));
                     } else {
                         flags.runtime_changed |= fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares, filter);
                     }

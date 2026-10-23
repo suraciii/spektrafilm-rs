@@ -52,9 +52,9 @@ fn operator_controls(
         return;
     }
     ui.separator();
-    ui.label("Operator correction");
+    ui.label(localized(ui.ctx(), "Operator correction"));
     if !active {
-        ui.label("Inactive: requires a negative film, an eligible negative-to-positive route and standard conversion style. Stored corrections are retained.");
+        ui.label(localized(ui.ctx(), "Inactive: requires a negative film, an eligible negative-to-positive route and standard conversion style. Stored corrections are retained."));
     }
     let mut editor = ui.ctx().data_mut(|data| {
         data.remove_temp::<OperatorEditor>(operator_editor_id())
@@ -85,24 +85,24 @@ fn operator_controls(
         }
         ui.horizontal_wrapped(|ui| {
             if filter_matches(filter, "restore automatic") {
-                let response = ui.add_enabled(*operator != ScanOperatorParams::default(), egui::Button::new("Restore automatic"))
-                    .on_hover_text("Reset the four operator values only; keep this frame's own automatic setup.");
+                let response = ui.add_enabled(*operator != ScanOperatorParams::default(), egui::Button::new(localized(ui.ctx(), "Restore automatic")))
+                    .on_hover_text(localized(ui.ctx(), "Reset the four operator values only; keep this frame's own automatic setup."));
                 focus_response(ui, "Restore automatic", &response);
                 if response.clicked() {
                     *operator = ScanOperatorParams::default();
                 }
             }
             if filter_matches(filter, "copy operator correction") {
-                let response = ui.button("Copy operator correction")
-                    .on_hover_text("Copy only the four operator values for this session, not automatic setup, film density or capture settings.");
+                let response = ui.button(localized(ui.ctx(), "Copy operator correction"))
+                    .on_hover_text(localized(ui.ctx(), "Copy only the four operator values for this session, not automatic setup, film density or capture settings."));
                 focus_response(ui, "Copy operator correction", &response);
                 if response.clicked() {
                     editor.clipboard = Some(*operator);
                 }
             }
             if filter_matches(filter, "paste operator correction") {
-                let response = ui.add_enabled(editor.clipboard.is_some(), egui::Button::new("Paste operator correction"))
-                    .on_hover_text("Apply the copied four values to this frame's own automatic setup.");
+                let response = ui.add_enabled(editor.clipboard.is_some(), egui::Button::new(localized(ui.ctx(), "Paste operator correction")))
+                    .on_hover_text(localized(ui.ctx(), "Apply the copied four values to this frame's own automatic setup."));
                 focus_response(ui, "Paste operator correction", &response);
                 if response.clicked()
                     && let Some(copied) = editor.clipboard
@@ -111,8 +111,8 @@ fn operator_controls(
                 }
             }
             if filter_matches(filter, "hold automatic comparison") {
-                let response = ui.button("Hold automatic comparison")
-                    .on_hover_text("Hold the primary mouse button or focused Space to view this same frame with default operator values. Release to restore the corrected view. Saved and exported corrections are unchanged.");
+                let response = ui.button(localized(ui.ctx(), "Hold automatic comparison"))
+                    .on_hover_text(localized(ui.ctx(), "Hold the primary mouse button or focused Space to view this same frame with default operator values. Release to restore the corrected view. Saved and exported corrections are unchanged."));
                 focus_response(ui, "Hold automatic comparison", &response);
                 let comparing = (response.is_pointer_button_down_on()
                     && ui.input(|input| input.pointer.primary_down()))
@@ -207,7 +207,7 @@ pub(crate) fn sections(
                     | spektrafilm_core::WorkflowRoute::FilmPrintScan
             );
             if !capture_active {
-                ui.label("Capture illuminant inactive on this route; stored values are retained.");
+                ui.label(localized(ui.ctx(), "Capture illuminant inactive on this route; stored values are retained."));
             }
             if filter_matches(filter, "exposure compensation ev") {
                 flags.runtime_changed |= param_numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, "camera.exposure_compensation_ev", "Add a bias to the auto-exposure of the camera.");
@@ -226,13 +226,14 @@ pub(crate) fn sections(
             }
             if filter_matches(filter, "capture illuminant") {
                 ui.add_enabled_ui(capture_active, |ui| {
+                    let help = crate::tr!(ui.ctx(), "controls.scanner.capture_illuminant_help", reference = capture_reference_illuminant);
                     flags.runtime_changed |= optional_choice_tip(
                         ui,
                         "capture illuminant",
                         &mut params.camera.capture_illuminant,
                         "inherit (film profile)",
                         CAPTURE_ILLUMINANTS,
-                        &format!("Scene illuminant for the filming front pass; unset inherits the selected film profile reference illuminant ({capture_reference_illuminant}). Distinct from film sensitivity calibration, scan and enlarger illuminants, and output white point."),
+                        &help,
                     );
                 });
             }
@@ -241,7 +242,10 @@ pub(crate) fn sections(
     if section == "Enlarger" {
         let print_active = params.workflow.route.contains(" > print > ");
         if !print_active {
-            ui.label("Enlarger inactive on this route; stored values are retained.");
+            ui.label(localized(
+                ui.ctx(),
+                "Enlarger inactive on this route; stored values are retained.",
+            ));
         }
         ui.add_enabled_ui(print_active, |ui| {
             if filter_matches(filter, "print exposure") {
@@ -291,19 +295,19 @@ pub(crate) fn sections(
                 ScanMedium::Negative => "Negative",
             };
             ui.label(
-                egui::RichText::new(format!("Scanning: {medium_label}"))
+                egui::RichText::new(crate::tr!(ui.ctx(), "controls.scanner.scanning_medium", medium = localized(ui.ctx(), medium_label)))
                     .small()
                     .color(theme::FG_MUTED),
             );
             // Product readout illumination is fixed by the material category;
             // only output polarity and readout optics are adjustable here.
             ui.label(
-                egui::RichText::new(vocabulary::SCANNER_SEQUENCE)
+                egui::RichText::new(localized(ui.ctx(), vocabulary::SCANNER_SEQUENCE))
                     .small()
                     .color(theme::FG_MUTED),
             );
             if medium == ScanMedium::None {
-                ui.label("Scanner inactive on this route; stored values are retained.");
+                ui.label(localized(ui.ctx(), "Scanner inactive on this route; stored values are retained."));
             }
             ui.add_enabled_ui(medium != ScanMedium::None, |ui| {
             if filter_matches(filter, vocabulary::SCAN_OUTPUT)
@@ -326,9 +330,9 @@ pub(crate) fn sections(
             // so it is offered only while that interpretation is selected.
             if filter_matches(filter, vocabulary::CONVERSION_STYLE) {
                 let conversion_active = positive_route && params.scanner.scan_output == "negative_to_positive";
-                if !conversion_active { ui.label("Conversion style inactive until Negative to positive is selected; stored values are retained."); }
+                if !conversion_active { ui.label(localized(ui.ctx(), "Conversion style inactive until Negative to positive is selected; stored values are retained.")); }
                 let styles = conversion_styles(data_dir);
-                if ui.add_enabled_ui(conversion_active, |ui| choice_tip_entries(
+                if ui.add_enabled_ui(conversion_active, |ui| widgets::choice_tip_profile_entries(
                     ui,
                     vocabulary::CONVERSION_STYLE,
                     &mut params.scanner.conversion_style,
@@ -434,7 +438,8 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
     let mut selected = preset;
     let mark = row_modified::RowMark::resolve(ui.ctx(), Some(PATH));
     ui.horizontal(|ui| {
-        let label = widgets::row_label(ui, "Film Format", false).on_hover_text(HELP);
+        let label =
+            widgets::row_label(ui, "Film Format", false).on_hover_text(localized(ui.ctx(), HELP));
         mark.paint(ui, &label);
         let width = ui
             .available_width()
@@ -442,9 +447,9 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
         let response = mark.gold(ui, |ui| {
             egui::ComboBox::from_id_salt("Film Format")
                 .selected_text(if custom {
-                    "Custom"
+                    localized(ui.ctx(), "Custom")
                 } else {
-                    FORMATS[preset.unwrap()].0
+                    std::borrow::Cow::Borrowed(FORMATS[preset.unwrap()].0)
                 })
                 .width(width)
                 .show_ui(ui, |ui| {
@@ -457,12 +462,18 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
                             custom = false;
                         }
                     }
-                    if ui.selectable_label(custom, "Custom").clicked() {
+                    if ui
+                        .push_id("Custom", |ui| {
+                            ui.selectable_label(custom, localized(ui.ctx(), "Custom"))
+                        })
+                        .inner
+                        .clicked()
+                    {
                         custom = true;
                     }
                 })
                 .response
-                .on_hover_text(HELP)
+                .on_hover_text(localized(ui.ctx(), HELP))
         });
         focus_response(ui, "Film Format", &response);
         widgets::name_choice(ui, "Film Format");
@@ -512,7 +523,10 @@ fn preflash_controls(
     }
     let active = params.workflow.route.contains(" > print > ");
     if !active {
-        ui.label("Preflash inactive on this route; stored values are retained.");
+        ui.label(localized(
+            ui.ctx(),
+            "Preflash inactive on this route; stored values are retained.",
+        ));
     }
     ui.add_enabled_ui(active, |ui| {
         if filter_matches(filter, "preflash exposure") {

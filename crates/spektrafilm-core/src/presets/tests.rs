@@ -449,7 +449,7 @@ fn atomic_failure_retains_document() {
     assert_eq!(std::fs::read(&path).unwrap(), before);
     let destination = temp.0.join("Directory.toml");
     std::fs::create_dir(&destination).unwrap();
-    assert!(super::library::atomic_write(&destination, "test").is_err());
+    assert!(super::library::atomic_write_detailed(&destination, "test").is_err());
     assert_eq!(std::fs::read(&path).unwrap(), before);
     assert!(
         std::fs::read_dir(&temp.0).unwrap().all(|e| !e
@@ -716,9 +716,9 @@ fn section_matching_compares_typed_carried_values() {
             .unwrap();
         assert!(section_matches(&preset, &applied).unwrap());
         let mut different = applied;
-        parameter_edits(&mismatch)
+        parameter_edits_detailed(&mismatch)
             .unwrap()
-            .apply(&mut different)
+            .apply_detailed(&mut different)
             .unwrap();
         assert!(!section_matches(&preset, &different).unwrap());
     }

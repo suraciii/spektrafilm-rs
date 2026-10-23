@@ -301,32 +301,55 @@ impl InputGamutCompress {
     /// `"off"` is accepted only for an inactive spec; unknown algorithms and invalid
     /// knees error before any artifact is produced.
     pub fn build(params: &InputGamutCompressParams) -> Result<Self, String> {
+        Self::build_detailed(params).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn build_detailed(
+        params: &InputGamutCompressParams,
+    ) -> Result<Self, crate::params::ValidationError> {
+        use crate::params::{ValidationError as Error, ValidationReason as Reason};
         let inactive = params.algorithm == "off";
         let algorithm = match params.algorithm.as_str() {
             "xy" => Algorithm::Xy,
             "oklch" => Algorithm::Oklch,
             "off" if !params.active => Algorithm::Xy,
             other => {
-                return Err(format!(
+                return Err(Error::new(Reason::InputAlgorithm, "io.input_gamut_compress.algorithm", format!(
                     "input gamut compression algorithm must be 'xy', 'oklch', or inactive 'off', got {other:?}"
-                ));
+                )).arg("value", format!("{other:?}")));
             }
         };
         let boundary = match params.boundary.as_str() {
             "locus" => Boundary::Locus,
             "inscribed_hull" => Boundary::InscribedHull,
-            other => return Err(format!("unknown input gamut boundary {other:?}")),
+            other => {
+                return Err(Error::new(
+                    Reason::InputBoundary,
+                    "io.input_gamut_compress.boundary",
+                    format!("unknown input gamut boundary {other:?}"),
+                )
+                .arg("value", format!("{other:?}")));
+            }
         };
         if !params.hull_detail.is_finite() || params.hull_detail <= 0.0 {
-            return Err(format!(
-                "input gamut hull detail must be finite and > 0, got {}",
-                params.hull_detail
-            ));
+            return Err(Error::new(
+                Reason::HullDetail,
+                "io.input_gamut_compress.hull_detail",
+                format!(
+                    "input gamut hull detail must be finite and > 0, got {}",
+                    params.hull_detail
+                ),
+            )
+            .arg("value", params.hull_detail));
         }
-        let knee = crate::params::validation::validate_gamut_triplet(
+        let knee = crate::params::validation::validate_gamut_triplet_detailed(
             "input gamut compression knee",
             params.knee,
-        )?;
+        )
+        .map_err(|mut error| {
+            error.path = "io.input_gamut_compress.knee".into();
+            error
+        })?;
         let locus = spectral_locus_xy();
         let active = params.active && !inactive;
         let c_max = match (active, algorithm) {
