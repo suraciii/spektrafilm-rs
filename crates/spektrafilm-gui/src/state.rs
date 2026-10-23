@@ -148,10 +148,34 @@ impl GuiState {
             bail!("Unsupported Rust GUI state extension version");
         }
         if matches!(version, Some(1..=4)) {
-            for pointer in ["/scanner", "/rust/runtime/scanner"] {
-                if let Some(scanner) = value.pointer_mut(pointer).and_then(Value::as_object_mut) {
-                    scanner.remove("lamp");
-                }
+            let mut top = json!({"scanner": value["scanner"].clone(),
+                "film_render": {"convert": value.get("convert").cloned().or_else(|| value.pointer("/rust/runtime/film_render/convert").cloned()).unwrap_or_else(|| json!({}))}});
+            spektrafilm_core::params::sources::normalize_legacy_scan_readout(&mut top, true)
+                .map_err(anyhow::Error::msg)?;
+            if value.get("scanner").is_some() {
+                value["scanner"] = top["scanner"].clone();
+            }
+            if top
+                .pointer("/film_render/convert/scan_illuminant")
+                .is_some()
+            {
+                value["convert"] = top["film_render"]["convert"].clone();
+            }
+            if let Some(runtime) = value.pointer_mut("/rust/runtime") {
+                spektrafilm_core::params::sources::normalize_legacy_scan_readout(runtime, true)
+                    .map_err(anyhow::Error::msg)?;
+            }
+        }
+        if value.pointer("/convert/scan_illuminant").is_none()
+            && let Some(light) = value
+                .pointer("/rust/runtime/film_render/convert/scan_illuminant")
+                .cloned()
+        {
+            if value.get("convert").is_none() {
+                value["convert"] = json!({});
+            }
+            if let Some(convert) = value.get_mut("convert").and_then(Value::as_object_mut) {
+                convert.insert("scan_illuminant".into(), light);
             }
         }
         validate_state_parameters(&mut value, version)?;

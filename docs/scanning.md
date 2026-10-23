@@ -43,7 +43,7 @@ There is one negative conversion interpretation. It has no selectable method. Th
 
 Negative conversion applies to direct negative-film scans and the `input > convert-film > scan` route. Print-paper and scan-minus-base routes retain their existing route semantics. The displayed result interprets film density. It is not a measurement of the film or a match guarantee for a processed reference JPEG. Hold profile, exposure, white balance, and scan settings fixed when comparing results.
 
-For a real negative scanner capture on `input > convert-film > scan`, disable virtual camera metering with `camera.auto_exposure=false`. Supply input transfer and color interpretation. Convert-film estimates the record densities that the negative converter reads.
+For a real negative scanner capture on `input > convert-film > scan`, disable virtual camera metering with `camera.auto_exposure=false`. Supply input transfer and color interpretation. Convert-film estimates the record densities that the negative converter reads. Set `film_render.convert.scan_illuminant` to the acquisition light (default `D55`). This is an imported-capture declaration, not a readout-light knob; final material readout remains fixed at D50 or BB5800.
 
 ## Conversion styles
 
@@ -140,3 +140,7 @@ The look's `negative_to_positive` tone assumes scene-linear input. Its tone valu
 - [Attribution](attribution.md)
 - [Film-chain specification](../specs/film-chain/spec.md)
 - [Project context](../CONTEXT.md)
+
+## Saved document cutover
+
+GUI state version 5, preset schema 6, and recipe schema `spektrafilm-rs-params-6` own the scanner cutover. Explicit older versions migrate `scanner.lamp` out of the readout controls. Complete captures preserve it as the Convert acquisition illuminant unless already declared. Current versions reject `scanner.lamp`. The built-in `neutral` spelling becomes `standard`; this migration intentionally changes the automatic scan output.

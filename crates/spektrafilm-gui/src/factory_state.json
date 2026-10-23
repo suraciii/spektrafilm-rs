@@ -189,6 +189,7 @@
     "yellow": 1.0
   },
   "convert": {
+    "scan_illuminant": "D55",
     "exposure_compensation_ev": 0.0,
     "base_percentile": 99.0,
     "calibration": "1 0 0  0 1 0  0 0 1"

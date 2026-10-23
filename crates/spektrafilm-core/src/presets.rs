@@ -523,29 +523,20 @@ impl Preset {
                 .and_then(|p| p.get("scanner"))
                 .filter(|scanner| !scanner.is_null())
             {
-                let current = serde_json::to_value(crate::ScannerProvenance::from_params(
-                    &RuntimeParams::default(),
-                ))
-                .map_err(|e| e.to_string())?;
-                let mut legacy = current.clone();
-                legacy["model"] = "neutral_scan_v2".into();
-                let mut with_lamp = legacy.clone();
-                with_lamp["lamp"] = lamp.clone().unwrap_or_else(|| "D55".into());
-                if scanner != &legacy && scanner != &with_lamp && scanner != &current {
-                    return Err(
-                        "legacy scanner provenance does not match the built-in readout model"
-                            .into(),
-                    );
-                }
+                let current = crate::ScannerProvenance::migrate_legacy(scanner, lamp.as_ref())?;
                 object["provenance"]["scanner"] = current;
                 object["provenance"]["model_version"] = crate::runtime::MODEL_VERSION.into();
             }
-            if let Some(scanner) = object
-                .get_mut("parameters")
-                .and_then(|p| p.get_mut("scanner"))
-                .and_then(Value::as_object_mut)
-            {
-                scanner.remove("lamp");
+            let preserve_capture = object.get("film_profile").is_some_and(|p| !p.is_null())
+                || object
+                    .get("parameters")
+                    .and_then(|p| p.get("film_render"))
+                    .is_some();
+            if let Some(parameters) = object.get_mut("parameters") {
+                crate::params::sources::normalize_legacy_scan_readout(
+                    parameters,
+                    preserve_capture,
+                )?;
             }
             object.insert("schema_version".into(), PRESET_SCHEMA_VERSION.into());
         }

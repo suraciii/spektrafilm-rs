@@ -37,12 +37,7 @@ pub(crate) fn resolve(name: &str, data_dir: Option<&Path>) -> Result<[ChannelTon
     if matches!(name, "standard" | "neutral") {
         return Ok(STANDARD);
     }
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-        || name.contains(':')
-    {
+    if !valid_name(name) {
         return Err(format!(
             "scanner.conversion_style {name:?} is not a valid style name; available styles: {}",
             available(data_dir).join(", ")
@@ -71,6 +66,14 @@ pub(crate) fn resolve(name: &str, data_dir: Option<&Path>) -> Result<[ChannelTon
     })
 }
 
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && !name.contains(':')
+}
+
 /// Style names available under a data directory (`standard` always, then the
 /// `scan-styles/*.json` stems) — for error messages and pickers.
 pub(crate) fn available(data_dir: Option<&Path>) -> Vec<String> {
@@ -82,10 +85,10 @@ pub(crate) fn available(data_dir: Option<&Path>) -> Vec<String> {
             .flatten()
             .filter_map(|entry| {
                 let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                     path.file_stem()
                         .and_then(|stem| stem.to_str())
-                        .filter(|name| !matches!(*name, "standard" | "neutral"))
+                        .filter(|name| valid_name(name) && !matches!(*name, "standard" | "neutral"))
                         .map(str::to_owned)
                 } else {
                     None
@@ -167,6 +170,8 @@ mod tests {
         .unwrap();
         std::fs::write(styles.join("standard.json"), "not consulted").unwrap();
         std::fs::write(styles.join("neutral.json"), "not consulted").unwrap();
+        std::fs::write(styles.join("bad..name.json"), "not offered").unwrap();
+        std::fs::create_dir(styles.join("not-a-file.json")).unwrap();
         let tones = resolve("warm-probe", Some(dir.path())).unwrap();
         assert_ne!(tones[0], tones[2]);
         assert_eq!(

@@ -44,7 +44,7 @@ The scan output value `negative_to_positive` selects negative conversion. Negati
 
 Image correction and digital output must not select a different scanned medium or a photographic print route.
 
-`scanner.scan_output` accepts only `direct_scan` and `negative_to_positive`. The removed value `positive_scan` must fail validation in CLI options, runtime parameters, sparse sources, presets, render recipes, and imported GUI state. Readers must not alias it or silently reset it. Omitted scan output retains the `direct_scan` default. Existing schema versions and parameter field names remain unchanged.
+`scanner.scan_output` accepts only `direct_scan` and `negative_to_positive`. The removed value `positive_scan` must fail validation in CLI options, runtime parameters, sparse sources, presets, render recipes, and imported GUI state. Readers must not alias it or silently reset it. Omitted scan output retains the `direct_scan` default. The [lab scan cutover](lab-scan/spec.md#point-wise-consumers-and-migration) owns document-version migration.
 
 The white reference of a scan is the clear film base of the scanned medium. A clear area of that base reads as the output color space's white; the chromatically adapted scan of any other area is expressed against that white.
 
@@ -67,7 +67,7 @@ The white reference of a scan is the clear film base of the scanned medium. A cl
 - Negative conversion belongs to `negative_to_positive`. A photographic-paper scan and a slide film scan must not expose it. See [Direct negative-film scan output](#direct-negative-film-scan-output).
 - Existing exposure and development controls belong to their material stage. No appearance treatment is applied to a completed scan: scanner finishing is removed from the contract.
 - Scanner calibration, inverse curves, and correction references retain their existing dependencies on profile and development settings. Material controls must not add a second reference model or alter the real captured-negative recovery solve.
-- Scan provenance records one colorimetric sensor and the clear-film white reference. It must publish the resolved lamp, the output space white, and the identity matrix of the scan transform.
+- Scan provenance records one colorimetric sensor and the clear-film white reference. It must publish the resolved readout illuminant, the output space white, and the identity matrix of the scan transform.
 
 ## Scan optics and print viewing glare
 
@@ -131,7 +131,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 1. Discovery, CLI help, effective parameter reports, saved presets, recipes, and GUI state must emit the canonical paths `scanner.scan_output`, `scanner.lens_blur`, `scanner.unsharp_mask`, and `enlarger.print_exposure_mode`.
 2. GUI display names must use the real operation words: scan output, lens blur, unsharp mask, and print exposure mode.
 3. Replacing a legacy path with its canonical path must preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls.
-4. The legacy `scanner.receiver_profile`, `scanner.negative_conversion_method`, `scanner.conversion_brightness_ev`, `scanner.conversion_balance_ev`, `scanner.conversion_contrast`, `scanner.conversion_dmax`, `scanner.auto_setup`, `scanner.finish`, `scanner.finish_strength`, `scanner.white_correction`, `scanner.black_correction`, `scanner.white_level`, `scanner.black_level`, `scanner.black_point`, `scanner.white_point`, `scanner.reference_exposure_ev`, and `scanner.reference_balance_ev` paths, the legacy `enlarger.normalize_print_exposure` and `enlarger.print_exposure_compensation` leaves, and the legacy `film_render.convert.scan_illuminant` leaf must fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes. Only the versioned preset migration and the versioned complete GUI state migration may map them.
+4. The legacy `scanner.receiver_profile`, `scanner.negative_conversion_method`, `scanner.conversion_brightness_ev`, `scanner.conversion_balance_ev`, `scanner.conversion_contrast`, `scanner.conversion_dmax`, `scanner.auto_setup`, `scanner.finish`, `scanner.finish_strength`, `scanner.white_correction`, `scanner.black_correction`, `scanner.white_level`, `scanner.black_level`, `scanner.black_point`, `scanner.white_point`, `scanner.reference_exposure_ev`, and `scanner.reference_balance_ev` paths, the legacy `enlarger.normalize_print_exposure` and `enlarger.print_exposure_compensation` leaves must fail unknown-field validation in runtime parameters, sparse sources, inline assignments, current-schema presets, and imported recipes. Only the versioned preset migration and the versioned complete GUI state migration may map them.
 5. Rejection timing and failed-import retention follow [Scan output naming acceptance](#scan-output-naming-acceptance).
 6. The implementation must identify the rename in its render/model version. Readers must not alias legacy paths at the current schema version.
 

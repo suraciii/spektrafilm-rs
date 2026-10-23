@@ -34,6 +34,24 @@ fn telemetry_scanner_configuration_roundtrips_the_neutral_scan_model() {
     drop(simulation);
     attempt.finish(Outcome::Succeeded);
     let report = operation.finish(Outcome::Succeeded).unwrap();
+    let mut historical: serde_json::Value =
+        serde_json::from_str(&report.to_json().unwrap()).unwrap();
+    let old_model = historical["configuration"]["render"]["scan_model"]
+        .as_object_mut()
+        .unwrap();
+    old_model.remove("readout_illuminant");
+    old_model.remove("readout_rule");
+    old_model.insert("lamp".into(), "D65".into());
+    let old = spektrafilm_core::telemetry::Report::from_json(&historical.to_string()).unwrap();
+    assert!(
+        old.configuration
+            .render
+            .unwrap()
+            .scan_model
+            .readout_illuminant
+            .is_empty(),
+        "historical reports must not invent a material-category readout fact"
+    );
     let decoded =
         spektrafilm_core::telemetry::Report::from_json(&report.to_json().unwrap()).unwrap();
     let actual = decoded.configuration.render.unwrap();

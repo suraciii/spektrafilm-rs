@@ -403,6 +403,9 @@ fn description(path: &str) -> Option<&'static str> {
         "scanner.lens_blur" => Some(
             "Optical softness in linear scanner readout before interpretation, corrections, gamut processing and digital sharpening.",
         ),
+        "film_render.convert.scan_illuminant" => Some(
+            "Illumination of the imported RGB acquisition; used only by convert-film inversion, independent of the product readout light.",
+        ),
         "scanner.conversion_style" => Some(
             "Named stylization of the negative-to-positive tone: standard applies automatic frame setup then the frozen tone; any other name applies the declared per-channel tone triple from data/scan-styles/<name>.json.",
         ),

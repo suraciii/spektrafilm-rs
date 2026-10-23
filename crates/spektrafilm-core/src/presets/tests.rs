@@ -1073,6 +1073,10 @@ fn scanner_cutover_migrates_legacy_lamp_and_canonicalizes_sparse_style_without_f
     let mut old = serde_json::to_value(base).unwrap();
     old["schema_version"] = 5.into();
     old["parameters"]["scanner"]["lamp"] = "D65".into();
+    old["parameters"]["film_render"]["convert"]
+        .as_object_mut()
+        .unwrap()
+        .remove("scan_illuminant");
     old["parameters"]["scanner"]["conversion_style"] = "neutral".into();
     let mut historical = serde_json::to_value(crate::ScannerProvenance::from_params(
         &RuntimeParams::default(),
@@ -1088,6 +1092,10 @@ fn scanner_cutover_migrates_legacy_lamp_and_canonicalizes_sparse_style_without_f
     assert_eq!(
         canonical["parameters"]["scanner"]["conversion_style"],
         "standard"
+    );
+    assert_eq!(
+        canonical["parameters"]["film_render"]["convert"]["scan_illuminant"],
+        "D65"
     );
     assert_eq!(canonical["provenance"]["scanner"]["model"], "lab_scan_v1");
     let mut forged = old.clone();

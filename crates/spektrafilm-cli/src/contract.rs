@@ -10,12 +10,13 @@ use std::path::Path;
 
 pub const IMPLEMENTATION: &str = "spektrafilm-rs";
 pub const ADAPTER_VERSION: &str = "spektrafilm-rs-adapter-1";
-pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-5";
+pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-6";
 const LEGACY_PARAMETER_SCHEMA_VERSIONS: &[&str] = &[
     "spektrafilm-rs-params-1",
     "spektrafilm-rs-params-2",
     "spektrafilm-rs-params-3",
     "spektrafilm-rs-params-4",
+    "spektrafilm-rs-params-5",
 ];
 pub const FORK_REFERENCE: &str = "suraciii/spektrafilm-rs";
 pub const FINISHED_JPEG_QUALITY: u8 = 85;
@@ -100,7 +101,18 @@ pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
     validate_output(&recipe.output)?;
     let mut parameters = canonical_parameters(recipe.parameters.clone())?;
     if LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&recipe.schema_version.as_str()) {
-        spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut parameters)
+        // Params 5 already rejected the older retired-field spellings.
+        if recipe.schema_version != "spektrafilm-rs-params-5" {
+            spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut parameters)
+                .map_err(anyhow::Error::msg)?;
+        }
+        if let Some(provenance) = recipe.scanner_provenance.as_ref() {
+            recipe.scanner_provenance = Some(
+                ScannerProvenance::migrate_legacy(provenance, parameters.pointer("/scanner/lamp"))
+                    .map_err(anyhow::Error::msg)?,
+            );
+        }
+        spektrafilm_core::params::sources::normalize_legacy_scan_readout(&mut parameters, true)
             .map_err(anyhow::Error::msg)?;
     }
     let params = normalize_parameters(parameters.clone())?;
@@ -335,6 +347,7 @@ mod tests {
                 let result = read_recipe(&path);
                 if retired.is_none()
                     || (LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&version)
+                        && version != "spektrafilm-rs-params-5"
                         && retired == Some(Value::Null))
                 {
                     let accepted = result.unwrap();
@@ -368,6 +381,40 @@ mod tests {
             assert_eq!(std::fs::read(&path).unwrap(), source);
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recipe_scan_cutover_preserves_capture_and_rejects_current_lamp_and_forged_provenance() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("recipe.json");
+        let mut metadata =
+            serde_json::to_value(ScannerProvenance::from_params(&RuntimeParams::default()))
+                .unwrap();
+        metadata["model"] = "neutral_scan_v2".into();
+        metadata["lamp"] = "T".into();
+        let mut document = json!({"schemaVersion":"spektrafilm-rs-params-5","filmProfile":"kodak_portra_400",
+            "parameters":{"scanner":{"lamp":"T","conversion_style":"neutral"}},
+            "scannerProvenance":metadata,"output":default_output("jpeg")});
+        std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        let recipe = read_recipe(&path).unwrap();
+        assert_eq!(recipe.schema_version, PARAMETER_SCHEMA_VERSION);
+        assert_eq!(
+            recipe.parameters["film_render"]["convert"]["scan_illuminant"],
+            "T"
+        );
+        assert_eq!(recipe.parameters["scanner"]["conversion_style"], "standard");
+        assert!(recipe.parameters["scanner"].get("lamp").is_none());
+        assert_eq!(recipe.scanner_provenance.unwrap()["model"], "lab_scan_v1");
+        document["scannerProvenance"]["sensor"] = "forged".into();
+        std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        assert!(read_recipe(&path).is_err());
+        document["schemaVersion"] = PARAMETER_SCHEMA_VERSION.into();
+        document
+            .as_object_mut()
+            .unwrap()
+            .remove("scannerProvenance");
+        std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        assert!(read_recipe(&path).is_err());
     }
 
     use super::*;

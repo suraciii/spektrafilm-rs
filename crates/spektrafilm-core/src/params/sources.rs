@@ -140,6 +140,49 @@ pub(crate) fn normalize_legacy_cmyk(value: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Remove the old readout control only at a versioned legacy boundary.
+/// Complete captures retain its value in the independent convert acquisition
+/// light unless that document already declares one. Scanner-only presets
+/// discard the retired leaf instead of gaining a different section.
+pub fn normalize_legacy_scan_readout(
+    value: &mut Value,
+    preserve_capture: bool,
+) -> Result<(), String> {
+    let Some(lamp) = value.pointer("/scanner/lamp").cloned() else {
+        return Ok(());
+    };
+    let name = lamp
+        .as_str()
+        .filter(|name| crate::spectral_service::is_supported_illuminant(name))
+        .ok_or("legacy scanner.lamp must name a supported illuminant")?;
+    let mut candidate = value.clone();
+    candidate["scanner"]
+        .as_object_mut()
+        .expect("lamp belongs to scanner object")
+        .remove("lamp");
+    if preserve_capture
+        && candidate
+            .pointer("/film_render/convert/scan_illuminant")
+            .is_none()
+    {
+        let film = candidate
+            .as_object_mut()
+            .ok_or("legacy parameters must be an object")?
+            .entry("film_render")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or("film_render must be an object")?;
+        let convert = film
+            .entry("convert")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or("film_render.convert must be an object")?;
+        convert.insert("scan_illuminant".into(), name.into());
+    }
+    *value = candidate;
+    Ok(())
+}
+
 /// Map the pre-v4 legacy `enlarger` print-exposure pair of a complete
 /// runtime document onto `enlarger.print_exposure_mode` with
 /// `settings.print_exposure_ev_tracking` for the two mixed states.

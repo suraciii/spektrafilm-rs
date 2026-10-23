@@ -297,6 +297,10 @@ impl Default for PrintBaseParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConvertFilmParams {
+    /// Illumination used to acquire the imported RGB capture. This belongs
+    /// to capture inversion, not the product readout illuminant.
+    #[serde(default = "default_convert_illuminant")]
+    pub scan_illuminant: String,
     #[serde(default)]
     pub exposure_compensation_ev: f64,
     #[serde(default = "default_99")]
@@ -304,9 +308,13 @@ pub struct ConvertFilmParams {
     #[serde(default = "default_calibration")]
     pub calibration: String,
 }
+fn default_convert_illuminant() -> String {
+    "D55".into()
+}
 impl Default for ConvertFilmParams {
     fn default() -> Self {
         Self {
+            scan_illuminant: default_convert_illuminant(),
             exposure_compensation_ev: 0.0,
             base_percentile: 99.0,
             calibration: default_calibration(),

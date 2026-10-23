@@ -380,3 +380,7 @@ Automatic discovery must exercise relocated executable-relative data, working-di
 A misspelled known field or preset name must fail and suggest its nearby canonical spelling, including a library name. An unrelated unknown value must fail without a misleading correction. Existing invalid-option suggestions must remain available.
 
 JSON and TOML discovery, dry-run, render, and inspect output must remain parseable with stderr captured separately. LUT bake and quality messages must use stderr. Normal image rendering must preserve its stdout behavior and output pixels.
+
+## Lab scan recipe cutover
+
+The recipe writer must emit `spektrafilm-rs-params-6`. Versions 1–5 may migrate only at their declared legacy boundary under the [lab scan contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration). Historical scanner provenance must match the built-in model before replacement. Version 5 must not reopen older retired-field migrations. Current recipe parameters must reject `scanner.lamp`; independent imported-capture illumination belongs to `film_render.convert.scan_illuminant`.

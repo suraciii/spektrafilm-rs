@@ -27,6 +27,10 @@ Positive transmission and paper reflection readout must use the clear material b
 
 Paper readout must compute color from spectral reflectance. The densitometer convention describes profile measurement; it must not replace the reflectance integration.
 
+## Imported capture illumination
+
+`film_render.convert.scan_illuminant` describes the light that acquired an imported RGB image. It defaults to `D55` and uses the shared illuminant vocabulary and validator. It must affect convert-film inversion and calibration only. It must not override the product readout illuminant. The Convert panel and saved state must retain this independent input declaration.
+
 ## Exposure reference and inverse
 
 The negative-film exposure coordinate uses the normalized camera reference: a scene-linear neutral value of `0.184` under the stock reference illuminant maps approximately to `log_e = 0`. The target coordinate for frame setup is
@@ -115,9 +119,9 @@ Any other valid name resolves to `<data-dir>/scan-styles/<name>.json`. A file de
 
 A `negative_to_positive` render with `standard` must fail LUT baking. A point-wise measurement whose range reaches `rgb_out` through this setup must fail before writing measurement output. Both failures must identify frame dependence and direct the caller to a declared fixed style. Earlier film-density or exposure taps remain measurable.
 
-GUI state version 5 owns the cutover. Versions 1–4 may discard retired `lamp` keys from scanner sections during migration. Current version 5 and unversioned current documents must reject them. Style aliases normalize on load and save. This migration intentionally changes scan appearance.
+GUI state version 5 owns the cutover. Versions 1–4 must remove retired `lamp` keys from scanner sections during migration. A complete legacy capture must preserve the old light under `film_render.convert.scan_illuminant` unless it already declares an acquisition light. Scanner-only preset sections must not acquire a Convert section. Current version 5 and unversioned current documents must reject them. Style aliases normalize on load and save. This migration intentionally changes scan appearance.
 
-Preset schema 6 owns the same scanner cutover for versions 1–5. It must validate historical scanner provenance against the built-in model before replacing it. It must reject forged device metadata. Current schema 6 rejects `lamp` and retains all unrelated retired-field rejection. Sparse sections must preserve omission when normalizing the style alias.
+Preset schema 6 and recipe schema `spektrafilm-rs-params-6` own the same scanner cutover for versions 1–5. It must validate historical scanner provenance against the built-in model before replacing it. It must reject forged device metadata. Current schemas reject `lamp` and retain all unrelated retired-field rejection. Sparse sections must preserve omission when normalizing the style alias.
 
 ## Acceptance and limits
 

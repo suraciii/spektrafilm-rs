@@ -23,6 +23,25 @@ impl ScannerProvenance {
         Self::LAB_SCAN_V1
     }
 
+    /// Validate metadata from a versioned legacy capture before re-deriving
+    /// it. Never bless arbitrary measured-device strings during migration.
+    pub fn migrate_legacy(
+        value: &serde_json::Value,
+        lamp: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let current = serde_json::to_value(Self::LAB_SCAN_V1).map_err(|e| e.to_string())?;
+        let mut legacy = current.clone();
+        legacy["model"] = "neutral_scan_v2".into();
+        let mut with_lamp = legacy.clone();
+        with_lamp["lamp"] = lamp.cloned().unwrap_or_else(|| "D55".into());
+        if value != &legacy && value != &with_lamp && value != &current {
+            return Err(
+                "legacy scanner provenance does not match the built-in readout model".into(),
+            );
+        }
+        Ok(current)
+    }
+
     const LAB_SCAN_V1: Self = Self {
         model: "lab_scan_v1",
         sensor: "cie_1931_cmf",

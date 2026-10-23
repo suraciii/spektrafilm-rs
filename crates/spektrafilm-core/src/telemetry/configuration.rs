@@ -264,7 +264,10 @@ pub struct ScanModelConfiguration {
     pub white_reference: String,
     pub output_white: String,
     pub matrix: String,
+    /// Empty when reading a pre-cutover report that did not record this fact.
+    #[serde(default)]
     pub readout_illuminant: String,
+    #[serde(default)]
     pub readout_rule: String,
 }
 

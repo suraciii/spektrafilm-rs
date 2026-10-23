@@ -30,7 +30,7 @@ A fixed user-authored style remains the explicit point-wise alternative. No addi
 
 Runtime scanner parameters own canonical style spelling. Deserialization maps `neutral` to `standard`; serialization emits the canonical spelling even for a programmatically assigned alias. The GUI catalog uses the same core catalog owner and hides reserved names. Reports carry the canonical style, the model revision, and the material-category readout selection. Debug tracing records per-frame offsets without adding a public control.
 
-The model revision changes because both readout light and automatic setup change pixels. GUI state migration removes retired lamp keys only for explicitly versioned legacy documents. Current-schema unknown-field validation stays strict.
+The model revision changes because both readout light and automatic setup change pixels. GUI state migration removes retired lamp keys only for explicitly versioned legacy documents. Current-schema unknown-field validation stays strict. Complete legacy documents preserve acquisition light under the Convert owner. Scanner-only presets discard the removed readout leaf without adding another section. Recipe, preset, and GUI adapters share the core cutover and provenance validators.
 
 ## Evidence limits
 

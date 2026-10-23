@@ -320,13 +320,13 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).to_owned())
             .collect(),
-        "camera.capture_illuminant" | "enlarger.illuminant" => {
-            crate::spectral_service::available_illuminants()
-                .iter()
-                .map(|v| (*v).to_owned())
-                .chain(std::iter::once("BB<kelvin> (1667..=25000)".into()))
-                .collect()
-        }
+        "camera.capture_illuminant"
+        | "enlarger.illuminant"
+        | "film_render.convert.scan_illuminant" => crate::spectral_service::available_illuminants()
+            .iter()
+            .map(|v| (*v).to_owned())
+            .chain(std::iter::once("BB<kelvin> (1667..=25000)".into()))
+            .collect(),
         "camera.diffusion_filter.filter_family" | "enlarger.diffusion_filter.filter_family" => {
             ["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"]
                 .iter()
@@ -409,7 +409,9 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
         }
         "settings.rgb_to_raw_method" => rgb_to_raw_names().contains(&value),
         "camera.color_filter" => crate::spectral_service::is_supported_color_filter(value),
-        "camera.capture_illuminant" | "enlarger.illuminant" => {
+        "camera.capture_illuminant"
+        | "enlarger.illuminant"
+        | "film_render.convert.scan_illuminant" => {
             crate::spectral_service::is_supported_illuminant(value)
         }
         "camera.diffusion_filter.filter_family" | "enlarger.diffusion_filter.filter_family" => {
@@ -649,6 +651,14 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         return Err(format!(
             "camera.capture_illuminant: unsupported illuminant {capture_illuminant:?}; \
              supported: {supported}"
+        ));
+    }
+    if !crate::spectral_service::is_supported_illuminant(
+        &params.film_render.convert.scan_illuminant,
+    ) {
+        return Err(format!(
+            "film_render.convert.scan_illuminant: unsupported capture illuminant {:?}",
+            params.film_render.convert.scan_illuminant
         ));
     }
     if !crate::spectral_service::is_supported_illuminant(&params.enlarger.illuminant) {
