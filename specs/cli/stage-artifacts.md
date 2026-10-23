@@ -184,7 +184,7 @@ spektrafilm process negative.sfstage --backend cpu \
   -o print.sfstage
 
 spektrafilm process print.sfstage --backend cpu \
-  --route 'print > scan' --set scanner.lamp=D65 \
+  --route 'print > scan' --set scanner.lens_blur=0.5 \
   -o print-scan.tif --diagnostics report.json
 ```
 

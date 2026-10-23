@@ -16,13 +16,16 @@ use super::{
     Backend, DataSelection, DiscoveryFormat, preset, process_report, select_data_dir, telemetry,
 };
 
+#[path = "process_stage.rs"]
+mod stage;
+
 #[derive(clap::Args)]
 #[group(id = "Process")]
 pub struct ProcessArgs {
     /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
     #[arg(long, value_enum, help_heading = "Execution and diagnostics")]
     pub(crate) backend: Option<Backend>,
-    /// Input TIFF, EXR, PNG, JPEG, or camera RAW image.
+    /// Input raster, camera RAW image, or stage artifact directory.
     #[arg(help_heading = "Input and RAW loading")]
     pub(crate) input: PathBuf,
     /// Raster color space; discover with describe --field io.input_color_space.
@@ -31,7 +34,7 @@ pub struct ProcessArgs {
     /// Whether raster samples require transfer decoding (true or false).
     #[arg(long, action = clap::ArgAction::Set, help_heading = "Input and RAW loading")]
     pub(crate) input_cctf_decoding: Option<bool>,
-    /// Destination TIFF, EXR, PNG, or JPEG image; optional only with --dry-run.
+    /// Destination image or stage artifact; optional only with --dry-run.
     #[arg(
         short,
         long,
@@ -56,12 +59,8 @@ pub struct ProcessArgs {
     pub(crate) compression: Option<CompressionArg>,
     #[command(flatten)]
     pub(crate) workflow: WorkflowOptions,
-    /// Film stock ID; discover with list-profiles. Required without --preset.
-    #[arg(
-        long,
-        required_unless_present = "preset",
-        help_heading = "Look and workflow"
-    )]
+    /// Film stock ID; discover with list-profiles. Inherited for artifact input.
+    #[arg(long, help_heading = "Look and workflow")]
     pub(crate) film: Option<String>,
     /// Print stock ID; otherwise uses film for direct scans or its target_print.
     #[arg(long, help_heading = "Look and workflow")]
@@ -111,14 +110,9 @@ pub struct ProcessArgs {
     /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
     #[arg(long, help_heading = "Output")]
     pub(crate) raw_out: Option<PathBuf>,
-    /// Write a native stage-evidence bundle (terminal manifest and f64 stage
-    /// buffers) into DIRECTORY; CPU reference execution only.
-    #[arg(
-        long,
-        value_name = "DIRECTORY",
-        help_heading = "Execution and diagnostics"
-    )]
-    pub(crate) stage_evidence: Option<PathBuf>,
+    /// Emit detailed execution diagnostics to stderr without creating files.
+    #[arg(long, action = clap::ArgAction::SetTrue, help_heading = "Execution and diagnostics")]
+    pub(crate) debug: bool,
     /// Run the pipeline this many times in one process (at least 1).
     #[arg(long, default_value = "1", help_heading = "Execution and diagnostics")]
     pub(crate) iters: usize,
@@ -183,7 +177,7 @@ impl Default for ProcessArgs {
             dry_run_format: None,
             seed: None,
             raw_out: None,
-            stage_evidence: None,
+            debug: false,
             iters: 1,
             data_dir: PathBuf::from("data"),
         }
@@ -479,6 +473,13 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
     // workers, so install the switch here instead of mutating the process
     // environment after the pool exists.
     spektrafilm_backend::timing::set_stage_timings(args.timings);
+    if args.input.is_dir() {
+        for id in ["raw_white_balance", "raw_temperature", "raw_tint", "lens_correction"] {
+            if command_matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine) {
+                bail!("--{} is inapplicable to stage artifact input", id.replace('_', "-"));
+            }
+        }
+    }
     let data_dir = std::mem::take(&mut args.data_dir);
     let data = select_data_dir(data_dir, command_matches)?;
     run_with_data_dir(args, data)
@@ -487,11 +488,41 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
 /// Run the process pipeline with an already-resolved data directory.
 /// Shared with the lab module, which cannot construct `ArgMatches`.
 pub(crate) fn run_with_data_dir(args: ProcessArgs, data: DataSelection) -> Result<()> {
-    // Protect every bundle file, including publication temporaries, from
-    // invocation inputs, output/raw-out and optional diagnostics.
-    let evidence_paths = args
-        .stage_evidence
-        .as_deref()
+    run_with_capture(args, data, None)
+}
+
+/// Instrument-owned native observation request, never a public parser option.
+pub(crate) fn run_with_native_capture(
+    args: ProcessArgs,
+    data: DataSelection,
+    directory: &Path,
+) -> Result<()> {
+    run_with_capture(args, data, Some(directory))
+}
+
+fn run_with_capture(mut args: ProcessArgs, data: DataSelection, capture: Option<&Path>) -> Result<()> {
+    // Legacy complete baselines may retain an image-input partial route. Do not
+    // infer artifact continuation: that input always requires explicit --route.
+    if args.workflow.route.is_none() && !args.input.is_dir() && !args.scan_film {
+        if let Some(path) = &args.params {
+            let text = std::fs::read_to_string(path).with_context(|| format!("opening params file {}", path.display()))?;
+            let baseline = spektrafilm_core::params::sources::parse_carrier(&text, false).map_err(anyhow::Error::msg)?;
+            if let Some(route) = baseline.pointer("/workflow/route").and_then(serde_json::Value::as_str) {
+                let selected = spektrafilm_core::WorkflowRoute::parse(route);
+                if selected.artifact_output().is_some() && selected.artifact_input().is_none() {
+                    args.workflow.route = Some(route.to_owned());
+                }
+            }
+        }
+    }
+    let route = args.workflow.route.as_deref().map(spektrafilm_core::WorkflowRoute::parse);
+    if args.input.is_dir() || route.is_some_and(|route| route.artifact_input().is_some() || route.artifact_output().is_some()) {
+        if capture.is_some() {
+            bail!("native research capture requires an image-output route");
+        }
+        return stage::run(&args, &data);
+    }
+    let evidence_paths = capture
         .map(|directory| {
             let mut paths = vec![
                 directory.join("stage-evidence.json"),
@@ -537,6 +568,7 @@ pub(crate) fn run_with_data_dir(args: ProcessArgs, data: DataSelection) -> Resul
                 invocation,
                 &protected[..invocation_path_count],
                 &evidence_paths,
+                capture,
             )
         },
     )?;
@@ -549,6 +581,7 @@ fn cmd_process(
     invocation: &mut telemetry::Invocation,
     protected: &[&Path],
     evidence_paths: &[PathBuf],
+    capture: Option<&Path>,
 ) -> Result<()> {
     let input = args.input.as_path();
     let output = args.output.as_deref();
@@ -576,10 +609,18 @@ fn cmd_process(
     let sources = &args.sources;
     let dry_run = args.dry_run;
     let raw_out = args.raw_out.as_deref();
-    let stage_evidence = args.stage_evidence.as_deref();
+    let stage_evidence = capture;
     let iters = args.iters;
     let backend_choice = args.backend;
     let data_dir = &data.path;
+    if args.debug {
+        eprintln!("Debug: requested backend={}, computation precision={}, input={}",
+            match args.backend { Some(Backend::Cpu) => "cpu", Some(Backend::Gpu) => "gpu", None => "auto" },
+            if cfg!(feature = "precision-f64") { "f64" } else { "f32" },
+            input.display());
+        eprintln!("Debug: parameter sources: {} preset(s), {} feature profile(s), {} --set source(s)",
+            args.preset.len(), args.feature_profiles.len(), args.sources.len());
+    }
     let total_start = Instant::now();
     use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
     let context = invocation.operation.context();
@@ -676,6 +717,11 @@ fn cmd_process(
     let mut params = resolved.params;
     params.random_seed = u64::from(args.seed.unwrap_or(0));
     process_report::warn_edits(&resolved.edits);
+    if args.debug {
+        eprintln!("Debug: resolved route={}, film={}, print={}, seed={}; execution{} observed",
+            params.workflow.route, resolved.film_name, resolved.print_name, params.random_seed,
+            if dry_run { " not" } else { " not yet" });
+    }
     if stage_evidence.is_some() {
         // Configuration-level rejection, before dry run or rendering: the
         // capture route must not run a configuration it cannot describe.

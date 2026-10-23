@@ -71,12 +71,17 @@ pub(crate) fn print_text(report: &Value) {
     println!("INPUT");
     println!("  kind: {}", value(&report["input"]["kind"]));
     let declaration = &report["input"]["declaration"];
-    for component in ["color_space", "cctf_decoding"] {
-        println!(
-            "  {component}: {} (source: {})",
-            value(&declaration[component]),
-            source_label(&declaration["sources"][component])
-        );
+    if !declaration.is_null() {
+        for component in ["color_space", "cctf_decoding"] {
+            println!("  {component}: {} (source: {})",
+                value(&declaration[component]), source_label(&declaration["sources"][component]));
+        }
+    }
+    if !report["input"]["artifact"].is_null() {
+        record("STAGE ARTIFACT", &report["input"]["artifact"]);
+    }
+    if !report["execution"].is_null() {
+        record("EXECUTION (planned, not observed)", &report["execution"]);
     }
     if !report["input"]["raw_loading"].is_null() {
         record("RAW LOADING", &report["input"]["raw_loading"]);
@@ -92,8 +97,11 @@ pub(crate) fn print_text(report: &Value) {
         value(&params["scanner"]["scan_output"])
     );
     println!("  seed: {}", value(&report["seed"]));
+    if !report["seed_source"].is_null() {
+        println!("  seed source: {}", value(&report["seed_source"]));
+    }
     record("CAPTURE ILLUMINANT", &report["capture_illuminant"]);
-    record("SCANNER LAMP", &report["scanner_lamp"]);
+    record("READOUT ILLUMINANT", &report["readout_illuminant"]);
     record("SCANNER", &params["scanner"]);
     record("SCANNER PROVENANCE", &report["scanner_provenance"]);
     println!(

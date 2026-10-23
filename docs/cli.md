@@ -38,6 +38,36 @@ See [source declarations](../specs/cli/spec.md#input-declaration) and the [image
 RAW examples retain automatic linear ACES2065-1 declaration.
 See [RAW input](raw.md) for decoding details and [scanning](scanning.md) for negative conversion.
 
+## Material stage input and output
+
+`--route` selects whether the primary output is an image or one resumable material state. A route ending at `film` or `print` writes a self-contained directory with a `stage.json` manifest and native density payloads; `.sfstage` is the recommended suffix. A route ending at `scan` writes an ordinary image. The destination extension never chooses the operations.
+
+```bash
+# Film-only processing does not require an unused print profile.
+spektrafilm process input.png --backend cpu --film kodak_portra_400 \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --route 'input > film' -o negative.sfstage
+
+# Continue the saved material without repeating film exposure or development.
+spektrafilm process negative.sfstage --backend cpu \
+    --route 'film > print > scan' --paper kodak_portra_endura -o final.tif
+
+# Save print separately, then scan it with downstream edits.
+spektrafilm process negative.sfstage --backend cpu \
+    --route 'film > print' --paper kodak_portra_endura -o print.sfstage
+spektrafilm process print.sfstage --backend cpu \
+    --route 'print > scan' --set scanner.lens_blur=0.5 -o print.tif
+```
+
+The six material routes are `input > film`, `input > film > print`, `film > scan`, `film > print`, `film > print > scan`, and `print > scan`. Artifact inputs require an explicit matching route and reject raster declarations, RAW loading controls, and diagnostic taps. Artifact destinations must not already exist. Image writer options such as `--format`, `--bit-depth`, compression, JPEG options, and saving color/transfer conversion do not apply to material output.
+
+Completed material and its interpretation are frozen. A different upstream edit must regenerate from the earlier input; later overrides cannot conceal the conflict. Downstream presets and `--set` retain their normal ordering. An omitted `--seed` inherits the artifact seed; an explicit seed changes only future stochastic operations. Geometry already performed is not repeated. Artifacts embed their material dependencies, so continuation does not depend on the original photograph or mutable profile library. Unsupported material boundaries fail with the model reason instead of disabling effects.
+
+`--dry-run` resolves the artifact header without decoding large numeric payloads or creating outputs. Its report distinguishes inherited and planned operations, seed origin, and unchecked payload integrity. It is not proof of integrity or compute-device availability. See the [stage artifact contract](../specs/cli/stage-artifacts.md) for the persistence and precision rules.
+
+`--debug` is a Boolean stderr-only diagnostic flag. It accepts no directory or value and creates no files. It does not change parameters, results, stdout, dry-run reports, artifact contents, or GPU timing collection. Redirect stderr with the shell to save text. `--diagnostics report.json` remains an independent structured-report request. The retired public `--stage-evidence` option has no alias; dedicated instrument native observations remain research data, not resumable material artifacts.
+
+
 ## Backend and precision
 
 `process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`.
