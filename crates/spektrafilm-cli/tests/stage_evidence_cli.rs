@@ -125,12 +125,15 @@ fn stage<'a>(manifest: &'a serde_json::Value, id: &str) -> &'a serde_json::Value
 #[test]
 fn experiment_observation_matches_uncaptured_raw_output() {
     let fixture = Fixture::new();
+    assert!(!fixture.0.join("observed").exists());
+    assert!(!fixture.bundle().exists());
     let observed = fixture.observe(&[]);
     assert!(
         observed.status.success(),
         "{}",
         String::from_utf8_lossy(&observed.stderr)
     );
+    assert!(fixture.bundle().is_dir());
     let raw = fixture.0.join("plain.f64");
     let plain = fixture.plain(&["--raw-out", raw.to_str().unwrap()]);
     assert!(

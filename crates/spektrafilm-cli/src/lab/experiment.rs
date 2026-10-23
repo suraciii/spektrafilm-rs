@@ -113,27 +113,6 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
         args.chain.data_dir.is_some(),
     )?;
     let bundle_dir = out.join("bundle");
-    // The shared handler protects process inputs. The experiment additionally
-    // owns declarations that must not be overwritten by observer publication.
-    let protected = [document_path.as_path(), suite_path.as_path()];
-    for name in std::iter::once("stage-evidence.json".to_owned()).chain(
-        spektrafilm_core::stage_evidence::StageId::ORDER
-            .iter()
-            .map(|stage| format!("{}.f64", stage.id())),
-    ) {
-        for destination in [
-            bundle_dir.join(&name),
-            bundle_dir.join(format!("{name}.tmp")),
-        ] {
-            spektrafilm_core::telemetry::validate_report_destination(&destination, &protected)
-                .with_context(|| {
-                    format!(
-                        "observation destination conflicts: {}",
-                        destination.display()
-                    )
-                })?;
-        }
-    }
     // A route the bundle cannot describe is a configuration-level failure
     // before rendering: the capture route is `rgb_in` through `rgb_out`, so a
     // route that skips the film or print boundaries would publish a bundle
@@ -233,6 +212,22 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
         data_dir: data.path.clone(),
     };
     let command_record = command_record(args, &document_path, &suite_path, &out, &process_args)?;
+    // Destination validation resolves file identities against an existing
+    // parent. Only create the observer tree after declarations resolve.
+    std::fs::create_dir_all(&bundle_dir)
+        .with_context(|| format!("creating observation directory: {}", bundle_dir.display()))?;
+    // The shared handler protects process inputs. The experiment additionally
+    // owns declarations that must not be overwritten by observer publication.
+    let protected = [document_path.as_path(), suite_path.as_path()];
+    for name in std::iter::once("stage-evidence.json".to_owned()).chain(
+        spektrafilm_core::stage_evidence::StageId::ORDER.iter()
+            .map(|stage| format!("{}.f64", stage.id())),
+    ) {
+        for destination in [bundle_dir.join(&name), bundle_dir.join(format!("{name}.tmp"))] {
+            spektrafilm_core::telemetry::validate_report_destination(&destination, &protected)
+                .with_context(|| format!("observation destination conflicts: {}", destination.display()))?;
+        }
+    }
     process::run_with_native_capture(process_args, data, &bundle_dir)?;
 
     let manifest_path = bundle_dir.join("stage-evidence.json");
