@@ -265,6 +265,9 @@ class ExperimentalDesktop(X11):
                         break
         require(rows, f'Choice label not visible: {label}')
         if not below:
+            rows = [(span, [word for word in values
+                            if words(word[0]) != ['experimental']], y)
+                    for span, values, y in rows]
             rows = [row for row in rows if row[1]
                     and not any(words(word[0]) in (['reset'], ['modified']) for word in row[1])]
             require(rows, f'Choice value not visible: {label}')
