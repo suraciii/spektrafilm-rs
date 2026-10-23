@@ -1026,7 +1026,7 @@ fn preflight_cases<'a>(
             let result = (|| -> Result<()> {
                 fs::create_dir_all(&folder)?;
                 let (environment, _) = renderer_environment(context.target, &folder);
-                let resolved = check_configuration(case, seed, context, &folder, &mut row)?;
+                check_configuration(case, seed, context, &folder, &mut row)?;
                 // The source route preflight resolves exactly the source
                 // configuration the execution will use, through the same
                 // resolver; no pixels are decoded, so exposure, stages and

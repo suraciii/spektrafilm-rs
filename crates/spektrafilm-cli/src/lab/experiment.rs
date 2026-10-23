@@ -115,7 +115,7 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
     let bundle_dir = out.join("bundle");
     // The shared handler protects process inputs. The experiment additionally
     // owns declarations that must not be overwritten by observer publication.
-    let protected = [document_path.clone(), suite_path.clone()];
+    let protected = [document_path.as_path(), suite_path.as_path()];
     for name in std::iter::once("stage-evidence.json".to_owned()).chain(
         spektrafilm_core::stage_evidence::StageId::ORDER
             .iter()
