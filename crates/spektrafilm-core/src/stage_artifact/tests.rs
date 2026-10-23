@@ -590,11 +590,51 @@ fn pinned_root_survives_path_and_ancestor_symlink_substitution() {
     assert_eq!(read_header_from_root(&pinned).unwrap().seed, 42);
     let (density, _) = payload::read_raster(&pinned, header.density.as_ref().unwrap(), true).unwrap().into_image().unwrap();
     assert_eq!(density.data, original.density.data);
-    // A new read refuses to follow the substituted ancestor at acquisition.
-    assert!(read_header(&path).is_err());
+    // A fresh invocation may intentionally select the ancestor alias, but
+    // that selection cannot replace the already pinned original root.
+    assert_eq!(read_header(&path).unwrap().seed, 99);
     let moved = moved_parent.join("film.sfstage");
     std::fs::rename(&moved, moved_parent.join("original.sfstage")).unwrap();
     symlink(outside.join("film.sfstage"), &moved).unwrap();
     assert_eq!(read_header_from_root(&pinned).unwrap().seed, 42);
     assert!(read_header(&moved).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn writer_and_reader_admit_selected_symlink_parent_aliases() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let real = root.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let alias = root.path().join("alias");
+    symlink(&real, &alias).unwrap();
+    let path = alias.join("film.sfstage");
+    let material = state();
+    validate_destination(&path).unwrap();
+    write(&path, &material).unwrap();
+    assert_eq!(read(&path).unwrap().density.data, material.density.data);
+    assert_eq!(read(real.join("film.sfstage")).unwrap().density.data, material.density.data);
+    symlink(real.join("film.sfstage"), alias.join("root-link.sfstage")).unwrap();
+    assert!(read(alias.join("root-link.sfstage")).is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn writer_rejects_reparse_parent_before_creating_staging_or_destination() {
+    use std::os::windows::fs::symlink_dir;
+    let root = tempfile::tempdir().unwrap();
+    let real = root.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let alias = root.path().join("alias");
+    // Creating symlinks requires Developer Mode or administrative privilege.
+    if let Err(error) = symlink_dir(&real, &alias) {
+        if error.kind() == std::io::ErrorKind::PermissionDenied { return; }
+        panic!("creating parent alias fixture: {error}");
+    }
+    let path = alias.join("film.sfstage");
+    assert!(validate_destination(&path).is_err());
+    assert!(write(&path, &state()).is_err());
+    assert!(!real.join("film.sfstage").exists());
+    assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0);
 }

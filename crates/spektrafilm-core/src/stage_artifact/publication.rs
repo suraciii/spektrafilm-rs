@@ -46,6 +46,9 @@ pub fn validate_destination(path: impl AsRef<Path>) -> Result<()> {
         "artifact destination parent does not exist: {}",
         parent.display()
     );
+    #[cfg(windows)]
+    let _parent_guard =
+        root(parent).context("artifact destination parent must not contain reparse points")?;
     match std::fs::symlink_metadata(path) {
         Ok(_) => bail!("artifact destination already exists: {}", path.display()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -77,14 +80,16 @@ pub(super) fn root(path: &Path) -> Result<ArtifactRoot> {
         use std::ffi::CString;
         use std::os::fd::{AsRawFd, FromRawFd};
         use std::os::unix::ffi::OsStrExt;
-        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
         let start = CString::new(if path.is_absolute() { "/" } else { "." })?;
         let fd = unsafe { libc::open(start.as_ptr(), flags) };
         if fd < 0 { return Err(std::io::Error::last_os_error()).context("pinning artifact root ancestor"); }
         let mut directory = unsafe { File::from_raw_fd(fd) };
-        // Pin every ancestor while walking. Never canonicalize an untrusted
-        // pathname: that would resolve a concurrently substituted symlink.
-        for component in path.components() {
+        // Ancestor aliases are ordinary input selection: open and pin their
+        // resolved directory atomically. Only the final artifact root and its
+        // members forbid symlinks. Never check then canonicalize/reopen.
+        let mut components = path.components().filter(|part| !matches!(part, Component::RootDir | Component::CurDir)).peekable();
+        while let Some(component) = components.next() {
             let name = match component {
                 Component::Normal(name) => name,
                 Component::ParentDir => std::ffi::OsStr::new(".."),
@@ -92,8 +97,9 @@ pub(super) fn root(path: &Path) -> Result<ArtifactRoot> {
                 Component::Prefix(_) => bail!("unsupported artifact root prefix"),
             };
             let name = CString::new(name.as_bytes())?;
-            let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
-            if fd < 0 { return Err(std::io::Error::last_os_error()).context("opening artifact root without symlinks"); }
+            let component_flags = flags | if components.peek().is_none() { libc::O_NOFOLLOW } else { 0 };
+            let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), component_flags) };
+            if fd < 0 { return Err(std::io::Error::last_os_error()).context("opening and pinning selected artifact root"); }
             directory = unsafe { File::from_raw_fd(fd) };
         }
         Ok(ArtifactRoot { directory })
