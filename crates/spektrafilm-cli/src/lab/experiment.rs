@@ -228,13 +228,21 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
             bundle_dir.join(&name),
             bundle_dir.join(format!("{name}.tmp")),
         ] {
-            spektrafilm_core::telemetry::validate_report_destination(&destination, &protected)
-                .with_context(|| {
-                    format!(
-                        "observation destination conflicts: {}",
-                        destination.display()
-                    )
-                })?;
+            match spektrafilm_core::telemetry::validate_report_destination(&destination, &protected) {
+                Ok(_) => {}
+                // The shared handler owns destination shape validation and
+                // clears a valid stale completeness marker before rejecting
+                // an unwritable buffer. Do not bypass that lifecycle here.
+                Err(spektrafilm_core::telemetry::PersistenceError::InvalidDestination) => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "observation destination conflicts: {}",
+                            destination.display()
+                        )
+                    });
+                }
+            }
         }
     }
     process::run_with_native_capture(process_args, data, &bundle_dir)?;
