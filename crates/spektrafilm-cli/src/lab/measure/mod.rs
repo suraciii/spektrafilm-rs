@@ -86,11 +86,19 @@ pub fn resolve_chain(
         return Err(anyhow!("--paper requires --preset or --film"));
     }
     let library = PresetLibrary::default();
-    let presets = args
-        .preset
-        .iter()
-        .map(|selector| crate::preset::select(&library, selector).map(|selected| selected.preset))
-        .collect::<Result<Vec<_>>>()?;
+    let mut presets = Vec::with_capacity(args.preset.len());
+    let mut preset_selectors = Vec::with_capacity(args.preset.len());
+    for selector in &args.preset {
+        let selected = crate::preset::select(&library, selector)?;
+        let replay_selector = match selected.path {
+            Some(path) => std::fs::canonicalize(&path)
+                .with_context(|| format!("resolving selected preset: {}", path.display()))?
+                .display().to_string(),
+            None => format!("built-in:{}", selected.preset.name),
+        };
+        preset_selectors.push(replay_selector);
+        presets.push(selected.preset);
+    }
     // The user binaries drop the stock-specific overrides of a profile only
     // when this internal switch asks for a frozen protocol; a measurement
     // must resolve the same chain as the run it describes.
@@ -137,8 +145,8 @@ pub fn resolve_chain(
         declaration: resolved.input_declaration,
         edits,
         sources: canonical_declared(&args.sources),
-        presets: canonical_declared(&args.preset),
-        files: declared_file_records(&args.preset, &args.sources)?,
+        files: declared_file_records(&preset_selectors, &args.sources)?,
+        presets: preset_selectors,
         digest_mode: if preserve_user_edits {
             "preserve_user_edits"
         } else {

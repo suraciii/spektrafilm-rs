@@ -166,6 +166,11 @@ taps, entry and collection boundary, CPU f64 execution, native schema version, a
 `directory: "evidence"` relative to `run.json`. Replay may change `--out` to a fresh
 destination; canonical declaration paths allow another working directory. There is
 no fabricated `process` capture argv.
+Measurement execution takes `random_seed` from the composed canonical parameter sources;
+for example `--set random_seed=42` executes and records seed 42. Replay preserves those
+sources in order rather than silently resetting the seed. Named user presets are retained
+as the selected file's canonical path and content hash, while built-in selections are
+qualified with `built-in:` so a different user library cannot shadow them.
 `readings.csv` carries one row per sample per available stage: the sample identity, its group,
 the stage, channel order, the three channel values, the unit, and a validity flag. A sample
 whose values include a non-finite number is invalid and reports an empty field; the command

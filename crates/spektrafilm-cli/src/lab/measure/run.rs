@@ -105,9 +105,10 @@ pub fn run_with_result(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Res
     // collection boundary reaches every requested reading, so the retained
     // effective document describes what actually executes.
     let (entry_tap, collect) = resolve_range(&mut chain.params, args.enter, &read)?;
-    // The measurement's own seed reaches the runtime the way the user surface
-    // sets it, so a stochastic stage reproduces from the recorded seed.
-    chain.params.random_seed = u64::from(args.chain.seed);
+    // The canonical parameter sources own the execution seed. Never replace
+    // their resolved value with the skipped parser carrier's default zero.
+    let seed = u32::try_from(chain.params.random_seed)
+        .context("measurement random_seed must fit UINT32")?;
 
     // The point-wise requirement is evaluated before executing anything: an
     // injected numeric sample has no neighborhood, so a spatial or stochastic
@@ -123,7 +124,7 @@ pub fn run_with_result(args: &MeasureRunArgs, matches: &clap::ArgMatches) -> Res
         &data_dir,
         args.enter.name(),
         &read,
-        args.chain.seed,
+        seed,
         stimulus_record.clone(),
     )?;
 
@@ -448,7 +449,7 @@ fn declaration_record(
         "sources": chain.sources,
         "route": args.chain.route,
         "scan_output": args.chain.scan_output,
-        "seed": args.chain.seed,
+        "seed": chain.params.random_seed,
         "data_dir": std::fs::canonicalize(data_dir)?,
         "enter": args.enter.name(),
         "read": read,

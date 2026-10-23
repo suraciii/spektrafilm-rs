@@ -490,6 +490,8 @@ impl MeasureFixture {
             self.data.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
+            "--set",
+            "random_seed=42",
         ];
         args.extend_from_slice(&POINT_WISE);
         self.lab(&args)
@@ -773,6 +775,8 @@ fn measure_run_matches_experiment_observation_on_log_e_film() {
     );
     let replayed: Value =
         serde_json::from_slice(&std::fs::read(repeat.join("run.json")).unwrap()).unwrap();
+    assert_eq!(original["declaration"]["seed"], 42);
+    assert_eq!(replayed["declaration"]["seed"], 42);
     assert_eq!(original["identity"], replayed["identity"]);
     assert!(
         !f.measure_with(&stimuli, &lab).status.success(),
@@ -2512,4 +2516,45 @@ fn automatic_standard_is_not_a_point_wise_measurement_but_density_taps_remain_av
             assert!(out.join("readings.csv").exists());
         }
     }
+}
+
+#[test]
+fn measurement_replay_pins_named_user_preset_and_nonzero_seed() {
+    let f = MeasureFixture::new();
+    let library = f.root.join("config/presets");
+    std::fs::create_dir_all(&library).unwrap();
+    let preset = library.join("Replay look.json");
+    std::fs::write(&preset, serde_json::to_vec(&json!({
+        "schema_version": spektrafilm_core::presets::PRESET_SCHEMA_VERSION,
+        "name": "Replay look",
+        "film_profile": {"stock": "kodak_portra_400"},
+        "print_profile": {"stock": "kodak_portra_endura"},
+        "parameters": {"enlarger": {}, "scanner": {}, "film_render": {}, "print_render": {},
+            "camera_diffusion_filter": {"active": false}, "output_mix": {"amount": 1.0}},
+        "provenance": {"implementation_version": "test", "model_version": "test"}
+    })).unwrap()).unwrap();
+    let out = f.root.join("named-original");
+    let result = f.lab(&["measure", "run", "--stimuli", f.stimuli.to_str().unwrap(),
+        "--enter", "rgb_in", "--read", "rgb_in", "--preset", "Replay look",
+        "--set", "random_seed=42", "--data-dir", f.data.to_str().unwrap(), "--out", out.to_str().unwrap()]);
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let record: Value = serde_json::from_slice(&std::fs::read(out.join("run.json")).unwrap()).unwrap();
+    assert_eq!(record["declaration"]["seed"], 42);
+    assert_eq!(record["identity"]["parameters"]["effective"]["random_seed"], 42);
+    assert_eq!(record["declaration"]["preset"][0], preset.canonicalize().unwrap().to_str().unwrap());
+    assert_eq!(record["command"]["dependencies"]["parameters"][0]["sha256"],
+        spektrafilm_benchmark::common::sha256_file(&preset).unwrap());
+    let replay_out = f.root.join("named-replay");
+    let mut argv: Vec<String> = record["command"]["argv"].as_array().unwrap().iter()
+        .map(|value| value.as_str().unwrap().to_owned()).collect();
+    let output_index = argv.iter().position(|value| value == "--out").unwrap() + 1;
+    argv[output_index] = replay_out.display().to_string();
+    let result = Command::new(record["command"]["executable"]["path"].as_str().unwrap())
+        .args(argv).current_dir(&f.root).env("SPEKTRAFILM_CONFIG_DIR", f.root.join("empty-config"))
+        .env_remove("SPEKTRAFILM_DATA_DIR").env_remove("SPEKTRAFILM_BACKEND").output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let replayed: Value = serde_json::from_slice(&std::fs::read(replay_out.join("run.json")).unwrap()).unwrap();
+    assert_eq!(record["identity"], replayed["identity"]);
+    assert_eq!(replayed["declaration"]["seed"], 42);
+    assert_eq!(std::fs::read(out.join("readings.csv")).unwrap(), std::fs::read(replay_out.join("readings.csv")).unwrap());
 }
