@@ -175,20 +175,31 @@ fn resolve_with_preview_mode(
     let added_sources = !request.presets.is_empty() || !request.sources.is_empty();
     let profile_sources = !request.feature_profiles.is_empty();
     let mut resolved_profiles = None;
-    let image_stage_route = request.route.map(WorkflowRoute::parse)
+    let image_stage_route = request
+        .route
+        .map(WorkflowRoute::parse)
         .is_some_and(|route| route.artifact_output().is_some() && route.artifact_input().is_none());
     if image_stage_route {
         for source in request.sources {
-            let edits = ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}"))?;
-            if edits.paths().any(|p| matches!(p, "taps.inject" | "taps.collect")) {
-                return Err(format!("--set {source:?}: taps.inject and taps.collect are inapplicable to stage artifacts"));
+            let edits =
+                ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}"))?;
+            if edits
+                .paths()
+                .any(|p| matches!(p, "taps.inject" | "taps.collect"))
+            {
+                return Err(format!(
+                    "--set {source:?}: taps.inject and taps.collect are inapplicable to stage artifacts"
+                ));
             }
         }
         if let Some(path) = request.params_file {
             let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
             let value = crate::params::sources::parse_carrier(&text, false)?;
             if value.pointer("/taps/inject").is_some() || value.pointer("/taps/collect").is_some() {
-                return Err(format!("--params {}: taps.inject and taps.collect are inapplicable to stage artifacts", path.display()));
+                return Err(format!(
+                    "--params {}: taps.inject and taps.collect are inapplicable to stage artifacts",
+                    path.display()
+                ));
             }
         }
     }
@@ -207,9 +218,13 @@ fn resolve_with_preview_mode(
                 let (print, print_name) = if route.prints() {
                     let reference = preset.print_profile.as_ref().expect("validated look");
                     let print = load_referenced_profile(reference, data_dir)?;
-                    if !print.is_print_stock() { return Err("print profile must have printing support/stage".into()); }
+                    if !print.is_print_stock() {
+                        return Err("print profile must have printing support/stage".into());
+                    }
                     (print, reference.stock.clone())
-                } else { (film.clone(), String::new()) };
+                } else {
+                    (film.clone(), String::new())
+                };
                 resolved_profiles = Some((film, print, film_ref.stock.clone(), print_name));
             } else {
                 params = preset.overlay_section(&params)?;
@@ -659,21 +674,37 @@ fn baseline_declarations(
 #[cfg(test)]
 mod tests;
 
-fn load_referenced_profile(reference: &presets::ProfileRef, data_dir: &Path) -> Result<Profile, String> {
-    let profile = profile::load_profile_by_name(data_dir, &reference.stock).map_err(|e| e.to_string())?;
+fn load_referenced_profile(
+    reference: &presets::ProfileRef,
+    data_dir: &Path,
+) -> Result<Profile, String> {
+    let profile =
+        profile::load_profile_by_name(data_dir, &reference.stock).map_err(|e| e.to_string())?;
     if profile.info.stock.as_deref() != Some(reference.stock.as_str()) {
-        return Err(format!("profile {:?} does not declare its stock identifier", reference.stock));
+        return Err(format!(
+            "profile {:?} does not declare its stock identifier",
+            reference.stock
+        ));
     }
-    if reference.version.as_ref().is_some_and(|version| version != &profile.metadata.version) {
+    if reference
+        .version
+        .as_ref()
+        .is_some_and(|version| version != &profile.metadata.version)
+    {
         return Err(format!("profile {:?} version mismatch", reference.stock));
     }
     if let Some(expected) = &reference.content_identity {
         use sha2::{Digest, Sha256};
-        let path = data_dir.join("profiles").join(format!("{}.json", reference.stock));
+        let path = data_dir
+            .join("profiles")
+            .join(format!("{}.json", reference.stock));
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let actual = format!("sha256-{:x}", Sha256::digest(bytes));
         if &actual != expected {
-            return Err(format!("profile {:?} content identity mismatch", reference.stock));
+            return Err(format!(
+                "profile {:?} content identity mismatch",
+                reference.stock
+            ));
         }
     }
     Ok(profile)

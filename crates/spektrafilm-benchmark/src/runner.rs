@@ -784,7 +784,6 @@ fn unobserved_stage_context(reason: &str) -> Value {
     })
 }
 
-
 /// Retain one validated run row into the comparison's evidence and return its
 /// per-case `run_evidence` role payload: run/target/input identities, the
 /// resolved-configuration and diagnostics references, the passive input
@@ -986,13 +985,7 @@ pub fn preflight(
 ) -> Result<(Value, i32)> {
     let suite_path = suite_path.canonicalize()?;
     let suite = documents::load_suite(&suite_path)?;
-    preflight_suite(
-        suite,
-        &suite_path,
-        target_path,
-        out,
-        selections,
-    )
+    preflight_suite(suite, &suite_path, target_path, out, selections)
 }
 
 /// Preflight an in-memory suite using `suite_path` as its dependency resolution anchor.
@@ -1004,14 +997,7 @@ pub fn preflight_suite(
     out: &Path,
     selections: &[String],
 ) -> Result<(Value, i32)> {
-    execute_suite(
-        suite,
-        suite_path,
-        target_path,
-        out,
-        selections,
-        true,
-    )
+    execute_suite(suite, suite_path, target_path, out, selections, true)
 }
 
 fn preflight_cases<'a>(
@@ -1136,13 +1122,7 @@ pub fn run(
     let suite_path = suite_path.canonicalize()?;
     let target_path = target_path.canonicalize()?;
     let suite = documents::load_suite(&suite_path)?;
-    run_suite(
-        suite,
-        &suite_path,
-        &target_path,
-        out,
-        selections,
-    )
+    run_suite(suite, &suite_path, &target_path, out, selections)
 }
 
 pub fn run_suite(
@@ -1152,14 +1132,7 @@ pub fn run_suite(
     out: &Path,
     selections: &[String],
 ) -> Result<(Value, i32)> {
-    execute_suite(
-        suite,
-        suite_path,
-        target_path,
-        out,
-        selections,
-        false,
-    )
+    execute_suite(suite, suite_path, target_path, out, selections, false)
 }
 
 fn execute_suite(

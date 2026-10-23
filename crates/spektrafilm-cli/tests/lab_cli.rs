@@ -499,14 +499,24 @@ impl MeasureFixture {
     fn process(&self, bundle: &Path) -> Output {
         use sha2::{Digest, Sha256};
         let suite = self.root.join("capture-suite.json");
-        let regions: Vec<Value> = (0..CHART_WIDTH).map(|x| json!({
-            "id": format!("p{x:02}"), "geometry": [x, 0, 1, 1]
-        })).collect();
-        std::fs::write(&suite, serde_json::to_vec(&json!({
-            "cases": [{"id": "chart", "regions": regions}]
-        })).unwrap()).unwrap();
+        let regions: Vec<Value> = (0..CHART_WIDTH)
+            .map(|x| {
+                json!({
+                    "id": format!("p{x:02}"), "geometry": [x, 0, 1, 1]
+                })
+            })
+            .collect();
+        std::fs::write(
+            &suite,
+            serde_json::to_vec(&json!({
+                "cases": [{"id": "chart", "regions": regions}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let patch: serde_json::Map<String, Value> = (0..CHART_WIDTH)
-            .map(|x| (format!("p{x:02}"), json!([0, x]))).collect();
+            .map(|x| (format!("p{x:02}"), json!([0, x])))
+            .collect();
         let document = self.root.join("capture-experiment.json");
         let sources: Vec<&str> = POINT_WISE.chunks_exact(2).map(|pair| pair[1]).collect();
         std::fs::write(&document, serde_json::to_vec(&json!({
@@ -519,9 +529,17 @@ impl MeasureFixture {
         })).unwrap()).unwrap();
         let out = bundle.with_extension("experiment");
         let result = self.lab(&[
-            "experiment", "run", "--experiment", document.to_str().unwrap(),
-            "--out", out.to_str().unwrap(), "--output-format", "png", "--force",
-            "--data-dir", self.data.to_str().unwrap(),
+            "experiment",
+            "run",
+            "--experiment",
+            document.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--output-format",
+            "png",
+            "--force",
+            "--data-dir",
+            self.data.to_str().unwrap(),
         ]);
         if result.status.success() {
             std::fs::rename(out.join("bundle"), bundle).unwrap();
@@ -2215,7 +2233,11 @@ fn measure_verify_reads_a_comparison_record_and_rehashes_its_sides() {
     let f = MeasureFixture::new();
     let bundle = f.root.join("verify-bundle");
     let observation = f.process(&bundle);
-    assert!(observation.status.success(), "{}", String::from_utf8_lossy(&observation.stderr));
+    assert!(
+        observation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&observation.stderr)
+    );
     let lab = f.root.join("verify-lab");
     assert!(
         f.measure_with(&f.stimuli, &lab).status.success(),

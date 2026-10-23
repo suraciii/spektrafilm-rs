@@ -26,8 +26,8 @@ use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_math::spectral::TcLut;
 
 mod execution;
-mod material;
 mod exposure;
+mod material;
 mod output_mix;
 mod resident;
 mod stages;

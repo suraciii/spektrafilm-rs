@@ -56,8 +56,16 @@ pub enum WorkflowRoute {
 
 impl WorkflowRoute {
     pub fn parse(value: &str) -> Self {
-        let mut nodes = value.split('>').map(|node| node.trim_matches(|c: char| c.is_ascii_whitespace()));
-        match (nodes.next(), nodes.next(), nodes.next(), nodes.next(), nodes.next()) {
+        let mut nodes = value
+            .split('>')
+            .map(|node| node.trim_matches(|c: char| c.is_ascii_whitespace()));
+        match (
+            nodes.next(),
+            nodes.next(),
+            nodes.next(),
+            nodes.next(),
+            nodes.next(),
+        ) {
             (Some("input"), None, None, None, None) => Self::Input,
             (Some("input"), Some("film"), Some("scan"), None, None) => Self::FilmScan,
             (Some("input"), Some("film"), Some("print"), Some("scan"), None) => Self::FilmPrintScan,
@@ -67,9 +75,15 @@ impl WorkflowRoute {
             (Some("film"), Some("print"), None, None, None) => Self::StoredFilmPrint,
             (Some("film"), Some("print"), Some("scan"), None, None) => Self::StoredFilmPrintScan,
             (Some("print"), Some("scan"), None, None, None) => Self::StoredPrintScan,
-            (Some("input"), Some("convert-film"), Some("print"), Some("scan"), None) => Self::ConvertFilmPrintScan,
-            (Some("input"), Some("convert-film"), Some("scan-minus-base"), None, None) => Self::ConvertFilmScanMinusBase,
-            (Some("input"), Some("convert-film"), Some("scan"), None, None) => Self::ConvertFilmScan,
+            (Some("input"), Some("convert-film"), Some("print"), Some("scan"), None) => {
+                Self::ConvertFilmPrintScan
+            }
+            (Some("input"), Some("convert-film"), Some("scan-minus-base"), None, None) => {
+                Self::ConvertFilmScanMinusBase
+            }
+            (Some("input"), Some("convert-film"), Some("scan"), None, None) => {
+                Self::ConvertFilmScan
+            }
             _ => Self::Custom,
         }
     }
@@ -92,7 +106,14 @@ impl WorkflowRoute {
     }
 
     pub fn prints(&self) -> bool {
-        matches!(self, Self::FilmPrintScan | Self::ConvertFilmPrintScan | Self::InputFilmPrint | Self::StoredFilmPrint | Self::StoredFilmPrintScan)
+        matches!(
+            self,
+            Self::FilmPrintScan
+                | Self::ConvertFilmPrintScan
+                | Self::InputFilmPrint
+                | Self::StoredFilmPrint
+                | Self::StoredFilmPrintScan
+        )
     }
 
     pub fn is_convert_film(&self) -> bool {
@@ -107,13 +128,18 @@ impl WorkflowRoute {
     }
 
     pub fn exposes_film(self) -> bool {
-        matches!(self, Self::FilmScan | Self::FilmPrintScan | Self::InputFilm | Self::InputFilmPrint)
+        matches!(
+            self,
+            Self::FilmScan | Self::FilmPrintScan | Self::InputFilm | Self::InputFilmPrint
+        )
     }
 
     pub fn artifact_input(self) -> Option<crate::stage_artifact::MaterialKind> {
         use crate::stage_artifact::MaterialKind;
         match self {
-            Self::StoredFilmScan | Self::StoredFilmPrint | Self::StoredFilmPrintScan => Some(MaterialKind::Film),
+            Self::StoredFilmScan | Self::StoredFilmPrint | Self::StoredFilmPrintScan => {
+                Some(MaterialKind::Film)
+            }
             Self::StoredPrintScan => Some(MaterialKind::Print),
             _ => None,
         }

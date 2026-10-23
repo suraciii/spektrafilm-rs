@@ -267,7 +267,9 @@ pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), S
         "scanner.scan_output",
         &params.scanner.scan_output,
     )?;
-    if params.scanner.scan_output != "negative_to_positive" || params.workflow.route_enum().artifact_output().is_some() {
+    if params.scanner.scan_output != "negative_to_positive"
+        || params.workflow.route_enum().artifact_output().is_some()
+    {
         return Ok(());
     }
     let direct_film_scan = params.workflow.route_enum().scans_film();
@@ -282,7 +284,9 @@ pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), S
 
 pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
     validate_scan_output_route(params)?;
-    if params.scanner.scan_output != "negative_to_positive" || params.workflow.route_enum().artifact_output().is_some() {
+    if params.scanner.scan_output != "negative_to_positive"
+        || params.workflow.route_enum().artifact_output().is_some()
+    {
         return Ok(());
     }
     if !film.is_negative() || !film.is_film() || !film.is_filming() {
@@ -330,26 +334,30 @@ pub(crate) fn build(
     // onto the 3-channel engine layout before reading the profile data.
     let mut film = crate::profile::resolve_for_render(film, params.film_render.development_time);
     validate_scan_output(&params, &film)?;
-    let mut print = if prepare_print { crate::profile::resolve_for_render(print, params.print_render.development_time) } else { print };
+    let mut print = if prepare_print {
+        crate::profile::resolve_for_render(print, params.print_render.development_time)
+    } else {
+        print
+    };
     apply_base_tuning(&mut film, &params.film_render.base, None);
     apply_film_chemistry(&mut film, &params.film_render.chemistry)
         .map_err(|error| format!("invalid film density-curve model: {error}"))?;
     if prepare_print {
-    apply_base_tuning(
-        &mut print,
-        &params.film_render.base,
-        Some(&params.print_render.base),
-    );
+        apply_base_tuning(
+            &mut print,
+            &params.film_render.base,
+            Some(&params.print_render.base),
+        );
 
-    if let Some(model) = print.data.density_curves_model.as_ref() {
-        crate::print_morph::morph_density_curves(
-            &print.log_exposure_f64(),
-            model,
-            &params.print_render.density_curves_morph,
-            print.is_positive(),
-        )
-        .map_err(|error| format!("invalid print density-curve model: {error}"))?;
-    }
+        if let Some(model) = print.data.density_curves_model.as_ref() {
+            crate::print_morph::morph_density_curves(
+                &print.log_exposure_f64(),
+                model,
+                &params.print_render.density_curves_morph,
+                print.is_positive(),
+            )
+            .map_err(|error| format!("invalid print density-curve model: {error}"))?;
+        }
     }
 
     // Python parity: look up per-(print, illuminant, film) neutral filter values from
@@ -451,23 +459,33 @@ pub(crate) fn build(
         density_spectral_midgray.clone()
     } else {
         enlarger::midgray_density_spectral_from_raw(
-            midgray_raw(2.0f64.powf(params.camera.exposure_compensation_ev as f64)), &film, &params,
+            midgray_raw(2.0f64.powf(params.camera.exposure_compensation_ev as f64)),
+            &film,
+            &params,
         )
     };
     // Print sensitivity: Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)`.
-    let print_sensitivity: Vec<[f64; 3]> = if prepare_print { print.sensitivity_f64() } else { Vec::new() };
+    let print_sensitivity: Vec<[f64; 3]> = if prepare_print {
+        print.sensitivity_f64()
+    } else {
+        Vec::new()
+    };
 
     // Constant enlarger preflash exposure (Python `_compute_raw_preflash`):
     // film base density lit by the preflash-filtered illuminant, integrated
     // against the print sensitivity. Off (→ [0; 3]) unless preflash_exposure > 0.
-    let preflash_raw = if prepare_print { enlarger::compute_preflash_raw(
-        &params.enlarger,
-        c_neutral_f64,
-        m_neutral_f64,
-        y_neutral_f64,
-        &film.data.base_density,
-        &print_sensitivity,
-    ) } else { [0.0; 3] };
+    let preflash_raw = if prepare_print {
+        enlarger::compute_preflash_raw(
+            &params.enlarger,
+            c_neutral_f64,
+            m_neutral_f64,
+            y_neutral_f64,
+            &film.data.base_density,
+            &print_sensitivity,
+        )
+    } else {
+        [0.0; 3]
+    };
 
     // Print exposure normalization — mirror Python's
     // `_compute_exposure_factor_midgray` in
@@ -487,30 +505,35 @@ pub(crate) fn build(
     // unconditionally apply `factor_midgray` here, which biased
     // the print exposure by ~3% on every render and was the root
     // cause of the residual Python-parity drift in the print stage.
-    let factor_midgray = if prepare_print { enlarger::compute_exposure_factor(
-        &density_spectral_midgray,
-        &print_illuminant,
-        &print_sensitivity,
-    ) } else { 1.0 };
+    let factor_midgray = if prepare_print {
+        enlarger::compute_exposure_factor(
+            &density_spectral_midgray,
+            &print_illuminant,
+            &print_sensitivity,
+        )
+    } else {
+        1.0
+    };
     // Python builds `density_spectral_midgray_comp` whenever EV
     // tracking is on — even when EV == 0, in which case
     // `rgb_midgray_comp = rgb_midgray * 2^0` and so
     // `factor_midgray_comp == factor_midgray`. We have to mirror
     // that (NOT short-circuit to 1.0) because the
     // `factor_midgray_comp` branch is what gets returned by default.
-    let factor_midgray_comp =
-        if !prepare_print || params.settings.print_exposure_ev_tracking == PrintExposureEvTracking::Never {
-            1.0
-        } else if params.camera.exposure_compensation_ev == 0.0 {
-            factor_midgray
-        } else {
-            // The same frozen compensated reference is consumed by continuation.
-            enlarger::compute_exposure_factor(
-                &compensated_midgray_density,
-                &print_illuminant,
-                &print_sensitivity,
-            )
-        };
+    let factor_midgray_comp = if !prepare_print
+        || params.settings.print_exposure_ev_tracking == PrintExposureEvTracking::Never
+    {
+        1.0
+    } else if params.camera.exposure_compensation_ev == 0.0 {
+        factor_midgray
+    } else {
+        // The same frozen compensated reference is consumed by continuation.
+        enlarger::compute_exposure_factor(
+            &compensated_midgray_density,
+            &print_illuminant,
+            &print_sensitivity,
+        )
+    };
     let print_exposure_factor = select_print_factor(&params, factor_midgray, factor_midgray_comp);
 
     tracing::info!(
@@ -543,7 +566,10 @@ pub(crate) fn build(
 }
 
 fn select_print_factor(params: &RuntimeParams, midgray: f64, compensated: f64) -> f64 {
-    match (params.enlarger.print_exposure_mode, params.settings.print_exposure_ev_tracking) {
+    match (
+        params.enlarger.print_exposure_mode,
+        params.settings.print_exposure_ev_tracking,
+    ) {
         (PrintExposureMode::Auto, PrintExposureEvTracking::Never) => midgray,
         (PrintExposureMode::Auto, _) => compensated,
         (PrintExposureMode::Manual, PrintExposureEvTracking::Always) => compensated / midgray,
@@ -552,32 +578,90 @@ fn select_print_factor(params: &RuntimeParams, midgray: f64, compensated: f64) -
 }
 
 /// Initialize only printing, consuming the frozen filming calibration.
-pub(crate) fn prepare_continued_print(film: &Profile, source: Profile, params: &mut RuntimeParams, context: &crate::stage_artifact::InterpretationContext, data_dir: &Path) -> Result<(Profile, f64, Vec<f64>, [f64; 3]), String> {
+pub(crate) fn prepare_continued_print(
+    film: &Profile,
+    source: Profile,
+    params: &mut RuntimeParams,
+    context: &crate::stage_artifact::InterpretationContext,
+    data_dir: &Path,
+) -> Result<(Profile, f64, Vec<f64>, [f64; 3]), String> {
     if !source.is_print_stock() {
         return Err("new printing material must be paper/printing or film/printing".into());
     }
-    let mut print = crate::profile::resolve_for_render(source, params.print_render.development_time);
-    apply_base_tuning(&mut print, &params.film_render.base, Some(&params.print_render.base));
+    let mut print =
+        crate::profile::resolve_for_render(source, params.print_render.development_time);
+    apply_base_tuning(
+        &mut print,
+        &params.film_render.base,
+        Some(&params.print_render.base),
+    );
     if let Some(model) = print.data.density_curves_model.as_ref() {
-        crate::print_morph::morph_density_curves(&print.log_exposure_f64(), model, &params.print_render.density_curves_morph, print.is_positive())?;
+        crate::print_morph::morph_density_curves(
+            &print.log_exposure_f64(),
+            model,
+            &params.print_render.density_curves_morph,
+            print.is_positive(),
+        )?;
     }
-    let mut cmy = [params.enlarger.c_filter_neutral as f64, params.enlarger.m_filter_neutral as f64, params.enlarger.y_filter_neutral as f64];
+    let mut cmy = [
+        params.enlarger.c_filter_neutral as f64,
+        params.enlarger.m_filter_neutral as f64,
+        params.enlarger.y_filter_neutral as f64,
+    ];
     if params.settings.neutral_print_filters_from_database {
         let db = crate::neutral_filters::NeutralFilters::load(data_dir)?;
-        if let Some(database) = db.lookup(print.info.stock.as_deref().unwrap_or(""), &params.enlarger.illuminant, film.info.stock.as_deref().unwrap_or("")) {
-            let protected = crate::params_builder::authored_filter_axes(params.neutral_print_filters_protected);
-            for axis in 0..3 { if !protected[axis] { cmy[axis] = database[axis]; } }
+        if let Some(database) = db.lookup(
+            print.info.stock.as_deref().unwrap_or(""),
+            &params.enlarger.illuminant,
+            film.info.stock.as_deref().unwrap_or(""),
+        ) {
+            let protected =
+                crate::params_builder::authored_filter_axes(params.neutral_print_filters_protected);
+            for axis in 0..3 {
+                if !protected[axis] {
+                    cmy[axis] = database[axis];
+                }
+            }
             params.enlarger.c_filter_neutral = cmy[0] as f32;
             params.enlarger.m_filter_neutral = cmy[1] as f32;
             params.enlarger.y_filter_neutral = cmy[2] as f32;
         }
     }
-    let illuminant = enlarger::enlarger_filtered_illuminant_f64(&params.enlarger.illuminant,cmy[0],cmy[1] + params.enlarger.m_filter_shift as f64,cmy[2] + params.enlarger.y_filter_shift as f64);
+    let illuminant = enlarger::enlarger_filtered_illuminant_f64(
+        &params.enlarger.illuminant,
+        cmy[0],
+        cmy[1] + params.enlarger.m_filter_shift as f64,
+        cmy[2] + params.enlarger.y_filter_shift as f64,
+    );
     let sensitivity = print.sensitivity_f64();
-    let preflash = enlarger::compute_preflash_raw(&params.enlarger,cmy[0],cmy[1],cmy[2],&film.data.base_density,&sensitivity);
-    let midgray = enlarger::compute_exposure_factor(&context.midgray_density,&illuminant,&sensitivity);
-    let compensated = if params.settings.print_exposure_ev_tracking == PrintExposureEvTracking::Never { 1.0 } else if context.camera_compensation_ev == 0.0 { midgray } else { enlarger::compute_exposure_factor(&context.compensated_midgray_density,&illuminant,&sensitivity) };
-    Ok((print,select_print_factor(params,midgray,compensated),illuminant,preflash))
+    let preflash = enlarger::compute_preflash_raw(
+        &params.enlarger,
+        cmy[0],
+        cmy[1],
+        cmy[2],
+        &film.data.base_density,
+        &sensitivity,
+    );
+    let midgray =
+        enlarger::compute_exposure_factor(&context.midgray_density, &illuminant, &sensitivity);
+    let compensated =
+        if params.settings.print_exposure_ev_tracking == PrintExposureEvTracking::Never {
+            1.0
+        } else if context.camera_compensation_ev == 0.0 {
+            midgray
+        } else {
+            enlarger::compute_exposure_factor(
+                &context.compensated_midgray_density,
+                &illuminant,
+                &sensitivity,
+            )
+        };
+    Ok((
+        print,
+        select_print_factor(params, midgray, compensated),
+        illuminant,
+        preflash,
+    ))
 }
 
 #[cfg(test)]

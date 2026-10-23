@@ -223,7 +223,10 @@ impl BundleBuilder {
 fn validate_route_topology(topology: Topology, route: &str) -> Result<(), String> {
     let workflow = WorkflowRoute::parse(route);
     if workflow.artifact_input().is_some() || workflow.artifact_output().is_some() {
-        return Err("LUT baking supports image routes only; material artifact routes require process".into());
+        return Err(
+            "LUT baking supports image routes only; material artifact routes require process"
+                .into(),
+        );
     }
     if topology == Topology::Four && WorkflowRoute::parse(route) == WorkflowRoute::FilmScan {
         return Err(
@@ -616,8 +619,19 @@ mod tests {
 
     #[test]
     fn lut_topology_rejects_routes_without_matching_taps() {
-        for route in ["input > film", "input > film > print", "film > scan", "film > print", "film > print > scan", "print > scan"] {
-            assert!(validate_route_topology(Topology::One, route).unwrap_err().contains("image routes only"));
+        for route in [
+            "input > film",
+            "input > film > print",
+            "film > scan",
+            "film > print",
+            "film > print > scan",
+            "print > scan",
+        ] {
+            assert!(
+                validate_route_topology(Topology::One, route)
+                    .unwrap_err()
+                    .contains("image routes only")
+            );
         }
         let error = validate_route_topology(Topology::Four, "input > film > scan").unwrap_err();
         assert!(error.contains("no print taps"));

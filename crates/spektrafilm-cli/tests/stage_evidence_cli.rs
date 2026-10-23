@@ -14,14 +14,30 @@ impl Fixture {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "spektrafilm-native-observation-cli-{}-{}",
-            std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir(&root).unwrap();
         let pixels: Vec<u8> = (0..32 * 24)
-            .flat_map(|i| [(i % 200 + 20) as u8, 90, 170]).collect();
-        image::save_buffer(root.join("input.png"), &pixels, 32, 24, image::ColorType::Rgb8).unwrap();
-        let digest = format!("{:x}", Sha256::digest(std::fs::read(root.join("input.png")).unwrap()));
-        std::fs::write(root.join("suite.json"), r#"{"cases":[{"id":"chart","regions":[{"id":"patch","geometry":[0,0,4,4]}]}]}"#).unwrap();
+            .flat_map(|i| [(i % 200 + 20) as u8, 90, 170])
+            .collect();
+        image::save_buffer(
+            root.join("input.png"),
+            &pixels,
+            32,
+            24,
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+        let digest = format!(
+            "{:x}",
+            Sha256::digest(std::fs::read(root.join("input.png")).unwrap())
+        );
+        std::fs::write(
+            root.join("suite.json"),
+            r#"{"cases":[{"id":"chart","regions":[{"id":"patch","geometry":[0,0,4,4]}]}]}"#,
+        )
+        .unwrap();
         std::fs::write(root.join("experiment.json"), serde_json::to_vec(&serde_json::json!({
             "schema_version": 1, "id": "chart",
             "chain": {"film": "kodak_portra_400", "input_color_space": "sRGB", "input_cctf_decoding": true},
@@ -35,7 +51,8 @@ impl Fixture {
 
     fn command(&self, binary: &str) -> Command {
         let mut command = Command::new(binary);
-        command.env("RUST_LOG", "off")
+        command
+            .env("RUST_LOG", "off")
             .env("SPEKTRAFILM_CONFIG_DIR", self.0.join("config"))
             .env_remove("SPEKTRAFILM_DATA_DIR")
             .env_remove("SPEKTRAFILM_BACKEND")
@@ -47,26 +64,49 @@ impl Fixture {
         self.command(env!("CARGO_BIN_EXE_spektrafilm-lab"))
             .args(["experiment", "run", "--experiment"])
             .arg(self.0.join("experiment.json"))
-            .arg("--out").arg(self.0.join("observed"))
+            .arg("--out")
+            .arg(self.0.join("observed"))
             .args(["--output-format", "png", "--force", "--data-dir"])
             .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"))
-            .args(extra).output().unwrap()
+            .args(extra)
+            .output()
+            .unwrap()
     }
 
     fn plain(&self, extra: &[&str]) -> Output {
         self.command(env!("CARGO_BIN_EXE_spektrafilm-f64"))
-            .arg("process").arg(self.0.join("input.png"))
-            .arg("--output").arg(self.0.join("plain.png"))
-            .args(["--film", "kodak_portra_400", "--backend", "cpu", "--input-color-space", "sRGB", "--input-cctf-decoding", "true", "--seed", "0", "--data-dir"])
+            .arg("process")
+            .arg(self.0.join("input.png"))
+            .arg("--output")
+            .arg(self.0.join("plain.png"))
+            .args([
+                "--film",
+                "kodak_portra_400",
+                "--backend",
+                "cpu",
+                "--input-color-space",
+                "sRGB",
+                "--input-cctf-decoding",
+                "true",
+                "--seed",
+                "0",
+                "--data-dir",
+            ])
             .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"))
-            .args(extra).output().unwrap()
+            .args(extra)
+            .output()
+            .unwrap()
     }
 
-    fn bundle(&self) -> PathBuf { self.0.join("observed/bundle") }
+    fn bundle(&self) -> PathBuf {
+        self.0.join("observed/bundle")
+    }
 }
 
 impl Drop for Fixture {
-    fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn manifest(root: &Path) -> serde_json::Value {
@@ -74,30 +114,56 @@ fn manifest(root: &Path) -> serde_json::Value {
 }
 
 fn stage<'a>(manifest: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
-    manifest["stages"].as_array().unwrap().iter().find(|record| record["id"] == id).unwrap()
+    manifest["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["id"] == id)
+        .unwrap()
 }
 
 #[test]
 fn experiment_observation_matches_uncaptured_raw_output() {
     let fixture = Fixture::new();
     let observed = fixture.observe(&[]);
-    assert!(observed.status.success(), "{}", String::from_utf8_lossy(&observed.stderr));
+    assert!(
+        observed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&observed.stderr)
+    );
     let raw = fixture.0.join("plain.f64");
     let plain = fixture.plain(&["--raw-out", raw.to_str().unwrap()]);
-    assert!(plain.status.success(), "{}", String::from_utf8_lossy(&plain.stderr));
-    assert_eq!(std::fs::read(fixture.bundle().join("rgb_out.f64")).unwrap(), std::fs::read(raw).unwrap());
+    assert!(
+        plain.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+    assert_eq!(
+        std::fs::read(fixture.bundle().join("rgb_out.f64")).unwrap(),
+        std::fs::read(raw).unwrap()
+    );
     let manifest = manifest(&fixture.bundle());
     assert_eq!(manifest["execution_status"], "completed");
     assert_eq!(manifest["host_precision"], "f64");
     assert!(manifest["errors"].as_array().unwrap().is_empty());
-    for id in ["rgb_in", "log_e_film", "cmy_film", "log_e_print", "cmy_print", "rgb_out"] {
+    for id in [
+        "rgb_in",
+        "log_e_film",
+        "cmy_film",
+        "log_e_print",
+        "cmy_print",
+        "rgb_out",
+    ] {
         let record = stage(&manifest, id);
         assert_eq!(record["availability"], "available", "{id}");
         let path = Path::new(record["path"].as_str().unwrap());
         assert!(!path.is_absolute());
         assert!(fixture.bundle().join(path).is_file());
     }
-    assert_eq!(manifest["exposure"]["source_dimensions"], serde_json::json!([32, 24]));
+    assert_eq!(
+        manifest["exposure"]["source_dimensions"],
+        serde_json::json!([32, 24])
+    );
     assert!(!fixture.0.join("stage-evidence").exists());
 }
 
@@ -106,12 +172,30 @@ fn experiment_grain_observation_keeps_delivered_geometry() {
     for engine in ["dye", "fotufilm"] {
         let fixture = Fixture::new();
         let result = fixture.observe(&[
-            "--set", "film_render.grain.active=true", "--set", &format!("film_render.grain.engine={engine}"),
-            "--set", "io.crop=true", "--set", "io.crop_size=[0.5,0.5]", "--set", "io.upscale_factor=0.5",
-            "--set", "scanner.unsharp_mask=[0,0]", "--set", "scanner.lens_blur=0",
-            "--set", "print_render.glare.active=false", "--set", "enlarger.diffusion_filter.active=false",
+            "--set",
+            "film_render.grain.active=true",
+            "--set",
+            &format!("film_render.grain.engine={engine}"),
+            "--set",
+            "io.crop=true",
+            "--set",
+            "io.crop_size=[0.5,0.5]",
+            "--set",
+            "io.upscale_factor=0.5",
+            "--set",
+            "scanner.unsharp_mask=[0,0]",
+            "--set",
+            "scanner.lens_blur=0",
+            "--set",
+            "print_render.glare.active=false",
+            "--set",
+            "enlarger.diffusion_filter.active=false",
         ]);
-        assert!(result.status.success(), "{engine}: {}", String::from_utf8_lossy(&result.stderr));
+        assert!(
+            result.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
         let manifest = manifest(&fixture.bundle());
         let output = stage(&manifest, "rgb_out");
         let full_source = stage(&manifest, "log_e_film");
@@ -120,7 +204,10 @@ fn experiment_grain_observation_keeps_delivered_geometry() {
         assert_ne!(full_source["layout"]["width"], output["layout"]["width"]);
         for id in ["cmy_film", "log_e_print", "cmy_print"] {
             let record = stage(&manifest, id);
-            assert_eq!(record["geometry"]["coordinate_space"], "output_pixels", "{engine}: {id}");
+            assert_eq!(
+                record["geometry"]["coordinate_space"], "output_pixels",
+                "{engine}: {id}"
+            );
             assert_eq!(record["layout"]["width"], output["layout"]["width"]);
             assert_eq!(record["layout"]["height"], output["layout"]["height"]);
         }
@@ -141,13 +228,21 @@ fn experiment_invalid_destination_fails_without_complete_manifest() {
 fn experiment_publication_clears_stale_manifest_before_failed_capture() {
     let fixture = Fixture::new();
     std::fs::create_dir_all(fixture.bundle().join("log_e_film.f64")).unwrap();
-    std::fs::write(fixture.bundle().join("stage-evidence.json"), r#"{"execution_status":"completed"}"#).unwrap();
+    std::fs::write(
+        fixture.bundle().join("stage-evidence.json"),
+        r#"{"execution_status":"completed"}"#,
+    )
+    .unwrap();
     let failed = fixture.observe(&[]);
     assert!(!failed.status.success());
     assert!(!fixture.bundle().join("stage-evidence.json").exists());
     std::fs::remove_dir(fixture.bundle().join("log_e_film.f64")).unwrap();
     let completed = fixture.observe(&[]);
-    assert!(completed.status.success(), "{}", String::from_utf8_lossy(&completed.stderr));
+    assert!(
+        completed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&completed.stderr)
+    );
     assert_eq!(manifest(&fixture.bundle())["execution_status"], "completed");
 }
 
@@ -176,13 +271,17 @@ fn ordinary_suite_and_image_runs_retain_absence_without_capture_files() {
     let fixture = Fixture::new();
     let renderer = PathBuf::from(env!("CARGO_BIN_EXE_spektrafilm-f64"));
     let target = fixture.0.join("target.json");
-    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data").canonicalize().unwrap();
+    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../data")
+        .canonicalize()
+        .unwrap();
     std::fs::write(&target, serde_json::to_vec(&json!({
         "schema_version": 1, "id": "target",
         "renderer": {"path": renderer, "sha256": spektrafilm_benchmark::common::sha256_file(&renderer).unwrap()},
         "data_dir": data, "backend": "cpu", "changes": {"set_files": [], "set": []}
     })).unwrap()).unwrap();
-    let configuration = json!({"film": "kodak_portra_400", "set": ["film_render.grain.active=false"]});
+    let configuration =
+        json!({"film": "kodak_portra_400", "set": ["film_render.grain.active=false"]});
     let config = fixture.0.join("configuration.json");
     std::fs::write(&config, serde_json::to_vec(&configuration).unwrap()).unwrap();
     let suite = fixture.0.join("ordinary-suite.json");
@@ -197,17 +296,34 @@ fn ordinary_suite_and_image_runs_retain_absence_without_capture_files() {
     for mode in ["suite", "image"] {
         let out = fixture.0.join(mode);
         let mut command = fixture.command(env!("CARGO_BIN_EXE_spektrafilm-lab"));
-        command.args(["run", mode, "--target"]).arg(&target).arg("--out").arg(&out);
+        command
+            .args(["run", mode, "--target"])
+            .arg(&target)
+            .arg("--out")
+            .arg(&out);
         if mode == "suite" {
             command.arg("--suite").arg(&suite);
         } else {
-            command.arg("--input").arg(fixture.0.join("input.png"))
-                .arg("--configuration").arg(&config)
-                .args(["--input-color-space", "sRGB", "--input-cctf-decoding", "true"]);
+            command
+                .arg("--input")
+                .arg(fixture.0.join("input.png"))
+                .arg("--configuration")
+                .arg(&config)
+                .args([
+                    "--input-color-space",
+                    "sRGB",
+                    "--input-cctf-decoding",
+                    "true",
+                ]);
         }
         let output = command.output().unwrap();
-        assert!(output.status.success(), "{mode}: {}", String::from_utf8_lossy(&output.stderr));
-        let run: serde_json::Value = serde_json::from_slice(&std::fs::read(out.join("run.json")).unwrap()).unwrap();
+        assert!(
+            output.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let run: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(out.join("run.json")).unwrap()).unwrap();
         for row in run["cases"].as_array().unwrap() {
             assert_eq!(row["status"], "completed");
             assert_eq!(row["stage_evidence"]["requested"], false);
@@ -215,17 +331,33 @@ fn ordinary_suite_and_image_runs_retain_absence_without_capture_files() {
             let observed = &row["stage_evidence"]["context"];
             assert_eq!(observed["exposure"]["availability"], "unavailable");
             assert!(observed["exposure"].get("metered_ev").is_none());
-            assert_eq!(observed["print_normalization"]["availability"], "unavailable");
+            assert_eq!(
+                observed["print_normalization"]["availability"],
+                "unavailable"
+            );
             for stage in observed["stages"].as_array().unwrap() {
                 assert_eq!(stage["availability"], "unavailable");
                 assert!(stage.get("path").is_none());
             }
             for key in ["command", "source_command"] {
-                assert!(!row[key].as_array().unwrap().iter().any(|value| value == "--stage-evidence"));
+                assert!(
+                    !row[key]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|value| value == "--stage-evidence")
+                );
             }
         }
-        assert!(!run["artifacts"].as_array().unwrap().iter().any(|artifact|
-            artifact["role"].as_str().is_some_and(|role| role.starts_with("stage_evidence"))));
+        assert!(
+            !run["artifacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|artifact| artifact["role"]
+                    .as_str()
+                    .is_some_and(|role| role.starts_with("stage_evidence")))
+        );
     }
 }
 

@@ -736,11 +736,28 @@ mod tests {
     #[test]
     fn supported_routes_remain_valid() {
         let mut params = RuntimeParams::default();
-        for route in ["input>film", " input\t> film > print ", "film>scan", "film >print", "film>print>scan", " print > scan "] {
+        for route in [
+            "input>film",
+            " input\t> film > print ",
+            "film>scan",
+            "film >print",
+            "film>print>scan",
+            " print > scan ",
+        ] {
             params.workflow.route = route.into();
             validate(&params).unwrap();
         }
-        for route in ["film", "print", "input > print", "input > film > film", "film > > scan", "film > scan > print", "Film > scan", "input > convert-film", "input > film > print > scan > film"] {
+        for route in [
+            "film",
+            "print",
+            "input > print",
+            "input > film > film",
+            "film > > scan",
+            "film > scan > print",
+            "Film > scan",
+            "input > convert-film",
+            "input > film > print > scan > film",
+        ] {
             params.workflow.route = route.into();
             assert!(validate(&params).is_err(), "invalid finite route {route}");
         }

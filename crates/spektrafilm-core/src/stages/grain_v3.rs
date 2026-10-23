@@ -63,7 +63,10 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
         return Ok(false);
     }
     let route = params.workflow.route_enum();
-    if !matches!(route, WorkflowRoute::FilmPrintScan | WorkflowRoute::FilmScan | WorkflowRoute::InputFilmPrint) {
+    if !matches!(
+        route,
+        WorkflowRoute::FilmPrintScan | WorkflowRoute::FilmScan | WorkflowRoute::InputFilmPrint
+    ) {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
         ));
@@ -274,7 +277,10 @@ pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), 
     let route = params.workflow.route.as_str();
     let route_kind = params.workflow.route_enum();
     let route_supported = match route_kind {
-        WorkflowRoute::FilmPrintScan | WorkflowRoute::InputFilmPrint | WorkflowRoute::StoredFilmPrint | WorkflowRoute::StoredFilmPrintScan => !params.io.scan_film,
+        WorkflowRoute::FilmPrintScan
+        | WorkflowRoute::InputFilmPrint
+        | WorkflowRoute::StoredFilmPrint
+        | WorkflowRoute::StoredFilmPrintScan => !params.io.scan_film,
         WorkflowRoute::FilmScan | WorkflowRoute::StoredFilmScan => params.io.scan_film,
         WorkflowRoute::InputFilm | WorkflowRoute::StoredPrintScan => true,
         _ => false,

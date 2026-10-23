@@ -105,7 +105,6 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
-
     static IDENTITY: std::sync::LazyLock<(String, String)> = std::sync::LazyLock::new(|| {
         let name = std::env::current_exe()
             .ok()
@@ -141,8 +140,7 @@ fn main() -> Result<()> {
         .get_matches();
     let cli = Cli::from_arg_matches(&matches)?;
     let (_, command_matches) = matches.subcommand().expect("required subcommand");
-    let debug = matches.subcommand_name() == Some("process")
-        && command_matches.get_flag("debug");
+    let debug = matches.subcommand_name() == Some("process") && command_matches.get_flag("debug");
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {

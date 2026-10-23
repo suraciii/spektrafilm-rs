@@ -474,9 +474,17 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
     // environment after the pool exists.
     spektrafilm_backend::timing::set_stage_timings(args.timings);
     if args.input.is_dir() {
-        for id in ["raw_white_balance", "raw_temperature", "raw_tint", "lens_correction"] {
+        for id in [
+            "raw_white_balance",
+            "raw_temperature",
+            "raw_tint",
+            "lens_correction",
+        ] {
             if command_matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine) {
-                bail!("--{} is inapplicable to stage artifact input", id.replace('_', "-"));
+                bail!(
+                    "--{} is inapplicable to stage artifact input",
+                    id.replace('_', "-")
+                );
             }
         }
     }
@@ -500,14 +508,23 @@ pub(crate) fn run_with_native_capture(
     run_with_capture(args, data, Some(directory))
 }
 
-fn run_with_capture(mut args: ProcessArgs, data: DataSelection, capture: Option<&Path>) -> Result<()> {
+fn run_with_capture(
+    mut args: ProcessArgs,
+    data: DataSelection,
+    capture: Option<&Path>,
+) -> Result<()> {
     // Legacy complete baselines may retain an image-input partial route. Do not
     // infer artifact continuation: that input always requires explicit --route.
     if args.workflow.route.is_none() && !args.input.is_dir() && !args.scan_film {
         if let Some(path) = &args.params {
-            let text = std::fs::read_to_string(path).with_context(|| format!("opening params file {}", path.display()))?;
-            let baseline = spektrafilm_core::params::sources::parse_carrier(&text, false).map_err(anyhow::Error::msg)?;
-            if let Some(route) = baseline.pointer("/workflow/route").and_then(serde_json::Value::as_str) {
+            let text = std::fs::read_to_string(path)
+                .with_context(|| format!("opening params file {}", path.display()))?;
+            let baseline = spektrafilm_core::params::sources::parse_carrier(&text, false)
+                .map_err(anyhow::Error::msg)?;
+            if let Some(route) = baseline
+                .pointer("/workflow/route")
+                .and_then(serde_json::Value::as_str)
+            {
                 let selected = spektrafilm_core::WorkflowRoute::parse(route);
                 if selected.artifact_output().is_some() && selected.artifact_input().is_none() {
                     args.workflow.route = Some(route.to_owned());
@@ -515,8 +532,16 @@ fn run_with_capture(mut args: ProcessArgs, data: DataSelection, capture: Option<
             }
         }
     }
-    let route = args.workflow.route.as_deref().map(spektrafilm_core::WorkflowRoute::parse);
-    if args.input.is_dir() || route.is_some_and(|route| route.artifact_input().is_some() || route.artifact_output().is_some()) {
+    let route = args
+        .workflow
+        .route
+        .as_deref()
+        .map(spektrafilm_core::WorkflowRoute::parse);
+    if args.input.is_dir()
+        || route.is_some_and(|route| {
+            route.artifact_input().is_some() || route.artifact_output().is_some()
+        })
+    {
         if capture.is_some() {
             bail!("native research capture requires an image-output route");
         }
@@ -614,12 +639,26 @@ fn cmd_process(
     let backend_choice = args.backend;
     let data_dir = &data.path;
     if args.debug {
-        eprintln!("Debug: requested backend={}, computation precision={}, input={}",
-            match args.backend { Some(Backend::Cpu) => "cpu", Some(Backend::Gpu) => "gpu", None => "auto" },
-            if cfg!(feature = "precision-f64") { "f64" } else { "f32" },
-            input.display());
-        eprintln!("Debug: parameter sources: {} preset(s), {} feature profile(s), {} --set source(s)",
-            args.preset.len(), args.feature_profiles.len(), args.sources.len());
+        eprintln!(
+            "Debug: requested backend={}, computation precision={}, input={}",
+            match args.backend {
+                Some(Backend::Cpu) => "cpu",
+                Some(Backend::Gpu) => "gpu",
+                None => "auto",
+            },
+            if cfg!(feature = "precision-f64") {
+                "f64"
+            } else {
+                "f32"
+            },
+            input.display()
+        );
+        eprintln!(
+            "Debug: parameter sources: {} preset(s), {} feature profile(s), {} --set source(s)",
+            args.preset.len(),
+            args.feature_profiles.len(),
+            args.sources.len()
+        );
     }
     let total_start = Instant::now();
     use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
@@ -718,9 +757,14 @@ fn cmd_process(
     params.random_seed = u64::from(args.seed.unwrap_or(0));
     process_report::warn_edits(&resolved.edits);
     if args.debug {
-        eprintln!("Debug: resolved route={}, film={}, print={}, seed={}; execution{} observed",
-            params.workflow.route, resolved.film_name, resolved.print_name, params.random_seed,
-            if dry_run { " not" } else { " not yet" });
+        eprintln!(
+            "Debug: resolved route={}, film={}, print={}, seed={}; execution{} observed",
+            params.workflow.route,
+            resolved.film_name,
+            resolved.print_name,
+            params.random_seed,
+            if dry_run { " not" } else { " not yet" }
+        );
     }
     if stage_evidence.is_some() {
         // Configuration-level rejection, before dry run or rendering: the

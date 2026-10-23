@@ -146,14 +146,23 @@ impl Runtime {
     }
 
     /// Prepare filming without resolving or calibrating an unused printing material.
-    pub fn new_film(film: profile::Profile, params: RuntimeParams, data_dir: &Path) -> Result<Self, String> {
+    pub fn new_film(
+        film: profile::Profile,
+        params: RuntimeParams,
+        data_dir: &Path,
+    ) -> Result<Self, String> {
         if params.workflow.route_enum() != crate::WorkflowRoute::InputFilm {
             return Err("new_film requires input > film".into());
         }
         Self::new(film.clone(), film, params, data_dir)
     }
 
-    pub fn process_stage(&self, image: ImageBuf, backend: &dyn ComputeBackend, seed: u64) -> Result<crate::stage_artifact::MaterialState, String> {
+    pub fn process_stage(
+        &self,
+        image: ImageBuf,
+        backend: &dyn ComputeBackend,
+        seed: u64,
+    ) -> Result<crate::stage_artifact::MaterialState, String> {
         let started = Instant::now();
         let result = self.pipeline.process_stage(image, backend, seed);
         self.record_elapsed(started, None);

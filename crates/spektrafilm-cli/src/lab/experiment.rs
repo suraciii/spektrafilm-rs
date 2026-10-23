@@ -117,12 +117,21 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
     // owns declarations that must not be overwritten by observer publication.
     let protected = [document_path.clone(), suite_path.clone()];
     for name in std::iter::once("stage-evidence.json".to_owned()).chain(
-        spektrafilm_core::stage_evidence::StageId::ORDER.iter()
+        spektrafilm_core::stage_evidence::StageId::ORDER
+            .iter()
             .map(|stage| format!("{}.f64", stage.id())),
     ) {
-        for destination in [bundle_dir.join(&name), bundle_dir.join(format!("{name}.tmp"))] {
+        for destination in [
+            bundle_dir.join(&name),
+            bundle_dir.join(format!("{name}.tmp")),
+        ] {
             spektrafilm_core::telemetry::validate_report_destination(&destination, &protected)
-                .with_context(|| format!("observation destination conflicts: {}", destination.display()))?;
+                .with_context(|| {
+                    format!(
+                        "observation destination conflicts: {}",
+                        destination.display()
+                    )
+                })?;
         }
     }
     // A route the bundle cannot describe is a configuration-level failure
@@ -1168,7 +1177,10 @@ fn command_record(
         Ok(json!({"role": role, "path": path, "sha256": sha256}))
     }
     let executable = dependency(&std::env::current_exe()?, "executable")?;
-    let mut dependencies = vec![dependency(document, "experiment")?, dependency(suite, "suite")?];
+    let mut dependencies = vec![
+        dependency(document, "experiment")?,
+        dependency(suite, "suite")?,
+    ];
     if let Some(params) = &process.params {
         dependencies.push(dependency(params, "params")?);
     }
@@ -2094,7 +2106,10 @@ mod tests {
                 film: Some("kodak_portra_400".to_owned()),
                 paper: None,
                 preset: vec!["look.toml".to_owned()],
-                sources: vec!["grain.toml".to_owned(), "camera.exposure_compensation_ev=1".to_owned()],
+                sources: vec![
+                    "grain.toml".to_owned(),
+                    "camera.exposure_compensation_ev=1".to_owned(),
+                ],
                 route: Some("input > film > print > scan".to_owned()),
                 scan_output: Some("direct_scan".to_owned()),
                 seed: 0,
@@ -2102,13 +2117,33 @@ mod tests {
             },
         };
         let argv = command_vector(&args, &document, &args.out, &dir.join("data"));
-        assert_eq!(argv, vec![
-            "experiment", "run", "--experiment", document.to_str().unwrap(),
-            "--out", args.out.to_str().unwrap(), "--output-format", "tiff",
-            "--data-dir", dir.join("data").to_str().unwrap(), "--force",
-            "--film", "kodak_portra_400", "--preset", "look.toml",
-            "--set", "grain.toml", "--set", "camera.exposure_compensation_ev=1",
-            "--route", "input > film > print > scan", "--scan-output", "direct_scan",
-        ]);
+        assert_eq!(
+            argv,
+            vec![
+                "experiment",
+                "run",
+                "--experiment",
+                document.to_str().unwrap(),
+                "--out",
+                args.out.to_str().unwrap(),
+                "--output-format",
+                "tiff",
+                "--data-dir",
+                dir.join("data").to_str().unwrap(),
+                "--force",
+                "--film",
+                "kodak_portra_400",
+                "--preset",
+                "look.toml",
+                "--set",
+                "grain.toml",
+                "--set",
+                "camera.exposure_compensation_ev=1",
+                "--route",
+                "input > film > print > scan",
+                "--scan-output",
+                "direct_scan",
+            ]
+        );
     }
 }

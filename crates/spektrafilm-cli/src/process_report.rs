@@ -73,8 +73,11 @@ pub(crate) fn print_text(report: &Value) {
     let declaration = &report["input"]["declaration"];
     if !declaration.is_null() {
         for component in ["color_space", "cctf_decoding"] {
-            println!("  {component}: {} (source: {})",
-                value(&declaration[component]), source_label(&declaration["sources"][component]));
+            println!(
+                "  {component}: {} (source: {})",
+                value(&declaration[component]),
+                source_label(&declaration["sources"][component])
+            );
         }
     }
     if !report["input"]["artifact"].is_null() {

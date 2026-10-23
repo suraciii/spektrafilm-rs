@@ -417,19 +417,9 @@ fn execute(
 
 fn execute_run_suite(args: RunSuiteArgs) -> Result<(serde_json::Value, i32), BenchError> {
     if args.dry_run {
-        runner::preflight(
-            &args.suite,
-            &args.target,
-            &args.out,
-            &args.case_ids,
-        )
+        runner::preflight(&args.suite, &args.target, &args.out, &args.case_ids)
     } else {
-        runner::run(
-            &args.suite,
-            &args.target,
-            &args.out,
-            &args.case_ids,
-        )
+        runner::run(&args.suite, &args.target, &args.out, &args.case_ids)
     }
 }
 
