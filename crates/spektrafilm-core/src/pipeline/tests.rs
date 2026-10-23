@@ -1772,7 +1772,13 @@ fn completed_film_and_print_splits_preserve_exact_cpu_math_and_source_geometry()
 fn negative_scan_split_keeps_standard_frame_setup_and_fixed_style_compensation() {
     use crate::stage_execution::{StageResult, continue_stage};
     let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-    let input = ImageBuf::from_data(9, 5, (0..9 * 5 * 3).map(|i| from_f64(0.02 + (i % 19) as f64 / 40.0)).collect());
+    let input = ImageBuf::from_data(
+        9,
+        5,
+        (0..9 * 5 * 3)
+            .map(|i| from_f64(0.02 + (i % 19) as f64 / 40.0))
+            .collect(),
+    );
     let directory = tempfile::tempdir().unwrap();
     let styles = directory.path().join("scan-styles");
     std::fs::create_dir(&styles).unwrap();
@@ -1786,7 +1792,8 @@ fn negative_scan_split_keeps_standard_frame_setup_and_fixed_style_compensation()
         full.params.camera.exposure_compensation_ev = 0.75;
         full.params.scanner.scan_output = "negative_to_positive".into();
         full.params.scanner.conversion_style = style.into();
-        full.conversion_tones = crate::stages::scanning::style::resolve(style, Some(directory.path())).unwrap();
+        full.conversion_tones =
+            crate::stages::scanning::style::resolve(style, Some(directory.path())).unwrap();
         let expected = full.process(input.clone(), &backend).unwrap();
         let mut producing = full.clone();
         producing.params.workflow.route = "input > film".into();
@@ -1795,7 +1802,11 @@ fn negative_scan_split_keeps_standard_frame_setup_and_fixed_style_compensation()
         let mut params = film.header.baseline.clone();
         params.workflow.route = "film > scan".into();
         params.scanner.scan_output = "negative_to_positive".into();
-        let StageResult::Image(actual) = continue_stage(film, params, None, directory.path(), &backend, 7).unwrap() else { panic!("expected scan") };
+        let StageResult::Image(actual) =
+            continue_stage(film, params, None, directory.path(), &backend, 7).unwrap()
+        else {
+            panic!("expected scan")
+        };
         assert_eq!(actual.data, expected.data, "scan style {style}");
     }
 }
@@ -1807,8 +1818,10 @@ fn completed_density_rejects_camera_reinterpretation_but_allows_future_procedura
     let mut producing = build();
     producing.params.workflow.route = "input > film".into();
     producing.params.film_render.grain.active = false;
-    let input = ImageBuf::from_data(4,3,vec![from_f64(0.2);36]);
-    let film = producing.process_stage(input.clone(), &backend, 12).unwrap();
+    let input = ImageBuf::from_data(4, 3, vec![from_f64(0.2); 36]);
+    let film = producing
+        .process_stage(input.clone(), &backend, 12)
+        .unwrap();
     let mut params = film.header.baseline.clone();
     params.workflow.route = "film > scan".into();
     params.camera.exposure_compensation_ev += 1.0;
@@ -1825,9 +1838,19 @@ fn completed_density_rejects_camera_reinterpretation_but_allows_future_procedura
     let expected = full.process(input.clone(), &backend).unwrap();
     full.params.film_render.grain.active = false;
     let without_grain = full.process(input, &backend).unwrap();
-    let StageResult::Image(actual) = continue_stage(film,params,None,&data_dir(),&backend,99).unwrap() else { panic!("expected scan") };
-    assert_eq!(actual.data, expected.data, "post-scan Procedural must run exactly once with the new seed");
-    assert_ne!(actual.data, without_grain.data, "enabling Procedural must visibly change the scanned samples");
+    let StageResult::Image(actual) =
+        continue_stage(film, params, None, &data_dir(), &backend, 99).unwrap()
+    else {
+        panic!("expected scan")
+    };
+    assert_eq!(
+        actual.data, expected.data,
+        "post-scan Procedural must run exactly once with the new seed"
+    );
+    assert_ne!(
+        actual.data, without_grain.data,
+        "enabling Procedural must visibly change the scanned samples"
+    );
 }
 
 #[test]
