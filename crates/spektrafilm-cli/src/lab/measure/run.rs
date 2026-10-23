@@ -464,19 +464,34 @@ fn declaration_record(
 /// the dependency identities already computed by the measurement owner.
 fn replay_record(args: &MeasureRunArgs, declaration: &Value, identity: &Value) -> Result<Value> {
     let cwd = std::env::current_dir()?;
-    let out = if args.out.is_absolute() { args.out.clone() } else { cwd.join(&args.out) };
+    let out = if args.out.is_absolute() {
+        args.out.clone()
+    } else {
+        cwd.join(&args.out)
+    };
     let text = |field: &str| declaration[field].as_str().unwrap_or_default().to_owned();
     let mut argv = vec![
-        "measure".to_owned(), "run".to_owned(), "--stimuli".to_owned(), text("stimuli"),
-        "--enter".to_owned(), text("enter"), "--out".to_owned(), out.display().to_string(),
-        "--data-dir".to_owned(), text("data_dir"),
+        "measure".to_owned(),
+        "run".to_owned(),
+        "--stimuli".to_owned(),
+        text("stimuli"),
+        "--enter".to_owned(),
+        text("enter"),
+        "--out".to_owned(),
+        out.display().to_string(),
+        "--data-dir".to_owned(),
+        text("data_dir"),
     ];
     for field in ["film", "paper", "route", "scan_output"] {
         if let Some(value) = declaration[field].as_str() {
             argv.extend([format!("--{}", field.replace('_', "-")), value.to_owned()]);
         }
     }
-    for (field, option) in [("preset", "--preset"), ("sources", "--set"), ("read", "--read")] {
+    for (field, option) in [
+        ("preset", "--preset"),
+        ("sources", "--set"),
+        ("read", "--read"),
+    ] {
         for value in declaration[field].as_array().into_iter().flatten() {
             if let Some(value) = value.as_str() {
                 argv.extend([option.to_owned(), value.to_owned()]);
