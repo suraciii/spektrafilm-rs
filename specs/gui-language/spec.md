@@ -4,7 +4,7 @@
 
 This specification owns the language that the GUI presents to a person. It owns visible labels, choice labels, help text, workflow descriptions, status wording, and the separation between product language and technical identifiers.
 
-[`CONTEXT.md`](../../CONTEXT.md) owns the domain glossary. [`Film chain`](../film-chain/spec.md) owns scanner operations, scanner stage boundaries, scan-output naming, and conversion-control naming. [`GUI workflow`](../gui-workflow/spec.md) owns control inventory, page ownership, editing behavior, and persisted-state behavior. [`GUI presentation`](../gui-presentation/spec.md) owns row and surface presentation.
+[`CONTEXT.md`](../../CONTEXT.md) owns the domain glossary. [`Film chain`](../film-chain/spec.md) owns scanner operations, scanner stage boundaries, scan-output naming, and conversion-control naming. [`GUI workflow`](../gui-workflow/spec.md) owns control inventory, stage and surface ownership, editing behavior, and persisted-state behavior. [`GUI presentation`](../gui-presentation/spec.md) owns row and surface presentation.
 
 The GUI must use the domain glossary and the owning operation specification as its vocabulary source. This specification must not redefine physical terms with shorter synonyms.
 
@@ -62,8 +62,11 @@ The GUI must display:
 | `scanner.scan_output = negative_to_positive` | `Negative to positive` |
 | `scanner.lens_blur` | `Lens blur (readout optics)` |
 | `scanner.unsharp_mask` | `Unsharp mask (digital sharpening)` |
+| `film_render.convert.scan_illuminant` | `Scan illuminant` in Input and capture → Convert |
 
 The GUI must not offer a scanner light control. The readout illuminant is a product constant selected by the material category.
+
+The Convert scan-illuminant help must identify the light used to acquire an imported RGB negative. It must distinguish that declaration from the fixed product readout illuminant and the Camera capture illuminant. Conversion-style choices must follow the [lab scan style-name contract](../film-chain/lab-scan/spec.md#tone-and-style-names). The GUI must not present `neutral` as a fixed built-in style or expose automatic setup as a separate control.
 
 The GUI must explain that `negative conversion` interprets a developed negative as a positive image through the film's own density response. It must not describe negative conversion as a file conversion, a scan finish, or a positive-scan alias.
 
@@ -85,6 +88,10 @@ The GUI must call the terminal modeled appearance `CMYK ink style`. Its help mus
 The GUI must keep `Simulation blend` as the name of the full-result/prepared-source mix. It must not rename it to opacity, intensity, saturation, or strength.
 
 The GUI must keep `Print viewing glare`, `Lens blur (readout optics)`, `Unsharp mask (digital sharpening)`, material grain, and Procedural post-scan grain distinct. Similar visual effects must not share a label that implies the same physical stage.
+
+The unified Grain selector must retain the names Spektra, Dye, and Procedural. Its choice descriptions must identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Procedural help must identify Film Resolution as part of that appearance algorithm, not scanner lens resolution.
+
+Camera diffusion and Enlarger diffusion must retain their distinct optical owners. Halation must remain a film-domain effect. Preflash exposure and its independent Magenta and Yellow filter shifts must remain printing controls. Print viewing glare help must identify readout stray light, not preflash or a change in material density. Visible placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership), not serialized section names.
 
 ## Viewer language
 
@@ -116,12 +123,16 @@ Actions must use one stable verb and one explicit target:
 
 | Action | Meaning |
 |---|---|
+| `Open` | Open image intake choices without changing their RGB and RAW meanings. |
+| `Undo` | Restore the preceding accepted edit transaction. |
+| `Redo` | Reapply the next undone edit transaction. |
+| `Settings` | Open session, display, and diagnostics settings. |
+| `Export` | Open the independent Export dialog without starting a render. |
 | `Select RGB image…` | Choose and load a standard raster image. |
 | `Select RAW file…` | Choose and load a camera RAW file through the RAW path. |
 | `Preview` or `PREVIEW` | Render the bounded preview using current runtime controls. |
 | `Scan` or `SCAN` | Render the original working resolution using current runtime controls. |
 | `Save…` or `SAVE` | Write retained output without rerendering. |
-| `Open export settings…` | Open independent export settings. |
 | `Export file…` | Start independent export rendering and writing. |
 | `Save preset…` | Capture the current look in a preset. |
 | `Save current to file` | Write GUI state to a selected state file. |
@@ -129,15 +140,17 @@ Actions must use one stable verb and one explicit target:
 | `Save current as default` | Replace the startup GUI state. |
 | `Restore factory default` | Restore factory GUI state and remove the saved startup default. |
 
-The implementation may use uppercase action labels for existing layout compatibility, but tooltips and status messages must use the meanings in this table. A future casing change must not change the action contract.
+Action labels may use uppercase casing. Tooltips and status messages must preserve the meanings in this table.
 
 `Save` and `Export` must never be described as the same operation. Save uses retained output; Export rerenders independently.
+
+Undo and Redo wording must follow [edit history](../gui-workflow/spec.md#edit-history). Their help must not imply that they reverse file writes or preset-library writes. Opening Settings or Export must not be described as changing pipeline stages.
 
 ## Header and status language
 
 The header must show the selected film, selected print material, exact workflow route, and one operation status surface. The exact route string remains available because it identifies the physical sequence and is required for diagnostics.
 
-A future presentation may add a direct physical description beside the exact route. The description must translate the route without inventing a look category. For example, `Film → print → scan` may describe `input > film > print > scan`; `Film print look` must not replace it.
+The header may add a direct physical description beside the exact route. The description must translate the route without inventing a look category. For example, `Film → print → scan` may describe `input > film > print > scan`; `Film print look` must not replace it.
 
 Normal success status must describe the accepted operation and its dimensions or target. Backend and precision detail belongs in Diagnostics unless it explains an actionable limitation. A diagnostic label such as `f64 reference` must not be the only normal success message.
 
@@ -147,11 +160,17 @@ A status that reports route or profile normalization must identify which stored 
 
 ## State, reset, and search language
 
-`modified` means that a section differs from the exact factory projection restored by its section reset. The GUI must not replace this state term with a looser term unless the section-reset contract is also updated. Help must explain what reset will restore.
+`Modified` must mean that a row or module differs from its exact factory reset projection. It must not mean that the value differs from the selected preset or startup default. Factory comparison follows [presentation design](../gui-presentation/design.md#factory-projection-and-modified-state). Reset behavior follows [complete control access](../gui-workflow/spec.md#complete-control-access).
 
-`Filter controls` remains the label while matching is limited to control labels. The GUI must not call it `Search controls` until it indexes a broader declared vocabulary. A no-match message must use the user's entered text and must not imply that parameter values changed.
+A row reset must be named `Reset to factory` with the row target available in accessible text or help. A module reset must name the module and its factory baseline. A section-preset menu whose stored payload spans more than one module must explicitly name its full scope. It must not describe the wider action as a module-only reset.
 
-A search result must name its owning page and section. The result summary may use product language, but it must not replace the accessible page and section identity.
+The inspector stage names must be `Input and capture`, `Film`, `Print`, `Scan`, and `Output`. A stage jump must identify the heading it reaches, not a page it replaces. `Settings` and `Export` must name dialogs rather than additional stages. The interface must not use MAIN, FILM, PRINT, ADVANCED, or CONFIG as page labels.
+
+`Search controls` must label the global control locator under [control search](../gui-workflow/spec.md#control-search). Help must state that it matches control labels, module names, and canonical parameter paths across editing surfaces. It must not describe search as a filter limited to the current stage. A no-match message must include the entered text and must not imply that parameter values changed.
+
+A result must name the control, its owning module, and its stage or dialog destination. Canonical paths may appear as secondary technical detail. The action must describe navigation to the real editor, not application of a value. A Settings or Export result must explicitly name that dialog. A result must not present a second editable copy.
+
+An inactive reason must identify the route, medium, or capability condition that prevents use. It must distinguish a retained value from one that was cleared by required normalization. A disabled value must not be labeled as applied when its stage does not execute.
 
 ## Help-text rules
 
@@ -178,7 +197,7 @@ Help text must not:
 
 1. Every scanner label and choice matches the scanner contracts and preserves the serialized value.
 2. Every visible technical term has a tooltip or linked documentation definition when its meaning is not self-evident.
-3. Search labels, AccessKit labels, state keys, enum values, and diagnostics remain distinct layers.
+3. Search result labels, accessible labels, state keys, enum values, and diagnostics remain distinct layers.
 4. Save, Export, retained output, and viewer-only state remain distinguishable in labels and help.
 5. A terminology review against `CONTEXT.md` rejects any rename that changes operation, domain, stage, or calibration meaning.
-6. Existing headless, layout, Save/Export pixel, and persisted-state acceptance remains valid after presentation-only language changes.
+6. Presentation-only language changes must preserve headless behavior, layout accessibility, Save/Export pixels, and persisted-state contracts.

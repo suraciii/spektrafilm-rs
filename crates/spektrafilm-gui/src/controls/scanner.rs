@@ -111,8 +111,23 @@ pub(crate) fn sections(
             if filter_matches(filter, "print illuminant") {
                 flags.runtime_changed |= choice_tip_experimental(ui, "print illuminant", &mut params.enlarger.illuminant, &["TH-KG3", "TH-KG3-L", "K75P", "T", "D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Print illuminant to simulate. Default is the bundled TH-KG3.");
             }
-            preflash_controls(ui, params, flags, filter);
+            if filter_matches(filter, "print exposure ev tracking") {
+                flags.runtime_changed |= enum_choice(
+                    ui,
+                    "print exposure ev tracking",
+                    &mut params.settings.print_exposure_ev_tracking,
+                    &[
+                        (PrintExposureEvTracking::FollowMode, "follow_mode"),
+                        (PrintExposureEvTracking::Never, "never"),
+                        (PrintExposureEvTracking::Always, "always"),
+                    ],
+                    "How the print exposure follows camera exposure compensation. follow_mode tracks it in auto mode and does not track it in manual; never disables tracking in auto; always applies the relative compensation factor in manual.",
+                );
+            }
         });
+    }
+    if section == "Preflash" {
+        preflash_controls(ui, params, flags, filter);
     }
     if section == "Scanner" {
         ui.scope(|ui| {
@@ -129,21 +144,19 @@ pub(crate) fn sections(
                     .small()
                     .color(theme::FG_MUTED),
             );
-            // One explanatory line groups the scanner controls by the physical
-            // light source, the output polarity, and the readout optics. It
-            // names the sequence only: it renames no runtime concept and adds
-            // no control.
+            // Product readout illumination is fixed by the material category;
+            // only output polarity and readout optics are adjustable here.
             ui.label(
                 egui::RichText::new(vocabulary::SCANNER_SEQUENCE)
                     .small()
                     .color(theme::FG_MUTED),
             );
             if medium == ScanMedium::None {
-                return;
+                ui.label("Scanner inactive on this route; stored values are retained.");
             }
-            if positive_route
-                && filter_matches(filter, vocabulary::SCAN_OUTPUT)
-                && choice_tip_entries(
+            ui.add_enabled_ui(medium != ScanMedium::None, |ui| {
+            if filter_matches(filter, vocabulary::SCAN_OUTPUT)
+                && ui.add_enabled_ui(positive_route, |ui| choice_tip_entries(
                     ui,
                     vocabulary::SCAN_OUTPUT,
                     &mut params.scanner.scan_output,
@@ -153,18 +166,18 @@ pub(crate) fn sections(
                     ]
                     .into_iter(),
                     vocabulary::SCAN_OUTPUT_HELP,
-                )
+                )).inner
             {
                 flags.runtime_changed = true;
                 normalize_scanner_selections(params, film_medium);
             }
             // A conversion style is a property of the negative interpretation,
             // so it is offered only while that interpretation is selected.
-            if params.scanner.scan_output == "negative_to_positive"
-                && filter_matches(filter, vocabulary::CONVERSION_STYLE)
-            {
+            if filter_matches(filter, vocabulary::CONVERSION_STYLE) {
+                let conversion_active = positive_route && params.scanner.scan_output == "negative_to_positive";
+                if !conversion_active { ui.label("Conversion style inactive until Negative to positive is selected; stored values are retained."); }
                 let styles = conversion_styles(data_dir);
-                if choice_tip_entries(
+                if ui.add_enabled_ui(conversion_active, |ui| choice_tip_entries(
                     ui,
                     vocabulary::CONVERSION_STYLE,
                     &mut params.scanner.conversion_style,
@@ -172,7 +185,7 @@ pub(crate) fn sections(
                         .iter()
                         .map(|style| (style.as_str(), style.as_str())),
                     vocabulary::CONVERSION_STYLE_HELP,
-                ) {
+                )).inner {
                     flags.runtime_changed = true;
                 }
             }
@@ -182,11 +195,12 @@ pub(crate) fn sections(
             if filter_matches(filter, "unsharp mask (digital sharpening)") {
                 flags.runtime_changed |= param_tuple(ui, "Unsharp mask (digital sharpening)", &mut params.scanner.unsharp_mask, "scanner.unsharp_mask", "Digital scan sharpening after interpretation and output gamut processing: [sigma in pixels, amount].");
             }
+            });
         });
     }
     if section == "Import Raw" {
         if filter_matches(filter, "white balance") {
-            flags.raw_reload |= extra_choice(
+            extra_choice(
                 ui,
                 extras,
                 "load_raw",
@@ -198,7 +212,7 @@ pub(crate) fn sections(
             );
         }
         if filter_matches(filter, "temperature") {
-            flags.raw_reload |= extra_number(
+            extra_number(
                 ui,
                 extras,
                 "load_raw",
@@ -210,7 +224,7 @@ pub(crate) fn sections(
             );
         }
         if filter_matches(filter, "tint") {
-            flags.raw_reload |= extra_number(
+            extra_number(
                 ui,
                 extras,
                 "load_raw",
@@ -222,7 +236,7 @@ pub(crate) fn sections(
             );
         }
         if filter_matches(filter, "lens correction") {
-            flags.raw_reload |= extra_bool_tip(
+            extra_bool_tip(
                 ui,
                 extras,
                 "load_raw",
@@ -231,9 +245,6 @@ pub(crate) fn sections(
                 false,
                 "Apply lens corrections",
             );
-        }
-        if filter_matches(filter, "reprocess raw") {
-            flags.raw_reload |= ui.button("reprocess raw").clicked();
         }
     }
     if section == "Camera diffusion" || section == "Enlarger diffusion" {

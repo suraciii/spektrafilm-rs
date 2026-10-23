@@ -11,7 +11,12 @@ use spektrafilm_core::params::diffusion::DiffusionFilterParams;
 /// Editor range for `path`, from the single per-path table. A missing entry
 /// is a defect, not a silent default to the machine range.
 pub(crate) fn editor_range_for(path: &str) -> editor_ranges::EditorRange {
-    editor_ranges::editor_range(path).unwrap_or_else(|| panic!("missing editor range for {path}"))
+    editor_ranges::editor_range(path)
+        .or_else(|| {
+            path.strip_prefix("extras.")
+                .and_then(editor_ranges::editor_range)
+        })
+        .unwrap_or_else(|| panic!("missing editor range for {path}"))
 }
 
 pub(crate) fn param_numeric<T: egui::emath::Numeric>(
@@ -21,9 +26,14 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
     path: &str,
     tooltip: &str,
 ) -> bool {
+    if !super::row_path_matches(ui.ctx(), path) {
+        return false;
+    }
+    let _identity = super::row_identity(ui.ctx(), path);
     let (min, max, step, decimals) = editor_range_for(path);
     let mark = row_modified::RowMark::resolve(ui.ctx(), Some(path));
-    numeric_marked(
+    let previous = *value;
+    let mut changed = numeric_marked(
         ui,
         label,
         value,
@@ -35,7 +45,26 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
         crate::numeric::unit_suffix(path),
         false,
         mark,
-    )
+    );
+    if changed
+        && !row_modified::accepts_value(
+            ui.ctx(),
+            path,
+            if T::INTEGRAL {
+                Value::from(value.to_f64() as i64)
+            } else {
+                Value::from(value.to_f64())
+            },
+        )
+    {
+        *value = previous;
+        changed = false;
+    }
+    row_modified::offer_reset(ui, label, Some(path));
+    if changed {
+        super::record_edited_path(ui.ctx(), path);
+    }
+    changed
 }
 
 /// `param_numeric` whose effective maximum is additionally capped at
@@ -48,8 +77,12 @@ pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
     max_cap: f64,
     tooltip: &str,
 ) -> bool {
+    if !super::row_path_matches(ui.ctx(), path) {
+        return false;
+    }
+    let _identity = super::row_identity(ui.ctx(), path);
     let (min, max, step, decimals) = editor_range_for(path);
-    numeric(
+    let changed = numeric(
         ui,
         label,
         value,
@@ -60,7 +93,11 @@ pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
         tooltip,
         crate::numeric::unit_suffix(path),
         false,
-    )
+    );
+    if changed {
+        super::record_edited_path(ui.ctx(), path);
+    }
+    changed
 }
 
 /// Per-component identifiers for a tuple row. Empty means the components are
@@ -88,7 +125,7 @@ pub(crate) const MICRO_STRUCTURE_IDENTIFIERS: &[&str] = &["blur", "clump"];
 /// tuple whose components are only ordered positions stays positional:
 /// inventing a name the parameter does not carry would mislead, and the
 /// identifier becomes part of the row's accessible name.
-fn tuple_identifiers(path: &str) -> &'static [&'static str] {
+pub(crate) fn tuple_identifiers(path: &str) -> &'static [&'static str] {
     match path {
         // Colour-channel tuples: one component per emulsion channel.
         "film_render.dir_couplers.gamma_samelayer_rgb"
@@ -129,8 +166,12 @@ pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
     path: &str,
     tooltip: &str,
 ) -> bool {
+    if !super::row_path_matches(ui.ctx(), path) {
+        return false;
+    }
+    let _identity = super::row_identity(ui.ctx(), path);
     let (min, max, step, decimals) = editor_range_for(path);
-    tuple_marked(
+    let changed = tuple_marked(
         ui,
         label,
         values,
@@ -142,7 +183,12 @@ pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
         tuple_identifiers(path),
         false,
         row_modified::RowMark::resolve(ui.ctx(), Some(path)),
-    )
+    );
+    row_modified::offer_reset(ui, label, Some(path));
+    if changed {
+        super::record_edited_path(ui.ctx(), path);
+    }
+    changed
 }
 
 /// `param_tuple` on a row marked experimental.
@@ -153,8 +199,12 @@ pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
     path: &str,
     tooltip: &str,
 ) -> bool {
+    if !super::row_path_matches(ui.ctx(), path) {
+        return false;
+    }
+    let _identity = super::row_identity(ui.ctx(), path);
     let (min, max, step, decimals) = editor_range_for(path);
-    tuple_marked(
+    let changed = tuple_marked(
         ui,
         label,
         values,
@@ -166,7 +216,12 @@ pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
         tuple_identifiers(path),
         true,
         row_modified::RowMark::resolve(ui.ctx(), Some(path)),
-    )
+    );
+    row_modified::offer_reset(ui, label, Some(path));
+    if changed {
+        super::record_edited_path(ui.ctx(), path);
+    }
+    changed
 }
 
 /// Per-path table keys for the shared diffusion-filter editor. Camera and
@@ -333,9 +388,27 @@ pub(crate) fn optional_numeric(
     path: &str,
     tooltip: &str,
 ) -> bool {
+    if !super::row_path_matches(ui.ctx(), path) {
+        return false;
+    }
     let mut displayed = value.unwrap_or(inherited);
-    let changed = param_numeric(ui, label, &mut displayed, path, tooltip);
-    if changed {
+    let numeric_changed = param_numeric(ui, label, &mut displayed, path, tooltip);
+    let mut changed = numeric_changed;
+    let mut inherited_selected = false;
+    ui.horizontal(|ui| {
+        ui.label(if value.is_none() {
+            format!("Inherited: {inherited}")
+        } else {
+            "Explicit override".to_owned()
+        });
+        if value.is_some() && ui.small_button(format!("Inherit {label}")).clicked() {
+            *value = None;
+            super::record_edited_path(ui.ctx(), path);
+            inherited_selected = true;
+            changed = true;
+        }
+    });
+    if numeric_changed && !inherited_selected {
         *value = Some(displayed);
     }
     changed
@@ -383,6 +456,11 @@ pub(crate) fn fotufilm_sublayer_shares(
     if filter_matches(filter, "sublayer 4 (remainder)") {
         ui.label(format!("Sublayer 4 (remainder): {:.6}", shares[3]));
     }
+    row_modified::offer_reset(
+        ui,
+        "Sublayer shares",
+        Some("film_render.grain.fotufilm.sublayer_shares"),
+    );
     changed
 }
 
@@ -413,6 +491,7 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
                         .selected(*value),
                 )
                 .on_hover_text(tooltip);
+            super::focus_response(ui, label, &response);
             if response.clicked() {
                 *value = !*value;
                 changed = true;
@@ -440,6 +519,10 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
             });
         });
     });
+    row_modified::offer_reset(ui, label, None);
+    if changed {
+        super::record_label_edit(ui.ctx(), label);
+    }
     changed
 }
 
@@ -488,8 +571,11 @@ pub(crate) fn optional_choice_tip(
 ) -> bool {
     let mut changed = false;
     let mut selected = value.clone().unwrap_or_else(|| unset.to_owned());
-    ui.horizontal(|ui| {
-        egui::ComboBox::from_label(label)
+    ui.vertical(|ui| {
+        ui.label(label).on_hover_text(tooltip);
+        let selector = egui::ComboBox::from_id_salt(label)
+            .width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
+            .wrap_mode(egui::TextWrapMode::Truncate)
             .selected_text(selected.clone())
             .show_ui(ui, |ui| {
                 let entries =
@@ -518,19 +604,42 @@ pub(crate) fn optional_choice_tip(
             })
             .response
             .on_hover_text(tooltip);
-        let mut text_value = value.clone().unwrap_or_default();
+        super::focus_response(ui, label, &selector);
+        name_choice(ui, label);
+        let draft_id = ui.make_persistent_id(("optional-illuminant-draft", label));
+        let mut text_value = ui
+            .ctx()
+            .data(|data| data.get_temp::<String>(draft_id))
+            .unwrap_or_else(|| value.clone().unwrap_or_default());
         let response = ui
             .add(
                 egui::TextEdit::singleline(&mut text_value)
-                    .desired_width(120.0)
+                    .desired_width(ui.available_width().min(theme::WIDTH_COMBO_MAX))
                     .hint_text("custom BB<kelvin>"),
             )
             .on_hover_text("Enter any shared catalog illuminant or BB<kelvin> (1667..=25000).");
-        if response.changed() {
-            *value = (!text_value.is_empty()).then_some(text_value);
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_label("custom capture illuminant")
+        });
+        if response.changed()
+            && (text_value.is_empty()
+                || spektrafilm_core::spectral_service::is_supported_illuminant(&text_value))
+        {
+            *value = (!text_value.is_empty()).then(|| text_value.clone());
             changed = true;
         }
+        let stored_draft = if response.lost_focus() {
+            value.clone().unwrap_or_default()
+        } else {
+            text_value
+        };
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(draft_id, stored_draft));
+        row_modified::offer_reset(ui, label, None);
     });
+    if changed {
+        super::record_label_edit(ui.ctx(), label);
+    }
     changed
 }
 
@@ -610,7 +719,7 @@ pub(crate) fn choice_tip_options<'a>(
         let width = ui
             .available_width()
             .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
-        egui::ComboBox::from_id_salt(label)
+        let response = egui::ComboBox::from_id_salt(label)
             .selected_text(&selected_label)
             .width(width)
             // Truncate rather than extend: an extending selector takes its
@@ -633,8 +742,13 @@ pub(crate) fn choice_tip_options<'a>(
             })
             .response
             .on_hover_text(tooltip);
+        super::focus_response(ui, label, &response);
         name_choice(ui, label);
     });
+    row_modified::offer_reset(ui, label, None);
+    if prev != *value {
+        super::record_label_edit(ui.ctx(), label);
+    }
     prev != *value
 }
 
@@ -687,6 +801,7 @@ pub(crate) fn extra_choice(
             .on_hover_text(tooltip);
         name_choice(ui, label);
     });
+    row_modified::offer_reset(ui, label, Some(&format!("extras.{section}.{key}")));
     if let Some(selected) = selected {
         set_extra(extras, section, key, Value::from(selected));
         true
@@ -804,12 +919,36 @@ pub(crate) fn extra_channels(
             }
         }
     }
-    if param_tuple_experimental(ui, label, &mut values, path, "") {
+    let mut changed = false;
+    ui.label(label).on_hover_text("Permutation of film density channels. Selecting a channel swaps its prior position so no record is duplicated or dropped.");
+    ui.horizontal(|ui| {
+        for index in 0..3 {
+            egui::ComboBox::from_id_salt((path, index))
+                .selected_text(values[index].to_string())
+                .show_ui(ui, |ui| {
+                    for channel in 0..3_u32 {
+                        if ui
+                            .selectable_label(values[index] == channel, channel.to_string())
+                            .clicked()
+                            && values[index] != channel
+                        {
+                            let other = values
+                                .iter()
+                                .position(|value| *value == channel)
+                                .expect("channel permutation");
+                            values.swap(index, other);
+                            changed = true;
+                        }
+                    }
+                });
+        }
+    });
+    row_modified::offer_reset(ui, label, Some(path));
+    if changed {
         set_extra(extras, "special", key, Value::from(values.to_vec()));
-        true
-    } else {
-        false
+        super::record_edited_path(ui.ctx(), path);
     }
+    changed
 }
 
 pub(crate) fn set_extra(extras: &mut Value, section: &str, key: &str, value: Value) {
@@ -820,4 +959,49 @@ pub(crate) fn set_extra(extras: &mut Value, section: &str, key: &str, value: Val
         extras[section] = Value::Object(Map::new());
     }
     extras[section][key] = value;
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn optional_capture_illuminant_stays_inside_a_narrow_control_panel() {
+        for width in [280.0_f32, 360.0_f32, 460.0_f32] {
+            let ctx = egui::Context::default();
+            let mut value = None;
+            let mut content_width = 0.0;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 500.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let available = ui.available_width();
+                        let content = ui.scope(|ui| {
+                            optional_choice_tip(
+                                ui,
+                                "capture illuminant",
+                                &mut value,
+                                "inherit (film profile)",
+                                &["D50", "D65"],
+                                "Effective inherited capture illuminant: D65",
+                            );
+                        });
+                        content_width = content.response.rect.width();
+                        assert!(
+                            content_width <= available + 1.0,
+                            "{width}: {content_width} > {available}"
+                        );
+                    });
+                },
+            );
+            assert!(value.is_none());
+            assert!(content_width > 0.0);
+        }
+    }
 }

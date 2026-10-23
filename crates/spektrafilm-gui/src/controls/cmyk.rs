@@ -12,6 +12,14 @@ pub(crate) fn sections(
     if section == "CMYK ink style" {
         section_header(ui, filter, section, |ui, filter| {
             let cmyk = &mut params.cmyk;
+            if filter_matches(filter, "enable CMYK ink style") {
+                flags.runtime_changed |= toggle(
+                    ui,
+                    "Enable CMYK ink style",
+                    &mut cmyk.active,
+                    "Enable the independent CMYK ink style processing stage; retains its strength while disabled.",
+                );
+            }
             if filter_matches(filter, "strength") {
                 flags.runtime_changed |= param_numeric(
                     ui,

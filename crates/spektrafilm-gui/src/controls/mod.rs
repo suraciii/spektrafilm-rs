@@ -11,6 +11,51 @@ use spektrafilm_core::params::{
 use spektrafilm_core::profile::Profile;
 use std::path::Path;
 
+#[derive(Clone)]
+pub(crate) struct ControlProjection {
+    pub(crate) runtime: std::sync::Arc<Value>,
+    pub(crate) extras: std::sync::Arc<Value>,
+}
+
+thread_local! {
+    static FRAME_PROJECTION: std::cell::RefCell<Option<(usize, usize, ControlProjection)>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn begin_control_frame(_ctx: &egui::Context, params: &RuntimeParams, extras: &Value) {
+    let projection = ControlProjection {
+        runtime: std::sync::Arc::new(serde_json::to_value(params).expect("runtime serializes")),
+        extras: std::sync::Arc::new(extras.clone()),
+    };
+    FRAME_PROJECTION.with(|cache| {
+        *cache.borrow_mut() = Some((
+            params as *const _ as usize,
+            extras as *const _ as usize,
+            projection,
+        ))
+    });
+}
+
+pub(crate) fn end_control_frame() {
+    FRAME_PROJECTION.with(|cache| *cache.borrow_mut() = None);
+}
+
+pub(crate) fn control_projection(params: &RuntimeParams, extras: &Value) -> ControlProjection {
+    FRAME_PROJECTION
+        .with(|cache| {
+            cache
+                .borrow()
+                .as_ref()
+                .filter(|(p, e, _)| {
+                    *p == params as *const _ as usize && *e == extras as *const _ as usize
+                })
+                .map(|(_, _, projection)| projection.clone())
+        })
+        .unwrap_or_else(|| ControlProjection {
+            runtime: std::sync::Arc::new(serde_json::to_value(params).expect("runtime serializes")),
+            extras: std::sync::Arc::new(extras.clone()),
+        })
+}
+
 const COLOR_SPACES: &[&str] = &[
     "sRGB",
     "DCI-P3",
@@ -47,8 +92,6 @@ pub enum CalibrationAction {
 pub struct ChangeFlags {
     /// A simulation input changed. Invalidate the applicable pipeline cache.
     pub runtime_changed: bool,
-    /// Reload the selected RAW with extras.load_raw before rendering it.
-    pub raw_reload: bool,
     /// The preview-size Update button was pressed, independently of auto-preview.
     pub preview_requested: bool,
     /// A real controller action was requested from the Convert panel.
@@ -126,7 +169,7 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     // vertical section body, so both share one explicit row here.
     ui.horizontal(|ui| {
         ui.label(label).on_hover_text(tooltip);
-        egui::ComboBox::from_id_salt(label)
+        let response = egui::ComboBox::from_id_salt(label)
             .selected_text(selected)
             .show_ui(ui, |ui| {
                 for &(option, label) in choices {
@@ -135,9 +178,19 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
             })
             .response
             .on_hover_text(tooltip);
+        if let Some(entry) = inventory().iter().find(|entry| {
+            entry.owner == ControlOwner::Export && entry.label.eq_ignore_ascii_case(label)
+        }) {
+            locate_row(ui, &entry.path, &response);
+        }
+        focus_response(ui, label, &response);
         // The selector carries the parameter's own accessible name.
         widgets::name_choice(ui, label);
     });
+    row_modified::offer_reset(ui, label, None);
+    if prev != *value {
+        record_label_edit(ui.ctx(), label);
+    }
     prev != *value
 }
 
@@ -163,6 +216,12 @@ pub(crate) fn section_header<R>(
     title: &str,
     add_contents: impl FnOnce(&mut Ui, &mut ControlFilter<'_>) -> R,
 ) {
+    if row_modified::current_section(ui.ctx()).is_some_and(|section| {
+        section == title || (section == "Glare" && title == "Print viewing glare")
+    }) {
+        add_contents(ui, filter);
+        return;
+    }
     if filter.active() {
         if !filter.section_matches() {
             return;
@@ -225,6 +284,12 @@ pub(crate) fn show(
     let mut flags = ChangeFlags::default();
     let _row_scope = row_modified::install(ui.ctx(), section, params, extras);
     let mut filter = ControlFilter::new(filter, cache);
+    let only_modified = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(egui::Id::new("controls_only_modified")))
+        .unwrap_or(false);
+    filter.configure(section, params, extras, only_modified);
+    filter.install_row_filter(ui.ctx());
     ui.push_id(("supplemental_controls", section), |ui| {
         render_sections(
             ui,
@@ -239,6 +304,12 @@ pub(crate) fn show(
         );
     });
     filter.finish();
+    ui.ctx().data_mut(|data| {
+        data.remove_temp::<Option<std::sync::Arc<Vec<String>>>>(egui::Id::new(
+            "control_allowed_paths",
+        ))
+    });
+    flags.runtime_changed |= apply_pending_resets(ui.ctx(), params, extras);
     flags
 }
 
@@ -286,109 +357,273 @@ mod couplers;
 mod crop;
 mod display;
 mod filter;
-pub(crate) use filter::{
-    ControlFilter, SectionLabelCache, cached_labels_match, filter_matches, filter_matches_any,
-    label_matches,
-};
+pub(crate) use filter::{ControlFilter, SectionLabelCache, filter_matches, filter_matches_any};
 pub(crate) mod row_modified;
-/// One item of a page's control panel, in the order the page renders it.
-///
-/// The table is the single source of a page's layout: the panel renders from
-/// it and the cross-page search index derives the searchable sections from it,
-/// so a section added to a page is searchable on the same change.
-pub(crate) enum PanelItem {
-    /// A parameter section, rendered by `ui::App::parameter_section`.
-    Section(&'static str),
-    /// The chemistry section of one medium: film or print.
-    Chemistry { film: bool },
-    /// One intake surface: false is RGB, true is RAW.
-    Import { raw: bool },
-    /// The profile selectors of the main page.
-    Profiles,
-    /// The export actions of the main page.
-    ExportOptions,
-    /// The diagnostics readout of the configuration page.
-    Diagnostics,
-    /// The GUI parameter toolbar of the configuration page.
-    GuiParameters,
-    /// The display settings of the configuration page.
-    DisplaySettings,
+/// Photographic stages in the continuous adjustment inspector.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Stage {
+    Input,
+    Film,
+    Print,
+    Scan,
+    Output,
 }
 
-impl PanelItem {
-    /// The parameter section this item renders, when it renders one.
-    ///
-    /// The Display item renders its parameter section inside its own
-    /// collapsible, so it owns one as well; the import surface's RAW editor is
-    /// excluded by the caller.
-    pub(crate) fn section(&self) -> Option<&'static str> {
+impl Stage {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Input,
+        Self::Film,
+        Self::Print,
+        Self::Scan,
+        Self::Output,
+    ];
+    pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Section(section) => Some(section),
-            Self::Chemistry { film: true } => Some("Film chemistry"),
-            Self::Chemistry { film: false } => Some("Print chemistry"),
-            Self::Import { raw: true } => Some("Import Raw"),
-            Self::DisplaySettings => Some("Display"),
-            _ => None,
+            Self::Input => "Input and capture",
+            Self::Film => "Film",
+            Self::Print => "Print",
+            Self::Scan => "Scan",
+            Self::Output => "Output",
         }
     }
 }
 
-/// Every page, with the items its control panel renders and in which order.
-pub(crate) const PAGE_LAYOUT: &[(crate::ui::GuiTab, &[PanelItem])] = &[
+/// Each module has one visual owner; this is not serialized preset scope.
+pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
     (
-        crate::ui::GuiTab::Main,
+        Stage::Input,
         &[
-            PanelItem::Import { raw: false },
-            PanelItem::Import { raw: true },
-            PanelItem::Section("Crop and upscale"),
-            PanelItem::Section("Input"),
-            PanelItem::Section("Camera"),
-            PanelItem::Profiles,
-            PanelItem::Section("Enlarger"),
-            PanelItem::Section("Scanner"),
-            PanelItem::Section("Output"),
-            PanelItem::ExportOptions,
+            "Workflow",
+            "Input",
+            "Import Raw",
+            "Source rotation",
+            "Crop and upscale",
+            "Camera",
+            "Camera diffusion",
+            "Input gamut compress",
+            "Spectral upsampling",
+            "Convert",
         ],
     ),
     (
-        crate::ui::GuiTab::Film,
+        Stage::Film,
         &[
-            PanelItem::Chemistry { film: true },
-            PanelItem::Section("Film base"),
-            PanelItem::Section("Halation"),
-            PanelItem::Section("Couplers"),
-            PanelItem::Section("Grain"),
-            PanelItem::Section("Camera diffusion"),
-            PanelItem::Section("Convert"),
+            "Film material",
+            "Film chemistry",
+            "Film base",
+            "Halation",
+            "Couplers",
+            "Grain",
         ],
     ),
     (
-        crate::ui::GuiTab::Print,
+        Stage::Print,
         &[
-            PanelItem::Chemistry { film: false },
-            PanelItem::Section("Print base"),
-            PanelItem::Section("Glare"),
-            PanelItem::Section("Enlarger diffusion"),
-            PanelItem::Section("CMYK ink style"),
+            "Print material",
+            "Enlarger",
+            "Preflash",
+            "Enlarger diffusion",
+            "Print chemistry",
+            "Print base",
         ],
     ),
+    (Stage::Scan, &["Scanner", "Glare"]),
     (
-        crate::ui::GuiTab::Advanced,
-        &[
-            PanelItem::Section("Spectral upsampling"),
-            PanelItem::Section("Input gamut compress"),
-            PanelItem::Section("Output gamut compress"),
-        ],
-    ),
-    (
-        crate::ui::GuiTab::Config,
-        &[
-            PanelItem::Diagnostics,
-            PanelItem::GuiParameters,
-            PanelItem::DisplaySettings,
-        ],
+        Stage::Output,
+        &["Output", "Output gamut compress", "CMYK ink style"],
     ),
 ];
+
+mod inventory;
+pub(crate) use inventory::{ControlOwner, inventory, lookup, section_matches};
+
+pub(crate) fn install_view_filter(ctx: &egui::Context, only_modified: bool) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("controls_only_modified"), only_modified));
+}
+
+pub(crate) fn take_edited_paths(ctx: &egui::Context) -> Vec<String> {
+    ctx.data_mut(|data| data.remove_temp::<Vec<String>>(egui::Id::new("controls_edited_paths")))
+        .unwrap_or_default()
+}
+
+pub(crate) fn record_edited_path(ctx: &egui::Context, path: &str) {
+    ctx.data_mut(|data| {
+        let paths =
+            data.get_temp_mut_or_default::<Vec<String>>(egui::Id::new("controls_edited_paths"));
+        if !paths.iter().any(|existing| existing == path) {
+            paths.push(path.to_owned());
+        }
+    });
+}
+
+pub(crate) fn record_label_edit(ctx: &egui::Context, label: &str) {
+    if let Some(section) = row_modified::current_section(ctx)
+        && let Some(path) = inventory::path_for_label(&section, label)
+    {
+        record_edited_path(ctx, path);
+    }
+}
+
+pub(crate) fn apply_pending_resets(
+    ctx: &egui::Context,
+    params: &mut RuntimeParams,
+    extras: &mut Value,
+) -> bool {
+    let mut changed = false;
+    for path in row_modified::take_resets(ctx) {
+        if crate::section_reset::reset_leaf(params, extras, &path) {
+            record_edited_path(ctx, &path);
+            changed = true;
+        }
+    }
+    changed
+}
+
+pub(crate) fn entry_matches(
+    path: &str,
+    query: &str,
+    params: &RuntimeParams,
+    extras: &Value,
+    only_modified: bool,
+) -> bool {
+    let Some(entry) = lookup(path) else {
+        return false;
+    };
+    entry.matches(&query.to_lowercase())
+        && (!only_modified || {
+            let projection = control_projection(params, extras);
+            entry.is_modified(&projection.runtime, &projection.extras)
+        })
+}
+
+pub(crate) fn request_focus(ctx: &egui::Context, section: &str, label: &str) {
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new("control_focus_request"),
+            (section.to_owned(), label.to_owned()),
+        )
+    });
+}
+
+pub(crate) fn row_path_matches(ctx: &egui::Context, path: &str) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<Option<std::sync::Arc<Vec<String>>>>(egui::Id::new("control_allowed_paths"))
+    })
+    .flatten()
+    .is_none_or(|paths| paths.iter().any(|candidate| candidate == path))
+}
+
+pub(crate) struct RowIdentity {
+    ctx: egui::Context,
+}
+pub(crate) fn row_identity(ctx: &egui::Context, path: &str) -> RowIdentity {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("control_row_path"), path.to_owned()));
+    RowIdentity { ctx: ctx.clone() }
+}
+impl Drop for RowIdentity {
+    fn drop(&mut self) {
+        self.ctx
+            .data_mut(|data| data.remove_temp::<String>(egui::Id::new("control_row_path")));
+    }
+}
+pub(crate) fn focus_response(ui: &Ui, label: &str, response: &egui::Response) {
+    let pending = ui
+        .ctx()
+        .data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request")));
+    let row_path = ui
+        .ctx()
+        .data(|data| data.get_temp::<String>(egui::Id::new("control_row_path")));
+    if let Some((section, target)) = pending
+        && (row_modified::current_section(ui.ctx()).as_deref() == Some(section.as_str())
+            || (section == "Export"
+                && inventory().iter().any(|entry| {
+                    entry.owner == ControlOwner::Export && entry.label.eq_ignore_ascii_case(label)
+                })))
+        && if lookup(&target).is_some() {
+            row_path.as_deref() == Some(target.as_str())
+                || (row_path.is_none()
+                    && lookup(&target).is_some_and(|entry| entry.label.eq_ignore_ascii_case(label)))
+        } else {
+            target.eq_ignore_ascii_case(label)
+        }
+    {
+        response.request_focus();
+        response.scroll_to_me(Some(egui::Align::Center));
+        let highlight_until = ui.input(|input| input.time) + 2.0;
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("control_located_row"),
+                (response.id, highlight_until),
+            )
+        });
+        ui.ctx().data_mut(|data| {
+            data.remove_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+        });
+    }
+    let highlighted = ui
+        .ctx()
+        .data(|data| data.get_temp::<(egui::Id, f64)>(egui::Id::new("control_located_row")))
+        .is_some_and(|(id, until)| id == response.id && ui.input(|input| input.time) < until);
+    if highlighted {
+        ui.painter().rect_stroke(
+            response.rect.expand(2.0),
+            2.0_f32,
+            egui::Stroke::new(2.0_f32, theme::ACCENT),
+            egui::StrokeKind::Outside,
+        );
+        ui.painter().text(
+            response.rect.left_top() - egui::vec2(0.0, 3.0),
+            egui::Align2::LEFT_BOTTOM,
+            "Located control",
+            egui::FontId::proportional(10.0),
+            theme::FG,
+        );
+    }
+}
+
+pub(crate) fn locate_row(ui: &Ui, path: &str, response: &egui::Response) {
+    let Some(entry) = lookup(path) else { return };
+    let pending = ui
+        .ctx()
+        .data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request")));
+    if pending.as_ref().is_some_and(|(section, target)| {
+        (section == entry.section || (section == "Export" && entry.owner == ControlOwner::Export))
+            && (target == path || target.eq_ignore_ascii_case(&entry.label))
+    }) {
+        response.request_focus();
+        response.scroll_to_me(Some(egui::Align::Center));
+        ui.ctx().data_mut(|data| {
+            data.remove_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+        });
+        ui.painter().rect_stroke(
+            response.rect.expand(2.0),
+            2.0_f32,
+            egui::Stroke::new(2.0_f32, theme::ACCENT),
+            egui::StrokeKind::Outside,
+        );
+        ui.painter().text(
+            response.rect.left_top(),
+            egui::Align2::LEFT_BOTTOM,
+            "Located control",
+            egui::FontId::proportional(10.0),
+            theme::FG,
+        );
+    }
+}
+
+pub(crate) fn module_applicability(
+    section: &str,
+    params: &RuntimeParams,
+    film: &Profile,
+    print: &Profile,
+) -> Option<String> {
+    inventory()
+        .iter()
+        .filter(|entry| entry.section == section && entry.searchable())
+        .find_map(|entry| {
+            spektrafilm_core::params::sources::inactive_reason(&entry.path, params, film, print)
+        })
+}
 mod cmyk;
 mod gamut;
 mod glare;
@@ -413,85 +648,8 @@ mod acceptance;
 mod tests {
     use super::*;
 
-    fn scanner_frame(
-        ctx: &egui::Context,
-        params: &mut RuntimeParams,
-        medium: ScanMedium,
-        events: Vec<egui::Event>,
-    ) -> (ChangeFlags, egui::FullOutput) {
-        let mut flags = ChangeFlags::default();
-        let mut cache = SectionLabelCache::default();
-        let output = ctx.run(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(900.0, 1600.0),
-                )),
-                events,
-                ..Default::default()
-            },
-            |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    flags = show(
-                        ui,
-                        params,
-                        &mut serde_json::json!({}),
-                        "Scanner",
-                        medium,
-                        "",
-                        &mut cache,
-                        "D55",
-                        &crate::profiles::pick_data_dir(),
-                    );
-                });
-            },
-        );
-        (flags, output)
-    }
-
     fn has_text(output: &egui::FullOutput, text: &str) -> bool {
         output.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(shape) if shape.galley.job.text == text))
-    }
-
-    #[test]
-    fn scanner_controls_follow_route_medium_and_output() {
-        for (route, medium, positive) in [
-            ("input", ScanMedium::Negative, false),
-            ("input > film > print > scan", ScanMedium::Negative, false),
-            ("input > film > scan", ScanMedium::Slide, false),
-            ("input > film > scan", ScanMedium::Negative, false),
-            ("input > film > scan", ScanMedium::Negative, true),
-            ("input > convert-film > scan", ScanMedium::Negative, true),
-            (
-                "input > convert-film > scan-minus-base",
-                ScanMedium::Negative,
-                false,
-            ),
-        ] {
-            let ctx = egui::Context::default();
-            let mut params = RuntimeParams::default();
-            params.workflow.route = route.into();
-            params.scanner.scan_output = if positive {
-                "negative_to_positive"
-            } else {
-                "direct_scan"
-            }
-            .into();
-            let (_, output) = scanner_frame(&ctx, &mut params, medium, vec![]);
-            // The scanner surface derives its medium from the route, so the
-            // controls follow the route rather than the selected film stock.
-            let active = medium.for_route(route) != ScanMedium::None;
-            assert_eq!(
-                has_text(&output, "Lens blur (readout optics)"),
-                active,
-                "{route}: lens blur"
-            );
-            assert_eq!(
-                has_text(&output, "scan output"),
-                medium.positive_output_eligible(route),
-                "{route}"
-            );
-        }
     }
 
     #[test]
@@ -515,22 +673,7 @@ mod tests {
 ]}"#;
 
     #[test]
-    fn conversion_style_defaults_to_neutral_and_is_gated_on_the_polarity() {
-        let ctx = egui::Context::default();
-        let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        assert_eq!(params.scanner.conversion_style, "standard");
-        // The style belongs to the negative interpretation, so the direct scan
-        // does not offer it at all.
-        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
-        assert!(!has_text(&output, "conversion style"));
-        params.scanner.scan_output = "negative_to_positive".into();
-        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
-        assert!(has_text(&output, "conversion style"));
-        assert!(has_text(&output, "standard"));
-    }
 
-    #[test]
     fn the_repository_data_directory_offers_only_the_neutral_style() {
         // No style ships with the install, so the shipped vocabulary is
         // exactly `standard` until the user drops a file into the data dir.
@@ -882,33 +1025,6 @@ mod tests {
         frame(click(fotufilm, true));
         let (flags, _) = frame(click(fotufilm, false));
         assert!(flags.runtime_changed);
-        // The accordion animates the selected engine's group open and the
-        // previous one closed; a mid-animation frame still clips the tail of
-        // the opening group and the body of the closing one, so wait for the
-        // layout to settle before reading the controls.
-        let mut selected = frame(vec![]).1;
-        for _ in 0..8 {
-            selected = frame(vec![]).1;
-        }
-        let advanced = text_position(&selected, "Fotufilm advanced");
-        frame(click(advanced, true));
-        frame(click(advanced, false));
-        let (_, selected) = frame(vec![]);
-        for label in [
-            "Amount",
-            "Size",
-            "Softness",
-            "Color",
-            "Layer amounts",
-            "RMS density",
-        ] {
-            assert!(
-                has_text(&selected, label),
-                "missing Fotufilm control: {label}"
-            );
-        }
-        assert!(has_text(&selected, "RMS density"));
-        assert!(!has_text(&selected, "Dye support (µm)"));
     }
 
     #[test]

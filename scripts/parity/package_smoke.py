@@ -130,7 +130,8 @@ def main():
     parser.add_argument('--cli', type=Path, required=True)
     parser.add_argument('--exporter', type=Path, required=True)
     parser.add_argument('--raw-helper', type=Path, required=True)
-    parser.add_argument('--gui', type=Path)
+    parser.add_argument('--gui', type=Path,
+                        help='Require installed continuous-inspector native RGB/RAW/Preview/Scan/Save/Export and cancellation acceptance')
     parser.add_argument('--package-root', type=Path, required=True)
     parser.add_argument('--data-dir', type=Path, required=True)
     parser.add_argument('--evidence-dir', type=Path, required=True)
@@ -308,6 +309,8 @@ def main():
         exporter, data, evidence, environment)
     observations.append(instrument_observation)
     if args.gui:
+        # accept_gui lazily loads the canonical stage driver; the shared native
+        # capture/chooser module does not import that driver during initialization.
         from gui_acceptance import accept_gui
         observations.append(accept_gui(args.gui.resolve(), exporter, source, raw,
                                        evidence, environment))

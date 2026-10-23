@@ -6,7 +6,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
     let mut s = session();
     let h = &mut s.harness;
     for (index, (route, label)) in routes::entries().enumerate() {
-        click(h, "MAIN");
+        reveal_control(h, "workflow.route");
         choose(h, "workflow", label);
         assert_eq!(h.state().params.workflow.route, route);
         let preview = render(h, "PREVIEW");
@@ -14,10 +14,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         let scan = render(h, "SCAN");
         assert_eq!((scan.width, scan.height), (160, 80), "{route}");
         let saved = s.directory.path().join(format!("route-{index}.json"));
-        click(h, "CONFIG");
-        if h.query_by_label("Save current to file").is_none() {
-            click(h, "GUI parameters");
-        }
+        reveal_control(h, "action.save_state");
         script(h, chooser::ChooserResult::Scripted(saved.clone()));
         click(h, "Save current to file");
         assert!(
@@ -40,7 +37,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
             h.state().status
         );
         assert_eq!(h.state().params.workflow.route, route);
-        click(h, "MAIN");
+        close_settings(h);
         let reloaded = render(h, "SCAN");
         assert_eq!(reloaded.data, scan.data, "state reload changed {route}");
         let destination = s.directory.path().join(format!("route-{index}.png"));
@@ -68,13 +65,14 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
 fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
     let mut s = session();
     let h = &mut s.harness;
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > print > scan");
     let before = h.state().params.print_render.glare.active;
+    search_controls(h, "Scanner");
     click(h, "scan for print");
     assert!(h.state().scan_for_print_snapshot.is_some());
     assert!(!h.state().params.print_render.glare.active);
-    click(h, "CONFIG");
-    click(h, "GUI parameters");
+    reveal_control(h, "action.save_state");
     let path = s.directory.path().join("correction.json");
     script(h, chooser::ChooserResult::Scripted(path.clone()));
     click(h, "Save current to file");
@@ -84,6 +82,8 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
     assert!(saved["rust"].get("scan_for_print_snapshot").is_none());
     assert!(saved["simulation"].get("workflow").is_none());
     assert!(saved["rust"]["runtime"]["workflow"].get("route").is_none());
+    close_settings(h);
+    search_controls(h, "Scanner");
     click(h, "scan for print");
     assert!(h.state().scan_for_print_snapshot.is_none());
     assert_eq!(h.state().params.print_render.glare.active, before);
@@ -91,13 +91,17 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
     // off and drops the transient snapshot rather than resurrecting the value
     // that was live when the file was written.
     click(h, "scan for print");
+    open_settings(h);
     script(h, chooser::ChooserResult::Scripted(path));
     click(h, "Load from file");
     assert!(h.state().scan_for_print_snapshot.is_none());
     assert!(!h.state().params.print_render.glare.active);
+    close_settings(h);
+    search_controls(h, "Scanner");
     click(h, "scan for print");
     assert!(h.state().scan_for_print_snapshot.is_some());
     assert!(!h.state().params.print_render.glare.active);
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input");
     assert!(h.state().scan_for_print_snapshot.is_none());
     assert!(!h.state().params.print_render.glare.active);
@@ -107,12 +111,14 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
 fn loaded_state_reports_scanner_normalization_in_header_status() {
     let mut s = session();
     let h = &mut s.harness;
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > scan");
-    click(h, "Scanner");
+    reveal_control(h, "scanner.scan_output");
     choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     // A route that cannot carry the negative polarity resets it, and the
     // header status names the control that was normalized.
+    reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > print > scan");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert!(
