@@ -518,7 +518,7 @@ impl MeasureFixture {
             .map(|x| (format!("p{x:02}"), json!([0, x])))
             .collect();
         let document = self.root.join("capture-experiment.json");
-        let sources: Vec<&str> = POINT_WISE.chunks_exact(2).map(|pair| pair[1]).collect();
+        let sources: Vec<&str> = POINT_WISE.as_chunks::<2>().0.iter().map(|pair| pair[1]).collect();
         std::fs::write(&document, serde_json::to_vec(&json!({
             "schema_version": 1, "id": "chart",
             "chain": {"film": "kodak_portra_400", "input_color_space": "sRGB", "input_cctf_decoding": true, "set": sources},
