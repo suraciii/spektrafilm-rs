@@ -164,6 +164,9 @@ fn stale_configuration_groups_all_checked_seeds_and_continues_other_cases() {
     let manifest = read(&root.join("preflight/preflight.json"));
     assert_eq!(manifest["cases"].as_array().unwrap().len(), 4);
     assert_eq!(manifest["cases"][3]["status"], "validated");
+    assert_eq!(manifest["cases"][3]["stage_evidence"]["requested"], false);
+    assert_eq!(manifest["cases"][3]["stage_evidence"]["availability"], "not_applicable");
+    assert_eq!(manifest["cases"][3]["stage_evidence"]["context"]["exposure"]["availability"], "unavailable");
     assert!(!root.join("preflight/run.json").exists());
     for row in manifest["cases"].as_array().unwrap() {
         let folder = root

@@ -397,7 +397,7 @@ fn resolved_geometry(resolved: &Value, diagnostics: &Value) -> Value {
 
 /// Source-evidence route command for one simulation command: the same
 /// configuration with the input route and linear ACES2065-1 RGB taps.
-/// Stage capture stays with the simulation, never the source-only decode.
+/// Neither ordinary simulation nor source-only execution captures native stages.
 fn source_render_command(command: &[String], folder: &Path) -> Result<Vec<String>> {
     let mut source_command = command.to_vec();
     if let Some(i) = source_command.iter().position(|s| s == "--route") {
@@ -1049,9 +1049,9 @@ fn preflight_cases<'a>(
                 row["source_command"] = json!(source_command);
                 row["source_resolved"] = record;
                 row["stage_evidence"] = json!({
-                    "requested": capture,
-                    "availability": "unavailable",
-                    "reason": "dry-run resolves the request without stage capture or exposure observation",
+                    "requested": false,
+                    "availability": "not_applicable",
+                    "reason": "ordinary runs do not collect native observations",
                     "context": unobserved_stage_context("dry-run does not render"),
                 });
                 row["status"] = json!("validated");
