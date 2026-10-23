@@ -5,7 +5,6 @@ fn scanner_params() -> RuntimeParams {
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();
     params.scanner.scan_output = "negative_to_positive".into();
-    params.scanner.conversion_brightness_ev = 0.0;
     params
 }
 
@@ -19,6 +18,7 @@ fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         "",
         &mut Default::default(),
         "D55",
+        &crate::profiles::pick_data_dir(),
     );
 }
 
@@ -32,6 +32,7 @@ fn camera(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         "",
         &mut Default::default(),
         "D65",
+        &crate::profiles::pick_data_dir(),
     );
 }
 
@@ -45,6 +46,7 @@ fn enlarger(ui: &mut egui::Ui, params: &mut RuntimeParams) {
         "",
         &mut Default::default(),
         "D65",
+        &crate::profiles::pick_data_dir(),
     );
 }
 
@@ -74,20 +76,17 @@ mod headless {
         assert_eq!(harness.ctx.input(|input| input.smooth_scroll_delta.y), 0.0);
         let after_event = harness.state().scanner.clone();
         harness.run();
+        assert_eq!(harness.state().scanner.lens_blur, after_event.lens_blur);
         assert_eq!(
-            harness.state().scanner.conversion_brightness_ev,
-            after_event.conversion_brightness_ev
-        );
-        assert_eq!(
-            harness.state().scanner.conversion_balance_ev,
-            after_event.conversion_balance_ev
+            harness.state().scanner.unsharp_mask,
+            after_event.unsharp_mask
         );
     }
 
     #[test]
     fn scanner_keyboard_enter_invalid_blur_and_tuple_channels() {
         let mut harness = Harness::new_ui_state(scanner, scanner_params());
-        let input = harness.get_by_label("brightness");
+        let input = harness.get_by_label("Lens blur (readout optics)");
         assert_eq!(input.role(), egui::accesskit::Role::TextInput);
         assert_eq!(
             harness
@@ -96,41 +95,60 @@ mod headless {
             egui::accesskit::Role::ComboBox
         );
         let id = input.id();
-        replace(&mut harness, "brightness", "-");
-        assert_eq!(harness.state().scanner.conversion_brightness_ev, 0.0);
-        assert_eq!(
-            harness.get_by_label("brightness").value().as_deref(),
-            Some("-")
+        replace(&mut harness, "Lens blur (readout optics)", "0.25");
+        harness.run();
+        assert_eq!(harness.state().scanner.lens_blur, 0.25);
+        harness
+            .get_by_label("Lens blur (readout optics)")
+            .key_press(Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().scanner.lens_blur, 0.25);
+        assert!(
+            !harness
+                .get_by_label("Lens blur (readout optics)")
+                .is_focused()
         );
-        harness.get_by_label("brightness").type_text("0.25");
+        assert_eq!(harness.get_by_label("Lens blur (readout optics)").id(), id);
+        // An out-of-range draft is rejected rather than clamped.
+        replace(&mut harness, "Lens blur (readout optics)", "-0.5");
         harness.run();
-        harness.get_by_label("brightness").key_press(Key::Enter);
+        assert_eq!(harness.state().scanner.lens_blur, 0.25);
+        assert_eq!(
+            harness
+                .get_by_label("Lens blur (readout optics)")
+                .value()
+                .as_deref(),
+            Some("-0.5")
+        );
+        // A non-numeric draft is rejected too.
+        replace(&mut harness, "Lens blur (readout optics)", "NaN");
+        assert_eq!(harness.state().scanner.lens_blur, 0.25);
+        harness
+            .get_by_label("Unsharp mask (digital sharpening) sigma")
+            .focus();
         harness.run();
-        assert_eq!(harness.state().scanner.conversion_brightness_ev, -0.25);
-        assert!(!harness.get_by_label("brightness").is_focused());
-        assert_eq!(harness.get_by_label("brightness").id(), id);
+        assert_eq!(
+            harness
+                .get_by_label("Lens blur (readout optics)")
+                .value()
+                .as_deref(),
+            Some("0.25")
+        );
 
-        replace(&mut harness, "brightness", "NaN");
-        assert_eq!(harness.state().scanner.conversion_brightness_ev, -0.25);
-        assert_eq!(
-            harness.get_by_label("brightness").value().as_deref(),
-            Some("NaN")
+        replace(
+            &mut harness,
+            "Unsharp mask (digital sharpening) sigma",
+            "0.5",
         );
-        harness.get_by_label("Lens blur (readout optics)").focus();
+        harness
+            .get_by_label("Unsharp mask (digital sharpening) sigma")
+            .key_press(Key::Enter);
         harness.run();
-        assert_eq!(
-            harness.get_by_label("brightness").value().as_deref(),
-            Some("-0.250")
-        );
-
-        replace(&mut harness, "balance G", "0.5");
-        harness.get_by_label("balance G").key_press(Key::Enter);
-        harness.run();
-        assert_eq!(
-            harness.state().scanner.conversion_balance_ev,
-            [0.0, 0.5, 0.0]
-        );
-        for label in ["balance R", "balance G", "balance B"] {
+        assert_eq!(harness.state().scanner.unsharp_mask[0], 0.5);
+        for label in [
+            "Unsharp mask (digital sharpening) sigma",
+            "Unsharp mask (digital sharpening) amount",
+        ] {
             assert_eq!(
                 harness.get_by_label(label).role(),
                 egui::accesskit::Role::TextInput
@@ -141,40 +159,51 @@ mod headless {
     #[test]
     fn scanner_wheel_steps_consumes_scroll_and_preserves_boundaries() {
         let mut harness = Harness::new_ui_state(scanner, scanner_params());
-        wheel(&mut harness, "brightness", 120.0);
-        assert!((harness.state().scanner.conversion_brightness_ev - 0.05).abs() < 1e-6);
-        wheel(&mut harness, "brightness", -120.0);
-        assert!(harness.state().scanner.conversion_brightness_ev.abs() < 1e-6);
+        wheel(&mut harness, "Lens blur (readout optics)", 120.0);
+        assert!((harness.state().scanner.lens_blur - 0.05).abs() < 1e-6);
+        wheel(&mut harness, "Lens blur (readout optics)", -120.0);
+        assert!(harness.state().scanner.lens_blur.abs() < 1e-6);
         // Typing an out-of-range value is rejected, not silently clamped.
-        replace(&mut harness, "brightness", "100");
-        harness.get_by_label("brightness").key_press(Key::Enter);
+        replace(&mut harness, "Lens blur (readout optics)", "100");
+        harness
+            .get_by_label("Lens blur (readout optics)")
+            .key_press(Key::Enter);
         harness.run();
-        assert!(harness.state().scanner.conversion_brightness_ev.abs() < 1e-6);
+        assert!(harness.state().scanner.lens_blur.abs() < 1e-6);
         // Typing an in-range value at the boundary is accepted.
-        replace(&mut harness, "brightness", "16");
-        harness.get_by_label("brightness").key_press(Key::Enter);
+        replace(&mut harness, "Lens blur (readout optics)", "5");
+        harness
+            .get_by_label("Lens blur (readout optics)")
+            .key_press(Key::Enter);
         harness.run();
-        assert_eq!(harness.state().scanner.conversion_brightness_ev, 16.0);
+        assert_eq!(harness.state().scanner.lens_blur, 5.0);
         // The wheel preserves the maximum boundary.
-        wheel(&mut harness, "brightness", 120.0);
-        assert_eq!(harness.state().scanner.conversion_brightness_ev, 16.0);
+        wheel(&mut harness, "Lens blur (readout optics)", 120.0);
+        assert_eq!(harness.state().scanner.lens_blur, 5.0);
         // A negative out-of-range value is rejected too.
-        replace(&mut harness, "brightness", "-100");
-        harness.get_by_label("brightness").key_press(Key::Enter);
+        replace(&mut harness, "Lens blur (readout optics)", "-100");
+        harness
+            .get_by_label("Lens blur (readout optics)")
+            .key_press(Key::Enter);
         harness.run();
-        assert_eq!(harness.state().scanner.conversion_brightness_ev, 16.0);
+        assert_eq!(harness.state().scanner.lens_blur, 5.0);
         // Typing an in-range value at the minimum boundary is accepted.
-        replace(&mut harness, "brightness", "-16");
-        harness.get_by_label("brightness").key_press(Key::Enter);
+        replace(&mut harness, "Lens blur (readout optics)", "0");
+        harness
+            .get_by_label("Lens blur (readout optics)")
+            .key_press(Key::Enter);
         harness.run();
-        assert_eq!(harness.state().scanner.conversion_brightness_ev, -16.0);
+        assert_eq!(harness.state().scanner.lens_blur, 0.0);
         // The wheel preserves the minimum boundary.
-        wheel(&mut harness, "brightness", -120.0);
-        assert_eq!(harness.state().scanner.conversion_brightness_ev, -16.0);
-        wheel(&mut harness, "balance B", 120.0);
-        assert!((harness.state().scanner.conversion_balance_ev[2] - 0.05).abs() < 1e-6);
-        assert_eq!(harness.state().scanner.conversion_balance_ev[0], 0.0);
-        assert_eq!(harness.state().scanner.conversion_balance_ev[1], 0.0);
+        wheel(&mut harness, "Lens blur (readout optics)", -120.0);
+        assert_eq!(harness.state().scanner.lens_blur, 0.0);
+        wheel(
+            &mut harness,
+            "Unsharp mask (digital sharpening) amount",
+            120.0,
+        );
+        assert!((harness.state().scanner.unsharp_mask[1] - 0.75).abs() < 1e-6);
+        assert_eq!(harness.state().scanner.unsharp_mask[0], 0.7);
     }
 }
 

@@ -43,44 +43,11 @@ bloom_intensity = 1.0
 bloom_size = 1.0
 
 [parameters.scanner]
-receiver_profile = "legacy_colorimetric"
-negative_conversion_method = "density"
-auto_setup = "off"
-finish = "neutral"
-finish_strength = 1.0
 lens_blur = 0.0
 scan_output = "direct_scan"
-white_correction = false
-black_correction = false
-white_level = 0.9800000190734863
-black_level = 0.009999999776482582
 unsharp_mask = [
     0.7,
     0.7,
-]
-black_point = [
-    0.0,
-    0.0,
-    0.0,
-]
-white_point = [
-    1.0,
-    1.0,
-    1.0,
-]
-conversion_brightness_ev = 0.8781766618
-conversion_balance_ev = [
-    0.0,
-    0.0,
-    0.0,
-]
-conversion_contrast = 0.7355140005821664
-conversion_dmax = 1.5625841465572565
-reference_exposure_ev = 0.0
-reference_balance_ev = [
-    0.0,
-    0.0,
-    0.0,
 ]
 
 [parameters.film_render]
@@ -259,7 +226,6 @@ magenta = 1.0
 yellow = 1.0
 
 [parameters.film_render.convert]
-scan_illuminant = "D55"
 exposure_compensation_ev = 0.0
 base_percentile = 99.0
 calibration = "1 0 0  0 1 0  0 0 1"

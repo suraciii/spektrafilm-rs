@@ -20,7 +20,7 @@ A `String` failure carries one field: human text. A caller can print it and can 
 
 The migration must not change any observable failure behavior.
 
-Error message text must stay byte-identical. The typed error must forward its message verbatim through `Display`, so an existing assertion such as `assert!(err.contains("scanner.conversion_brightness_ev"))` must keep passing without edit. Any migration step that changes a message string is a defect, not a cleanup.
+Error message text must stay byte-identical. The typed error must forward its message verbatim through `Display`, so an existing assertion such as `assert!(err.contains("scanner.lamp"))` must keep passing without edit. Any migration step that changes a message string is a defect, not a cleanup.
 
 Exit codes must not change. CLI failure outcomes must stay the same for the same input. A GUI dialog must show the same text.
 

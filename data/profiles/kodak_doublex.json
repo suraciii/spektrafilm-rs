@@ -19,8 +19,7 @@
         "channel_model": "bw",
         "densitometer": "diffuse_visual",
         "log_sensitivity_density_over_min": 1.0,
-        "reference_illuminant": "D55",
-        "viewing_illuminant": "D50"
+        "reference_illuminant": "D55"
     },
     "data": {
         "wavelengths": [

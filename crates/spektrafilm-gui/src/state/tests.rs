@@ -78,11 +78,8 @@ fn state_carriers_reject_ignored_mix_and_nested_retired_io() {
 #[test]
 fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
     let legacy_scanner = json!({
-        "positive_interpretation": "separable",
-        "positive_density_ev": 0.4,
-        "positive_balance_ev": [0.1, 0.0, -0.1],
-        "positive_contrast": 0.8,
-        "positive_dmax": 1.3,
+        "scan_output": "negative_to_positive",
+        "lamp": "D55",
     });
     for (pair, mode, compensation, tracking) in [
         (
@@ -123,14 +120,8 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
         });
         let state = GuiState::from_value(source.clone()).unwrap();
         let params = state.runtime_params().unwrap();
-        assert_eq!(
-            params.scanner.negative_conversion_method.as_str(),
-            "separable"
-        );
-        assert_eq!(params.scanner.conversion_brightness_ev, 0.4);
-        assert_eq!(params.scanner.conversion_balance_ev, [0.1, 0.0, -0.1]);
-        assert_eq!(params.scanner.conversion_contrast, 0.8);
-        assert_eq!(params.scanner.conversion_dmax, 1.3);
+        assert_eq!(params.scanner.scan_output, "negative_to_positive");
+        assert_eq!(params.scanner.lamp, "D55");
         assert_eq!(params.enlarger.print_exposure_mode.as_str(), mode);
         assert_eq!(
             params.settings.print_exposure_ev_tracking.as_str(),
@@ -142,8 +133,7 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
             GuiState::from_runtime(&params, state.film(), state.paper(), &state.sections).unwrap();
         assert_eq!(saved.sections["rust"]["version"], json!(4));
         let runtime = serde_json::to_string(&saved.sections["rust"]["runtime"]).unwrap();
-        assert!(runtime.contains("negative_conversion_method"));
-        assert!(!runtime.contains("positive_"));
+        assert!(runtime.contains("negative_to_positive"));
         assert_eq!(
             saved.sections["preflashing"]["normalize_print_exposure"],
             json!(mode == "auto")
@@ -158,7 +148,6 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
         );
         let runtime = serde_json::to_string(&saved.sections["rust"]["runtime"]).unwrap();
         assert!(runtime.contains("\"print_exposure_mode\""));
-        assert!(runtime.contains("negative_conversion_method"));
         source["rust"]["version"] = json!(4);
     }
     // The upstream compensation boolean projects onto the tracking
@@ -179,7 +168,7 @@ fn version_two_states_rename_conversion_paths_and_map_the_exposure_pair() {
     );
     // A current-version document must fail unknown-field validation.
     let current = GuiState::from_value(json!({"rust": {"version": 4, "runtime": {
-        "scanner": {"positive_density_ev": 0.4}
+        "scanner": {"lamp": "D55", "retired_receiver_profile": "lab_scan_approx"}
     }}}));
     assert!(current.is_err());
 }
@@ -295,6 +284,12 @@ fn factory_matches_independently_generated_upstream_state() {
         .as_object_mut()
         .unwrap()
         .remove("lightness_compression");
+    // The pinned oracle predates the neutral scan model: `scan_illuminant`
+    // moved onto `scanner.lamp` and is no longer a `convert` control.
+    expected["convert"]
+        .as_object_mut()
+        .unwrap()
+        .remove("scan_illuminant");
     fn compare(actual: &Value, expected: &Value, path: &str) -> usize {
         match (actual, expected) {
             (Value::Object(actual), Value::Object(expected)) => {
@@ -343,30 +338,27 @@ fn factory_matches_independently_generated_upstream_state() {
     // These controls belong to the Rust scanner extension, not the
     // independently generated Python factory-state oracle.
     let scanner = shared["scanner"].as_object_mut().unwrap();
-    for key in [
-        "scan_output",
-        "conversion_brightness_ev",
-        "conversion_balance_ev",
-        "conversion_contrast",
-        "conversion_dmax",
-        "black_point",
-        "white_point",
-        "receiver_profile",
-        "negative_conversion_method",
-        "auto_setup",
-        "finish",
-        "finish_strength",
-        "reference_exposure_ev",
-        "reference_balance_ev",
-    ] {
+    for key in ["scan_output", "conversion_style", "lamp"] {
         scanner.remove(key);
+    }
+    // The pinned oracle predates the neutral scan model: it still carries the
+    // retired receiver/finish/point controls. Only the physical boundaries
+    // both surfaces share remain comparable.
+    let oracle_scanner = expected["scanner"].as_object_mut().unwrap();
+    for key in [
+        "black_correction",
+        "black_level",
+        "white_correction",
+        "white_level",
+    ] {
+        oracle_scanner.remove(key);
     }
     // `camera.capture_illuminant` is a Rust-only optional leaf: the pinned
     // Python oracle predates it, and its unset state is a real null rather
     // than an absent key.
     let camera = shared["camera"].as_object_mut().unwrap();
     camera.remove("capture_illuminant");
-    assert_eq!(compare(&shared, &expected, "factory"), 186);
+    assert_eq!(compare(&shared, &expected, "factory"), 181);
     let params = factory.runtime_params().unwrap();
     assert_eq!(params.film_render.grain.rms_granularity, [5.0; 3]);
     assert_eq!(params.io.upscale_factor, 1.0);
@@ -826,7 +818,6 @@ fn canonical_sections_roundtrip_without_runtime_extension() {
     params.film_render.base.tilt = 0.2;
     params.film_render.base.cyan = 1.2;
     params.print_render.base.scale = 0.8;
-    params.film_render.convert.scan_illuminant = "D65".into();
     params.film_render.convert.base_percentile = 97.5;
     params.film_render.convert.calibration = "1.1 0 0  0 1 0  0 0 0.9".into();
     params.workflow.route = "input > convert-film > scan-minus-base".into();
@@ -860,7 +851,6 @@ fn canonical_sections_roundtrip_without_runtime_extension() {
     assert_eq!(restored.film_render.base.tilt, 0.2);
     assert_eq!(restored.film_render.base.cyan, 1.2);
     assert_eq!(restored.print_render.base.scale, 0.8);
-    assert_eq!(restored.film_render.convert.scan_illuminant, "D65");
     assert_eq!(restored.film_render.convert.base_percentile, 97.5);
     assert_eq!(
         restored.film_render.convert.calibration,
@@ -908,14 +898,8 @@ fn negative_to_positive_convert_route_roundtrip() -> anyhow::Result<()> {
     let mut params = factory.runtime_params().unwrap();
     params.workflow.route = "input > convert-film > scan".into();
     params.scanner.scan_output = "negative_to_positive".into();
-    params.scanner.black_point = [0.1, 0.2, 0.3];
-    params.scanner.white_point = [0.7, 0.8, 0.9];
-    params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-    params.scanner.negative_conversion_method =
-        spektrafilm_core::params::NegativeConversionMethod::Coupled;
-    params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::Full;
-    params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
-    params.scanner.finish_strength = 0.0;
+    params.scanner.lamp = "TH-KG3".into();
+    params.scanner.lens_blur = 0.25;
     let saved =
         GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)?;
     assert_eq!(
@@ -923,39 +907,66 @@ fn negative_to_positive_convert_route_roundtrip() -> anyhow::Result<()> {
         "input > convert-film > scan"
     );
     assert_eq!(
-        saved.sections["rust"]["scanner_provenance"]["receiver"]["calibration_status"],
-        "approximate_uncalibrated"
+        saved.sections["rust"]["scanner_provenance"]["model"],
+        "neutral_scan_v2"
     );
     assert_eq!(
-        saved.sections["rust"]["scanner_provenance"]["receiver"]["version"],
-        "fotufilm_lab_scan_approx_v1"
+        saved.sections["rust"]["scanner_provenance"]["sensor"],
+        "cie_1931_cmf"
     );
     assert_eq!(
-        saved.sections["rust"]["scanner_provenance"]["finish"],
-        "lab_scan"
+        saved.sections["rust"]["scanner_provenance"]["white_reference"],
+        "clear_film_base"
     );
-    assert!(
-        saved.sections["rust"]["scanner_provenance"]["finish_version"]
-            .as_str()
-            .is_some()
+    assert_eq!(
+        saved.sections["rust"]["scanner_provenance"]["output_white"],
+        "output_color_space_white"
+    );
+    assert_eq!(
+        saved.sections["rust"]["scanner_provenance"]["matrix"],
+        "identity"
     );
     let loaded = GuiState::from_value(saved.sections)?;
     let restored = loaded.runtime_params()?;
     assert_eq!(restored.workflow.route, "input > convert-film > scan");
     assert_eq!(restored.scanner.scan_output, "negative_to_positive");
-    assert_eq!(restored.scanner.black_point, [0.1, 0.2, 0.3]);
-    assert_eq!(restored.scanner.white_point, [0.7, 0.8, 0.9]);
-    assert_eq!(
-        restored.scanner.receiver_profile,
-        params.scanner.receiver_profile
+    assert_eq!(restored.scanner.lamp, "TH-KG3");
+    assert_eq!(restored.scanner.lens_blur, 0.25);
+    assert_eq!(restored.scanner.unsharp_mask, [0.7, 0.7]);
+    Ok(())
+}
+
+#[test]
+fn conversion_style_round_trips_through_the_param_set_path() -> anyhow::Result<()> {
+    // The value routes through the same schema-driven parameter-set mechanism
+    // as scanner.lamp and scanner.scan_output. Validation checks name sanity
+    // and the negative-to-positive gate only, so the file need not exist here.
+    let mut params = GuiState::factory().runtime_params()?;
+    spektrafilm_core::params::sources::ParameterEdits::parse(
+        "scanner.scan_output=negative_to_positive,scanner.conversion_style=warm-probe",
+    )
+    .map_err(anyhow::Error::msg)?
+    .apply(&mut params)
+    .map_err(anyhow::Error::msg)?;
+    assert_eq!(params.scanner.conversion_style, "warm-probe");
+    // A non-neutral style without the negative interpretation is rejected.
+    let mut invalid = params.clone();
+    invalid.scanner.scan_output = "direct_scan".into();
+    let error = invalid.validate().unwrap_err();
+    assert!(
+        error.starts_with(
+            "scanner.conversion_style requires scanner.scan_output=negative_to_positive"
+        ),
+        "{error}"
     );
-    assert_eq!(
-        restored.scanner.negative_conversion_method,
-        params.scanner.negative_conversion_method
-    );
-    assert_eq!(restored.scanner.auto_setup, params.scanner.auto_setup);
-    assert_eq!(restored.scanner.finish, params.scanner.finish);
-    assert_eq!(restored.scanner.finish_strength, 0.0);
+    // The GUI section carries the value, and a document round-trip keeps it.
+    let factory = GuiState::factory();
+    params.workflow.route = "input > convert-film > scan".into();
+    let saved =
+        GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)?;
+    assert_eq!(saved.sections["scanner"]["conversion_style"], "warm-probe");
+    let restored = GuiState::from_value(saved.sections)?.runtime_params()?;
+    assert_eq!(restored.scanner.conversion_style, "warm-probe");
     Ok(())
 }
 #[test]
@@ -965,63 +976,69 @@ fn legacy_runtime_extension_scan_output_survives_state_load() {
     let state = GuiState::from_value(json!({
         "simulation": {"route": "input > convert-film > scan"},
         "rust": {"version": 1, "runtime": {"scanner": {
-            "scan_output": "negative_to_positive", "receiver_profile": "lab_scan_approx",
-            "negative_conversion_method": "coupled", "auto_setup": "per_frame",
-            "finish": "lab_scan", "finish_strength": 0.0
+            "scan_output": "negative_to_positive", "lamp": "D65"
         }}}
     }))
     .unwrap();
     let params = state.runtime_params().unwrap();
     assert_eq!(params.scanner.scan_output, "negative_to_positive");
+    assert_eq!(params.scanner.lamp, "D65");
     assert_eq!(
         state.sections["scanner"]["scan_output"],
         "negative_to_positive"
     );
-    for (key, expected) in [
-        ("receiver_profile", json!("lab_scan_approx")),
-        ("auto_setup", json!("per_frame")),
-        ("finish", json!("lab_scan")),
-        ("finish_strength", json!(0.0)),
-    ] {
-        assert_eq!(state.sections["scanner"][key], expected);
-        let runtime_value = serde_json::to_value(&params.scanner).unwrap()[key].clone();
-        if key == "auto_setup" {
-            assert_eq!(runtime_value, json!("full"));
-        } else {
-            assert_eq!(runtime_value, expected);
-        }
-    }
+    assert_eq!(state.sections["scanner"]["lamp"], "D65");
     // An explicit canonical selection takes precedence over the extension.
     let mut canonical = state.sections.clone();
     canonical["scanner"]["scan_output"] = json!("direct_scan");
-    canonical["scanner"]["negative_conversion_method"] = json!("density");
-    canonical["scanner"]["auto_setup"] = json!("off");
-    canonical["scanner"]["finish"] = json!("neutral");
     let canonical = GuiState::from_value(canonical).unwrap();
     assert_eq!(
         canonical.runtime_params().unwrap().scanner.scan_output,
         "direct_scan"
     );
 }
+
 #[test]
 fn scanner_defaults_and_invalid_combinations_use_runtime_contract() {
     let state = GuiState::from_value(json!({})).unwrap();
     let runtime_defaults = serde_json::to_value(RuntimeParams::default().scanner).unwrap();
     for key in [
-        "receiver_profile",
-        "negative_conversion_method",
-        "auto_setup",
-        "finish",
-        "finish_strength",
+        "scan_output",
+        "conversion_style",
+        "lamp",
+        "lens_blur",
+        "unsharp_mask",
     ] {
         assert_eq!(state.sections["scanner"][key], runtime_defaults[key]);
     }
     for scanner in [
-        json!({"receiver_profile": "lab_scan_approx"}),
-        json!({"negative_conversion_method": "coupled"}),
+        json!({"lamp": "not-a-lamp"}),
+        json!({"scan_output": "positive_scan"}),
+        json!({"conversion_style": ""}),
+        json!({"conversion_style": "../etc/passwd"}),
+    ] {
+        assert!(GuiState::from_value(json!({"scanner": scanner})).is_err());
+    }
+    // A non-neutral style requires the negative interpretation.
+    assert!(
+        GuiState::from_value(json!({"scanner": {
+            "scan_output": "negative_to_positive", "conversion_style": "warm-probe"
+        }}))
+        .is_ok()
+    );
+    assert!(
+        GuiState::from_value(json!({"scanner": {
+            "scan_output": "direct_scan", "conversion_style": "warm-probe"
+        }}))
+        .is_err()
+    );
+    // Retired scanner keys are no longer part of the schema.
+    for scanner in [
+        json!({"receiver_profile": "legacy_colorimetric"}),
         json!({"finish": "lab_scan"}),
-        json!({"finish_strength": -0.01}),
-        json!({"finish_strength": 1.01}),
+        json!({"auto_setup": "full"}),
+        json!({"finish_strength": 0.5}),
+        json!({"white_point": [1.0, 1.0, 1.0]}),
     ] {
         assert!(GuiState::from_value(json!({"scanner": scanner})).is_err());
     }
@@ -1031,43 +1048,26 @@ fn scanner_defaults_and_invalid_combinations_use_runtime_contract() {
 fn scanner_provenance_is_rederived_from_builtin_selection() {
     let state = GuiState::from_value(json!({
         "simulation": {"route": "input > film > scan"},
-        "scanner": {"receiver_profile": "lab_scan_approx"},
         "rust": {"version": 1, "scanner_provenance": {
-            "receiver": {"source": "unavailable device", "calibration_status": "measured"},
-            "finish": "unavailable finish"
+            "model": "unavailable model", "sensor": "unavailable sensor"
         }}
     }))
     .unwrap();
     assert_eq!(
-        state.sections["rust"]["scanner_provenance"]["receiver"]["calibration_status"],
-        "approximate_uncalibrated"
+        state.sections["rust"]["scanner_provenance"]["model"],
+        "neutral_scan_v2"
     );
     assert_eq!(
-        state.sections["rust"]["scanner_provenance"]["finish"],
-        "neutral"
+        state.sections["rust"]["scanner_provenance"]["sensor"],
+        "cie_1931_cmf"
     );
     assert!(
         GuiState::from_value(json!({
             "simulation": {"route": "input > film > scan"},
-            "scanner": {"receiver_profile": "unavailable_device"}
+            "scanner": {"lamp": "unavailable_lamp"}
         }))
         .is_err()
     );
-}
-
-#[test]
-fn invalid_scan_points_are_rejected_on_state_load() {
-    let factory = GuiState::factory();
-    for (black, white) in [
-        ([0.5; 3], [0.5; 3]),
-        ([0.0, -0.1, 0.0], [1.0; 3]),
-        ([0.0; 3], [1.0, 1.1, 1.0]),
-    ] {
-        let mut sections = factory.sections.clone();
-        sections["scanner"]["black_point"] = json!(black);
-        sections["scanner"]["white_point"] = json!(white);
-        assert!(GuiState::from_value(sections).is_err());
-    }
 }
 
 #[test]

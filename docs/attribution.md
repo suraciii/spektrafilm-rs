@@ -19,13 +19,6 @@ Claude Code assisted the port.
 The Rust program is GPL-3.0; see [LICENSE](../LICENSE).
 Andrea Volpato's spectral profiles and their LUT derivatives retain CC BY-SA 4.0; see [the canonical asset license](../data/license/SPEKTRAFILM_LICENSE.txt).
 
-## LabScan scanner finish
-
-The optional LabScan scanner finish adapts Fotufilm project-authored `Sources/FotufilmCore/LabScanFinish.swift` under Apache-2.0.
-The source is pinned at revision `59d43471dbef45c85ae442e507a291fdebfb2ec5`.
-The approximate narrow-band receiver follows Fotufilm's `PrintPaperTables.swift` sensitivity approximation.
-It is not a measured or calibrated scanner device.
-
 ## Fotufilm Film grain engine
 
 The optional Fotufilm Film grain engine adapts the crystal-population and periodic-aperture mechanism of Fotufilm project-authored `Sources/FotufilmCore/FilmGrain.swift` under Apache-2.0.

@@ -1,14 +1,15 @@
 //! Editors for the pinned experimental GUI sections.
+use crate::routes::vocabulary;
 use crate::theme;
 use egui::Ui;
 use serde_json::Value;
 use spektrafilm_core::feature_profiles::{self, FeatureProfileFamily, FeatureProfileSelection};
 use spektrafilm_core::params::{
-    NegativeConversionMethod, PrintCurvesMorphParams, PrintExposureEvTracking, PrintExposureMode,
-    ReceiverProfile, RuntimeParams, ScannerAutoSetup, ScannerFinish,
+    PrintCurvesMorphParams, PrintExposureEvTracking, PrintExposureMode, RuntimeParams,
     grain::{FotufilmMaterial, GrainEngine, GrainV2FilmType, GrainV2Mode},
 };
 use spektrafilm_core::profile::Profile;
+use std::path::Path;
 
 const COLOR_SPACES: &[&str] = &[
     "sRGB",
@@ -77,10 +78,6 @@ impl ScanMedium {
         self == Self::Negative
             && matches!(route, "input > film > scan" | "input > convert-film > scan")
     }
-
-    pub(crate) fn correction_eligible(self) -> bool {
-        matches!(self, Self::Paper | Self::Slide)
-    }
 }
 
 /// Scan medium implied by a film profile: negative, positive (slide), or
@@ -97,31 +94,17 @@ pub(crate) fn scan_medium(film: &Profile) -> ScanMedium {
 
 /// Normalize only GUI transitions; imported states and recipes retain validation errors.
 pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medium: ScanMedium) {
-    let medium = film_medium.for_route(&params.workflow.route);
-    if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference
-        && (film_medium != ScanMedium::Negative
-            || params.workflow.route != "input > film > scan"
-            || params.scanner.scan_output != "negative_to_positive")
-    {
-        params.scanner.negative_conversion_method = NegativeConversionMethod::default();
-    }
-    if params.scanner.negative_conversion_method != NegativeConversionMethod::DigitalReference {
-        if params.scanner.receiver_profile == ReceiverProfile::DigitalReference {
-            params.scanner.receiver_profile = ReceiverProfile::LegacyColorimetric;
-        }
-        params.scanner.reference_exposure_ev = 0.0;
-        params.scanner.reference_balance_ev = [0.0; 3];
-    }
-    if !matches!(medium, ScanMedium::Slide | ScanMedium::Negative) {
-        params.scanner.receiver_profile = ReceiverProfile::LegacyColorimetric;
-    }
     if !film_medium.positive_output_eligible(&params.workflow.route) {
         params.scanner.scan_output = "direct_scan".into();
     }
-    if params.scanner.scan_output != "negative_to_positive" {
-        params.scanner.negative_conversion_method = NegativeConversionMethod::default();
-        params.scanner.auto_setup = ScannerAutoSetup::Off;
-        params.scanner.finish = ScannerFinish::Neutral;
+    // A conversion style belongs to the negative interpretation, so leaving
+    // that interpretation resets it to the frozen reference tone. Resetting
+    // keeps the transition actioned; a non-neutral style with a direct scan
+    // is a validation error the render would otherwise surface.
+    if params.scanner.scan_output != "negative_to_positive"
+        && params.scanner.conversion_style != vocabulary::CONVERSION_STYLE_NEUTRAL
+    {
+        params.scanner.conversion_style = vocabulary::CONVERSION_STYLE_NEUTRAL.into();
     }
 }
 
@@ -237,6 +220,7 @@ pub(crate) fn show(
     filter: &str,
     cache: &mut SectionLabelCache,
     capture_reference_illuminant: &str,
+    data_dir: &Path,
 ) -> ChangeFlags {
     let mut flags = ChangeFlags::default();
     let _row_scope = row_modified::install(ui.ctx(), section, params, extras);
@@ -251,6 +235,7 @@ pub(crate) fn show(
             &mut flags,
             &mut filter,
             capture_reference_illuminant,
+            data_dir,
         );
     });
     filter.finish();
@@ -267,6 +252,7 @@ pub(crate) fn render_sections(
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
     capture_reference_illuminant: &str,
+    data_dir: &Path,
 ) {
     scanner::sections(
         ui,
@@ -277,6 +263,7 @@ pub(crate) fn render_sections(
         flags,
         filter,
         capture_reference_illuminant,
+        data_dir,
     );
     chemistry::sections(ui, params, section, flags, filter);
     glare::sections(ui, params, section, flags, filter);
@@ -454,6 +441,7 @@ mod tests {
                         "",
                         &mut cache,
                         "D55",
+                        &crate::profiles::pick_data_dir(),
                     );
                 });
             },
@@ -489,116 +477,133 @@ mod tests {
                 "direct_scan"
             }
             .into();
-            params.scanner.finish = if positive {
-                ScannerFinish::LabScan
-            } else {
-                ScannerFinish::Neutral
-            };
             let (_, output) = scanner_frame(&ctx, &mut params, medium, vec![]);
-            assert_eq!(
-                has_text(&output, "receiver profile"),
-                route != "input" && !route.contains(" > print > "),
-                "{route}"
-            );
-            for label in [
-                "Negative conversion method",
-                "scanner auto setup",
-                "scanner finish",
-                "finish strength",
-            ] {
-                assert_eq!(has_text(&output, label), positive, "{route}: {label}");
+            // The scanner surface derives its medium from the route, so the
+            // controls follow the route rather than the selected film stock.
+            let active = medium.for_route(route) != ScanMedium::None;
+            for label in ["scanner lamp", "Lens blur (readout optics)"] {
+                assert_eq!(has_text(&output, label), active, "{route}: {label}");
             }
             assert_eq!(
                 has_text(&output, "scan output"),
                 medium.positive_output_eligible(route),
                 "{route}"
             );
-            if positive {
-                params.scanner.finish = ScannerFinish::Neutral;
-                let (_, output) = scanner_frame(&ctx, &mut params, medium, vec![]);
-                assert!(!has_text(&output, "finish strength"));
-            }
         }
     }
 
     #[test]
-    fn approximate_receiver_and_coupled_choices_are_clickable() {
+    fn scanner_lamp_choice_writes_the_selected_illuminant() {
         let ctx = egui::Context::default();
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
-        params.scanner.scan_output = "negative_to_positive".into();
-        for (selected, next) in [
-            ("legacy colorimetric", "lab scan (approximate)"),
-            ("density", "separable"),
-            ("separable", "coupled"),
-            ("off", "full"),
-            ("neutral", "lab_scan"),
-        ] {
-            let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
-            let position = text_position(&output, selected);
-            scanner_frame(
-                &ctx,
-                &mut params,
-                ScanMedium::Negative,
-                click(position, true),
-            );
-            scanner_frame(
-                &ctx,
-                &mut params,
-                ScanMedium::Negative,
-                click(position, false),
-            );
+        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
+        assert!(has_text(&output, "D55"));
+        fn select(
+            ctx: &egui::Context,
+            params: &mut RuntimeParams,
+            summary: &str,
+            option: &str,
+        ) -> ChangeFlags {
+            let (_, output) = scanner_frame(ctx, params, ScanMedium::Negative, vec![]);
+            let button = text_position(&output, summary);
+            scanner_frame(ctx, params, ScanMedium::Negative, click(button, true));
+            scanner_frame(ctx, params, ScanMedium::Negative, click(button, false));
             // Popup areas lay out their first frame before becoming visible and hittable.
-            let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
-            let position = text_position(&output, next);
-            scanner_frame(
-                &ctx,
-                &mut params,
-                ScanMedium::Negative,
-                click(position, true),
-            );
-            let (flags, _) = scanner_frame(
-                &ctx,
-                &mut params,
-                ScanMedium::Negative,
-                click(position, false),
-            );
-            assert!(flags.runtime_changed, "{next}");
-            scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
+            let (_, output) = scanner_frame(ctx, params, ScanMedium::Negative, vec![]);
+            let entry = popup_text_position(&output, option);
+            scanner_frame(ctx, params, ScanMedium::Negative, click(entry, true));
+            scanner_frame(ctx, params, ScanMedium::Negative, click(entry, false)).0
         }
-        assert_eq!(
-            params.scanner.receiver_profile,
-            ReceiverProfile::LabScanApprox
-        );
-        assert_eq!(
-            params.scanner.negative_conversion_method,
-            NegativeConversionMethod::Coupled
-        );
-        assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::Full);
-        assert_eq!(params.scanner.finish, ScannerFinish::LabScan);
+        let flags = select(&ctx, &mut params, "D55", "D65");
+        assert!(flags.runtime_changed, "scanner lamp");
+        assert_eq!(params.scanner.lamp, "D65");
+        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
+        assert!(has_text(&output, "D65"));
     }
 
     #[test]
-    fn direct_scan_selection_resets_positive_only_selectors() {
+    fn ineligible_routes_reset_the_scan_polarity() {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
-        params.scanner.receiver_profile = ReceiverProfile::LabScanApprox;
-        params.scanner.negative_conversion_method = NegativeConversionMethod::Coupled;
-        params.scanner.auto_setup = ScannerAutoSetup::Full;
-        params.scanner.finish = ScannerFinish::LabScan;
-        params.scanner.finish_strength = 0.0;
+        params.scanner.scan_output = "negative_to_positive".into();
         normalize_scanner_selections(&mut params, ScanMedium::Negative);
+        assert_eq!(params.scanner.scan_output, "negative_to_positive");
+        params.workflow.route = "input > film > print > scan".into();
+        normalize_scanner_selections(&mut params, ScanMedium::Negative);
+        assert_eq!(params.scanner.scan_output, "direct_scan");
+    }
+
+    /// A style file body the tests author: the same per-channel tone triple
+    /// shape `data/scan-styles/<name>.json` carries.
+    const PROBE_STYLE_BODY: &str = r#"{"channels":[
+ {"brightness_ev":1.2,"contrast":0.9,"dmax":1.8},
+ {"brightness_ev":1.2,"contrast":0.9,"dmax":1.8},
+ {"brightness_ev":1.2,"contrast":0.9,"dmax":1.8}
+]}"#;
+
+    #[test]
+    fn conversion_style_defaults_to_neutral_and_is_gated_on_the_polarity() {
+        let ctx = egui::Context::default();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        assert_eq!(params.scanner.conversion_style, "neutral");
+        // The style belongs to the negative interpretation, so the direct scan
+        // does not offer it at all.
+        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
+        assert!(!has_text(&output, "conversion style"));
+        params.scanner.scan_output = "negative_to_positive".into();
+        let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
+        assert!(has_text(&output, "conversion style"));
+        assert!(has_text(&output, "neutral"));
+    }
+
+    #[test]
+    fn the_repository_data_directory_offers_only_the_neutral_style() {
+        // No style ships with the install, so the shipped vocabulary is
+        // exactly `neutral` until the user drops a file into the data dir.
         assert_eq!(
-            params.scanner.receiver_profile,
-            ReceiverProfile::LabScanApprox
+            crate::profiles::scan_conversion_styles(&crate::profiles::pick_data_dir()),
+            vec!["neutral".to_owned()]
         );
+    }
+
+    #[test]
+    fn a_data_directory_with_styles_offers_them_beside_neutral() {
+        let data = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(data.path().join("scan-styles")).unwrap();
+        for name in ["warm-probe", "cool-probe"] {
+            std::fs::write(
+                data.path().join("scan-styles").join(format!("{name}.json")),
+                PROBE_STYLE_BODY,
+            )
+            .unwrap();
+        }
         assert_eq!(
-            params.scanner.negative_conversion_method,
-            NegativeConversionMethod::Density
+            crate::profiles::scan_conversion_styles(data.path()),
+            vec![
+                "neutral".to_owned(),
+                "cool-probe".to_owned(),
+                "warm-probe".to_owned()
+            ],
+            "neutral first, then the installed styles sorted"
         );
-        assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::Off);
-        assert_eq!(params.scanner.finish, ScannerFinish::Neutral);
-        assert_eq!(params.scanner.finish_strength, 0.0);
+    }
+
+    #[test]
+    fn leaving_the_negative_interpretation_resets_the_conversion_style() {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.conversion_style = "warm-probe".into();
+        normalize_scanner_selections(&mut params, ScanMedium::Negative);
+        assert_eq!(params.scanner.conversion_style, "warm-probe");
+        // Switching back to the direct scan resets the style rather than
+        // leaving a combination validation rejects.
+        params.scanner.scan_output = "direct_scan".into();
+        normalize_scanner_selections(&mut params, ScanMedium::Negative);
+        assert_eq!(params.scanner.conversion_style, "neutral");
+        params.validate().unwrap();
     }
 
     fn click(position: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
@@ -642,6 +647,7 @@ mod tests {
                         "",
                         &mut cache,
                         "D55",
+                        &crate::profiles::pick_data_dir(),
                     );
                 });
             },
@@ -717,6 +723,7 @@ mod tests {
                             "",
                             &mut cache,
                             "D55",
+                            &crate::profiles::pick_data_dir(),
                         );
                     });
                 },
@@ -832,6 +839,7 @@ mod tests {
                             "",
                             &mut Default::default(),
                             "D55",
+                            &crate::profiles::pick_data_dir(),
                         );
                     });
                 },
@@ -882,6 +890,7 @@ mod tests {
                             "",
                             &mut Default::default(),
                             "D55",
+                            &crate::profiles::pick_data_dir(),
                         );
                     });
                 },
@@ -961,154 +970,5 @@ mod tests {
         assert!((shares[3] - 0.1).abs() < 1e-12);
         assert!((shares.iter().sum::<f64>() - 1.0).abs() < 1e-12);
         assert!(shares.iter().all(|share| *share > 0.0));
-    }
-
-    #[test]
-    fn point_text_edits_commit_only_valid_channel_pairs() {
-        let ctx = egui::Context::default();
-        let mut black = [0.1, 0.2, 0.3];
-        let mut white = [0.7, 0.8, 0.9];
-        let mut frame = |events: Vec<egui::Event>| {
-            let mut changed = false;
-            let output = ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(600.0, 300.0),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        let mut cache = SectionLabelCache::default();
-                        let mut filter = ControlFilter::new("", &mut cache);
-                        changed = scan_points(ui, &mut black, &mut white, &mut filter);
-                    });
-                },
-            );
-            (changed, black, white, output)
-        };
-        let (_, _, _, output) = frame(vec![]);
-        let position = text_position(&output, "0.100");
-        frame(click(position, true));
-        frame(click(position, false));
-        for text in ["0.7", "0.95", "NaN", "-"] {
-            let (changed, black, white, _) = frame(replace_text(text));
-            assert!(!changed, "{text}");
-            assert_eq!(black, [0.1, 0.2, 0.3]);
-            assert_eq!(white, [0.7, 0.8, 0.9]);
-        }
-        let (changed, black, white, _) = frame(replace_text("0.25"));
-        assert!(changed);
-        assert_eq!(black, [0.25, 0.2, 0.3]);
-        assert_eq!(white, [0.7, 0.8, 0.9]);
-    }
-
-    #[test]
-    fn rejected_point_edit_preserves_last_committed_value() {
-        let ctx = egui::Context::default();
-        let mut black = [0.1, 0.2, 0.3];
-        let mut white = [0.7, 0.8, 0.9];
-        let mut frame = |events: Vec<egui::Event>| {
-            let mut changed = false;
-            let output = ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(600.0, 300.0),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        let mut cache = SectionLabelCache::default();
-                        let mut filter = ControlFilter::new("", &mut cache);
-                        changed = scan_points(ui, &mut black, &mut white, &mut filter);
-                    });
-                },
-            );
-            (changed, black, white, output)
-        };
-        let (_, _, _, output) = frame(vec![]);
-        let position = text_position(&output, "0.100");
-        frame(click(position, true));
-        frame(click(position, false));
-        let (changed, black, _, _) = frame(replace_text("0.250"));
-        assert!(changed);
-        assert_eq!(black[0], 0.25);
-        let (changed, black, _, _) = frame(replace_text("0.700"));
-        assert!(!changed);
-        assert_eq!(black[0], 0.25);
-    }
-
-    #[test]
-    fn white_point_draft_survives_sequential_typing_and_external_changes() {
-        let ctx = egui::Context::default();
-        let mut black = [0.1; 3];
-        let mut white = [1.0; 3];
-        let mut frame = |events: Vec<egui::Event>, external: Option<f64>| {
-            if let Some(value) = external {
-                white[0] = value;
-            }
-            let output = ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(600.0, 300.0),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        let mut cache = SectionLabelCache::default();
-                        let mut filter = ControlFilter::new("", &mut cache);
-                        scan_points(ui, &mut black, &mut white, &mut filter);
-                    });
-                },
-            );
-            (black, white, output)
-        };
-        let (_, _, output) = frame(vec![], None);
-        let position = text_position(&output, "1.000");
-        frame(click(position, true), None);
-        frame(click(position, false), None);
-        let select_all = egui::Event::Key {
-            key: egui::Key::A,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers {
-                ctrl: true,
-                command: true,
-                ..Default::default()
-            },
-        };
-        let (_, white, _) = frame(vec![select_all, egui::Event::Text("0".into())], None);
-        assert_eq!(white, [1.0; 3]);
-        let (_, white, _) = frame(vec![egui::Event::Text(".".into())], None);
-        assert_eq!(white, [1.0; 3]);
-        let (_, white, _) = frame(vec![egui::Event::Text("9".into())], None);
-        assert_eq!(white, [0.9, 1.0, 1.0]);
-        let (black, white, _) = frame(vec![egui::Event::Text("5".into())], None);
-        assert_eq!(white, [0.95, 1.0, 1.0]);
-        assert_eq!(black, [0.1; 3]);
-        frame(vec![], Some(0.8));
-        let (_, white, _) = frame(
-            vec![
-                egui::Event::Key {
-                    key: egui::Key::End,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                },
-                egui::Event::Text("5".into()),
-            ],
-            None,
-        );
-        assert_eq!(white, [0.8005, 1.0, 1.0]);
     }
 }

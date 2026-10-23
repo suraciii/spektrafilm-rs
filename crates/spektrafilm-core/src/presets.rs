@@ -568,10 +568,8 @@ impl Preset {
             PresetParameters::Section(payload) => parameter_edits(payload)?.apply(&mut params)?,
         }
         if let Some(scanner) = &self.provenance.scanner {
-            let expected = serde_json::to_value(
-                crate::scan_receiver::ScannerProvenance::from_params(&params),
-            )
-            .map_err(|e| e.to_string())?;
+            let expected = serde_json::to_value(crate::ScannerProvenance::from_params(&params))
+                .map_err(|e| e.to_string())?;
             if scanner != &expected {
                 return Err(
                     "scanner provenance does not match the typed scanner parameters".into(),
@@ -663,16 +661,6 @@ impl Preset {
             default_route.clone()
         };
         params.io.scan_film = film.is_positive();
-        if params.scanner.negative_conversion_method
-            == crate::params::NegativeConversionMethod::DigitalReference
-            && (film.is_positive() || params.workflow.route != "input > film > scan")
-        {
-            params.scanner.negative_conversion_method =
-                crate::params::NegativeConversionMethod::default();
-            params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
-            params.scanner.reference_exposure_ev = 0.0;
-            params.scanner.reference_balance_ev = [0.0; 3];
-        }
         if film.is_positive()
             || !matches!(
                 params.workflow.route.as_str(),
@@ -680,21 +668,6 @@ impl Preset {
             )
         {
             params.scanner.scan_output = "direct_scan".into();
-            params.scanner.negative_conversion_method =
-                crate::params::NegativeConversionMethod::default();
-            params.scanner.auto_setup = crate::params::ScannerAutoSetup::default();
-            params.scanner.finish = crate::params::ScannerFinish::default();
-            if params.scanner.receiver_profile == crate::params::ReceiverProfile::DigitalReference {
-                params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
-                params.scanner.reference_exposure_ev = 0.0;
-                params.scanner.reference_balance_ev = [0.0; 3];
-            }
-        }
-        if !matches!(
-            params.workflow.route.as_str(),
-            "input > film > scan" | "input > convert-film > scan"
-        ) {
-            params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
         }
         crate::pipeline_calibration::validate_scan_output_route(&params)?;
         params.validate()?;
@@ -715,7 +688,7 @@ impl Preset {
         mut provenance: Provenance,
     ) -> Self {
         provenance.scanner = Some(
-            serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(params))
+            serde_json::to_value(crate::ScannerProvenance::from_params(params))
                 .expect("built-in provenance is serializable"),
         );
         Self {
@@ -747,10 +720,8 @@ impl Preset {
         let mut captured = RuntimeParams::default();
         parameter_edits(&payload)?.apply(&mut captured)?;
         provenance.scanner = Some(
-            serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(
-                &captured,
-            ))
-            .map_err(|e| e.to_string())?,
+            serde_json::to_value(crate::ScannerProvenance::from_params(&captured))
+                .map_err(|e| e.to_string())?,
         );
         let preset = Self {
             schema_version: PRESET_SCHEMA_VERSION,
@@ -775,8 +746,6 @@ impl Preset {
         let params = self.overlay_section(current)?;
         params.validate()?;
         let scan_changed = params.scanner.scan_output != current.scanner.scan_output
-            || params.scanner.white_correction != current.scanner.white_correction
-            || params.scanner.black_correction != current.scanner.black_correction
             || params.film_render.grain.active != current.film_render.grain.active
             || params.film_render.grain.engine != current.film_render.grain.engine;
         if scan_changed || crate::pipeline_calibration::validate_scan_output(current, film).is_ok()

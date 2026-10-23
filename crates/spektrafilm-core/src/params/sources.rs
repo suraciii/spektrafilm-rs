@@ -140,10 +140,9 @@ pub(crate) fn normalize_legacy_cmyk(value: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Map the pre-v4 conversion-control paths of a complete runtime document
-/// onto their canonical names: the five renamed `scanner` leaves and the
-/// legacy `enlarger` print-exposure pair onto `enlarger.print_exposure_mode`
-/// with `settings.print_exposure_ev_tracking` for the two mixed states.
+/// Map the pre-v4 legacy `enlarger` print-exposure pair of a complete
+/// runtime document onto `enlarger.print_exposure_mode` with
+/// `settings.print_exposure_ev_tracking` for the two mixed states.
 /// `settings_allowed` must be false for single-section payloads, which cannot
 /// carry a `settings` group. Only versioned legacy documents may run this
 /// mapping; current documents must fail unknown-field validation instead.
@@ -152,27 +151,9 @@ pub fn normalize_legacy_conversion_paths(
     value: &mut Value,
     settings_allowed: bool,
 ) -> Result<(), String> {
-    const SCANNER_RENAMES: &[(&str, &str)] = &[
-        ("positive_interpretation", "negative_conversion_method"),
-        ("positive_density_ev", "conversion_brightness_ev"),
-        ("positive_balance_ev", "conversion_balance_ev"),
-        ("positive_contrast", "conversion_contrast"),
-        ("positive_dmax", "conversion_dmax"),
-    ];
     let Some(object) = value.as_object_mut() else {
         return Ok(());
     };
-    // Validate every conflict before mutating so a rejected document stays
-    // byte-identical.
-    if let Some(scanner) = object.get("scanner").and_then(Value::as_object) {
-        for (old, new) in SCANNER_RENAMES {
-            if scanner.contains_key(*old) && scanner.contains_key(*new) {
-                return Err(format!(
-                    "legacy complete params carry both scanner.{old} and scanner.{new}"
-                ));
-            }
-        }
-    }
     let mut mixed_state = None;
     if let Some(enlarger) = object.get("enlarger").and_then(Value::as_object) {
         let has_legacy = enlarger.contains_key("normalize_print_exposure")
@@ -224,13 +205,6 @@ pub fn normalize_legacy_conversion_paths(
              settings.print_exposure_ev_tracking leaf, but settings is not an \
              object"
             .into());
-    }
-    if let Some(scanner) = object.get_mut("scanner").and_then(Value::as_object_mut) {
-        for (old, new) in SCANNER_RENAMES {
-            if let Some(v) = scanner.remove(*old) {
-                scanner.insert((*new).into(), v);
-            }
-        }
     }
     if let Some((mode, tracking)) = mixed_state {
         let enlarger = object
@@ -1103,30 +1077,7 @@ mod fotufilm_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::{NegativeConversionMethod, PrintExposureMode};
-
-    #[test]
-    fn scanner_point_sources_reject_bad_channels_and_validate_composed_pairs() {
-        for source in [
-            "scanner.black_point=[-0.1,0,0]",
-            "scanner.white_point=[1,1.1,1]",
-            "scanner.black_point=[0,0]",
-            "scanner.white_point=[1,null,1]",
-        ] {
-            assert!(ParameterEdits::parse(source).is_err(), "{source}");
-        }
-        let mut params = RuntimeParams::default();
-        ParameterEdits::parse("scanner.black_point=[0.1,0.2,0.3],scanner.white_point=[0.8,0.9,1]")
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        params.validate().unwrap();
-        ParameterEdits::parse("scanner.white_point=[0.8,0.2,1]")
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        assert!(params.validate().is_err());
-    }
+    use crate::params::PrintExposureMode;
 
     #[test]
     fn format_sources_reject_invalid_and_preserve_fractional_values() {
@@ -1568,13 +1519,6 @@ mod tests {
 
     #[test]
     fn legacy_conversion_paths_rename_and_preserve_the_four_states() {
-        let scanner_old = serde_json::json!({
-            "positive_interpretation": "coupled",
-            "positive_density_ev": 0.5,
-            "positive_balance_ev": [0.1, 0.0, -0.1],
-            "positive_contrast": 0.9,
-            "positive_dmax": 1.2,
-        });
         for (pair, mode, tracking) in [
             (
                 serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": true}),
@@ -1608,20 +1552,9 @@ mod tests {
                 "never",
             ),
         ] {
-            let mut value = serde_json::json!({
-                "scanner": scanner_old.clone(),
-                "enlarger": pair,
-            });
+            let mut value = serde_json::json!({ "enlarger": pair });
             normalize_legacy_complete_params(&mut value).unwrap();
             let params: RuntimeParams = serde_json::from_value(value).unwrap();
-            assert_eq!(
-                params.scanner.negative_conversion_method,
-                NegativeConversionMethod::Coupled
-            );
-            assert_eq!(params.scanner.conversion_brightness_ev, 0.5);
-            assert_eq!(params.scanner.conversion_balance_ev, [0.1, 0.0, -0.1]);
-            assert_eq!(params.scanner.conversion_contrast, 0.9);
-            assert_eq!(params.scanner.conversion_dmax, 1.2);
             assert_eq!(params.enlarger.print_exposure_mode.as_str(), mode);
             assert_eq!(
                 params.settings.print_exposure_ev_tracking.as_str(),
@@ -1642,6 +1575,13 @@ mod tests {
             }
         });
         assert!(normalize_legacy_complete_params(&mut both).is_err());
+        // Legacy scanner conversion leaves are retired with the scan
+        // surface: they stay untouched and fail unknown-field validation.
+        let mut retired = serde_json::json!({
+            "scanner": { "positive_interpretation": "coupled" }
+        });
+        assert!(normalize_legacy_complete_params(&mut retired).is_ok());
+        assert!(serde_json::from_value::<RuntimeParams>(retired).is_err());
     }
 
     #[test]
@@ -1858,29 +1798,6 @@ mod tests {
                 "a Dye-only control must not claim the Spektra engine: {path}: {described:?}"
             );
         }
-    }
-
-    #[test]
-    fn renamed_conversion_paths_keep_the_negative_to_positive_condition() {
-        use super::effects::conditions;
-        for path in [
-            "scanner.negative_conversion_method",
-            "scanner.conversion_brightness_ev",
-            "scanner.conversion_balance_ev",
-            "scanner.conversion_contrast",
-            "scanner.conversion_dmax",
-        ] {
-            let found = conditions(path);
-            assert!(
-                found
-                    .iter()
-                    .any(|c| c.description() == "scanner.scan_output = negative_to_positive"),
-                "missing NegativeToPositive condition for {path}: {:?}",
-                found.iter().map(|c| c.description()).collect::<Vec<_>>()
-            );
-        }
-        // The retired prefix carries no activation condition (hard cut).
-        assert!(conditions("scanner.positive_density_ev").is_empty());
     }
 
     #[test]

@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use spektrafilm_core::ScannerProvenance;
 use spektrafilm_core::image_io::ImageFormat;
 use spektrafilm_core::params::RuntimeParams;
 use std::fs;
@@ -106,9 +107,7 @@ pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
     recipe.parameters = serde_json::to_value(&params)?;
     recipe.schema_version = PARAMETER_SCHEMA_VERSION.into();
     if let Some(provenance) = &recipe.scanner_provenance {
-        let expected = serde_json::to_value(
-            spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
-        )?;
+        let expected = serde_json::to_value(ScannerProvenance::from_params(&params))?;
         if provenance != &expected {
             bail!("scannerProvenance does not match the typed scanner parameters");
         }

@@ -19,8 +19,7 @@
         "channel_model": "color",
         "densitometer": "status_M",
         "log_sensitivity_density_over_min": 0.2,
-        "reference_illuminant": "T",
-        "viewing_illuminant": "D50"
+        "reference_illuminant": "T"
     },
     "data": {
         "wavelengths": [

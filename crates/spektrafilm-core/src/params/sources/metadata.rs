@@ -362,19 +362,17 @@ fn conditions(path: &str) -> Vec<String> {
     if path == "camera.film_format_mm" {
         out.push("finite and strictly positive; exposed full-source long edge, not roll width or film-stock designation".into());
     }
-    if path == "scanner.receiver_profile" {
-        out.push("film scans only; legacy_colorimetric preserves CIE spectral-to-output acquisition; lab_scan_approx is an approximate uncalibrated Fotufilm narrow-band receiver (630/545/465 nm, sigma 8.5/14/9.5 nm), version fotufilm_lab_scan_approx_v1".into());
-    } else if path == "scanner.negative_conversion_method" {
-        out.push("density reads record densities and acquires no receiver capture, so its output is receiver-independent; separable and coupled interpret a receiver capture and apply to a real negative capture or the exact-cell scan path; density behaves as separable where the incoming image is a capture".into());
-        out.push("digital_reference pairs its modeled receiver on input > film > scan only; Reference Exposure requires auto_setup off, identity points and default reconstruction controls; fixed Kodak Endura receiver and Portra400 dye basis, equal-energy light and fixed 18% response".into());
-    } else if path == "scanner.scan_output" {
-        out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain Procedural are unsupported".into());
+    if path == "scanner.scan_output" {
+        out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; active Grain Procedural is unsupported".into());
     }
-    if path.starts_with("scanner.reference_") {
-        out.push("output-relative stops; neutral 0; exposure multiplies all channels by 2^EV and balance multiplies independent linear-sRGB channels by 2^EV after fixed reference tone, before output-space conversion".into());
+    if path == "scanner.lamp" {
+        out.push("the scanner's one light source; the clear-film white calibration keeps its spectral shape in play, and the declared infrared cut rides on it".into());
     }
-    if matches!(path, "scanner.black_point" | "scanner.white_point") {
-        out.push("each channel requires 0 <= black_point < white_point <= 1; points remap without clipping".into());
+    if path == "scanner.conversion_style" {
+        out.push(
+            "named positive-conversion tone for negative_to_positive; neutral is the frozen reference, other names resolve to data/scan-styles/<name>.json (declared per-channel tone parameters, never fitted)"
+                .into(),
+        );
     }
     if path.starts_with("film_render.grain.fotufilm.") {
         out.push("authored effective-appearance control; not measured stock calibration".into());
@@ -407,6 +405,9 @@ fn description(path: &str) -> Option<&'static str> {
         ),
         "scanner.lens_blur" => Some(
             "Optical softness in linear scanner readout before interpretation, corrections, gamut processing and digital sharpening.",
+        ),
+        "scanner.conversion_style" => Some(
+            "Named stylization of the negative-to-positive tone: neutral keeps the frozen reference tone; any other name applies the declared per-channel tone triple from data/scan-styles/<name>.json.",
         ),
         "scanner.unsharp_mask" => {
             Some("Digital scan sharpening after optical readout and output processing.")

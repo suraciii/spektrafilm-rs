@@ -231,7 +231,7 @@ An operation lies inside the measured range when it executes and can change a re
 | `film_render.dir_couplers.active` | `cmy_film` |
 | `film_render.grain.active` | `cmy_film` |
 | `enlarger.diffusion_filter.active` | `log_e_print` |
-| `print_render.glare.active`, `scanner.lens_blur`, `scanner.unsharp_mask`, `scanner.auto_setup` | `rgb_out` |
+| `print_render.glare.active`, `scanner.lens_blur`, `scanner.unsharp_mask` | `rgb_out` |
 
 An operation executes when the range passes through it: the entry boundary is where the stimulus enters, so an operation whose first changed stage is at or before the entry cannot reach a reading, and an operation whose first changed stage is after the last requested reading has not changed one yet. An operation is listed when both hold.
 
@@ -497,8 +497,6 @@ Both configuration objects must set `route` to `input > film > print > scan` and
   "camera.auto_exposure=false",
   "camera.exposure_compensation_ev=0",
   "camera.film_format_mm=35",
-  "scanner.auto_setup=off",
-  "scanner.finish=neutral",
   "cmyk.active=false",
   "io.output_color_space=sRGB",
   "io.output_cctf_encoding=true",

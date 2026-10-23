@@ -66,7 +66,7 @@ impl WgpuBackend {
         let preflash = p.preflash;
         let print_channel_density = p.print_channel_density;
         let print_base_density = p.print_base_density;
-        let viewing_illuminant = p.viewing_illuminant;
+        let scan_illuminant = p.scan_illuminant;
         let scan_normalization = p.scan_normalization;
         let scan_xyz_to_rgb = p.scan_xyz_to_rgb;
 
@@ -195,7 +195,7 @@ impl WgpuBackend {
             preflash,
             print_channel_density,
             print_base_density,
-            viewing_illuminant,
+            scan_illuminant,
             scan_normalization,
             scan_xyz_to_rgb,
             p,
@@ -962,31 +962,6 @@ impl WgpuBackend {
                 encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels, wg_xy)),
             });
         }
-        // 6b'. Capability fence (pipe architecture, S3): the scanner
-        //     readout interpretation — slide points, the faithful B&W/slide
-        //     luminance remap, negative-to-positive conversion, and the
-        //     LabScan finish — runs on the host over the acquisition RGB
-        //     after scanner lens blur and glare, before output gamut
-        //     compression and unsharp (the CPU scanning order).
-        if let Some(cpu) = p.scan_tail_cpu_stage.as_ref() {
-            let buf_b = buf_b.clone();
-            let (w, h) = (image.width, image.height);
-            let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::super::pipe::ChainStage::Cpu {
-                name: "scan_tail_cpu_stage",
-                fence: Box::new(move |pipe| {
-                    let host = pipe.readback_buffer(&buf_b, img_bytes_u64);
-                    let interpreted = cpu(&ImageBuf::from_data(
-                        w,
-                        h,
-                        crate::gpu_helpers::f32_to_scalars(host),
-                    ))?;
-                    let out_f32 = crate::gpu_helpers::scalars_to_f32(&interpreted.data);
-                    pipe.write_image_buffer(&buf_b, &out_f32);
-                    Ok(())
-                }),
-            });
-        }
         // 6c. Output gamut compression (in place on buf_b) — after glare,
         //     before unsharp, mirroring the CPU scanning order.
         if let Some(gs) = gamut_state.as_ref() {
@@ -1295,7 +1270,7 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         table(p.print_density_curves.len()),
         table(scan_wavelengths),
         f32s(scan_wavelengths),
-        f32s(p.viewing_illuminant.len()),
+        f32s(p.scan_illuminant.len()),
         f32s(spektrafilm_math::spectral::N_WAVELENGTHS), // cmf_x/y/z
         tc_lut_bytes,
         dir_log_bytes,
@@ -1374,10 +1349,9 @@ mod tests {
             print_channel_density: &[],
             print_base_density: &[],
             preflash: [0.0; 3],
-            viewing_illuminant: &[],
+            scan_illuminant: &[],
             scan_normalization: 1.0,
             scan_xyz_to_rgb: &MAT3,
-            white_black_xyz_remap: None,
             scan_film: false,
             halation: None,
             dir_couplers: None,
@@ -1391,7 +1365,6 @@ mod tests {
             highlight_boost: None,
             grain_dye: None,
             density_cpu_stage: None,
-            scan_tail_cpu_stage: None,
             scan_acquisition_cpu_stage: None,
             print_acquisition_cpu_stage: None,
             camera_diffusion_cpu_stage: None,

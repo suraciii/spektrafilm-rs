@@ -27,7 +27,6 @@ pub(crate) struct ScanParams {
     pub(super) col0: [f32; 4],
     pub(super) col1: [f32; 4],
     pub(super) col2: [f32; 4],
-    pub(super) bw: [f32; 4],
 }
 
 /// Uniform parameters for the front pass (hanatos LUT lookup or mallett matmul).

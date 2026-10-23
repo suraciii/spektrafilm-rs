@@ -69,14 +69,9 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
     let mut s = session();
     let h = &mut s.harness;
     choose(h, "workflow", "input > film > print > scan");
-    let before = (
-        h.state().params.scanner.white_correction,
-        h.state().params.scanner.black_correction,
-        h.state().params.print_render.glare.active,
-    );
-    click(h, "white and black correction");
-    assert!(h.state().params.scanner.white_correction);
-    assert!(h.state().params.scanner.black_correction);
+    let before = h.state().params.print_render.glare.active;
+    click(h, "scan for print");
+    assert!(h.state().scan_for_print_snapshot.is_some());
     assert!(!h.state().params.print_render.glare.active);
     click(h, "CONFIG");
     click(h, "GUI parameters");
@@ -89,27 +84,22 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
     assert!(saved["rust"].get("scan_for_print_snapshot").is_none());
     assert!(saved["simulation"].get("workflow").is_none());
     assert!(saved["rust"]["runtime"]["workflow"].get("route").is_none());
-    click(h, "white and black correction");
-    assert_eq!(
-        (
-            h.state().params.scanner.white_correction,
-            h.state().params.scanner.black_correction,
-            h.state().params.print_render.glare.active
-        ),
-        before
-    );
-    click(h, "white and black correction");
+    click(h, "scan for print");
+    assert!(h.state().scan_for_print_snapshot.is_none());
+    assert_eq!(h.state().params.print_render.glare.active, before);
+    // The document was written while glare was disabled, so the reload keeps it
+    // off and drops the transient snapshot rather than resurrecting the value
+    // that was live when the file was written.
+    click(h, "scan for print");
     script(h, chooser::ChooserResult::Scripted(path));
     click(h, "Load from file");
     assert!(h.state().scan_for_print_snapshot.is_none());
-    assert!(h.state().params.scanner.white_correction);
-    assert!(h.state().params.scanner.black_correction);
     assert!(!h.state().params.print_render.glare.active);
-    click(h, "white and black correction");
+    click(h, "scan for print");
+    assert!(h.state().scan_for_print_snapshot.is_some());
+    assert!(!h.state().params.print_render.glare.active);
     choose(h, "workflow", "input");
     assert!(h.state().scan_for_print_snapshot.is_none());
-    assert!(h.state().params.scanner.white_correction);
-    assert!(h.state().params.scanner.black_correction);
     assert!(!h.state().params.print_render.glare.active);
 }
 
@@ -117,25 +107,21 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
 fn loaded_state_reports_scanner_normalization_in_header_status() {
     let mut s = session();
     let h = &mut s.harness;
-    choose(h, "workflow", "input");
-    let mut state = h.state().current_state().unwrap();
-    let path = s.directory.path().join("normalized-state.json");
-    state.sections["simulation"]["route"] = "input > film > scan".into();
-    state.sections["scanner"]["finish_strength"] = 0.75.into();
-    state.save(&path).unwrap();
-    click(h, "CONFIG");
-    if h.query_by_label("Load from file").is_none() {
-        click(h, "GUI parameters");
-    }
-    script(h, chooser::ChooserResult::Scripted(path));
-    click(h, "Load from file");
+    choose(h, "workflow", "input > film > scan");
+    click(h, "Scanner");
+    choose(h, "scan output", "Negative to positive");
+    assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
+    // A route that cannot carry the negative polarity resets it, and the
+    // header status names the control that was normalized.
+    choose(h, "workflow", "input > film > print > scan");
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert!(
         h.state().status.contains("normalized scanner controls"),
         "{}",
         h.state().status
     );
     assert!(
-        h.state().status.contains("finish strength"),
+        h.state().status.contains("scan output"),
         "{}",
         h.state().status
     );

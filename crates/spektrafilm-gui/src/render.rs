@@ -1,19 +1,16 @@
 //! GUI render snapshots and runtime preparation shared by Preview, Scan, and Export.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, OnceLock};
 
 use spektrafilm_backend::telemetry::{ObservationContext, ObservationKind, Purpose};
-use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
+use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::profile;
-use spektrafilm_core::runtime::{DigestMode, Runtime, ScannerSetup};
+use spektrafilm_core::runtime::{DigestMode, Runtime};
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
-use spektrafilm_math::image::ImageBuf;
 
 use super::observed_result;
-
-pub(super) type SharedScannerSetup = Arc<OnceLock<Result<ScannerSetup, String>>>;
 
 #[derive(Clone)]
 pub(super) struct RenderSnapshot {
@@ -22,7 +19,6 @@ pub(super) struct RenderSnapshot {
     print_name: String,
     data_dir: PathBuf,
     special: serde_json::Value,
-    scanner_setup: SharedScannerSetup,
     cancellation: Option<Arc<AtomicBool>>,
 }
 
@@ -33,7 +29,6 @@ impl RenderSnapshot {
         print_name: String,
         data_dir: PathBuf,
         special: serde_json::Value,
-        scanner_setup: SharedScannerSetup,
     ) -> Self {
         Self {
             params,
@@ -41,7 +36,6 @@ impl RenderSnapshot {
             print_name,
             data_dir,
             special,
-            scanner_setup,
             cancellation: None,
         }
     }
@@ -59,11 +53,6 @@ impl RenderSnapshot {
     #[cfg(test)]
     pub(super) fn params(&self) -> &RuntimeParams {
         &self.params
-    }
-
-    #[cfg(test)]
-    pub(super) fn scanner_setup(&self) -> &SharedScannerSetup {
-        &self.scanner_setup
     }
 
     fn digested_params(
@@ -117,24 +106,6 @@ impl RenderSnapshot {
         Runtime::new_observed(film, print, params, &self.data_dir, context)
             .map_err(|e| format!("runtime build: {e}"))
     }
-
-    pub(super) fn prepare_scanner_setup(
-        &self,
-        full_input: &ImageBuf,
-        context: &ObservationContext,
-    ) -> Result<Option<ScannerSetup>, String> {
-        if self.params.scanner.auto_setup == ScannerAutoSetup::Off {
-            return Ok(None);
-        }
-        if let Some(setup) = self.scanner_setup.get() {
-            return setup.clone().map(Some);
-        }
-        let canonical = build_runtime_observed(self, false, context)?
-            .with_cancellation(self.cancellation.clone());
-        let setup = canonical.prepare_scanner_setup(full_input)?;
-        let _ = self.scanner_setup.set(Ok(setup));
-        Ok(Some(setup))
-    }
 }
 #[derive(Clone, PartialEq)]
 struct RuntimeCacheKey {
@@ -159,27 +130,14 @@ struct RuntimeCacheEntry {
 }
 
 impl RuntimeCache {
-    #[cfg(test)]
-    pub(super) fn prepare_without_setup(
-        &mut self,
-        snapshot: &RenderSnapshot,
-        preview: bool,
-        context: &ObservationContext,
-    ) -> Result<&mut Runtime, String> {
-        self.prepare(snapshot, preview, None, context)
-    }
-
     pub(super) fn prepare_observed(
         &mut self,
         snapshot: &RenderSnapshot,
         preview: bool,
-        full_input: &ImageBuf,
         context: &ObservationContext,
     ) -> Result<&mut Runtime, String> {
         let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
-        let result = snapshot
-            .prepare_scanner_setup(full_input, prepare.context())
-            .and_then(|setup| self.prepare(snapshot, preview, setup, prepare.context()));
+        let result = self.prepare(snapshot, preview, prepare.context());
         observed_result(
             prepare,
             result,
@@ -192,7 +150,6 @@ impl RuntimeCache {
         &mut self,
         snapshot: &RenderSnapshot,
         preview: bool,
-        setup: Option<ScannerSetup>,
         context: &ObservationContext,
     ) -> Result<&mut Runtime, String> {
         if let Some(mut cached) = self.entry.take() {
@@ -211,11 +168,7 @@ impl RuntimeCache {
                 special: snapshot.special.clone(),
             };
             if cached.key == key {
-                let runtime = cached.runtime.with_params(digested)?;
-                cached.runtime = match setup {
-                    Some(setup) => runtime.with_scanner_setup(setup),
-                    None => runtime,
-                };
+                cached.runtime = cached.runtime.with_params(digested)?;
                 self.entry = Some(cached);
                 return Ok(&mut self.entry.as_mut().expect("runtime cache restored").runtime);
             }
@@ -237,10 +190,6 @@ impl RuntimeCache {
             digest_print.clone()
         };
         let runtime = snapshot.build_runtime(runtime_film, runtime_print, digested, context)?;
-        let runtime = match setup {
-            Some(setup) => runtime.with_scanner_setup(setup),
-            None => runtime,
-        };
         self.entry = Some(RuntimeCacheEntry {
             key: RuntimeCacheKey {
                 data_dir: snapshot.data_dir.clone(),
@@ -292,18 +241,14 @@ mod tests {
     use super::{RenderSnapshot, RuntimeCache};
     use spektrafilm_backend::cpu_backend::CpuBackend;
     use spektrafilm_backend::telemetry::ObservationContext;
-    use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
+    use spektrafilm_core::params::RuntimeParams;
     use spektrafilm_math::image::ImageBuf;
-    use std::sync::{Arc, OnceLock};
 
     fn snapshot_and_input() -> (RenderSnapshot, ImageBuf) {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.auto_setup = ScannerAutoSetup::Off;
-        params.scanner.white_correction = false;
-        params.scanner.black_correction = false;
         params.film_render.grain.active = false;
         params.camera.auto_exposure = false;
         params.print_render.glare.active = false;
@@ -314,7 +259,6 @@ mod tests {
             "kodak_portra_endura".into(),
             crate::headless::data_dir(),
             serde_json::json!({}),
-            Arc::new(OnceLock::new()),
         );
         let input = ImageBuf::from_data(
             24,
@@ -329,64 +273,48 @@ mod tests {
     }
 
     #[test]
-    fn runtime_cache_recovers_from_setup_update_and_profile_failures() {
+    fn runtime_cache_recovers_from_profile_and_update_failures() {
         let (snapshot, image) = snapshot_and_input();
         let input = &image;
         let backend = CpuBackend;
         let context = ObservationContext::default();
         let mut cache = RuntimeCache::default();
         let expected = cache
-            .prepare_observed(&snapshot, false, input, &context)
+            .prepare_observed(&snapshot, false, &context)
             .unwrap()
             .process(input.clone(), &backend)
             .unwrap();
-
-        let mut failed_setup = snapshot.clone();
-        failed_setup.params.scanner.auto_setup = ScannerAutoSetup::Full;
-        failed_setup.scanner_setup = Arc::new(OnceLock::new());
-        failed_setup
-            .scanner_setup
-            .set(Err("scanner setup unavailable".into()))
-            .unwrap();
-        assert_eq!(
-            cache
-                .prepare_observed(&failed_setup, false, input, &context)
-                .err()
-                .unwrap(),
-            "scanner setup unavailable"
-        );
-        assert!(cache.entry.is_some());
 
         let missing = tempfile::tempdir().unwrap();
         let mut failed_profile = snapshot.clone();
         failed_profile.data_dir = missing.path().to_owned();
         assert!(
             cache
-                .prepare_observed(&failed_profile, false, input, &context)
+                .prepare_observed(&failed_profile, false, &context)
                 .err()
                 .unwrap()
                 .contains("film profile 'kodak_portra_400'")
         );
         assert!(cache.entry.is_some());
         let recovered = cache
-            .prepare_observed(&snapshot, false, input, &context)
+            .prepare_observed(&snapshot, false, &context)
             .unwrap()
             .process(input.clone(), &backend)
             .unwrap();
         assert_eq!(recovered.data, expected.data);
 
         let mut failed_update = snapshot.clone();
-        failed_update.params.scanner.conversion_brightness_ev = f64::NAN;
+        failed_update.params.scanner.lamp = "not-a-lamp".into();
         assert!(
             cache
-                .prepare_observed(&failed_update, false, input, &context)
+                .prepare_observed(&failed_update, false, &context)
                 .err()
                 .unwrap()
-                .contains("scanner.conversion_brightness_ev")
+                .contains("scanner.lamp")
         );
         assert!(cache.entry.is_none());
         let rebuilt = cache
-            .prepare_observed(&snapshot, false, input, &context)
+            .prepare_observed(&snapshot, false, &context)
             .unwrap()
             .process(input.clone(), &backend)
             .unwrap();

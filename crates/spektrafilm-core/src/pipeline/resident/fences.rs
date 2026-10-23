@@ -114,33 +114,22 @@ impl super::super::Pipeline {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn scan_acquisition_cpu_stage<'a>(
         &'a self,
-        reference_mode: bool,
         density_reading: bool,
-        n2p_requested: bool,
         scan_context: &'a crate::chain_prep::ScanColorContext,
         scan_profile: &'a crate::profile::Profile,
         scan_params: &'a crate::params::RuntimeParams,
         scan_channel_density: &'a [[f64; 3]],
         scan_base_density: &'a [f64],
-        color_ref: &'a crate::color_reference::ColorReference,
         backend: &'a dyn ComputeBackend,
     ) -> Option<CpuStageFn<'a>> {
-        if reference_mode
-            || density_reading
-            || scan_context.receiver.is_some()
-            || self.params.settings.use_scanner_lut
-            || color_ref.has_remap()
-        {
+        if density_reading || self.params.settings.use_scanner_lut {
             let profile = scan_profile;
             let params = scan_params;
+            let tones = self.conversion_tones;
             let channel_density = scan_channel_density;
             let base_density = scan_base_density;
-            let reference = self.digital_reference.as_deref();
-            let defer_correction = !n2p_requested;
-            let fence_reason = if reference_mode || density_reading {
+            let fence_reason = if density_reading {
                 spektrafilm_backend::telemetry::CpuReason::NegativeToPositiveOutput
-            } else if scan_context.receiver.is_some() {
-                spektrafilm_backend::telemetry::CpuReason::ScannerReceiver
             } else {
                 spektrafilm_backend::telemetry::CpuReason::SpectralLut
             };
@@ -150,17 +139,9 @@ impl super::super::Pipeline {
                     spektrafilm_backend::cpu_backend::CpuBackend;
                 let backend: &dyn spektrafilm_backend::ComputeBackend =
                     observed.as_deref().unwrap_or(&CPU_BACKEND);
-                if reference_mode {
-                    // `stages::scanning` validates the prepared assets
-                    // at scan entry and construction prepares them, so
-                    // this only guards the library entry points.
-                    let reference = reference.ok_or_else(|| {
-                        "Digital Reference requires runtime-prepared spectral assets".to_owned()
-                    })?;
-                    reference.convert(density, params, backend)
-                } else if density_reading {
+                if density_reading {
                     crate::stages::scanning::interpret_negative_density_stage(
-                        density, profile, params, backend,
+                        density, profile, &tones, params, backend,
                     )
                 } else {
                     Ok(crate::stages::scanning::scan_spectral_rgb(
@@ -168,11 +149,9 @@ impl super::super::Pipeline {
                         profile,
                         params,
                         backend,
-                        color_ref,
                         channel_density,
                         base_density,
                         scan_context,
-                        defer_correction,
                     ))
                 }
             });
@@ -218,7 +197,6 @@ impl super::super::Pipeline {
     pub(crate) fn print_acquisition_cpu_stage<'a>(
         &'a self,
         print_fence_requested: bool,
-        color_ref: &'a crate::color_reference::ColorReference,
         backend: &'a dyn ComputeBackend,
         pixel_size_um: f64,
     ) -> Option<CpuStageFn<'a>> {
@@ -229,7 +207,6 @@ impl super::super::Pipeline {
             let illuminant = &self.print_illuminant;
             let exposure_factor = self.print_exposure_factor;
             let preflash = self.preflash_raw;
-            let bw = color_ref.printing_exposure_correction;
             let fence_reason = if self.params.settings.use_enlarger_lut {
                 spektrafilm_backend::telemetry::CpuReason::SpectralLut
             } else {
@@ -250,95 +227,8 @@ impl super::super::Pipeline {
                     illuminant,
                     exposure_factor,
                     preflash,
-                    bw,
                     pixel_size_um,
                 ))
-            });
-            Some(closure)
-        } else {
-            None
-        }
-    }
-
-    /// Readout interpretation as an assembled CPU fence on the scan tail.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn scan_tail_cpu_stage<'a>(
-        &'a self,
-        n2p_capture_method: bool,
-        reference_mode: bool,
-        density_reading: bool,
-        slide_points_active: bool,
-        n2p_requested: bool,
-        scan_context: &'a crate::chain_prep::ScanColorContext,
-        scan_profile: &'a crate::profile::Profile,
-        scan_params: &'a crate::params::RuntimeParams,
-        scan_channel_density: &'a [[f64; 3]],
-        scan_base_density: &'a [f64],
-        scan_output_space: &'a spektrafilm_math::colorspace::RgbColorSpace,
-        color_ref: &'a crate::color_reference::ColorReference,
-        backend: &'a dyn ComputeBackend,
-    ) -> Option<CpuStageFn<'a>> {
-        if n2p_capture_method
-            || reference_mode
-            || density_reading
-            || color_ref.has_remap()
-            || slide_points_active
-        {
-            let profile = scan_profile;
-            let params = scan_params;
-            let channel_density = scan_channel_density;
-            let base_density = scan_base_density;
-            let n2p = n2p_requested;
-            let seed_backend = backend;
-            // Negative-to-positive binds its calibration captures to the CPU
-            // backend, exactly like the per-stage route; the observed wrapper
-            // keeps the stage's own executor reasons published.
-            let n2p_backend = fence_cpu_backend(
-                backend,
-                spektrafilm_backend::telemetry::CpuReason::NegativeToPositiveOutput,
-            );
-            let closure: CpuStageFn<'_> = Box::new(move |rgb: &ImageBuf| {
-                let observation =
-                        // The assembled readout fence is the resident
-                        // route's scanner stage, so it reports under the
-                        // published stage vocabulary ("scanning"), like
-                        // the per-stage route's scan stage.
-                        crate::stages::StageObservation::new(seed_backend, "scanning");
-                let observed = observation.backend(seed_backend);
-                static CPU_BACKEND: spektrafilm_backend::cpu_backend::CpuBackend =
-                    spektrafilm_backend::cpu_backend::CpuBackend;
-                let interp_backend: &dyn spektrafilm_backend::ComputeBackend = if n2p {
-                    n2p_backend.as_deref().unwrap_or(&CPU_BACKEND)
-                } else {
-                    observed
-                };
-                // Active slide points execute on the CPU here, so they
-                // carry the published `scanner_film_points` reason
-                // (telemetry metrics; GPU execution of the points
-                // would not).
-                let _points = slide_points_active.then(|| {
-                    crate::stages::StageObservation::cpu(
-                        seed_backend,
-                        "scanner_film_points",
-                        spektrafilm_backend::telemetry::CpuReason::ScannerFilmPoints,
-                    )
-                });
-                let mut image = rgb.clone();
-                crate::stages::scanning::apply_scan_readout_interpretation(
-                    &mut image,
-                    profile,
-                    params,
-                    interp_backend,
-                    color_ref,
-                    channel_density,
-                    base_density,
-                    scan_context,
-                    scan_output_space,
-                    n2p,
-                    reference_mode,
-                    density_reading,
-                )?;
-                Ok(image)
             });
             Some(closure)
         } else {

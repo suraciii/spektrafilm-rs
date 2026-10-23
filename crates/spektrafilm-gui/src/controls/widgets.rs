@@ -2,7 +2,7 @@
 use super::row_modified;
 use super::{ControlFilter, filter_matches};
 use crate::editor_ranges;
-use crate::numeric::{numeric, numeric_field, numeric_field_validated, numeric_marked};
+use crate::numeric::{numeric, numeric_field, numeric_marked};
 use crate::theme;
 use egui::Ui;
 use serde_json::{Map, Value};
@@ -66,7 +66,7 @@ pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(
 /// Per-component identifiers for a tuple row. Empty means the components are
 /// numbered by position, which is what the accessible names already carry.
 pub(crate) const POSITION_IDENTIFIERS: &[&str] = &[];
-/// Component identifiers for a film-scan point tuple.
+/// Component identifiers for a colour-channel tuple.
 pub(crate) const CHANNEL_IDENTIFIERS: &[&str] = &["R", "G", "B"];
 /// Component identifiers for a gamut knee: core declares the component
 /// domains, and the identifiers name them.
@@ -101,9 +101,7 @@ fn tuple_identifiers(path: &str) -> &'static [&'static str] {
         | "film_render.halation.halation_first_sigma_um"
         | "film_render.grain.rms_granularity"
         | "film_render.grain.density_min"
-        | "film_render.grain.uniformity"
-        | "scanner.reference_balance_ev"
-        | "scanner.conversion_balance_ev" => CHANNEL_IDENTIFIERS,
+        | "film_render.grain.uniformity" => CHANNEL_IDENTIFIERS,
         // Gamut knee: core owns the component names.
         "io.input_gamut_compress.knee" | "io.output_gamut_compress.knee" => KNEE_IDENTIFIERS,
         // Crop rectangle in relative coordinates.
@@ -168,39 +166,6 @@ pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
         tuple_identifiers(path),
         true,
         row_modified::RowMark::resolve(ui.ctx(), Some(path)),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn param_numeric_field_validated<T, Id>(
-    ui: &mut Ui,
-    label: &str,
-    id_salt: Id,
-    value: &mut T,
-    path: &str,
-    tooltip: &str,
-    unit: Option<&str>,
-    labelled_by: Option<egui::Id>,
-    valid: impl Fn(T) -> bool,
-) -> bool
-where
-    T: egui::emath::Numeric,
-    Id: std::hash::Hash,
-{
-    let (min, max, step, decimals) = editor_range_for(path);
-    numeric_field_validated(
-        ui,
-        label,
-        id_salt,
-        value,
-        min,
-        max,
-        step,
-        decimals,
-        tooltip,
-        unit,
-        labelled_by,
-        valid,
     )
 }
 
@@ -419,87 +384,6 @@ pub(crate) fn fotufilm_sublayer_shares(
         ui.label(format!("Sublayer 4 (remainder): {:.6}", shares[3]));
     }
     changed
-}
-
-pub(crate) fn scan_points(
-    ui: &mut Ui,
-    black: &mut [f64; 3],
-    white: &mut [f64; 3],
-    filter: &mut ControlFilter<'_>,
-) -> bool {
-    let mut changed = false;
-    if filter_matches(filter, "film-scan black point") {
-        changed |= point_tuple(
-            ui,
-            "film-scan black point",
-            black,
-            white,
-            true,
-            "scanner.black_point",
-        );
-    }
-    if filter_matches(filter, "film-scan white point") {
-        changed |= point_tuple(
-            ui,
-            "film-scan white point",
-            white,
-            black,
-            false,
-            "scanner.white_point",
-        );
-    }
-    changed
-}
-
-pub(crate) fn point_tuple(
-    ui: &mut Ui,
-    label: &str,
-    values: &mut [f64; 3],
-    other: &[f64; 3],
-    is_black: bool,
-    path: &str,
-) -> bool {
-    let tooltip = "Red, green, and blue positions in the film scan range. Each black point must be below its white point; values outside the points are not clipped.";
-    ui.push_id(label, |ui| {
-        ui.label(label).on_hover_text(tooltip);
-        ui.horizontal_wrapped(|ui| {
-            values
-                .iter_mut()
-                .enumerate()
-                .map(|(channel, value)| {
-                    let identifier_response = ui
-                        .label(
-                            egui::RichText::new(CHANNEL_IDENTIFIERS[channel])
-                                .color(theme::FG_MUTED)
-                                .size(theme::SIZE_HINT),
-                        )
-                        .on_hover_text(tooltip);
-                    param_numeric_field_validated(
-                        ui,
-                        // The visible identifier and the accessible name agree,
-                        // so the component is named the same way for every
-                        // reader.
-                        &format!("{label} {}", CHANNEL_IDENTIFIERS[channel]),
-                        (label, channel),
-                        value,
-                        path,
-                        tooltip,
-                        None,
-                        Some(identifier_response.id),
-                        |next| {
-                            if is_black {
-                                next < other[channel]
-                            } else {
-                                next > other[channel]
-                            }
-                        },
-                    )
-                })
-                .fold(false, |changed, field_changed| changed | field_changed)
-        })
-        .inner
-    })
-    .inner
 }
 
 /// A boolean parameter row's editor: a switch.

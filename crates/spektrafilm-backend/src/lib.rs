@@ -368,21 +368,15 @@ pub struct FilmChainParams<'a> {
     /// Constant enlarger preflash raw 3-vector, added to the print exposure
     /// before the inner log10 (Python `_compute_raw_preflash`). `[0; 3]` off.
     pub preflash: [f64; 3],
-    pub viewing_illuminant: &'a [f64],
+    pub scan_illuminant: &'a [f64],
     pub scan_normalization: f64,
     pub scan_xyz_to_rgb: &'a [[f64; 3]; 3],
-    /// Scanner white and black correction luminance remap `(m, q)` applied
-    /// per-pixel on the scan XYZ (`clip(m·Y+q, 0, 1)/(Y+1e-10)`). `None` is
-    /// identity. The filming/printing exposure halves of the correction are
-    /// folded by the caller into `rgb_to_adapted_xyz` /
-    /// `print_normalization_factor`.
-    pub white_black_xyz_remap: Option<(f64, f64)>,
     /// Scan the developed film directly instead of printing onto paper.
     /// When true the print_spectral + print density-curve passes are
     /// skipped and scan_spectral runs on the film density buffer using the
     /// film's `film_channel_density` / `film_base_density` (the caller sets
-    /// `viewing_illuminant` / `scan_normalization` / `scan_xyz_to_rgb` from
-    /// the film's viewing illuminant). Mirrors the CPU `scan_film` path.
+    /// `scan_illuminant` / `scan_normalization` / `scan_xyz_to_rgb` from
+    /// the neutral scan context). Mirrors the CPU `scan_film` path.
     pub scan_film: bool,
     /// Optional halation pass — when `Some`, inserted on the raw film
     /// exposure buffer between hanatos2025 and log10.
@@ -431,19 +425,9 @@ pub struct FilmChainParams<'a> {
     /// materialized density_cmy image and returns the grained image, which
     /// is written back to the same device buffer.
     pub density_cpu_stage: Option<CpuStageFn<'a>>,
-    /// Optional CPU stage on the scanner readout buffer between glare and
-    /// output gamut compression — the assembled fence for the scanner
-    /// readout interpretation (slide points, the faithful luminance remap,
-    /// negative-to-positive conversion, and the LabScan finish; pipe
-    /// architecture, capability class). Receives the acquisition RGB and
-    /// returns the interpreted image, which is written back in place. When
-    /// present, `white_black_xyz_remap` must be `None`: the fence owns the
-    /// remap in the faithful order, after optical blur and glare.
-    pub scan_tail_cpu_stage: Option<CpuStageFn<'a>>,
     /// Optional CPU stage replacing the GPU scan spectral pass whenever the
-    /// CPU route acquires differently: the PCHIP scanner LUT (the slide
-    /// luminance remap or `use_scanner_lut`), the modeled receiver capture,
-    /// and the negative-to-positive density reading and Digital Reference
+    /// CPU route acquires differently: the PCHIP scanner LUT
+    /// (`use_scanner_lut`) and the negative-to-positive density reading
     /// (pipe architecture, capability class). Receives the film/print
     /// density and returns the captured RGB, which is written to the
     /// acquisition buffer.

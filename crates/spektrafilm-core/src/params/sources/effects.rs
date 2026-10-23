@@ -24,11 +24,6 @@ pub(super) enum Condition {
     Couplers,
     AutoExposure,
     Crop,
-    ScannerPoints,
-    NegativeToPositive,
-    LabScanFinish,
-    FilmScan,
-    DigitalReference,
     CmykActive,
     CmykStrength,
     FilmDevelopment,
@@ -72,13 +67,6 @@ impl Condition {
             Self::Couplers => "film_render.dir_couplers.active = true",
             Self::AutoExposure => "camera.auto_exposure = true",
             Self::Crop => "io.crop = true",
-            Self::ScannerPoints => {
-                "slide film scan or negative film scan with scanner.scan_output = negative_to_positive; ignored for paper and direct negative scans"
-            }
-            Self::NegativeToPositive => "scanner.scan_output = negative_to_positive",
-            Self::LabScanFinish => "scanner.finish = lab_scan",
-            Self::FilmScan => "film-scan route",
-            Self::DigitalReference => "scanner.negative_conversion_method = digital_reference",
             Self::CmykActive => "cmyk.active = true",
             Self::CmykStrength => "cmyk.strength > 0",
             Self::FilmDevelopment => {
@@ -138,19 +126,6 @@ impl Condition {
             Self::Couplers => p.film_render.dir_couplers.active,
             Self::AutoExposure => p.camera.auto_exposure,
             Self::Crop => p.io.crop,
-            Self::ScannerPoints => {
-                (p.io.scan_film || p.workflow.route_enum() == WorkflowRoute::ConvertFilmScan)
-                    && (film.is_positive() || p.scanner.scan_output == "negative_to_positive")
-            }
-            Self::NegativeToPositive => p.scanner.scan_output == "negative_to_positive",
-            Self::LabScanFinish => p.scanner.finish == crate::params::ScannerFinish::LabScan,
-            Self::FilmScan => {
-                p.io.scan_film || p.workflow.route_enum() == WorkflowRoute::ConvertFilmScan
-            }
-            Self::DigitalReference => {
-                p.scanner.negative_conversion_method
-                    == crate::params::NegativeConversionMethod::DigitalReference
-            }
             Self::CmykActive => p.cmyk.active,
             Self::CmykStrength => p.cmyk.strength > 0.0,
             Self::FilmDevelopment => matches!(
@@ -270,21 +245,6 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         out.push(AutoExposure);
     } else if path.starts_with("io.crop_") {
         out.push(Crop);
-    } else if matches!(path, "scanner.black_point" | "scanner.white_point") {
-        out.push(ScannerPoints);
-    } else if path == "scanner.finish_strength" {
-        out.extend([NegativeToPositive, LabScanFinish]);
-    } else if path == "scanner.receiver_profile" {
-        out.push(FilmScan);
-    } else if path.starts_with("scanner.reference_") {
-        out.push(DigitalReference);
-    } else if path.starts_with("scanner.conversion_")
-        || matches!(
-            path,
-            "scanner.negative_conversion_method" | "scanner.auto_setup" | "scanner.finish"
-        )
-    {
-        out.push(NegativeToPositive);
     } else if path == "camera.capture_illuminant" {
         out.push(CaptureIlluminant);
     } else if path.starts_with("cmyk.") {

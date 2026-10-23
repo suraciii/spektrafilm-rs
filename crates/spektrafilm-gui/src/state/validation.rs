@@ -247,6 +247,18 @@ pub(super) fn validate_state_parameters(value: &mut Value, version: Option<u64>)
         }
     }
     // Inspect both carriers independently so an ignored duplicate cannot hide a retired value.
+    // The scanner section projects through the typed runtime so retired
+    // scanner keys fail the document instead of being silently dropped.
+    if let Some(fields) = value.get("scanner") {
+        let projected = json!({"scanner": fields});
+        let _: RuntimeParams =
+            serde_json::from_value(projected).context("Invalid GUI scanner parameters")?;
+    }
+    if let Some(fields) = value["rust"]["runtime"].get("scanner") {
+        let projected = json!({"scanner": fields});
+        let _: RuntimeParams = serde_json::from_value(projected)
+            .context("Invalid GUI Rust runtime scanner parameters")?;
+    }
     if let Some(output) = value.get_mut("output_gamut_compress") {
         let mut projected = json!({"io": {"output_gamut_compress": output.clone()}});
         if legacy {

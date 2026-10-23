@@ -1,6 +1,5 @@
 pub mod chain_prep;
 pub mod cmyk;
-pub mod color_reference;
 pub mod config;
 pub mod enlarger;
 #[cfg(feature = "precision-f64")]
@@ -21,7 +20,6 @@ pub mod params_builder;
 pub mod pipeline;
 mod pipeline_calibration;
 pub use pipeline_calibration::validate_scan_output;
-pub mod digital_reference;
 pub mod dye_measurement;
 pub mod feature_profiles;
 pub mod presets;
@@ -31,10 +29,8 @@ pub mod profile;
 pub mod progress;
 pub mod resizing;
 pub mod runtime;
-pub mod scan_receiver;
-pub mod scanner_setup;
-pub use scan_receiver::ScannerProvenance;
-pub use scanner_setup::{ScannerInputIdentity, ScannerSetupProvenance};
+pub mod scanner_provenance;
+pub use scanner_provenance::ScannerProvenance;
 pub mod spectral_eval;
 pub mod spectral_service;
 pub mod stage_evidence;

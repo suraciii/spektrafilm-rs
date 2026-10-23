@@ -31,15 +31,14 @@ pub(crate) fn validate_profile(profile: &Profile) -> Result<(), ProfileError> {
             )));
         }
     }
-    for (field, value) in [
-        ("reference_illuminant", info.reference_illuminant.as_str()),
-        ("viewing_illuminant", info.viewing_illuminant.as_str()),
-    ] {
-        if !matches!(value, "D50" | "D55" | "D65" | "T" | "TH-KG3" | "K75P") {
-            return Err(ProfileError::Validation(format!(
-                "unsupported {field} value {value:?}"
-            )));
-        }
+    if !matches!(
+        info.reference_illuminant.as_str(),
+        "D50" | "D55" | "D65" | "T" | "TH-KG3" | "K75P"
+    ) {
+        return Err(ProfileError::Validation(format!(
+            "unsupported reference_illuminant value {:?}",
+            info.reference_illuminant
+        )));
     }
     if data.wavelengths.is_empty() {
         return Err(ProfileError::Validation("wavelengths is empty".into()));

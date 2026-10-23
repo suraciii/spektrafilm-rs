@@ -132,8 +132,6 @@ pub struct ProfileInfo {
     pub log_sensitivity_density_over_min: f64,
     #[serde(default = "default_d55")]
     pub reference_illuminant: String,
-    #[serde(default = "default_d50")]
-    pub viewing_illuminant: String,
 }
 
 fn default_negative() -> String {
@@ -159,9 +157,6 @@ fn default_status_m() -> String {
 }
 fn default_d55() -> String {
     "D55".into()
-}
-fn default_d50() -> String {
-    "D50".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

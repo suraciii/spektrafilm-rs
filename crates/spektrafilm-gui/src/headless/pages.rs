@@ -794,7 +794,7 @@ fn an_unselected_grain_engine_group_is_read_only() {
 
 // specs/gui-workflow/spec.md#control-search: a control whose visible label
 // extends the guard prefix stays reachable by the full label and keeps its
-// section visible, and the scan point rows filter as independent controls.
+// section visible, and the remaining scanner controls filter independently.
 #[test]
 fn control_search_reaches_scanner_controls_by_their_visible_labels() {
     let mut s = session();
@@ -802,18 +802,18 @@ fn control_search_reaches_scanner_controls_by_their_visible_labels() {
     choose(h, "workflow", "input > film > scan");
     h.state_mut().params.scanner.scan_output = "negative_to_positive".into();
 
-    search(h, "Negative conversion method");
+    search(h, "scanner lamp");
     assert!(
-        h.query_by_role_and_label(
-            egui::accesskit::Role::ComboBox,
-            "Negative conversion method"
-        )
-        .is_some()
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "scanner lamp")
+            .is_some()
     );
 
-    search(h, "film-scan white point");
-    assert!(h.query_by_label("film-scan white point R").is_some());
-    assert!(h.query_by_label("film-scan black point R").is_none());
+    search(h, "Lens blur");
+    assert!(h.query_by_label("Lens blur (readout optics)").is_some());
+    assert!(
+        h.query_by_label("Unsharp mask (digital sharpening) sigma")
+            .is_none()
+    );
 }
 
 #[test]

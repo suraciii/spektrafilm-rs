@@ -2,6 +2,24 @@ use super::*;
 use crate::routes::vocabulary;
 use egui::Ui;
 use serde_json::Value;
+use std::path::Path;
+
+/// Illuminants offered by the scanner lamp selector. The lamp is the one
+/// physical light source of a scan, so the list is the same curated
+/// vocabulary the enlarger illuminant selector offers; the canonical
+/// `--set scanner.lamp=…` / preset path accepts every catalog name plus any
+/// `BB<kelvin>` blackbody.
+const SCANNER_ILLUMINANTS: &[&str] = &["D50", "D55", "D65", "T", "TH-KG3", "TH-KG3-L", "K75P"];
+
+/// Conversion-style names the selector offers.
+///
+/// Resolved from the same data directory the pipeline reads, so the selector
+/// lists exactly the styles a render would accept. Nothing ships a style, so
+/// the installed set is `neutral` alone until the user drops a
+/// `scan-styles/<name>.json` into their data directory.
+fn conversion_styles(data_dir: &Path) -> Vec<String> {
+    crate::profiles::scan_conversion_styles(data_dir)
+}
 
 /// One `show()` section group, split out of the dispatcher for readability.
 #[allow(clippy::too_many_arguments)]
@@ -14,6 +32,7 @@ pub(crate) fn sections(
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
     capture_reference_illuminant: &str,
+    data_dir: &Path,
 ) {
     if section == "Input" {
         section_header(ui, filter, "Input", |ui, filter| {
@@ -117,9 +136,10 @@ pub(crate) fn sections(
                     .small()
                     .color(theme::FG_MUTED),
             );
-            // One explanatory line groups the scanner controls by acquisition,
-            // conversion, automatic scan setup, and finishing. It names the
-            // sequence only: it renames no runtime concept and adds no control.
+            // One explanatory line groups the scanner controls by the physical
+            // light source, the output polarity, and the readout optics. It
+            // names the sequence only: it renames no runtime concept and adds
+            // no control.
             ui.label(
                 egui::RichText::new(vocabulary::SCANNER_SEQUENCE)
                     .small()
@@ -127,15 +147,6 @@ pub(crate) fn sections(
             );
             if medium == ScanMedium::None {
                 return;
-            }
-            if matches!(medium, ScanMedium::Slide | ScanMedium::Negative)
-                && params.scanner.negative_conversion_method != NegativeConversionMethod::DigitalReference
-                && filter_matches(filter, vocabulary::RECEIVER_PROFILE)
-            {
-                flags.runtime_changed |= enum_choice(ui, vocabulary::RECEIVER_PROFILE, &mut params.scanner.receiver_profile, &[
-                    (ReceiverProfile::LegacyColorimetric, vocabulary::LEGACY_COLORIMETRIC),
-                    (ReceiverProfile::LabScanApprox, vocabulary::LAB_SCAN_APPROX),
-                ], vocabulary::receiver_profile_help());
             }
             if positive_route
                 && filter_matches(filter, vocabulary::SCAN_OUTPUT)
@@ -151,115 +162,41 @@ pub(crate) fn sections(
                     vocabulary::SCAN_OUTPUT_HELP,
                 )
             {
-                if params.scanner.scan_output == "negative_to_positive" {
-                    params.scanner.white_correction = false;
-                    params.scanner.black_correction = false;
-                }
                 flags.runtime_changed = true;
                 normalize_scanner_selections(params, film_medium);
             }
-            if positive_route && params.scanner.scan_output == "negative_to_positive" {
-                let methods = [
-                    (NegativeConversionMethod::Density, "density"),
-                    (NegativeConversionMethod::Separable, "separable"),
-                    (NegativeConversionMethod::Coupled, "coupled"),
-                    (NegativeConversionMethod::DigitalReference, vocabulary::DIGITAL_REFERENCE),
-                ];
-                let methods = &methods[..if params.workflow.route == "input > film > scan" { 4 } else { 3 }];
-                if filter_matches(filter, vocabulary::NEGATIVE_CONVERSION_METHOD)
-                    && enum_choice(ui, vocabulary::NEGATIVE_CONVERSION_METHOD, &mut params.scanner.negative_conversion_method, methods,
-                        vocabulary::negative_conversion_help())
-                {
-                    if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference {
-                        let defaults = spektrafilm_core::params::ScannerParams::default();
-                        params.scanner.receiver_profile = ReceiverProfile::DigitalReference;
-                        params.scanner.auto_setup = ScannerAutoSetup::Off;
-                        params.scanner.black_point = [0.0; 3];
-                        params.scanner.white_point = [1.0; 3];
-                        params.scanner.conversion_brightness_ev = defaults.conversion_brightness_ev;
-                        params.scanner.conversion_balance_ev = defaults.conversion_balance_ev;
-                        params.scanner.conversion_contrast = defaults.conversion_contrast;
-                        params.scanner.conversion_dmax = defaults.conversion_dmax;
-                    }
-                    normalize_scanner_selections(params, film_medium);
+            // A conversion style is a property of the negative interpretation,
+            // so it is offered only while that interpretation is selected.
+            if params.scanner.scan_output == "negative_to_positive"
+                && filter_matches(filter, vocabulary::CONVERSION_STYLE)
+            {
+                let styles = conversion_styles(data_dir);
+                if choice_tip_entries(
+                    ui,
+                    vocabulary::CONVERSION_STYLE,
+                    &mut params.scanner.conversion_style,
+                    styles
+                        .iter()
+                        .map(|style| (style.as_str(), style.as_str())),
+                    vocabulary::CONVERSION_STYLE_HELP,
+                ) {
                     flags.runtime_changed = true;
                 }
-                if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference {
-                    ui.label("Reference Exposure: 18% neutral (fixed)")
-                        .on_hover_text("Common Kodak Endura spectral receiver sensitivity and fixed Kodak Portra 400 dye basis. One reference exposure and clear-film reading normalize each stock; no frame histogram or selected-film inverse is used.");
-                } else {
-                    if filter_matches(filter, vocabulary::SCANNER_AUTO_SETUP) {
-                        flags.runtime_changed |= enum_choice(ui, vocabulary::SCANNER_AUTO_SETUP, &mut params.scanner.auto_setup, &[
-                            (ScannerAutoSetup::Off, "off"),
-                            (ScannerAutoSetup::Density, "density"),
-                            (ScannerAutoSetup::DensityColor, "density_color"),
-                            (ScannerAutoSetup::Full, "full"),
-                        ], vocabulary::SCANNER_AUTO_SETUP_HELP);
-                    }
-                }
-                if filter_matches(filter, vocabulary::SCANNER_FINISH) {
-                    flags.runtime_changed |= enum_choice(ui, vocabulary::SCANNER_FINISH, &mut params.scanner.finish, &[
-                        (ScannerFinish::Neutral, "neutral"),
-                        (ScannerFinish::LabScan, "lab_scan"),
-                    ], vocabulary::SCANNER_FINISH_HELP);
-                }
-                if params.scanner.finish == ScannerFinish::LabScan
-                    && filter_matches(filter, vocabulary::FINISH_STRENGTH)
-                {
-                    flags.runtime_changed |= param_numeric(ui, vocabulary::FINISH_STRENGTH, &mut params.scanner.finish_strength, "scanner.finish_strength", vocabulary::FINISH_STRENGTH_HELP);
-                }
-                if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference {
-                    if filter_matches(filter, "reference exposure ev") {
-                        flags.runtime_changed |= param_numeric(ui, "Reference exposure EV", &mut params.scanner.reference_exposure_ev, "scanner.reference_exposure_ev", "Output exposure in stops after the fixed reference response. Zero is neutral; +1 doubles linear light.");
-                    }
-                    if filter_matches(filter, "reference balance ev") {
-                        flags.runtime_changed |= param_tuple(ui, "Reference balance EV", &mut params.scanner.reference_balance_ev, "scanner.reference_balance_ev", "Independent linear-sRGB red, green and blue output gains in stops after the fixed reference response. All zero is neutral.");
-                    }
-                } else {
-                    if filter_matches(filter, "brightness") {
-                        flags.runtime_changed |= param_numeric(ui, "brightness", &mut params.scanner.conversion_brightness_ev, "scanner.conversion_brightness_ev", "Negative conversion brightness offset in stops.");
-                    }
-                    if filter_matches(filter, "balance") {
-                        flags.runtime_changed |= param_tuple(ui, "balance", &mut params.scanner.conversion_balance_ev, "scanner.conversion_balance_ev", "Independent red, green, and blue negative conversion exposure offsets in stops.");
-                    }
-                    if filter_matches(filter, "contrast") {
-                        flags.runtime_changed |= param_numeric(ui, "contrast", &mut params.scanner.conversion_contrast, "scanner.conversion_contrast", "Negative conversion logistic contrast; strictly positive.");
-                    }
-                    if filter_matches(filter, "maximum density") {
-                        flags.runtime_changed |= param_numeric(ui, "maximum density", &mut params.scanner.conversion_dmax, "scanner.conversion_dmax", "Negative conversion maximum density; strictly positive.");
-                    }
-                }
             }
-            if medium == ScanMedium::Slide
-                || (positive_route && params.scanner.scan_output == "negative_to_positive"
-                    && params.scanner.negative_conversion_method != NegativeConversionMethod::DigitalReference)
-            {
-                flags.runtime_changed |= scan_points(
+            if filter_matches(filter, vocabulary::SCANNER_LAMP) {
+                flags.runtime_changed |= choice_tip_experimental(
                     ui,
-                    &mut params.scanner.black_point,
-                    &mut params.scanner.white_point,
-                    filter,
+                    vocabulary::SCANNER_LAMP,
+                    &mut params.scanner.lamp,
+                    SCANNER_ILLUMINANTS,
+                    vocabulary::scanner_lamp_help(),
                 );
             }
             if filter_matches(filter, "lens blur (readout optics)") {
-                flags.runtime_changed |= param_numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, "scanner.lens_blur", "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, points, correction, finishing, gamut processing, sharpening and encoding. Identity points retain this optical order.");
-            }
-            if medium.correction_eligible() {
-                if filter_matches(filter, "white correction") {
-                    flags.runtime_changed |= toggle(ui, "white correction", &mut params.scanner.white_correction, "Enable the scanner white correction applied to the scan output.");
-                }
-                if filter_matches(filter, "white level") {
-                    flags.runtime_changed |= param_numeric(ui, "white level", &mut params.scanner.white_level, "scanner.white_level", "Target white level the scanned medium's white reference luminance maps to when white correction is enabled.");
-                }
-                if filter_matches(filter, "black correction") {
-                    flags.runtime_changed |= toggle(ui, "black correction", &mut params.scanner.black_correction, "Enable the scanner black correction applied to the scan output.");
-                }
-                if filter_matches(filter, "black level") {
-                    flags.runtime_changed |= param_numeric(ui, "black level", &mut params.scanner.black_level, "scanner.black_level", "Target black level the scanned medium's black reference luminance maps to when black correction is enabled.");
-                }
+                flags.runtime_changed |= param_numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, "scanner.lens_blur", "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, gamut processing, sharpening and encoding. Identity points retain this optical order.");
             }
             if filter_matches(filter, "unsharp mask (digital sharpening)") {
-                flags.runtime_changed |= param_tuple(ui, "Unsharp mask (digital sharpening)", &mut params.scanner.unsharp_mask, "scanner.unsharp_mask", "Digital scan sharpening after interpretation, scanner finish and output gamut processing: [sigma in pixels, amount].");
+                flags.runtime_changed |= param_tuple(ui, "Unsharp mask (digital sharpening)", &mut params.scanner.unsharp_mask, "scanner.unsharp_mask", "Digital scan sharpening after interpretation and output gamut processing: [sigma in pixels, amount].");
             }
         });
     }

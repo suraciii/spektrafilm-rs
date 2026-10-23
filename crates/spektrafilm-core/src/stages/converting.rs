@@ -92,8 +92,7 @@ struct Converter {
 
 impl Converter {
     fn new(profile: &Profile, params: &RuntimeParams) -> Result<Self, String> {
-        let illuminant =
-            select_illuminant_f64(&params.film_render.convert.scan_illuminant).into_owned();
+        let illuminant = select_illuminant_f64(&params.scanner.lamp).into_owned();
         let n = illuminant
             .len()
             .min(profile.data.channel_density.len())
@@ -540,14 +539,6 @@ pub fn neutralize_filters(
     p.workflow.route = "input > film > print > scan".into();
     p.io.scan_film = false;
     p.scanner.scan_output = "direct_scan".into();
-    // This local calibration scans paper, independently of film-scan controls.
-    p.scanner.receiver_profile = crate::params::ReceiverProfile::LegacyColorimetric;
-    p.scanner.negative_conversion_method = crate::params::NegativeConversionMethod::Separable;
-    p.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
-    p.scanner.finish = crate::params::ScannerFinish::Neutral;
-    p.scanner.finish_strength = 1.0;
-    p.scanner.reference_exposure_ev = 0.0;
-    p.scanner.reference_balance_ev = [0.0; 3];
     p.io.output_cctf_encoding = false;
     p.io.output_gamut_compress.algorithm = "off".into();
     p.settings.use_enlarger_lut = false;
@@ -608,15 +599,6 @@ mod action_tests {
         params.scanner.scan_output = "negative_to_positive".into();
         let positive = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
         assert_eq!(positive, direct);
-        params.scanner.receiver_profile = crate::params::ReceiverProfile::DigitalReference;
-        params.scanner.negative_conversion_method =
-            crate::params::NegativeConversionMethod::DigitalReference;
-        params.scanner.reference_exposure_ev = 0.5;
-        params.scanner.reference_balance_ev = [0.25, -0.125, 0.0];
-        let reference = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
-        assert_eq!(reference, direct);
-        assert_eq!(params.scanner.reference_exposure_ev, 0.5);
-        assert_eq!(params.scanner.reference_balance_ev, [0.25, -0.125, 0.0]);
         assert_eq!(params.workflow.route, "input > film > scan");
         assert_eq!(params.scanner.scan_output, "negative_to_positive");
     }

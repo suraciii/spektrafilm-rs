@@ -130,21 +130,8 @@ impl GuiState {
     pub fn factory() -> Self {
         let mut sections: Value =
             serde_json::from_str(include_str!("factory_state.json")).expect("pinned factory JSON");
-        let scanner = serde_json::to_value(RuntimeParams::default().scanner)
-            .expect("scanner defaults serialize");
-        for key in [
-            "receiver_profile",
-            "negative_conversion_method",
-            "auto_setup",
-            "finish",
-            "finish_strength",
-            "reference_exposure_ev",
-            "reference_balance_ev",
-        ] {
-            sections["scanner"][key] = scanner[key].clone();
-        }
         sections["rust"]["scanner_provenance"] = serde_json::to_value(
-            spektrafilm_core::scan_receiver::ScannerProvenance::from_params(
+            spektrafilm_core::scanner_provenance::ScannerProvenance::from_params(
                 &RuntimeParams::default(),
             ),
         )
@@ -223,16 +210,7 @@ impl GuiState {
             }
         }
         // Promote extension-only controls before canonical factory defaults merge.
-        for key in [
-            "scan_output",
-            "receiver_profile",
-            "negative_conversion_method",
-            "auto_setup",
-            "finish",
-            "finish_strength",
-            "reference_exposure_ev",
-            "reference_balance_ev",
-        ] {
+        for key in ["scan_output", "conversion_style", "lamp"] {
             if normalized["scanner"].get(key).is_none()
                 && let Some(selection) = value["rust"]["runtime"]["scanner"].get(key)
             {
@@ -273,7 +251,7 @@ impl GuiState {
         let params = state.runtime_params()?;
         // Metadata is derived from the selected built-ins, never trusted from an import.
         state.sections["rust"]["scanner_provenance"] = serde_json::to_value(
-            spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
+            spektrafilm_core::scanner_provenance::ScannerProvenance::from_params(&params),
         )?;
         if normalized.get("rust").is_none() {
             state

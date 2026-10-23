@@ -43,10 +43,6 @@ bloom_size = 1.0
 [parameters.scanner]
 lens_blur = 0.0
 scan_output = "direct_scan"
-white_correction = false
-black_correction = false
-white_level = 0.9800000190734863
-black_level = 0.009999999776482582
 unsharp_mask = [
     0.7,
     0.7,
@@ -193,7 +189,6 @@ magenta = 1.0
 yellow = 1.0
 
 [parameters.film_render.convert]
-scan_illuminant = "D55"
 exposure_compensation_ev = 0.0
 base_percentile = 99.0
 calibration = "1 0 0  0 1 0  0 0 1"

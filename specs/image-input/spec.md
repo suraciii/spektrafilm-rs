@@ -18,7 +18,7 @@ The **capture illuminant** is the assumed scene light of the photograph. It is a
 `camera.capture_illuminant` supplies that independent scene-light declaration. Without an explicit value, the selected film profile's `reference_illuminant` remains the effective scene-light assumption; changing the profile is not required to state a different photograph capture light.
 
 - `camera.capture_illuminant` is an optional runtime leaf. Its unset value — TOML omission, inline `null`, JSON `null`, or an omitted `parameters.camera.capture_illuminant` leaf in a preset — inherits the selected film profile's `reference_illuminant`. Unset is meaningful and is the state of every existing preset, stock, and invocation, so an unset leaf changes no pixels.
-- An explicit value is a catalog illuminant name or a `BB<kelvin>` token. The shared illuminant vocabulary that [CLI field discovery](../cli/spec.md#discovery-and-dry-run) already reports for `enlarger.illuminant` and `film_render.convert.scan_illuminant` owns the accepted names. An unsupported or malformed value MUST fail validation with the permitted values and MUST NOT fall back to the profile reference.
+- An explicit value is a catalog illuminant name or a `BB<kelvin>` token. The shared illuminant vocabulary that [CLI field discovery](../cli/spec.md#discovery-and-dry-run) already reports for `enlarger.illuminant` and `scanner.lamp` owns the accepted names. An unsupported or malformed value MUST fail validation with the permitted values and MUST NOT fall back to the profile reference.
 - The resolved value is the assumed scene light of the camera-side conversion into film exposure. It MUST NOT change the film's sensitivity data, density curves, development, calibration, or the developed negative.
 - EXIF and RAW metadata are not a capture-illuminant source in version 1. RAW white balance remains a loader choice reported separately; it MUST NOT select, bias, or silently replace this leaf.
 - The leaf is inactive where no film exposure is computed from scene RGB: the `input` route and a real negative-capture `input > convert-film > ...` route, where the incoming image is already a capture rather than a scene. An inactive value remains stored.
@@ -32,11 +32,9 @@ Each control below owns one light source. The capture illuminant is distinct fro
 | RAW white balance | how the RAW adapter normalizes raw sensor channels |
 | Film profile `reference_illuminant` | the illuminant the profile's own data is rated and calibrated for |
 | `camera.capture_illuminant` | the assumed scene light of this photograph |
-| `film_render.convert.scan_illuminant` | the light a scan pass reads a developed medium with |
+| `scanner.lamp` | the single light source of a scan |
 | `enlarger.illuminant` | the filtered enlarger lamp that exposes photographic paper |
 | Output white point (`io.output_color_space`) | the destination color space of the delivered image |
-| `scanner.receiver_profile` | the spectral response that acquires a scan |
-| `scanner.auto_setup` | scanner controls derived from image measurements |
 
 A Capture & Scan Setup document, a universal camera or scanner registry, and automatic scene-light inference from image content are outside this contract. The [capture-illuminant DSL](capture-illuminant.dsl.md) is a worked example of the existing parameter language for this leaf, not a new schema.
 

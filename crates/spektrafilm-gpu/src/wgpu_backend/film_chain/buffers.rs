@@ -50,7 +50,7 @@ pub(super) fn upload(
     preflash: [f64; 3],
     print_channel_density: &[[f64; 3]],
     print_base_density: &[f64],
-    viewing_illuminant: &[f64],
+    scan_illuminant: &[f64],
     scan_normalization: f64,
     scan_xyz_to_rgb: &[[f64; 3]; 3],
     params: &spektrafilm_backend::FilmChainParams<'_>,
@@ -100,8 +100,8 @@ pub(super) fn upload(
     let scan_cd_buf = mk_storage("scan_cd", bytemuck::cast_slice(&scan_cd_f32));
     let scan_bd_buf = mk_storage("scan_bd", bytemuck::cast_slice(&scan_bd_f32));
 
-    let view_illu_f32: Vec<f32> = viewing_illuminant.iter().map(|&v| v as f32).collect();
-    let view_illu_buf = mk_storage("view_illu", bytemuck::cast_slice(&view_illu_f32));
+    let scan_illu_f32: Vec<f32> = scan_illuminant.iter().map(|&v| v as f32).collect();
+    let view_illu_buf = mk_storage("scan_illuminant", bytemuck::cast_slice(&scan_illu_f32));
     let cmf_x_buf = mk_storage(
         "cmf_x",
         bytemuck::cast_slice(&spektrafilm_math::spectral::CMF_X),
@@ -194,15 +194,7 @@ pub(super) fn upload(
         bytemuck::bytes_of(&print_density_params),
     );
 
-    let s = scan_xyz_to_rgb;
-    // Scanner white and black correction luminance remap (m, q); z=1
-    // enables it in the shader. Preserve floating range before gamut
-    // compression and destination encoding.
-    let white_black = match params.white_black_xyz_remap {
-        Some((m, q)) => [m as f32, q as f32, 1.0, 0.0],
-        None => [1.0, 0.0, 0.0, 0.0],
-    };
-    let columns = pack_matrix_columns_f64(s);
+    let columns = pack_matrix_columns_f64(scan_xyz_to_rgb);
     let scan_params = ScanParams {
         width: image.width,
         height: image.height,
@@ -211,7 +203,6 @@ pub(super) fn upload(
         col0: columns[0],
         col1: columns[1],
         col2: columns[2],
-        bw: white_black,
     };
     let scan_params_buf = mk_uniform("scan_params", bytemuck::bytes_of(&scan_params));
     ChainBuffers {

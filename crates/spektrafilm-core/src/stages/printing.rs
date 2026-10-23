@@ -131,7 +131,7 @@ fn enlarger_lut_bounds(film: &Profile, params: &RuntimeParams) -> ([f64; 3], [f6
 /// Mirrors Python's `printing.expose` *exactly*, including the
 /// double-log roundtrip:
 ///   log_raw_print = log10(max(raw_p * factor_midgray + preflash, 0) + 1e-10)
-///   raw           = 10^log_raw_print * print_exposure * white_black_correction
+///   raw           = 10^log_raw_print * print_exposure
 ///   raw           = apply_diffusion_filter_um(raw, ...)   // no-op when inactive
 ///   return         log10(max(raw, 0) + 1e-10)
 /// The +1e-10 floor is applied at *both* log10s — collapsing them to a
@@ -151,7 +151,6 @@ pub fn expose_calibrated(
     print_illuminant: &[f64],
     exposure_factor: f64,
     preflash: [f64; 3],
-    white_black_print_correction: f64,
     pixel_size_um: f64,
 ) -> ImageBuf {
     let channel_density = crate::chain_prep::channel_density(film);
@@ -193,9 +192,8 @@ pub fn expose_calibrated(
         )
     };
 
-    // Stage 2: 10^log_raw_print, scale by print_exposure × white_black, then
-    // the outer log10. With print_exposure=1 and white_black=1 the operations
-    // still matter because of the floor-and-add roundtrip noise.
+    // Stage 2: 10^log_raw_print, scale by print_exposure, then
+    // the outer log10. With print_exposure=1 the operations
     //
     // vForce path: bulk `10^x` into a chunk-local f64 buffer, then
     // walk it once to multiply, floor and log10. The scalar
@@ -206,14 +204,9 @@ pub fn expose_calibrated(
     // the same IEEE 754 pow algorithm as libm).
     const BLOCK: usize = 1 << 16;
     let print_exposure = params.enlarger.print_exposure as f64;
-    // Scanner white and black correction — print exposure half. Python
-    // applies it as a second in-place multiply after print_exposure, so we
-    // keep the two multiplies separate (left-to-right) rather than
-    // pre-combining the scalars. 1.0 = no-op.
-    let white_black = white_black_print_correction;
 
     // Enlarger diffusion filter operates on the *linear* print raw (Python:
-    // raw = 10^log_raw_print * print_exposure * white_black; raw = diffusion(raw); log10).
+    // raw = 10^log_raw_print * print_exposure; raw = diffusion(raw); log10).
     // When active we materialise that linear buffer, diffuse, then log10;
     // otherwise the 10^x → ×exposure → log10 collapse into one pass.
     let edf = &params.enlarger.diffusion_filter;
@@ -228,7 +221,7 @@ pub fn expose_calibrated(
             let mut tmp: Vec<f64> = chunk.iter().map(|&v| v as f64).collect();
             spektrafilm_math::precision::exp10_inplace(&mut tmp);
             for (out, &raw) in chunk.iter_mut().zip(tmp.iter()) {
-                *out = spektrafilm_math::precision::from_f64(raw * print_exposure * white_black);
+                *out = spektrafilm_math::precision::from_f64(raw * print_exposure);
             }
         });
         // Python uses the ResizingService pitch (from the full input),
@@ -260,7 +253,7 @@ pub fn expose_calibrated(
         let mut tmp: Vec<f64> = chunk.iter().map(|&v| v as f64).collect();
         spektrafilm_math::precision::exp10_inplace(&mut tmp);
         for (out, &raw) in chunk.iter_mut().zip(tmp.iter()) {
-            let v = raw * print_exposure * white_black;
+            let v = raw * print_exposure;
             *out = spektrafilm_math::precision::from_f64((v.max(0.0) + 1e-10).log10());
         }
     });
@@ -279,7 +272,6 @@ pub fn expose_linear_calibrated(
     print_illuminant: &[f64],
     exposure_factor: f64,
     preflash: [f64; 3],
-    white_black_print_correction: f64,
 ) -> Result<ImageBuf, String> {
     if params.enlarger.diffusion_filter.active || params.settings.use_enlarger_lut {
         return Err(
@@ -296,7 +288,6 @@ pub fn expose_linear_calibrated(
         print_illuminant,
         exposure_factor,
         preflash,
-        white_black_print_correction,
         1.0,
     );
     linear.data.par_iter_mut().for_each(|value| {

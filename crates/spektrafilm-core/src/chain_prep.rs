@@ -89,84 +89,123 @@ pub(crate) fn dir_matrix(dir: &crate::params::couplers::DirCouplersParams) -> [[
     )
 }
 
-/// Colour context of one scan pass: viewing illuminant, its normalization,
-/// the derived chromatic-adaptation matrix, and the output XYZ→RGB matrix.
+/// Colour context of one scan pass: the scanner lamp, the clear-film white
+/// calibration derived from it, the chromatic adaptation to the output white,
+/// and the output XYZ→RGB matrix.
+///
+/// Neutral scan model v2: the white reference is the clear film (base)
+/// reading under the lamp, not the lamp itself. Dividing the capture by the
+/// base reading keeps the lamp's spectral shape in play — exactly how a real
+/// scanner's white calibration behaves — and adapting from the base white to
+/// the output white removes the film-base tint.
 #[derive(Debug, Clone)]
 pub struct ScanColorContext {
-    /// Resolved viewing (or scan-override) illuminant, f64 per wavelength.
+    /// Effective scanner lamp, f64 per wavelength: the resolved illuminant
+    /// with the scanner's declared infrared cut (`1/(1+exp((λ-670nm)/20nm))`,
+    /// research `k64-neutral-scan-v2`) folded in. Every kernel multiplies
+    /// this spectrum, so the cut needs no separate plumbing.
     pub illuminant: Vec<f64>,
-    /// Wavelength count shared by the illuminant, the profile's dye
-    /// densities, and the historical 81-sample grid.
+    /// Wavelength count shared by the lamp, the profile's dye and base
+    /// densities, and the CMF tables.
     pub n_wl: usize,
-    /// `Σ illu·CMF_Y` — Python parity (81-element sum in f64).
+    /// Clear-film XYZ reading under the lamp (`∫ 10^-D_base·L·CMF`) — the
+    /// scanner's white calibration reference.
+    pub base_xyz: [f64; 3],
+    /// `base_xyz[1]` — the scalar every scan kernel divides the capture by.
     pub normalization: f64,
-    /// Illuminant XYZ integrated against the CMFs and divided by
-    /// `normalization` (Y = 1).
-    pub illu_xyz: [f64; 3],
-    /// Viewing white derived through the XYZ→xy→XYZ roundtrip that
-    /// renormalizes Y to exactly 1 (matches Python's contract chain).
-    pub viewing_white: [f64; 3],
-    /// Chromatic adaptation from the viewing white to the output white.
+    /// Lamp XYZ integrated against the CMFs (with the IR cut applied); the
+    /// glare offset colour source.
+    pub lamp_xyz: [f64; 3],
+    /// Clear-film white (Y = 1) the chromatic adaptation starts from.
+    pub base_white: [f64; 3],
+    /// Chromatic adaptation from the clear-film white to the output white.
     pub adapt: [[f64; 3]; 3],
     /// Output colour space XYZ→RGB matrix.
     pub base_xyz_to_rgb: [[f64; 3]; 3],
-    pub(crate) receiver: Option<crate::scan_receiver::ScanReceiver>,
 }
 
 impl ScanColorContext {
-    /// Build the context for one scan pass. `illuminant` is already resolved
-    /// (the per-stage path may pass a scan override; the resident chain
-    /// passes the profile's viewing illuminant). `channel_density_len` is
-    /// the scanned profile's per-wavelength dye-density row count.
+    /// Build the context for one scan pass. `lamp` is the resolved scanner
+    /// lamp; `channel_density` and `base_density` are the scanned medium's
+    /// spectral data (pass zeros for the base density of a base-excluded
+    /// convert-film pass, which degenerates the white reference to the lamp
+    /// itself).
     pub fn build(
-        illuminant: Vec<f64>,
-        channel_density_len: usize,
+        lamp: Vec<f64>,
+        channel_density: &[[f64; 3]],
+        base_density: &[f64],
         output_color_space: &str,
     ) -> Self {
-        let n_wl = illuminant.len().min(channel_density_len).min(N_WAVELENGTHS);
+        let n_wl = lamp
+            .len()
+            .min(base_density.len())
+            .min(channel_density.len())
+            .min(N_WAVELENGTHS);
 
-        // Python parity — the normalization sums exactly n_wl terms in f64.
-        let normalization: f64 = (0..n_wl)
-            .map(|i| illuminant[i] * spectral::CMF_Y_F64[i])
-            .sum();
-
-        // Illuminant XYZ (Y normalized to 1) — same runtime derivation as
-        // Python's integrate/contract chain, including the division by
-        // `normalization` before the xy roundtrip below.
-        let mut illu_xyz = [0.0f64; 3];
-        // The wavelength index aligns illuminant and color-matching samples.
+        let mut base_xyz = [0.0f64; 3];
+        let mut lamp_xyz = [0.0f64; 3];
+        // The scanner's declared infrared cut (research
+        // `k64-neutral-scan-v2`: soft edge at 670 nm, 20 nm scale) rides on
+        // the lamp. Index i is wavelength 380 + 5·i nm on the shared grid.
+        let lamp: Vec<f64> = lamp
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| {
+                let nm = spectral::WAVELENGTH_MIN as f64 + 5.0 * i as f64;
+                v / (1.0 + ((nm - 670.0) / 20.0).exp())
+            })
+            .collect();
+        // The wavelength index aligns lamp, dye, base density, and
+        // color-matching samples. A row the kernels would mask — a
+        // non-finite lamp, dye, or base sample (NaN·0 is NaN, then masked
+        // to zero) — is excluded from the white reference too, so the
+        // clear-film reading the normalization divides by is exactly the
+        // kernel's.
         #[allow(clippy::needless_range_loop)]
         for i in 0..n_wl {
-            illu_xyz[0] += illuminant[i] * spectral::CMF_X_F64[i];
-            illu_xyz[1] += illuminant[i] * spectral::CMF_Y_F64[i];
-            illu_xyz[2] += illuminant[i] * spectral::CMF_Z_F64[i];
+            let dye = channel_density[i];
+            if !lamp[i].is_finite()
+                || !base_density[i].is_finite()
+                || !dye[0].is_finite()
+                || !dye[1].is_finite()
+                || !dye[2].is_finite()
+            {
+                continue;
+            }
+            let lamp = lamp[i];
+            let base_transmission = 10.0f64.powf(-base_density[i]);
+            base_xyz[0] += base_transmission * lamp * spectral::CMF_X_F64[i];
+            base_xyz[1] += base_transmission * lamp * spectral::CMF_Y_F64[i];
+            base_xyz[2] += base_transmission * lamp * spectral::CMF_Z_F64[i];
+            lamp_xyz[0] += lamp * spectral::CMF_X_F64[i];
+            lamp_xyz[1] += lamp * spectral::CMF_Y_F64[i];
+            lamp_xyz[2] += lamp * spectral::CMF_Z_F64[i];
         }
-        for value in &mut illu_xyz {
-            *value /= normalization;
-        }
-
-        // XYZ_to_xy then xy_to_xyz roundtrip (renormalizes Y to exactly 1).
-        let sum_xyz = illu_xyz[0] + illu_xyz[1] + illu_xyz[2];
-        let vx = illu_xyz[0] / sum_xyz;
-        let vy = illu_xyz[1] / sum_xyz;
-        let viewing_white = [vx / vy, 1.0f64, (1.0 - vx - vy) / vy];
+        let normalization = base_xyz[1];
+        assert!(
+            normalization.is_finite() && normalization > 0.0,
+            "clear-film scan reference must be positive"
+        );
+        let base_white = [
+            base_xyz[0] / normalization,
+            1.0f64,
+            base_xyz[2] / normalization,
+        ];
 
         let output_space = colorspace::resolve(output_color_space)
             .expect("output color space must be validated before scanning");
-        let adapt = colorspace::chromatic_adaptation_matrix_f64(
-            viewing_white,
-            output_space.whitepoint_xyz(),
-        );
+        let adapt =
+            colorspace::chromatic_adaptation_matrix_f64(base_white, output_space.whitepoint_xyz());
 
         Self {
-            illuminant,
+            illuminant: lamp,
             n_wl,
+            base_xyz,
             normalization,
-            illu_xyz,
-            viewing_white,
+            lamp_xyz,
+            base_white,
             adapt,
             base_xyz_to_rgb: output_space.matrix_xyz_to_rgb,
-            receiver: None,
         }
     }
 }
@@ -185,27 +224,20 @@ impl PreparedChain {
     pub fn for_scan(
         profile: &crate::profile::Profile,
         params: &crate::params::RuntimeParams,
-        scan_illuminant: Option<&str>,
+        include_base: bool,
     ) -> Self {
-        let illuminant = scan_illuminant
-            .map(crate::spectral_service::select_illuminant_f64)
-            .unwrap_or_else(|| {
-                crate::spectral_service::select_illuminant_f64(&profile.info.viewing_illuminant)
-            });
-        let channel_density_len = profile.data.channel_density.len();
-        let mut scan = ScanColorContext::build(
-            illuminant.into_owned(),
-            channel_density_len,
+        let lamp = crate::spectral_service::select_illuminant_f64(&params.scanner.lamp);
+        let base_density = if include_base {
+            std::borrow::Cow::Borrowed(profile.data.base_density.as_slice())
+        } else {
+            std::borrow::Cow::Owned(vec![0.0; profile.data.base_density.len()])
+        };
+        let scan = ScanColorContext::build(
+            lamp.into_owned(),
+            &channel_density(profile),
+            &base_density,
             &params.io.output_color_space,
         );
-        if params.io.scan_film
-            && params.scanner.receiver_profile == crate::params::ReceiverProfile::LabScanApprox
-        {
-            scan.receiver = Some(crate::scan_receiver::ScanReceiver::resolve(
-                &scan,
-                &params.io.output_color_space,
-            ));
-        }
         let mut scan_xyz_to_rgb = [[0.0f64; 3]; 3];
         // Matrix multiplication indexes both operands by row and column.
         #[allow(clippy::needless_range_loop)]
@@ -223,14 +255,19 @@ impl PreparedChain {
     }
 }
 
-/// Per-channel RGB glare offset `M · illuminant_xyz`, applied as
-/// `rgb += g * offset / 100`. The two matrix applications follow the
-/// per-stage scan order — CAT first, then the output XYZ→RGB matrix —
-/// keeping the reference rounding sequence authoritative.
+/// Per-channel RGB glare offset `M · CAT · (lamp_xyz / normalization)`,
+/// applied as `rgb += g * offset / 100`. The two matrix applications follow
+/// the per-stage scan order — CAT first, then the output XYZ→RGB matrix —
+/// and the division places the stray lamp light in the same clear-film
+/// normalized sensor domain as the capture.
 pub fn glare_rgb_offset_f64(ctx: &ScanColorContext) -> [f64; 3] {
     let a = ctx.adapt;
     let m = ctx.base_xyz_to_rgb;
-    let xyz = ctx.illu_xyz;
+    let xyz = [
+        ctx.lamp_xyz[0] / ctx.normalization,
+        ctx.lamp_xyz[1] / ctx.normalization,
+        ctx.lamp_xyz[2] / ctx.normalization,
+    ];
     let xyz_adapt = [
         a[0][0] * xyz[0] + a[0][1] * xyz[1] + a[0][2] * xyz[2],
         a[1][0] * xyz[0] + a[1][1] * xyz[1] + a[1][2] * xyz[2],

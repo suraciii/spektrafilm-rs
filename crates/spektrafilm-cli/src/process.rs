@@ -1,10 +1,10 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use clap::{ArgMatches, ValueEnum};
 use serde_json::json;
+use spektrafilm_core::ScannerProvenance;
 use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
 use spektrafilm_core::params::Tap;
 use spektrafilm_core::params_builder::resize_for_preview;
@@ -641,55 +641,34 @@ fn cmd_process(
         .iter()
         .map(|selector| preset::select(&library, selector).map(|selected| selected.preset))
         .collect::<Result<Vec<_>>>()?;
-    let resolve_params = |canonical| {
-        let resolve = if canonical {
-            spektrafilm_core::process_params::resolve_scanner_setup
-        } else {
-            spektrafilm_core::process_params::resolve
-        };
-        resolve(
-            spektrafilm_core::process_params::ProcessParamsRequest {
-                film: film_name,
-                paper: paper_name,
-                presets: &presets,
-                params_file,
-                sources,
-                feature_profiles: &feature_profile_values,
-                route: workflow.route.as_deref(),
-                scan_film,
-                scan_output: workflow.scan_output.as_deref(),
-                input_is_raw,
-                input_color_space: args.input_color_space.as_deref(),
-                input_cctf_decoding: args.input_cctf_decoding,
-                require_input_declaration: std::env::var_os(
-                    "SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS",
-                )
+    let resolved = spektrafilm_core::process_params::resolve(
+        spektrafilm_core::process_params::ProcessParamsRequest {
+            film: film_name,
+            paper: paper_name,
+            presets: &presets,
+            params_file,
+            sources,
+            feature_profiles: &feature_profile_values,
+            route: workflow.route.as_deref(),
+            scan_film,
+            scan_output: workflow.scan_output.as_deref(),
+            input_is_raw,
+            input_color_space: args.input_color_space.as_deref(),
+            input_cctf_decoding: args.input_cctf_decoding,
+            require_input_declaration: std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
                 .as_deref()
-                    != Some(std::ffi::OsStr::new("1")),
-                digest_mode: if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
-                    .as_deref()
-                    == Some(std::ffi::OsStr::new("1"))
-                {
-                    DigestMode::PreserveUserEdits
-                } else {
-                    DigestMode::ApplyStockSpecifics
-                },
+                != Some(std::ffi::OsStr::new("1")),
+            digest_mode: if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS").as_deref()
+                == Some(std::ffi::OsStr::new("1"))
+            {
+                DigestMode::PreserveUserEdits
+            } else {
+                DigestMode::ApplyStockSpecifics
             },
-            data_dir,
-        )
-        .map_err(anyhow::Error::msg)
-    };
-    let resolved = resolve_params(false)?;
-    let canonical =
-        if resolved.params.scanner.auto_setup != spektrafilm_core::params::ScannerAutoSetup::Off {
-            let mut canonical = resolve_params(true)?;
-            canonical.params.random_seed = u64::from(args.seed.unwrap_or(0));
-            apply_channel_swap(&mut canonical.film, &workflow.film_channel_swap)?;
-            apply_channel_swap(&mut canonical.print, &workflow.print_channel_swap)?;
-            Some(canonical)
-        } else {
-            None
-        };
+        },
+        data_dir,
+    )
+    .map_err(anyhow::Error::msg)?;
     let mut film = resolved.film;
     let mut print = resolved.print;
     apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
@@ -837,7 +816,7 @@ fn cmd_process(
             "print_profile": resolved.print_name,
             "capture_illuminant": capture_illuminant,
             "parameters": params,
-            "scanner_provenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
+            "scanner_provenance": ScannerProvenance::from_params(&params),
             "film_grain_dye": grain_v3,
             "film_grain_fotufilm": grain_fotufilm,
             "input": {
@@ -971,37 +950,6 @@ fn cmd_process(
     invocation
         .operation
         .set_input_dimensions(image.width, image.height);
-    let input_identity = if canonical.is_some() {
-        Some(
-            spektrafilm_core::scanner_setup::input_identity(input, &image)
-                .map_err(anyhow::Error::msg)?,
-        )
-    } else {
-        None
-    };
-    let scanner_setup = if let Some(canonical) = canonical {
-        Some(invocation.phase(
-            "scanner_setup_prepare",
-            IssueCategory::Configuration,
-            IssueBoundary::RuntimePrepare,
-            &context,
-            |prepare_context| {
-                let canonical = Runtime::new_observed(
-                    canonical.film,
-                    canonical.print,
-                    canonical.params,
-                    data_dir,
-                    prepare_context,
-                )
-                .map_err(anyhow::Error::msg)?;
-                canonical
-                    .prepare_scanner_setup(&image)
-                    .map_err(anyhow::Error::msg)
-            },
-        )?)
-    } else {
-        None
-    };
     // Preview mode: bound the long edge before processing (upstream
     // `simulate_preview` + `resize_for_preview`).
     let image = invocation.phase(
@@ -1037,11 +985,6 @@ fn cmd_process(
 
     // Run the calibrated runtime — a missing spectral LUT is a hard error.
     let t = Instant::now();
-    let provenance_profile = if params.io.scan_film {
-        film.clone()
-    } else {
-        print.clone()
-    };
     let runtime = invocation.phase(
         "runtime_prepare",
         IssueCategory::Configuration,
@@ -1058,11 +1001,6 @@ fn cmd_process(
             })
         },
     )?;
-    let runtime = if let Some(setup) = scanner_setup {
-        runtime.with_scanner_setup(setup)
-    } else {
-        runtime
-    };
     if context.enabled() {
         invocation
             .operation
@@ -1136,12 +1074,6 @@ fn cmd_process(
     let plan = plan.context("internal error: missing output plan for rendering")?;
     let output = output.context("internal error: missing output path for rendering")?;
 
-    let scanner_provenance = scanner_setup.as_ref().map(|setup| {
-        setup.provenance(
-            &provenance_profile,
-            input_identity.clone().expect("setup identity"),
-        )
-    });
     // Save output
     let t = Instant::now();
     invocation.operation.set_saved_attempt(output_attempt.get());
@@ -1184,34 +1116,9 @@ fn cmd_process(
             .with_context(|| format!("saving image: {}", output.display()))
         },
     )?;
-    let report = if let Some(provenance) = scanner_provenance {
-        let sidecar = output.with_extension("scanner-setup.json");
-        let sidecar_tmp = sidecar.with_extension("tmp");
-        fs::write(&sidecar_tmp, serde_json::to_vec_pretty(&provenance)?)
-            .with_context(|| format!("writing scanner setup record: {}", sidecar_tmp.display()))?;
-        let report = match prepared_image.publish(true) {
-            Ok(report) => report,
-            Err(error) => {
-                let _ = fs::remove_file(&sidecar_tmp);
-                return Err(anyhow::Error::msg(error.to_string())).context("publishing image");
-            }
-        };
-        if let Err(error) = fs::rename(&sidecar_tmp, &sidecar) {
-            let _ = fs::remove_file(output);
-            let _ = fs::remove_file(&sidecar_tmp);
-            return Err(error).with_context(|| {
-                format!("publishing scanner setup record: {}", sidecar.display())
-            });
-        }
-        eprintln!("Scanner setup: {}", sidecar.display());
-        report
-    } else {
-        let report = prepared_image
-            .publish(true)
-            .map_err(|e| anyhow::Error::msg(e.to_string()))?;
-        let _ = fs::remove_file(output.with_extension("scanner-setup.json"));
-        report
-    };
+    let report = prepared_image
+        .publish(true)
+        .map_err(|e| anyhow::Error::msg(e.to_string()))?;
     if let Some(warning) = report.metadata_warning {
         eprintln!("Warning: {warning}");
     }

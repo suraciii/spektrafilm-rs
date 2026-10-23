@@ -68,6 +68,7 @@ pub(crate) fn build(
     params: &spektrafilm_core::params::RuntimeParams,
     extras: &Value,
     film_medium: ScanMedium,
+    data_dir: &std::path::Path,
 ) -> Vec<SearchResult> {
     let mut results = Vec::new();
     if filter.is_empty() {
@@ -104,6 +105,7 @@ pub(crate) fn build(
                             &mut flags,
                             &mut state,
                             "D65",
+                            data_dir,
                         );
                     });
                     state.finish();
@@ -146,6 +148,7 @@ impl SearchIndex {
         extras: &Value,
         film_medium: ScanMedium,
         revision: u64,
+        data_dir: &std::path::Path,
     ) -> &[SearchResult] {
         if filter.is_empty() {
             self.reset();
@@ -161,7 +164,7 @@ impl SearchIndex {
         self.filter = filter.to_owned();
         self.revision = revision;
         self.medium = Some(film_medium);
-        self.results = build(filter, params, extras, film_medium);
+        self.results = build(filter, params, extras, film_medium, data_dir);
         self.built = true;
         &self.results
     }
@@ -182,10 +185,16 @@ mod tests {
 
     fn sections_for(filter: &str) -> Vec<(&'static str, &'static str)> {
         let params = RuntimeParams::default();
-        build(filter, &params, &serde_json::json!({}), ScanMedium::None)
-            .into_iter()
-            .map(|result| (result.page.label(), result.section))
-            .collect()
+        build(
+            filter,
+            &params,
+            &serde_json::json!({}),
+            ScanMedium::None,
+            &crate::profiles::pick_data_dir(),
+        )
+        .into_iter()
+        .map(|result| (result.page.label(), result.section))
+        .collect()
     }
 
     /// A control the owning page renders is reported with that page and its
@@ -256,7 +265,13 @@ mod tests {
     #[test]
     fn every_page_section_is_indexed() {
         let params = RuntimeParams::default();
-        let index = build("a", &params, &serde_json::json!({}), ScanMedium::None);
+        let index = build(
+            "a",
+            &params,
+            &serde_json::json!({}),
+            ScanMedium::None,
+            &crate::profiles::pick_data_dir(),
+        );
         let pages: Vec<&str> = index.iter().map(|result| result.page.label()).collect();
         for page in ["MAIN", "FILM", "PRINT", "ADVANCED", "CONFIG"] {
             assert!(pages.contains(&page), "page {page} has no indexed section");

@@ -36,7 +36,6 @@ impl Pipeline {
         at: Tap,
         image: ImageBuf,
         backend: &dyn ComputeBackend,
-        color_ref: &crate::color_reference::ColorReference,
         pixel_size_um: f64,
         ae_ev: f64,
         stage_timings: &mut Option<&mut BTreeMap<String, f64>>,
@@ -68,11 +67,9 @@ impl Pipeline {
                     self.tc_lut.as_ref(),
                     self.mallett_core.as_ref(),
                     &select_illuminant(&self.front_illuminant),
-                    color_ref.filming_exposure_correction,
                     pixel_size_um,
                     ae_ev,
                 );
-                print_stage_timing(print_timings, "filming_expose", t);
                 record_stage_timing(stage_timings, "filming_expose", t);
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_LOG_RAW", &out);
                 Ok(out)
@@ -95,17 +92,14 @@ impl Pipeline {
             Tap::CmyFilm => {
                 if self.params.io.scan_film {
                     let t = Instant::now();
-                    let out = crate::stages::scanning::process_prepared(
+                    let out = crate::stages::scanning::process(
                         &image,
                         &self.film,
+                        &self.conversion_tones,
                         &self.params,
                         backend,
-                        color_ref,
                         &self.output_gamut,
-                        self.digital_reference.as_deref(),
-                        self.scanner_setup.as_ref(),
                     )?;
-                    print_stage_timing(print_timings, "scanning", t);
                     record_stage_timing(stage_timings, "scanning", t);
                     tracing::info!("pipeline: scanning complete (film scan)");
                     Ok(out)
@@ -120,10 +114,8 @@ impl Pipeline {
                         &self.print_illuminant,
                         self.print_exposure_factor,
                         self.preflash_raw,
-                        color_ref.printing_exposure_correction,
                         pixel_size_um,
                     );
-                    print_stage_timing(print_timings, "printing", t);
                     record_stage_timing(stage_timings, "printing", t);
                     dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &out);
                     Ok(out)
@@ -145,11 +137,10 @@ impl Pipeline {
                 let out = crate::stages::scanning::process(
                     &image,
                     &self.print,
+                    &self.conversion_tones,
                     &self.params,
                     backend,
-                    color_ref,
                     &self.output_gamut,
-                    self.scanner_setup.as_ref(),
                 )?;
                 print_stage_timing(print_timings, "scanning", t);
                 record_stage_timing(stage_timings, "scanning", t);
@@ -192,7 +183,6 @@ impl Pipeline {
         inject: Tap,
         collect: Tap,
         backend: &dyn ComputeBackend,
-        color_ref: &crate::color_reference::ColorReference,
         physical_context: Option<(f64, f64)>,
         stage_timings: Option<&mut BTreeMap<String, f64>>,
         mut capture: Option<&mut crate::stage_evidence::StageCapture>,
@@ -240,12 +230,6 @@ impl Pipeline {
             collect,
             self.params.io.scan_film,
         )?;
-        if cell_spectral && color_ref.has_remap() {
-            return Err(
-                "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL does not support scanner luminance remap"
-                    .to_owned(),
-            );
-        }
         if aperture_factor.is_some()
             && (collect != Tap::RgbOut
                 || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap())
@@ -299,7 +283,6 @@ impl Pipeline {
                 order[i],
                 cur,
                 backend,
-                color_ref,
                 pixel_size_um,
                 ae_ev,
                 &mut stage_timings,
@@ -355,7 +338,6 @@ impl Pipeline {
                                     &self.film,
                                     &self.params,
                                     backend,
-                                    color_ref,
                                 )
                             } else {
                                 crate::stages::printing::expose_linear_calibrated(
@@ -367,7 +349,6 @@ impl Pipeline {
                                     &self.print_illuminant,
                                     self.print_exposure_factor,
                                     self.preflash_raw,
-                                    color_ref.printing_exposure_correction,
                                 )
                             }
                         },
@@ -387,10 +368,8 @@ impl Pipeline {
                             &self.film,
                             &self.params,
                             observation.backend(backend),
-                            color_ref,
                             &self.output_gamut,
                         )?;
-                        i = order.iter().position(|tap| *tap == Tap::RgbOut).unwrap();
                     } else {
                         cur.data.par_iter_mut().for_each(|value| {
                             *value = from_f64(to_f64(*value).log10());

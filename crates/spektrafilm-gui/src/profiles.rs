@@ -22,7 +22,7 @@ pub(super) struct ProfileEntry {
 /// Finder launches apps with `cwd=/`, so the exe-relative probes matter for a
 /// double-clicked `.app`. Falls back to `./data` so the downstream loader
 /// surfaces a clear "profiles not found" error.
-pub(super) fn pick_data_dir() -> PathBuf {
+pub(crate) fn pick_data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("SPEKTRAFILM_DATA_DIR") {
         return PathBuf::from(dir);
     }
@@ -30,6 +30,31 @@ pub(super) fn pick_data_dir() -> PathBuf {
         .into_iter()
         .find(|path| path.is_dir())
         .unwrap_or_else(|| PathBuf::from("data"))
+}
+
+/// Conversion-style names offered by the scanner's negative-to-positive
+/// interpretation. `neutral` is the frozen reference tone and always
+/// available; any other name is a user-authored `scan-styles/*.json` stem,
+/// sorted, so the selector order is stable. Mirrors [`scan_profiles`]: a
+/// missing directory yields just `neutral` rather than failing the panel,
+/// which is the shipped state — no style ships with the install.
+pub(crate) fn scan_conversion_styles(data_dir: &Path) -> Vec<String> {
+    let mut names = vec![crate::routes::vocabulary::CONVERSION_STYLE_NEUTRAL.to_owned()];
+    let dir = data_dir.join("scan-styles");
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        let mut extra: Vec<String> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let name_lossy = name.to_string_lossy().to_string();
+                name_lossy.strip_suffix(".json").map(str::to_owned)
+            })
+            .collect();
+        extra.sort();
+        extra.dedup();
+        names.extend(extra);
+    }
+    names
 }
 
 /// Scan `<data_dir>/profiles/*.json`, parse each profile's `info`, and

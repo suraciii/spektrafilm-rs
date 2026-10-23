@@ -165,192 +165,46 @@ impl Default for EnlargerParams {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReceiverProfile {
-    #[default]
-    LegacyColorimetric,
-    LabScanApprox,
-    DigitalReference,
-}
-impl ReceiverProfile {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::LegacyColorimetric => "legacy_colorimetric",
-            Self::LabScanApprox => "lab_scan_approx",
-            Self::DigitalReference => "digital_reference",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NegativeConversionMethod {
-    /// Read record densities directly: the film's own monotone characteristic
-    /// curves, with no synthetic capture in the loop.
-    #[default]
-    Density,
-    /// Interpret a receiver capture through a per-channel monotone inverse.
-    Separable,
-    /// Interpret a receiver capture through the three-channel coupled inverse.
-    Coupled,
-    /// Common modeled receiver and fixed Reference Exposure response.
-    DigitalReference,
-}
-impl NegativeConversionMethod {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Density => "density",
-            Self::Separable => "separable",
-            Self::Coupled => "coupled",
-            Self::DigitalReference => "digital_reference",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScannerAutoSetup {
-    #[default]
-    Off,
-    Density,
-    DensityColor,
-    #[serde(alias = "per_frame")]
-    Full,
-}
-impl ScannerAutoSetup {
-    pub const fn includes_density(self) -> bool {
-        !matches!(self, Self::Off)
-    }
-    pub const fn includes_color(self) -> bool {
-        matches!(self, Self::DensityColor | Self::Full)
-    }
-    pub const fn includes_contrast(self) -> bool {
-        matches!(self, Self::Full)
-    }
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Density => "density",
-            Self::DensityColor => "density_color",
-            Self::Full => "full",
-        }
-    }
-}
-impl std::fmt::Display for ScannerAutoSetup {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScannerFinish {
-    #[default]
-    Neutral,
-    LabScan,
-}
-impl ScannerFinish {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Neutral => "neutral",
-            Self::LabScan => "lab_scan",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
-    #[serde(default)]
-    pub receiver_profile: ReceiverProfile,
-    #[serde(default)]
-    pub negative_conversion_method: NegativeConversionMethod,
-    #[serde(default)]
-    pub auto_setup: ScannerAutoSetup,
-    #[serde(default)]
-    pub finish: ScannerFinish,
-    #[serde(default = "default_finish_strength")]
-    pub finish_strength: f64,
-    #[serde(default)]
-    pub lens_blur: f32,
+    /// The scanner lamp — the single physical light source of a scan. A
+    /// reversal stock has no second viewing illuminant; the lamp is the only
+    /// light a scanner owns.
+    #[serde(default = "default_d55")]
+    pub lamp: String,
     /// Scan output polarity: `direct_scan` preserves the scanner capture;
     /// `negative_to_positive` interprets each negative dye record's density as a
     /// positive image.
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,
+    /// Named positive-conversion style applied by the negative-to-positive
+    /// interpretation: `neutral` is the frozen reference tone; any other
+    /// name resolves to `data/scan-styles/<name>.json` (declared
+    /// per-channel tone parameters, never fitted). Meaningful only with
+    /// `scan_output = negative_to_positive`.
+    #[serde(default = "default_conversion_style")]
+    pub conversion_style: String,
     #[serde(default)]
-    pub white_correction: bool,
-    #[serde(default)]
-    pub black_correction: bool,
-    #[serde(default = "default_098")]
-    pub white_level: f32,
-    #[serde(default = "default_001")]
-    pub black_level: f32,
+    pub lens_blur: f32,
     #[serde(default = "default_unsharp")]
     pub unsharp_mask: [f64; 2],
-    #[serde(default)]
-    pub black_point: [f64; 3],
-    #[serde(default = "default_scanner_white_point")]
-    pub white_point: [f64; 3],
-    #[serde(default = "default_conversion_brightness_ev")]
-    pub conversion_brightness_ev: f64,
-    #[serde(default)]
-    pub conversion_balance_ev: [f64; 3],
-    #[serde(default = "default_conversion_contrast")]
-    pub conversion_contrast: f64,
-    #[serde(default = "default_conversion_dmax")]
-    pub conversion_dmax: f64,
-    /// Output-relative stops after the fixed reference response.
-    #[serde(default)]
-    pub reference_exposure_ev: f64,
-    /// Independent linear-sRGB output-relative stops, before output-space mapping.
-    #[serde(default)]
-    pub reference_balance_ev: [f64; 3],
 }
 
 impl Default for ScannerParams {
     fn default() -> Self {
         Self {
-            receiver_profile: ReceiverProfile::default(),
-            negative_conversion_method: NegativeConversionMethod::default(),
-            auto_setup: ScannerAutoSetup::default(),
-            finish: ScannerFinish::default(),
-            finish_strength: default_finish_strength(),
-            lens_blur: 0.0,
+            lamp: default_d55(),
             scan_output: default_direct_scan(),
-            white_correction: false,
-            black_correction: false,
-            white_level: 0.98,
-            black_level: 0.01,
-            unsharp_mask: [0.7, 0.7],
-            black_point: [0.0; 3],
-            white_point: default_scanner_white_point(),
-            conversion_brightness_ev: default_conversion_brightness_ev(),
-            conversion_balance_ev: [0.0; 3],
-            conversion_contrast: default_conversion_contrast(),
-            conversion_dmax: default_conversion_dmax(),
-            reference_exposure_ev: 0.0,
-            reference_balance_ev: [0.0; 3],
+            conversion_style: default_conversion_style(),
+            lens_blur: 0.0,
+            unsharp_mask: default_unsharp(),
         }
     }
 }
 
-fn default_finish_strength() -> f64 {
-    1.0
-}
-
-fn default_scanner_white_point() -> [f64; 3] {
-    [1.0; 3]
-}
-
-fn default_conversion_brightness_ev() -> f64 {
-    0.8781766618
-}
-fn default_conversion_contrast() -> f64 {
-    0.73551400058216643
-}
-fn default_conversion_dmax() -> f64 {
-    1.5625841465572565
+fn default_conversion_style() -> String {
+    "neutral".into()
 }
 
 fn default_one_f64() -> f64 {
@@ -415,8 +269,6 @@ impl Default for PrintBaseParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConvertFilmParams {
-    #[serde(default = "default_d55")]
-    pub scan_illuminant: String,
     #[serde(default)]
     pub exposure_compensation_ev: f64,
     #[serde(default = "default_99")]
@@ -427,7 +279,6 @@ pub struct ConvertFilmParams {
 impl Default for ConvertFilmParams {
     fn default() -> Self {
         Self {
-            scan_illuminant: "D55".into(),
             exposure_compensation_ev: 0.0,
             base_percentile: 99.0,
             calibration: default_calibration(),
@@ -1060,12 +911,6 @@ fn default_direct_scan() -> String {
     "direct_scan".into()
 }
 
-fn default_098() -> f32 {
-    0.98
-}
-fn default_001() -> f32 {
-    0.01
-}
 fn default_unsharp() -> [f64; 2] {
     [0.7, 0.7]
 }
@@ -1107,37 +952,21 @@ fn default_route() -> String {
 mod tests {
     use super::{CameraParams, RuntimeParams};
     #[test]
-    fn scanner_selector_defaults_and_sparse_edits_are_compatible() {
+    fn scanner_defaults_and_sparse_edits_are_compatible() {
         let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();
-        assert_eq!(
-            legacy.receiver_profile,
-            super::ReceiverProfile::LegacyColorimetric
-        );
-        assert_eq!(
-            legacy.negative_conversion_method,
-            super::NegativeConversionMethod::Density
-        );
-        assert_eq!(legacy.auto_setup, super::ScannerAutoSetup::Off);
-        assert_eq!(legacy.finish, super::ScannerFinish::Neutral);
-        assert_eq!(legacy.finish_strength, 1.0);
+        assert_eq!(legacy.lamp, "D55");
+        assert_eq!(legacy.scan_output, "direct_scan");
+        assert_eq!(legacy.lens_blur, 0.0);
+        assert_eq!(legacy.unsharp_mask, [0.7, 0.7]);
         for (path, allowed) in [
             (
-                "scanner.receiver_profile",
-                &[
-                    "legacy_colorimetric",
-                    "lab_scan_approx",
-                    "digital_reference",
-                ][..],
+                "scanner.lamp",
+                &["D50", "D55", "D65", "T", "TH-KG3", "K75P"][..],
             ),
             (
-                "scanner.negative_conversion_method",
-                &["density", "separable", "coupled", "digital_reference"][..],
+                "scanner.scan_output",
+                &["direct_scan", "negative_to_positive"][..],
             ),
-            (
-                "scanner.auto_setup",
-                &["off", "density", "density_color", "full"][..],
-            ),
-            ("scanner.finish", &["neutral", "lab_scan"][..]),
             ("enlarger.print_exposure_mode", &["manual", "auto"][..]),
             (
                 "settings.print_exposure_ev_tracking",
@@ -1149,11 +978,19 @@ mod tests {
             }
             assert!(super::sources::ParameterEdits::parse(&format!("{path}=unknown")).is_err());
         }
-        assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=1.1").is_err());
-        assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=-0.1").is_err());
         let encoded = serde_json::to_value(&legacy).unwrap();
-        assert_eq!(encoded["receiver_profile"], "legacy_colorimetric");
-        assert_eq!(encoded["negative_conversion_method"], "density");
+        assert_eq!(encoded["lamp"], "D55");
+        assert_eq!(encoded["scan_output"], "direct_scan");
+        for removed in [
+            "receiver_profile",
+            "negative_conversion_method",
+            "auto_setup",
+            "finish",
+            "white_correction",
+            "black_point",
+        ] {
+            assert!(encoded.get(removed).is_none());
+        }
         let enlarger = serde_json::to_value(super::EnlargerParams::default()).unwrap();
         assert_eq!(enlarger["print_exposure_mode"], "auto");
         assert!(
@@ -1164,21 +1001,33 @@ mod tests {
         assert_eq!(settings["print_exposure_ev_tracking"], "follow_mode");
     }
     #[test]
-    fn direct_scan_rejects_conversion_controls() {
+    fn scanner_lamp_rejects_unsupported_illuminants() {
         let mut params = RuntimeParams::default();
-        params.scanner.scan_output = "direct_scan".into();
-        params.scanner.negative_conversion_method = super::NegativeConversionMethod::Coupled;
+        params.scanner.lamp = "D55".into();
+        params.validate().unwrap();
+        params.scanner.lamp = "sunlit-window".into();
         let error = params.validate().unwrap_err();
-        assert!(error.contains("scanner.negative_conversion_method=coupled"));
-        assert!(error.contains("negative_to_positive"));
-
-        params.scanner.negative_conversion_method = super::NegativeConversionMethod::Density;
-        params.scanner.finish = super::ScannerFinish::LabScan;
-        let error = params.validate().unwrap_err();
-        assert!(error.contains("scanner.finish=lab_scan"));
-        assert!(error.contains("negative_to_positive"));
+        assert!(error.contains("scanner.lamp"));
     }
 
+    #[test]
+    fn conversion_style_requires_negative_to_positive() {
+        let mut params = RuntimeParams::default();
+        params.scanner.conversion_style = "warm-probe".into();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.validate().unwrap();
+
+        params.scanner.scan_output = "direct_scan".into();
+        let error = params.validate().unwrap_err();
+        assert!(
+            error.contains("scanner.conversion_style") && error.contains("negative_to_positive"),
+            "{error}"
+        );
+
+        params.scanner.conversion_style = "../etc/passwd".into();
+        let error = params.validate().unwrap_err();
+        assert!(error.contains("scanner.conversion_style"), "{error}");
+    }
     #[test]
     fn null_or_missing_camera_color_filter_uses_no_filter() {
         let null: CameraParams = serde_json::from_str(r#"{"color_filter":null}"#).unwrap();
@@ -1218,29 +1067,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scanner_points_validate_each_channel_without_partial_pairs() {
-        let mut params = RuntimeParams::default();
-        params.scanner.black_point = [0.0, 0.2, 0.4];
-        params.scanner.white_point = [0.5, 0.7, 1.0];
-        params.validate().unwrap();
-        for channel in 0..3 {
-            let valid = params.scanner.clone();
-            for value in [-0.01, 1.01, f64::NAN, f64::INFINITY] {
-                params.scanner.black_point[channel] = value;
-                assert!(params.validate().is_err());
-                params.scanner = valid.clone();
-                params.scanner.white_point[channel] = value;
-                assert!(params.validate().is_err());
-                params.scanner = valid.clone();
-            }
-            params.scanner.black_point[channel] = params.scanner.white_point[channel];
-            assert!(params.validate().is_err());
-            params.scanner.black_point[channel] += 0.1;
-            assert!(params.validate().is_err());
-            params.scanner = valid;
-        }
-    }
     #[test]
     fn grain_v2_profile_inheritance_and_overrides() {
         let mut params = super::RuntimeParams::default();

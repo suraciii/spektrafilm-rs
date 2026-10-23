@@ -37,8 +37,6 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         group: PresetGroup::BuiltIn,
         name: "Remembered".into(),
     });
-    app.params.scanner.white_correction = false;
-    app.params.scanner.black_correction = false;
     app.params.print_render.glare.active = true;
     app.toggle_scan_for_print();
     app.dirty_since = Some(std::time::Instant::now());
@@ -207,46 +205,21 @@ fn browser_file_errors_are_visible_and_explicit_state_ignores_bad_carrier() {
 }
 
 #[test]
-fn scanner_transitions_preserve_points_and_reset_illegal_output() {
+fn scanner_transitions_reset_the_scan_polarity() {
     let (mut app, directory) = test_app("scanner-transitions");
-    app.params.scanner.black_point = [0.1, 0.2, 0.3];
-    app.params.scanner.white_point = [0.7, 0.8, 0.9];
     app.params.workflow.route = "input > film > scan".into();
     app.params.scanner.scan_output = "negative_to_positive".into();
-    app.params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-    app.params.scanner.negative_conversion_method =
-        spektrafilm_core::params::NegativeConversionMethod::Coupled;
-    app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::Full;
-    app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
-    app.params.scanner.finish_strength = 0.75;
-    app.params.scanner.reference_exposure_ev = 1.0;
-    app.params.scanner.reference_balance_ev = [0.1, 0.2, 0.3];
+    app.params.scanner.lamp = "D65".into();
     let revision = app.parameter_revision;
     app.params.workflow.route = "input > film > print > scan".into();
     app.finish_route_change();
     assert!(
-        app.status.contains("reference exposure EV") && app.status.contains("reference balance EV"),
-        "route normalization status must name cleared reference controls: {}",
+        app.status.contains("scan output"),
+        "route normalization status must name the reset polarity: {}",
         app.status
     );
     assert_eq!(app.params.scanner.scan_output, "direct_scan");
-    assert_eq!(
-        app.params.scanner.receiver_profile,
-        spektrafilm_core::params::ReceiverProfile::LegacyColorimetric
-    );
-    assert_eq!(
-        app.params.scanner.negative_conversion_method,
-        spektrafilm_core::params::NegativeConversionMethod::Density
-    );
-    assert_eq!(
-        app.params.scanner.auto_setup,
-        spektrafilm_core::params::ScannerAutoSetup::Off
-    );
-    assert_eq!(
-        app.params.scanner.finish,
-        spektrafilm_core::params::ScannerFinish::Neutral
-    );
-    assert!(app.status.contains("finish strength"), "{}", app.status);
+    assert_eq!(app.params.scanner.lamp, "D65");
     assert!(app.dirty);
     assert_eq!(app.parameter_revision, revision.wrapping_add(1));
     app.params.workflow.route = "input".into();
@@ -267,48 +240,24 @@ fn scanner_transitions_preserve_points_and_reset_illegal_output() {
     app.params.workflow.route = "input > convert-film > scan".into();
     app.finish_route_change();
     app.params.scanner.scan_output = "negative_to_positive".into();
-    app.params.scanner.white_correction = false;
-    app.params.scanner.black_correction = false;
     app.toggle_scan_for_print();
-    app.params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-    app.params.scanner.negative_conversion_method =
-        spektrafilm_core::params::NegativeConversionMethod::Coupled;
-    app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::Full;
-    app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
     app.select_film_profile("kodak_ektachrome_100".into());
     assert_eq!(app.film_medium, crate::controls::ScanMedium::Slide);
     assert_eq!(app.params.scanner.scan_output, "direct_scan");
-    assert_eq!(
-        app.params.scanner.receiver_profile,
-        spektrafilm_core::params::ReceiverProfile::LabScanApprox
-    );
-    assert_eq!(
-        app.params.scanner.negative_conversion_method,
-        spektrafilm_core::params::NegativeConversionMethod::Density
-    );
-    assert_eq!(
-        app.params.scanner.auto_setup,
-        spektrafilm_core::params::ScannerAutoSetup::Off
-    );
-    assert_eq!(
-        app.params.scanner.finish,
-        spektrafilm_core::params::ScannerFinish::Neutral
-    );
+    assert_eq!(app.params.scanner.lamp, "D65");
     let restored = app.current_state().unwrap().runtime_params().unwrap();
-    assert_eq!(restored.scanner.black_point, [0.1, 0.2, 0.3]);
-    assert_eq!(restored.scanner.white_point, [0.7, 0.8, 0.9]);
+    assert_eq!(restored.scanner.lamp, "D65");
+    assert_eq!(restored.scanner.lens_blur, 0.0);
+    assert_eq!(restored.scanner.unsharp_mask, [0.7, 0.7]);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
-fn preset_application_reports_scanner_normalization_and_inactive_controls() {
+fn preset_application_reports_scanner_normalization() {
     let (mut app, directory) = test_app("preset-scanner-normalization");
     app.params.workflow.route = "input > film > scan".into();
     app.params.scanner.scan_output = "negative_to_positive".into();
-    app.params.scanner.negative_conversion_method =
-        spektrafilm_core::params::NegativeConversionMethod::DigitalReference;
-    app.params.scanner.reference_exposure_ev = 1.0;
-    app.params.scanner.reference_balance_ev = [0.1, 0.2, 0.3];
+    app.params.scanner.lamp = "D65".into();
     let entry = app
         .presets
         .entries
@@ -317,17 +266,12 @@ fn preset_application_reports_scanner_normalization_and_inactive_controls() {
         .unwrap()
         .clone();
     app.load_preset(entry.group, &entry.name);
-    assert!(
-        app.status.contains("reference exposure EV"),
-        "{}",
-        app.status
-    );
-    assert!(
-        app.status.contains("reference balance EV"),
-        "{}",
-        app.status
-    );
     assert!(app.status.contains("scanner controls"), "{}", app.status);
+    // The preset carries its own scanner parameters, so the lamp comes from it.
+    let applied = app.params.scanner.lamp.clone();
+    assert!(!applied.is_empty());
+    let state = app.current_state().unwrap();
+    assert_eq!(state.sections["scanner"]["lamp"], applied.as_str());
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -337,9 +281,6 @@ fn slide_startup_rejects_positive_output_with_visible_error() {
     let mut params = app.params.clone();
     params.workflow.route = "input > film > scan".into();
     params.scanner.scan_output = "negative_to_positive".into();
-    params.scanner.white_correction = false;
-    params.scanner.black_correction = false;
-    params.scanner.black_point = [0.1, 0.2, 0.3];
     let state = state::GuiState::from_runtime(
         &params,
         "kodak_ektachrome_100",

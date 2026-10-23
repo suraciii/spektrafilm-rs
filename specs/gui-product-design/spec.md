@@ -69,24 +69,20 @@ The selector must not silently change route terminology when a profile or stock 
 
 The Scanner surface must follow the physical sequence from [`Film chain`](../film-chain/spec.md#scan-medium-and-scanner-controls):
 
-1. scanner acquisition through a scan receiver;
+1. scanner acquisition through the scanner lamp;
 2. scan output polarity and negative conversion;
-3. automatic scan setup;
-4. optional scanner finishing;
-5. downstream digital output.
+3. readout optics and digital sharpening;
+4. downstream digital output.
 
 This sequence may be explained with a short static help line. It must not create additional parameter groups or rename the canonical scanner controls.
 
 The surface must distinguish:
 
-- receiver acquisition from negative conversion;
-- record density from receiver capture;
-- automatic scan setup from receiver calibration;
-- scanner finishing from film development and print exposure;
-- scanner white and black correction from film-scan black and white points;
+- scanner acquisition from negative conversion;
+- record density from scan capture;
 - lens blur from unsharp mask.
 
-Approximate or modeled choices must carry their qualification in the visible choice or immediate help. A measured-device claim requires measurement and calibration provenance.
+The surface must state that the white reference of a scan is the clear film base of the scanned medium and that it reads as the output color space's white.
 
 ## Viewer product surface
 

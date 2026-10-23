@@ -31,9 +31,6 @@ A fit must fail with an actionable error when the two patch tables differ in len
 `--fit <GROUPS>` selects the parameter groups to fit. Groups are comma-separated and applied together in one optimization.
 
 - `surface`: the `surface_terms` leading non-constant terms of every layer of the film profile's `hanatos2025_adaptation_surface_params`, that is `layers * terms` values. The fit replaces the whole surface: the fitted terms carry the fitted values and every other term is zero. The fit must not use the profile's stored surface values as a starting surface.
-- `tone`: `scanner.conversion_brightness_ev` and the three `scanner.conversion_balance_ev` values. `scanner.conversion_contrast` and `scanner.conversion_dmax` keep the values of the chain configuration.
-
-A common offset added to `conversion_brightness_ev` and subtracted from every `conversion_balance_ev` channel leaves the converted image unchanged, so the four values are redundant by one degree of freedom. The fit must pin `conversion_balance_ev[1]` to its resolved value and search only the other three, and the report must record the pinned channel and its value. Without the pin, identical data would fit equivalent but different tones.
 
 The default is `surface`. `--surface-terms <N>` sets the term count of the surface group and defaults to 9.
 
@@ -56,7 +53,7 @@ The command must disable halation and grain for every evaluation. Halation leaks
 
 ## Objective
 
-For every patch of the color range and the fit-gray range, the residual is the pair difference of the chain output patch and the reference patch in CIE L\*a\*b\* coordinates, computed from linear sRGB. The objective adds a ridge term `sqrt(lambda) * value` for every fitted surface coefficient; tone coefficients carry no ridge term.
+For every patch of the color range and the fit-gray range, the residual is the pair difference of the chain output patch and the reference patch in CIE L\*a\*b\* coordinates, computed from linear sRGB. The objective adds a ridge term `sqrt(lambda) * value` for every fitted surface coefficient.
 
 The fitted target is deterministic: identical inputs, preset, and options must produce identical fitted values.
 
@@ -64,7 +61,6 @@ The fitted target is deterministic: identical inputs, preset, and options must p
 
 - `--report <PATH>`: the fit report as JSON. It is required.
 - `--out-profile <PATH>`: a copy of the resolved film profile with the fitted surface. Required when the fit includes the `surface` group. The copy appends to `metadata.datasource` one sentence that names the tool version, the scene source, and the reference source, and replaces the sentence an earlier fit appended, because the fit replaces the whole surface.
-- `--out-overlay <PATH>`: a sparse parameter file with the fitted tone leaves. Required when the fit includes the `tone` group.
 
 The report must carry the fitted values, the metrics below, every input path with its SHA-256, the source of both patch tables, the resolved preset and route, the forced settings, and the tool version.
 

@@ -26,27 +26,12 @@ impl App {
     }
 
     pub(crate) fn render_snapshot(&mut self, params: RuntimeParams) -> RenderSnapshot {
-        let key = (self.input_epoch, self.parameter_revision);
-        if self
-            .scanner_setup
-            .as_ref()
-            .is_none_or(|(cached, _)| *cached != key)
-        {
-            self.scanner_setup = Some((key, Arc::new(OnceLock::new())));
-        }
-        let scanner_setup = self
-            .scanner_setup
-            .as_ref()
-            .expect("scanner setup slot inserted")
-            .1
-            .clone();
         RenderSnapshot::new(
             params,
             self.film_name.clone(),
             self.print_name.clone(),
             self.data_dir.clone(),
             self.gui_state.special().clone(),
-            scanner_setup,
         )
     }
 

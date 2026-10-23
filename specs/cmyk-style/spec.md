@@ -24,7 +24,7 @@ The product must describe this feature as a style simulation. It must not claim 
 - The feature must accept output-referred RGB with explicit primaries, white point, and transfer state. Linear encoding must not imply scene-referred exposure.
 - The feature must run once after the base workflow and its scanner-domain effects, before output publication:
 
-  `Scanning → scanner finishing → output gamut processing → unsharp masking → transfer encoding → Procedural grain → CMYK ink style → output mix → writer`
+  `Scanning → output gamut processing → unsharp masking → transfer encoding → Procedural grain → CMYK ink style → output mix → writer`
 
 - Existing material controls run at their eligible exposure and development stages before scanning. They must not alter CMYK ink style's definition, Strength, or enablement. Overall output mixing follows CMYK ink style in common linear output RGB. Material processing and CMYK ink style must each run once. The `input` workflow runs CMYK ink style without film or print development.
 - The feature must preserve image dimensions and spatial detail positions. It must not re-run exposure, film development, or grain generation.

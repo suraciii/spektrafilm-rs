@@ -94,6 +94,9 @@ pub struct Pipeline {
     /// Constant preflash raw 3-vector added to the print exposure before the
     /// inner log10. `[0; 3]` unless the enlarger preflash is active.
     preflash_raw: [f64; 3],
+    /// Resolved positive-conversion tone triple for the negative-to-positive
+    /// interpretation (`scanner.conversion_style`).
+    pub(crate) conversion_tones: [crate::stages::scanning::ChannelTone; 3],
     /// Output gamut compressor (built once; identity unless oklch is enabled).
     output_gamut: crate::gamut_compression::OutputGamutCompress,
     /// Data directory the spectral front-end was built from. Present on
@@ -101,57 +104,12 @@ pub struct Pipeline {
     /// when a sensitivity-affecting control changes instead of reusing a
     /// stale one.
     data_dir: Option<std::path::PathBuf>,
-    scanner_setup: Option<crate::scanner_setup::ScannerSetup>,
-    digital_reference: Option<Arc<crate::digital_reference::DigitalReference>>,
     /// Original film reference captured before calibration mutates the render profile.
     original_film: Arc<Profile>,
     fotufilm_prepared: crate::stages::grain_fotufilm::Prepared,
     cancellation: Option<Arc<AtomicBool>>,
 }
 impl Pipeline {
-    pub(crate) fn with_scanner_setup(mut self, setup: crate::scanner_setup::ScannerSetup) -> Self {
-        self.scanner_setup = Some(setup);
-        self
-    }
-    pub(crate) fn has_scanner_setup(&self) -> bool {
-        self.scanner_setup.is_some()
-    }
-    pub(crate) fn scanner_setup_provenance(
-        &self,
-        input_identity: crate::scanner_setup::ScannerInputIdentity,
-    ) -> Option<crate::scanner_setup::ScannerSetupProvenance> {
-        self.scanner_setup
-            .as_ref()
-            .map(|setup| setup.provenance(&self.film, input_identity))
-    }
-    pub(crate) fn reference_provenance(
-        &self,
-    ) -> Option<&crate::digital_reference::ReferenceProvenance> {
-        self.digital_reference
-            .as_deref()
-            .map(|reference| &reference.provenance)
-    }
-
-    pub(crate) fn prepare_scanner_setup(
-        &self,
-        full_input: &ImageBuf,
-    ) -> Result<crate::scanner_setup::ScannerSetup, String> {
-        if self.params.scanner.auto_setup == crate::params::ScannerAutoSetup::Off {
-            return Ok(crate::scanner_setup::ScannerSetup::IDENTITY);
-        }
-        crate::scanner_setup::ScannerSetup::from_image(full_input, &self.params)
-    }
-
-    fn scan_params(&self) -> std::borrow::Cow<'_, RuntimeParams> {
-        match self.scanner_setup {
-            Some(setup) => {
-                let mut params = self.params.clone();
-                setup.apply(&mut params);
-                std::borrow::Cow::Owned(params)
-            }
-            None => std::borrow::Cow::Borrowed(&self.params),
-        }
-    }
     /// Accessor for the pre-computed TC LUT (used by parity tests).
     pub fn tc_lut(&self) -> Option<&TcLut> {
         self.tc_lut.as_ref()
@@ -185,7 +143,6 @@ impl Pipeline {
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
         let mut params = params;
         crate::params_builder::normalize_runtime_topology(&self.film, &mut params);
-        crate::scanner_setup::validate_route(&self.film, &params)?;
         params.validate()?;
         params.validate_color()?;
         crate::pipeline_calibration::validate_scan_output(&params, &self.film)?;
@@ -201,34 +158,19 @@ impl Pipeline {
         let spectral_changed = crate::pipeline_calibration::spectral_changed(&self.params, &params);
         let calibration_changed =
             crate::pipeline_calibration::calibration_changed(&self.params, &params);
-        if self.params.scanner.negative_conversion_method
-            != params.scanner.negative_conversion_method
-        {
-            self.digital_reference = if params.scanner.negative_conversion_method
-                == crate::params::NegativeConversionMethod::DigitalReference
-            {
-                Some(Arc::new(
-                    crate::digital_reference::DigitalReference::prepare(
-                        &self.film,
-                        self.data_dir
-                            .as_deref()
-                            .ok_or("Digital Reference requires a runtime data directory")?,
-                    )?,
-                ))
-            } else {
-                None
-            };
-        }
         if spectral_changed || calibration_changed {
             return self.rebuild_spectral(params);
+        }
+        if params.scanner.conversion_style != self.params.scanner.conversion_style {
+            self.conversion_tones = crate::stages::scanning::style::resolve(
+                &params.scanner.conversion_style,
+                self.data_dir.as_deref(),
+            )?;
         }
         self.output_gamut = crate::gamut_compression::OutputGamutCompress::build(
             &params.io.output_gamut_compress,
             &params.io.output_color_space,
         )?;
-        if self.params != params {
-            self.scanner_setup = None;
-        }
         self.params = params;
         Ok(self)
     }
@@ -298,8 +240,6 @@ impl Pipeline {
             crate::profile::resolve_for_render(film, params.film_render.development_time);
         let mut params = params;
         crate::params_builder::normalize_runtime_topology(&film, &mut params);
-        crate::scanner_setup::validate_route(&film, &params)
-            .expect("invalid scanner auto setup route");
         crate::pipeline_calibration::validate_scan_output(&params, &film)
             .expect("invalid scan output mode");
         let mut print =
@@ -318,6 +258,9 @@ impl Pipeline {
             (params.enlarger.m_filter_neutral + params.enlarger.m_filter_shift) as f64,
             (params.enlarger.y_filter_neutral + params.enlarger.y_filter_shift) as f64,
         );
+        let conversion_tones =
+            crate::stages::scanning::style::resolve(&params.scanner.conversion_style, None)
+                .expect("validated scanner conversion style");
         let output_gamut = crate::gamut_compression::OutputGamutCompress::build(
             &params.io.output_gamut_compress,
             &params.io.output_color_space,
@@ -334,10 +277,9 @@ impl Pipeline {
             print_exposure_factor: 1.0,
             print_illuminant,
             preflash_raw: [0.0; 3],
+            conversion_tones,
             output_gamut,
             data_dir: None,
-            scanner_setup: None,
-            digital_reference: None,
             original_film,
             fotufilm_prepared,
             cancellation: None,
@@ -356,16 +298,11 @@ impl Pipeline {
             &original_film,
             params.film_render.development_time,
         );
+        let conversion_tones = crate::stages::scanning::style::resolve(
+            &params.scanner.conversion_style,
+            Some(data_dir),
+        )?;
         let calibrated = crate::pipeline_calibration::build(film, print, params, data_dir)?;
-        let digital_reference = if calibrated.params.scanner.negative_conversion_method
-            == crate::params::NegativeConversionMethod::DigitalReference
-        {
-            Some(Arc::new(
-                crate::digital_reference::DigitalReference::prepare(&calibrated.film, data_dir)?,
-            ))
-        } else {
-            None
-        };
         Ok(Self {
             film: calibrated.film,
             print: calibrated.print,
@@ -376,10 +313,9 @@ impl Pipeline {
             print_exposure_factor: calibrated.print_exposure_factor,
             print_illuminant: calibrated.print_illuminant,
             preflash_raw: calibrated.preflash_raw,
+            conversion_tones,
             output_gamut: calibrated.output_gamut,
             data_dir: calibrated.data_dir,
-            scanner_setup: None,
-            digital_reference,
             original_film,
             fotufilm_prepared,
             cancellation: None,
@@ -422,27 +358,5 @@ impl Pipeline {
         geometry.set_complete(resized.is_ok());
         drop(geometry);
         resized
-    }
-
-    /// Colour reference for one render — scanner/exposure corrections shared
-    /// by the resident and per-stage routes, computed under the
-    /// `color_reference` observation scope.
-    fn color_reference(
-        &self,
-        backend: &dyn ComputeBackend,
-    ) -> crate::color_reference::ColorReference {
-        let _observation = crate::stages::StageObservation::cpu(
-            backend,
-            "color_reference",
-            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
-        );
-        crate::color_reference::ColorReference::compute(
-            &self.film,
-            &self.print,
-            &self.params,
-            &self.print_illuminant,
-            self.print_exposure_factor,
-            self.preflash_raw,
-        )
     }
 }

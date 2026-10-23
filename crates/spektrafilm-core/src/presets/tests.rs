@@ -45,30 +45,6 @@ fn scanner_preset_import_rejects_removed_mode_and_preserves_canonical_or_omitted
     assert_eq!(applied.scanner.scan_output, "direct_scan");
 }
 
-#[test]
-fn scanner_provenance_roundtrip_rejects_fabricated_calibration() {
-    let mut params = RuntimeParams::default();
-    params.workflow.route = "input > film > scan".into();
-    params.io.scan_film = true;
-    params.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
-    let preset = Preset::capture_section(
-        "Approximate scanner",
-        Section::Scanner,
-        &params,
-        provenance(),
-    )
-    .unwrap();
-    let json = preset.to_json().unwrap();
-    let decoded = Preset::from_json_str(&json).unwrap();
-    assert_eq!(
-        decoded.provenance.scanner.as_ref().unwrap()["receiver"]["calibration_status"],
-        "approximate_uncalibrated"
-    );
-    let mut value: Value = serde_json::from_str(&json).unwrap();
-    value["provenance"]["scanner"]["receiver"]["calibration_status"] =
-        Value::String("measured".into());
-    assert!(Preset::from_json_str(&value.to_string()).is_err());
-}
 struct Temp(std::path::PathBuf);
 impl Temp {
     fn new() -> Self {
@@ -106,14 +82,7 @@ fn version_one_maps_name_and_materializes_controls() {
 }
 
 #[test]
-fn version_three_looks_rename_conversion_paths_and_map_the_exposure_pair() {
-    let legacy_scanner = serde_json::json!({
-        "positive_interpretation": "separable",
-        "positive_density_ev": 0.25,
-        "positive_balance_ev": [0.05, 0.0, -0.05],
-        "positive_contrast": 0.8,
-        "positive_dmax": 1.4,
-    });
+fn version_three_looks_map_the_exposure_pair_and_reject_retired_scanner_spelling() {
     for (pair, mode, tracking) in [
         (
             serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": true}),
@@ -149,7 +118,6 @@ fn version_three_looks_rename_conversion_paths_and_map_the_exposure_pair() {
             .as_object_mut()
             .unwrap()
             .remove("print_exposure_ev_tracking");
-        document["parameters"]["scanner"] = legacy_scanner.clone();
         document["parameters"]["enlarger"]
             .as_object_mut()
             .unwrap()
@@ -157,14 +125,6 @@ fn version_three_looks_rename_conversion_paths_and_map_the_exposure_pair() {
         let migrated = Preset::from_json_str(&document.to_string()).unwrap();
         assert_eq!(migrated.schema_version, PRESET_SCHEMA_VERSION);
         let look = migrated.look_parameters().unwrap();
-        assert_eq!(
-            look.scanner.negative_conversion_method.as_str(),
-            "separable"
-        );
-        assert_eq!(look.scanner.conversion_brightness_ev, 0.25);
-        assert_eq!(look.scanner.conversion_balance_ev, [0.05, 0.0, -0.05]);
-        assert_eq!(look.scanner.conversion_contrast, 0.8);
-        assert_eq!(look.scanner.conversion_dmax, 1.4);
         assert_eq!(look.enlarger.print_exposure_mode.as_str(), mode);
         assert_eq!(
             serde_json::to_value(&look.settings).unwrap()["print_exposure_ev_tracking"],
@@ -172,34 +132,28 @@ fn version_three_looks_rename_conversion_paths_and_map_the_exposure_pair() {
         );
         // A v4 document must not carry the legacy spelling.
         let mut current = serde_json::to_value(migrated).unwrap();
-        current["parameters"]["scanner"]["positive_density_ev"] = 0.5.into();
+        current["parameters"]["enlarger"]["normalize_print_exposure"] = true.into();
         assert!(Preset::from_json_str(&current.to_string()).is_err());
     }
+    // The retired scanner conversion spelling is rejected, not migrated:
+    // the neutral scan model has no conversion controls to map onto.
+    let preset = builtin_presets().remove(0);
+    let mut document = serde_json::to_value(preset).unwrap();
+    document["schema_version"] = 3.into();
+    document["parameters"]["scanner"]["positive_density_ev"] = 0.5.into();
+    assert!(Preset::from_json_str(&document.to_string()).is_err());
     // A single enlarger section cannot carry the tracking setting, so a
     // mixed legacy pair fails with an explicit error.
     let section = serde_json::json!({
         "schema_version": 3,
         "name": "Mixed",
         "parameters": {"enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": false}},
-        "provenance": provenance(),
     });
-    let error = Preset::from_json_str(&section.to_string()).unwrap_err();
-    assert!(error.contains("print_exposure_mode"), "{error}");
-    // The aligned pair migrates into the section without a settings group.
-    let aligned = serde_json::json!({
-        "schema_version": 3,
-        "name": "Aligned",
-        "parameters": {"scanner": {"positive_density_ev": 0.5}},
-        "provenance": provenance(),
-    });
-    let migrated = Preset::from_json_str(&aligned.to_string()).unwrap();
     assert!(
-        migrated
-            .to_json()
-            .unwrap()
-            .contains("conversion_brightness_ev")
+        Preset::from_json_str(&section.to_string())
+            .unwrap_err()
+            .contains("print_exposure_mode explicitly")
     );
-    assert!(!migrated.to_json().unwrap().contains("positive_"));
 }
 
 #[test]
@@ -752,84 +706,6 @@ fn look_resolution_normalizes_scan_mode_without_a_declared_film_scan_route() {
 }
 
 #[test]
-fn look_resolution_normalizes_approximate_receiver_for_default_paper_route() {
-    let mut current = RuntimeParams::default();
-    current.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
-    current.scanner.finish = crate::params::ScannerFinish::LabScan;
-    current.scanner.finish_strength = 0.37;
-    current.scanner.scan_output = "negative_to_positive".into();
-    let preset = Preset::capture(
-        "Approximate scan look",
-        "kodak_portra_400",
-        "kodak_portra_endura",
-        &current,
-        provenance(),
-    );
-
-    let resolved = preset.resolve(&data(), &RuntimeParams::default()).unwrap();
-    assert_eq!(
-        resolved.params.workflow.route,
-        "input > film > print > scan"
-    );
-    assert_eq!(
-        resolved.params.scanner.receiver_profile,
-        crate::params::ReceiverProfile::LegacyColorimetric
-    );
-    assert_eq!(
-        resolved.params.scanner.finish,
-        crate::params::ScannerFinish::Neutral
-    );
-    assert_eq!(resolved.params.scanner.finish_strength, 0.37);
-}
-
-#[test]
-fn look_resolution_preserves_default_lab_scan_strength_on_explicit_film_scan_route() {
-    let mut current = RuntimeParams::default();
-    current.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
-    current.scanner.finish = crate::params::ScannerFinish::LabScan;
-    current.scanner.scan_output = "negative_to_positive".into();
-    let preset = Preset::capture(
-        "Lab scan look",
-        "kodak_portra_400",
-        "kodak_portra_endura",
-        &current,
-        provenance(),
-    );
-
-    let presets = [preset];
-    let resolved = crate::process_params::resolve(
-        crate::process_params::ProcessParamsRequest {
-            film: None,
-            paper: None,
-            presets: &presets,
-            params_file: None,
-            sources: &["scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan".into()],
-            feature_profiles: &[],
-            route: Some("input > film > scan"),
-            scan_film: true,
-            scan_output: Some("negative_to_positive"),
-            input_is_raw: false,
-            input_color_space: Some("sRGB"),
-            input_cctf_decoding: Some(false),
-            require_input_declaration: true,
-            digest_mode: crate::runtime::DigestMode::ApplyStockSpecifics,
-        },
-        &data(),
-    )
-    .unwrap();
-    assert_eq!(resolved.params.workflow.route, "input > film > scan");
-    assert_eq!(
-        resolved.params.scanner.receiver_profile,
-        crate::params::ReceiverProfile::LabScanApprox
-    );
-    assert_eq!(
-        resolved.params.scanner.finish,
-        crate::params::ScannerFinish::LabScan
-    );
-    assert_eq!(resolved.params.scanner.finish_strength, 1.0);
-}
-
-#[test]
 fn section_application_rejects_new_invalid_scan_route_but_allows_legacy_state() {
     let preset = Preset::from_json_str(r#"{"schema_version":2,"name":"Negative conversion","parameters":{"scanner":{"scan_output":"negative_to_positive"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
     let mut current = RuntimeParams::default();
@@ -863,32 +739,25 @@ fn section_application_rejects_new_invalid_scan_route_but_allows_legacy_state() 
 }
 
 #[test]
-fn section_application_checks_film_corrections_and_grain_before_commit() {
+fn section_application_checks_grain_before_commit() {
     let film = test_film();
     let mut current = RuntimeParams::default();
     current.workflow.route = "input > film > scan".into();
     current.io.scan_film = true;
     current.scanner.scan_output = "negative_to_positive".into();
-    current.scanner.white_correction = false;
-    current.scanner.black_correction = false;
     current.film_render.grain.active = false;
-    for payload in [
-        serde_json::json!({"film_render":{"grain":{"active":true,"engine":"procedural"}}}),
-        serde_json::json!({"scanner":{"white_correction":true}}),
-        serde_json::json!({"scanner":{"black_correction":true}}),
-    ] {
-        let section = Preset::from_json_str(
-            &serde_json::json!({
-                "schema_version":2,"name":"Invalid scan combination","parameters":payload,
-                "provenance":provenance()
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let before = current.clone();
-        assert!(section.apply_section(&current, &film).is_err());
-        assert_eq!(current, before);
-    }
+    let section = Preset::from_json_str(
+        &serde_json::json!({
+            "schema_version":2,"name":"Invalid scan combination",
+            "parameters":{"film_render":{"grain":{"active":true,"engine":"procedural"}}},
+            "provenance":provenance()
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let before = current.clone();
+    assert!(section.apply_section(&current, &film).is_err());
+    assert_eq!(current, before);
     let section = Preset::from_json_str(r#"{"schema_version":2,"name":"Negative conversion","parameters":{"scanner":{"scan_output":"negative_to_positive"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
     current.scanner.scan_output = "direct_scan".into();
     let positive_film = profile::load_profile_by_name(&data(), "fujifilm_provia_100f").unwrap();
