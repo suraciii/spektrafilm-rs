@@ -93,7 +93,8 @@ pub fn resolve_chain(
         let replay_selector = match selected.path {
             Some(path) => std::fs::canonicalize(&path)
                 .with_context(|| format!("resolving selected preset: {}", path.display()))?
-                .display().to_string(),
+                .display()
+                .to_string(),
             None => format!("built-in:{}", selected.preset.name),
         };
         preset_selectors.push(replay_selector);
