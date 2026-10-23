@@ -432,34 +432,38 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
     let mut custom =
         ui.ctx().data(|data| data.get_temp::<f64>(id)) == Some(current) || preset.is_none();
     let mut selected = preset;
+    let mark = row_modified::RowMark::resolve(ui.ctx(), Some(PATH));
     ui.horizontal(|ui| {
-        widgets::row_label(ui, "Film Format", false).on_hover_text(HELP);
+        let label = widgets::row_label(ui, "Film Format", false).on_hover_text(HELP);
+        mark.paint(ui, &label);
         let width = ui
             .available_width()
             .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
-        let response = egui::ComboBox::from_id_salt("Film Format")
-            .selected_text(if custom {
-                "Custom"
-            } else {
-                FORMATS[preset.unwrap()].0
-            })
-            .width(width)
-            .show_ui(ui, |ui| {
-                for (index, (name, _)) in FORMATS.iter().enumerate() {
-                    if ui
-                        .selectable_label(!custom && preset == Some(index), *name)
-                        .clicked()
-                    {
-                        selected = Some(index);
-                        custom = false;
+        let response = mark.gold(ui, |ui| {
+            egui::ComboBox::from_id_salt("Film Format")
+                .selected_text(if custom {
+                    "Custom"
+                } else {
+                    FORMATS[preset.unwrap()].0
+                })
+                .width(width)
+                .show_ui(ui, |ui| {
+                    for (index, (name, _)) in FORMATS.iter().enumerate() {
+                        if ui
+                            .selectable_label(!custom && preset == Some(index), *name)
+                            .clicked()
+                        {
+                            selected = Some(index);
+                            custom = false;
+                        }
                     }
-                }
-                if ui.selectable_label(custom, "Custom").clicked() {
-                    custom = true;
-                }
-            })
-            .response
-            .on_hover_text(HELP);
+                    if ui.selectable_label(custom, "Custom").clicked() {
+                        custom = true;
+                    }
+                })
+                .response
+                .on_hover_text(HELP)
+        });
         focus_response(ui, "Film Format", &response);
         widgets::name_choice(ui, "Film Format");
     });

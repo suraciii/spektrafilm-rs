@@ -182,6 +182,9 @@ pub(crate) fn inventory() -> &'static [ControlEntry] {
             {
                 text.push_str("\nOperator correction");
             }
+            if entry.path == "camera.film_format_mm" {
+                text.push_str("\nFrame Long Edge");
+            }
             for component in &entry.components {
                 text.push('\n');
                 text.push_str(&component.label);

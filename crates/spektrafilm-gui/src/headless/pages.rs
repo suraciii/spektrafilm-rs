@@ -544,6 +544,15 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
         "opening must retain legacy 35 mm"
     );
     assert!(h.query_by_label("Frame Long Edge").is_some());
+    for query in ["Frame Long Edge", "long edge"] {
+        search_controls(h, query);
+        assert!(
+            h.query_by_label("Locate Input and capture: Camera")
+                .is_some()
+        );
+        assert!(h.query_by_label("Frame Long Edge").is_some());
+    }
+    reveal_control(h, "camera.film_format_mm");
     for (name, mm) in [("35mm", 36.0), ("120", 56.0), ("4×5", 127.0)] {
         choose(h, "Film Format", name);
         let mut expected = original.clone();
