@@ -9,10 +9,11 @@ fn data() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
 }
 fn binaries() -> Vec<&'static str> {
-    let mut bins = vec![env!("CARGO_BIN_EXE_spektrafilm")];
-    #[cfg(feature = "precision-f64")]
-    bins.push(env!("CARGO_BIN_EXE_spektrafilm-f64"));
-    bins
+    vec![
+        env!("CARGO_BIN_EXE_spektrafilm"),
+        #[cfg(feature = "precision-f64")]
+        env!("CARGO_BIN_EXE_spektrafilm-f64"),
+    ]
 }
 fn invoke(bin: &str, root: &Path, input: &str, flags: &[&str]) -> Output {
     Command::new(bin)
