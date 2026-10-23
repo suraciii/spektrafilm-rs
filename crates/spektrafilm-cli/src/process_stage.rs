@@ -49,26 +49,10 @@ pub(super) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
     Ok(())
 }
 
-fn execute(
-    args: &ProcessArgs,
-    data: &DataSelection,
-    invocation: &mut telemetry::Invocation,
-    protected: &[&Path],
-) -> Result<()> {
-    let header = if args.input.is_dir() {
-        Some(stage_artifact::read_header(&args.input)?)
-    } else {
-        None
-    };
-    let route = WorkflowRoute::parse(
-        args.workflow
-            .route
-            .as_deref()
-            .ok_or("stage processing requires --route")?,
-    );
-    if route == WorkflowRoute::Custom {
-        bail!("unsupported workflow route");
-    }
+fn execute(args: &ProcessArgs, data: &DataSelection, invocation: &mut telemetry::Invocation, protected: &[&Path]) -> Result<()> {
+    let header = if args.input.is_dir() { Some(stage_artifact::read_header(&args.input)?) } else { None };
+    let route = WorkflowRoute::parse(args.workflow.route.as_deref().context("stage processing requires --route")?);
+    if route == WorkflowRoute::Custom { bail!("unsupported workflow route"); }
     if route.artifact_input() != header.as_ref().map(|h| h.state) {
         bail!("--route input node does not match the supplied input state");
     }
@@ -382,27 +366,11 @@ fn execute(
             eprintln!("Stage storage-to-computation precision conversion: {conversion:?}");
         }
         for index in 1..=args.iters {
-            let input = if index == args.iters {
-                state.take().expect("final state")
-            } else {
-                state.as_ref().expect("restored state").clone()
-            };
-            let (attempt, result) =
-                telemetry::simulation_attempt(invocation, index as u64, |observation| {
-                    let observed = spektrafilm_backend::observed_backend::bind_backend(
-                        backend.as_ref(),
-                        observation.clone(),
-                    );
-                    stage_execution::continue_stage(
-                        input,
-                        params.clone(),
-                        print.clone(),
-                        &data.path,
-                        observed.as_ref(),
-                        seed,
-                    )
-                    .map_err(anyhow::Error::msg)
-                });
+            let input = if index == args.iters { state.take().expect("final state") } else { state.as_ref().expect("restored state").clone() };
+            let (attempt, result) = telemetry::simulation_attempt(invocation, index as u64, |observation| {
+                let observed = spektrafilm_backend::bind_backend(backend.as_ref(), observation.clone());
+                stage_execution::continue_stage(input, params.clone(), print.clone(), &data.path, observed.as_ref(), seed).map_err(anyhow::Error::msg)
+            });
             last = Some(result?);
             invocation.operation.set_saved_attempt(attempt);
         }
@@ -432,22 +400,11 @@ fn execute(
         .map_err(anyhow::Error::msg)?;
         let mut image = Some(image);
         for index in 1..=args.iters {
-            let input = if index == args.iters {
-                image.take().expect("final input")
-            } else {
-                image.as_ref().expect("prepared input").clone()
-            };
-            let (attempt, result) =
-                telemetry::simulation_attempt(invocation, index as u64, |observation| {
-                    let observed = spektrafilm_backend::observed_backend::bind_backend(
-                        backend.as_ref(),
-                        observation.clone(),
-                    );
-                    runtime
-                        .process_stage(input, observed.as_ref(), seed)
-                        .map(stage_execution::StageResult::Material)
-                        .map_err(anyhow::Error::msg)
-                });
+            let input = if index == args.iters { image.take().expect("final input") } else { image.as_ref().expect("prepared input").clone() };
+            let (attempt, result) = telemetry::simulation_attempt(invocation, index as u64, |observation| {
+                let observed = spektrafilm_backend::bind_backend(backend.as_ref(), observation.clone());
+                runtime.process_stage(input, observed.as_ref(), seed).map(stage_execution::StageResult::Material).map_err(anyhow::Error::msg)
+            });
             last = Some(result?);
             invocation.operation.set_saved_attempt(attempt);
         }

@@ -517,19 +517,9 @@ fn run_with_capture(
     // infer artifact continuation: that input always requires explicit --route.
     if args.workflow.route.is_none() && !args.input.is_dir() && !args.scan_film {
         if let Some(path) = &args.params {
-            let text = std::fs::read_to_string(path)
-                .with_context(|| format!("opening params file {}", path.display()))?;
-            let baseline = spektrafilm_core::params::sources::parse_carrier(&text, false)
-                .map_err(anyhow::Error::msg)?;
-            if let Some(route) = baseline
-                .pointer("/workflow/route")
-                .and_then(serde_json::Value::as_str)
-            {
-                let selected = spektrafilm_core::WorkflowRoute::parse(route);
-                if selected.artifact_output().is_some() && selected.artifact_input().is_none() {
-                    args.workflow.route = Some(route.to_owned());
-                }
-            }
+            args.workflow.route = spektrafilm_core::process_params::legacy_image_stage_route(path)
+                .map_err(anyhow::Error::msg)?
+                .map(|route| route.as_str().to_owned());
         }
     }
     let route = args

@@ -671,6 +671,17 @@ fn baseline_declarations(
     Ok(declarations)
 }
 
+/// Read a retained image-input material route without exposing the carrier
+/// parser or admitting implicit continuation routes for artifact input.
+pub fn legacy_image_stage_route(path: &Path) -> Result<Option<WorkflowRoute>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("opening params file {}: {e}", path.display()))?;
+    let baseline = crate::params::sources::parse_carrier(&text, false)
+        .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
+    let route = baseline.pointer("/workflow/route").and_then(Value::as_str).map(WorkflowRoute::parse);
+    Ok(route.filter(|route| route.artifact_output().is_some() && route.artifact_input().is_none()))
+}
+
 #[cfg(test)]
 mod tests;
 
