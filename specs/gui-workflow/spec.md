@@ -136,6 +136,14 @@ Undo and Redo must advance render revisions and use the same validation, invalid
 
 The header actions must name the next undoable or redoable operation and be disabled when unavailable. Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z must operate on adjustment history outside a text editor. While a text editor owns focus, its text-editing shortcuts must not unexpectedly undo a photograph adjustment.
 
+## Film format selection
+
+The Camera module must expose one **Film Format** selector with **35mm**, **120**, **4×5**, and **Custom**. These are specification labels, not numeric roll-width values. The first three choices must set `camera.film_format_mm` to exposed-image long edges of 36, 56, and 127 mm respectively. The 120 choice uses a fixed representative 56 mm scale.
+
+A specification selection must change only that canonical physical-scale value and its edit provenance. It must not change crop, aspect ratio, output dimensions, or other effect controls. It must form one undoable adjustment.
+
+Custom must expose the existing numeric editor as **Frame Long Edge**, in millimeters. Revealing Custom must not change the value or create history. External values that do not exactly match a named specification must display as Custom. Loading a state or preset must not round a value to a specification or migrate the existing factory value. No additional film-format field must be serialized.
+
 ## Numeric editor ranges
 
 An editor range is a usability bound. It is not the parameter's document bound.

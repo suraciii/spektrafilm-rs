@@ -441,7 +441,7 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
     toggle_control(h, "cmyk.active", "Enable CMYK ink style");
     assert_eq!(h.state().params.cmyk.active, cmyk_active);
 
-    edit_control(h, "camera.film_format_mm", "film format mm", "56");
+    choose_control(h, "camera.film_format_mm", "Film Format", "120");
     choose_control(
         h,
         "camera.auto_exposure_method",
@@ -526,9 +526,66 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
         2.0
     );
     save_mutate_and_reload(&mut s, "capture-controls.json", |h| {
-        edit_control(h, "camera.film_format_mm", "film format mm", "42");
+        choose_control(h, "camera.film_format_mm", "Film Format", "Custom");
+        edit(h, "Frame Long Edge", "42");
         assert_eq!(h.state().params.camera.film_format_mm, 42.0);
     });
+}
+
+#[test]
+fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let original = h.state().params.clone();
+    reveal_control(h, "camera.film_format_mm");
+    assert_eq!(
+        h.state().params,
+        original,
+        "opening must retain legacy 35 mm"
+    );
+    assert!(h.query_by_label("Frame Long Edge").is_some());
+    for (name, mm) in [("35mm", 36.0), ("120", 56.0), ("4×5", 127.0)] {
+        choose(h, "Film Format", name);
+        let mut expected = original.clone();
+        expected.camera.film_format_mm = mm;
+        let mut preparation = expected.render_preparation_state();
+        preparation
+            .explicit_section_paths
+            .push("camera.film_format_mm".into());
+        expected.restore_render_preparation_state(&preparation);
+        assert_eq!(
+            h.state().params,
+            expected,
+            "{name} must not change crop or effects"
+        );
+        assert!(h.query_by_label("Frame Long Edge").is_none());
+    }
+    click(h, "Undo");
+    assert_eq!(h.state().params.camera.film_format_mm, 56.0);
+    click(h, "Redo");
+    assert_eq!(h.state().params.camera.film_format_mm, 127.0);
+    let revision = h.state().parameter_revision;
+    choose(h, "Film Format", "Custom");
+    assert_eq!(
+        h.state().parameter_revision,
+        revision,
+        "revealing custom is not an edit"
+    );
+    edit(h, "Frame Long Edge", "42");
+    assert_eq!(h.state().params.camera.film_format_mm, 42.0);
+    click(h, "Reset Frame Long Edge to factory");
+    assert_eq!(
+        h.state().params.camera.film_format_mm,
+        original.camera.film_format_mm
+    );
+    click(h, "Undo");
+    assert_eq!(h.state().params.camera.film_format_mm, 42.0);
+    save_mutate_and_reload(&mut s, "custom-format.json", |h| {
+        choose_control(h, "camera.film_format_mm", "Film Format", "120");
+    });
+    reveal_control(&mut s.harness, "camera.film_format_mm");
+    assert_eq!(s.harness.state().params.camera.film_format_mm, 42.0);
+    assert!(s.harness.query_by_label("Frame Long Edge").is_some());
 }
 
 #[test]

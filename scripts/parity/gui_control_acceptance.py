@@ -129,9 +129,9 @@ def control_boundaries(driver, root, factory):
     scenarios = [
         ('camera.exposure_compensation_ev', 'Input and capture', 'Camera', 'exposure compensation ev',
          -10, -20, 'camera', 'exposure_compensation_ev', -10),
-        ('camera.film_format_mm', 'Input and capture', 'Camera', 'film format mm',
+        ('camera.film_format_mm', 'Input and capture', 'Camera', 'Frame Long Edge',
          1, 0, 'camera', 'film_format_mm', 1),
-        ('camera.film_format_mm', 'Input and capture', 'Camera', 'film format mm',
+        ('camera.film_format_mm', 'Input and capture', 'Camera', 'Frame Long Edge',
          1000, 2000, 'camera', 'film_format_mm', 1000),
         ('film_render.convert.exposure_compensation_ev', 'Input and capture', 'Convert', 'exposure compensation ev',
          -10, -20, 'convert', 'exposure_compensation_ev', -10),
@@ -153,6 +153,8 @@ def control_boundaries(driver, root, factory):
         driver.choose_route(3 if section == 'Convert' else 2)
         for attempt, entered in (('valid', valid), ('outside-range', invalid), ('invalid-text', 'not-a-number')):
             driver.reveal(canonical, owner, section)
+            if canonical == 'camera.film_format_mm':
+                driver.choose('Film Format', 'Custom')
             enter_number(driver, label, entered)
             actual = saved(driver, root, f'boundary-{index}-{attempt}')
             observed = actual[group][field]

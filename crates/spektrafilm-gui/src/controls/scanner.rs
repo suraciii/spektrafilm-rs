@@ -64,8 +64,8 @@ pub(crate) fn sections(
             if filter_matches(filter, "auto exposure") {
                 flags.runtime_changed |= toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera.");
             }
-            if filter_matches(filter, "film format mm") {
-                flags.runtime_changed |= param_numeric(ui, "film format mm", &mut params.camera.film_format_mm, "camera.film_format_mm", "Exposed full-image long edge in millimeters: 36 for a 24×36 mm frame, 56 for a 56×56 mm frame, 127 for 4×5 inch sheet film. This is not the roll width or the 120 roll-film designation. Physical film effects, including Grain Dye, use this scale. The editor holds to 1-1000 mm; recipes, presets and CLI parameters carry any strictly positive value.");
+            if filter_matches(filter, "Film Format") {
+                flags.runtime_changed |= film_format(ui, &mut params.camera.film_format_mm);
             }
             if filter_matches(filter, "auto exposure method") {
                 flags.runtime_changed |= choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure.");
@@ -260,6 +260,76 @@ pub(crate) fn sections(
             flags.runtime_changed |= diffusion(ui, section, diffusion_filter, paths, filter);
         });
     }
+}
+
+/// Names are film specifications; values remain exposed-image long edges.
+fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
+    const PATH: &str = "camera.film_format_mm";
+    const FORMATS: [(&str, f64); 3] = [("35mm", 36.0), ("120", 56.0), ("4×5", 127.0)];
+    const HELP: &str = "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. 35mm uses a 36 mm frame long edge; 120 uses a representative 56 mm; 4×5 uses 127 mm.";
+    if !row_path_matches(ui.ctx(), PATH) {
+        return false;
+    }
+    let _identity = row_identity(ui.ctx(), PATH);
+    let current = value.to_f64();
+    let preset = FORMATS.iter().position(|(_, mm)| *mm == current);
+    let id = ui.make_persistent_id("film-format-custom");
+    let mut custom =
+        ui.ctx().data(|data| data.get_temp::<f64>(id)) == Some(current) || preset.is_none();
+    let mut selected = preset;
+    ui.horizontal(|ui| {
+        widgets::row_label(ui, "Film Format", false).on_hover_text(HELP);
+        let width = ui
+            .available_width()
+            .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
+        let response = egui::ComboBox::from_id_salt("Film Format")
+            .selected_text(if custom {
+                "Custom"
+            } else {
+                FORMATS[preset.unwrap()].0
+            })
+            .width(width)
+            .show_ui(ui, |ui| {
+                for (index, (name, _)) in FORMATS.iter().enumerate() {
+                    if ui
+                        .selectable_label(!custom && preset == Some(index), *name)
+                        .clicked()
+                    {
+                        selected = Some(index);
+                        custom = false;
+                    }
+                }
+                if ui.selectable_label(custom, "Custom").clicked() {
+                    custom = true;
+                }
+            })
+            .response
+            .on_hover_text(HELP);
+        focus_response(ui, "Film Format", &response);
+        widgets::name_choice(ui, "Film Format");
+    });
+    let mut changed = false;
+    if !custom && let Some(index) = selected {
+        let mm = FORMATS[index].1;
+        if current != mm && row_modified::accepts_value(ui.ctx(), PATH, Value::from(mm)) {
+            *value = T::from_f64(mm);
+            record_edited_path(ui.ctx(), PATH);
+            changed = true;
+        }
+    }
+    if custom {
+        changed |= param_numeric(ui, "Frame Long Edge", value, PATH, HELP);
+    } else {
+        row_modified::offer_reset(ui, "Film Format", Some(PATH));
+    }
+    ui.ctx().data_mut(|data| {
+        if custom {
+            data.insert_temp(id, value.to_f64());
+        } else {
+            data.remove::<f64>(id);
+        }
+    });
+    changed
 }
 
 fn preflash_controls(

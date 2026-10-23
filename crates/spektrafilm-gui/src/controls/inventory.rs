@@ -234,6 +234,8 @@ fn runtime_entry(path: &str, validation: Value) -> ControlEntry {
         EditorKind::Unconnected
     } else if path == "film_render.grain.v2_profile" || path.ends_with("development_time") {
         EditorKind::Profile
+    } else if path == "camera.film_format_mm" {
+        EditorKind::Choice
     } else if validation["default"].is_array() {
         EditorKind::Tuple
     } else if validation["type"] == "bool" {
@@ -978,7 +980,7 @@ const LABELS: &[(&str, &str)] = &[
         "camera.exposure_compensation_ev",
         "exposure compensation ev",
     ),
-    ("camera.film_format_mm", "film format mm"),
+    ("camera.film_format_mm", "Film Format"),
     ("cmyk.active", "Enable CMYK ink style"),
     ("cmyk.strength", "strength"),
     ("enlarger.diffusion_filter.active", "Enlarger diffusion"),

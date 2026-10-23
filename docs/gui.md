@@ -44,6 +44,14 @@ The viewer also accepts a dropped image file through the same import path. An un
 
 Choose the base route in **Input and capture → Workflow → workflow**, the film in **Film → Film material → film profile**, and the paper in **Print → Print material → print profile**. Selecting a film keeps the current paper; selecting a paper keeps the current film. Film selection applies its workflow default and scanner normalization, reported in the header. A look preset selects the material pair and its owned controls atomically. Development-time choices follow the selected material's actual family; a material without a selectable family shows its effective development time instead.
 
+### Film Format
+
+**Input and capture → Camera → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
+
+The choices use exposed-image long edges of 36 mm, 56 mm, and 127 mm respectively. **120** uses one representative size; it does not select a square crop. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph.
+
+Existing states and presets retain their exact `camera.film_format_mm` value. A value without a matching specification, including the existing 35 mm factory value, displays as Custom. Selecting a specification is one reversible adjustment; factory reset retains the existing default.
+
 ### RAW decode draft
 
 **Input and capture → Import Raw** contains **white balance**, **temperature**, **tint**, and **lens correction**. These are decode settings, not simulated camera exposure. Editing them leaves the accepted source pixels unchanged. For a RAW source, the module reports when settings are pending and the accepted source still uses the previous settings; **Reprocess RAW** explicitly decodes the source with the draft. Successful reprocessing replaces the accepted source and starts a new adjustment history. Failure retains the accepted source and preceding history, reports the error, and leaves the pending settings visible. For an RGB source, RAW decoding is inactive and the settings are retained for the next RAW import.
