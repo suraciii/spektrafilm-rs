@@ -31,6 +31,24 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 - The capture illuminant control belongs to the Camera section. It must not be duplicated on another surface, and no second surface may edit the same leaf.
 - Input and capture → Convert exposes `film_render.convert.scan_illuminant` as the imported-capture acquisition-light declaration under [Imported capture illumination](../film-chain/lab-scan/spec.md#imported-capture-illumination). It must offer the full shared illuminant catalog and custom `BB<kelvin>` entry through the shared validator. A route without convert-film inversion must identify the control as inactive and retain its value. It must not edit the product readout illuminant.
 
+## Result identity and delivery guidance
+
+The header must identify the retained result's operation, pixel dimensions, and whether it matches current adjustments. A pending operation must not hide that identity or imply that the retained result is current.
+
+```mermaid
+flowchart LR
+    A[Accepted adjustments] --> P[Preview or Scan]
+    P --> R[Retained result]
+    R --> S[Save retained pixels]
+    A --> E[Export independent render]
+```
+
+A Preview must disclose that detail effects can differ from Scan under the existing rendering contract. Zoom percentage must not stand in for render quality. The interface must not describe Preview and Scan as differing only in size.
+
+Before Save publication, the GUI must identify the retained dimensions and disclose any mismatch with current adjustments. Saving a stale result must require an explicit choice to continue. Canceling that choice must leave controls and output unchanged. Save must not silently render current adjustments.
+
+Export must be the primary file-delivery entry. Its submission surface must identify the accepted source, output dimensions, and delivery settings. This guidance must not merge Save and Export or change their [pixel contracts](../photo-export/spec.md).
+
 ## Material controls and output composition
 
 Control placement follows [Stage and surface ownership](#stage-and-surface-ownership). Material behavior follows [Output mix and material controls](../output-mix/spec.md#user-operation). The inspector must not add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
