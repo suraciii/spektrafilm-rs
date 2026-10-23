@@ -1,13 +1,19 @@
 use super::{RuntimeParams, Tap};
 use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 
-pub(crate) const SUPPORTED_ROUTES: [&str; 6] = [
+pub(crate) const SUPPORTED_ROUTES: [&str; 12] = [
     "input",
     "input > film > scan",
     "input > film > print > scan",
     "input > convert-film > print > scan",
     "input > convert-film > scan-minus-base",
     "input > convert-film > scan",
+    "input > film",
+    "input > film > print",
+    "film > scan",
+    "film > print",
+    "film > print > scan",
+    "print > scan",
 ];
 
 /// The removed dedicated magazine workflow. Saved configurations that still
@@ -738,7 +744,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     if let Some(t) = params.taps.inject.as_deref() {
         Tap::parse(t).map_err(|e| format!("taps.inject: {e}"))?;
     }
-    if !SUPPORTED_ROUTES.contains(&params.workflow.route.as_str()) {
+    if params.workflow.route_enum() == crate::WorkflowRoute::Custom {
         return Err(format!(
             "workflow.route: unsupported route {:?}; {}",
             params.workflow.route,
@@ -765,6 +771,31 @@ mod tests {
     #[test]
     fn supported_routes_remain_valid() {
         let mut params = RuntimeParams::default();
+        for route in [
+            "input>film",
+            " input\t> film > print ",
+            "film>scan",
+            "film >print",
+            "film>print>scan",
+            " print > scan ",
+        ] {
+            params.workflow.route = route.into();
+            validate(&params).unwrap();
+        }
+        for route in [
+            "film",
+            "print",
+            "input > print",
+            "input > film > film",
+            "film > > scan",
+            "film > scan > print",
+            "Film > scan",
+            "input > convert-film",
+            "input > film > print > scan > film",
+        ] {
+            params.workflow.route = route.into();
+            assert!(validate(&params).is_err(), "invalid finite route {route}");
+        }
         for route in SUPPORTED_ROUTES {
             params.workflow.route = route.to_owned();
             validate(&params).unwrap();

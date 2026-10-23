@@ -160,37 +160,30 @@ Add `--dry-run` to either run form with a new destination to resolve every selec
 Use `inspect` to read retained measurements and `report comparison` to publish the offline
 retained-comparison page; neither command recalculates metrics.
 
-`case_conditions` exposes each selected case and seed's retained `run_evidence` by role. Read its input and target identities, actual commands, preparation declaration, resolved configuration links, and observed exposure before interpreting color differences. Without requested stage capture, observed exposure and print normalization remain unavailable; an enabled configuration flag is not a measured gain.
+`case_conditions` exposes each selected case and seed's retained `run_evidence` by role. Read its input and target identities, actual commands, preparation declaration, resolved configuration links, and any retained observed exposure before interpreting color differences. Ordinary suite/image runs have no native observation capture: exposure and prepared print normalization remain unavailable unless already retained in supported historical evidence. An enabled configuration flag is not a measured gain, and inspection must not rerender to obtain one.
 
 For each selected region, `region_readouts` exposes both sides' Lab/LCh centers and a signed three-component Lab displacement, ΔL*, ΔC*, Δh, ΔE76, ΔE00, and equal-L ΔE00 where eligible. Read `estimator` before comparing values: `bounded_lab_channel_median` and `unclipped_linear_srgb_mean` are different statistics. Repeat region selectors, for example `--region A2 --region C4 --region F2 --region D4`, to read the four TE226 focus patches when those IDs are declared. Metric selectors narrow scalar rows, not these regional records. Historical comparisons report `not_retained`; create a new comparison from retained runs to obtain the new readouts without rerendering.
 
 For a replay across renderer versions, compare the resolved values as well as the parameter-file hashes. Legacy `--params` supplies a baseline; it does not protect profile-owned values from stock initialization. Pin required inherited values with explicit `--set` sources under the [CLI composition rules](../specs/cli/spec.md#composition). Check native output or stage agreement before treating a changed result as a material-model difference.
 
-## Collect native-stage diagnosis
+## Native-stage research boundary
 
-Add `--stage-evidence` to a CPU run with `settings.preview_mode=false` to retain the renderer's native stage bundle. Capture rejects preview mode instead of changing its rendering or metering behavior. Ordinary crop and resize remain supported and carry their own stage geometry. This example reuses the generated quick suite and target:
+The [native observation contract](../specs/instrument/native-observations.md) separates dedicated research from ordinary benchmark rendering. Ordinary `run suite` and `run image`, including preflight and source-only execution, expose no optional native capture or implicit replacement. New runs retain explicit absence. Sampling, comparison, inspection, and reporting do not rerender, reconstruct missing stages, or infer applied exposure and prepared print normalization from authored settings.
+
+Dedicated [`experiment run`](../specs/instrument/experiment/spec.md) and [`measure run`](measurement.md#measure-run) retain native observations by attaching the common core observer to their actual CPU f64 execution, not by passing capture flags to `process`. Their replay records identify the owning instrument invocation, dependencies, seed, and observer configuration, never fabricated process argv. Experimental export uses positional bundle input:
 
 ```bash
-./target/release/spektrafilm-lab run suite \
-    --suite /tmp/spektrafilm-benchmark-fixtures/quick.json \
-    --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
-    --case color_chart --stage-evidence \
-    --out /tmp/spektrafilm-diagnostic-run
-./target/release/spektrafilm-lab compare pairs \
-    --run /tmp/spektrafilm-diagnostic-run --against input \
-    --out /tmp/spektrafilm-diagnostic-comparison
-./target/release/spektrafilm-lab inspect \
-    --comparison /tmp/spektrafilm-diagnostic-comparison --case color_chart
-./target/release/spektrafilm-lab report comparison \
-    --comparison /tmp/spektrafilm-diagnostic-comparison \
-    --out /tmp/spektrafilm-diagnostic-review
+spektrafilm-lab experiment run --experiment experiment.json --out research-run
+spektrafilm-lab experiment export research-run/bundle --out research-arrays
 ```
 
-The bundle retains native RGB, film-layer exposure and developed channels, print-layer exposure and developed channels, and final RGB where the selected route executes those stages. Each buffer identifies its geometry, domain, storage layout, host precision, and hash. Skipped stages carry an explicit reason. Actual exposure and prepared print normalization come from the same renderer execution; the benchmark does not reconstruct them. This capture is opt-in, separate from ordinary telemetry, and does not change image parameters or output. A GPU target is not silently replaced by CPU execution. `run --dry-run --stage-evidence` records the request but cannot observe exposure or stage values.
+An experiment document declares input identity, parameter sources, and matching case/grid. Its shared process handler attaches a private instrument observer to the same render that supplies the image. `command.json` records the owning experiment invocation, executable and declaration hashes, seed, and native observer configuration; it is not a process command with a retired capture flag. A bundle contains the native buffers actually produced by that execution, with geometry, domain, channel axis, precision, hashes, and explicit skipped-stage reasons. The scientific wire filename remains `stage-evidence.json`. Experiment observation requires the complete film-and-print scan route; measurement may deliberately observe narrower ranges. GPU and preview requests fail rather than changing execution or metering semantics. Human Boolean `--debug` does not capture arrays. A `.sfstage` film/print artifact is a resumable state, not an observation bundle.
+
+Existing `sample --from-evidence` and `sample --from-run` remain research readers for supported retained bundles and historical captured runs. They reject absent observations without rendering or resuming a stage artifact. A newly rendered ordinary run is not a source of native buffers merely because its final image exists.
 
 The report opens the selected image pair, a short condition summary, and the available regional evidence. Selecting a region keeps other regions, failed cases, and worst regressions reachable. The page never calculates measurements or matches exposure. A visual pair without measured evidence shows that limitation instead of borrowing another pair's score. Unknown reference processing remains visual-only; stage provenance does not qualify that reference for numerical distances.
 
-`stage_readouts` exposes each declared region's native channel mean, minimum, and maximum, with channel order, units, precision, and buffer links. Uncaptured stages and grids without a proven region mapping remain unavailable. The report places color coordinates, signed displacements, and native-stage tables inside each region's detail panel. Rounded tables keep full-precision records in a disclosure. Both CLI and report read the same retained comparison; neither recomputes measurements or adjusts exposure. Native buffers remain downloadable evidence, not page imagery.
+`stage_readouts` exposes retained native channel means, minima, and maxima with channel order, units, precision, and buffer links when supported evidence and a proven region mapping exist. For new ordinary suite/image runs, native observations remain explicitly absent; neither a later comparison nor a report obtains them by rerendering. Historical uncaptured stages and grids without a proven mapping remain unavailable. The report places retained color coordinates, signed displacements, and native-stage tables inside region details, keeping full precision in a disclosure. CLI and report project the same retained comparison without recomputing measurements or adjusting exposure; native buffers are downloadable evidence, not page imagery.
 
 Provide reference `regions` when a visual-only reference needs patch crops. These coordinates describe the reference image, not the simulation. Without reference geometry, its patch crop remains unavailable. The report folds the complete measurement table below the image review.
 

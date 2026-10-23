@@ -12,6 +12,9 @@ _Avoid_: Receiver capture, record density
 **Record density**: The optical density formed in one developed record of a film or a photographic paper. It describes the developed material, before a scan interprets it.
 _Avoid_: Scanned density, scan capture
 
+**Simulated material state**: The completed state of a modeled film or print material, with the material interpretation and physical context needed for later operations. Continuing from this state does not repeat the operations that formed it.
+_Avoid_: Debug dump, scan capture
+
 **Scanned medium**: The developed film or photographic paper read for digital output. Its native polarity is independent of the delivered image's polarity.
 
 **Scanner lamp**: The single physical light source of a scan. Its accepted values are the illuminant vocabulary the enlarger lamp uses: `D50`, `D55`, `D65`, `T`, `TH-KG3`, `TH-KG3-L`, `K75P`, and a `BB<kelvin>` blackbody token. `D55` is the default.

@@ -442,10 +442,6 @@ impl MeasureFixture {
         self.command(env!("CARGO_BIN_EXE_spektrafilm-lab"), args)
     }
 
-    fn panel(&self, args: &[&str]) -> Output {
-        self.command(env!("CARGO_BIN_EXE_spektrafilm-f64"), args)
-    }
-
     fn command(&self, binary: &str, args: &[&str]) -> Output {
         self.command_env(binary, args, &[])
     }
@@ -499,29 +495,61 @@ impl MeasureFixture {
         self.lab(&args)
     }
 
-    /// Execute the same values as a raster through the user binary.
+    /// Observe the raster through the dedicated experiment owner.
     fn process(&self, bundle: &Path) -> Output {
-        let mut args = vec![
-            "process".to_owned(),
-            self.root.join("input.png").display().to_string(),
-            "--output".to_owned(),
-            self.root.join("out.png").display().to_string(),
-            "--stage-evidence".to_owned(),
-            bundle.display().to_string(),
-            "--film".to_owned(),
-            "kodak_portra_400".to_owned(),
-            "--backend".to_owned(),
-            "cpu".to_owned(),
-            "--input-color-space".to_owned(),
-            "sRGB".to_owned(),
-            "--input-cctf-decoding".to_owned(),
-            "true".to_owned(),
-            "--data-dir".to_owned(),
-            self.data.display().to_string(),
-        ];
-        args.extend(POINT_WISE.iter().map(|value| (*value).to_owned()));
-        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-        self.panel(&borrowed)
+        use sha2::{Digest, Sha256};
+        let suite = self.root.join("capture-suite.json");
+        let regions: Vec<Value> = (0..CHART_WIDTH)
+            .map(|x| {
+                json!({
+                    "id": format!("p{x:02}"), "geometry": [x, 0, 1, 1]
+                })
+            })
+            .collect();
+        std::fs::write(
+            &suite,
+            serde_json::to_vec(&json!({
+                "cases": [{"id": "chart", "regions": regions}]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let patch: serde_json::Map<String, Value> = (0..CHART_WIDTH)
+            .map(|x| (format!("p{x:02}"), json!([0, x])))
+            .collect();
+        let document = self.root.join("capture-experiment.json");
+        let sources: Vec<&str> = POINT_WISE
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| pair[1])
+            .collect();
+        std::fs::write(&document, serde_json::to_vec(&json!({
+            "schema_version": 1, "id": "chart",
+            "chain": {"film": "kodak_portra_400", "input_color_space": "sRGB", "input_cctf_decoding": true, "set": sources},
+            "input": {"path": "input.png", "sha256": format!("{:x}", Sha256::digest(std::fs::read(self.root.join("input.png")).unwrap()))},
+            "case": {"id": "chart", "suite": "capture-suite.json"},
+            "grid": {"rows": 1, "cols": CHART_WIDTH, "patch_px": 1, "gap_px": 0, "origin": [0, 0], "patch": patch},
+            "seeds": [0]
+        })).unwrap()).unwrap();
+        let out = bundle.with_extension("experiment");
+        let result = self.lab(&[
+            "experiment",
+            "run",
+            "--experiment",
+            document.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--output-format",
+            "png",
+            "--force",
+            "--data-dir",
+            self.data.to_str().unwrap(),
+        ]);
+        if result.status.success() {
+            std::fs::rename(out.join("bundle"), bundle).unwrap();
+        }
+        result
     }
 }
 
@@ -677,7 +705,7 @@ fn assert_close(label: &str, got: [f64; 3], want: [f64; 3]) {
 }
 
 #[test]
-fn measure_run_matches_process_stage_evidence_on_log_e_film() {
+fn measure_run_matches_experiment_observation_on_log_e_film() {
     let f = MeasureFixture::new();
     let bundle = f.root.join("bundle");
     let result = f.process(&bundle);
@@ -712,16 +740,47 @@ fn measure_run_matches_process_stage_evidence_on_log_e_film() {
         }
     }
 
-    // Repeated runs on identical inputs produce identical artifacts.
+    // Replay the owning declaration from another working directory. Only the
+    // output destination changes, so numerical readings must be byte-identical.
     let repeat = f.root.join("lab-repeat");
-    assert!(f.measure_with(&stimuli, &repeat).status.success());
-    for name in ["run.json", "readings.csv"] {
-        assert_eq!(
-            std::fs::read(lab.join(name)).unwrap(),
-            std::fs::read(repeat.join(name)).unwrap(),
-            "{name} differs between identical runs"
-        );
-    }
+    let original: Value =
+        serde_json::from_slice(&std::fs::read(lab.join("run.json")).unwrap()).unwrap();
+    let mut argv: Vec<String> = original["command"]["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(&argv[..2], &["measure", "run"]);
+    let output_index = argv.iter().position(|value| value == "--out").unwrap() + 1;
+    argv[output_index] = repeat.display().to_string();
+    let result = Command::new(original["command"]["executable"]["path"].as_str().unwrap())
+        .args(&argv)
+        .current_dir(&f.root)
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", f.root.join("config"))
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        std::fs::read(lab.join("readings.csv")).unwrap(),
+        std::fs::read(repeat.join("readings.csv")).unwrap()
+    );
+    assert_eq!(
+        original["command"]["executable"],
+        original["identity"]["renderer"]
+    );
+    let replayed: Value =
+        serde_json::from_slice(&std::fs::read(repeat.join("run.json")).unwrap()).unwrap();
+    assert_eq!(original["declaration"]["seed"], 0);
+    assert_eq!(replayed["declaration"]["seed"], 0);
+    assert_eq!(original["identity"], replayed["identity"]);
     assert!(
         !f.measure_with(&stimuli, &lab).status.success(),
         "an existing artifact must not be replaced"
@@ -732,6 +791,17 @@ fn measure_run_matches_process_stage_evidence_on_log_e_film() {
     assert_eq!(record["kind"], "run");
     assert_eq!(record["executed"], true);
     assert_eq!(record["declaration"]["enter"], "rgb_in");
+    assert_eq!(record["observer"]["kind"], "native_stage_capture");
+    assert_eq!(record["observer"]["backend"], "cpu");
+    assert_eq!(record["observer"]["host_precision"], "f64");
+    assert_eq!(record["observer"]["inject"], "rgb_in");
+    assert_eq!(record["observer"]["collect"], "rgb_out");
+    assert_eq!(record["observer"]["directory"], "evidence");
+    assert!(
+        lab.join(record["observer"]["directory"].as_str().unwrap())
+            .join("stage-evidence.json")
+            .is_file()
+    );
     assert_eq!(
         record["identity"]["input_declaration"]["cctf_decoding"],
         true
@@ -1982,6 +2052,14 @@ fn measure_records_the_parameter_files_it_declared() {
         .as_array()
         .unwrap();
     assert_eq!(files.len(), 1, "{record}");
+    assert_eq!(
+        record["command"]["dependencies"]["parameters"],
+        record["identity"]["parameters"]["files"]
+    );
+    assert_eq!(
+        record["command"]["dependencies"]["stimulus"],
+        record["identity"]["stimulus"]
+    );
     let path = files[0]["path"].as_str().unwrap();
     assert!(path.ends_with("edits.toml"), "{path}");
     assert!(
@@ -2204,10 +2282,11 @@ fn measure_verify_reports_identity_differences_without_failing() {
 fn measure_verify_reads_a_comparison_record_and_rehashes_its_sides() {
     let f = MeasureFixture::new();
     let bundle = f.root.join("verify-bundle");
+    let observation = f.process(&bundle);
     assert!(
-        f.process(&bundle).status.success(),
+        observation.status.success(),
         "{}",
-        String::from_utf8_lossy(&f.process(&bundle).stderr)
+        String::from_utf8_lossy(&observation.stderr)
     );
     let lab = f.root.join("verify-lab");
     assert!(
@@ -2440,4 +2519,90 @@ fn automatic_standard_is_not_a_point_wise_measurement_but_density_taps_remain_av
             assert!(out.join("readings.csv").exists());
         }
     }
+}
+
+#[test]
+fn measurement_replay_pins_named_user_preset() {
+    let f = MeasureFixture::new();
+    let library = f.root.join("config/presets");
+    std::fs::create_dir_all(&library).unwrap();
+    let preset = library.join("Replay look.json");
+    std::fs::write(
+        &preset,
+        serde_json::to_vec(&json!({
+            "schema_version": spektrafilm_core::presets::PRESET_SCHEMA_VERSION,
+            "name": "Replay look",
+            "film_profile": {"stock": "kodak_portra_400"},
+            "print_profile": {"stock": "kodak_portra_endura"},
+            "parameters": {"enlarger": {}, "scanner": {}, "film_render": {}, "print_render": {},
+                "camera_diffusion_filter": {"active": false}, "output_mix": {"amount": 1.0}},
+            "provenance": {"implementation_version": "test", "model_version": "test"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let out = f.root.join("named-original");
+    let result = f.lab(&[
+        "measure",
+        "run",
+        "--stimuli",
+        f.stimuli.to_str().unwrap(),
+        "--enter",
+        "rgb_in",
+        "--read",
+        "rgb_in",
+        "--preset",
+        "Replay look",
+        "--data-dir",
+        f.data.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(out.join("run.json")).unwrap()).unwrap();
+    assert_eq!(record["declaration"]["seed"], 0);
+    assert_eq!(record["identity"]["parameters"]["seed"], 0);
+    assert_eq!(
+        record["declaration"]["preset"][0],
+        preset.canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(
+        record["command"]["dependencies"]["parameters"][0]["sha256"],
+        spektrafilm_benchmark::common::sha256_file(&preset).unwrap()
+    );
+    let replay_out = f.root.join("named-replay");
+    let mut argv: Vec<String> = record["command"]["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect();
+    let output_index = argv.iter().position(|value| value == "--out").unwrap() + 1;
+    argv[output_index] = replay_out.display().to_string();
+    let result = Command::new(record["command"]["executable"]["path"].as_str().unwrap())
+        .args(argv)
+        .current_dir(&f.root)
+        .env("SPEKTRAFILM_CONFIG_DIR", f.root.join("empty-config"))
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let replayed: Value =
+        serde_json::from_slice(&std::fs::read(replay_out.join("run.json")).unwrap()).unwrap();
+    assert_eq!(record["identity"], replayed["identity"]);
+    assert_eq!(replayed["declaration"]["seed"], 0);
+    assert_eq!(
+        std::fs::read(out.join("readings.csv")).unwrap(),
+        std::fs::read(replay_out.join("readings.csv")).unwrap()
+    );
 }

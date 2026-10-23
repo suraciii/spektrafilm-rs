@@ -417,21 +417,9 @@ fn execute(
 
 fn execute_run_suite(args: RunSuiteArgs) -> Result<(serde_json::Value, i32), BenchError> {
     if args.dry_run {
-        runner::preflight(
-            &args.suite,
-            &args.target,
-            &args.out,
-            &args.case_ids,
-            args.stage_evidence,
-        )
+        runner::preflight(&args.suite, &args.target, &args.out, &args.case_ids)
     } else {
-        runner::run(
-            &args.suite,
-            &args.target,
-            &args.out,
-            &args.case_ids,
-            args.stage_evidence,
-        )
+        runner::run(&args.suite, &args.target, &args.out, &args.case_ids)
     }
 }
 
@@ -455,7 +443,6 @@ fn execute_run_image(args: RunImageArgs) -> Result<(serde_json::Value, i32), Ben
             &args.target,
             &args.out,
             &[],
-            args.stage_evidence,
         )
     } else {
         runner::run_suite(
@@ -464,7 +451,6 @@ fn execute_run_image(args: RunImageArgs) -> Result<(serde_json::Value, i32), Ben
             &args.target,
             &args.out,
             &[],
-            args.stage_evidence,
         )
     }
 }
@@ -489,8 +475,7 @@ fn execute_run_legacy(
             || args.reference_info.is_some()
             || args.preparation.is_some()
             || args.target.is_some()
-            || !args.case_ids.is_empty()
-            || args.stage_evidence)
+            || !args.case_ids.is_empty())
     {
         return Err(BenchError::new(
             "argument_syntax",
@@ -563,7 +548,6 @@ fn execute_run_legacy(
             out,
             case_ids: args.case_ids,
             dry_run: args.dry_run,
-            stage_evidence: args.stage_evidence,
         });
     }
     let configuration = args
@@ -585,7 +569,6 @@ fn execute_run_legacy(
         target,
         out,
         dry_run: args.dry_run,
-        stage_evidence: args.stage_evidence,
     })
 }
 fn execute_compare_legacy(

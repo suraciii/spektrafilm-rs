@@ -64,7 +64,8 @@ pub fn dispatch_with_result(command: &ExperimentCommand) -> Result<(serde_json::
 
 /// Run one declared experiment and publish its boundary values.
 fn run(args: &ExperimentRunArgs) -> Result<()> {
-    let document_path = absolute(&args.experiment)?;
+    let document_path = std::fs::canonicalize(&args.experiment)
+        .with_context(|| format!("resolving experiment: {}", args.experiment.display()))?;
     let text = read_document(&document_path)?;
     let document: ExperimentDocument = parse_document(&text, &document_path)?;
     let document_root = document_root(&document_path)?;
@@ -130,6 +131,13 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     ensure_describable_route(resolved_route)?;
+    for (field, expected) in [("inject", "rgb_in"), ("collect", "rgb_out")] {
+        if let Some(value) = resolved.params["taps"][field].as_str()
+            && value != expected
+        {
+            bail!("taps.{field}={value:?} omits required experiment boundaries; use {expected:?}");
+        }
+    }
     let process_args = ProcessArgs {
         backend: Some(crate::Backend::Cpu),
         input: input_path,
@@ -199,12 +207,46 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
         dry_run_format: None,
         seed: Some(document.seeds[0]),
         raw_out: None,
-        stage_evidence: Some(bundle_dir.clone()),
+        debug: false,
         iters: 1,
         data_dir: data.path.clone(),
     };
-    let command_vector = command_vector(args.output_format, &process_args, &set_sources);
-    process::run_with_data_dir(process_args, data)?;
+    let command_record = command_record(args, &document_path, &suite_path, &out, &process_args)?;
+    // Destination validation resolves file identities against an existing
+    // parent. Only create the observer tree after declarations resolve.
+    std::fs::create_dir_all(&bundle_dir)
+        .with_context(|| format!("creating observation directory: {}", bundle_dir.display()))?;
+    // The shared handler protects process inputs. The experiment additionally
+    // owns declarations that must not be overwritten by observer publication.
+    let protected = [document_path.as_path(), suite_path.as_path()];
+    for name in std::iter::once("stage-evidence.json".to_owned()).chain(
+        spektrafilm_core::stage_evidence::StageId::ORDER
+            .iter()
+            .map(|stage| format!("{}.f64", stage.id())),
+    ) {
+        for destination in [
+            bundle_dir.join(&name),
+            bundle_dir.join(format!("{name}.tmp")),
+        ] {
+            match spektrafilm_core::telemetry::validate_report_destination(&destination, &protected)
+            {
+                Ok(_) => {}
+                // The shared handler owns destination shape validation and
+                // clears a valid stale completeness marker before rejecting
+                // an unwritable buffer. Do not bypass that lifecycle here.
+                Err(spektrafilm_core::telemetry::PersistenceError::InvalidDestination) => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "observation destination conflicts: {}",
+                            destination.display()
+                        )
+                    });
+                }
+            }
+        }
+    }
+    process::run_with_native_capture(process_args, data, &bundle_dir)?;
 
     let manifest_path = bundle_dir.join("stage-evidence.json");
     let manifest: Value =
@@ -264,7 +306,7 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
             suite_path: &suite_path,
             resolved,
             manifest,
-            command_vector,
+            command_record,
         },
     ) {
         // A failed record write must not leave a stale, consumable bundle
@@ -284,18 +326,10 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
 fn ensure_describable_route(route: &str) -> Result<()> {
     use spektrafilm_core::telemetry::WorkflowRoute;
     let parsed = WorkflowRoute::parse(route);
-    if parsed.as_str().is_empty() {
+    if parsed.as_str() != "input > film > print > scan" {
         bail!(
-            "unknown workflow route {route:?}; supported routes are \
-             \"input > film > print > scan\", \"input > convert-film > print > scan\", \
-             \"input > convert-film > scan-minus-base\""
-        );
-    }
-    if !parsed.prints() {
-        bail!(
-            "route {route:?} does not execute the print development boundary; \
-             the published bundle would not carry the print stages — use a print route \
-             (\"input > film > print > scan\" or \"input > convert-film > print > scan\")"
+            "route {route:?} does not execute every required film and print development boundary; \
+             experiment observation requires \"input > film > print > scan\""
         );
     }
     Ok(())
@@ -303,7 +337,7 @@ fn ensure_describable_route(route: &str) -> Result<()> {
 
 /// Convert one bundle's buffers into `.npy` arrays.
 fn export(args: &ExperimentExportArgs) -> Result<()> {
-    let bundle_dir = absolute(&args.stage_evidence)?;
+    let bundle_dir = absolute(&args.input)?;
     let manifest_path = bundle_dir.join("stage-evidence.json");
     let manifest: Value = serde_json::from_str(
         &std::fs::read_to_string(&manifest_path)
@@ -1014,7 +1048,7 @@ struct Records<'a> {
     suite_path: &'a Path,
     resolved: ResolvedChain,
     manifest: Value,
-    command_vector: Vec<String>,
+    command_record: Value,
 }
 
 /// Write `resolved.json`, `command.json`, and `report.json` beside the
@@ -1027,7 +1061,7 @@ fn write_records(out: &Path, force: bool, records: &Records<'_>) -> Result<()> {
         suite_path,
         resolved,
         manifest,
-        command_vector,
+        command_record,
     } = records;
     let resolved_text = serde_json::to_string_pretty(&json!({
         "schema_version": 1,
@@ -1041,10 +1075,7 @@ fn write_records(out: &Path, force: bool, records: &Records<'_>) -> Result<()> {
         "edits": resolved.edits,
         "seed": document.seeds[0],
     }))?;
-    let command_text = serde_json::to_string_pretty(&json!({
-        "argv": command_vector,
-        "cwd": std::env::current_dir().ok().map(|path| path.display().to_string()),
-    }))?;
+    let command_text = serde_json::to_string_pretty(command_record)?;
     let report_text = serde_json::to_string_pretty(&json!({
         "schema_version": 1,
         "tool": {"name": "spektrafilm-lab", "version": env!("CARGO_PKG_VERSION")},
@@ -1100,77 +1131,103 @@ fn write_records(out: &Path, force: bool, records: &Records<'_>) -> Result<()> {
     .map_err(anyhow::Error::msg)
 }
 
-/// The full `process` argument vector the executed run used, including the
-/// `--stage-evidence` destination and every `--set` source, so a retained run
-/// is reproducible.
+/// Replay the owning experiment operation, including command-line overrides.
+/// Capture is an instrument-owned observer, not a fictional process option.
 fn command_vector(
-    output_format: OutputFormatArg,
-    args: &ProcessArgs,
-    set_sources: &[PathBuf],
+    args: &ExperimentRunArgs,
+    document: &Path,
+    out: &Path,
+    data: &Path,
 ) -> Vec<String> {
     let mut argv = vec![
-        "process".to_owned(),
-        args.input.display().to_string(),
-        "--output".to_owned(),
-        args.output
-            .as_ref()
-            .expect("output is set")
-            .display()
-            .to_string(),
-        "--format".to_owned(),
-        output_format.into_name().to_owned(),
-        "--backend".to_owned(),
-        "cpu".to_owned(),
-        "--stage-evidence".to_owned(),
-        args.stage_evidence
-            .as_ref()
-            .expect("stage evidence is set")
-            .display()
-            .to_string(),
-        "--seed".to_owned(),
-        args.seed.expect("seed is set").to_string(),
-        "--iters".to_owned(),
-        args.iters.to_string(),
-        // --experiment is not a process flag; the document is recorded in report.json.
-        // It is omitted so the vector is a replayable process invocation.
+        "experiment".to_owned(),
+        "run".to_owned(),
+        "--experiment".to_owned(),
+        document.display().to_string(),
+        "--out".to_owned(),
+        out.display().to_string(),
+        "--output-format".to_owned(),
+        args.output_format.into_name().to_owned(),
+        "--data-dir".to_owned(),
+        data.display().to_string(),
     ];
-    if let Some(film) = &args.film {
-        argv.push("--film".to_owned());
-        argv.push(film.clone());
+    if args.force {
+        argv.push("--force".to_owned());
     }
-    if let Some(paper) = &args.paper {
-        argv.push("--paper".to_owned());
-        argv.push(paper.clone());
+    if let Some(film) = &args.chain.film {
+        argv.extend(["--film".to_owned(), film.clone()]);
     }
-    for selector in &args.preset {
-        argv.push("--preset".to_owned());
-        argv.push(selector.clone());
+    if let Some(paper) = &args.chain.paper {
+        argv.extend(["--paper".to_owned(), paper.clone()]);
     }
-    if let Some(params) = &args.params {
-        argv.push("--params".to_owned());
-        argv.push(params.display().to_string());
+    for selector in &args.chain.preset {
+        argv.extend(["--preset".to_owned(), selector.clone()]);
     }
-    for source in set_sources {
-        argv.push("--set".to_owned());
-        argv.push(source.display().to_string());
+    for source in &args.chain.sources {
+        argv.extend(["--set".to_owned(), source.clone()]);
     }
-    if let Some(route) = &args.workflow.route {
-        argv.push("--route".to_owned());
-        argv.push(route.clone());
+    if let Some(route) = &args.chain.route {
+        argv.extend(["--route".to_owned(), route.clone()]);
     }
-    if let Some(scan_output) = &args.workflow.scan_output {
-        argv.push("--scan-output".to_owned());
-        argv.push(scan_output.clone());
-    }
-    if let Some(color_space) = &args.input_color_space {
-        argv.push("--input-color-space".to_owned());
-        argv.push(color_space.clone());
-    }
-    if let Some(decoding) = args.input_cctf_decoding {
-        argv.push("--input-cctf-decoding".to_owned());
-        argv.push(decoding.to_string());
+    if let Some(scan_output) = &args.chain.scan_output {
+        argv.extend(["--scan-output".to_owned(), scan_output.clone()]);
     }
     argv
+}
+
+/// Identity of the owning invocation and every parameter declaration it used.
+fn command_record(
+    args: &ExperimentRunArgs,
+    document: &Path,
+    suite: &Path,
+    out: &Path,
+    process: &ProcessArgs,
+) -> Result<Value> {
+    fn dependency(path: &Path, role: &str) -> Result<Value> {
+        let path = std::fs::canonicalize(path)
+            .with_context(|| format!("resolving {role}: {}", path.display()))?;
+        let sha256 = spektrafilm_benchmark::common::sha256_file(&path)?;
+        Ok(json!({"role": role, "path": path, "sha256": sha256}))
+    }
+    let executable = dependency(&std::env::current_exe()?, "executable")?;
+    let mut dependencies = vec![
+        dependency(document, "experiment")?,
+        dependency(suite, "suite")?,
+    ];
+    if let Some(params) = &process.params {
+        dependencies.push(dependency(params, "params")?);
+    }
+    for source in &process.sources {
+        if let Some(path) = file_source_path(source) {
+            dependencies.push(dependency(Path::new(path), "set")?);
+        }
+    }
+    let library = PresetLibrary::default();
+    for selector in &process.preset {
+        let selected = crate::preset::select(&library, selector)?;
+        if let Some(path) = selected.path {
+            dependencies.push(dependency(&path, "preset")?);
+        } else {
+            let content = serde_json::to_value(&selected.preset)?;
+            dependencies.push(json!({"role": "preset", "selector": selector,
+                "sha256": format!("{:x}", Sha256::digest(serde_json::to_vec(&content)?)), "document": content}));
+        }
+    }
+    let data = std::fs::canonicalize(&process.data_dir)?;
+    Ok(json!({
+        "argv": command_vector(args, document, out, &data),
+        "cwd": std::env::current_dir()?,
+        "executable": executable,
+        "dependencies": dependencies,
+        "seed": process.seed,
+        "observer": {
+            "kind": "native_stage_capture", "schema_version": BUNDLE_SCHEMA_VERSION,
+            "directory": out.join("bundle"), "backend": "cpu", "host_precision": "f64",
+            "buffer_dtype": "f64", "inject": "rgb_in", "collect": "rgb_out",
+            "stages": spektrafilm_core::stage_evidence::StageId::ORDER
+                .iter().map(|stage| stage.id()).collect::<Vec<_>>(),
+        },
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -2025,12 +2082,7 @@ mod tests {
 
     #[test]
     fn accepts_a_route_the_bundle_can_describe() {
-        for route in [
-            "input > film > print > scan",
-            "input > convert-film > print > scan",
-        ] {
-            ensure_describable_route(route).unwrap();
-        }
+        ensure_describable_route("input > film > print > scan").unwrap();
     }
 
     #[test]
@@ -2042,6 +2094,11 @@ mod tests {
             "input > film > scan",
             "input > convert-film > scan",
             "input > convert-film > scan-minus-base",
+            "input > convert-film > print > scan",
+            "input > film",
+            "input > film > print",
+            "film > print > scan",
+            "print > scan",
             "not a route",
         ] {
             let error = ensure_describable_route(route).unwrap_err().to_string();
@@ -2050,35 +2107,56 @@ mod tests {
     }
 
     #[test]
-    fn builds_a_reproducible_command_vector() {
+    fn builds_a_replayable_owning_experiment_command() {
         let dir = scratch();
-        let _document = dir.join("experiment.json");
-        let set_source = dir.join("grain.toml");
-        let mut args = ProcessArgs {
-            input: dir.join("input.png"),
-            output: Some(dir.join("output.tiff")),
-            stage_evidence: Some(dir.join("bundle")),
-            seed: Some(0),
-            ..ProcessArgs::default()
+        let document = dir.join("experiment.json");
+        let args = ExperimentRunArgs {
+            experiment: document.clone(),
+            out: dir.join("report"),
+            output_format: OutputFormatArg::Tiff,
+            force: true,
+            chain: ChainArgs {
+                film: Some("kodak_portra_400".to_owned()),
+                paper: None,
+                preset: vec!["look.toml".to_owned()],
+                sources: vec![
+                    "grain.toml".to_owned(),
+                    "camera.exposure_compensation_ev=1".to_owned(),
+                ],
+                route: Some("input > film > print > scan".to_owned()),
+                scan_output: Some("direct_scan".to_owned()),
+                seed: 0,
+                data_dir: None,
+            },
         };
-        args.film = Some("kodak_portra_400".to_owned());
-        args.workflow.route = Some("input > film > scan".to_owned());
-        args.sources = vec![set_source.display().to_string()];
-        let argv = command_vector(
-            OutputFormatArg::Tiff,
-            &args,
-            std::slice::from_ref(&set_source),
+        let argv = command_vector(&args, &document, &args.out, &dir.join("data"));
+        assert_eq!(
+            argv,
+            vec![
+                "experiment",
+                "run",
+                "--experiment",
+                document.to_str().unwrap(),
+                "--out",
+                args.out.to_str().unwrap(),
+                "--output-format",
+                "tiff",
+                "--data-dir",
+                dir.join("data").to_str().unwrap(),
+                "--force",
+                "--film",
+                "kodak_portra_400",
+                "--preset",
+                "look.toml",
+                "--set",
+                "grain.toml",
+                "--set",
+                "camera.exposure_compensation_ev=1",
+                "--route",
+                "input > film > print > scan",
+                "--scan-output",
+                "direct_scan",
+            ]
         );
-        assert_eq!(argv[0], "process");
-        assert!(argv.contains(&"cpu".to_owned()));
-        assert!(argv.contains(&"--stage-evidence".to_owned()));
-        assert!(!argv.contains(&"--experiment".to_owned()));
-        assert!(argv.contains(&"--set".to_owned()));
-        assert!(argv.contains(&"--route".to_owned()));
-        assert!(argv.contains(&"kodak_portra_400".to_owned()));
-        assert!(argv.contains(&dir.join("bundle").display().to_string()));
-        assert!(argv.contains(&dir.join("grain.toml").display().to_string()));
-        assert!(argv.contains(&"--format".to_owned()));
-        assert!(argv.contains(&"tiff".to_owned()));
     }
 }

@@ -1,4 +1,4 @@
-//! Opt-in native stage evidence (`process --stage-evidence`).
+//! Instrument-owned native stage observations.
 //!
 //! One `StageCapture` records the boundary values of one executed render and
 //! publishes them as a bundle: one f64 buffer per available stage plus the
@@ -602,7 +602,7 @@ pub fn ensure_supported_params(params: &RuntimeParams) -> Result<(), String> {
             "stage evidence capture does not support preview mode: preview bounding \
              resizes the decoded source before metering and the bundle would not \
              represent the full-original geometry — render at full resolution \
-             (settings.preview_mode=false) or drop --stage-evidence"
+             (settings.preview_mode=false) for native observations"
                 .to_string(),
         );
     }

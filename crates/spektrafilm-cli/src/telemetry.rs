@@ -8,7 +8,6 @@ use spektrafilm_backend::telemetry::{
 use spektrafilm_core::telemetry::{
     BackendRequested, IssueBoundary, IssueCategory, Operation, OperationKind, Outcome,
 };
-use spektrafilm_math::image::ImageBuf;
 
 /// One accepted CLI invocation. Report persistence is deliberately outside its lifetime.
 pub(crate) struct Invocation {
@@ -46,11 +45,11 @@ impl Invocation {
 /// One instrumented simulation attempt: the `simulation` phase around `run`,
 /// the attempt's identity, and its terminal outcome. Both render paths share
 /// this helper so attempt numbering and outcome policy cannot drift apart.
-pub(crate) fn simulation_attempt(
+pub(crate) fn simulation_attempt<T>(
     invocation: &Invocation,
     index: u64,
-    run: impl FnOnce(&ObservationContext) -> Result<ImageBuf>,
-) -> (u64, Result<ImageBuf>) {
+    run: impl FnOnce(&ObservationContext) -> Result<T>,
+) -> (u64, Result<T>) {
     let attempt = invocation.operation.attempt(index);
     let attempt_id = attempt.context().id();
     let result = invocation.phase(
