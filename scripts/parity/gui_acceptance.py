@@ -1092,7 +1092,7 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
         self.input.write(text, interval=0, _pause=False)
         self.input.press('enter', _pause=False)
         if sys.platform == 'win32':
-            self.send_pointer(*target)
+            require(self.os.SetCursorPos(*target), 'Windows rejected native cursor movement')
         else:
             self.input.moveTo(*target, _pause=False)
         self.input.mouseDown(_pause=False)
@@ -1355,7 +1355,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
             require(not re.search(r'Dye\s+support', observed, re.I),
                     'Dye-only control remained visible for Fotufilm')
         driver.reveal('viewer.layer.output', 'Viewer', 'Viewer')
-        driver.click('Output', bottom=True)
+        driver.click('Modified', bottom=True)
         driver.reveal('film_render.grain.fotufilm.amount', 'Film', 'Grain')
         before_amount = driver.viewer_fingerprint()
         driver.drain_reports()
@@ -1432,7 +1432,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         clockwise = driver.wait_report('clockwise-render-complete')
         require(clockwise['configuration']['working_dimensions'] == [96, 192],
                 'Clockwise rotation did not render portrait')
-        driver.click('Input')
+        driver.click('Original', bottom=True)
         _hover_float(driver, np.rot90(pixels, -1), driver.records)
         cw_bounds = driver.measure_viewer('clockwise-rotation')
         require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
@@ -1456,7 +1456,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         counterclockwise = driver.wait_report('counterclockwise-render-complete')
         require(counterclockwise['configuration']['working_dimensions'] == [192, 96],
                 'Counterclockwise rotation did not restore landscape')
-        driver.click('Input', bottom=True)
+        driver.click('Original', bottom=True)
         ccw_bounds = driver.measure_viewer('counterclockwise-rotation')
         require(ccw_bounds[2] - ccw_bounds[0] > ccw_bounds[3] - ccw_bounds[1],
                 f'Counterclockwise rotation did not restore landscape Input pixels: {ccw_bounds}')

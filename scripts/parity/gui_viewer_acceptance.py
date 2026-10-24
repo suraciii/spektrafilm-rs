@@ -324,7 +324,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     viewer.update(zoom=0.15, zoom_percent=None, pan=[0, 0])
     small_preview_path = _state_path(root, "viewer-small-preview.json", small_preview_state)
     _load_state(driver, small_preview_path, "viewer-small-preview")
-    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.layer.input", "Original")
     driver.await_viewer(label="small Input raster")
     small_input, _ = _record_snap(driver, records, "viewer-small-input-raster")
     large_preview_state = copy.deepcopy(small_preview_state)
@@ -332,7 +332,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     large_preview_state["rust"]["runtime"]["settings"]["preview_max_size"] = 256
     large_preview_path = _state_path(root, "viewer-large-preview.json", large_preview_state)
     _load_state(driver, large_preview_path, "viewer-large-preview")
-    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.layer.input", "Original")
     driver.await_viewer(label="large Input raster")
     large_input, _ = _record_snap(driver, records, "viewer-large-input-raster")
     # The source occupies only a small part of a nonmagnifying canvas. Compare
@@ -398,7 +398,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _require(float(paper.std()) > 1.0 and float(watermark.std()) > 0.1,
              "Paper back screenshot has no visible presentation raster/watermark region")
 
-    _viewer_control(driver, "viewer.layer.output", "Output")
+    _viewer_control(driver, "viewer.layer.output", "Modified")
     _interpolation(driver, "spline36")
     driver.await_viewer(label="baseline spline36")
     fingerprint = driver.viewer_fingerprint()
@@ -419,7 +419,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     "spline36_screenshot": records[-1]["screenshot"],
                     "mean_abs_pixel_change": interpolation_delta})
     _require(interpolation_delta > 0.01, "Nearest and spline36 did not produce different viewer pixels")
-    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.layer.input", "Original")
     _interpolation(driver, "nearest")
     driver.await_viewer(label='input interpolation nearest')
     input_nearest_image, _ = _record_snap(driver, records, "viewer-input-nearest")
@@ -530,7 +530,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     crossfade_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
     crossfade_path = _state_path(root, "viewer-crossfade.json", crossfade_state)
     _load_state(driver, crossfade_path, "viewer-crossfade-baseline")
-    _viewer_control(driver, "viewer.layer.output", "Output")
+    _viewer_control(driver, "viewer.layer.output", "Modified")
     driver.await_viewer(label="crossfade baseline")
     from gui_control_acceptance import numeric_editor
     driver.reveal("camera.exposure_compensation_ev", "Input and capture", "Camera")
