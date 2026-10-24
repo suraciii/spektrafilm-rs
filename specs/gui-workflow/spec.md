@@ -190,6 +190,12 @@ The development animation is fixed viewer behaviour. It must not have an editor,
 
 The viewer must let the user select a display ICC profile. The selected profile applies to the disposable viewer raster only. Windows discovers the primary display profile when the user selects none. An explicitly selected profile applies on every platform that supports LittleCMS. Without a usable profile, the encoded sRGB preview is used directly.
 
+Display ICC conversion must preserve the existing LittleCMS reference behavior. Acceleration and cache reuse must preserve its sample domains, rendering intent, quantization, clipping, and transform order. A supported profile must not receive an approximate substitute conversion.
+
+Opening a source, changing a display profile, and interacting with the viewer must remain responsive during display-transform preparation and GPU compilation. Pending or failed display work must retain the last accepted frame. A superseded display result must not replace the frame for a newer requested configuration.
+
+Cache availability must not change supported profiles or displayed pixel values. Missing, invalid, stale, or unwritable caches must not prevent the viewer from preparing the correct transform.
+
 The viewer must expose a tonal-distribution readout of the retained output. It must be viewer-only: it must not alter saved or exported pixels.
 - The readout is a fixed strip at the top of the control panel, above search and stage navigation. It is co-visible with the controls, does not occlude the image, and does not increase the control panel width. It is default-on, collapsible, and its visibility state is persisted. It is viewer-only and never affects saved or exported pixels.
 

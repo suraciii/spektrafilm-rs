@@ -864,6 +864,7 @@
   "surfaces.status.rotate_requires_image": "旋转前请先加载图像。",
   "surfaces.status.rotated": "已将输入旋转 %{degrees}°",
   "surfaces.status.viewer_error": "查看器输入失败：%{error}",
+  "surfaces.status.preparing_input": "正在准备源图像显示…",
   "surfaces.status.display_profile": "显示 ICC 配置文件：%{path}",
   "surfaces.status.display_cleared": "已清除显示 ICC 配置文件",
   "surfaces.status.publication_error": "诊断报告发布失败：%{error}",

@@ -113,6 +113,7 @@ fn startup_default_and_factory_restore_stay_in_session_directory() {
             App::new_with_browser_path(Arc::new(CpuBackend), image, None, None, browser, data_dir())
         });
     let h = &mut s.harness;
+    await_input(h);
     assert_eq!(h.state().params, expected);
     assert_eq!(h.state().config_directory, directory);
     state_controls(h);
@@ -242,6 +243,7 @@ fn replacing_input_rejects_the_previous_sources_real_worker_result() {
     )
     .unwrap();
     h.state_mut().load_image_from_path(&replacement);
+    await_app_input(h.state_mut(), &ctx);
     assert!(h.state().input_epoch > epoch);
     let accepted = h.state().image.as_ref().unwrap().clone();
     assert!(!accepted.same_source(&previous));

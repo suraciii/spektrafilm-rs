@@ -39,6 +39,9 @@ impl App {
     }
 
     pub(crate) fn operation_status_localized(&self, ctx: &egui::Context) -> String {
+        if self.input_pending() {
+            return crate::i18n::text(ctx, "surfaces.status.preparing_input").into_owned();
+        }
         let active_kind = self
             .render_worker
             .active

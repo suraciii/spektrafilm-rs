@@ -35,7 +35,7 @@ Native file reading, container parsing, compressed-sample unpacking, file encodi
 
 File encoding here means container, entropy, and format-required codec work. Saving primaries and transfer conversion, output clipping, and requested bit-depth quantization remain GPU sample conversion. Necessary packing of already converted samples must not reapply those numerical operations on CPU.
 
-The host may validate profiles and resolve bounded, image-independent coefficients in reference precision. It must not precompute image-sized random arrays, grain populations, correction rasters, or per-pixel results and upload them as a substitute for GPU computation. Bulk spectral-table generation, calibration sampling, and grain preparation that execute numerical workloads must also have GPU execution. The [design](design.md#preparation-boundary) defines this boundary.
+The host may validate profiles and resolve bounded, image-independent coefficients in reference precision. CPU preparation of display-transform data follows the [GUI display color-management boundary](../gui-workflow/design.md#display-color-management). It must not precompute image-sized random arrays, grain populations, correction rasters, or per-pixel results and upload them as a substitute for GPU computation. Bulk spectral-table generation, calibration sampling, and grain preparation that execute numerical workloads must also have GPU execution. The [design](design.md#preparation-boundary) defines this boundary.
 
 Reference analysis and profile-optimizer execution are not image-render execution. The benchmark's reference metrics do not have to use GPU arithmetic to judge a GPU render.
 

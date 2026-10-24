@@ -49,7 +49,27 @@ fn app() -> (App, tempfile::TempDir, egui::Context) {
     let path = directory.path().join("accepted.png");
     source(&path, 0.18);
     app.open_photograph(&path).unwrap();
-    (app, directory, egui::Context::default())
+    let ctx = egui::Context::default();
+    settle(&mut app, &ctx);
+    (app, directory, ctx)
+}
+
+fn settle(app: &mut App, ctx: &egui::Context) {
+    let deadline = Instant::now() + crate::headless::WAIT_DEADLINE;
+    while app.input_pending() {
+        assert!(
+            Instant::now() < deadline,
+            "input did not finish: {}",
+            app.status
+        );
+        app.poll_input_job(ctx);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn install(app: &mut App, ctx: &egui::Context, preparation: PhotoPreparation) {
+    app.queue_photograph(preparation, None).unwrap();
+    settle(app, ctx);
 }
 
 fn exposure(app: &mut App, ctx: &egui::Context, value: f32) {
@@ -57,6 +77,68 @@ fn exposure(app: &mut App, ctx: &egui::Context, value: f32) {
     app.params.camera.exposure_compensation_ev = value as _;
     app.mark_parameters_changed_invalidating_calibration();
     app.end_adjustment_frame(ctx);
+}
+
+#[test]
+fn escape_cannot_dismiss_a_confirmed_transition_while_its_preparation_runs() {
+    let (mut app, _directory, ctx) = app();
+    let (started, ready) = std::sync::mpsc::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    app.photograph.pending = Some(PhotoAction::Close);
+    app.queue_input_command(
+        vec![],
+        Some(Box::new(move |_, _| {
+            started.send(()).unwrap();
+            blocked.recv().unwrap();
+            Ok(())
+        })),
+        |_, _| Ok(()),
+    )
+    .unwrap();
+    ready.recv_timeout(Duration::from_secs(10)).unwrap();
+    let escape = || egui::RawInput {
+        events: vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        ..Default::default()
+    };
+    let _ = ctx.run(escape(), |ctx| app.photograph_dialogs(ctx));
+    let still_pending = app.photograph.pending.is_some();
+    release.send(()).unwrap();
+    settle(&mut app, &ctx);
+    assert!(
+        still_pending,
+        "confirmed transition was dismissed while it could still commit"
+    );
+    let _ = ctx.run(escape(), |ctx| app.photograph_dialogs(ctx));
+    assert!(app.photograph.pending.is_none());
+    assert!(!app.photograph.allow_close);
+}
+
+#[test]
+fn record_save_waits_for_pending_input_before_changing_record_ownership() {
+    let (mut app, directory, ctx) = app();
+    let original = directory.path().join("original.spektra-photo.json");
+    app.save_photograph_record_to(&original).unwrap();
+    let original_bytes = std::fs::read(&original).unwrap();
+    exposure(&mut app, &ctx, 1.0);
+    let baseline = app.photograph.baseline.clone();
+    let source = app.image_path.clone().unwrap();
+    app.load_image_from_path(&source);
+    let destination = directory.path().join("after-reprocess.spektra-photo.json");
+    assert!(app.save_photograph_record_to(&destination).is_err());
+    assert!(!destination.exists());
+    assert_eq!(app.photograph.record_path.as_ref(), Some(&original));
+    assert_eq!(app.photograph.baseline, baseline);
+    settle(&mut app, &ctx);
+    app.save_photograph_record_to(&destination).unwrap();
+    assert_eq!(app.photograph.record_path.as_ref(), Some(&destination));
+    assert!(!app.photograph_has_unsaved_changes());
+    assert_eq!(std::fs::read(original).unwrap(), original_bytes);
 }
 
 #[test]
@@ -93,7 +175,8 @@ fn failed_next_load_and_changed_record_source_preserve_pixels_and_history() {
     let epoch = app.input_epoch;
     let invalid = directory.path().join("broken.png");
     std::fs::write(&invalid, b"not an image").unwrap();
-    assert!(app.open_photograph(&invalid).is_err());
+    app.open_photograph(&invalid).unwrap();
+    settle(&mut app, &ctx);
     assert!(image.same_source(app.image.as_ref().unwrap()));
     assert_eq!(app.capture_photograph_settings().unwrap(), settings);
     assert_eq!(app.photograph.baseline, baseline);
@@ -136,6 +219,7 @@ fn saved_record_excludes_pending_controls_and_reopens_the_accepted_endpoint() {
         json!(6200.0)
     );
     app.reopen_photograph_record(&record, None).unwrap();
+    settle(&mut app, &ctx);
     assert_eq!(app.params.camera.exposure_compensation_ev, 0.5);
     assert_eq!(app.gui_state.sections["load_raw"], accepted_raw);
     assert!(
@@ -181,9 +265,9 @@ fn accepted_context_replacement_invalidates_materials_cached_by_real_worker() {
     settings.params.io.scan_film = true;
     let path = app.image_path.clone().unwrap();
     let context = app
-        .prepare_photo_context(&path, Some(settings.clone()))
+        .photo_preparation(&path, Some(settings.clone()))
         .unwrap();
-    app.install_photo_context(context);
+    install(&mut app, &ctx, context);
     let before = render(&mut app, &ctx);
     let material = app
         .data_dir
@@ -201,8 +285,8 @@ fn accepted_context_replacement_invalidates_materials_cached_by_real_worker() {
         }
     }
     std::fs::write(&material, serde_json::to_vec(&value).unwrap()).unwrap();
-    let context = app.prepare_photo_context(&path, Some(settings)).unwrap();
-    app.install_photo_context(context);
+    let context = app.photo_preparation(&path, Some(settings)).unwrap();
+    install(&mut app, &ctx, context);
     assert!(
         app.output_image.is_none(),
         "replacement clears old retained pixels"
@@ -255,13 +339,14 @@ fn raw_record_reopens_saved_decode_and_interpretation_not_pending_raw_draft() {
         "37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc"
     );
     app.open_photograph(&raw).unwrap();
+    settle(&mut app, &ctx);
     exposure(&mut app, &ctx, 0.25);
     let mut accepted = app.capture_photograph_settings().unwrap();
     accepted.raw["lens_correction"] = json!(true);
     accepted.params.io.input_color_space = "ProPhoto RGB".into();
     accepted.params.io.input_cctf_decoding = true;
-    let context = app.prepare_photo_context(&raw, Some(accepted)).unwrap();
-    app.install_photo_context(context);
+    let context = app.photo_preparation(&raw, Some(accepted)).unwrap();
+    install(&mut app, &ctx, context);
     let pixels = app.image.clone().unwrap();
     let raw_accepted = app.raw_applied_settings.clone().unwrap();
     app.gui_state.sections["load_raw"]["white_balance"] = json!("custom");
@@ -299,7 +384,9 @@ fn raw_record_reopens_saved_decode_and_interpretation_not_pending_raw_draft() {
     );
     app.open_photograph(&directory.path().join("accepted.png"))
         .unwrap();
+    settle(&mut app, &ctx);
     app.reopen_photograph_record(&record, None).unwrap();
+    settle(&mut app, &ctx);
     assert_eq!(app.params.io.input_color_space, "ProPhoto RGB");
     assert!(app.params.io.input_cctf_decoding);
     assert_eq!(app.raw_applied_settings.as_ref(), Some(&raw_accepted));
@@ -320,9 +407,11 @@ fn raw_record_reopens_saved_decode_and_interpretation_not_pending_raw_draft() {
     assert!(source_pixels.same_source(app.image.as_ref().unwrap()));
     app.add_work_paths(vec![directory.path().join("accepted.png")]);
     app.perform_work_select(1).unwrap();
+    settle(&mut app, &ctx);
     assert!(app.save_inactive_record_to(0, &record).is_err());
     assert_eq!(std::fs::read(&record).unwrap(), saved_bytes);
     app.perform_work_select(0).unwrap();
+    settle(&mut app, &ctx);
     assert_eq!(app.photograph.baseline, baseline);
     assert_eq!(
         app.capture_photograph_settings().unwrap(),
@@ -355,11 +444,13 @@ fn active_and_inactive_lens_identity_mismatch_preserves_records_and_history() {
     source(&second, 0.4);
     app.add_work_paths(vec![second]);
     app.perform_work_select(1).unwrap();
+    settle(&mut app, &ctx);
     let active_pixels = app.image.clone().unwrap();
     assert!(app.save_inactive_record_to(0, &record).is_err());
     assert_eq!(std::fs::read(&record).unwrap(), saved_bytes);
     assert!(active_pixels.same_source(app.image.as_ref().unwrap()));
     app.perform_work_select(0).unwrap();
+    settle(&mut app, &ctx);
     assert_eq!(app.photograph.baseline, baseline);
     assert_eq!(app.capture_photograph_settings().unwrap(), settings);
     assert!(app.photograph_has_unsaved_changes());

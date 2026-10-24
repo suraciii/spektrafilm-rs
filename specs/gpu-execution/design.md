@@ -16,6 +16,8 @@ The stage sequence is carried by an internal pipe. Nodes are assembled per opera
 
 The host may parse and validate profiles, resolve controls, select reference data, check dimensions, and derive bounded scalar coefficients or small matrices in f64. This host work must not evaluate image samples. Image-independent validation may use reference arithmetic to decide whether a model is well-defined.
 
+Display-transform preparation follows the [GUI display color-management boundary](../gui-workflow/design.md#display-color-management).
+
 Gamut validation must check controls and destination compatibility without constructing numerical boundary tables or initializing CPU reference Cmax caches. The selected backend must own numerical boundary construction during preparation.
 
 Numerical calibration grids, spectral lookup generation, full-source statistics, spatial field formation, stochastic population preparation, and image-sized intermediate construction must have GPU implementations. CPU-generated image or grain data must not be relabeled as cached preparation to satisfy GPU coverage. A cache hit does not prove where its content was computed.

@@ -158,18 +158,18 @@ fn locale_preference_survives_state_load_factory_and_application_restart() {
     language(&mut s.harness, LanguagePreference::SimplifiedChinese);
     s.harness
         .state_mut()
-        .apply_state(state::GuiState::load(&path).unwrap())
+        .apply_state_with_source(state::GuiState::load(&path).unwrap(), |_| {})
         .unwrap();
-    s.harness.run_steps(3);
+    await_input(&mut s.harness);
     assert_eq!(
         crate::i18n::locale(&s.harness.ctx),
         Locale::SimplifiedChinese
     );
     s.harness
         .state_mut()
-        .apply_state(state::GuiState::factory())
+        .apply_state_with_source(state::GuiState::factory(), |_| {})
         .unwrap();
-    s.harness.run_steps(3);
+    await_input(&mut s.harness);
     assert_eq!(
         crate::i18n::locale(&s.harness.ctx),
         Locale::SimplifiedChinese

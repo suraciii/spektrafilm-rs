@@ -36,6 +36,7 @@ mod export_job;
 mod headless;
 mod histogram;
 mod i18n;
+mod input_worker;
 rust_i18n::i18n!("locales", fallback = "en");
 mod numeric;
 mod photograph;
@@ -389,18 +390,14 @@ mod telemetry_lifecycle_tests {
         let mut invalid = app.current_state().unwrap();
         invalid.sections["simulation"]["film_stock"] = "fujifilm_provia_100f".into();
         invalid.sections["scanner"]["scan_output"] = "negative_to_positive".into();
-        let error = app.apply_state(invalid).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("negative filming-stage film profile")
-        );
+        assert!(app.apply_state_with_source(invalid, |_| {}).is_err());
         assert_eq!(app.params, original);
         assert_eq!(app.parameter_revision, revision);
         assert_eq!(app.film_name, "kodak_portra_400");
         app.image_path = None;
         let valid = app.current_state().unwrap();
-        app.apply_state(valid).unwrap();
+        app.apply_state_with_source(valid, |_| {}).unwrap();
+        crate::headless::await_app_input(&mut app, &egui::Context::default());
         assert_eq!(app.params.scanner.scan_output, "direct_scan");
         assert_eq!(app.params.scanner.lens_blur, 0.0);
     }

@@ -472,6 +472,7 @@ fn gpu_operator_comparison_keeps_the_corrected_device_carrier() {
             theme::apply(&cc.egui_ctx);
             App::new_with_browser_path(backend, Some(image), Some(state), None, browser, data_dir())
         });
+    await_input(&mut h);
     standard_operator(&mut h);
     operator_edit(&mut h, "Finished exposure", "1.0");
     click(&mut h, "SCAN");

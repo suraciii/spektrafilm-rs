@@ -26,6 +26,17 @@ The workspace must contain these crates for compute:
 
 `spektrafilm-backend` must not enable a device feature by default. `spektrafilm-gpu` must remain the crate that enables the device toolkit. A build that selects only `spektrafilm-backend` must not compile any device code.
 
+## Viewer ICC preparation
+
+The viewer owns ICC profile parsing and image-independent LittleCMS preparation. `ViewerIccGpuParams` must carry only the content identity, a fixed representation kind, and immutable packed words. The WGPU backend must own the prepared device buffer and apply it with a fixed kernel. It must not compile profile-specific shader source or evaluate source-image ICC pixels on the host.
+
+Preparation must preserve the default LittleCMS RGB8-to-RGB8 Perceptual transform. A matrix-shaper representation must match the pinned optimizer ABI and its integer quantization. Other valid transforms, including transforms without an exposed pipeline, must use an exhaustive map of all 256³ RGB8 inputs. The map must not use a coarse lattice or interpolation.
+
+Prepared host data must use a bounded memory cache and a checked persistent cache. Cache identity must include conversion-bearing profile content, intent, pixel formats, CMM version, and preparation-format version. Disk reads must validate identity, kind, length, and payload checksum before reuse. Invalid entries must be prepared again. Persistence failure must not invalidate a successful preparation.
+
+Concurrent requests for one identity must share one preparation result. Cache lookup locks must not span disk access or LittleCMS work. At most two independent preparations may run at once. The host memory cache and device buffer cache must each retain at most 16 entries and 96 MiB of prepared data. The persistent prepared-data cache must retain at most 16 entries and 128 MiB after pruning. Active callers may retain evicted entries until their operation completes.
+
+
 ## Dependency direction
 
 Dependencies must point in one direction only:

@@ -69,6 +69,7 @@ fn copied_inactive_session() -> (Session, PathBuf, PathBuf) {
             spektrafilm_core::presets::Section::Camera,
         ))
         .unwrap();
+    await_input(h);
     h.state_mut().save_photograph_record_to(&record).unwrap();
     assert!(!h.state().photograph_has_unsaved_changes());
     (s, first, second)
@@ -156,6 +157,7 @@ fn close_guards_each_inactive_copy_cancel_failed_save_save_and_discard_through_m
             spektrafilm_core::presets::Section::Camera,
         ))
         .unwrap();
+    await_input(h);
     let active_record = h.state().photograph.record_path.clone().unwrap();
     h.state_mut()
         .save_photograph_record_to(&active_record)
@@ -218,6 +220,7 @@ fn pending_raw_drafts_return_per_entry_without_becoming_accepted_record_settings
         .add_work_paths(vec![raw.clone(), second_raw.clone()]);
     h.state_mut()
         .request_photo_action(crate::photograph::PhotoAction::SelectEntry(1));
+    await_input(h);
     h.run_steps(2);
     assert_eq!(
         h.state().image_path.as_ref(),
@@ -245,6 +248,7 @@ fn pending_raw_drafts_return_per_entry_without_becoming_accepted_record_settings
     assert!(h.state().image.as_ref().unwrap().same_source(&pixels));
     h.state_mut()
         .request_photo_action(crate::photograph::PhotoAction::SelectEntry(2));
+    await_input(h);
     h.run_steps(2);
     assert_eq!(
         h.state().capture_photograph_settings().unwrap().raw,
@@ -258,6 +262,7 @@ fn pending_raw_drafts_return_per_entry_without_becoming_accepted_record_settings
     let second_draft = h.state().gui_state.sections["load_raw"].clone();
     h.state_mut()
         .request_photo_action(crate::photograph::PhotoAction::SelectEntry(1));
+    await_input(h);
     h.run_steps(2);
     assert_eq!(h.state().gui_state.sections["load_raw"], draft);
     assert_eq!(
@@ -267,6 +272,7 @@ fn pending_raw_drafts_return_per_entry_without_becoming_accepted_record_settings
     assert!(h.state().image.as_ref().unwrap().same_source(&pixels));
     h.state_mut()
         .request_photo_action(crate::photograph::PhotoAction::SelectEntry(2));
+    await_input(h);
     h.run_steps(2);
     assert_eq!(h.state().gui_state.sections["load_raw"], second_draft);
     assert_eq!(
@@ -275,6 +281,7 @@ fn pending_raw_drafts_return_per_entry_without_becoming_accepted_record_settings
     );
     h.state_mut()
         .request_photo_action(crate::photograph::PhotoAction::SelectEntry(0));
+    await_input(h);
     h.run_steps(2);
     assert_eq!(h.state().image_path.as_ref(), Some(&rgb));
     assert_ne!(h.state().gui_state.sections["load_raw"], draft);
@@ -299,6 +306,7 @@ fn raw_options_draft_carrier_is_restored_independently_for_each_work_context() {
     // Direct committed navigation isolates context retention from the RAW
     // decoder (the real RAW guard/accepted-decode path is exercised above).
     h.state_mut().perform_work_select(1).unwrap();
+    await_input(h);
     h.run_steps(2);
     assert_ne!(h.state().gui_state.sections["load_raw"], first_draft);
     reveal_control(h, "extras.load_raw.white_balance");
@@ -307,10 +315,12 @@ fn raw_options_draft_carrier_is_restored_independently_for_each_work_context() {
     h.run_steps(3);
     let second_draft = h.state().gui_state.sections["load_raw"].clone();
     h.state_mut().perform_work_select(0).unwrap();
+    await_input(h);
     h.run_steps(2);
     assert_eq!(h.state().image_path.as_ref(), Some(&first));
     assert_eq!(h.state().gui_state.sections["load_raw"], first_draft);
     h.state_mut().perform_work_select(1).unwrap();
+    await_input(h);
     h.run_steps(2);
     assert_eq!(h.state().image_path.as_ref(), Some(&second));
     assert_eq!(h.state().gui_state.sections["load_raw"], second_draft);

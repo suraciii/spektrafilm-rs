@@ -57,7 +57,7 @@ impl WgpuBackend {
                 usage: wgpu::BufferUsages::STORAGE,
             })
     }
-    fn viewer_dispatch(
+    pub(super) fn viewer_dispatch(
         &self,
         shader: &'static str,
         words: &[u32],

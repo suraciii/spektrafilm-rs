@@ -169,13 +169,15 @@ impl App {
             });
         if confirmed {
             self.factory_reset_confirm = false;
-            let result =
-                state::reset_factory(&self.config_directory).and_then(|s| self.apply_state(s));
-            self.status = match result {
-                Ok(()) => crate::app::Message::new("surfaces.status.factory_restored"),
-                Err(e) => crate::app::Message::new("surfaces.status.factory_error")
-                    .message_arg("error", crate::app::Message::error(&e)),
-            };
+            let result = state::reset_factory(&self.config_directory).and_then(|state| {
+                self.apply_state_with_source(state, |app| {
+                    app.status = crate::app::Message::new("surfaces.status.factory_restored");
+                })
+            });
+            if let Err(error) = result {
+                self.status = crate::app::Message::new("surfaces.status.factory_error")
+                    .message_arg("error", crate::app::Message::error(&error));
+            }
         } else if canceled {
             self.factory_reset_confirm = false;
         }
@@ -407,117 +409,61 @@ impl App {
     }
 
     pub(super) fn load_image_from_path(&mut self, path: &Path) {
-        let t = Instant::now();
-        let raw = image_io::is_raw(path);
-        let mut raw_lens_info = None;
-        let mut lens_model_identity = None;
-        let source_digest = Self::accepted_source_digest(path);
-        let reprocess = self.image_path.as_deref() == Some(path);
+        if self.input_command_job.is_some() {
+            self.status = crate::app::Message::new("surfaces.status.preparing_input");
+            return;
+        }
+        let path = path.to_path_buf();
+        let raw = image_io::is_raw(&path);
+        let reprocess = self.image_path.as_deref() == Some(path.as_path());
         let previous_baseline = self.photograph.baseline.clone();
         let previous_record = self.photograph.record_path.clone();
-        let loaded = source_digest
-            .as_ref()
-            .map_err(|error| anyhow::anyhow!("{error:#}"))
-            .and_then(|_| {
+        let raw_settings = self.gui_state.sections["load_raw"].clone();
+        let spec = crate::input_worker::InputSpec {
+            source: crate::input_worker::InputSource::File {
+                path: path.clone(),
+                raw: raw_settings.clone(),
+            },
+            rotation: 0,
+            space: if raw {
+                "ACES2065-1".into()
+            } else {
+                self.params.io.input_color_space.clone()
+            },
+            decode: !raw && self.params.io.input_cctf_decoding,
+            max_size: Some(self.params.settings.preview_max_size),
+        };
+        self.queue_input(
+            spec,
+            crate::input_worker::InputFailure::Load,
+            move |app, prepared| {
+                let view = prepared.view.expect("source request prepared its view");
                 if raw {
-                    let settings = &self.gui_state.sections["load_raw"];
-                    let options = spektrafilm_raw::RawOptions {
-                        white_balance: match settings["white_balance"].as_str().unwrap_or("as_shot")
-                        {
-                            "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
-                            "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
-                            "custom" => spektrafilm_raw::WhiteBalance::Custom,
-                            _ => spektrafilm_raw::WhiteBalance::AsShot,
-                        },
-                        temperature: settings["temperature"].as_f64(),
-                        tint: settings["tint"].as_f64(),
-                        lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
-                    };
-                    if self.backend.is_gpu() {
-                        spektrafilm_raw::load_retained_with_backend(
-                            path,
-                            &options,
-                            self.backend.as_ref(),
-                        )
-                        .map(|result| {
-                            raw_lens_info = Some(result.lens_info);
-                            lens_model_identity = result.lens_model_identity;
-                            (
-                                crate::render::InputImage::Device(result.image),
-                                image_io::read_metadata(path),
-                            )
-                        })
-                        .map_err(anyhow::Error::msg)
-                    } else {
-                        spektrafilm_raw::load(path, &options)
-                            .map(|result| {
-                                raw_lens_info = Some(result.lens_info);
-                                lens_model_identity = result.lens_model_identity;
-                                (
-                                    crate::render::InputImage::Host(Arc::new(result.image)),
-                                    image_io::read_metadata(path),
-                                )
-                            })
-                            .map_err(anyhow::Error::msg)
-                    }
-                } else {
-                    image_io::load(path)
-                        .map(|loaded| {
-                            (
-                                crate::render::InputImage::Host(Arc::new(loaded.image)),
-                                loaded.metadata,
-                            )
-                        })
-                        .map_err(anyhow::Error::from)
+                    app.params.io.input_color_space = "ACES2065-1".into();
+                    app.params.io.input_cctf_decoding = false;
                 }
-            })
-            .and_then(|loaded| {
-                anyhow::ensure!(
-                    source_digest.as_ref().ok() == Some(&Self::accepted_source_digest(path)?),
-                    crate::app::Message::new("photo.error.source_changed")
-                );
-                Ok(loaded)
-            });
-        match loaded {
-            Ok((img, metadata)) => {
-                let declaration = if raw {
-                    ("ACES2065-1", false)
-                } else {
-                    (
-                        self.params.io.input_color_space.as_str(),
-                        self.params.io.input_cctf_decoding,
-                    )
-                };
-                let (viewer_image, viewer_raster) =
-                    match self.prepare_input_viewer(&img, 0, declaration.0, declaration.1) {
-                        Ok(prepared) => prepared,
-                        Err(error) => {
-                            self.status = crate::app::Message::new("surfaces.status.viewer_error")
-                                .arg("error", error);
-                            return;
-                        }
-                    };
-                if raw {
-                    self.params.io.input_color_space = "ACES2065-1".into();
-                    self.params.io.input_cctf_decoding = false;
-                }
-                self.source_metadata = metadata;
-                self.input_rotation = 0;
-                self.raw_lens_info = raw_lens_info;
-                self.photograph.lens_model_identity = lens_model_identity;
+                app.source_metadata = prepared.metadata;
+                app.input_rotation = 0;
+                app.raw_lens_info = prepared.lens_info;
+                app.photograph.lens_model_identity = prepared.lens_model_identity;
                 let mut loaded = crate::app::Message::new(if raw {
                     "surfaces.status.loaded_raw"
                 } else {
                     "surfaces.status.loaded"
                 })
-                .arg("width", img.width())
-                .arg("height", img.height())
-                .arg("mp", format!("{:.1}", img.pixel_count() as f64 / 1e6))
-                .arg("ms", format!("{:.0}", t.elapsed().as_secs_f32() * 1000.0));
-                self.raw_applied_settings =
-                    raw.then(|| self.gui_state.sections["load_raw"].clone());
+                .arg("width", prepared.source.width())
+                .arg("height", prepared.source.height())
+                .arg(
+                    "mp",
+                    format!("{:.1}", prepared.source.pixel_count() as f64 / 1e6),
+                )
+                .arg(
+                    "ms",
+                    format!("{:.0}", prepared.elapsed.as_secs_f64() * 1000.0),
+                );
+                app.raw_applied_settings = raw.then_some(raw_settings);
                 if raw {
-                    let lens = match self.raw_lens_info.as_deref() {
+                    let lens = match app.raw_lens_info.as_deref() {
                         Some(info) if !info.is_empty() => {
                             crate::app::Message::new("surfaces.status.lens_applied")
                                 .arg("info", info)
@@ -526,152 +472,128 @@ impl App {
                     };
                     loaded = loaded.message_arg("lens", lens);
                 }
-                self.status = loaded;
-                self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-                self.input_epoch = self.input_epoch.wrapping_add(1);
-                self.set_operator_compare(false);
-                self.render_worker.cancel_active();
-                self.full_scan_requested = false;
-                self.image = Some(img);
-                self.publish_input_viewer(viewer_image, viewer_raster);
-                self.image_path = Some(path.to_path_buf());
-                self.output_image = None;
-                self.output_retained = None;
-                self.output_histogram = None;
-                self.output_metadata = None;
-                self.source_render = None;
-                self.retained_kind = None;
-                self.stale_save_confirmation = false;
-                self.dirty = true;
-                self.reset_adjustment_history();
-                if let Some(ctx) = &self.photograph.context {
+                app.status = loaded;
+                app.calibration_epoch = app.calibration_epoch.wrapping_add(1);
+                app.input_epoch = app.input_epoch.wrapping_add(1);
+                app.set_operator_compare(false);
+                app.render_worker.cancel_active();
+                app.full_scan_requested = false;
+                app.image = Some(prepared.source);
+                app.publish_input_viewer(view.oriented, view.raster);
+                app.image_path = Some(path);
+                app.output_image = None;
+                app.output_retained = None;
+                app.output_histogram = None;
+                app.output_metadata = None;
+                app.source_render = None;
+                app.retained_kind = None;
+                app.stale_save_confirmation = false;
+                app.dirty = true;
+                app.reset_adjustment_history();
+                if let Some(ctx) = &app.photograph.context {
                     crate::numeric::NumericDrafts::take(ctx);
                 }
-                self.mark_photograph_baseline();
-                self.photograph.source_digest = source_digest.ok();
+                app.photograph.baseline = app.capture_photograph_settings().ok();
+                app.photograph.record_path = None;
+                app.photograph.source_digest = prepared.digest;
                 if reprocess {
-                    self.photograph.baseline = previous_baseline;
-                    self.photograph.record_path = previous_record;
+                    app.photograph.baseline = previous_baseline;
+                    app.photograph.record_path = previous_record;
                 }
-            }
-            Err(e) => {
-                self.status = crate::app::Message::new("surfaces.status.load_error")
-                    .message_arg("error", crate::app::Message::error(&e));
-            }
-        }
+                Ok(())
+            },
+        );
     }
 
-    /// Rotate the retained input by a quarter turn.
-    ///
-    /// Orientation is input metadata, not an edit of the source raster: the
-    /// selected GPU applies it in the working-geometry pass and the CPU
-    /// reference applies it before its own stages. Two opposite turns cancel
-    /// exactly, and a rotation never re-encodes or resamples the source.
+    /// Commit a deferred source rotation only after its device view is ready.
     fn rotate_input_image(&mut self, clockwise: bool) {
-        let Some(source) = self.image.as_ref() else {
+        let Some(source) = self.image.as_ref().cloned() else {
             self.status = crate::app::Message::new("surfaces.status.rotate_requires_image");
             return;
         };
-        let quarter_turns = if clockwise { -1 } else { 1 };
-        let rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
-        let (viewer_image, viewer_raster) = match self.prepare_input_viewer(
-            source,
+        if self.input_transition_pending() {
+            return;
+        }
+        let rotation = (self.input_rotation + if clockwise { -1 } else { 1 }).rem_euclid(4);
+        let epoch = self.input_epoch;
+        let spec = crate::input_worker::InputSpec {
+            source: crate::input_worker::InputSource::Existing(source),
             rotation,
-            &self.params.io.input_color_space,
-            self.params.io.input_cctf_decoding,
-        ) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.status =
-                    crate::app::Message::new("surfaces.status.viewer_error").arg("error", error);
-                return;
-            }
+            space: self.params.io.input_color_space.clone(),
+            decode: self.params.io.input_cctf_decoding,
+            max_size: Some(self.params.settings.preview_max_size),
         };
-        self.input_rotation = rotation;
-        self.input_epoch = self.input_epoch.wrapping_add(1);
-        self.set_operator_compare(false);
-        self.render_worker.cancel_active();
-        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-        self.full_scan_requested = false;
-        self.output_image = None;
-        self.output_retained = None;
-        self.output_histogram = None;
-        self.output_metadata = None;
-        self.source_render = None;
-        self.publish_input_viewer(viewer_image, viewer_raster);
-        self.dirty = true;
-        self.force_preview = true;
-        self.status = crate::app::Message::new("surfaces.status.rotated")
-            .arg("degrees", self.input_rotation * 90);
+        self.queue_input(
+            spec,
+            crate::input_worker::InputFailure::Viewer,
+            move |app, prepared| {
+                if app.input_epoch != epoch {
+                    return Ok(());
+                }
+                let view = prepared.view.expect("rotation request prepared its view");
+                app.input_rotation = rotation;
+                app.input_epoch = app.input_epoch.wrapping_add(1);
+                app.set_operator_compare(false);
+                app.render_worker.cancel_active();
+                app.calibration_epoch = app.calibration_epoch.wrapping_add(1);
+                app.full_scan_requested = false;
+                app.output_image = None;
+                app.output_retained = None;
+                app.output_histogram = None;
+                app.output_metadata = None;
+                app.source_render = None;
+                app.publish_input_viewer(view.oriented, view.raster);
+                app.dirty = true;
+                app.force_preview = true;
+                app.status = crate::app::Message::new("surfaces.status.rotated")
+                    .arg("degrees", rotation * 90);
+                Ok(())
+            },
+        );
     }
 
-    /// Rebuild presentation only; accepted source samples stay immutable.
+    /// Refresh presentation on the input worker without rewriting accepted samples.
     pub(crate) fn refresh_input_viewer(&mut self) {
-        let Some(source) = self.image.as_ref() else {
+        let Some(source) = self.image.as_ref().cloned() else {
             return;
         };
-        match self.prepare_input_viewer(
-            source,
-            self.input_rotation,
-            &self.params.io.input_color_space,
-            self.params.io.input_cctf_decoding,
-        ) {
-            Ok((image, raster)) => {
-                if self.output_image.is_some() || self.output_retained.is_some() {
-                    self.viewer
-                        .refresh_input(raster, [image.width() as usize, image.height() as usize]);
-                    self.seed_input_viewer(image);
-                } else {
-                    self.publish_input_viewer(image, raster);
-                }
-            }
-            Err(error) => {
-                self.status =
-                    crate::app::Message::new("surfaces.status.viewer_error").arg("error", error)
-            }
-        }
-    }
-    /// Prepare presentation geometry without changing the accepted input.
-    /// A selected GPU keeps orientation and display arithmetic on its device.
-    fn prepare_input_viewer(
-        &self,
-        source: &crate::render::InputImage,
-        rotation: i32,
-        input_color_space: &str,
-        input_cctf_decoding: bool,
-    ) -> Result<(crate::render::InputImage, display::DisplayRaster), String> {
-        let image = source.rotated(
+        let epoch = self.input_epoch;
+        let rotation = self.input_rotation;
+        let space = self.params.io.input_color_space.clone();
+        let decode = self.params.io.input_cctf_decoding;
+        let spec = crate::input_worker::InputSpec {
+            source: crate::input_worker::InputSource::Existing(source),
             rotation,
-            self.backend.as_ref(),
-            input_color_space,
-            input_cctf_decoding,
-        )?;
-        let max_size = self.params.settings.preview_max_size as usize;
-        let raster = match &image {
-            crate::render::InputImage::Host(source) => display::input_display_raster_with(
-                self.backend.as_ref(),
-                source,
-                input_color_space,
-                input_cctf_decoding,
-                max_size,
-            )?,
-            crate::render::InputImage::Device(source) => {
-                display::output_display_raster_retained(
-                    self.backend.as_ref(),
-                    source,
-                    source.space().name,
-                    source.domain() == spektrafilm_backend::SampleDomain::Encoded,
-                    true,
-                    None,
-                    max_size,
-                )?
-                .0
-            }
+            space: space.clone(),
+            decode,
+            max_size: Some(self.params.settings.preview_max_size),
         };
-        Ok((image, raster))
+        self.queue_input_view(spec, move |app, prepared| {
+            if app.input_epoch != epoch
+                || app.input_rotation != rotation
+                || app.params.io.input_color_space != space
+                || app.params.io.input_cctf_decoding != decode
+            {
+                return Ok(());
+            }
+            let view = prepared.view.expect("display refresh prepared its view");
+            if app.output_image.is_some() || app.output_retained.is_some() {
+                app.viewer.refresh_input(
+                    view.raster,
+                    [
+                        view.oriented.width() as usize,
+                        view.oriented.height() as usize,
+                    ],
+                );
+                app.seed_input_viewer(view.oriented);
+            } else {
+                app.publish_input_viewer(view.oriented, view.raster);
+            }
+            Ok(())
+        });
     }
 
-    fn publish_input_viewer(
+    pub(crate) fn publish_input_viewer(
         &mut self,
         image: crate::render::InputImage,
         raster: display::DisplayRaster,
@@ -1225,10 +1147,6 @@ impl App {
             {
                 self.gui_state.set_display_profile(path.to_str());
                 self.refresh_viewing_artifacts();
-                if lcms2::Profile::new_file(&path).is_err() {
-                    self.viewer.transform_status =
-                        crate::app::Message::new("surfaces.display.invalid_profile");
-                }
                 self.status = crate::app::Message::new("surfaces.status.display_profile")
                     .arg("path", path.display());
             }
@@ -1513,6 +1431,7 @@ impl App {
                     let reveal = self.pending_scroll.as_deref() == Some(section);
                     let response = egui::CollapsingHeader::new(if section == "Session" { crate::i18n::text(ui.ctx(), "surfaces.settings.general") } else { controls::localized(ui.ctx(), section) }).id_salt(section).default_open(false).open(reveal.then_some(true)).show(ui, |ui| {
                         let _scope = controls::row_modified::install(ui.ctx(), section, &self.params, &self.gui_state.sections);
+                        if self.input_transition_pending() && !matches!(section, "Display" | "Diagnostics") { ui.disable(); }
                         match section {
                             "Session" => {
                                 ui.horizontal(|ui| {
@@ -1675,7 +1594,7 @@ impl App {
                     );
                     if ui
                         .add_enabled(
-                            self.can_undo(),
+                            self.can_undo() && !self.input_transition_pending(),
                             egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.undo")),
                         )
                         .on_hover_text(undo_label)
@@ -1692,7 +1611,7 @@ impl App {
                     );
                     if ui
                         .add_enabled(
-                            self.can_redo(),
+                            self.can_redo() && !self.input_transition_pending(),
                             egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.redo")),
                         )
                         .on_hover_text(redo_label)
@@ -1832,6 +1751,7 @@ impl eframe::App for App {
             }
         }
         let _ = frame;
+        self.poll_input_job(ctx);
 
         self.begin_adjustment_frame(ctx);
         self.poll_render_job(ctx);
@@ -1844,6 +1764,7 @@ impl eframe::App for App {
             && !self.settings_open
             && !self.export_dialog.is_open()
             && !self.stale_save_confirmation
+            && !self.input_transition_pending()
         {
             if ctx.input_mut(|input| {
                 input.consume_key(
@@ -1896,6 +1817,9 @@ impl eframe::App for App {
             .min_width(300.0)
             .max_width((ctx.screen_rect().width() * 0.48).max(300.0))
             .show(ctx, |ui| {
+                if self.input_transition_pending() {
+                    ui.disable();
+                }
                 // Panel sizing belongs to the user's resize gesture, never to a
                 // long query, locator, or applicability explanation inside it.
                 let inspector_rect = ui.available_rect_before_wrap();
@@ -2116,6 +2040,7 @@ impl eframe::App for App {
         // the last input event before the native event loop becomes idle.
         if self.dirty
             && self.image.is_some()
+            && !self.input_transition_pending()
             && self.calibration_job.is_none()
             && !self.export_dialog.is_open()
             && !self.stale_save_confirmation

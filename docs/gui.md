@@ -55,6 +55,8 @@ Chinese fonts are bundled for offline use; no system font installation is requir
 
 The viewer also accepts a dropped image file through the same import path. An unsupported or unreadable import leaves the accepted image and controls unchanged and reports the error in the header.
 
+Source loading, RAW reprocessing, rotation, and state loading prepare the replacement input view in the background. The header reports input preparation. Photographic editors and Undo/Redo pause during an input transaction; viewer navigation remains available. The previous accepted source, output, and history remain intact until preparation succeeds.
+
 Choose the base route in **Input and capture → Workflow → workflow**, the film in **Film → Film material → film profile**, and the paper in **Print → Print material → print profile**. Selecting a film keeps the current paper; selecting a paper keeps the current film. Film selection applies its workflow default and scanner normalization, reported in the header. A look preset selects the material pair and its owned controls atomically. Development-time choices follow the selected material's actual family; a material without a selectable family shows its effective development time instead.
 
 RGB imports retain their original host samples; GPU RAW imports retain the decoded device image and its color metadata. Preview, Scan, independent GPU Export, and input viewing consume that source without rewriting it. With a selected GPU, viewing a rotated RGB import uploads the original samples and turns them on the device; both RGB and RAW rotation produce a separate retained presentation image. Import and rotation prepare the replacement view before publishing the new source or orientation; failure preserves the previous accepted source and output. An explicit CPU reference export or source-analysis operation materializes device samples only at that requested host boundary.
@@ -187,6 +189,10 @@ When the display transform is enabled, every platform converts output-space pixe
 
 **Settings → Display** lets you choose an ICC profile with **select ICC profile…**, clear it again with **clear**, and shows the selected path or the reason it is unusable. The selection applies to the disposable viewer raster only: Save, Export, and the retained output keep their own pixels.
 
+Display ICC preparation and GPU compilation run in the background. With a selected GPU, the CPU prepares image-independent LittleCMS conversion data and fixed GPU kernels apply it to viewer pixels. Complex profiles retain the LittleCMS RGB8 conversion exactly rather than using an approximate coarse LUT or CPU processing of the displayed image.
+
+Compatible prepared ICC data is reused across images and application restarts. The bounded cache lives under `cache/display-icc-v1` in the application configuration directory. Missing, corrupt, or unwritable cache files cause background preparation, not a different conversion. Device buffers and compiled pipelines are reused within the process; this cache does not store driver-compiled binaries. Save and Export do not use the display ICC conversion.
+
 **use display transform**, **gray 18% canvas**, **white padding**, and **output interpolation** have factory row resets in this section. Each reset updates its live viewer preference only. These preferences and their resets remain outside photograph adjustment history and do not change retained, saved, or exported pixels.
 
 On macOS, the Metal surface is tagged sRGB.
@@ -224,6 +230,8 @@ Save uses upstream OpenImageIO JPEG defaults rather than Export's quality/subsam
 ## Photograph adjustment records
 
 **Save adjustments…** writes a versioned photograph record containing source identity, accepted input interpretation, RAW decode settings, geometry, adjustments, seed, material identities, and render-preparation ownership. It does not embed source images or runtime assets. Keep the referenced external files unchanged. Pending text and RAW drafts, application preferences, undo stacks, jobs, and Export drafts are excluded.
+
+**Save adjustments…** is unavailable while an input transaction prepares a replacement source or view. Wait for that transaction to finish before saving a record. A rejected save during preparation leaves the existing record, baseline, and record path unchanged.
 
 **Reopen adjustments…** validates the source and dependencies before replacing the photograph. Missing or changed assets leave the current photograph intact. Explicit source relocation accepts only identical contents. A record is not a reusable preset or a startup-default file. Failed writes preserve an existing valid record and never overwrite the source.
 

@@ -5,6 +5,7 @@ use crate::display::{Interpolation, ViewLayer, ViewerObservation};
 use super::panels::assert_float_images_equal;
 
 fn click(h: &mut Harness<'_, App>, label: &str) {
+    await_input(h);
     h.ctx.style_mut(|style| style.animation_time = 0.0);
     // Settle egui collapsing-panel geometry before queuing pointer actions.
     // This disables only widget animation; Viewer development still uses
@@ -808,7 +809,10 @@ fn display_profile_selection_clear_persistence_and_viewer_only_effect() {
     accepted.save(&saved).unwrap();
     let restored = state::GuiState::load(&saved).unwrap();
     assert_eq!(restored.display_profile(), Some(profile.to_str().unwrap()));
-    h.state_mut().apply_state(restored).unwrap();
+    h.state_mut()
+        .apply_state_with_source(restored, |_| {})
+        .unwrap();
+    await_input(h);
     assert_eq!(
         h.state().gui_state.display_profile(),
         Some(profile.to_str().unwrap()),
@@ -903,7 +907,10 @@ fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
     h.state_mut().current_state().unwrap().save(&saved).unwrap();
     let restored = state::GuiState::load(&saved).unwrap();
     assert_eq!(restored.display_profile(), Some(broken.to_str().unwrap()));
-    h.state_mut().apply_state(restored).unwrap();
+    h.state_mut()
+        .apply_state_with_source(restored, |_| {})
+        .unwrap();
+    await_input(h);
     assert_eq!(
         h.state().gui_state.display_profile(),
         Some(broken.to_str().unwrap()),
@@ -995,6 +1002,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
                 data_dir(),
             )
         });
+    await_input(&mut h);
     wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
     let source = h.state().image.as_ref().unwrap().clone();
     let original = source.host_image().unwrap().clone();
