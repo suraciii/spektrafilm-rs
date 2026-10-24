@@ -262,7 +262,7 @@ impl App {
         self.scan_for_print_snapshot = None;
         self.operator_compare = false;
         self.operator_comparison = None;
-        self.force_preview = true;
+
         self.full_scan_requested = false;
         self.dirty_since = Some(Instant::now());
         self.search_index.reset();

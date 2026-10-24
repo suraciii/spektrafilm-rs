@@ -158,7 +158,6 @@ impl GuiState {
             );
         }
         for (section, key) in [
-            ("simulation", "auto_preview"),
             ("simulation", "saving_cctf_encoding"),
             ("display", "use_display_transform"),
             ("display", "gray_18_canvas"),

@@ -16,7 +16,7 @@ fn drain(h: &mut Harness<'_, App>) {
         a.render_job.is_none()
             && a.export_job.is_none()
             && a.calibration_job.is_none()
-            && !a.force_preview
+            && (!a.dirty || a.image.is_none())
     });
 }
 
@@ -57,7 +57,7 @@ fn wait_calibration(h: &mut Harness<'_, App>, label: &str) {
 /// A session whose App starts without an input image, like a fresh install.
 /// (`empty_session` is reserved for the `gui-raw` gate; this guard must run in
 /// the default gate too.)
-fn session_without_image() -> Session {
+pub(super) fn session_without_image() -> Session {
     let directory = tempfile::tempdir().unwrap();
     let factory = state::GuiState::factory();
     let mut params = factory.runtime_params().unwrap();
@@ -66,10 +66,9 @@ fn session_without_image() -> Session {
     params.debug.deactivate_spatial_effects = true;
     params.debug.deactivate_stochastic_effects = true;
     params.io.crop = false;
-    let mut initial =
+    let initial =
         state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
             .unwrap();
-    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
     let state_path = directory.path().join("initial.json");
     initial.save(&state_path).unwrap();
     let browser_path = directory.path().join("browser.json");
@@ -156,6 +155,7 @@ fn detect_base_button_fits_the_film_base_and_scan_exposure_from_the_loaded_ramp(
     assert_eq!(h.state().params.film_render.convert.scan_illuminant, "D65");
     choose(h, "scan illuminant", "D55");
     assert_eq!(h.state().params.film_render.convert.scan_illuminant, "D55");
+    drain(h);
     let before = calibration_outputs(h.state());
     let route = h.state().params.workflow.route.clone();
     let revision = h.state().parameter_revision;
@@ -180,7 +180,8 @@ fn detect_base_button_fits_the_film_base_and_scan_exposure_from_the_loaded_ramp(
     assert_eq!((after.3, after.4), (before.3, before.4));
     assert_eq!(h.state().params.workflow.route, route);
     assert_eq!(h.state().parameter_revision, revision.wrapping_add(1));
-    assert!(h.state().force_preview);
+    preview(h);
+    assert!(!h.state().accepted_frame_is_stale());
 }
 
 #[test]
@@ -240,7 +241,8 @@ fn blind_calibration_button_fits_the_device_correction_matrix_from_the_loaded_ra
     assert_eq!(after.1, before.1);
     assert_eq!((after.3, after.4), (before.3, before.4));
     assert_eq!(h.state().parameter_revision, revision.wrapping_add(1));
-    assert!(h.state().force_preview);
+    preview(h);
+    assert!(!h.state().accepted_frame_is_stale());
 }
 
 #[test]
@@ -276,7 +278,8 @@ fn neutralize_print_filters_button_solves_neutral_m_and_y_filter_shifts() {
     assert_eq!(after.1, before.1);
     assert_eq!(after.2, before.2);
     assert_eq!(h.state().parameter_revision, revision.wrapping_add(1));
-    assert!(h.state().force_preview);
+    preview(h);
+    assert!(!h.state().accepted_frame_is_stale());
 }
 
 #[test]
@@ -414,7 +417,6 @@ fn calibration_result_from_a_run_superseded_by_a_parameter_change_is_discarded()
     // The superseded fit completed but must not touch any output parameter.
     assert_eq!(calibration_outputs(h.state()), before);
     assert_eq!(h.state().parameter_revision, revision);
-    assert!(!h.state().force_preview);
 }
 
 #[test]

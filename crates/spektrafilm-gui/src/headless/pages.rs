@@ -493,11 +493,11 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
     assert_eq!(h.state().params.io.crop_center, [0.25, 0.5]);
     assert_eq!(h.state().params.io.crop_size, [0.5, 0.5]);
     set_route(h, "input");
-    let left = render(h, "SCAN");
+    let left = scan(h);
     assert_eq!((left.width, left.height), (80, 80));
     edit_control(h, "io.crop_center", "crop center x", "0.75");
     assert_eq!(h.state().params.io.crop_center, [0.75, 0.5]);
-    let right = render(h, "SCAN");
+    let right = scan(h);
     assert_eq!((right.width, right.height), (80, 80));
     assert!(
         mean(&right) > mean(&left) + 0.05,
@@ -507,11 +507,11 @@ fn camera_enlarger_crop_upscale_and_cmyk_controls_edit_params_geometry_and_persi
     );
     edit_control(h, "io.upscale_factor", "upscale factor", "2");
     assert_eq!(h.state().params.io.upscale_factor, 2.0);
-    let up = render(h, "SCAN");
+    let up = scan(h);
     assert_eq!((up.width, up.height), (160, 160));
     toggle_control(h, "io.crop", "crop");
     assert!(!h.state().params.io.crop);
-    let full = render(h, "SCAN");
+    let full = scan(h);
     assert_eq!((full.width, full.height), (320, 160));
     let before_reject = h.state().params.clone();
     edit_control(h, "io.upscale_factor", "upscale factor", "not-a-number");
@@ -603,17 +603,17 @@ fn simulation_blend_scales_render_between_prepared_source_and_complete_result() 
     let h = &mut s.harness;
     set_route(h, "input > film > scan");
     assert_eq!(h.state().params.output_mix.amount, 1.0);
-    let complete = render(h, "PREVIEW");
+    let complete = preview(h);
     edit_control(h, "output_mix.amount", "Simulation blend", "0.0");
     assert_eq!(h.state().params.output_mix.amount, 0.0);
-    let prepared = render(h, "PREVIEW");
+    let prepared = preview(h);
     assert_ne!(
         prepared.data, complete.data,
         "amount 0 and 1 must reach distinct mix branches"
     );
     edit_control(h, "output_mix.amount", "Simulation blend", "0.25");
     assert_eq!(h.state().params.output_mix.amount, 0.25);
-    let mixed = render(h, "PREVIEW");
+    let mixed = preview(h);
     let space = resolve(&h.state().output_color_space).unwrap();
     let encoded = h.state().output_cctf_encoding;
     let linear = |value: f64| {
@@ -680,15 +680,9 @@ fn simulation_blend_scales_render_between_prepared_source_and_complete_result() 
     reveal_control(h, "settings.preview_max_size");
     edit(h, "preview max size", "256");
     assert_eq!(h.state().params.settings.preview_max_size, 256);
-    let previous = h.state().output_image.clone();
-    click(h, "update");
-    wait_until(h, |a| {
-        a.render_job.is_none()
-            && a.output_image
-                .as_ref()
-                .is_some_and(|out| previous.as_ref().is_none_or(|old| !Arc::ptr_eq(old, out)))
-    });
-    let resized = h.state().output_image.as_ref().unwrap();
+    assert!(h.query_by_label("update").is_none());
+    close_settings(h);
+    let resized = preview(h);
     assert_eq!((resized.width, resized.height), (160, 80));
     assert!(
         h.state().status.to_string().starts_with("Preview ·"),
@@ -699,7 +693,6 @@ fn simulation_blend_scales_render_between_prepared_source_and_complete_result() 
         h.state().gui_state.sections["display"]["preview_max_size"].as_u64(),
         Some(256)
     );
-    close_settings(h);
     save_mutate_and_reload(&mut s, "output-mix.json", |h| {
         edit_control(h, "output_mix.amount", "Simulation blend", "0.75");
         assert_eq!(h.state().params.output_mix.amount, 0.75);
@@ -930,10 +923,8 @@ fn global_search_locates_settings_and_export_without_mutation_or_filtering_the_d
     reveal_control(h, "settings.preview_max_size");
     assert!(h.state().settings_open);
     assert!(h.query_by_label("preview max size").is_some());
-    assert!(
-        h.query_by_label("auto preview").is_some(),
-        "the located Settings subsection must not inherit the photographic query"
-    );
+    assert!(h.query_by_label("auto preview").is_none());
+    assert!(h.query_by_label("Update").is_none());
     assert!(!h.state().export_dialog.is_open());
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().gui_state.sections, sections);

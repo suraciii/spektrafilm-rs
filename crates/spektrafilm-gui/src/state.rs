@@ -144,6 +144,17 @@ impl GuiState {
         if !value.is_object() {
             bail!(crate::app::Message::new("operations.state.object"));
         }
+        // Preview is always automatic. Retired preferences must not disable
+        // it when an older flat or nested GUI state is reopened.
+        if let Some(simulation) = value.get_mut("simulation").and_then(Value::as_object_mut) {
+            simulation.remove("auto_preview");
+            if let Some(workflow) = simulation
+                .get_mut("workflow")
+                .and_then(Value::as_object_mut)
+            {
+                workflow.remove("auto_preview");
+            }
+        }
         let version = value["rust"].get("version").and_then(Value::as_u64);
         if value.get("rust").is_some() && !matches!(version, Some(1..=CURRENT_STATE_VERSION)) {
             bail!(
@@ -208,7 +219,7 @@ impl GuiState {
         copy_fields(
             &mut normalized["simulation"],
             &value["simulation"]["workflow"],
-            &["saving_color_space", "saving_cctf_encoding", "auto_preview"],
+            &["saving_color_space", "saving_cctf_encoding"],
         );
         if let Some(enlarger) = value["simulation"].get("enlarger") {
             for &(simulation_key, enlarger_key) in ENLARGER_SIMULATION_ALIASES {
@@ -322,11 +333,6 @@ impl GuiState {
         self.sections["simulation"]["print_paper"]
             .as_str()
             .unwrap_or("kodak_supra_endura")
-    }
-    pub fn auto_preview(&self) -> bool {
-        self.sections["simulation"]["auto_preview"]
-            .as_bool()
-            .unwrap_or(true)
     }
     pub fn display_profile(&self) -> Option<&str> {
         self.sections["rust"]["display_profile"].as_str()

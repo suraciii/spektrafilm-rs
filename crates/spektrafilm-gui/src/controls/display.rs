@@ -11,31 +11,22 @@ pub(crate) fn sections(
     flags: &mut ChangeFlags,
     filter: &mut ControlFilter<'_>,
 ) {
-    if section == "Session" {
-        if filter_matches(filter, "preview max size")
-            && param_numeric(
-                ui,
-                "preview max size",
-                &mut params.settings.preview_max_size,
-                "settings.preview_max_size",
-                "max size of the long edge of the preview image in pixels",
-            )
-        {
-            set_extra(
-                extras,
-                "display",
-                "preview_max_size",
-                Value::from(params.settings.preview_max_size),
-            );
-        }
-        if filter_matches(filter, "update") {
-            let update = ui
-                .push_id("action.update_preview", |ui| {
-                    ui.button(localized(ui.ctx(), "update"))
-                })
-                .inner;
-            locate_row(ui, "action.update_preview", &update);
-            flags.preview_requested |= update.clicked();
-        }
+    if section == "Session"
+        && filter_matches(filter, "preview max size")
+        && param_numeric(
+            ui,
+            "preview max size",
+            &mut params.settings.preview_max_size,
+            "settings.preview_max_size",
+            "max size of the long edge of the preview image in pixels",
+        )
+    {
+        set_extra(
+            extras,
+            "display",
+            "preview_max_size",
+            Value::from(params.settings.preview_max_size),
+        );
+        flags.runtime_changed = true;
     }
 }

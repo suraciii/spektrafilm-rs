@@ -27,13 +27,13 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     standard_operator(h);
     h.state_mut().viewer.settings.crossfade = false;
 
-    let automatic_preview = render(h, "PREVIEW");
+    let automatic_preview = preview(h);
     assert_eq!(h.state().params.settings.preview_max_size, 128);
     assert_eq!(
         (automatic_preview.width, automatic_preview.height),
         (160, 80)
     );
-    let automatic_scan = render(h, "SCAN");
+    let automatic_scan = scan(h);
     assert_eq!(automatic_preview.data, automatic_scan.data);
     settle_animation(h);
     let automatic_display = h.state().viewer.output.as_ref().unwrap().clone();
@@ -46,8 +46,8 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
 
     operator_edit(h, "Finished exposure", "1.0");
     assert_eq!(h.state().params.scanner.operator.exposure_ev, 1.0);
-    let corrected_preview = render(h, "PREVIEW");
-    let corrected = render(h, "SCAN");
+    let corrected_preview = preview(h);
+    let corrected = scan(h);
     assert_eq!(corrected_preview.data, corrected.data);
     assert_ne!(automatic_scan.data, corrected.data);
     assert!(mean(&corrected) > mean(&automatic_scan));
@@ -82,7 +82,6 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     assert!(h.state().operator_compare);
     wait_until(h, |app| {
         app.operator_compare
-            && !app.force_preview
             && !app.dirty
             && app.render_job.is_none()
             && app
@@ -161,8 +160,7 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     h.step();
     assert!(!h.state().operator_compare);
     wait_until(h, |app| {
-        !app.force_preview
-            && !app.dirty
+        !app.dirty
             && app.render_job.is_none()
             && app
                 .output_image
@@ -353,7 +351,7 @@ fn inactive_operator_values_remain_stored_while_rendering_neutrally() {
     operator_edit(h, "Finished exposure", "1.0");
     operator_edit(h, "Warmth", "0.25");
     let stored = h.state().params.scanner.operator;
-    let corrected = render(h, "PREVIEW");
+    let corrected = preview(h);
 
     reveal_control(h, "scanner.scan_output");
     choose(h, "scan output", "Preserve medium polarity");
@@ -361,16 +359,16 @@ fn inactive_operator_values_remain_stored_while_rendering_neutrally() {
     assert!(h.get_by_label("Finished exposure").node().is_disabled());
     assert!(h.get_by_label("Restore automatic").node().is_disabled());
     assert_eq!(h.state().params.scanner.operator, stored);
-    let inactive = render(h, "PREVIEW");
+    let inactive = preview(h);
     // Undoing the route choice reactivates precisely the retained correction.
     click(h, "Undo");
     assert_eq!(h.state().params.scanner.operator, stored);
-    let reactivated = render(h, "PREVIEW");
+    let reactivated = preview(h);
     assert_eq!(reactivated.data, corrected.data);
     click(h, "Restore automatic");
     reveal_control(h, "scanner.scan_output");
     choose(h, "scan output", "Preserve medium polarity");
-    let neutral = render(h, "PREVIEW");
+    let neutral = preview(h);
     assert_eq!(inactive.data, neutral.data);
 }
 
@@ -418,7 +416,7 @@ fn nonprimary_pointer_holds_do_not_compare_or_invalidate_the_corrected_frame() {
     let h = &mut s.harness;
     standard_operator(h);
     operator_edit(h, "Finished exposure", "0.5");
-    let corrected = render(h, "PREVIEW");
+    let corrected = preview(h);
     scroll_controls_into_view(h, "Hold automatic comparison");
     let bounds = h
         .get_by_label("Hold automatic comparison")
@@ -475,22 +473,37 @@ fn gpu_operator_comparison_keeps_the_corrected_device_carrier() {
     await_input(&mut h);
     standard_operator(&mut h);
     operator_edit(&mut h, "Finished exposure", "1.0");
+    let revision = h.state().parameter_revision;
+    let corrected_params = h.state().params.clone();
+    wait_until(&mut h, |app| {
+        app.render_job.is_none()
+            && !app.dirty
+            && !app.accepted_frame_is_stale()
+            && app.output_retained.is_some()
+            && app
+                .source_render
+                .as_ref()
+                .is_some_and(|source| source.parameter_revision == Some(revision))
+    });
     click(&mut h, "SCAN");
     wait_until(&mut h, |app| {
         app.render_job.is_none()
-            && !app.force_preview
             && !app.dirty
             && app.retained_kind == Some(RenderKind::Scan)
+            && !app.accepted_frame_is_stale()
+            && app
+                .source_render
+                .as_ref()
+                .is_some_and(|source| source.parameter_revision == Some(revision))
             && app.output_retained.is_some()
     });
     let corrected = h.state().output_retained.clone().unwrap();
-    let samples = corrected.to_host(h.state().backend.as_ref()).unwrap();
     let source = h.state().image.clone().unwrap();
     settle_animation(&mut h);
     assert!(h.state().viewer.observation().pixels.is_some());
     h.state_mut().set_operator_compare(true);
     wait_until(&mut h, |app| {
-        app.operator_comparison.is_some() && app.render_job.is_none() && !app.force_preview
+        app.operator_comparison.is_some() && app.render_job.is_none() && !app.dirty
     });
     let baseline = &h.state().operator_comparison.as_ref().unwrap().image;
     assert!(
@@ -520,13 +533,18 @@ fn gpu_operator_comparison_keeps_the_corrected_device_carrier() {
     let path = directory.path().join("corrected-comparison.tiff");
     h.state_mut().save_to_path(&path);
     assert!(path.is_file(), "{}", h.state().status);
-    assert_eq!(
-        corrected.to_host(h.state().backend.as_ref()).unwrap().data,
-        samples.data
-    );
+    assert!(Arc::ptr_eq(
+        h.state()
+            .output_retained
+            .as_ref()
+            .unwrap()
+            .payload()
+            .unwrap(),
+        corrected.payload().unwrap()
+    ));
     h.state_mut().set_operator_compare(false);
     wait_until(&mut h, |app| {
-        !app.operator_compare && app.render_job.is_none() && !app.force_preview && !app.dirty
+        !app.operator_compare && app.render_job.is_none() && !app.dirty
     });
     settle_animation(&mut h);
     assert!(h.state().operator_comparison.is_none());
@@ -535,15 +553,10 @@ fn gpu_operator_comparison_keeps_the_corrected_device_carrier() {
         crate::display::ViewLayer::Output
     );
     assert!(h.state().output_image.is_none());
-    assert_eq!(
-        h.state()
-            .output_retained
-            .as_ref()
-            .unwrap()
-            .to_host(h.state().backend.as_ref())
-            .unwrap()
-            .data,
-        samples.data,
-        "releasing automatic comparison must restore corrected device pixels"
-    );
+    // Always-auto Preview can republish the corrected frame on release.
+    // Its carrier identity is disposable; its saved pixels must be unchanged.
+    let released_path = directory.path().join("corrected-released.tiff");
+    h.state_mut().save_to_path(&released_path);
+    super::panels::assert_float_images_equal(&path, &released_path);
+    assert_eq!(h.state().params, corrected_params);
 }

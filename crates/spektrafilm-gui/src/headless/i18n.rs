@@ -12,6 +12,7 @@ fn language(h: &mut Harness<'_, App>, preference: LanguagePreference) {
 fn switching_language_preserves_photographic_identity_and_bilingual_search() {
     let mut s = session();
     let h = &mut s.harness;
+    preview(h);
     let params = h.state().params.clone();
     let sections = h.state().gui_state.sections.clone();
     let revision = h.state().parameter_revision;
@@ -25,7 +26,6 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
         "重做",
         "设置",
         "导出",
-        "预览",
         "扫描",
         "保存",
         "原图",
@@ -36,6 +36,7 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
             "Chinese action {label}"
         );
     }
+    assert!(h.query_by_label("预览").is_none());
     for query in [
         "胶片规格",
         "Film Format",
@@ -191,7 +192,7 @@ fn locale_preference_survives_state_load_factory_and_application_restart() {
 fn live_language_switch_does_not_change_retained_save_or_independent_export_pixels() {
     let mut s = session();
     let h = &mut s.harness;
-    let output = render(h, "SCAN");
+    let output = scan(h);
     let revision = h.state().parameter_revision;
     let before = s.directory.path().join("english.png");
     h.state_mut().save_to_path(&before);
@@ -290,11 +291,12 @@ fn export_draft_survives_language_switch_and_cancel_without_committing_preferenc
 fn language_switch_preserves_active_render_identity_and_accepts_its_result() {
     let mut s = session();
     let h = &mut s.harness;
+    preview(h);
     let active = h.state().render_worker.active.clone();
     let guard = active.lock();
-    let ctx = h.ctx.clone();
-    h.state_mut().force_preview = true;
-    h.state_mut().dispatch_render(&ctx);
+    reveal_control(h, "camera.exposure_compensation_ev");
+    edit(h, "exposure compensation ev", "0.5");
+    wait_until(h, |a| a.render_job.is_some());
     let revision = h.state().parameter_revision;
     let epoch = h.state().input_epoch;
     let request = h.state().render_job.as_ref().unwrap().request_id;
@@ -302,11 +304,7 @@ fn language_switch_preserves_active_render_identity_and_accepts_its_result() {
     language(h, LanguagePreference::SimplifiedChinese);
     assert!(h.state().render_job.is_some());
     assert_eq!(h.state().render_job.as_ref().unwrap().request_id, request);
-    assert!(
-        h.state()
-            .operation_status_localized(&h.ctx)
-            .contains("预览")
-    );
+    assert!(h.query_by_label("渲染中……").is_some());
     assert_eq!(h.state().parameter_revision, revision);
     assert_eq!(h.state().input_epoch, epoch);
     drop(guard);
@@ -337,7 +335,7 @@ fn chinese_header_actions_and_search_remain_reachable_at_supported_desktop_sizes
         });
         click(&mut h, "◀");
         language(&mut h, LanguagePreference::SimplifiedChinese);
-        for label in ["打开", "设置", "导出", "搜索控件", "预览", "扫描", "保存"] {
+        for label in ["打开", "设置", "导出", "搜索控件", "扫描", "保存"] {
             let mut nodes = h.query_all_by_label(label).peekable();
             assert!(nodes.peek().is_some(), "missing {label}");
             for node in nodes {
@@ -511,7 +509,7 @@ fn real_language_selector_retains_invalid_and_deferred_numeric_drafts() {
 fn language_switch_preserves_staged_export_job_and_published_pixels() {
     let mut s = session();
     let h = &mut s.harness;
-    let output = render(h, "SCAN");
+    let output = scan(h);
     let destination = s.directory.path().join("切换语言时导出.png");
     let pause = super::dialogs::stage_export(h, &destination);
     let cancel = h.state().export_job.as_ref().unwrap().cancel.clone();
@@ -525,11 +523,7 @@ fn language_switch_preserves_staged_export_job_and_published_pixels() {
     assert!(!cancel.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().parameter_revision, revision);
-    assert!(
-        h.state()
-            .operation_status_localized(&h.ctx)
-            .contains("导出")
-    );
+    assert!(h.state().status.localized(&h.ctx).contains("导出"));
     pause.release();
     wait_until(h, |app| app.export_job.is_none());
     let expected = image_io::convert_image(
@@ -619,7 +613,7 @@ fn raw_settings_draft_is_not_reprocessed_or_lost_by_language_switch() {
 fn chinese_save_rejection_translates_owned_cause_and_recovery_without_hiding_extension() {
     let mut s = session();
     let h = &mut s.harness;
-    render(h, "PREVIEW");
+    preview(h);
     language(h, LanguagePreference::SimplifiedChinese);
     let destination = s.directory.path().join("拒绝.xyz");
     h.state_mut().save_to_path(&destination);

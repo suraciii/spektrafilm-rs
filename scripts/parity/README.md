@@ -84,9 +84,9 @@ The tests use isolated state, image, and output files. They drive production
 controls and check scanner mode changes, numeric edits, rendering, state
 restoration, and image output.
 
-Render actions wait for pending state-load previews and worker jobs to drain
-before clicking the enabled production button. Parameter edits can supersede
-those previews; a click while the button is disabled does not request a render.
+Automatic Preview checks wait for the result produced by accepted source or
+parameter changes. Explicit Scan checks wait for pending work to drain before
+clicking the enabled SCAN button.
 
 Save and Export tests enter at the selected-path boundary. They use the same
 conversion, worker, and writer as the native dialog actions. These tests do not
@@ -152,22 +152,22 @@ The Linux gate uses real X11 input, OCR, and native file choosers. It checks the
 five tab section order, manifest-derived labels, boundary edits, saved zero RMS,
 fresh startup and factory restore against the independent Python reference,
 profile reselection, and each of the six Workflow selections. Every route is
-saved to canonical state, rendered with PREVIEW and SCAN, saved as TIFF, and
-loaded/saved again. The unique Output/Export options entry opens the independent
+saved to canonical state, rendered by automatic Preview and explicit Scan, saved
+as TIFF, and loaded/saved again. The unique Output/Export options entry opens the independent
 settings modal and exercises the CPU Runtime worker and in-flight cancellation.
 Save writes retained output according to the chosen filename extension. The
 report records executable, input, state, profile/preset, observation, and screenshot
 hashes. Numerical upstream parity remains a separate runtime gate; native rendering
 alone does not establish it.
 
-Start D-Bus inside Xvfb so the GTK portal inherits DISPLAY. The driver performs
-an initial preview before saving state to establish the output viewing layer.
-It selects the requested uppercase footer action independently of neighboring
-button OCR, distinguishes SCAN from the Scan for print checkbox, and observes
-the requested Preview or Scan completion from the report the GUI publishes for
-each operation (`SPEKTRAFILM_GUI_DIAGNOSTICS_DIR`), so render readiness never
-depends on the status line; the human status text is still recorded in the
-scenario records.
+Start D-Bus inside Xvfb so the GTK portal inherits DISPLAY. The driver waits for
+the initial automatic Preview before saving state to establish the output viewing
+layer. It selects the uppercase SCAN footer action independently of neighboring
+button OCR and distinguishes SCAN from the Scan for print checkbox. It observes
+automatic Preview or explicit Scan completion from the report the GUI publishes
+for each operation (`SPEKTRAFILM_GUI_DIAGNOSTICS_DIR`), so render readiness never
+depends on the viewer status badge; the human status text is still recorded in
+the scenario records.
 RAW import requires the pinned fixture's loaded/full dimensions or corresponding
 preview dimensions, plus saved ACES2065-1 state with decoding disabled; transient
 Loaded text can be replaced by a completed preview.
@@ -451,8 +451,8 @@ the render completes. Processed Output can be nearly neutral; its dimensions
 and metadata are checked separately through render reports and decoded Export.
 White-padding verification waits for the requested white border before
 measuring pixel differences; an unrelated changed frame is not completion.
-Crossfade verification disables automatic preview while changing exposure,
-then clicks Preview to request the animated render.
+Crossfade verification changes exposure and requests an explicit Scan. Ordinary
+automatic updates after the first output do not run the development animation.
 The Linux file chooser driver tracks its native window through closure and
 locates the primary action beside Cancel in the window's bottom button row.
 It does not treat the Open files read-only checkbox as an Open action.

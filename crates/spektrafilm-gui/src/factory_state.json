@@ -309,7 +309,6 @@
     "output_color_space": "sRGB",
     "saving_color_space": "sRGB",
     "saving_cctf_encoding": true,
-    "auto_preview": true,
     "route": "input > film > print > scan"
   },
   "load_raw": {

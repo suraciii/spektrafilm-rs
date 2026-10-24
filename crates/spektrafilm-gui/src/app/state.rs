@@ -32,7 +32,6 @@ pub(crate) struct App {
     pub(crate) print_dev_times: Vec<f64>,
     pub(crate) params: RuntimeParams,
     pub(crate) gui_state: state::GuiState,
-    pub(crate) force_preview: bool,
     pub(crate) full_scan_requested: bool,
     /// Original print-glare switch captured while Scan-for-print is active.
     /// This transient workflow state is deliberately excluded from persistence.
@@ -95,9 +94,6 @@ pub(crate) struct App {
     pub(crate) input_job: Option<crate::input_worker::InputJob>,
     pub(crate) input_view_job: Option<crate::input_worker::InputJob>,
     pub(crate) input_command_job: Option<crate::input_worker::InputJob>,
-    /// Innermost work unit of the in-flight render, shared with the render
-    /// worker thread.
-    pub(crate) render_progress: Arc<progress::RenderProgress>,
     /// In-flight export job. `Some` while the immutable snapshot is rendering;
     /// the `update()` loop polls the receiver each frame and
     /// surfaces success/failure in `status` when the worker thread
@@ -237,7 +233,6 @@ impl App {
             }
         }
 
-        let render_progress = Arc::new(progress::RenderProgress::default());
         let viewer_backend = Arc::clone(&backend);
         let mut app = Self {
             backend,
@@ -261,7 +256,6 @@ impl App {
             print_dev_times,
             params,
             gui_state,
-            force_preview: false,
             full_scan_requested: false,
             scan_for_print_snapshot: None,
             operator_compare: false,
@@ -297,12 +291,11 @@ impl App {
             output_cctf_encoding: true,
             dirty_since: None,
             render_job: None,
-            render_worker: RenderWorker::new(render_progress.clone()),
+            render_worker: RenderWorker::new(),
             input_worker: crate::input_worker::InputWorker::new(),
             input_job: None,
             input_view_job: None,
             input_command_job: None,
-            render_progress,
             export_job: None,
             status: startup_error
                 .map(|error| {
@@ -571,7 +564,7 @@ impl App {
         self.scan_for_print_snapshot = None;
         self.dirty = true;
         self.dirty_since = Some(Instant::now());
-        self.force_preview = true;
+
         self.full_scan_requested = false;
         self.render_worker.cancel_active();
         if let Some(prepared) = loaded {

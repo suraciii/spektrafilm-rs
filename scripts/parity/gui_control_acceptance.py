@@ -94,7 +94,7 @@ def scanner_readout(driver, root):
     baseline_path = root / 'scanner-baseline.json'
     baseline = driver.state_action('Save current to file', baseline_path, save=True)
     probe = json.loads(json.dumps(baseline))
-    probe['simulation'].update(route='input > film > scan', auto_preview=False)
+    probe['simulation']['route'] = 'input > film > scan'
     probe['grain']['active'] = False
     probe['scanner'].update(scan_output='direct_scan', conversion_style='standard',
                             lens_blur=0, unsharp_mask=[0, 0],
@@ -201,7 +201,6 @@ def upscale_tooltips(driver):
 
 def control_boundaries(driver, root, factory):
     state = json.loads(json.dumps(factory))
-    state['simulation']['auto_preview'] = False
     state['grain']['rms_granularity'] = [0, 0, 0]
     state['input_image']['upscale_factor'] = 1.5
     path = root / 'saved-user-values.json'

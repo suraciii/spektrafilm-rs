@@ -74,7 +74,7 @@ stateDiagram-v2
 
 Submission must capture each entry independently of later edits or removal. Pending RAW changes must remain distinct from the accepted decode being exported. Duplicate destinations must be resolved before submission; replacement of existing files must require an explicit choice.
 
-The queue must expose per-entry outcomes and cancellation. Live operation status stays in the [header](../../gui-workflow/spec.md#labels-and-surfaces). A failed entry must not stop unrelated work. Canceling remaining work must preserve completed files. [Photo export](../../photo-export/spec.md#publication) owns individual publication guarantees; the batch is not one atomic transaction.
+The queue must expose per-entry outcomes and cancellation. Live export operation status stays in the [header](../../gui-workflow/spec.md#labels-and-surfaces), separate from viewer rendering. A failed entry must not stop unrelated work. Canceling remaining work must preserve completed files. [Photo export](../../photo-export/spec.md#publication) owns individual publication guarantees; the batch is not one atomic transaction.
 
 Retry must distinguish repeating the failed submission from submitting current adjustments. Sequential execution is sufficient. Restart recovery and parallel rendering are outside this target.
 

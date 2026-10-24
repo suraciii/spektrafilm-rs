@@ -376,38 +376,35 @@ fn factory_matches_independently_generated_upstream_state() {
         .as_object_mut()
         .unwrap()
         .remove("lightness_compression");
-    fn compare(actual: &Value, expected: &Value, path: &str) -> usize {
+    // The upstream UI can disable Preview; the native viewer always updates.
+    expected["simulation"]
+        .as_object_mut()
+        .unwrap()
+        .remove("auto_preview");
+    fn compare(actual: &Value, expected: &Value, path: &str) {
         match (actual, expected) {
             (Value::Object(actual), Value::Object(expected)) => {
                 assert_eq!(actual.len(), expected.len(), "section keys at {path}");
-                expected
-                    .iter()
-                    .map(|(key, value)| {
-                        compare(
-                            actual
-                                .get(key)
-                                .unwrap_or_else(|| panic!("missing {path}.{key}")),
-                            value,
-                            &format!("{path}.{key}"),
-                        )
-                    })
-                    .sum()
+                for (key, value) in expected {
+                    compare(
+                        actual
+                            .get(key)
+                            .unwrap_or_else(|| panic!("missing {path}.{key}")),
+                        value,
+                        &format!("{path}.{key}"),
+                    );
+                }
             }
             (Value::Array(actual), Value::Array(expected)) => {
                 assert_eq!(actual.len(), expected.len(), "array size at {path}");
                 for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
                     compare(actual, expected, &format!("{path}[{index}]"));
                 }
-                1
             }
             (Value::Number(actual), Value::Number(expected)) => {
                 assert_eq!(actual.as_f64(), expected.as_f64(), "number at {path}");
-                1
             }
-            _ => {
-                assert_eq!(actual, expected, "value at {path}");
-                1
-            }
+            _ => assert_eq!(actual, expected, "value at {path}"),
         }
     }
     let factory = GuiState::factory();
@@ -444,7 +441,7 @@ fn factory_matches_independently_generated_upstream_state() {
     // than an absent key.
     let camera = shared["camera"].as_object_mut().unwrap();
     camera.remove("capture_illuminant");
-    assert_eq!(compare(&shared, &expected, "factory"), 182);
+    compare(&shared, &expected, "factory");
     let params = factory.runtime_params().unwrap();
     assert_eq!(params.film_render.grain.rms_granularity, [5.0; 3]);
     assert_eq!(params.io.upscale_factor, 1.0);
@@ -1216,12 +1213,30 @@ fn nested_upstream_state_flattens_only_owned_workflow_leaves() {
     assert_eq!(params.enlarger.y_filter_shift, 7.0);
     assert_eq!(params.io.output_color_space, "ITU-R BT.2020");
     assert_eq!(state.film(), "kodak_doublex");
-    assert!(!state.auto_preview());
+    assert!(state.sections["simulation"].get("auto_preview").is_none());
     assert_eq!(
         state.sections["simulation"]["saving_color_space"],
         "ITU-R BT.2020"
     );
     assert!(state.sections["simulation"].get("workflow").is_none());
+}
+
+#[test]
+fn retired_auto_preview_is_ignored_and_omitted_on_save() {
+    let directory = tempfile::tempdir().unwrap();
+    for value in [
+        json!({"simulation": {"auto_preview": false}}),
+        json!({"simulation": {"auto_preview": "false"}}),
+        json!({"simulation": {"workflow": {"auto_preview": false}}}),
+    ] {
+        let state = GuiState::from_value(value).unwrap();
+        assert!(state.sections["simulation"].get("auto_preview").is_none());
+        let path = directory.path().join("migrated.json");
+        state.save(&path).unwrap();
+        let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert!(saved["simulation"].get("auto_preview").is_none());
+        assert!(saved["simulation"].get("workflow").is_none());
+    }
 }
 
 #[test]
@@ -1231,7 +1246,6 @@ fn malformed_controls_and_future_extensions_fail_before_application() {
         json!({"camera":{"auto_exposure":"bad"}}),
         json!({"rust":{"version":9}}),
         json!({"special":{"film_channel_swap":[0,1,3]}}),
-        json!({"simulation":{"auto_preview":"false"}}),
     ] {
         assert!(GuiState::from_value(value).is_err());
     }

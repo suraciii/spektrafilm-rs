@@ -493,23 +493,11 @@ mod tests {
 
     #[test]
     fn modified_search_refreshes_session_preferences_without_a_photo_revision() {
-        let (mut params, mut extras) = factory();
-        let original_auto_preview = extras["simulation"]["auto_preview"].clone();
+        let (mut params, extras) = factory();
         let original_preview_max_size = params.settings.preview_max_size;
         let ctx = egui::Context::default();
         let mut index = SearchIndex::default();
-        for (auto_modified, size_modified) in [
-            (false, false),
-            (true, false),
-            (true, true),
-            (false, true),
-            (false, false),
-        ] {
-            extras["simulation"]["auto_preview"] = if auto_modified {
-                Value::from(!original_auto_preview.as_bool().unwrap())
-            } else {
-                original_auto_preview.clone()
-            };
+        for size_modified in [false, true, false] {
             params.settings.preview_max_size = if size_modified {
                 original_preview_max_size + 1
             } else {
@@ -525,19 +513,14 @@ mod tests {
                 Path::new("."),
                 true,
             );
-            if auto_modified || size_modified {
+            if size_modified {
                 assert_eq!(found.len(), 1);
                 assert_eq!(found[0].owner, ControlOwner::Settings);
-                assert_eq!(
-                    found[0].labels.iter().any(|label| label == "auto preview"),
-                    auto_modified
-                );
-                assert_eq!(
+                assert!(
                     found[0]
                         .labels
                         .iter()
-                        .any(|label| label == "preview max size"),
-                    size_modified
+                        .any(|label| label == "preview max size")
                 );
             } else {
                 assert!(found.is_empty());

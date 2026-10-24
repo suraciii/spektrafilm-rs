@@ -144,9 +144,16 @@ fn on_exit_cancels_and_joins_staged_export_without_publication() {
     assert!(h.state().render_worker.handle.is_none());
     assert!(!destination.exists());
     assert!(files(&output_directory).is_empty());
-    let reports = files(&reports);
-    assert_eq!(reports.len(), 1);
-    assert_cancelled_report(&reports[0]);
+    let export_reports: Vec<_> = files(&reports)
+        .into_iter()
+        .filter(|path| {
+            let report: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            report["operation"]["kind"] == "export"
+        })
+        .collect();
+    assert_eq!(export_reports.len(), 1);
+    assert_cancelled_report(&export_reports[0]);
 }
 
 #[test]
@@ -155,7 +162,7 @@ fn on_exit_joins_active_render_and_discards_queued_results() {
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
     choose(h, "workflow", "input");
-    let baseline = render(h, "PREVIEW");
+    let baseline = preview(h);
     let ctx = h.ctx.clone();
     let active = h.state().render_worker.active.clone();
     let shutdown = h.state().render_worker.shutdown.clone();
