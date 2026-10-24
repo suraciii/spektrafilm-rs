@@ -17,54 +17,6 @@ pub(crate) fn current_section(ctx: &Context) -> Option<String> {
     ctx.data(|data| data.get_temp::<String>(section_id()))
 }
 
-/// Every row uses the same canonical inventory and factory projection.
-pub(crate) fn offer_reset(ui: &mut Ui, label: &str, path: Option<&str>) {
-    let section = current_section(ui.ctx());
-    let entry = path.and_then(super::lookup).or_else(|| {
-        super::inventory().iter().find(|entry| {
-            Some(entry.section) == section.as_deref() && entry.label.eq_ignore_ascii_case(label)
-        })
-    });
-    let Some(entry) = entry else { return };
-    if section_reset::factory_value(&entry.path).is_none() {
-        return;
-    }
-    let action = crate::tr!(
-        ui.ctx(),
-        "controls.reset.target",
-        label = super::localized(ui.ctx(), label)
-    );
-    let response = ui
-        .add(
-            egui::Button::new(
-                egui::RichText::new(crate::i18n::text(ui.ctx(), "controls.reset.action"))
-                    .color(crate::theme::FG_SECONDARY)
-                    .size(crate::theme::SIZE_UNIT),
-            )
-            .small(),
-        )
-        .on_hover_text(action.as_ref());
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &action)
-    });
-    ui.ctx()
-        .accesskit_node_builder(response.id, |node| node.set_label(action.as_ref()));
-    if response.clicked() {
-        ui.ctx().data_mut(|data| {
-            let paths =
-                data.get_temp_mut_or_default::<Vec<String>>(egui::Id::new("control_row_resets"));
-            if !paths.contains(&entry.path) {
-                paths.push(entry.path.clone());
-            }
-        });
-    }
-}
-
-pub(crate) fn take_resets(ctx: &Context) -> Vec<String> {
-    ctx.data_mut(|data| data.remove_temp::<Vec<String>>(egui::Id::new("control_row_resets")))
-        .unwrap_or_default()
-}
-
 /// Validate a changed row against the accepted runtime and shared typed validator.
 /// This runs only on an actual edit, not while painting or searching rows.
 pub(crate) fn accepts_value(ctx: &Context, path: &str, value: Value) -> bool {

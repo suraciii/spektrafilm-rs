@@ -453,7 +453,7 @@ mod operator_interactions {
     }
 
     #[test]
-    fn operator_edit_reset_restore_and_copy_apply_only_four_values() {
+    fn operator_edit_restore_and_copy_apply_only_four_values() {
         let mut h = harness(scanner_params());
         for (label, value) in [
             ("Finished exposure", "1.25"),
@@ -487,109 +487,75 @@ mod operator_interactions {
         assert_eq!(h.state().camera.exposure_compensation_ev, -1.5);
         assert_eq!(h.state().film_render.convert.exposure_compensation_ev, 0.75);
         assert_eq!(h.state().scanner.lens_blur, 0.5);
-        click(&mut h, "Reset Warmth to factory");
-        let mut reset = copied;
-        reset.warmth_ev = 0.0;
-        assert_eq!(h.state().scanner.operator, reset);
     }
 
     #[test]
-    fn operator_resets_and_paste_report_runtime_edits_without_session_history() {
+    fn operator_restore_and_paste_report_runtime_edits_without_session_history() {
         let copied = ScanOperatorParams {
             exposure_ev: 0.25,
             warmth_ev: 0.35,
             tint_ev: -0.2,
             contrast: 1.4,
         };
-        for (action, expected) in [
+        let action = "Restore automatic";
+        let expected = ScanOperatorParams::default();
+        let mut params = scanner_params();
+        params.scanner.operator = copied;
+        params.camera.exposure_compensation_ev = -1.5;
+        params.scanner.lens_blur = 0.5;
+        let mut h = harness(params);
+        click(&mut h, "Copy operator correction");
+        assert_eq!(runtime_changes(&h), 0, "copy is not an adjustment");
+        click(&mut h, action);
+        assert_eq!(h.state().scanner.operator, expected, "{action}");
+        assert_eq!(runtime_changes(&h), 1, "{action}");
+        let edited = super::super::take_edited_paths(&h.ctx);
+        for (path, before, after) in [
             (
-                "Reset Finished exposure to factory",
-                ScanOperatorParams {
-                    exposure_ev: 0.0,
-                    ..copied
-                },
+                "scanner.operator.exposure_ev",
+                copied.exposure_ev,
+                expected.exposure_ev,
             ),
             (
-                "Reset Warmth to factory",
-                ScanOperatorParams {
-                    warmth_ev: 0.0,
-                    ..copied
-                },
+                "scanner.operator.warmth_ev",
+                copied.warmth_ev,
+                expected.warmth_ev,
             ),
+            ("scanner.operator.tint_ev", copied.tint_ev, expected.tint_ev),
             (
-                "Reset Green–magenta tint to factory",
-                ScanOperatorParams {
-                    tint_ev: 0.0,
-                    ..copied
-                },
+                "scanner.operator.contrast",
+                copied.contrast,
+                expected.contrast,
             ),
-            (
-                "Reset Contrast to factory",
-                ScanOperatorParams {
-                    contrast: 1.0,
-                    ..copied
-                },
-            ),
-            ("Restore automatic", ScanOperatorParams::default()),
         ] {
-            let mut params = scanner_params();
-            params.scanner.operator = copied;
-            params.camera.exposure_compensation_ev = -1.5;
-            params.scanner.lens_blur = 0.5;
-            let mut h = harness(params);
-            click(&mut h, "Copy operator correction");
-            assert_eq!(runtime_changes(&h), 0, "copy is not an adjustment");
-            click(&mut h, action);
-            assert_eq!(h.state().scanner.operator, expected, "{action}");
-            assert_eq!(runtime_changes(&h), 1, "{action}");
-            let edited = super::super::take_edited_paths(&h.ctx);
-            for (path, before, after) in [
-                (
-                    "scanner.operator.exposure_ev",
-                    copied.exposure_ev,
-                    expected.exposure_ev,
-                ),
-                (
-                    "scanner.operator.warmth_ev",
-                    copied.warmth_ev,
-                    expected.warmth_ev,
-                ),
-                ("scanner.operator.tint_ev", copied.tint_ev, expected.tint_ev),
-                (
-                    "scanner.operator.contrast",
-                    copied.contrast,
-                    expected.contrast,
-                ),
-            ] {
-                assert_eq!(
-                    edited.iter().any(|edited| edited == path),
-                    before != after,
-                    "{action}: {path}"
-                );
-            }
-            click(&mut h, "Paste operator correction");
-            assert_eq!(h.state().scanner.operator, copied);
-            assert_eq!(runtime_changes(&h), 2, "paste is one runtime adjustment");
-            click(&mut h, "Paste operator correction");
             assert_eq!(
-                runtime_changes(&h),
-                2,
-                "unchanged paste is not an adjustment"
+                edited.iter().any(|edited| edited == path),
+                before != after,
+                "{action}: {path}"
             );
-            assert_eq!(h.state().camera.exposure_compensation_ev, -1.5);
-            assert_eq!(h.state().scanner.lens_blur, 0.5);
-
-            let fresh = harness(h.state().clone());
-            assert_eq!(fresh.state().scanner.operator, copied);
-            assert!(
-                fresh
-                    .get_by_label("Paste operator correction")
-                    .node()
-                    .is_disabled()
-            );
-            assert!(fresh.query_by_label("Undo operator correction").is_none());
-            assert!(fresh.query_by_label("Redo operator correction").is_none());
         }
+        click(&mut h, "Paste operator correction");
+        assert_eq!(h.state().scanner.operator, copied);
+        assert_eq!(runtime_changes(&h), 2, "paste is one runtime adjustment");
+        click(&mut h, "Paste operator correction");
+        assert_eq!(
+            runtime_changes(&h),
+            2,
+            "unchanged paste is not an adjustment"
+        );
+        assert_eq!(h.state().camera.exposure_compensation_ev, -1.5);
+        assert_eq!(h.state().scanner.lens_blur, 0.5);
+
+        let fresh = harness(h.state().clone());
+        assert_eq!(fresh.state().scanner.operator, copied);
+        assert!(
+            fresh
+                .get_by_label("Paste operator correction")
+                .node()
+                .is_disabled()
+        );
+        assert!(fresh.query_by_label("Undo operator correction").is_none());
+        assert!(fresh.query_by_label("Redo operator correction").is_none());
     }
 
     fn runtime_changes(h: &Harness<'_, RuntimeParams>) -> usize {

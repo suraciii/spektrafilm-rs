@@ -60,7 +60,6 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
         *value = previous;
         changed = false;
     }
-    row_modified::offer_reset(ui, label, Some(path));
     if changed {
         super::record_edited_path(ui.ctx(), path);
     }
@@ -184,7 +183,6 @@ pub(crate) fn param_tuple<T: egui::emath::Numeric, const N: usize>(
         false,
         row_modified::RowMark::resolve(ui.ctx(), Some(path)),
     );
-    row_modified::offer_reset(ui, label, Some(path));
     if changed {
         super::record_edited_path(ui.ctx(), path);
     }
@@ -217,7 +215,6 @@ pub(crate) fn param_tuple_experimental<T: egui::emath::Numeric, const N: usize>(
         true,
         row_modified::RowMark::resolve(ui.ctx(), Some(path)),
     );
-    row_modified::offer_reset(ui, label, Some(path));
     if changed {
         super::record_edited_path(ui.ctx(), path);
     }
@@ -468,11 +465,6 @@ pub(crate) fn fotufilm_sublayer_shares(
             value = format!("{:.6}", shares[3])
         ));
     }
-    row_modified::offer_reset(
-        ui,
-        "Sublayer shares",
-        Some("film_render.grain.fotufilm.sublayer_shares"),
-    );
     changed
 }
 
@@ -538,7 +530,6 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
             });
         });
     });
-    row_modified::offer_reset(ui, label, None);
     if changed {
         super::record_label_edit(ui.ctx(), label);
     }
@@ -665,7 +656,6 @@ pub(crate) fn optional_choice_tip(
         };
         ui.ctx()
             .data_mut(|data| data.insert_temp(draft_id, stored_draft));
-        row_modified::offer_reset(ui, label, None);
     });
     if changed {
         super::record_label_edit(ui.ctx(), label);
@@ -801,7 +791,6 @@ pub(crate) fn choice_tip_options<'a>(
         super::focus_response(ui, label, &response);
         name_choice(ui, label);
     });
-    row_modified::offer_reset(ui, label, None);
     if prev != *value {
         super::record_label_edit(ui.ctx(), label);
     }
@@ -861,7 +850,6 @@ pub(crate) fn extra_choice(
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         name_choice(ui, label);
     });
-    row_modified::offer_reset(ui, label, Some(&format!("extras.{section}.{key}")));
     if let Some(selected) = selected {
         set_extra(extras, section, key, Value::from(selected));
         true
@@ -1015,7 +1003,6 @@ pub(crate) fn extra_channels(
                 });
         }
     });
-    row_modified::offer_reset(ui, label, Some(path));
     if changed {
         set_extra(extras, "special", key, Value::from(values.to_vec()));
         super::record_edited_path(ui.ctx(), path);

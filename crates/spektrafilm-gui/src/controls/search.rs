@@ -291,29 +291,37 @@ mod tests {
             "session actions are not modified runtime values"
         );
         // Inactive values are GUI storage, not a core-valid render request.
-        // Their disabled rows become resettable again on the eligible route.
+        // Their rows become modified again on the eligible route.
         params.workflow.route = "input > film > scan".into();
         params.scanner.scan_output = "negative_to_positive".into();
-        for path in [
+        let operator_paths = [
             "scanner.operator.exposure_ev",
             "scanner.operator.warmth_ev",
             "scanner.operator.tint_ev",
             "scanner.operator.contrast",
-        ] {
-            assert!(crate::section_reset::reset_leaf(
-                &mut params,
-                &mut extras,
-                path
-            ));
+        ];
+        for path in operator_paths {
+            assert!(
+                !build_filtered(path, &params, &extras, true).is_empty(),
+                "{path}"
+            );
+            assert_eq!(build_filtered(path, &params, &extras, false).len(), 1);
+        }
+        assert!(crate::section_reset::reset(
+            &mut params,
+            &mut extras,
+            "Scanner"
+        ));
+        assert_eq!(params.scanner.operator, Default::default());
+        assert_eq!(params.camera.exposure_compensation_ev, camera_exposure);
+        assert_eq!(params.scanner.lens_blur, optics);
+        for path in operator_paths {
             assert!(
                 build_filtered(path, &params, &extras, true).is_empty(),
                 "{path}"
             );
             assert_eq!(build_filtered(path, &params, &extras, false).len(), 1);
         }
-        assert_eq!(params.scanner.operator, Default::default());
-        assert_eq!(params.camera.exposure_compensation_ev, camera_exposure);
-        assert_eq!(params.scanner.lens_blur, optics);
         assert!(build_filtered("Operator correction", &params, &extras, true).is_empty());
         params.scanner.operator.exposure_ev = 0.5;
         assert!(crate::section_reset::is_modified(

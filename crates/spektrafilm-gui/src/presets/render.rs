@@ -585,142 +585,6 @@ impl App {
         }
         self.preset_dialogs(ctx);
     }
-    /// One menu at the serialized section's primary module, not its reset scope.
-    pub(crate) fn section_preset_menu(&mut self, ui: &mut egui::Ui, module: &str) {
-        let Some((section, scope)) = section_anchor(module) else {
-            return;
-        };
-        let matching = spektrafilm_core::presets::matching_section_preset_detailed(
-            section,
-            self.presets
-                .entries
-                .iter()
-                .filter_map(|entry| entry.preset.as_ref()),
-            &self.params,
-        );
-        let current = match &matching {
-            Ok(Some(preset)) => std::borrow::Cow::Borrowed(preset.name.as_str()),
-            _ => crate::i18n::text(ui.ctx(), "surfaces.presets.custom"),
-        };
-        let mut action = None;
-        let mut save = false;
-        ui.push_id(("section preset", module), |ui| {
-            let menu = ui.menu_button(
-                crate::tr!(ui.ctx(), "surfaces.presets.section", name = current),
-                |ui| {
-                    ui.add(
-                        egui::Label::new(crate::tr!(
-                            ui.ctx(),
-                            "surfaces.presets.scope",
-                            scope = crate::controls::localized(ui.ctx(), scope)
-                        ))
-                        .wrap(),
-                    );
-                    if let Err(error) = &matching {
-                        ui.colored_label(
-                            theme::ERROR,
-                            document_error_message(error).localized(ui.ctx()),
-                        );
-                    }
-                    if ui
-                        .button(crate::i18n::text(ui.ctx(), "surfaces.presets.save_as"))
-                        .clicked()
-                    {
-                        save = true;
-                        ui.close_menu();
-                    }
-                    let mut any = false;
-                    for group in [PresetGroup::BuiltIn, PresetGroup::User] {
-                        for (index, entry) in
-                            self.presets
-                                .entries
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, entry)| {
-                                    entry.group == group
-                                        && entry.fault.is_none()
-                                        && entry.preset.as_ref().is_some_and(|preset| {
-                                            preset.kind() == Ok(PresetKind::Section(section))
-                                        })
-                                })
-                        {
-                            if !any {
-                                ui.separator();
-                            }
-                            any = true;
-                            let group_name = if group == PresetGroup::BuiltIn {
-                                "Built-in"
-                            } else {
-                                "My Presets"
-                            };
-                            let identity = format!(
-                                "{} / {}",
-                                crate::controls::localized(ui.ctx(), group_name),
-                                entry.name
-                            );
-                            if ui
-                                .button(crate::tr!(
-                                    ui.ctx(),
-                                    "surfaces.presets.apply",
-                                    identity = identity
-                                ))
-                                .clicked()
-                            {
-                                action = Some((index, PresetAction::Load));
-                                ui.close_menu();
-                            }
-                            let management = [
-                                (PresetAction::Rename, "Rename…", group == PresetGroup::User),
-                                (
-                                    PresetAction::Duplicate,
-                                    if group == PresetGroup::BuiltIn {
-                                        "Duplicate to My Presets…"
-                                    } else {
-                                        "Duplicate…"
-                                    },
-                                    true,
-                                ),
-                                (PresetAction::Export, "Export…", true),
-                                (PresetAction::Reveal, "Show file", entry.path.is_some()),
-                                (PresetAction::Delete, "Delete…", group == PresetGroup::User),
-                            ];
-                            for (selected, label, visible) in management {
-                                if visible
-                                    && ui
-                                        .button(crate::tr!(
-                                            ui.ctx(),
-                                            "surfaces.presets.manage",
-                                            action = crate::controls::localized(ui.ctx(), label),
-                                            identity = identity
-                                        ))
-                                        .clicked()
-                                {
-                                    action = Some((index, selected));
-                                    ui.close_menu();
-                                }
-                            }
-                        }
-                    }
-                    if !any {
-                        ui.label(crate::i18n::text(
-                            ui.ctx(),
-                            "surfaces.presets.section_empty",
-                        ));
-                    }
-                },
-            );
-            if save || action.is_some() {
-                menu.response.request_focus();
-            }
-        });
-        if save {
-            self.save_section_preset_as(section);
-        }
-        if let Some((index, action)) = action {
-            self.apply_preset_action(index, action);
-        }
-    }
-
     fn preset_actions(&self, ui: &mut egui::Ui, entry: &LibraryEntry) -> Option<PresetAction> {
         let preset = entry.preset.as_ref()?;
         let mut action = None;
@@ -903,22 +767,19 @@ impl App {
                         self.presets
                             .library
                             .save_new_detailed(&preset, &self.data_dir)
+                            .map_err(|error| library_error_message(&error))
                     }
-                    NameAction::Rename(old) => {
-                        self.presets
-                            .library
-                            .rename_detailed(old, &dialog.name, &self.data_dir)
-                    }
-                    NameAction::Duplicate(preset) => self.presets.library.duplicate_detailed(
-                        preset,
-                        &dialog.name,
-                        &self.data_dir,
-                    ),
-                    NameAction::Import(path) => self.presets.library.import_detailed(
-                        path,
-                        Some(&dialog.name),
-                        &self.data_dir,
-                    ),
+                    NameAction::Rename(old) => self
+                        .presets
+                        .library
+                        .rename_detailed(old, &dialog.name, &self.data_dir)
+                        .map_err(|error| library_error_message(&error)),
+                    NameAction::Duplicate(preset) => self
+                        .presets
+                        .library
+                        .duplicate_detailed(preset, &dialog.name, &self.data_dir)
+                        .map_err(|error| library_error_message(&error)),
+                    NameAction::Import(path) => self.import_look_preset(path, Some(&dialog.name)),
                 };
                 match result {
                     Ok(path) => {
@@ -945,7 +806,7 @@ impl App {
                         self.presets.refresh();
                     }
                     Err(e) => {
-                        let detail = library_error_message(&e);
+                        let detail = e;
                         self.status = crate::app::Message::new("surfaces.status.preset_error")
                             .message_arg("error", detail.clone());
                         dialog.error = Some(detail);

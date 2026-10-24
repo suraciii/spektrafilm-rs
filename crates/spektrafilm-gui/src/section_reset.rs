@@ -43,6 +43,16 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
         ],
     ),
     ("Session", &["settings.preview_max_size"], &[]),
+    (
+        "Display",
+        &[],
+        &[
+            "display.use_display_transform",
+            "display.gray_18_canvas",
+            "display.white_padding",
+            "display.output_interpolation",
+        ],
+    ),
     ("Film base", &["film_render.base"], &[]),
     (
         "Film chemistry",
@@ -174,7 +184,7 @@ const SECTION_PARAMETERS: &[(&str, &[&str], &[&str])] = &[
     ),
 ];
 
-/// Factory values shared by row resets, inventory filtering and module markers.
+/// Factory values shared by module resets, inventory filtering and module markers.
 pub(crate) fn factory_value(path: &str) -> Option<Value> {
     if let Some(path) = path.strip_prefix("extras.") {
         document_value(&FACTORY_EXTRAS, path)
@@ -223,47 +233,6 @@ pub(crate) fn path_modified(path: &str, live_root: &Value, extras: &Value) -> bo
     match (live, factory_value(path)) {
         (Some(live), Some(factory)) => !same_bits(&live, &factory),
         (None, Some(factory)) => !factory.is_null(),
-        _ => false,
-    }
-}
-
-/// Restore one canonical leaf, including its optional state or complete vector.
-/// The candidate is validated before publication; no neighboring leaf changes.
-pub(crate) fn reset_leaf(params: &mut RuntimeParams, extras: &mut Value, path: &str) -> bool {
-    let Some(factory) = factory_value(path) else {
-        return false;
-    };
-    if let Some(path) = path.strip_prefix("extras.") {
-        if extras_value(extras, path)
-            .as_ref()
-            .is_some_and(|live| same_bits(live, &factory))
-        {
-            return false;
-        }
-        return set_value(extras, path, factory);
-    }
-    let Ok(mut root) = serde_json::to_value(&*params) else {
-        return false;
-    };
-    if document_value(&root, path)
-        .as_ref()
-        .is_some_and(|live| same_bits(live, &factory))
-    {
-        return false;
-    }
-    if !set_value(&mut root, path, factory) {
-        return false;
-    }
-    let preparation = params.render_preparation_state();
-    match serde_json::from_value::<RuntimeParams>(root) {
-        Ok(mut candidate) => {
-            if crate::state::validate_stored_runtime(&mut candidate).is_err() {
-                return false;
-            }
-            candidate.restore_render_preparation_state(&preparation);
-            *params = candidate;
-            true
-        }
         _ => false,
     }
 }
@@ -458,12 +427,14 @@ pub fn reset(params: &mut RuntimeParams, extras: &mut Value, section: &str) -> b
             // rejects leaves the section unrestored, so the caller is told
             // nothing changed rather than marking a reset that did not happen.
             let preparation = params.render_preparation_state();
-            match serde_json::from_value::<RuntimeParams>(live_root) {
-                Ok(mut restored) if restored.validate().is_ok() => {
-                    restored.restore_render_preparation_state(&preparation);
-                    *params = restored;
+            if let Ok(mut restored) = serde_json::from_value::<RuntimeParams>(live_root) {
+                if crate::state::validate_stored_runtime(&mut restored).is_err() {
+                    return false;
                 }
-                _ => return false,
+                restored.restore_render_preparation_state(&preparation);
+                *params = restored;
+            } else {
+                return false;
             }
         }
     }
@@ -548,11 +519,11 @@ mod tests {
         ));
         extras["display"]["white_padding"] = Value::from(0.25_f32);
         let mut params = params;
-        assert!(reset_leaf(
-            &mut params,
-            &mut extras,
-            "extras.display.white_padding"
-        ));
+        assert!(reset(&mut params, &mut extras, "Display"));
+        assert_eq!(
+            extras["display"]["white_padding"],
+            projected["white_padding"]
+        );
         assert!(!path_modified(
             "extras.display.white_padding",
             &root,
@@ -562,7 +533,7 @@ mod tests {
 
     #[test]
     fn export_conversion_and_icc_modified_markers_use_typed_factory_defaults() {
-        let mut params = factory();
+        let params = factory();
         let mut extras = GuiState::factory().sections;
         let root = serde_json::to_value(&params).unwrap();
         let paths = [
@@ -584,8 +555,6 @@ mod tests {
         extras["rust"]["display_profile"] = Value::from("selected-display.icc");
         for path in paths {
             assert!(path_modified(path, &root, &extras), "{path}");
-            assert!(reset_leaf(&mut params, &mut extras, path), "{path}");
-            assert!(!path_modified(path, &root, &extras), "{path}");
         }
         extras["rust"]
             .as_object_mut()
@@ -595,30 +564,23 @@ mod tests {
     }
 
     #[test]
-    fn leaf_and_module_resets_preserve_unrelated_explicit_preparation_ownership() {
-        for module in [false, true] {
-            let mut params = factory();
-            params.camera.exposure_compensation_ev = 1.0;
-            params.enlarger.preflash_y_filter_shift = 7.0;
-            let mut preparation = params.render_preparation_state();
-            preparation.explicit_section_paths = vec![
-                "enlarger.print_exposure".into(),
-                "enlarger.preflash_y_filter_shift".into(),
-            ];
-            preparation.explicit_section_paths.sort();
-            preparation.neutral_print_filters_protected = [true, false, true];
-            params.restore_render_preparation_state(&preparation);
-            let mut extras = GuiState::factory().sections.clone();
-            assert!(if module {
-                reset(&mut params, &mut extras, "Camera")
-            } else {
-                reset_leaf(&mut params, &mut extras, "enlarger.preflash_y_filter_shift")
-            });
-            assert_eq!(params.render_preparation_state(), preparation);
-            if module {
-                assert_eq!(params.enlarger.preflash_y_filter_shift, 7.0);
-            }
-        }
+    fn module_reset_preserves_unrelated_explicit_preparation_ownership() {
+        let mut params = factory();
+        params.camera.exposure_compensation_ev = 1.0;
+        params.enlarger.preflash_y_filter_shift = 7.0;
+        let mut preparation = params.render_preparation_state();
+        preparation.explicit_section_paths = vec![
+            "enlarger.print_exposure".into(),
+            "enlarger.preflash_y_filter_shift".into(),
+        ];
+        preparation.explicit_section_paths.sort();
+        preparation.neutral_print_filters_protected = [true, false, true];
+        params.restore_render_preparation_state(&preparation);
+        let mut extras = GuiState::factory().sections.clone();
+        assert!(reset(&mut params, &mut extras, "Camera"));
+        assert_eq!(params.render_preparation_state(), preparation);
+        assert_eq!(params.camera.exposure_compensation_ev, 0.0);
+        assert_eq!(params.enlarger.preflash_y_filter_shift, 7.0);
     }
 
     #[test]
@@ -697,13 +659,6 @@ mod tests {
         params.scanner.lens_blur = 0.25;
         assert!(reset(&mut params, &mut extras, "Scanner"));
         assert_eq!(params.film_render.convert.scan_illuminant, "BB4321");
-        assert!(reset_leaf(
-            &mut params,
-            &mut extras,
-            "film_render.convert.scan_illuminant"
-        ));
-        assert_eq!(params.film_render.convert.scan_illuminant, factory_light);
-        params.film_render.convert.scan_illuminant = "T".into();
         params.scanner.lens_blur = 0.5;
         assert!(reset(&mut params, &mut extras, "Convert"));
         assert_eq!(params.film_render.convert.scan_illuminant, factory_light);

@@ -1,5 +1,6 @@
 use super::*;
 use crate::state;
+use spektrafilm_core::presets::Section;
 pub(super) fn test_app(label: &str) -> (App, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("spektrafilm-gui-{label}-{}", std::process::id()));
@@ -623,65 +624,6 @@ fn browser_search_matches_both_material_names_and_ids_without_changing_order_or_
 }
 
 #[test]
-fn section_application_keeps_full_serialized_scope_and_explicit_ownership() {
-    let (mut app, directory) = test_app("section-application");
-    let remembered = AppliedPreset {
-        group: PresetGroup::BuiltIn,
-        name: "Remembered look".into(),
-    };
-    app.presets.state.applied = Some(remembered.clone());
-    app.params.camera.exposure_compensation_ev = 1.25;
-    let mut preparation = app.params.render_preparation_state();
-    preparation
-        .explicit_section_paths
-        .push("camera.exposure_compensation_ev".into());
-    app.params.restore_render_preparation_state(&preparation);
-    let mut source = app.params.clone();
-    source.enlarger.print_exposure = 2.5;
-    source.enlarger.preflash_exposure = 0.1;
-    source.enlarger.preflash_y_filter_shift = 3.0;
-    source.enlarger.preflash_m_filter_shift = 4.0;
-    let preset =
-        Preset::capture_section("Full enlarger", Section::Enlarger, &source, provenance()).unwrap();
-    app.presets
-        .library
-        .save_new(&preset, &app.data_dir)
-        .unwrap();
-    let film = app.film_name.clone();
-    let print = app.print_name.clone();
-    let route = app.params.workflow.route.clone();
-    let diffusion = serde_json::to_value(&app.params.enlarger.diffusion_filter).unwrap();
-    app.load_preset(PresetGroup::User, &preset.name);
-    assert_eq!(app.params.enlarger.print_exposure, 2.5);
-    assert_eq!(app.params.enlarger.preflash_exposure, 0.1);
-    assert_eq!(app.params.enlarger.preflash_y_filter_shift, 3.0);
-    assert_eq!(app.params.enlarger.preflash_m_filter_shift, 4.0);
-    assert_eq!(
-        serde_json::to_value(&app.params.enlarger.diffusion_filter).unwrap(),
-        diffusion
-    );
-    assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
-    let preparation = app.params.render_preparation_state();
-    assert!(
-        preparation
-            .explicit_section_paths
-            .iter()
-            .any(|path| path == "camera.exposure_compensation_ev")
-    );
-    assert!(
-        preparation
-            .explicit_section_paths
-            .iter()
-            .any(|path| path == "enlarger.preflash_exposure")
-    );
-    assert_eq!(app.presets.state.applied, Some(remembered));
-    assert_eq!(app.film_name, film);
-    assert_eq!(app.print_name, print);
-    assert_eq!(app.params.workflow.route, route);
-    std::fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
 fn browser_filters_only_looks_and_does_not_hide_library_faults() {
     let (mut app, directory) = test_app("search-faults");
     let section = Preset::capture_section(
@@ -812,39 +754,5 @@ fn look_application_preserves_existing_explicit_ownership_and_legacy_camera_omis
         app.params.render_preparation_state().explicit_section_paths,
         ownership.explicit_section_paths
     );
-    std::fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
-fn print_section_changes_scan_glare_without_changing_enlarger_or_materials() {
-    let (mut app, directory) = test_app("print-section-scope");
-    app.params.enlarger.preflash_exposure = 0.05;
-    app.params.print_render.glare.active = false;
-    app.toggle_scan_for_print();
-    let mut source = app.params.clone();
-    source.print_render.glare.active = true;
-    source.print_render.glare.percent = 2.0;
-    source.print_render.density_curve_gamma = 1.25;
-    let preset =
-        Preset::capture_section("Print and readout", Section::Print, &source, provenance())
-            .unwrap();
-    app.presets
-        .library
-        .save_new(&preset, &app.data_dir)
-        .unwrap();
-    let enlarger = serde_json::to_value(&app.params.enlarger).unwrap();
-    let film = app.film_name.clone();
-    let print = app.print_name.clone();
-    app.load_preset(PresetGroup::User, &preset.name);
-    assert!(app.params.print_render.glare.active);
-    assert_eq!(app.params.print_render.glare.percent, 2.0);
-    assert_eq!(app.params.print_render.density_curve_gamma, 1.25);
-    assert!(app.scan_for_print_snapshot.is_none());
-    assert_eq!(
-        serde_json::to_value(&app.params.enlarger).unwrap(),
-        enlarger
-    );
-    assert_eq!(app.film_name, film);
-    assert_eq!(app.print_name, print);
     std::fs::remove_dir_all(directory).unwrap();
 }

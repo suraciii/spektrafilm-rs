@@ -489,8 +489,6 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
     }
     if custom {
         changed |= param_numeric(ui, "Frame Long Edge", value, PATH, HELP);
-    } else {
-        row_modified::offer_reset(ui, "Film Format", Some(PATH));
     }
     ui.ctx().data_mut(|data| {
         if custom {

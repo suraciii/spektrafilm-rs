@@ -1,5 +1,6 @@
 use super::discovery::{Filter, Preferences};
 use super::*;
+use spektrafilm_core::presets::Section;
 
 fn identity(group: PresetGroup, name: &str) -> AppliedPreset {
     AppliedPreset {

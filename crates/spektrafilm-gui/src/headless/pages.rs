@@ -581,7 +581,7 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
     );
     edit(h, "Frame Long Edge", "42");
     assert_eq!(h.state().params.camera.film_format_mm, 42.0);
-    click(h, "Reset Frame Long Edge to factory");
+    click(h, "reset Camera");
     assert_eq!(
         h.state().params.camera.film_format_mm,
         original.camera.film_format_mm
@@ -848,7 +848,7 @@ fn scanner_search_reveals_independent_rows_on_an_inactive_route() {
 }
 
 #[test]
-fn individual_and_module_resets_restore_only_their_owned_values_and_are_reversible() {
+fn module_resets_restore_only_their_owned_values_and_are_reversible() {
     let mut s = session();
     let h = &mut s.harness;
     set_route(h, "input > film > print > scan");
@@ -876,22 +876,8 @@ fn individual_and_module_resets_restore_only_their_owned_values_and_are_reversib
     );
 
     reveal_control(h, "enlarger.preflash_y_filter_shift");
-    click(h, "Reset preflash y filter shift to factory");
-    let mut expected = edited.clone();
-    expected.enlarger.preflash_y_filter_shift = factory.enlarger.preflash_y_filter_shift;
-    assert_eq!(h.state().params, expected, "row reset owns only one leaf");
-    assert!(
-        h.query_by_label("preflash y filter shift").is_none(),
-        "factory row leaves Only modified results"
-    );
-    click(h, "Undo");
-    assert_eq!(h.state().params, edited);
-    assert!(h.query_by_label("preflash y filter shift").is_some());
-    click(h, "Only modified");
-
-    reveal_control(h, "enlarger.preflash_exposure");
     click(h, "reset Preflash");
-    expected = edited.clone();
+    let mut expected = edited.clone();
     expected.enlarger.preflash_exposure = factory.enlarger.preflash_exposure;
     expected.enlarger.preflash_y_filter_shift = factory.enlarger.preflash_y_filter_shift;
     expected.enlarger.preflash_m_filter_shift = factory.enlarger.preflash_m_filter_shift;
@@ -900,8 +886,15 @@ fn individual_and_module_resets_restore_only_their_owned_values_and_are_reversib
         expected,
         "Preflash reset must not own main enlarger exposure or diffusion"
     );
+    assert!(
+        h.query_by_label("preflash y filter shift").is_none(),
+        "factory preflash rows leave Only modified results"
+    );
     click(h, "Undo");
     assert_eq!(h.state().params, edited);
+    assert!(h.query_by_label("preflash y filter shift").is_some());
+    click(h, "Only modified");
+
     reveal_control(h, "enlarger.print_exposure");
     click(h, "reset Enlarger");
     expected = edited.clone();
@@ -910,6 +903,10 @@ fn individual_and_module_resets_restore_only_their_owned_values_and_are_reversib
         h.state().params,
         expected,
         "Enlarger reset must retain separate Preflash controls"
+    );
+    assert_eq!(
+        h.state().params.enlarger.preflash_y_filter_shift,
+        edited.enlarger.preflash_y_filter_shift
     );
 }
 
@@ -1084,118 +1081,6 @@ fn camera_module_reset_retains_camera_diffusion_and_other_stage_edits() {
         h.state().params,
         expected,
         "Camera reset must not replace its separately owned diffusion or another stage"
-    );
-}
-
-#[test]
-fn enlarger_section_preset_applies_preflash_but_retains_separate_diffusion_and_materials() {
-    use spektrafilm_core::presets::{Preset, Provenance, Section};
-    let mut s = session();
-    let h = &mut s.harness;
-    set_route(h, "input > film > print > scan");
-    edit_control(h, "enlarger.print_exposure", "print exposure", "0.5");
-    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0.25");
-    edit_control(
-        h,
-        "enlarger.preflash_y_filter_shift",
-        "preflash y filter shift",
-        "1.5",
-    );
-    let accepted = h.state().params.clone();
-    let film = h.state().film_name.clone();
-    let paper = h.state().print_name.clone();
-    let preset = Preset::capture_section(
-        "Inspector enlarger",
-        Section::Enlarger,
-        &accepted,
-        Provenance {
-            implementation_version: env!("CARGO_PKG_VERSION").into(),
-            model_version: "spektrafilm".into(),
-            scanner: None,
-        },
-    )
-    .unwrap();
-    let directory = h.state().config_directory.join("presets");
-    std::fs::create_dir_all(&directory).unwrap();
-    std::fs::write(
-        directory.join("Inspector enlarger.toml"),
-        preset.to_toml().unwrap(),
-    )
-    .unwrap();
-    h.state_mut().presets.refresh();
-    edit_control(h, "enlarger.print_exposure", "print exposure", "2");
-    edit_control(h, "enlarger.preflash_exposure", "preflash exposure", "0");
-    edit_control(
-        h,
-        "enlarger.preflash_y_filter_shift",
-        "preflash y filter shift",
-        "-0.5",
-    );
-    edit_control(h, "enlarger.diffusion_filter.strength", "strength", "0.375");
-    edit_control(
-        h,
-        "camera.exposure_compensation_ev",
-        "exposure compensation ev",
-        "0.75",
-    );
-    let before = h.state().params.clone();
-    reveal_control(h, "enlarger.print_exposure");
-    scroll_controls_into_view(h, "Section preset: custom");
-    h.get_by_role_and_label(egui::accesskit::Role::Button, "Section preset: custom")
-        .click();
-    h.run_steps(3);
-    h.get_by_role_and_label(
-        egui::accesskit::Role::Button,
-        "Apply My Presets / Inspector enlarger",
-    )
-    .focus();
-    h.run_steps(3);
-    h.press_key(egui::Key::Enter);
-    h.run_steps(3);
-    let mut expected = before.clone();
-    expected.enlarger = accepted.enlarger;
-    expected.enlarger.diffusion_filter = before.enlarger.diffusion_filter.clone();
-    let actual_consumers = serde_json::to_value(&h.state().params).unwrap();
-    let expected_consumers = serde_json::to_value(&expected).unwrap();
-    assert_eq!(
-        actual_consumers, expected_consumers,
-        "serialized Enlarger preset scope includes Preflash but not Enlarger diffusion or camera"
-    );
-    let before_preparation = before.render_preparation_state();
-    let after_preparation = h.state().params.render_preparation_state();
-    assert!(
-        before_preparation
-            .explicit_section_paths
-            .iter()
-            .all(|path| after_preparation.explicit_section_paths.contains(path)),
-        "section application preserves explicit ownership of prior independent edits"
-    );
-    assert_eq!(
-        after_preparation.neutral_print_filters_protected,
-        before_preparation.neutral_print_filters_protected
-    );
-    for path in [
-        "camera.exposure_compensation_ev",
-        "enlarger.diffusion_filter.strength",
-        "enlarger.preflash_exposure",
-        "enlarger.preflash_y_filter_shift",
-        "enlarger.print_exposure",
-    ] {
-        assert!(
-            after_preparation
-                .explicit_section_paths
-                .iter()
-                .any(|owned| owned == path),
-            "section application lost explicit ownership: {path}"
-        );
-    }
-    assert_eq!(h.state().film_name, film);
-    assert_eq!(h.state().print_name, paper);
-    click(h, "Undo");
-    assert_eq!(
-        h.state().params,
-        before,
-        "multi-module section application is one reversible edit"
     );
 }
 
