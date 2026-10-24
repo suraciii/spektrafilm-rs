@@ -49,7 +49,6 @@ fn key(label: &str) -> Option<&'static str> {
         " • applied" => Some("surfaces.presets.suffix_applied"),
         " • missing" => Some("surfaces.presets.suffix_missing"),
         " • modified" => Some("surfaces.presets.suffix_modified"),
-        "%{action} %{identity}" => Some("surfaces.presets.manage"),
         "%{cause}; %{detail}" => Some("surfaces.status.normalization"),
         "%{format} · %{depth} · %{space} · %{encoding} · %{compression}" => {
             Some("surfaces.export.summary_tiff")
@@ -109,7 +108,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Amount" => Some("controls.grain.amount"),
         "Analogue" => Some("controls.grain.analogue"),
         "Applied preset '%{name}'" => Some("surfaces.status.preset_applied"),
-        "Apply %{identity}" => Some("surfaces.presets.apply"),
         "Apply lens corrections" => Some("controls.scanner.lens_correction_help"),
         "Apply saving CCTF encoding" => Some("controls.label.apply_saving_cctf_encoding"),
         "Apply the copied four values to this frame's own automatic setup." => {
@@ -186,7 +184,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Camera" => Some("controls.label.camera"),
         "Camera diffusion" => Some("controls.label.camera_diffusion"),
-        "Camera exposure and capture illuminant" => Some("surfaces.presets.scope_camera"),
         "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter." => {
             Some("controls.scanner.color_filter_help")
         }
@@ -420,7 +417,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Engine" => Some("controls.grain.engine"),
         "Enlarger" => Some("controls.label.enlarger"),
         "Enlarger diffusion" => Some("controls.label.enlarger_diffusion"),
-        "Enlarger exposure, filtration and Preflash" => Some("surfaces.presets.scope_enlarger"),
         "Enlarger inactive on this route; stored values are retained." => {
             Some("controls.scanner.enlarger_inactive")
         }
@@ -458,8 +454,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Film Type" => Some("controls.grain.film_type"),
         "Film base" => Some("controls.label.film_base"),
         "Film chemistry" => Some("controls.chemistry.film_section"),
-        "Film chemistry and density curve" => Some("surfaces.presets.scope_film"),
-        "Film grain" => Some("surfaces.presets.scope_grain"),
         "Film material" => Some("controls.label.film_material"),
         "Film polarity for procedural grain." => Some("controls.grain.film_type_help"),
         "Film profile changed" => Some("surfaces.status.film_changed"),
@@ -486,7 +480,6 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.couplers.diffusion_tail_weight_help")
         }
         "Frame Long Edge" => Some("controls.scanner.frame_long_edge"),
-        "Full preset scope: %{scope}" => Some("surfaces.presets.scope"),
         "GPU passes and measurement availability" => Some("surfaces.diagnostics.gpu"),
         "GPU timing" => Some("surfaces.diagnostics.gpu_timing"),
         "GUI parameters" => Some("controls.label.gui_parameters"),
@@ -719,9 +712,6 @@ fn key(label: &str) -> Option<&'static str> {
         "No modified controls match “%{query}”." => Some("surfaces.search.no_modified_match"),
         "No observations in this scope." => Some("surfaces.diagnostics.no_observations"),
         "No output" => Some("surfaces.histogram.empty"),
-        "No presets for this section. Save as, or place a section preset file in the library." => {
-            Some("surfaces.presets.section_empty")
-        }
         "No saved looks. Use Save preset to save the current look." => {
             Some("surfaces.presets.empty")
         }
@@ -832,9 +822,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Print" => Some("controls.label.print"),
         "Print base" => Some("controls.label.print_base"),
         "Print chemistry" => Some("controls.chemistry.print_section"),
-        "Print chemistry, Print base, print density curve and Scan / Print viewing glare" => {
-            Some("surfaces.presets.scope_print")
-        }
         "Print illuminant to simulate. Default is the bundled TH-KG3." => {
             Some("controls.scanner.print_illuminant_help")
         }
@@ -919,18 +906,9 @@ fn key(label: &str) -> Option<&'static str> {
         "Requested: %{requested} · Selected: %{selected} · Route: %{route}" => {
             Some("surfaces.diagnostics.backend")
         }
-        "Reset %{label} to factory" => Some("surfaces.export.reset"),
-        "Reset film profile to factory" => Some("surfaces.profiles.reset_film"),
-        "Reset gray 18% canvas to factory" => Some("surfaces.display.reset_canvas"),
-        "Reset only this Export draft option. Cancel discards the draft; this does not edit the photograph." => {
-            Some("surfaces.export.reset_help")
-        }
-        "Reset output interpolation to factory" => Some("surfaces.display.reset_interpolation"),
-        "Reset print profile to factory" => Some("surfaces.profiles.reset_print"),
         "Reset the four operator values only; keep this frame's own automatic setup." => {
             Some("controls.scanner.restore_automatic_help")
         }
-        "Reset use display transform to factory" => Some("surfaces.display.reset_transform"),
         "Resident route declined: %{reason}" => Some("surfaces.diagnostics.declined"),
         "Resolution Type" => Some("controls.grain.resolution_type"),
         "Resolution component of the post-scan Procedural appearance algorithm; this does not set scanner lens resolution." => {
@@ -965,7 +943,6 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.convert.detect_base_help")
         }
         "Save" => Some("surfaces.action.save"),
-        "Save as…" => Some("surfaces.presets.save_as"),
         "Save current as default" => Some("surfaces.state.save_default"),
         "Save current look as a preset" => Some("surfaces.presets.save_help"),
         "Save current to file" => Some("surfaces.state.save_file"),
@@ -986,7 +963,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Search controls" => Some("surfaces.search.label"),
         "Search presets" => Some("surfaces.presets.search"),
-        "Section preset: %{name}" => Some("surfaces.presets.section"),
         "Select the JPEG chroma subsampling." => Some("surfaces.export.subsampling_help"),
         "Select the TIFF compression method." => Some("surfaces.export.compression_help"),
         "Select the bit depth." => Some("surfaces.export.depth_help"),

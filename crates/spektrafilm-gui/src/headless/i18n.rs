@@ -375,38 +375,6 @@ fn chinese_workspace_and_settings_render_with_bundled_font() {
 }
 
 #[test]
-fn authored_section_preset_named_custom_is_not_a_translated_fallback() {
-    use spektrafilm_core::presets::{Preset, Provenance, Section};
-    let mut s = session();
-    let h = &mut s.harness;
-    let preset = Preset::capture_section(
-        "custom",
-        Section::Camera,
-        &h.state().params,
-        Provenance {
-            implementation_version: env!("CARGO_PKG_VERSION").into(),
-            model_version: "spektrafilm".into(),
-            scanner: None,
-        },
-    )
-    .unwrap();
-    let directory = h.state().config_directory.join("presets");
-    std::fs::create_dir_all(&directory).unwrap();
-    std::fs::write(
-        directory.join("custom.json"),
-        serde_json::to_vec(&preset).unwrap(),
-    )
-    .unwrap();
-    h.state_mut().presets.refresh();
-    reveal_control(h, "camera.exposure_compensation_ev");
-    language(h, LanguagePreference::SimplifiedChinese);
-    assert!(
-        h.query_by_role_and_label(egui::accesskit::Role::Button, "分区预设：custom")
-            .is_some()
-    );
-}
-
-#[test]
 fn real_language_selector_retains_invalid_and_deferred_numeric_drafts() {
     for draft in ["-", "0"] {
         let mut s = session();

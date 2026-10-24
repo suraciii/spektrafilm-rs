@@ -615,12 +615,9 @@ fn history_message(label: &str) -> crate::app::Message {
         "Rotate source" => "operations.history.rotate",
         "Scan for print" => "operations.history.scan_for_print",
         "Adjust photograph" => "operations.history.adjust",
-        "Reset film profile to factory" => "operations.history.reset_film",
-        "Reset print profile to factory" => "operations.history.reset_print",
         "Rotate source counter-clockwise" => "operations.history.rotate_ccw",
         "Rotate source clockwise" => "operations.history.rotate_cw",
         "Toggle scan for print" => "operations.history.toggle_scan_for_print",
-        "Reset control to factory" => "operations.history.reset_control",
         _ => return crate::app::Message::control(label),
     };
     crate::app::Message::new(key)

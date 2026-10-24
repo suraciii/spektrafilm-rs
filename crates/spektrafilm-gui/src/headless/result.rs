@@ -232,10 +232,9 @@ fn quiet_secondary_actions_keep_visible_keyboard_focus() {
     let mut s = session();
     let h = &mut s.harness;
     reveal_control(h, "io.upscale_factor");
-    assert_painted_focus(h, "Reset upscale factor to factory");
     assert_painted_focus(h, "reset Crop and upscale");
     reveal_control(h, "extras.simulation.film_stock");
-    assert_painted_focus(h, "Reset film profile to factory");
+    assert_painted_focus(h, "reset Film material");
     reveal_control(h, "action.save_state");
     for label in [
         "Save current to file",
@@ -245,8 +244,4 @@ fn quiet_secondary_actions_keep_visible_keyboard_focus() {
     ] {
         assert_painted_focus(h, label);
     }
-    open_export(h);
-    choose(h, "Format", "TIFF");
-    assert_painted_focus(h, "Reset Format to factory");
-    click(h, "Cancel");
 }

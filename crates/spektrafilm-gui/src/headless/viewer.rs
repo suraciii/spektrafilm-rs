@@ -588,7 +588,7 @@ fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
 }
 
 #[test]
-fn white_padding_modified_locator_and_row_reset_follow_live_and_persisted_viewer_settings() {
+fn white_padding_modified_locator_and_display_reset_follow_live_and_persisted_viewer_settings() {
     let mut s = session();
     let h = &mut s.harness;
     let factory = state::GuiState::factory().sections["display"]["white_padding"]
@@ -612,7 +612,7 @@ fn white_padding_modified_locator_and_row_reset_follow_live_and_persisted_viewer
     let locator = "Locate Settings: Display";
     assert!(h.query_by_label(locator).is_some());
     click(h, locator);
-    click(h, "Reset white padding to factory");
+    click(h, "reset Display");
     assert!((h.state().viewer.settings.white_padding as f64 - factory).abs() < 1e-6);
     assert!(
         (h.state().current_state().unwrap().sections["display"]["white_padding"]
@@ -631,7 +631,7 @@ fn white_padding_modified_locator_and_row_reset_follow_live_and_persisted_viewer
 }
 
 #[test]
-fn display_row_resets_restore_only_the_live_owned_field_without_adjustment_history() {
+fn display_reset_restores_the_full_live_viewer_settings_without_adjustment_history() {
     let mut s = session();
     let h = &mut s.harness;
     let factory =
@@ -651,55 +651,39 @@ fn display_row_resets_restore_only_the_live_owned_field_without_adjustment_histo
             "nearest"
         },
     );
+    edit(h, "white padding", "0.2");
     let changed = h.state().viewer.settings.clone();
     assert_ne!(changed.use_display_transform, factory.use_display_transform);
     assert_ne!(changed.gray_18_canvas, factory.gray_18_canvas);
     assert_ne!(changed.interpolation, factory.interpolation);
+    assert!((changed.white_padding - factory.white_padding).abs() > 1e-6);
 
-    click(h, "Reset use display transform to factory");
+    click(h, "reset Display");
+    let restored = &h.state().viewer.settings;
     assert_eq!(
-        h.state().viewer.settings.use_display_transform,
+        restored.use_display_transform,
         factory.use_display_transform
     );
+    assert_eq!(restored.gray_18_canvas, factory.gray_18_canvas);
+    assert_eq!(restored.interpolation, factory.interpolation);
+    assert!((restored.white_padding - factory.white_padding).abs() < 1e-6);
+
+    let persisted = h.state().current_state().unwrap();
+    let display = &persisted.sections["display"];
     assert_eq!(
-        h.state().viewer.settings.gray_18_canvas,
-        changed.gray_18_canvas
-    );
-    assert_eq!(
-        h.state().viewer.settings.interpolation,
-        changed.interpolation
-    );
-    assert_eq!(
-        h.state().current_state().unwrap().sections["display"]["use_display_transform"],
+        display["use_display_transform"],
         serde_json::json!(factory.use_display_transform)
     );
-
-    click(h, "Reset gray 18% canvas to factory");
     assert_eq!(
-        h.state().viewer.settings.gray_18_canvas,
-        factory.gray_18_canvas
-    );
-    assert_eq!(
-        h.state().viewer.settings.interpolation,
-        changed.interpolation
-    );
-    assert_eq!(
-        h.state().current_state().unwrap().sections["display"]["gray_18_canvas"],
+        display["gray_18_canvas"],
         serde_json::json!(factory.gray_18_canvas)
     );
-
-    click(h, "Reset output interpolation to factory");
     assert_eq!(
-        h.state().viewer.settings.interpolation,
-        factory.interpolation
-    );
-    assert_eq!(
-        h.state().current_state().unwrap().sections["display"]["output_interpolation"],
+        display["output_interpolation"],
         serde_json::json!(factory.interpolation.name())
     );
-    assert_eq!(
-        h.state().viewer.settings.white_padding,
-        changed.white_padding
+    assert!(
+        (display["white_padding"].as_f64().unwrap() - factory.white_padding as f64).abs() < 1e-6
     );
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().parameter_revision, revision);

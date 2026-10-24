@@ -308,6 +308,43 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     );
 }
 
+#[test]
+fn preset_import_rejects_section_documents_without_writing_or_editing() {
+    let mut s = session();
+    let h = &mut s.harness;
+    expand_preset_library(h);
+    let preset = Preset::capture_section(
+        "Section only",
+        spektrafilm_core::presets::Section::OutputMix,
+        &h.state().params,
+        preset_provenance(),
+    )
+    .unwrap();
+    let external = s.directory.path().join("section.json");
+    std::fs::write(&external, preset.to_json().unwrap()).unwrap();
+    let before = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+    script(h, chooser::ChooserResult::Scripted(external.clone()));
+    scroll_preset_into_view(h, "Import");
+    preset_pointer_click(h, "Import", egui::PointerButton::Primary);
+    assert!(h.state().status.localized(&h.ctx).contains("look"));
+    edit_preset_name(h, "Renamed section");
+    click(h, "Save");
+    assert!(h.state().presets.name_dialog.is_some());
+    let library = h.state().config_directory.join("presets");
+    for name in ["Section only", "Renamed section"] {
+        for extension in ["toml", "json"] {
+            assert!(!library.join(format!("{name}.{extension}")).exists());
+        }
+    }
+    assert_eq!(h.state().params, before);
+    assert_eq!(h.state().parameter_revision, revision);
+    assert_eq!(
+        Preset::from_json_str(&std::fs::read_to_string(external).unwrap()).unwrap(),
+        preset
+    );
+}
+
 // specs/gui-product-design/spec.md#preset-browser: the card carries a visible
 // action control, so the management actions are reachable without the context
 // menu, and the control takes focus so a keyboard activates it.
@@ -365,6 +402,13 @@ fn open_export_dialog(h: &mut Harness<'_, App>) {
 
 fn change_export_format(h: &mut Harness<'_, App>, next: &str) {
     choose(h, "Format", next);
+}
+
+/// Move the Export draft away from the committed baseline.
+fn edit_export_draft(h: &mut Harness<'_, App>) {
+    choose(h, "Backend", export::ExportBackend::Cpu.label());
+    choose(h, "Format", "PNG");
+    choose(h, "Saving color space", "Display P3");
 }
 
 #[test]
@@ -460,11 +504,10 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
 }
 
 #[test]
-fn export_row_factory_resets_are_draft_local_cancelable_and_commit_without_adjustment_history() {
+fn export_draft_edits_are_local_cancelable_and_commit_normalized_without_adjustment_history() {
     let mut s = session();
     let h = &mut s.harness;
-    let factory = export::ExportOptions::from_state(&state::GuiState::factory().sections);
-    let mut custom = factory.clone();
+    let mut custom = h.state().export_options.clone();
     custom.backend = export::ExportBackend::Gpu;
     custom.format = export::ExportFormat::Tiff;
     custom.depth = BitDepth::ThirtyTwo;
@@ -478,44 +521,48 @@ fn export_row_factory_resets_are_draft_local_cancelable_and_commit_without_adjus
     let could_undo = h.state().can_undo();
     let could_redo = h.state().can_redo();
 
-    for submit in [false, true] {
-        open_export(h);
-        for label in [
-            "Backend",
-            "Bit depth",
-            "Compression",
-            "Saving color space",
-            "Apply saving CCTF encoding",
-        ] {
-            export_action(h, &format!("Reset {label} to factory"));
-        }
-        choose(h, "Format", "JPEG");
-        export_action(h, "Reset JPEG quality to factory");
-        export_action(h, "Reset JPEG subsampling to factory");
-        export_action(h, "Reset Format to factory");
-        assert_eq!(
-            h.state().export_options,
-            custom,
-            "draft resets do not commit preferences"
-        );
-        assert_eq!(h.state().params, params);
-        assert_eq!(h.state().can_undo(), could_undo);
-        assert_eq!(h.state().can_redo(), could_redo);
-        if submit {
-            let destination = s.directory.path().join("factory-reset-export.png");
-            script(h, chooser::Chooser::chooser_path(&destination));
-            export_action(h, "Export file…");
-            wait_until(h, |app| app.export_job.is_none() && destination.is_file());
-            assert_eq!(h.state().export_options, factory);
-            assert_eq!(h.state().params, params);
-            assert_eq!(h.state().can_undo(), could_undo);
-            assert_eq!(h.state().can_redo(), could_redo);
-        } else {
-            click(h, "Cancel");
-            assert_eq!(h.state().export_options, custom);
-            assert!(h.state().export_job.is_none());
-        }
-    }
+    // Draft edits stay in the dialog: they are not preferences until Export.
+    open_export_dialog(h);
+    edit_export_draft(h);
+    assert_eq!(
+        h.state().export_options,
+        custom,
+        "draft edits do not commit preferences"
+    );
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().can_undo(), could_undo);
+    assert_eq!(h.state().can_redo(), could_redo);
+    click(h, "Cancel");
+    assert_eq!(
+        h.state().export_options,
+        custom,
+        "cancel preserves the committed preferences"
+    );
+    assert!(h.state().export_job.is_none());
+
+    // Export commits the edited draft after the dialog normalizes it.
+    let destination = s.directory.path().join("draft-normalized-export.png");
+    open_export_dialog(h);
+    edit_export_draft(h);
+    script(h, chooser::Chooser::chooser_path(&destination));
+    export_action(h, "Export file…");
+    wait_until(h, |app| app.export_job.is_none() && destination.is_file());
+    let mut expected = custom.clone();
+    expected.backend = export::ExportBackend::Cpu;
+    expected.format = export::ExportFormat::Png;
+    expected.saving_color_space = "Display P3".into();
+    expected.normalize();
+    assert_eq!(
+        &h.state().export_options,
+        &expected,
+        "export commits the normalized draft"
+    );
+    // PNG requires 8-bit encoded output even after a linear 32-bit TIFF draft.
+    assert_eq!(h.state().export_options.depth, BitDepth::Eight);
+    assert!(h.state().export_options.saving_cctf_encoding);
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().can_undo(), could_undo);
+    assert_eq!(h.state().can_redo(), could_redo);
 }
 
 #[test]

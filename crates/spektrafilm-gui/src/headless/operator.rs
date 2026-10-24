@@ -270,7 +270,7 @@ fn operator_edits_copy_paste_and_restore_share_global_adjustment_history() {
 }
 
 #[test]
-fn operator_resets_restore_paste_and_text_edits_replace_global_redo_branches() {
+fn operator_restore_paste_and_text_edits_replace_global_redo_branches() {
     use spektrafilm_core::params::ScanOperatorParams;
 
     let mut s = session();
@@ -289,34 +289,6 @@ fn operator_resets_restore_paste_and_text_edits_replace_global_redo_branches() {
     operator_edit(h, "Finished exposure", "1.5");
     let first = h.state().params.clone();
     for (action, operator) in [
-        (
-            "Reset Finished exposure to factory",
-            ScanOperatorParams {
-                exposure_ev: 0.0,
-                ..first.scanner.operator
-            },
-        ),
-        (
-            "Reset Warmth to factory",
-            ScanOperatorParams {
-                warmth_ev: 0.0,
-                ..first.scanner.operator
-            },
-        ),
-        (
-            "Reset Green–magenta tint to factory",
-            ScanOperatorParams {
-                tint_ev: 0.0,
-                ..first.scanner.operator
-            },
-        ),
-        (
-            "Reset Contrast to factory",
-            ScanOperatorParams {
-                contrast: 1.0,
-                ..first.scanner.operator
-            },
-        ),
         ("Restore automatic", ScanOperatorParams::default()),
         ("Paste operator correction", copied),
     ] {
@@ -373,7 +345,7 @@ fn inactive_operator_values_remain_stored_while_rendering_neutrally() {
 }
 
 #[test]
-fn neighboring_leaf_reset_retains_inactive_operator_and_uses_global_history() {
+fn neighboring_module_reset_retains_inactive_operator_and_uses_global_history() {
     let mut s = session();
     let h = &mut s.harness;
     standard_operator(h);
@@ -399,7 +371,7 @@ fn neighboring_leaf_reset_retains_inactive_operator_and_uses_global_history() {
     let factory = state::GuiState::factory().runtime_params().unwrap();
     let mut expected = edited.clone();
     expected.output_mix.amount = factory.output_mix.amount;
-    click(h, "Reset Simulation blend to factory");
+    click(h, "reset Output");
     assert_eq!(h.state().params, expected);
     assert_eq!(h.state().params.scanner.operator, stored);
     click(h, "Undo");

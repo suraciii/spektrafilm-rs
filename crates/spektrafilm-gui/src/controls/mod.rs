@@ -190,7 +190,6 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
         // The selector carries the parameter's own accessible name.
         widgets::name_choice(ui, label);
     });
-    row_modified::offer_reset(ui, label, None);
     if prev != *value {
         record_label_edit(ui.ctx(), label);
     }
@@ -317,7 +316,6 @@ pub(crate) fn show(
             "control_allowed_paths",
         ))
     });
-    flags.runtime_changed |= apply_pending_resets(ui.ctx(), params, extras);
     flags
 }
 
@@ -470,21 +468,6 @@ pub(crate) fn record_label_edit(ctx: &egui::Context, label: &str) {
     {
         record_edited_path(ctx, path);
     }
-}
-
-pub(crate) fn apply_pending_resets(
-    ctx: &egui::Context,
-    params: &mut RuntimeParams,
-    extras: &mut Value,
-) -> bool {
-    let mut changed = false;
-    for path in row_modified::take_resets(ctx) {
-        if crate::section_reset::reset_leaf(params, extras, &path) {
-            record_edited_path(ctx, &path);
-            changed = true;
-        }
-    }
-    changed
 }
 
 pub(crate) fn entry_matches(

@@ -658,14 +658,6 @@ impl App {
                 }
                 heading = Some(response);
                 self.section_reset_controls(ui, section);
-                self.section_preset_menu(
-                    ui,
-                    if section == "Output" {
-                        "Simulation blend"
-                    } else {
-                        section
-                    },
-                );
             });
             if reveal {
                 self.pending_scroll = None;
@@ -778,30 +770,6 @@ impl App {
                             self.select_print_profile(selected);
                         }
                     }
-                    let reset_label = if film {
-                        "Reset film profile to factory"
-                    } else {
-                        "Reset print profile to factory"
-                    };
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new(controls::localized(ui.ctx(), reset_label))
-                                    .color(theme::FG_SECONDARY)
-                                    .size(theme::SIZE_UNIT),
-                            )
-                            .small(),
-                        )
-                        .clicked()
-                    {
-                        let factory = state::GuiState::factory();
-                        self.label_adjustment(reset_label);
-                        if film {
-                            self.select_film_profile(factory.film().to_owned());
-                        } else {
-                            self.select_print_profile(factory.paper().to_owned());
-                        }
-                    }
                 }
                 self.chemistry_dev_time(ui, film);
             }
@@ -890,22 +858,12 @@ impl App {
             }
             _ => self.parameter_section_controls(ui, section),
         }
-        if controls::apply_pending_resets(ui.ctx(), &mut self.params, &mut self.gui_state.sections)
-        {
-            self.label_adjustment("Reset control to factory");
-            if section == "Workflow" {
-                self.finish_route_change();
-            } else {
-                self.mark_parameters_changed_invalidating_calibration();
-            }
-        }
     }
 
     /// The `modified` chip and the reset action of one section header.
     ///
-    /// Every resettable section presents these on its header, whether or not
-    /// it also carries a preset menu, so the reset scope the section table
-    /// declares is reachable from the surface that renders the section.
+    /// Every resettable section presents these on its header, so the reset scope
+    /// the section table declares is reachable from the surface rendering it.
     fn section_reset_controls(&mut self, ui: &mut egui::Ui, section: &str) -> bool {
         let mut changed = false;
         let material_modified = match section {
@@ -960,10 +918,12 @@ impl App {
                 node.set_label(accessible_name);
             });
             if response.clicked() {
-                self.label_adjustment_message(
-                    crate::app::Message::new("operations.history.reset_section")
-                        .message_arg("section", crate::app::Message::control(section)),
-                );
+                if !matches!(section, "Session" | "Display") {
+                    self.label_adjustment_message(
+                        crate::app::Message::new("operations.history.reset_section")
+                            .message_arg("section", crate::app::Message::control(section)),
+                    );
+                }
                 if section == "Film material" {
                     self.select_film_profile(state::GuiState::factory().film().to_owned());
                 } else if section == "Print material" {
@@ -972,9 +932,10 @@ impl App {
                 section_reset::reset(&mut self.params, &mut self.gui_state.sections, section);
                 if section == "Workflow" {
                     self.finish_route_change();
-                } else {
+                } else if section != "Display" {
                     self.mark_parameters_changed_invalidating_calibration();
                 }
+                self.search_index.reset();
                 changed = true;
             }
         }
@@ -1258,15 +1219,6 @@ impl App {
         {
             controls::locate_row(ui, path, &response);
         }
-        controls::row_modified::offer_reset(
-            ui,
-            "development time",
-            Some(if film {
-                "film_render.development_time"
-            } else {
-                "print_render.development_time"
-            }),
-        );
     }
 
     fn controls_panel(&mut self, ui: &mut egui::Ui) {
@@ -1399,7 +1351,7 @@ impl App {
             self.viewer.settings.use_display_transform,
             self.params.settings.preview_max_size,
         );
-        egui::Window::new(crate::i18n::text(ctx, "surfaces.settings.title")).id(egui::Id::new("Settings"))
+        egui::Window::new(crate::i18n::text(ctx, "surfaces.settings.title"))
             .id(egui::Id::new("application-settings"))
             .open(&mut open)
             .default_width(520.0)
@@ -1414,6 +1366,13 @@ impl App {
                     let response = egui::CollapsingHeader::new(if section == "Session" { crate::i18n::text(ui.ctx(), "surfaces.settings.general") } else { controls::localized(ui.ctx(), section) }).id_salt(section).default_open(false).open(reveal.then_some(true)).show(ui, |ui| {
                         let _scope = controls::row_modified::install(ui.ctx(), section, &self.params, &self.gui_state.sections);
                         if self.input_transition_pending() && !matches!(section, "Display" | "Diagnostics") { ui.disable(); }
+                        if matches!(section, "Session" | "Display") && self.section_reset_controls(ui, section) && section == "Display" {
+                            let restored = display::DisplaySettings::from_json(&self.gui_state.sections["display"]);
+                            self.viewer.settings.use_display_transform = restored.use_display_transform;
+                            self.viewer.settings.gray_18_canvas = restored.gray_18_canvas;
+                            self.viewer.settings.white_padding = restored.white_padding;
+                            self.viewer.settings.interpolation = restored.interpolation;
+                        }
                         match section {
                             "Session" => {
                                 ui.horizontal(|ui| {
@@ -1427,28 +1386,11 @@ impl App {
                                 self.display_profile_controls(ui);
                                 let transform = ui.checkbox(&mut self.viewer.settings.use_display_transform, controls::localized(ui.ctx(), "use display transform")).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.display.transform_help"));
                                 controls::locate_row(ui, "extras.display.use_display_transform", &transform);
-                                if ui.small_button(crate::i18n::text(ui.ctx(), "surfaces.display.reset_transform")).clicked() {
-                                    self.viewer.settings.use_display_transform = display::DisplaySettings::from_json(&state::GuiState::factory().sections["display"]).use_display_transform;
-                                }
                                 let canvas = ui.checkbox(&mut self.viewer.settings.gray_18_canvas, controls::localized(ui.ctx(), "gray 18% canvas"));
                                 controls::locate_row(ui, "extras.display.gray_18_canvas", &canvas);
-                                if ui.small_button(crate::i18n::text(ui.ctx(), "surfaces.display.reset_canvas")).clicked() {
-                                    self.viewer.settings.gray_18_canvas = display::DisplaySettings::from_json(&state::GuiState::factory().sections["display"]).gray_18_canvas;
-                                }
                                 controls::param_numeric(ui, "white padding", &mut self.viewer.settings.white_padding, "extras.display.white_padding", "Viewer-only white border, as a fraction of the image long edge.");
                                 self.viewer.interpolation_control(ui);
-                                if ui.small_button(crate::i18n::text(ui.ctx(), "surfaces.display.reset_interpolation")).clicked() {
-                                    self.viewer.settings.interpolation = display::DisplaySettings::from_json(&state::GuiState::factory().sections["display"]).interpolation;
-                                }
                                 self.sync_display_controls();
-                                if controls::apply_pending_resets(ui.ctx(), &mut self.params, &mut self.gui_state.sections) {
-                                    let restored = display::DisplaySettings::from_json(&self.gui_state.sections["display"]);
-                                    self.viewer.settings.use_display_transform = restored.use_display_transform;
-                                    self.viewer.settings.gray_18_canvas = restored.gray_18_canvas;
-                                    self.viewer.settings.white_padding = restored.white_padding;
-                                    self.viewer.settings.interpolation = restored.interpolation;
-                                    self.search_index.reset();
-                                }
                             }
                             "Diagnostics" => self.diagnostics_panel(ui),
                             _ => unreachable!(),

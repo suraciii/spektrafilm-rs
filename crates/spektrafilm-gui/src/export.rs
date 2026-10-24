@@ -310,34 +310,6 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-fn draft_reset<T: Clone + PartialEq>(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut T,
-    factory: &T,
-    applicable: bool,
-) {
-    if ui
-        .add_enabled(
-            applicable && value != factory,
-            egui::Button::new(
-                egui::RichText::new(crate::tr!(
-                    ui.ctx(),
-                    "surfaces.export.reset",
-                    label = controls::localized(ui.ctx(), label)
-                ))
-                .color(theme::FG_SECONDARY)
-                .size(theme::SIZE_UNIT),
-            )
-            .small(),
-        )
-        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.reset_help"))
-        .clicked()
-    {
-        value.clone_from(factory);
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct ExportDialog {
     draft: Option<ExportOptions>,
@@ -364,14 +336,10 @@ impl ExportDialog {
         source: Option<&Path>,
     ) -> Option<ExportOptions> {
         let draft = self.draft.as_mut()?;
-        static FACTORY: std::sync::LazyLock<ExportOptions> = std::sync::LazyLock::new(|| {
-            ExportOptions::from_state(&crate::state::GuiState::factory().sections)
-        });
-        let factory = &*FACTORY;
         let mut open = true;
         let mut submit = false;
         let mut cancel = false;
-        egui::Window::new(crate::i18n::text(ctx, "surfaces.export.title")).id(egui::Id::new("Export options"))
+        egui::Window::new(crate::i18n::text(ctx, "surfaces.export.title"))
             .id(egui::Id::new("full_render_export_options"))
             .open(&mut open)
             .collapsible(false)
@@ -399,14 +367,12 @@ impl ExportDialog {
                     (ExportBackend::Cpu, cpu_label),
                     (ExportBackend::Gpu, "GPU (WGPU f32)"),
                 ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
-                draft_reset(ui, "Backend", &mut draft.backend, &factory.backend, true);
                 enum_choice(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, ExportFormat::Jpeg.label()),
                     (ExportFormat::Png, ExportFormat::Png.label()),
                     (ExportFormat::Tiff, ExportFormat::Tiff.label()),
                     (ExportFormat::Exr, ExportFormat::Exr.label()),
                 ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit integer or 32-bit float, ZIP or uncompressed. EXR: 16/32-bit linear for compositing.");
-                draft_reset(ui, "Format", &mut draft.format, &factory.format, true);
                 draft.normalize();
                 let depth_choices: &[(BitDepth, &str)] = match draft.format {
                     ExportFormat::Jpeg | ExportFormat::Png => &[],
@@ -420,7 +386,6 @@ impl ExportDialog {
                 } else {
                     enum_choice(ui, "Bit depth", &mut draft.depth, depth_choices, "Select the bit depth.");
                 }
-                draft_reset(ui, "Bit depth", &mut draft.depth, &factory.depth, !depth_choices.is_empty());
                 let jpeg = draft.format == ExportFormat::Jpeg;
                 if jpeg {
                     ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_warning"));
@@ -428,14 +393,12 @@ impl ExportDialog {
                 let quality = ui.add_enabled(jpeg,
                     egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality"))).on_disabled_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality_help"));
                 controls::locate_row(ui, "extras.rust.jpeg_quality", &quality);
-                draft_reset(ui, "JPEG quality", &mut draft.jpeg_quality, &factory.jpeg_quality, jpeg);
                 ui.add_enabled_ui(jpeg, |ui| {
                     enum_choice(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &[
                         (JpegSubsampling::Yuv444, "4:4:4"),
                         (JpegSubsampling::Yuv420, "4:2:0"),
                     ], "Select the JPEG chroma subsampling.");
                 });
-                draft_reset(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &factory.jpeg_subsampling, jpeg);
                 if !jpeg {
                     ui.label(egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_inactive")).small().color(theme::FG_MUTED));
                 }
@@ -458,7 +421,6 @@ impl ExportDialog {
                         controls::locate_row(ui, "extras.rust.export_compression", &response);
                     }
                 }
-                draft_reset(ui, "Compression", &mut draft.compression, &factory.compression, draft.format == ExportFormat::Tiff);
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
                 let color_space = egui::ComboBox::new("Saving color space", crate::i18n::text(ui.ctx(), "surfaces.export.color_space"))
                     .selected_text(&draft.saving_color_space)
@@ -474,12 +436,10 @@ impl ExportDialog {
                 })
                 .response.on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.space_help"));
                 controls::locate_row(ui, "extras.rust.export_saving_color_space", &color_space);
-                draft_reset(ui, "Saving color space", &mut draft.saving_color_space, &factory.saving_color_space, true);
                 let encoding = ui.add_enabled(draft.format == ExportFormat::Tiff,
                     egui::Checkbox::new(&mut draft.saving_cctf_encoding, controls::localized(ui.ctx(), "Apply saving CCTF encoding")))
                     .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help"));
                 controls::locate_row(ui, "extras.rust.export_saving_cctf_encoding", &encoding);
-                draft_reset(ui, "Apply saving CCTF encoding", &mut draft.saving_cctf_encoding, &factory.saving_cctf_encoding, draft.format == ExportFormat::Tiff);
                 draft.normalize();
                 match draft.format {
                     ExportFormat::Exr => { ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.exr_fixed")); }

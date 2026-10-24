@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use spektrafilm_core::{
     params::RuntimeParams,
     presets::{
-        LibraryEntry, Preset, PresetGroup, PresetKind, PresetLibrary, Provenance, Section,
-        validate_name,
+        LibraryEntry, Preset, PresetGroup, PresetKind, PresetLibrary, Provenance, validate_name,
     },
 };
 use std::path::{Path, PathBuf};
@@ -171,33 +170,6 @@ fn provenance() -> Provenance {
         model_version: "spektrafilm".into(),
         scanner: None,
     }
-}
-
-/// One anchor for each core serialized scope, independent of visual reset scope.
-pub(crate) fn section_anchor(module: &str) -> Option<(Section, &'static str)> {
-    Some(match module {
-        "Film chemistry" => (Section::Film, "Film chemistry and density curve"),
-        "Grain" => (Section::Grain, "Film grain"),
-        "Halation" => (Section::Halation, "Halation"),
-        "Couplers" => (Section::Couplers, "Couplers"),
-        "Film base" => (Section::Base, "Film base"),
-        "Convert" => (Section::Convert, "Convert"),
-        "Camera" => (Section::Camera, "Camera exposure and capture illuminant"),
-        "Camera diffusion" => (Section::CameraFilter, "Camera diffusion"),
-        "Enlarger diffusion" => (Section::EnlargerFilter, "Enlarger diffusion"),
-        "Enlarger" => (
-            Section::Enlarger,
-            "Enlarger exposure, filtration and Preflash",
-        ),
-        "Scanner" => (Section::Scanner, "Scanner"),
-        "CMYK ink style" => (Section::Cmyk, "CMYK ink style"),
-        "Print chemistry" => (
-            Section::Print,
-            "Print chemistry, Print base, print density curve and Scan / Print viewing glare",
-        ),
-        "Simulation blend" => (Section::OutputMix, "Simulation blend"),
-        _ => return None,
-    })
 }
 
 pub(crate) enum PresetAction {
