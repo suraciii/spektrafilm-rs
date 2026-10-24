@@ -102,14 +102,11 @@ pub struct Viewer {
     #[cfg(test)]
     observed_geometry: Option<(Rect, Rect, Interpolation, Option<PixelInspection>)>,
     #[cfg(test)]
-    observed_sampling_rect: Option<Rect>,
-    #[cfg(test)]
     observed_image: Option<egui::ColorImage>,
 }
 #[cfg(test)]
 pub(crate) struct ViewerObservation {
     pub viewport: Rect,
-    pub sampling_rect: Rect,
     pub image_rect: Rect,
     pub interpolation: Interpolation,
     pub inspection: Option<PixelInspection>,
@@ -127,7 +124,6 @@ impl Viewer {
             self.observed_geometry.expect("viewer has been shown");
         ViewerObservation {
             viewport,
-            sampling_rect: self.observed_sampling_rect.expect("viewer has been shown"),
             image_rect,
             interpolation,
             inspection,
@@ -883,7 +879,6 @@ impl Viewer {
         #[cfg(test)]
         {
             self.observed_geometry = Some((rect, image_rect, interpolation, inspection));
-            self.observed_sampling_rect = Some(sampling_rect);
         }
         let text = if let Some(p) = inspection {
             crate::tr!(

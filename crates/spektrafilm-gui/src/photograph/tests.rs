@@ -120,6 +120,28 @@ fn escape_cannot_dismiss_a_confirmed_transition_while_its_preparation_runs() {
 }
 
 #[test]
+fn record_save_waits_for_pending_input_before_changing_record_ownership() {
+    let (mut app, directory, ctx) = app();
+    let original = directory.path().join("original.spektra-photo.json");
+    app.save_photograph_record_to(&original).unwrap();
+    let original_bytes = std::fs::read(&original).unwrap();
+    exposure(&mut app, &ctx, 1.0);
+    let baseline = app.photograph.baseline.clone();
+    let source = app.image_path.clone().unwrap();
+    app.load_image_from_path(&source);
+    let destination = directory.path().join("after-reprocess.spektra-photo.json");
+    assert!(app.save_photograph_record_to(&destination).is_err());
+    assert!(!destination.exists());
+    assert_eq!(app.photograph.record_path.as_ref(), Some(&original));
+    assert_eq!(app.photograph.baseline, baseline);
+    settle(&mut app, &ctx);
+    app.save_photograph_record_to(&destination).unwrap();
+    assert_eq!(app.photograph.record_path.as_ref(), Some(&destination));
+    assert!(!app.photograph_has_unsaved_changes());
+    assert_eq!(std::fs::read(original).unwrap(), original_bytes);
+}
+
+#[test]
 fn changed_accepted_source_cannot_be_saved_under_replacement_identity() {
     let (mut app, directory, ctx) = app();
     exposure(&mut app, &ctx, 0.75);

@@ -231,6 +231,8 @@ Save uses upstream OpenImageIO JPEG defaults rather than Export's quality/subsam
 
 **Save adjustments…** writes a versioned photograph record containing source identity, accepted input interpretation, RAW decode settings, geometry, adjustments, seed, material identities, and render-preparation ownership. It does not embed source images or runtime assets. Keep the referenced external files unchanged. Pending text and RAW drafts, application preferences, undo stacks, jobs, and Export drafts are excluded.
 
+**Save adjustments…** is unavailable while an input transaction prepares a replacement source or view. Wait for that transaction to finish before saving a record. A rejected save during preparation leaves the existing record, baseline, and record path unchanged.
+
 **Reopen adjustments…** validates the source and dependencies before replacing the photograph. Missing or changed assets leave the current photograph intact. Explicit source relocation accepts only identical contents. A record is not a reusable preset or a startup-default file. Failed writes preserve an existing valid record and never overwrite the source.
 
 Closing or replacing unsaved accepted work offers **Save record**, **Discard changes**, and **Cancel**. Canceling the chooser or a failed save stops the transition. Closing also protects unsaved inactive work-list entries, one identified source at a time.

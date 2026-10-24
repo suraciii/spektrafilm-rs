@@ -391,6 +391,10 @@ impl App {
     }
 
     pub(crate) fn save_photograph_record_to(&mut self, path: &Path) -> Result<()> {
+        anyhow::ensure!(
+            !self.input_transition_pending(),
+            Message::new("surfaces.status.preparing_input")
+        );
         let source = self
             .image_path
             .as_deref()
@@ -457,7 +461,7 @@ impl App {
     pub(crate) fn photograph_toolbar(&mut self, ui: &mut egui::Ui) {
         let save = ui
             .add_enabled(
-                self.image.is_some(),
+                self.image.is_some() && !self.input_transition_pending(),
                 egui::Button::new(crate::i18n::text(ui.ctx(), "photo.record.save")),
             )
             .on_hover_text(crate::i18n::text(ui.ctx(), "photo.record.accepted_only"));
