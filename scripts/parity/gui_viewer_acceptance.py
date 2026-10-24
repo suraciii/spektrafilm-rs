@@ -35,23 +35,15 @@ def _state_path(root: Path, name: str, state: dict) -> Path:
 
 
 def _load_state(driver, path: Path, label: str):
-    driver.state_action("Load from file", path)
-    _preview(driver, label)
-
-
-def _start_preview(driver):
-    driver.close_settings()
-    driver.drain_reports()
-    point = wait_for(lambda: driver.locate("PREVIEW", bottom=True), "persistent PREVIEW action", 25)
-    driver.snap("viewer-preview-request")
-    driver.xd("mousemove", "--window", driver.window, int(point[0]), int(point[1]))
-    driver.xd("click", 1)
-
-
-def _preview(driver, label):
-    _start_preview(driver)
-    driver.wait_report(label, "Preview")
+    report = driver.state_action("Load from file", path)
     driver.snap(label)
+    return report
+
+
+def _accepted_preview(driver, label):
+    report = driver.wait_report(label, "Preview")
+    driver.snap(label)
+    return report
 
 
 def _viewer_control(driver, path, label):
@@ -95,31 +87,24 @@ def _record_frame(driver, records, label):
     return image
 
 
-def _transition_frames(driver, records, label, count=24, interval=0.05):
-    frames = []
-    for index in range(count):
-        image = _record_frame(driver, records, f"{label}-frame-{index}")
-        frames.append(np.asarray(_viewer_crop(image), dtype=np.float32))
-        time.sleep(interval)
-    return frames
-
-
-def _preview_transition_frames(driver, records, label):
-    """Capture during rendering and after handoff without blocking on OCR."""
-    _start_preview(driver)
-    frames = []
+def _render_transition_frames(driver, records, label, action, start, bounds=None):
+    """Capture the real render handoff without allowing OCR to hide animation."""
+    driver.drain_reports()
+    before, _ = driver.image()
+    frames = [np.asarray(before.crop(bounds) if bounds else _viewer_crop(before), dtype=np.float32)]
+    start()
     deadline = time.monotonic() + 120
     completed = False
     while time.monotonic() < deadline:
         image = _record_frame(driver, records, f"{label}-render-frame-{len(frames)}")
-        frames.append(np.asarray(_viewer_crop(image), dtype=np.float32))
+        frames.append(np.asarray(image.crop(bounds) if bounds else _viewer_crop(image), dtype=np.float32))
         for path in driver.report_directory.glob("operation-*.json"):
             try:
                 operation = json.loads(path.read_text())["operation"]
             except (OSError, ValueError, KeyError):
                 continue
             if (operation["id"] > driver.last_report_id
-                    and operation["kind"] == "preview"
+                    and operation["kind"] == action.lower()
                     and operation["outcome"] != "superseded"):
                 completed = True
                 break
@@ -127,11 +112,11 @@ def _preview_transition_frames(driver, records, label):
             break
         time.sleep(.05)
     _require(completed, f"Timed out capturing {label} render")
-    driver.wait_report(label + "-rendered", "Preview")
-    frames.extend(_transition_frames(driver, records, label, count=32, interval=.05))
-    changed = sum(float(np.max(np.abs(a - b))) > 1.0
-                  for a, b in zip(frames, frames[1:]))
-    _require(changed >= 2, f"{label} has no observable intermediate transition frames")
+    driver.wait_report(label + "-rendered", action)
+    for index in range(32):
+        image = _record_frame(driver, records, f"{label}-handoff-frame-{index}")
+        frames.append(np.asarray(image.crop(bounds) if bounds else _viewer_crop(image), dtype=np.float32))
+        time.sleep(.05)
     return frames
 
 
@@ -339,7 +324,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     viewer.update(zoom=0.15, zoom_percent=None, pan=[0, 0])
     small_preview_path = _state_path(root, "viewer-small-preview.json", small_preview_state)
     _load_state(driver, small_preview_path, "viewer-small-preview")
-    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.layer.input", "Original")
     driver.await_viewer(label="small Input raster")
     small_input, _ = _record_snap(driver, records, "viewer-small-input-raster")
     large_preview_state = copy.deepcopy(small_preview_state)
@@ -347,7 +332,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     large_preview_state["rust"]["runtime"]["settings"]["preview_max_size"] = 256
     large_preview_path = _state_path(root, "viewer-large-preview.json", large_preview_state)
     _load_state(driver, large_preview_path, "viewer-large-preview")
-    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.layer.input", "Original")
     driver.await_viewer(label="large Input raster")
     large_input, _ = _record_snap(driver, records, "viewer-large-input-raster")
     # The source occupies only a small part of a nonmagnifying canvas. Compare
@@ -413,7 +398,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _require(float(paper.std()) > 1.0 and float(watermark.std()) > 0.1,
              "Paper back screenshot has no visible presentation raster/watermark region")
 
-    _viewer_control(driver, "viewer.layer.output", "Output")
+    _viewer_control(driver, "viewer.layer.output", "Modified")
     _interpolation(driver, "spline36")
     driver.await_viewer(label="baseline spline36")
     fingerprint = driver.viewer_fingerprint()
@@ -434,7 +419,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     "spline36_screenshot": records[-1]["screenshot"],
                     "mean_abs_pixel_change": interpolation_delta})
     _require(interpolation_delta > 0.01, "Nearest and spline36 did not produce different viewer pixels")
-    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.layer.input", "Original")
     _interpolation(driver, "nearest")
     driver.await_viewer(label='input interpolation nearest')
     input_nearest_image, _ = _record_snap(driver, records, "viewer-input-nearest")
@@ -508,33 +493,88 @@ def accept_viewer(driver, root, state, pixels, exporter):
     animation_state.setdefault("display", {}).update({"viewer_layer": "paper_back", "reveal": True})
     animation_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "paper_back", "reveal": True})
     animation_path = _state_path(root, "viewer-animation.json", animation_state)
-    _load_state(driver, animation_path, "viewer-animation-baseline")
+    # Loading complete state clears the old output. Capture its first automatic
+    # output across chooser closure, before OCR can outlive the reveal.
+    driver.reveal("action.load_state", "Settings", "GUI parameters")
+    driver.click("Load from file")
+
+    def first_output():
+        driver.dialog(animation_path)
+        driver.xd("key", "Escape")
+
+    first_frames = _render_transition_frames(driver, records, "viewer-first-output-reveal", "Preview", first_output)
+    wait_for(lambda: driver.locate("Close settings") is None, "animation Settings closed", 20)
+    driver.settings_open = False
+    first_changed = sum(float(np.max(np.abs(a - b))) > 1.0
+                        for a, b in zip(first_frames[-32:], first_frames[-31:]))
+    _require(first_changed >= 2, "First automatic output has no intermediate reveal frames")
+    records.append({"parity_action": "polaroid_animation", "scenario": "first_output_reveal",
+                    "action": "load complete state with Paper back and Reveal",
+                    "assertion": "first automatic output retains intermediate reveal frames",
+                    "frames": len(first_frames), "changed_handoff_frames": first_changed})
+
     _viewer_control(driver, "viewer.layer.paper_back", "Paper back")
-    driver.await_viewer(label="reveal baseline")
-    reveal_frames = _preview_transition_frames(driver, records, "viewer-reveal")
-    reveal_delta = float(max(np.max(np.abs(reveal_frames[0] - frame)) for frame in reveal_frames[1:]))
-    records.append({"parity_action": "polaroid_animation",
-                    "scenario": "reveal", "action": "preview with Paper back and Reveal",
-                    "assertion": "raw transition frames differ in the viewer region",
-                    "frames": len(reveal_frames), "max_frame_delta": reveal_delta})
-    _require(reveal_delta > 1.0, "Reveal did not produce observable transition frames")
+    driver.await_viewer(label="Paper back before Scan reveal")
+    scan_point = wait_for(lambda: driver.locate("SCAN", bottom=True), "persistent SCAN action", 25)
+    reveal_frames = _render_transition_frames(driver, records, "viewer-scan-reveal", "Scan",
+                                             lambda: driver.point_click(scan_point))
+    reveal_changed = sum(float(np.max(np.abs(a - b))) > 1.0
+                         for a, b in zip(reveal_frames[-32:], reveal_frames[-31:]))
+    _require(reveal_changed >= 2, "Explicit Scan has no intermediate reveal frames")
+    records.append({"scenario": "reveal", "action": "Scan with Paper back and Reveal",
+                    "assertion": "explicit Scan retains intermediate reveal frames",
+                    "frames": len(reveal_frames), "changed_handoff_frames": reveal_changed})
 
     crossfade_state = copy.deepcopy(state)
-    crossfade_state.setdefault("simulation", {})["auto_preview"] = False
     crossfade_state.setdefault("display", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
     crossfade_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
     crossfade_path = _state_path(root, "viewer-crossfade.json", crossfade_state)
     _load_state(driver, crossfade_path, "viewer-crossfade-baseline")
-    _viewer_control(driver, "viewer.layer.output", "Output")
+    _viewer_control(driver, "viewer.layer.output", "Modified")
     driver.await_viewer(label="crossfade baseline")
-    driver.reveal("camera.auto_exposure", "Input and capture", "Camera")
-    driver.toggle('auto exposure')
-    crossfade_frames = _preview_transition_frames(driver, records, "viewer-crossfade")
-    crossfade_delta = float(max(np.max(np.abs(crossfade_frames[0] - frame)) for frame in crossfade_frames[1:]))
-    records.append({"scenario": "crossfade", "action": "preview Output with Crossfade",
-                    "assertion": "raw transition frames differ in the viewer region",
-                    "frames": len(crossfade_frames), "max_frame_delta": crossfade_delta})
-    _require(crossfade_delta > 1.0, "Crossfade did not produce observable transition frames")
+    from gui_control_acceptance import numeric_editor
+    driver.reveal("camera.exposure_compensation_ev", "Input and capture", "Camera")
+    bounds = driver.measure_viewer("viewer-automatic-edit-bounds")
+    editor, _ = numeric_editor(driver, "exposure compensation ev")
+    driver.point_click(editor)
+    driver.xd("key", "ctrl+a")
+    driver.xd("mousemove", "--window", driver.window, 100, 100)
+
+    def automatic_edit():
+        driver.xd("type", "--clearmodifiers", "--", "0.75")
+        driver.xd("key", "Return")
+
+    automatic_frames = _render_transition_frames(driver, records, "viewer-automatic-edit", "Preview",
+                                                automatic_edit, bounds)
+    edit_delta = float(np.mean(np.abs(automatic_frames[0] - automatic_frames[-1])))
+    _require(edit_delta > .1, "Accepted automatic exposure edit did not change Output pixels")
+    intermediate = [float(min(np.mean(np.abs(frame - automatic_frames[0])),
+                              np.mean(np.abs(frame - automatic_frames[-1]))))
+                    for frame in automatic_frames]
+    _require(max(intermediate) <= max(.05, edit_delta * .05),
+             "Accepted automatic edit animated instead of handing off its completed Output")
+    records.append({"scenario": "automatic_edit_no_animation", "action": "accept exposure 0.75 EV",
+                    "assertion": "accepted automatic output changes directly without intermediate crossfade frames",
+                    "frames": len(automatic_frames), "mean_abs_pixel_change": edit_delta,
+                    "max_intermediate_distance": max(intermediate)})
+
+    # Commit another real edit and immediately request Scan, using its observed
+    # coordinate before the automatic debounce can finish. No preview is paused.
+    scan_point = wait_for(lambda: driver.locate("SCAN", bottom=True), "persistent SCAN action", 25)
+    driver.point_click(editor)
+    driver.xd("key", "ctrl+a")
+
+    def changed_scan():
+        driver.accept_numeric_and_click("-0.75", scan_point)
+
+    crossfade_frames = _render_transition_frames(driver, records, "viewer-scan-crossfade", "Scan",
+                                                changed_scan, bounds)
+    crossfade_changed = sum(float(np.max(np.abs(a - b))) > 1.0
+                            for a, b in zip(crossfade_frames[-32:], crossfade_frames[-31:]))
+    _require(crossfade_changed >= 2, "Explicit Scan has no intermediate crossfade frames")
+    records.append({"scenario": "crossfade", "action": "Scan accepted exposure -0.75 EV with Crossfade",
+                    "assertion": "explicit Scan retains intermediate crossfade frames",
+                    "frames": len(crossfade_frames), "changed_handoff_frames": crossfade_changed})
 
     detail_state = copy.deepcopy(state)
     detail_state.setdefault("display", {})["preview_max_size"] = max(256, max(np.asarray(pixels).shape[:2]))
@@ -597,9 +637,12 @@ def accept_viewer(driver, root, state, pixels, exporter):
     profile_before_path.unlink(missing_ok=True)
     driver.state_action("Save current to file", profile_before_path, True)
     _wait_file(profile_before_path, "viewer profile baseline state")
+    driver.drain_reports()
     _select_profile(driver, "film profile", film_label)
+    _accepted_preview(driver, "viewer-film-profile-selected")
+    driver.drain_reports()
     _select_profile(driver, "print profile", paper_label)
-    _preview(driver, "viewer-profile-selected")
+    _accepted_preview(driver, "viewer-print-profile-selected")
     selected_path = root / "viewer-profile-selected-state.json"
     selected_path.unlink(missing_ok=True)
     driver.state_action("Save current to file", selected_path, True)
@@ -644,7 +687,6 @@ def accept_viewer(driver, root, state, pixels, exporter):
 
     _load_state(driver, baseline, "viewer-restored-state")
     driver.open_image(source, "viewer-restored-source")
-    _preview(driver, "viewer-restored-output")
     records.append({"scenario": "viewer_restore", "action": "reload baseline state and source",
                     "assertion": "caller receives restored configured source",
                     "state": baseline.name, "source": source.name})

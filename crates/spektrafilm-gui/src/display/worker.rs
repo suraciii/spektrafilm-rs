@@ -232,6 +232,10 @@ impl DisplayWorker {
     pub(super) fn take_response(&self) -> Option<DisplayResponse> {
         self.state.0.lock().response.take()
     }
+    pub(super) fn has_pending(&self) -> bool {
+        let state = self.state.0.lock();
+        state.request.is_some() || state.active_cancel.is_some() || state.response.is_some()
+    }
 }
 impl Drop for DisplayWorker {
     fn drop(&mut self) {

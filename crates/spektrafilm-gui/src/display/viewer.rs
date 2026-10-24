@@ -141,6 +141,11 @@ impl Viewer {
     pub(crate) fn output_display_profile(&self) -> Option<&Path> {
         self.output_source_profile.as_deref()
     }
+    /// True until the current composition finishes or its animation ends.
+    /// Completed failures are not pending; they retain the last good texture.
+    pub(crate) fn presentation_pending(&self) -> bool {
+        self.worker.has_pending() || self.transition.is_some()
+    }
     pub fn invalidate_display(&mut self) {
         // Display controls change viewing pixels without retaining development animation.
         self.transition = None;
@@ -764,6 +769,7 @@ impl Viewer {
             if let Some(error) = response.error.as_ref() {
                 self.transform_status =
                     crate::app::Message::new("surfaces.display.error").arg("error", error);
+                self.transition = None;
             } else {
                 self.accepted_generation = response.generation;
                 if let Some(t) = self.transition.as_mut() {

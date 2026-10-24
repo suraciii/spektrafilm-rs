@@ -14,7 +14,7 @@ When the historical fused resident route is evaluated and declined, the record m
 
 ## Local surfaces
 
-CLI telemetry must use a separate local report destination. It must not add text to machine-readable stdout. Human diagnostic events must use stderr. GUI diagnostics must expose the operation summary and allow explicit local report export. The normal status bar must remain a short operation status.
+CLI telemetry must use a separate local report destination. It must not add text to machine-readable stdout. Human diagnostic events must use stderr. GUI diagnostics must expose the operation summary and allow explicit local report export. Ordinary GUI status must remain short and follow [status surface ownership](../gui-workflow/spec.md#labels-and-surfaces). Viewer rendering status must not depend on telemetry collection or extend an operation's terminal boundary.
 
 The GUI must expose `Diagnostics` in the Settings dialog under [Stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership). It must provide a collection-mode selector, the current operation's collection state, recent completed operations, and `Save report…` for the selected completed operation. Changing the mode must affect only operations accepted after the change. It must not trigger a render or change an in-flight operation. Diagnostics mode and reports must remain session-local and outside saved GUI states, presets, and recipes.
 

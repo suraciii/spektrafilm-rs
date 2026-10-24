@@ -212,13 +212,13 @@ Undo and Redo wording must follow [edit history](../gui-workflow/spec.md#edit-hi
 
 ## Header and status language
 
-The header must show the selected film, selected print material, exact workflow route, and one operation status surface. The exact route string remains available because it identifies the physical sequence and is required for diagnostics.
+The header must show the selected film, selected print material, and exact workflow route. Status ownership follows [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces). The exact route string remains available because it identifies the physical sequence and is required for diagnostics.
 
 The header may add a direct physical description beside the exact route. The description must translate the route without inventing a look category. For example, `Film → print → scan` may describe `input > film > print > scan`; `Film print look` must not replace it.
 
 Normal success status must describe the accepted operation and its dimensions or target. Backend and precision detail belongs in Diagnostics unless it explains an actionable limitation. A diagnostic label such as `f64 reference` must not be the only normal success message.
 
-A running render's status names the operation and the executing work unit in product language. Work-unit wording must name the physical operation, for example `Film development`, `Grain`, `Printing`, and `Scanning`. It must not expose serialized work-unit identifiers. A running render without a named work unit shows its name alone.
+Live viewer rendering uses the short localized message defined by [Viewer presentation](../gui-workflow/spec.md#viewer-presentation). It must not duplicate a running-stage message in the header. Work-unit names in diagnostic detail must use product language, for example `Film development`, `Grain`, `Printing`, and `Scanning`, not serialized identifiers.
 
 A status that reports route or profile normalization must identify which stored controls became inactive or were cleared. It must not claim that a value was applied when the selected route cannot execute it.
 

@@ -755,7 +755,6 @@ fn key(label: &str) -> Option<&'static str> {
         "POSITIVE/reversal film: per-channel receiver-side Langmuir saturation (R, G, B), normalized to the arrived-inhibitor ceiling (the receiver analogue of langmuir_donor_k_rgb's d_max normalization). The donor (silver release) stays linear; this rolls off the receiving layer's response under a pushed amount. Lower = harder, more crash-proof knee (alters the operating-point look); large values approach linear." => {
             Some("controls.couplers.langmuir_receiver_help")
         }
-        "PREVIEW" => Some("surfaces.action.preview"),
         "PSF family. pro_mist / glimmerglass / cinebloom are transparent (energy-preserving); black_pro_mist absorbs a fraction of the deflected light, lifting shadows by reducing local contrast." => {
             Some("controls.help.diffusion.family")
         }
@@ -901,9 +900,6 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.gamut.input_knee_help")
         }
         "Rename…" => Some("surfaces.presets.rename"),
-        "Render the bounded preview with the current runtime controls, at the preview max size, and retain it as the viewer's output. Preview disables the spatial and stochastic effects covered by the preview contract, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active." => {
-            Some("surfaces.action.preview_help")
-        }
         "Render the original working resolution with the current runtime controls and retain it as the viewer's output. Spatial and stochastic effects follow their current accepted controls, including any explicit deactivation settings." => {
             Some("surfaces.action.scan_help")
         }
@@ -960,7 +956,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Rotated input %{degrees}°" => Some("surfaces.status.rotated"),
         "Roughness of the glare light (0-1)" => Some("controls.help.glare.roughness"),
         "Route: %{route}" => Some("surfaces.header.route"),
-        "Run Preview or Scan to create a retained output before selecting Modified." => {
+        "Modified becomes available when automatic Preview or Scan completes." => {
             Some("surfaces.viewer.output_disabled")
         }
         "SAVE" => Some("surfaces.action.save_retained"),
@@ -987,9 +983,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Scanner sequence: scan output polarity, then readout optics and digital sharpening." => {
             Some("controls.scanner.sequence")
-        }
-        "Schedule a bounded Preview after accepted photographic adjustments." => {
-            Some("surfaces.settings.auto_preview_help")
         }
         "Search controls" => Some("surfaces.search.label"),
         "Search presets" => Some("surfaces.presets.search"),
@@ -1187,7 +1180,6 @@ fn key(label: &str) -> Option<&'static str> {
         "auto" => Some("controls.scanner.auto"),
         "auto exposure" => Some("controls.scanner.auto_exposure"),
         "auto exposure method" => Some("controls.scanner.metering_method"),
-        "auto preview" => Some("controls.label.auto_preview"),
         "available only when the Procedural engine is selected" => {
             Some("controls.grain.procedural_profile_unavailable")
         }
@@ -1498,7 +1490,6 @@ fn key(label: &str) -> Option<&'static str> {
         "unit" => Some("controls.metadata.unit"),
         "unsharp mask (digital sharpening)" => Some("controls.scanner.unsharp_mask"),
         "unsubmitted export draft" => Some("controls.condition.draft"),
-        "update" => Some("controls.display.update"),
         "upscale factor" => Some("controls.crop.upscale_factor"),
         "use cat16" => Some("controls.upsampling.use_cat16"),
         "use display transform" => Some("controls.label.use_display_transform"),

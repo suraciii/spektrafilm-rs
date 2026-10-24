@@ -8,6 +8,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 - The GUI exposes controls for input, film, print, scanner, output, advanced color, and configuration.
 - Preview renders a bounded disposable image. Scan renders the original working resolution. Both use the current runtime controls.
   `standard` negative-to-positive preview must prepare and finish the complete working frame before display reduction; its full-frame requirements follow the [scan preview contract](../film-chain/lab-scan/spec.md#exact-preview-and-prepared-baseline).
+- Preview updates automatically after source acceptance and valid adjustment changes, including the preview size limit. It must not have a Preview button, an Update action, or an enablement preference. Accepted edits must use the existing debounce and wait for calibration and modal guards.
 - Save writes retained output. Export re-renders through the selected backend and exposes cancellation. Render, saving-conversion, and viewer execution follow [GPU execution](../gpu-execution/spec.md); selecting CPU does not imply a precision different from the actual build.
 - Startup controls may be saved and restored. Removing the startup default restores the factory profile.
 - Viewer-only state, such as zoom, interpolation, reveal, and canvas presentation, must not alter saved or exported pixels.
@@ -74,7 +75,7 @@ The window has three regions and one header.
 - The viewer occupies the central region and is the primary surface. It presents the retained input, output, or paper back under [Viewer presentation](#viewer-presentation), and its footer owns the layer selector.
 - The adjustment inspector occupies the right region. It owns photographic parameter editors, stage headings and their jump strip, control search, and the tonal-distribution readout. Application settings and Export own their separate editors under [Stage and surface ownership](#stage-and-surface-ownership).
 - The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser design](../presets/design.md).
-- The window header spans the three regions. It owns Open image, Undo, Redo, application settings, and independent Export actions. It shows the accepted source, current film profile, print profile, and physical workflow as read-only context. It is the only operation-status surface. Preview, Scan, and Save remain reachable from a persistent action area without opening an inspector module.
+- The window header spans the three regions. It owns Open image, Undo, Redo, application settings, and independent Export actions. It shows the accepted source, current film profile, print profile, and physical workflow as read-only context. Status ownership follows [Labels and surfaces](#labels-and-surfaces). Scan and Save remain reachable from a persistent action area without opening an inspector module.
 
 A region is a layout slot, not a mutually exclusive page. A control belongs to exactly one surface under [Labels and surfaces](#labels-and-surfaces). A dialog may edit only the values assigned to it.
 
@@ -97,7 +98,7 @@ Each module has one editing owner. The inspector must contain these stages and m
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
 | Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; operator correction, reset, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare. |
 | Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
-| Application settings | General: interface language, Auto preview and preview limits, and rendering preferences that are not photographic controls; GUI parameters: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
+| Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; GUI parameters: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
 | Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state. |
 | Preset browser | Look selection, browser search, library refresh/reveal, and look-preset management. |
@@ -152,7 +153,7 @@ History must not own image buffers, viewer transforms, library files, startup de
 
 Accepting a replacement source, completing RAW reprocessing, or loading a complete GUI state must start a new adjustment history for that accepted context. A failed import, reprocess, or state load must retain the preceding history and context. Loading a GUI state must not serialize or reconstruct an old undo stack.
 
-Undo and Redo must advance render revisions and use the same validation, invalidation, and Auto preview rules as other accepted edits. They must not rewind revision counters or publish an old result as current. In-flight Export retains its captured configuration; adjustment history must not mutate it.
+Undo and Redo must advance render revisions and use the same validation, invalidation, and automatic Preview rules as other accepted edits. They must not rewind revision counters or publish an old result as current. In-flight Export retains its captured configuration; adjustment history must not mutate it.
 
 The header actions must name the next undoable or redoable operation and be disabled when unavailable. Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z must operate on adjustment history outside a text editor. While a text editor owns focus, its text-editing shortcuts must not unexpectedly undo a photograph adjustment.
 
@@ -184,9 +185,11 @@ The viewer presents the retained input, the retained output, or the paper back. 
 
 The viewer presents an explicit empty state when no image is loaded. The empty state must name the import action and must not present a blank canvas. It is viewer-only and must not alter saved or exported pixels.
 
+The viewer must show a legible, lightweight `Rendering…` overlay at its top-right while its current update is pending. Simplified Chinese must show `渲染中……`. The status covers accepted edits waiting for debounce, pipeline computation, and composition until the latest viewer frame is accepted. Superseded work must not keep it visible after the current update completes. A failed request must end its pending status and retain the last completed image. No source means no rendering overlay. The overlay must not prevent zoom, pan, or pointer inspection.
+
 The viewer footer owns the layer selector. It is the only surface that exposes it. Application settings must not repeat it.
 
-The development animation is fixed viewer behaviour. It must not have an editor, and it must not be persisted as an editable control. An automatic parameter update skips it; an explicit Preview or Scan retains it.
+The development animation is fixed viewer behaviour. It must not have an editor, and it must not be persisted as an editable control. Automatic updates after the first accepted output skip it; the first output and explicit Scan retain it.
 
 The viewer must let the user select a display ICC profile. The selected profile applies to the disposable viewer raster only. Windows discovers the primary display profile when the user selects none. An explicitly selected profile applies on every platform that supports LittleCMS. Without a usable profile, the encoded sRGB preview is used directly.
 
@@ -247,9 +250,11 @@ Preset browser search is a separate operation owned by [Presets](../presets/spec
 
 A label must name the current product concept. A label must not name a removed implementation, a development tool, or a file format of a former dependency.
 
-An operation status must appear on exactly one surface, the window header. It must be short, under the [telemetry status rule](../telemetry/spec.md#local-surfaces). While Preview or Scan runs, it names the operation and the work unit that executes now. An export reports its own operation status with its cancellation states. When no operation runs, it describes the last accepted operation.
+The viewer owns live rendering status under [Viewer presentation](#viewer-presentation). The header must not duplicate it. The header retains import, Save, independent Export, completion, and error messages. Export reports elapsed time and cancellation there, not as viewer rendering. These messages must remain short under the [telemetry status rule](../telemetry/spec.md#local-surfaces).
 
 A control that changes a persisted value must be reachable from the GUI. A persisted value with no control, no pipeline consumer, and no owning specification must be removed from the document.
+
+Saved GUI states must omit the retired `simulation.auto_preview` preference. Loading an older state must discard that leaf without disabling automatic Preview or rejecting the state.
 
 Two controls that edit the same persisted value must not both be editable. When two surfaces must show one value, one is read-only.
 

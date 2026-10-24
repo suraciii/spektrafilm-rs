@@ -169,21 +169,21 @@ impl App {
                 self.params.film_render.base = params;
                 self.params.film_render.convert.exposure_compensation_ev = exposure_ev;
                 self.mark_parameters_changed();
-                self.force_preview = true;
+
                 self.status = crate::app::Message::new("operations.base_detected")
                     .arg("exposure", format!("{exposure_ev:+.2}"));
             }
             Ok(CalibrationResult::BlindCalibration(calibration)) => {
                 self.params.film_render.convert.calibration = calibration;
                 self.mark_parameters_changed();
-                self.force_preview = true;
+
                 self.status = crate::app::Message::new("operations.calibration_fitted");
             }
             Ok(CalibrationResult::NeutralizeFilters { m_shift, y_shift }) => {
                 self.params.enlarger.m_filter_shift = m_shift;
                 self.params.enlarger.y_filter_shift = y_shift;
                 self.mark_parameters_changed();
-                self.force_preview = true;
+
                 self.status = crate::app::Message::new("operations.filters_neutralized")
                     .arg("magenta", format!("{m_shift:+.2}"))
                     .arg("yellow", format!("{y_shift:+.2}"));

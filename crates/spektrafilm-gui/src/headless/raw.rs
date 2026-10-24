@@ -34,7 +34,7 @@ fn retained_raw_interpretation_matches_cpu_and_queued_exports_freeze_the_declara
             )
         });
     click(&mut h, "◀");
-    wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
+    wait_until(&mut h, |a| !a.dirty && a.render_job.is_none());
     let samples = h
         .state()
         .image
@@ -106,11 +106,12 @@ fn retained_raw_interpretation_matches_cpu_and_queued_exports_freeze_the_declara
             .effective_runtime_params()
             .unwrap();
         let snapshot = h.state_mut().render_snapshot(params);
-        for (button, preview) in [("PREVIEW", true), ("SCAN", false)] {
-            click(&mut h, button);
+        for (kind, preview) in [("Preview", true), ("Scan", false)] {
+            if !preview {
+                click(&mut h, "SCAN");
+            }
             wait_until(&mut h, |a| {
                 !a.dirty
-                    && !a.force_preview
                     && a.render_job.is_none()
                     && a.status.to_string().starts_with(if preview {
                         "Preview ·"
@@ -146,7 +147,7 @@ fn retained_raw_interpretation_matches_cpu_and_queued_exports_freeze_the_declara
             for (&actual, &expected) in actual.data.iter().zip(&expected.data) {
                 assert!(
                     (actual - expected).abs() < 3e-5,
-                    "{space}, encoded={encoded}, {button}: {actual} != {expected}"
+                    "{space}, encoded={encoded}, {kind}: {actual} != {expected}"
                 );
             }
             if !preview {
@@ -274,7 +275,7 @@ fn raw_import_through_the_app_sets_linear_aces_and_renders() {
         fixture.file_name(),
     );
 
-    let scan = render(h, "SCAN");
+    let scan = scan(h);
     assert_eq!((scan.width, scan.height), (RAW_WIDTH, RAW_HEIGHT));
     for value in &scan.data {
         assert!(value.is_finite(), "RAW scan produced a nonfinite sample");
@@ -343,6 +344,8 @@ fn gpu_raw_import_preview_scan_and_export_reuse_retained_samples() {
             )
         });
     click(&mut h, "◀");
+    // Observe the automatic import request from its first dispatch.
+    h.state_mut().diagnostics.mode = spektrafilm_backend::telemetry::CollectionMode::Summary;
     script(&mut h, chooser::Chooser::chooser_path(&fixture));
     import_file(&mut h, true);
     let source = h.state().image.clone().expect("GPU RAW import accepted");
@@ -359,38 +362,32 @@ fn gpu_raw_import_preview_scan_and_export_reuse_retained_samples() {
     );
     assert_eq!(h.state().params.io.input_color_space, "ACES2065-1");
     assert!(!h.state().params.io.input_cctf_decoding);
-    // Auto preview is disabled by the deterministic state: import marks the
-    // input dirty without scheduling work. The explicit Preview below consumes
-    // that dirty state; waiting for !dirty here would never complete.
-    wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
-    h.state_mut().diagnostics.mode = spektrafilm_backend::telemetry::CollectionMode::Summary;
-    for button in ["PREVIEW", "SCAN"] {
-        let previous = h.state().output_retained.clone();
-        click(&mut h, button);
-        wait_until(&mut h, |a| {
-            !a.dirty
-                && !a.force_preview
-                && a.render_job.is_none()
-                && a.status.to_string().starts_with(if button == "SCAN" {
-                    "Scan ·"
-                } else {
-                    "Preview ·"
-                })
-                && a.output_retained.as_ref().is_some_and(|image| {
-                    previous.as_ref().is_none_or(|old| {
-                        !Arc::ptr_eq(image.payload().unwrap(), old.payload().unwrap())
+    for kind in ["preview", "scan"] {
+        if kind == "scan" {
+            let previous = h.state().output_retained.clone().unwrap();
+            click(&mut h, "SCAN");
+            wait_until(&mut h, |a| {
+                !a.dirty
+                    && a.render_job.is_none()
+                    && a.status.to_string().starts_with("Scan ·")
+                    && a.output_retained.as_ref().is_some_and(|image| {
+                        !Arc::ptr_eq(image.payload().unwrap(), previous.payload().unwrap())
                     })
-                })
-        });
+            });
+        } else {
+            wait_until(&mut h, |a| {
+                !a.dirty
+                    && a.render_job.is_none()
+                    && a.output_retained.is_some()
+                    && a.status.to_string().starts_with("Preview ·")
+            });
+        }
         assert!(
-            h.state()
-                .status
-                .to_string()
-                .starts_with(if button == "SCAN" {
-                    "Scan ·"
-                } else {
-                    "Preview ·"
-                }),
+            h.state().status.to_string().starts_with(if kind == "scan" {
+                "Scan ·"
+            } else {
+                "Preview ·"
+            }),
             "{}",
             h.state().status
         );
@@ -401,7 +398,6 @@ fn gpu_raw_import_preview_scan_and_export_reuse_retained_samples() {
         assert!(h.state().output_histogram.is_some());
         assert!(h.state().image.as_ref().unwrap().same_source(&source));
         let output = h.state().output_retained.as_ref().unwrap();
-        let kind = if button == "SCAN" { "scan" } else { "preview" };
         let report = assert_retained_gpu_report(
             h.state(),
             &directory.path().join(format!("{kind}-report.json")),

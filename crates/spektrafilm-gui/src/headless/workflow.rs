@@ -9,9 +9,9 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         reveal_control(h, "workflow.route");
         choose(h, "workflow", label);
         assert_eq!(h.state().params.workflow.route, route);
-        let preview = render(h, "PREVIEW");
+        let preview = preview(h);
         assert_eq!((preview.width, preview.height), (128, 64), "{route}");
-        let scan = render(h, "SCAN");
+        let scan = scan(h);
         assert_eq!((scan.width, scan.height), (160, 80), "{route}");
         let saved = s.directory.path().join(format!("route-{index}.json"));
         reveal_control(h, "action.save_state");
@@ -32,7 +32,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         assert!(h.query_by_label("Discard changes").is_none());
         assert_eq!(h.state().params.workflow.route, route);
         close_settings(h);
-        let reloaded = render(h, "SCAN");
+        let reloaded = super::scan(h);
         assert_eq!(reloaded.data, scan.data, "state reload changed {route}");
         let destination = s.directory.path().join(format!("route-{index}.png"));
         script(h, chooser::ChooserResult::Scripted(destination.clone()));
@@ -126,5 +126,43 @@ fn loaded_state_reports_scanner_normalization_in_header_status() {
         h.state().status.to_string().contains("scan output"),
         "{}",
         h.state().status
+    );
+}
+
+#[test]
+fn legacy_disabled_preview_state_still_renders_accepted_numeric_edits_automatically() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let baseline = preview(h);
+    let mut legacy = h.state().current_state().unwrap().sections;
+    legacy["simulation"]["auto_preview"] = serde_json::json!(false);
+    let path = s.directory.path().join("legacy-disabled-preview.json");
+    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    reveal_control(h, "action.save_state");
+    script(h, chooser::ChooserResult::Scripted(path));
+    click(h, "Load from file");
+    if h.query_by_label("Discard changes").is_some() {
+        click(h, "Discard changes");
+    }
+    assert!(h.query_by_label("auto preview").is_none());
+    assert!(h.query_by_label("Update").is_none());
+    close_settings(h);
+    preview(h);
+    assert!(h.query_by_label("PREVIEW").is_none());
+    reveal_control(h, "camera.exposure_compensation_ev");
+    edit(h, "exposure compensation ev", "1.0");
+    let revision = h.state().parameter_revision;
+    let current = preview(h);
+    assert_eq!(h.state().params.camera.exposure_compensation_ev, 1.0);
+    assert_eq!(
+        h.state().source_render.as_ref().unwrap().parameter_revision,
+        Some(revision)
+    );
+    assert!(!h.state().accepted_frame_is_stale());
+    assert_ne!(current.data, baseline.data);
+    assert!(
+        h.state().current_state().unwrap().sections["simulation"]
+            .get("auto_preview")
+            .is_none()
     );
 }

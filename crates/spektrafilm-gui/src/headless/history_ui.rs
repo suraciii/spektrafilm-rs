@@ -97,8 +97,7 @@ fn one_drag_with_multiple_intermediate_values_is_one_undo_step() {
 fn released_slider_updates_preview_without_more_input() {
     let mut s = session();
     let h = &mut s.harness;
-    let before = render(h, "PREVIEW");
-    h.state_mut().gui_state.sections["simulation"]["auto_preview"] = true.into();
+    let before = preview(h);
     reveal_control(h, "camera.exposure_compensation_ev");
     let (tx, rx) = mpsc::channel();
     h.ctx.set_request_repaint_callback(move |request| {
@@ -172,7 +171,7 @@ fn escape_cancels_a_drag_and_invalid_text_adds_no_adjustment() {
 fn undo_after_dispatch_supersedes_old_work_and_renders_the_restored_adjustment() {
     let mut s = session();
     let h = &mut s.harness;
-    let baseline = render(h, "PREVIEW");
+    let baseline = preview(h);
     camera_edit(h, "1.0");
     release_text_focus(h);
     let ctx = h.ctx.clone();
@@ -180,7 +179,7 @@ fn undo_after_dispatch_supersedes_old_work_and_renders_the_restored_adjustment()
     let abandoned_revision = h.state().parameter_revision;
     click(h, "Undo");
     assert!(h.state().parameter_revision > abandoned_revision);
-    let restored = render(h, "PREVIEW");
+    let restored = preview(h);
     assert_eq!(restored.data, baseline.data);
     assert_eq!(h.state().params.camera.exposure_compensation_ev, 0.0);
 }
@@ -212,7 +211,7 @@ fn keyboard_history_works_with_nontext_focus_and_preserves_text_edit_ownership()
 }
 
 #[test]
-fn rotation_undo_redo_keeps_completed_output_viewable_and_saveable_without_auto_preview() {
+fn rotation_undo_redo_automatically_refreshes_viewable_and_saveable_output() {
     let _device = spektrafilm_gpu::test_support::device_lock();
     for gpu in [false, true] {
         let directory = tempfile::tempdir().unwrap();
@@ -240,108 +239,59 @@ fn rotation_undo_redo_keeps_completed_output_viewable_and_saveable_without_auto_
                 )
             });
         click(&mut h, "◀");
-        wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
+        wait_until(&mut h, |a| !a.dirty && a.render_job.is_none());
         let source = h.state().image.as_ref().unwrap().clone();
         reveal_control(&mut h, "action.rotate_cw");
         click(&mut h, "cw rotate");
         assert_eq!(h.state().input_rotation, 3);
-        wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
+        wait_until(&mut h, |a| !a.dirty && a.render_job.is_none());
         click(&mut h, "SCAN");
         wait_until(&mut h, |a| {
-            !a.dirty
-                && !a.force_preview
-                && a.render_job.is_none()
-                && a.status.to_string().starts_with("Scan ·")
+            !a.dirty && a.render_job.is_none() && a.status.to_string().starts_with("Scan ·")
         });
         // Paper geometry follows the newly oriented input. Hold output at an
         // exact source-pixel zoom and compare its interior, not that changing
         // fit framing or the surrounding paper/canvas.
         h.state_mut().viewer.set_zoom_percent(100.0);
         settle_animation(&mut h);
-        let retained_host = h.state().output_image.clone();
-        let retained_device = h.state().output_retained.clone();
-        let saved = directory.path().join("before-undo.tiff");
-        h.state_mut().save_to_path(&saved);
-        assert!(saved.exists(), "{}", h.state().status);
-        let saved_image = image_io::load(&saved).unwrap().image;
-        let output_pixels = |observation: crate::display::ViewerObservation| {
-            let image = observation.pixels.unwrap();
-            let width = (observation.image_rect.width().round() as usize).saturating_sub(8);
-            let height = (observation.image_rect.height().round() as usize).saturating_sub(8);
-            assert!(width > 0 && height > 0);
-            let x = (image.size[0] - width) / 2;
-            let y = (image.size[1] - height) / 2;
-            (0..height)
-                .flat_map(|row| {
-                    image.pixels
-                        [(y + row) * image.size[0] + x..(y + row) * image.size[0] + x + width]
-                        .iter()
-                        .copied()
-                })
-                .collect::<Vec<_>>()
-        };
-        let shown = output_pixels(h.state().viewer.observation());
-        for (action, rotation) in [("Undo", 0), ("Redo", 3)] {
+        let baseline = directory.path().join("rotated.tiff");
+        h.state_mut().save_to_path(&baseline);
+        assert!(baseline.exists(), "{}", h.state().status);
+        let rotated = image_io::load(&baseline).unwrap().image;
+        assert_eq!((rotated.width, rotated.height), (80, 160));
+        for (action, rotation, dimensions) in [("Undo", 0, (128, 64)), ("Redo", 3, (64, 128))] {
             click(&mut h, action);
             assert_eq!(h.state().input_rotation, rotation);
-            assert_eq!(
-                h.state().viewer.settings.layer,
-                crate::display::ViewLayer::Output
-            );
-            settle_animation(&mut h);
-            assert_eq!(
-                output_pixels(h.state().viewer.observation()),
-                shown,
-                "{action} must keep displaying the completed output; GPU={gpu}"
-            );
-            assert!(h.state().accepted_frame_is_stale());
-            assert!(h.state().render_job.is_none(), "auto preview is off");
-            assert!(h.state().image.as_ref().unwrap().same_source(&source));
-            if let Some(retained) = &retained_host {
-                assert!(Arc::ptr_eq(
-                    h.state().output_image.as_ref().unwrap(),
-                    retained
-                ));
-            }
-            if let Some(retained) = &retained_device {
-                assert!(Arc::ptr_eq(
-                    h.state()
-                        .output_retained
+            let revision = h.state().parameter_revision;
+            wait_until(&mut h, |a| {
+                !a.dirty
+                    && a.render_job.is_none()
+                    && !a.accepted_frame_is_stale()
+                    && a.source_render
                         .as_ref()
-                        .unwrap()
-                        .payload()
-                        .unwrap(),
-                    retained.payload().unwrap()
-                ));
-                assert!(h.state().output_image.is_none());
-            }
-            // Inspecting the refreshed input must not replace Save's carrier.
+                        .is_some_and(|source| source.parameter_revision == Some(revision))
+            });
+            settle_animation(&mut h);
+            assert_eq!(h.state().retained_kind, Some(RenderKind::Preview));
+            assert!(h.state().image.as_ref().unwrap().same_source(&source));
+            assert!(!h.get_by_label("Modified").node().is_disabled());
+            let saved = directory.path().join(format!("{action}.tiff"));
+            h.state_mut().save_to_path(&saved);
+            assert!(saved.exists(), "{}", h.state().status);
+            let output = image_io::load(&saved).unwrap().image;
+            assert_eq!((output.width, output.height), dimensions);
             h.state_mut().viewer.settings.layer = crate::display::ViewLayer::Input;
             settle_animation(&mut h);
-            assert_ne!(output_pixels(h.state().viewer.observation()), shown);
+            assert_eq!(
+                h.state().viewer.settings.layer,
+                crate::display::ViewLayer::Input
+            );
             h.state_mut().viewer.settings.layer = crate::display::ViewLayer::Output;
             settle_animation(&mut h);
-            assert_eq!(output_pixels(h.state().viewer.observation()), shown);
-            h.state_mut().save_to_path(&saved);
-            let saved_after = image_io::load(&saved).unwrap().image;
-            assert_eq!(
-                (saved_after.width, saved_after.height),
-                (saved_image.width, saved_image.height)
-            );
-            for (&after, &before) in saved_after.data.iter().zip(&saved_image.data) {
-                assert!(
-                    (after - before).abs() <= 1e-6,
-                    "{action} and input/output viewing must preserve saved pixels; GPU={gpu}"
-                );
-            }
+            let viewed = directory.path().join(format!("{action}-viewed.tiff"));
+            h.state_mut().save_to_path(&viewed);
+            super::panels::assert_float_images_equal(&saved, &viewed);
         }
-        let destination = directory.path().join("confirmed-retained.tiff");
-        script(&mut h, chooser::Chooser::chooser_path(&destination));
-        click(&mut h, "SAVE");
-        assert!(h.state().stale_save_confirmation);
-        click(&mut h, "Continue saving retained pixels");
-        super::panels::assert_float_images_equal(&saved, &destination);
-        assert!(h.state().render_job.is_none());
         eframe::App::on_exit(h.state_mut(), None);
     }
 }

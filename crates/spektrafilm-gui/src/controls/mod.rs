@@ -94,8 +94,6 @@ pub enum CalibrationAction {
 pub struct ChangeFlags {
     /// A simulation input changed. Invalidate the applicable pipeline cache.
     pub runtime_changed: bool,
-    /// The preview-size Update button was pressed, independently of auto-preview.
-    pub preview_requested: bool,
     /// A real controller action was requested from the Convert panel.
     pub action: Option<CalibrationAction>,
     /// Press/hold comparison changed; never changes the persisted operator values.

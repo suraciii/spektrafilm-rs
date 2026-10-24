@@ -25,7 +25,7 @@ impl App {
             );
             self.viewer.invalidate_display();
             self.mark_parameters_changed();
-            self.force_preview = true;
+
             self.dirty_since = None;
         }
     }
@@ -38,34 +38,10 @@ impl App {
             })
     }
 
-    pub(crate) fn operation_status_localized(&self, ctx: &egui::Context) -> String {
-        if self.input_pending() {
-            return crate::i18n::text(ctx, "surfaces.status.preparing_input").into_owned();
-        }
-        let active_kind = self
-            .render_worker
-            .active
-            .try_lock()
-            .and_then(|active| (*active).map(|(_, kind, _)| kind));
-        let Some(kind) = active_kind.or_else(|| self.render_job.as_ref().map(|job| job.kind))
-        else {
-            return self.status.localized(ctx);
-        };
-        match self.render_progress.unit() {
-            Some(unit) => crate::tr!(
-                ctx,
-                "operations.running_stage",
-                operation = kind.message().localized(ctx),
-                stage = progress::stage_label_localized(ctx, unit)
-            )
-            .into_owned(),
-            None => crate::tr!(
-                ctx,
-                "operations.running",
-                operation = kind.message().localized(ctx)
-            )
-            .into_owned(),
-        }
+    pub(crate) fn viewer_render_pending(&self) -> bool {
+        self.input_pending()
+            || (self.image.is_some()
+                && (self.dirty || self.render_job.is_some() || self.viewer.presentation_pending()))
     }
 
     pub(crate) fn render_snapshot(&mut self, params: RuntimeParams) -> RenderSnapshot {
@@ -124,8 +100,7 @@ impl App {
                 parameter_revision,
                 request_id: 0,
                 kind,
-                animate: self.force_preview
-                    || self.full_scan_requested
+                animate: self.full_scan_requested
                     || (self.output_image.is_none() && self.output_retained.is_none()),
                 rotation_quarter_turns: self.input_rotation.rem_euclid(4) as u32,
                 collection_mode: operation.mode(),

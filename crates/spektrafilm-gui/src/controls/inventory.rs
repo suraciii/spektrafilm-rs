@@ -913,15 +913,6 @@ const SURFACES: &[SurfaceEntry] = &[
         conditions: &[],
     },
     SurfaceEntry {
-        path: "extras.simulation.auto_preview",
-        label: "auto preview",
-        owner: ControlOwner::Settings,
-        section: "Session",
-        editor: EditorKind::Toggle,
-        validator: "GuiState::auto_preview",
-        conditions: &[],
-    },
-    SurfaceEntry {
         path: "extras.simulation.saving_color_space",
         label: "saving color space",
         owner: ControlOwner::Stage(Stage::Output),
@@ -1199,15 +1190,6 @@ const SURFACES: &[SurfaceEntry] = &[
         editor: EditorKind::Action,
         validator: "diagnostics::Diagnostics::save_selected",
         conditions: &["selected report"],
-    },
-    SurfaceEntry {
-        path: "action.update_preview",
-        label: "update",
-        owner: ControlOwner::Settings,
-        section: "Session",
-        editor: EditorKind::Action,
-        validator: "ChangeFlags::preview_requested",
-        conditions: &["loaded source"],
     },
     SurfaceEntry {
         path: "action.export",

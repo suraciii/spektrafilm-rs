@@ -9,7 +9,7 @@ fn state_controls(h: &mut Harness<'_, App>) {
 fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories() {
     let mut s = session();
     let h = &mut s.harness;
-    let preview = render(h, "PREVIEW");
+    let preview = preview(h);
     let saved = s.directory.path().join("button-save.png");
     script(h, chooser::ChooserResult::Scripted(saved.clone()));
     click(h, "SAVE");
@@ -64,7 +64,7 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     import_file(h, false);
     assert!(h.state().image.as_ref().unwrap().same_source(&before));
     assert_eq!(h.state().status, status);
-    let scan = render(h, "SCAN");
+    let scan = scan(h);
     open_export(h);
     let exported = s.directory.path().join("button-export.png");
     script(h, chooser::ChooserResult::Scripted(exported.clone()));
@@ -161,7 +161,7 @@ fn cancelled_factory_restore_keeps_the_current_controls_and_the_saved_default() 
 fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
     let mut s = session();
     let h = &mut s.harness;
-    render(h, "PREVIEW");
+    preview(h);
     let image_path = h.state().image_path.clone();
     let params = h.state().params.clone();
     let image = h.state().image.as_ref().unwrap().clone();
@@ -216,7 +216,7 @@ fn replacing_input_rejects_the_previous_sources_real_worker_result() {
     let mut s = session();
     let h = &mut s.harness;
     choose(h, "workflow", "input");
-    render(h, "PREVIEW");
+    preview(h);
     let previous = h.state().image.as_ref().unwrap().clone();
     let epoch = h.state().input_epoch;
     let ctx = h.ctx.clone();
@@ -263,16 +263,13 @@ fn replacing_input_rejects_the_previous_sources_real_worker_result() {
             .is_none_or(|job| job.request_id != old_request)
     });
     assert!(h.state().image.as_ref().unwrap().same_source(&accepted));
-    assert!(
-        h.state().output_image.is_none(),
-        "stale source output was published"
-    );
-    assert!(
-        h.state().output_retained.is_none(),
-        "stale retained output was published"
-    );
-    assert!(h.state().source_render.is_none());
-    let output = render(h, "SCAN");
+    if let Some(source) = &h.state().source_render {
+        assert_eq!(source.input_revision, Some(h.state().input_epoch));
+        assert_eq!(source.dimensions, [3, 2]);
+    }
+    let automatic = preview(h);
+    assert_eq!((automatic.width, automatic.height), (3, 2));
+    let output = scan(h);
     assert_eq!((output.width, output.height), (3, 2));
     assert_eq!(
         h.state().source_render.as_ref().unwrap().input_revision,
@@ -416,7 +413,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
         .host_image()
         .unwrap()
         .clone();
-    let baseline = render(h, "SCAN");
+    let baseline = scan(h);
     reveal_control(h, "action.rotate_cw");
     click(h, "cw rotate");
     assert_eq!(h.state().input_rotation, 3);
@@ -441,7 +438,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
             assert_eq!(&rotated.data[to..to + 3], &original.data[from..from + 3]);
         }
     }
-    let scan = render(h, "SCAN");
+    let scan = scan(h);
     assert_eq!((scan.width, scan.height), (2, 4));
     let expected = image_io::convert_image(
         &scan,
@@ -502,7 +499,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
             .data,
         original.data
     );
-    let restored = render(h, "SCAN");
+    let restored = super::scan(h);
     assert_eq!((restored.width, restored.height), (4, 2));
     assert_eq!(restored.data, baseline.data);
 }

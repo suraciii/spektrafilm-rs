@@ -43,7 +43,6 @@ mod photograph;
 mod platform;
 mod presets;
 mod profiles;
-mod progress;
 mod render;
 mod render_worker;
 mod routes;

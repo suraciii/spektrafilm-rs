@@ -131,7 +131,7 @@ def main():
     parser.add_argument('--exporter', type=Path, required=True)
     parser.add_argument('--raw-helper', type=Path, required=True)
     parser.add_argument('--gui', type=Path,
-                        help='Require installed continuous-inspector native RGB/RAW/Preview/Scan/Save/Export and cancellation acceptance')
+                        help='Require installed continuous-inspector native RGB/RAW/automatic-preview/Scan/Save/Export and cancellation acceptance')
     parser.add_argument('--package-root', type=Path, required=True)
     parser.add_argument('--data-dir', type=Path, required=True)
     parser.add_argument('--evidence-dir', type=Path, required=True)

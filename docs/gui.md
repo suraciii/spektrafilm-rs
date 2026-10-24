@@ -20,7 +20,7 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 ## Workspace
 
-The header provides **Save adjustments…**, **Reopen adjustments…**, **Photographs…**, **Open**, **Undo**, **Redo**, **Settings**, and primary **Export**. It identifies the accepted source, film, print material, and workflow route as read-only context, and reports operation status. While an export runs, **Cancel export** replaces **Export**.
+The header provides **Save adjustments…**, **Reopen adjustments…**, **Photographs…**, **Open**, **Undo**, **Redo**, **Settings**, and primary **Export**. It identifies the accepted source, film, print material, and workflow route as read-only context, and reports import, delivery, completion, and error messages. While an export runs, **Cancel export** replaces **Export**. Live viewer rendering status appears inside the viewer.
 
 The left **Presets** browser is collapsible and resizable. **Search presets** finds looks by name or film/print stock, including stock display names. **Clear preset search** restores the full list. **Built-in** looks are read-only; **My Presets** holds user looks. **Save preset…** saves a look, not a photograph or startup default. Searching, collapsing, or scrolling the browser does not apply a look or change the photograph.
 Built-in reference thumbnails sit beside the compact card controls; the fixed-reference warning, attribution, and license appear once above the group. Each card's visible action menu supports pointer and keyboard activation, with focused controls scrolled into view; library issues precede the cards, and the applied or missing look remains visible above the list.
@@ -37,7 +37,7 @@ The right inspector contains one continuous list, not mutually exclusive pages. 
 | Scan | Scanner, Print viewing glare |
 | Output | Output, Output gamut compress, CMYK ink style |
 
-The persistent **PREVIEW**, **SCAN**, and **SAVE** action bar stays below the inspector. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
+The persistent **SCAN** and **SAVE** action bar stays below the inspector. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
 
 ## Interface language
 
@@ -79,7 +79,7 @@ Simulated exposure remains a separate control at **Input and capture → Camera 
 
 ### Editing, search, and reset
 
-**Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits follow **Settings → General → auto preview**. Incomplete or invalid text keeps the last valid parameter value and remains visible as an editing draft until Escape or ordinary focus loss. Opening language settings suspends the draft instead of finishing it; return to the field to continue or cancel it. Escape cancels the uncommitted edit. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
+**Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits automatically refresh Preview after a short debounce. Incomplete or invalid text keeps the last valid parameter value and remains visible as an editing draft until Escape or ordinary focus loss. Opening language settings suspends the draft instead of finishing it; return to the field to continue or cancel it. Escape cancels the uncommitted edit. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
 
 Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. A modified row shows a gold marker and value; the marker uses the same section-reset baseline as the section `modified` chip. Tuple, optional, extra, and boolean rows use the same marker rule. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
 
@@ -135,9 +135,9 @@ The `input` workflow color-manages an already rendered image to the output space
 
 Header **Undo** and **Redo** apply to accepted adjustments for the current source: parameter edits, workflow and material selection with their dependent normalizations, feature/section/look-preset application, source rotation, and row/module resets. Their hover text names the next action; unavailable actions are disabled. One completed slider drag or numeric text edit is one step; each original wheel event is one step. Rejected edits and canceled gestures add no step. A new accepted edit after Undo discards the redo branch.
 
-Undo restores accepted controls, materials, route, explicit edit ownership, and the associated applied-preset state. Redo restores the recorded successor without rereading a possibly changed preset file. Both invalidate obsolete work and follow auto preview; delayed worker results cannot overwrite a newer restored adjustment. The viewer retains its last completed frame while work runs and the header marks it **Retained frame is not current · controls changed** until a current result is accepted.
+Undo restores accepted controls, materials, route, explicit edit ownership, and the associated applied-preset state. Redo restores the recorded successor without rereading a possibly changed preset file. Both invalidate obsolete work and automatically refresh Preview; delayed worker results cannot overwrite a newer restored adjustment. The viewer retains its last completed frame while work runs and the retained-result label marks it stale until a current result is accepted.
 
-Rotation Undo/Redo refreshes input presentation without discarding the completed output: with auto preview off, Output remains viewable and Save continues to write the same retained samples until another render is accepted.
+Rotation Undo/Redo refreshes input presentation without discarding the completed output. Modified remains viewable and Save continues to write the same retained samples until the automatic replacement render is accepted.
 
 Use Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z outside text editors and the Settings/Export dialogs. When a text editor has focus, its own text-editing shortcuts do not undo photograph adjustments.
 
@@ -145,11 +145,11 @@ Accepting another source, completing RAW reprocessing, or loading a complete GUI
 
 ## Preview and Scan
 
-**PREVIEW** renders a bounded image using the configured preview long-edge limit and current runtime controls. Set **preview max size** and **auto preview** in **Settings → General**. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active. Explicitly update it when auto preview is disabled.
+Preview automatically renders a bounded image using the configured preview long-edge limit and current runtime controls. Set **preview max size** in **Settings → General**; accepting a new limit automatically updates Preview. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active.
 
-With **auto preview** on, applying a preset, releasing a slider, or accepting numeric text refreshes **Modified** without another Preview action.
+Opening an image, applying a preset, moving a slider, or accepting numeric text refreshes **Modified** automatically. No Preview button, Update action, or auto-preview preference is required. Rendering waits while calibration or the existing modal guards block submission.
 
-New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates skip the development animation; explicit Preview and Scan retain it.
+New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates after the first output skip the development animation; the first output and explicit Scan retain it.
 
 The retained-result label identifies **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
 
@@ -179,7 +179,7 @@ The collapsible tonal-distribution readout sits above inspector search and stage
 
 The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel.
 
-The window header shows the current source, film profile, print profile, and exact workflow route as read-only text; hover the route for its physical description. The operation status appears only in this header. While Preview or Scan runs, it names the operation and the stage that executes now, for example `Scan · Film development`. With no work running it describes the last accepted operation; Export reports its status with elapsed time and cancellation state there too. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
+The window header shows the current source, film profile, print profile, and exact workflow route as read-only text; hover the route for its physical description. A lightweight **Rendering…** status appears at the viewer's top-right, or **渲染中……** in Simplified Chinese. It covers debounce, pipeline work, and the latest viewer composition. It disappears on completion or failure and is absent without a source. The last completed image and pointer navigation remain available while it runs. The header does not repeat this running message; it retains import, Save, Export, completion, and error evidence, including Export elapsed time and cancellation. Status ownership follows [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
 
 With a selected GPU, the accepted render owns device samples through viewing and Save. Fitted resampling, display conversion, ICC evaluation, full-source interpolation, crossfade, development animation, and virtual-paper numerical synthesis use disposable device buffers; none rewrites the accepted render. The native egui frontend receives only packed presentation pixels. Histogram data and hovered source pixels are bounded readouts, not a full-image download followed by re-upload. A failed viewer computation keeps the last accepted texture and reports the display error.
 
@@ -219,7 +219,7 @@ The GUI warns that JPEG remains lossy even at quality 100. 4:2:0 can soften colo
 
 ## Save retained output
 
-**SAVE** saves the latest retained floating output without rerendering. If it no longer matches the accepted adjustments, an explicit confirmation offers to continue saving that frame or cancel before opening the file chooser. It uses **Output → Output → saving color space** and **saving cctf encoding**. The filename extension selects the format. `.jpg` is the default. Run Preview or Scan first when the file should reflect changed controls.
+**SAVE** saves the latest retained floating output without rerendering. If it no longer matches the accepted adjustments, an explicit confirmation offers to continue saving that frame or cancel before opening the file chooser. It uses **Output → Output → saving color space** and **saving cctf encoding**. The filename extension selects the format. `.jpg` is the default. Wait for automatic Preview or run Scan first when the file should reflect changed controls.
 
 - JPEG/PNG use 8-bit integer samples.
 - TIFF uses 16-bit integer samples with ZIP compression.
@@ -256,6 +256,8 @@ In the same settings section, **Save current as default** persists the current c
 Startup files use the platform configuration directory. `SPEKTRAFILM_CONFIG_DIR` overrides it. Rust settings use `rust.version = 2`. File-dialog directories persist separately.
 
 Legacy states without an explicit export format preserve 8-bit as PNG and 16/32-bit as TIFF before defaults and validation. Recipe values and viewer state remain intact. Explicitly incompatible format/depth combinations remain errors.
+
+Older states may contain `simulation.auto_preview`. Loading discards that retired preference; saved states omit it. Preview always updates automatically.
 
 ### Preset browser state
 

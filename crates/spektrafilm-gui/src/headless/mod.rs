@@ -104,11 +104,10 @@ fn deterministic_state(directory: &Path) -> PathBuf {
     let mut initial =
         state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
             .unwrap();
-    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
     // The viewer's 50-frame Polaroid reveal paints one full-canvas raster per
     // frame. That costs about 0.7 s per frame at this harness size, so sessions
     // start with the animation off. The animation keeps its coverage in
-    // `headless::viewer::explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not`,
+    // `headless::viewer::first_output_and_scan_animate_but_automatic_parameter_update_does_not`,
     // which turns it back on through `viewer.settings.reveal`.
     initial.sections["rust"]["viewer"]["settings"]["reveal"] = serde_json::json!(false);
     let state_path = directory.join("initial.json");
@@ -385,7 +384,7 @@ fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
             .unwrap();
         let left = search.x0;
         let top = search.y1 + 70.0;
-        let bottom = h.get_by_label("PREVIEW").node().raw_bounds().unwrap().y0 - 8.0;
+        let bottom = h.get_by_label("SCAN").node().raw_bounds().unwrap().y0 - 8.0;
         (
             left,
             top,
@@ -546,36 +545,33 @@ fn settle_animation(h: &mut Harness<'_, App>) {
     });
 }
 
-fn render(h: &mut Harness<'_, App>, button: &str) -> Arc<ImageBuf> {
-    // State loading can schedule a preview even with auto-preview off. Drain it
-    // before clicking: a disabled action does not enqueue the requested render.
-    wait_until(h, |a| {
-        a.render_job.is_none()
-            && a.export_job.is_none()
-            && a.calibration_job.is_none()
-            && !a.force_preview
-    });
-    let previous = h.state().output_image.clone();
-    click(h, button);
+/// Wait for the accepted automatic result, including an already-current Scan.
+/// This never manufactures a render request: accepted UI edits own scheduling.
+fn preview(h: &mut Harness<'_, App>) -> Arc<ImageBuf> {
     wait_until(h, |a| {
         !a.dirty
             && a.render_job.is_none()
+            && a.calibration_job.is_none()
+            && !a.accepted_frame_is_stale()
+            && a.output_image.is_some()
+    });
+    h.state().output_image.as_ref().unwrap().clone()
+}
+
+fn scan(h: &mut Harness<'_, App>) -> Arc<ImageBuf> {
+    preview(h);
+    wait_until(h, |a| a.export_job.is_none() && a.calibration_job.is_none());
+    let previous = h.state().output_image.clone();
+    click(h, "SCAN");
+    wait_until(h, |a| {
+        !a.dirty
+            && a.render_job.is_none()
+            && a.retained_kind == Some(RenderKind::Scan)
+            && !a.accepted_frame_is_stale()
             && a.output_image
                 .as_ref()
                 .is_some_and(|out| previous.as_ref().is_none_or(|old| !Arc::ptr_eq(old, out)))
     });
-    assert!(
-        h.state()
-            .status
-            .to_string()
-            .starts_with(if button == "SCAN" {
-                "Scan ·"
-            } else {
-                "Preview ·"
-            }),
-        "{}",
-        h.state().status
-    );
     h.state().output_image.as_ref().unwrap().clone()
 }
 
@@ -688,7 +684,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
             .is_none(),
         "the readout light is a product constant, not a control"
     );
-    let direct = render(h, "PREVIEW");
+    let direct = preview(h);
     assert_eq!((direct.width, direct.height), (128, 64));
     edit(h, "Lens blur (readout optics)", "0.5");
     assert_eq!(h.state().params.scanner.lens_blur, 0.5);
@@ -714,7 +710,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "conversion style")
             .is_some()
     );
-    let preview = render(h, "PREVIEW");
+    let preview = preview(h);
     let accepted = h.state().current_state().unwrap();
     let accepted_params = h.state().params.clone();
     let accepted_input = h.state().image.as_ref().unwrap().clone();
@@ -788,10 +784,27 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     )
     .unwrap();
     assert_png(&save_path, &expected_saved);
-    let scan = render(h, "SCAN");
+    reveal_control(h, "settings.preview_max_size");
+    edit(h, "preview max size", "256");
+    close_settings(h);
+    let scan = scan(h);
     assert_eq!((scan.width, scan.height), (160, 80));
-    // Export must ignore the most recently retained preview's reduced resolution.
-    render(h, "PREVIEW");
+    let scan_operation = h.state().source_render.as_ref().unwrap().operation_id;
+    // A size edit schedules automatic Preview. Negative conversion retains
+    // the exact full frame; only its viewer raster uses the size limit.
+    reveal_control(h, "settings.preview_max_size");
+    edit(h, "preview max size", "128");
+    assert_eq!(h.state().params.settings.preview_max_size, 128);
+    assert!(h.query_by_label("Update").is_none());
+    assert!(h.query_by_label("auto preview").is_none());
+    close_settings(h);
+    let bounded = self::preview(h);
+    assert_eq!((bounded.width, bounded.height), (160, 80));
+    assert_eq!(h.state().retained_kind, Some(RenderKind::Preview));
+    assert_ne!(
+        h.state().source_render.as_ref().unwrap().operation_id,
+        scan_operation
+    );
     open_export(h);
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");
@@ -922,7 +935,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
         h.state().params.film_render.grain.engine,
         GrainEngine::Spektra
     );
-    let spektra = render(h, "PREVIEW");
+    let spektra = preview(h);
     choose(h, "Engine", "Fotufilm Film");
     assert_eq!(
         h.state().params.film_render.grain.engine,
@@ -933,7 +946,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
     // The harness deactivates stochastic effects, so the selected engine must
     // remain an exact bypass; the release-binary CLI smoke exercises the
     // prepared bank and residual sampling.
-    let fotufilm = render(h, "PREVIEW");
+    let fotufilm = preview(h);
     assert_eq!((fotufilm.width, fotufilm.height), (128, 64));
     assert_eq!(
         fotufilm.data, spektra.data,
@@ -946,7 +959,7 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
     let mut s = session();
     let h = &mut s.harness;
     choose(h, "workflow", "input");
-    let baseline = render(h, "PREVIEW");
+    let baseline = preview(h);
     let ctx = h.ctx.clone();
     // Hold the worker's existing start marker while UI events change the
     // revision. This schedules real work deterministically, not a fake response.
@@ -957,10 +970,11 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
     choose(h, "workflow", "input > film > scan");
     assert!(h.state().parameter_revision > stale_revision);
     drop(start_guard);
-    wait_until(h, |a| a.render_job.is_none());
-    assert!(
-        Arc::ptr_eq(&baseline, h.state().output_image.as_ref().unwrap()),
-        "stale real worker response must not replace retained output"
+    preview(h);
+    assert_eq!(
+        h.state().source_render.as_ref().unwrap().parameter_revision,
+        Some(h.state().parameter_revision),
+        "only the latest automatic request may publish output"
     );
     let start_guard = active.lock();
     h.state_mut().dispatch_render(&ctx);
@@ -1098,7 +1112,7 @@ mod layout_snapshots {
     fn app_window_stage_actions_remain_inside_the_native_viewport() {
         let mut s = snapshot_session();
         let h = &mut s.harness;
-        render(h, "PREVIEW");
+        preview(h);
         settle_animation(h);
         wait_until(h, |a| a.histogram.cached_data().is_some());
         for stage in controls::Stage::ALL {
@@ -1112,7 +1126,6 @@ mod layout_snapshots {
                 "Redo",
                 "Settings",
                 "Export",
-                "PREVIEW",
                 "SCAN",
                 "SAVE",
                 "Search controls",
@@ -1230,17 +1243,17 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
     );
     h.press_key(egui::Key::Escape);
     h.run_steps(3);
-    let reference = render(h, "PREVIEW");
+    let reference = preview(h);
     choose(h, "conversion style", "warm-probe");
     assert_eq!(h.state().params.scanner.conversion_style, "warm-probe");
-    let styled = render(h, "PREVIEW");
+    let styled = preview(h);
     assert_ne!(
         styled.data, reference.data,
         "an installed style must change the rendered capture"
     );
     choose(h, "conversion style", "standard");
     assert_eq!(h.state().params.scanner.conversion_style, "standard");
-    let unstyled = render(h, "PREVIEW");
+    let unstyled = preview(h);
     assert_eq!(unstyled.data, reference.data);
 }
 
@@ -1275,7 +1288,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     ] {
         assert!(h.query_by_label(label).is_none(), "retired control {label}");
     }
-    let neutral = render(h, "PREVIEW");
+    let neutral = preview(h);
     assert!(neutral.data.iter().all(|x| x.is_finite()));
     let accepted = h.state().current_state().unwrap();
     let accepted_params = h.state().params.clone();
@@ -1344,9 +1357,8 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     )
     .unwrap();
     assert_png(&save_path, &expected);
-    let scan = render(h, "SCAN");
+    let scan = scan(h);
     assert_eq!((scan.width, scan.height), (160, 80));
-    render(h, "PREVIEW");
     let export_path = s.directory.path().join("lamp-full.png");
     let ctx = h.ctx.clone();
     let options = h.state().export_options.clone();
@@ -1377,7 +1389,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     let slide = profile::load_profile_by_name(&data_dir(), "kodak_ektachrome_100").unwrap();
     choose(h, "film profile", slide.info.name.as_deref().unwrap());
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    render(h, "PREVIEW");
+    preview(h);
 }
 
 #[test]
@@ -1394,7 +1406,7 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
         h.query_by_label("American Reminiscence • applied")
             .is_some()
     );
-    let initial = render(h, "PREVIEW");
+    let initial = preview(h);
     assert!(edge_difference(&initial) > 0.01);
     reveal_control(h, "camera.exposure_compensation_ev");
     edit(h, "exposure compensation ev", "-1.0");
@@ -1402,7 +1414,7 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
         h.query_by_label("American Reminiscence • modified")
             .is_some()
     );
-    let changed = render(h, "PREVIEW");
+    let changed = preview(h);
     assert!(
         initial
             .data
@@ -1411,7 +1423,7 @@ fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
             .any(|(a, b)| (*a as f64 - *b as f64).abs() > 0.001)
     );
     click(h, "American Reminiscence • modified");
-    let restored = render(h, "PREVIEW");
+    let restored = preview(h);
     assert!(
         h.query_by_label("American Reminiscence • applied")
             .is_some()

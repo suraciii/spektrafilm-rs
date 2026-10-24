@@ -624,6 +624,7 @@ fn save_report_from_panel(h: &mut Harness<'_, App>, path: &Path) {
 fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() {
     let mut s = session();
     let h = &mut s.harness;
+    preview(h);
     let published = s.directory.path().join("published-reports");
     std::fs::create_dir(&published).unwrap();
     h.state_mut()
@@ -633,11 +634,20 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     open_settings(h);
     choose_diagnostics_mode(h, "Summary");
     close_settings(h);
-    render(h, "PREVIEW");
+    reveal_control(h, "camera.exposure_compensation_ev");
+    edit(h, "exposure compensation ev", "0.25");
+    preview(h);
     open_settings(h);
     let first_reports = report_paths(&published);
     assert_eq!(first_reports.len(), 1);
-    let first = read_report(&first_reports[0]);
+    let first = first_reports
+        .iter()
+        .map(|path| read_report(path))
+        .find(|report| {
+            report["operation"]["kind"] == "preview"
+                && report["configuration"]["collection_mode_requested"] == "summary"
+        })
+        .expect("Summary report for the automatic Preview");
     assert_eq!(
         first["configuration"]["collection_mode_requested"],
         "summary"
@@ -652,14 +662,18 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
 
     choose_diagnostics_mode(h, "GPU timing");
     close_settings(h);
-    render(h, "PREVIEW");
+    reveal_control(h, "camera.exposure_compensation_ev");
+    edit(h, "exposure compensation ev", "0.5");
+    preview(h);
     open_settings(h);
     let reports = report_paths(&published);
     assert_eq!(reports.len(), 2);
     let gpu_report_path = reports
         .iter()
         .find(|path| {
-            read_report(path)["configuration"]["collection_mode_requested"] == "gpu_timing"
+            let report = read_report(path);
+            report["operation"]["kind"] == "preview"
+                && report["configuration"]["collection_mode_requested"] == "gpu_timing"
         })
         .unwrap();
     let gpu_report = read_report(gpu_report_path);
@@ -688,7 +702,9 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
 
     choose_diagnostics_mode(h, "Off");
     close_settings(h);
-    render(h, "PREVIEW");
+    reveal_control(h, "camera.exposure_compensation_ev");
+    edit(h, "exposure compensation ev", "0.75");
+    preview(h);
     open_settings(h);
     assert_eq!(
         report_paths(&published).len(),
@@ -710,6 +726,7 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
 fn diagnostics_user_selected_report_survives_later_renders() {
     let mut s = session();
     let h = &mut s.harness;
+    preview(h);
     let published = s.directory.path().join("published-reports");
     std::fs::create_dir(&published).unwrap();
     h.state_mut()
@@ -719,7 +736,9 @@ fn diagnostics_user_selected_report_survives_later_renders() {
     open_settings(h);
     choose_diagnostics_mode(h, "Summary");
     close_settings(h);
-    render(h, "PREVIEW");
+    reveal_control(h, "camera.exposure_compensation_ev");
+    edit(h, "exposure compensation ev", "0.25");
+    preview(h);
     open_settings(h);
 
     let reports = report_paths(&published);
@@ -741,7 +760,8 @@ fn diagnostics_user_selected_report_survives_later_renders() {
 
     // Trigger another render; the user's selection must survive.
     close_settings(h);
-    render(h, "PREVIEW");
+    edit(h, "exposure compensation ev", "0.5");
+    preview(h);
     open_settings(h);
     assert_eq!(
         h.state().diagnostics.selected_report_id(),
@@ -793,7 +813,8 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     assert_eq!(h.state().image_path.as_ref(), Some(&dropped));
     assert_eq!((loaded.width, loaded.height), (7, 3));
     assert_eq!(loaded.data, expected.data);
-    assert!(h.state().output_image.is_none());
+    let accepted_output = preview(h);
+    assert_eq!((accepted_output.width, accepted_output.height), (7, 3));
 
     let mut imported = session();
     script(
@@ -836,7 +857,10 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
             .unwrap()
             .same_source(&retained_image)
     );
-    assert!(h.state().output_image.is_none());
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &accepted_output
+    ));
 }
 
 fn empty_session_for_guards() -> Session {
@@ -848,10 +872,9 @@ fn empty_session_for_guards() -> Session {
     params.debug.deactivate_spatial_effects = true;
     params.debug.deactivate_stochastic_effects = true;
     params.io.crop = false;
-    let mut initial =
+    let initial =
         state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
             .unwrap();
-    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
     let state_path = directory.path().join("initial.json");
     initial.save(&state_path).unwrap();
     let browser_path = directory.path().join("browser.json");
@@ -924,7 +947,7 @@ fn guarded_operations_and_unknown_save_extension_create_no_file() {
     wait_until(h, |app| app.export_job.is_none());
     assert!(destination.is_file());
 
-    render(h, "PREVIEW");
+    preview(h);
     let unsupported = s.directory.path().join("unsupported-container.xyz");
     script(h, chooser::ChooserResult::Scripted(unsupported.clone()));
     click(h, "SAVE");

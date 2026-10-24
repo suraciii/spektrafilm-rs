@@ -106,7 +106,7 @@ pub(super) struct RenderResult {
 }
 
 impl RenderWorker {
-    pub(super) fn new(progress: Arc<crate::progress::RenderProgress>) -> Self {
+    pub(super) fn new() -> Self {
         let state = Arc::new((Mutex::new(None::<RenderRequest>), Condvar::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
         let active = Arc::new(Mutex::new(None));
@@ -121,9 +121,6 @@ impl RenderWorker {
         let handle = std::thread::Builder::new()
             .name("spektrafilm-render".into())
             .spawn(move || {
-                // One operation at a time runs on this thread, so one scope
-                // reports every unit the render reaches.
-                let _progress = spektrafilm_core::progress::ProgressScope::new(progress);
                 let mut runtime_cache = RuntimeCache::default();
                 let mut scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
                 let mut oriented_host: Option<(u64, u32, Arc<ImageBuf>)> = None;

@@ -4,6 +4,30 @@ use crate::display::{Interpolation, ViewLayer, ViewerObservation};
 
 use super::panels::assert_float_images_equal;
 
+fn session() -> Session {
+    let mut s = super::session();
+    preview(&mut s.harness);
+    settle_animation(&mut s.harness);
+    click(&mut s.harness, "Original");
+    s
+}
+
+fn assert_rendering_overlay(h: &Harness<'_, App>) {
+    let text = crate::i18n::text(&h.ctx, "surfaces.viewer.rendering");
+    let label = h.query_by_label(text.as_ref());
+    assert_eq!(label.is_some(), h.state().viewer_render_pending());
+    if let Some(label) = label {
+        assert_ne!(label.node().role(), egui::accesskit::Role::Button);
+        let bounds = label.raw_bounds().unwrap();
+        let viewport = h.state().viewer.observation().viewport;
+        assert!(bounds.x0 >= viewport.left() as f64);
+        assert!(bounds.x1 <= viewport.right() as f64 - 8.0);
+        assert!(bounds.x1 >= viewport.right() as f64 - 32.0);
+        assert!(bounds.y0 >= viewport.top() as f64 + 8.0);
+        assert!(bounds.y1 < viewport.center().y as f64);
+    }
+}
+
 fn click(h: &mut Harness<'_, App>, label: &str) {
     await_input(h);
     h.ctx.style_mut(|style| style.animation_time = 0.0);
@@ -40,7 +64,9 @@ fn click(h: &mut Harness<'_, App>, label: &str) {
     }
 }
 fn frame(h: &mut Harness<'_, App>, time: f64) {
-    h.input_mut().time = Some(time);
+    // UI helpers and worker waits advance the harness clock implicitly. Never
+    // rewind it when returning to explicitly timed viewer frames.
+    h.input_mut().time = Some(time.max(h.ctx.input(|input| input.time)));
     h.step();
 }
 
@@ -65,19 +91,11 @@ fn composed(h: &mut Harness<'_, App>, time: f64) -> ViewerObservation {
     }
 }
 
-fn develop(h: &mut Harness<'_, App>, button: &str, time: f64) {
-    let before = h.state().output_image.clone();
-    h.get_by_label(button).simulate_click();
+fn develop(h: &mut Harness<'_, App>, time: f64) {
     let deadline = Instant::now() + WAIT_DEADLINE;
     loop {
         frame(h, time);
-        if !h.state().dirty
-            && h.state().render_job.is_none()
-            && h.state()
-                .output_image
-                .as_ref()
-                .is_some_and(|out| before.as_ref().is_none_or(|old| !Arc::ptr_eq(old, out)))
-        {
+        if !h.state().dirty && h.state().render_job.is_none() && h.state().output_image.is_some() {
             return;
         }
         assert!(
@@ -91,16 +109,20 @@ fn develop(h: &mut Harness<'_, App>, button: &str, time: f64) {
 
 fn finish_animation(h: &mut Harness<'_, App>, mut time: f64) -> f64 {
     let initial = composed(h, time);
-    let mut previous = initial.transition.expect("explicit render animates");
+    time = h.ctx.input(|input| input.time);
+    let mut previous = initial.transition.expect("first output or Scan animates");
     let initial_pixels = initial.pixels.unwrap().pixels;
     for _ in 0..51 {
         time += 0.04;
         let observation = composed(h, time);
+        assert_rendering_overlay(h);
         match observation.transition {
             Some(current) => {
                 assert_eq!(current.1, previous.1);
                 assert_eq!(current.0, previous.0 + 1);
-                if (current.1 && current.0 == 25) || (!current.1 && current.0 == 5) {
+                // Reveal changes the presented pixels; a repeated Scan can
+                // crossfade identical accepted samples without a byte delta.
+                if current.1 && current.0 == 25 {
                     let pixels = &observation.pixels.as_ref().unwrap().pixels;
                     let max_delta = pixels
                         .iter()
@@ -171,14 +193,7 @@ fn pointer(h: &mut Harness<'_, App>, position: egui::Pos2, pressed: bool, time: 
 fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
     let mut s = session();
     let h = &mut s.harness;
-    assert!(h.state().viewer.output.is_none());
-    let layer = h.state().viewer.settings.layer;
-    click(h, "Modified");
-    assert_eq!(
-        h.state().viewer.settings.layer,
-        layer,
-        "unavailable output is disabled"
-    );
+    develop(h, 10.0);
     click(h, "Original");
     let input = composed(h, 10.0);
     assert_eq!(h.state().viewer.settings.layer, ViewLayer::Input);
@@ -186,7 +201,7 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
     click(h, "Paper back");
     assert_eq!(h.state().viewer.settings.layer, ViewLayer::PaperBack);
     assert_eq!(composed(h, 10.0).interpolation, Interpolation::Spline36);
-    develop(h, "PREVIEW", 10.0);
+    develop(h, 10.0);
     settle_animation(h);
     click(h, "400%");
     display_controls(h);
@@ -243,13 +258,15 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
             });
         let h = &mut harness;
         h.input_mut().max_texture_side = Some(4096);
+        preview(h);
+        settle_animation(h);
         click(h, "Original");
         assert_eq!(h.state().viewer.settings.layer, ViewLayer::Input);
         h.state_mut().viewer.settings.gray_18_canvas = false;
-        let mut time = 20.0;
+        let mut time = h.ctx.input(|input| input.time);
         for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
             click(h, label);
-            time += 1.0;
+            time = time.max(h.ctx.input(|input| input.time)) + 1.0;
             let (source_width, source_height) = {
                 let source = h.state().image.as_ref().unwrap();
                 (source.width(), source.height())
@@ -405,12 +422,13 @@ fn click_steps_the_zoom_at_the_pointer_and_a_double_click_fits() {
     let h = &mut s.harness;
     click(h, "Original");
     let baseline = composed(h, 10.0);
+    let time = h.ctx.input(|input| input.time);
     let image = baseline.image_rect;
     let at = image.center() + egui::vec2(24.0, -18.0);
     let fraction = (at - image.min) / image.size();
-    pointer(h, at, true, 11.0);
-    pointer(h, at, false, 11.1);
-    let zoomed = composed(h, 12.0);
+    pointer(h, at, true, time + 1.0);
+    pointer(h, at, false, time + 1.1);
+    let zoomed = composed(h, time + 2.0);
     assert!((h.state().viewer.zoom - 2.0).abs() < 1e-6);
     assert_eq!(h.state().viewer.zoom_percent, None);
     assert!((zoomed.image_rect.size() - image.size() * 2.0).length() < 0.5);
@@ -421,10 +439,10 @@ fn click_steps_the_zoom_at_the_pointer_and_a_double_click_fits() {
         "clicked content moved: {landed:?}"
     );
     // A double click fits the view again.
-    pointer(h, at, true, 13.0);
-    pointer(h, at, false, 13.1);
-    pointer(h, at, true, 13.2);
-    pointer(h, at, false, 13.3);
+    pointer(h, at, true, time + 3.0);
+    pointer(h, at, false, time + 3.1);
+    pointer(h, at, true, time + 3.2);
+    pointer(h, at, false, time + 3.3);
     assert_eq!(h.state().viewer.zoom, 1.0);
     assert_eq!(h.state().viewer.zoom_percent, None);
     assert_eq!(h.state().viewer.pan, egui::Vec2::ZERO);
@@ -436,6 +454,7 @@ fn marquee_release_zooms_to_the_selection() {
     let h = &mut s.harness;
     click(h, "Original");
     let baseline = composed(h, 20.0);
+    let time = h.ctx.input(|input| input.time);
     let viewport = baseline.viewport;
     let image = baseline.image_rect;
     let size = egui::vec2(80.0, 50.0);
@@ -459,10 +478,10 @@ fn marquee_release_zooms_to_the_selection() {
             modifiers: shift,
         },
     ]);
-    frame(h, 21.0);
+    frame(h, time + 1.0);
     h.input_mut().modifiers = shift;
     h.input_mut().events.push(egui::Event::PointerMoved(end));
-    frame(h, 21.1);
+    frame(h, time + 1.1);
     h.input_mut().modifiers = shift;
     h.input_mut().events.push(egui::Event::PointerButton {
         pos: end,
@@ -470,9 +489,9 @@ fn marquee_release_zooms_to_the_selection() {
         pressed: false,
         modifiers: shift,
     });
-    frame(h, 21.2);
+    frame(h, time + 1.2);
     h.input_mut().modifiers = egui::Modifiers::default();
-    let zoomed = composed(h, 22.0);
+    let zoomed = composed(h, time + 2.0);
     let expected = (viewport.width() / size.x).min(viewport.height() / size.y);
     assert!(
         (h.state().viewer.zoom - expected).abs() < 1e-4,
@@ -498,16 +517,16 @@ fn marquee_release_zooms_to_the_selection() {
             modifiers: egui::Modifiers::default(),
         },
     ]);
-    frame(h, 23.0);
+    frame(h, time + 3.0);
     h.input_mut().events.push(egui::Event::PointerMoved(end));
-    frame(h, 23.1);
+    frame(h, time + 3.1);
     h.input_mut().events.push(egui::Event::PointerButton {
         pos: end,
         button: egui::PointerButton::Secondary,
         pressed: false,
         modifiers: egui::Modifiers::default(),
     });
-    frame(h, 23.2);
+    frame(h, time + 3.2);
     assert!(
         h.state().viewer.zoom > before,
         "secondary marquee must zoom further"
@@ -688,51 +707,181 @@ fn display_row_resets_restore_only_the_live_owned_field_without_adjustment_histo
 }
 
 #[test]
-fn explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not() {
-    let mut s = session();
-    let h = &mut s.harness;
-    // This test owns the reveal animation's coverage, so it enables the
-    // animation that `session_fixture` disables before asserting its frames.
-    h.state_mut().viewer.settings.reveal = true;
-    develop(h, "PREVIEW", 40.0);
-    let reveal = composed(h, 40.0).transition.unwrap();
-    assert_eq!(reveal, (0, true));
-    let time = finish_animation(h, 40.0);
+fn first_output_and_scan_animate_but_automatic_parameter_update_does_not() {
+    let directory = tempfile::tempdir().unwrap();
+    let (image_path, state_path) = deterministic_inputs(directory.path());
+    let browser_path = directory.path().join("browser.json");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 800.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            let mut app = app(state_path, image_path, browser_path);
+            assert!(app.viewer_render_pending());
+            // Enable reveal before the first automatic output can be accepted.
+            app.viewer.settings.reveal = true;
+            app
+        });
+    let h = &mut harness;
+    develop(h, 0.0);
+    assert_eq!(composed(h, 0.0).transition, Some((0, true)));
+    assert_rendering_overlay(h);
+    let time = finish_animation(h, 0.0);
     reveal_control(h, "camera.exposure_compensation_ev");
+    let before = h.state().output_image.clone().unwrap();
     edit(h, "exposure compensation ev", "0.75");
-    develop(h, "PREVIEW", time);
-    assert_eq!(composed(h, time).transition, Some((0, false)));
-    let time = finish_animation(h, time);
+    develop(h, time);
+    assert!(!Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &before
+    ));
+    assert_eq!(composed(h, time).transition, None);
+    assert_rendering_overlay(h);
+
+    // An explicit Scan on the output layer crossfades the previous output.
+    close_settings(h);
+    h.get_by_label("SCAN").simulate_click();
+    develop(h, time + 1.0);
+    assert!(h.state().status.to_string().starts_with("Scan ·"));
+    assert_eq!(composed(h, time + 1.0).transition, Some((0, false)));
+    let time = finish_animation(h, time + 1.0);
+
+    // Scanning from another layer instead reveals the newly accepted output.
     click(h, "Paper back");
-    develop(h, "SCAN", time + 1.0);
+    h.get_by_label("SCAN").simulate_click();
+    develop(h, time + 1.0);
     assert_eq!(composed(h, time + 1.0).transition, Some((0, true)));
     let time = finish_animation(h, time + 1.0);
-    reveal_control(h, "extras.simulation.auto_preview");
-    click(h, "auto preview");
-    close_settings(h);
     reveal_control(h, "camera.exposure_compensation_ev");
     let before = h.state().output_image.clone().unwrap();
     edit(h, "exposure compensation ev", "0.5");
-    let deadline = Instant::now() + WAIT_DEADLINE;
-    loop {
-        frame(h, time + 10.0);
-        if h.state().render_job.is_none()
-            && !h.state().dirty
-            && !Arc::ptr_eq(h.state().output_image.as_ref().unwrap(), &before)
-        {
-            break;
-        }
-        assert!(Instant::now() < deadline, "automatic preview timed out");
-        wait_tick();
+    develop(h, time + 1.0);
+    assert!(!Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &before
+    ));
+    assert!(h.state().status.to_string().starts_with("Preview ·"));
+    assert_eq!(composed(h, time + 1.0).transition, None);
+    assert_rendering_overlay(h);
+}
+
+#[test]
+fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let (image_path, state_path) = deterministic_inputs(directory.path());
+    let browser_path = directory.path().join("browser.json");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1100.0, 800.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            App::new_with_browser_path(
+                Arc::new(CpuBackend),
+                None,
+                Some(state_path),
+                None,
+                browser_path,
+                data_dir(),
+            )
+        });
+    assert!(!h.state().viewer_render_pending());
+    assert_rendering_overlay(&h);
+    let layer = h.state().viewer.settings.layer;
+    click(&mut h, "Modified");
+    assert_eq!(
+        h.state().viewer.settings.layer,
+        layer,
+        "unavailable output is disabled"
+    );
+
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .select_language(&ctx, crate::i18n::LanguagePreference::SimplifiedChinese)
+        .unwrap();
+    let active = h.state().render_worker.active.clone();
+    let worker_guard = active.lock();
+    h.state_mut().load_image_from_path(&image_path);
+    assert!(
+        h.state().viewer_render_pending(),
+        "input preparation and render debounce belong to viewer work"
+    );
+    frame(&mut h, 0.0);
+    assert_rendering_overlay(&h);
+    assert!(h.query_by_label("Rendering…").is_none());
+    wait_until(&mut h, |app| app.render_job.is_some());
+    assert!(h.state().viewer_render_pending());
+    assert_rendering_overlay(&h);
+    assert!(h.query_by_label("渲染中……").is_some());
+    drop(worker_guard);
+    develop(&mut h, 0.0);
+    composed(&mut h, 0.0);
+    assert!(!h.state().viewer_render_pending());
+    assert_rendering_overlay(&h);
+
+    h.state_mut()
+        .select_language(&ctx, crate::i18n::LanguagePreference::English)
+        .unwrap();
+    h.step();
+    reveal_control(&mut h, "camera.exposure_compensation_ev");
+    let worker_guard = active.lock();
+    edit(&mut h, "exposure compensation ev", "0.5");
+    wait_until(&mut h, |app| app.render_job.is_some());
+    assert!(h.state().viewer_render_pending());
+    assert_rendering_overlay(&h);
+    assert!(h.query_by_label("Rendering…").is_some());
+    drop(worker_guard);
+    develop(&mut h, 1.0);
+    assert!(h.state().render_job.is_none());
+    assert_eq!(
+        h.state().viewer_render_pending(),
+        h.state().viewer.presentation_pending()
+    );
+    composed(&mut h, 1.0);
+    assert!(!h.state().viewer_render_pending());
+    assert_rendering_overlay(&h);
+
+    // An unavailable real profile must fail without retaining a spinner or
+    // replacing the last successfully accepted output.
+    let accepted = h.state().output_image.clone().unwrap();
+    let reports = directory.path().join("failed-render-reports");
+    std::fs::create_dir(&reports).unwrap();
+    h.state_mut().diagnostics.mode = spektrafilm_core::telemetry::CollectionMode::Summary;
+    h.state_mut()
+        .diagnostics
+        .publish_completed_to(reports.clone());
+    // Change the external resource location, not accepted photograph controls.
+    // History correctly rejects an invalid film-name edit before rendering.
+    h.state_mut().data_dir = directory.path().join("missing-profile-data");
+    h.state_mut().dispatch_render(&ctx);
+    if h.state().render_job.is_some() {
+        assert!(
+            h.state().viewer_render_pending(),
+            "unconsumed pipeline response is pending"
+        );
     }
-    assert_eq!(composed(h, time + 10.0).transition, None);
+    wait_until(&mut h, |app| app.render_job.is_none());
+    let report_path = std::fs::read_dir(&reports)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+    assert_eq!(report["operation"]["outcome"], "failed");
+    wait_until(&mut h, |app| !app.viewer_render_pending());
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &accepted
+    ));
+    assert_rendering_overlay(&h);
+    assert!(h.query_by_label("渲染中……").is_none());
+    assert!(h.query_by_label("PREVIEW").is_none());
 }
 
 #[test]
 fn viewer_settings_do_not_change_saved_or_exported_pixels() {
     let mut s = session();
     let h = &mut s.harness;
-    develop(h, "PREVIEW", 50.0);
+    develop(h, 50.0);
     settle_animation(h);
     let save_before = s.directory.path().join("save-before.exr");
     let export_before = s.directory.path().join("export-before.exr");
@@ -766,7 +915,8 @@ fn viewer_settings_do_not_change_saved_or_exported_pixels() {
 fn display_profile_selection_clear_persistence_and_viewer_only_effect() {
     let mut s = session();
     let h = &mut s.harness;
-    develop(h, "PREVIEW", 60.0);
+    develop(h, 60.0);
+    click(h, "Modified");
     settle_animation(h);
     display_controls(h);
 
@@ -821,7 +971,7 @@ fn display_profile_selection_clear_persistence_and_viewer_only_effect() {
     // The reloaded state reloads the input, so the retained output is produced
     // again; the selection then reaches the freshly seeded viewing raster.
     close_settings(h);
-    develop(h, "PREVIEW", 62.0);
+    develop(h, 62.0);
     settle_animation(h);
     assert_eq!(
         h.state().viewer.output_display_profile(),
@@ -869,7 +1019,8 @@ fn display_profile_selection_clear_persistence_and_viewer_only_effect() {
 fn an_unusable_display_profile_path_falls_back_without_breaking_state() {
     let mut s = session();
     let h = &mut s.harness;
-    develop(h, "PREVIEW", 70.0);
+    develop(h, 70.0);
+    click(h, "Modified");
     settle_animation(h);
     display_controls(h);
 
@@ -965,7 +1116,8 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
                 "viewer height changed for {query:?} at {size:?}"
             );
             assert_eq!(h.state().params, params, "search must not edit controls");
-            for action in ["PREVIEW", "SCAN", "SAVE"] {
+            assert!(h.query_by_label("PREVIEW").is_none());
+            for action in ["SCAN", "SAVE"] {
                 let bounds = h.get_by_label(action).raw_bounds().unwrap();
                 assert!(
                     bounds.x0 >= search.x0 - 2.0 && bounds.x1 <= size.x as f64,
@@ -980,6 +1132,36 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
     }
 }
 
+fn wait_device_output(h: &mut Harness<'_, App>) {
+    wait_until(h, |app| {
+        !app.dirty
+            && app.render_job.is_none()
+            && app.calibration_job.is_none()
+            && !app.accepted_frame_is_stale()
+            && app.output_retained.is_some()
+    });
+}
+
+fn scan_device_output(h: &mut Harness<'_, App>) {
+    // Unlike the CPU pixel helpers, readiness is the accepted device carrier
+    // and its provenance, never a compatibility raster or a host readback.
+    wait_device_output(h);
+    let previous = h.state().source_render.as_ref().unwrap().operation_id;
+    h.get_by_label("SCAN").simulate_click();
+    h.run_steps(3);
+    wait_until(h, |app| {
+        !app.dirty
+            && app.render_job.is_none()
+            && !app.accepted_frame_is_stale()
+            && app.output_retained.is_some()
+            && app.retained_kind == Some(RenderKind::Scan)
+            && app
+                .source_render
+                .as_ref()
+                .is_some_and(|render| render.operation_id != previous)
+    });
+}
+
 #[test]
 fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     let _device = spektrafilm_gpu::test_support::device_lock();
@@ -990,7 +1172,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
         spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().expect("GPU adapter required"),
     );
     let mut h = Harness::builder()
-        .with_size(egui::vec2(720.0, 600.0))
+        .with_size(egui::vec2(1100.0, 800.0))
         .build_eframe(move |cc| {
             theme::apply(&cc.egui_ctx);
             App::new_with_browser_path(
@@ -1003,7 +1185,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
             )
         });
     await_input(&mut h);
-    wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
+    wait_device_output(&mut h);
     let source = h.state().image.as_ref().unwrap().clone();
     let original = source.host_image().unwrap().clone();
     for (space, encoded) in [("Display P3", true), ("ACES2065-1", false)] {
@@ -1084,14 +1266,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     assert!(h.state().image.as_ref().unwrap().same_source(&source));
     assert_eq!(source.host_image().unwrap().data, original.data);
     h.state_mut().diagnostics.mode = spektrafilm_backend::telemetry::CollectionMode::Summary;
-    super::click(&mut h, "SCAN");
-    wait_until(&mut h, |a| {
-        !a.dirty
-            && !a.force_preview
-            && a.render_job.is_none()
-            && a.output_retained.is_some()
-            && a.status.to_string().starts_with("Scan ·")
-    });
+    scan_device_output(&mut h);
     assert!(
         h.state().output_image.is_none(),
         "GPU Scan must not retain a compatibility host raster"
@@ -1190,18 +1365,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     for (&actual, &expected) in presentation_samples.data.iter().zip(&expected_source.data) {
         assert_eq!(actual as f32, expected as f32);
     }
-    wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
-    super::click(&mut h, "SCAN");
-    // SCAN queues a debounced request while the rotation's Preview remains
-    // accepted. Wait for the request to dispatch and accept a Scan, not merely
-    // for the still-idle worker and that previous capped Preview carrier.
-    wait_until(&mut h, |a| {
-        !a.dirty
-            && !a.force_preview
-            && a.render_job.is_none()
-            && a.output_retained.is_some()
-            && a.status.to_string().starts_with("Scan ·")
-    });
+    scan_device_output(&mut h);
     let turned = h.state().output_retained.clone().unwrap();
     let turned_samples = turned.to_host(h.state().backend.as_ref()).unwrap();
     let expected_scan = samples.rotated_quarter_turns(3);
@@ -1230,7 +1394,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
             .same_source(&source)
     );
     assert_eq!(source.host_image().unwrap().data, original.data);
-    wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
+    wait_device_output(&mut h);
     // A real active Fotufilm request must retain the same worker observation
     // boundary. The aggregate film_chain stage is the executor authority;
     // no grain-specific stage is synthesized by the GUI.
@@ -1243,14 +1407,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
         app.params.random_seed = 17;
         app.mark_parameters_changed();
     }
-    super::click(&mut h, "SCAN");
-    wait_until(&mut h, |a| {
-        !a.dirty
-            && !a.force_preview
-            && a.render_job.is_none()
-            && a.output_retained.is_some()
-            && a.status.to_string().starts_with("Scan ·")
-    });
+    scan_device_output(&mut h);
     let report = assert_retained_gpu_report(
         h.state(),
         &directory.path().join("fotufilm-scan-report.json"),

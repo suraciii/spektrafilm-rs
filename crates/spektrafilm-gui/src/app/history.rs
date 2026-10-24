@@ -143,7 +143,6 @@ struct FrameBoundary {
     calibration: u64,
     dirty: bool,
     dirty_since: Option<Instant>,
-    force_preview: bool,
     full_scan: bool,
 }
 
@@ -322,7 +321,6 @@ impl App {
             calibration: self.calibration_epoch,
             dirty: self.dirty,
             dirty_since: self.dirty_since,
-            force_preview: self.force_preview,
             full_scan: self.full_scan_requested,
         });
     }
@@ -396,7 +394,7 @@ impl App {
             self.calibration_epoch = frame.calibration;
             self.dirty = frame.dirty;
             self.dirty_since = frame.dirty_since;
-            self.force_preview = frame.force_preview;
+
             self.full_scan_requested = frame.full_scan;
             self.status = crate::app::Message::new("operations.adjustment_rejected")
                 .message_arg("detail", crate::app::Message::error(&error));
@@ -856,7 +854,6 @@ mod tests {
         app.select_film_profile("kodak_ektachrome_100".into());
         app.end_adjustment_frame(&ctx);
         app.params.settings.preview_max_size = 1024;
-        app.gui_state.sections["simulation"]["auto_preview"] = false.into();
         app.gui_state.set_display_profile(Some("user-display.icc"));
         assert!(app.undo_adjustment());
         assert_eq!(app.film_name, film);
@@ -864,7 +861,6 @@ mod tests {
         assert_eq!(app.scan_for_print_snapshot, Some(true));
         assert!(!app.params.print_render.glare.active);
         assert_eq!(app.params.settings.preview_max_size, 1024);
-        assert!(!app.gui_state.auto_preview());
         assert_eq!(app.gui_state.display_profile(), Some("user-display.icc"));
         assert!(app.undo_adjustment());
         assert_eq!(app.scan_for_print_snapshot, None);

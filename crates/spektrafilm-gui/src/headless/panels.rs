@@ -97,15 +97,8 @@ pub(crate) fn assert_float_images_equal(before: &Path, after: &Path) {
 fn original_modified_switching_preserves_adjustments_view_and_saved_exported_pixels() {
     let mut s = session();
     let h = &mut s.harness;
-    h.state_mut().force_preview = false;
-    h.state_mut().dirty = false;
-    h.run_steps(1);
-    assert!(h.get_by_label("Modified").node().is_disabled());
-    click_viewer_layer(h, "Modified");
-    assert_eq!(h.state().viewer.settings.layer, ViewLayer::Input);
-    assert!(h.state().render_job.is_none());
 
-    let output = render(h, "PREVIEW");
+    let output = preview(h);
     let (modified, time) = settled(h, 20.0);
     assert_eq!(h.state().viewer.settings.layer, ViewLayer::Output);
     assert!(!h.get_by_label("Modified").node().is_disabled());
@@ -160,7 +153,6 @@ fn original_modified_switching_preserves_adjustments_view_and_saved_exported_pix
     );
     assert!(h.state().render_job.is_none());
     assert!(!h.state().dirty);
-    assert!(!h.state().force_preview);
     assert_eq!(h.state().source_render, source_render);
     assert!(Arc::ptr_eq(
         h.state().output_image.as_ref().unwrap(),
@@ -179,14 +171,12 @@ fn original_modified_switching_preserves_adjustments_view_and_saved_exported_pix
 }
 
 #[test]
-fn first_scan_selects_modified_and_original_remains_available() {
+fn scan_selects_modified_and_original_remains_available() {
     let mut s = session();
     let h = &mut s.harness;
-    h.state_mut().force_preview = false;
-    h.state_mut().dirty = false;
+    preview(h);
     click_viewer_layer(h, "Original");
-    assert!(h.get_by_label("Modified").node().is_disabled());
-    let output = render(h, "SCAN");
+    let output = scan(h);
     let _ = settled(h, 20.0);
     assert_eq!(h.state().viewer.settings.layer, ViewLayer::Output);
     click_viewer_layer(h, "Original");
@@ -201,15 +191,8 @@ fn first_scan_selects_modified_and_original_remains_available() {
 
 #[test]
 fn empty_histogram_shows_its_no_output_paint_branch_without_a_retained_render() {
-    let mut s = session();
+    let mut s = super::calibration::session_without_image();
     let h = &mut s.harness;
-    // `apply_state` arms a startup preview (`force_preview`/`dirty`) behind the
-    // wall-clock debounce, so a heavily loaded run could land an output image
-    // during the fixture's frames. Neutralize the pending preview and drive the
-    // strip from a deterministically absent output through a real frame.
-    h.state_mut().force_preview = false;
-    h.state_mut().dirty = false;
-    h.state_mut().output_image = None;
     h.run_steps(1);
     assert!(h.state().output_image.is_none());
     assert!(h.state().histogram.visible, "the empty strip is visible");
@@ -221,7 +204,7 @@ fn empty_histogram_shows_its_no_output_paint_branch_without_a_retained_render() 
 fn histogram_draws_retained_output_without_advancing_viewer_or_render_generations() {
     let mut s = session();
     let h = &mut s.harness;
-    let _ = render(h, "PREVIEW");
+    let _ = preview(h);
     settle_animation(h);
     // Binning runs on the worker thread, so the strip adopts the finished
     // distribution a frame or more after the output is retained.
@@ -261,6 +244,8 @@ fn histogram_draws_retained_output_without_advancing_viewer_or_render_generation
 fn footer_reset_view_restores_fit_zoom_and_zero_pan_after_zoom_and_drag() {
     let mut s = session();
     let h = &mut s.harness;
+    preview(h);
+    settle_animation(h);
     click_viewer_layer(h, "Original");
     let baseline = composed(h, 40.0);
     click(h, "200%");

@@ -42,7 +42,7 @@ The presentation layer in `crates/spektrafilm-gui` owns the token set and surfac
 
 The central viewer must remain the dominant surface. The collapsible preset browser occupies the left side. The continuous inspector occupies the right side. Stage headings must be stronger than module headings, and module headings must be stronger than row labels and secondary help.
 
-The header toolbar must present Open, Undo, Redo, Settings, and Export without competing with the retained image. Preview, Scan, and Save must remain distinct and reachable under [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership). Settings and Export must read as separate dialogs, not additional inspector stages.
+The header toolbar must present Open, Undo, Redo, Settings, and Export without competing with the retained image. Preview remains automatic; Scan and Save must remain distinct and reachable under [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership). Settings and Export must read as separate dialogs, not additional inspector stages. Live rendering feedback follows [viewer presentation](../gui-workflow/spec.md#viewer-presentation).
 
 The inspector must use one vertically scrolling control list. Long lists must not require horizontal scrolling to reach a value, reset action, or help. Labels and help may wrap without hiding the value or its editor. Collapse controls must show their expanded state without color alone. Stage and module expansion must remain independent under [complete control access](../gui-workflow/spec.md#complete-control-access).
 

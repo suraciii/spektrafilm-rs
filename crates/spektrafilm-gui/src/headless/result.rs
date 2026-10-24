@@ -5,8 +5,10 @@ use super::*;
 fn stale_save_cancel_and_continue_preserve_retained_pixels_and_adjustments() {
     let mut s = session();
     let h = &mut s.harness;
-    let retained = render(h, "PREVIEW");
     choose(h, "workflow", "input");
+    let retained = preview(h);
+    open_export(h);
+    assert!(h.state_mut().undo_adjustment());
     assert!(h.state().accepted_frame_is_stale());
     let adjustments = h.state().params.clone();
     let revision = h.state().parameter_revision;
@@ -14,11 +16,30 @@ fn stale_save_cancel_and_continue_preserve_retained_pixels_and_adjustments() {
     let destination = s.directory.path().join("confirmed-retained.png");
     script(h, chooser::ChooserResult::Scripted(destination.clone()));
 
-    click(h, "SAVE");
+    // Enter the SAVE handler while the existing Export modal guards automatic
+    // submission. The real confirmation and chooser still own publication.
+    h.state_mut().save_dialog();
+    h.run_steps(3);
     assert!(h.state().stale_save_confirmation);
     assert!(!destination.exists());
     assert!(h.query_by_label("The retained 128 × 64 px result does not match current adjustments. Continue to save these retained pixels without rendering?").is_some());
-    click(h, "Cancel");
+    let continue_bounds = h
+        .get_by_label("Continue saving retained pixels")
+        .node()
+        .raw_bounds()
+        .unwrap();
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+        .find(|node| {
+            node.node()
+                .raw_bounds()
+                .is_some_and(|bounds| bounds.y0 == continue_bounds.y0)
+        })
+        .expect("Cancel in the stale-save confirmation")
+        .simulate_click();
+    h.run_steps(3);
+    assert!(h.state().export_dialog.is_open());
+    assert!(h.state().dirty);
+    assert!(h.state().render_job.is_none());
     assert!(!h.state().stale_save_confirmation);
     assert!(!destination.exists());
     assert_eq!(h.state().params, adjustments);
@@ -31,8 +52,11 @@ fn stale_save_cancel_and_continue_preserve_retained_pixels_and_adjustments() {
 
     // The canceled confirmation must not consume the chooser result. Reusing
     // that result proves destination selection happens only after Continue.
-    click(h, "SAVE");
-    click(h, "Continue saving retained pixels");
+    h.state_mut().save_dialog();
+    h.run_steps(3);
+    h.get_by_label("Continue saving retained pixels")
+        .simulate_click();
+    h.run_steps(3);
     assert!(!h.state().stale_save_confirmation);
     let expected = image_io::convert_image(
         &retained,
@@ -49,7 +73,6 @@ fn stale_save_cancel_and_continue_preserve_retained_pixels_and_adjustments() {
         &retained,
         h.state().output_image.as_ref().unwrap()
     ));
-    assert!(h.state().render_job.is_none());
     assert!(h.state().accepted_frame_is_stale());
 }
 
@@ -57,12 +80,20 @@ fn stale_save_cancel_and_continue_preserve_retained_pixels_and_adjustments() {
 fn escape_cancels_stale_save_without_opening_the_chooser() {
     let mut s = session();
     let h = &mut s.harness;
-    let retained = render(h, "SCAN");
     choose(h, "workflow", "input");
+    let retained = scan(h);
+    open_export(h);
+    assert!(h.state_mut().undo_adjustment());
     let destination = s.directory.path().join("escape-retained.png");
     script(h, chooser::ChooserResult::Scripted(destination.clone()));
     let status = h.state().status.clone();
-    click(h, "SAVE");
+    // Keep automatic submission paused by the real Export modal, not a test
+    // opt-out, while exercising the SAVE handler and topmost confirmation.
+    h.state_mut().save_dialog();
+    h.run_steps(3);
+    assert!(h.state().stale_save_confirmation);
+    let active = h.state().render_worker.active.clone();
+    let worker_guard = active.lock();
     h.press_key(egui::Key::Escape);
     h.run_steps(3);
     assert!(!h.state().stale_save_confirmation);
@@ -72,13 +103,14 @@ fn escape_cancels_stale_save_without_opening_the_chooser() {
         &retained,
         h.state().output_image.as_ref().unwrap()
     ));
+    drop(worker_guard);
 }
 
 #[test]
 fn header_keeps_preview_identity_and_quality_caveat_while_scan_is_pending() {
     let mut s = session();
     let h = &mut s.harness;
-    let retained = render(h, "PREVIEW");
+    let retained = preview(h);
     assert_eq!(h.state().retained_kind, Some(RenderKind::Preview));
     let identity = h.state().retained_result_identity(&h.ctx);
     assert!(identity.contains("Preview"), "{identity}");
@@ -89,14 +121,20 @@ fn header_keeps_preview_identity_and_quality_caveat_while_scan_is_pending() {
     );
     assert!(h.query_by_label(&identity).is_some());
 
-    choose(h, "workflow", "input");
     let active = h.state().render_worker.active.clone();
     let guard = active.lock();
-    let ctx = h.ctx.clone();
+    choose(h, "workflow", "input");
+    // Queue the Scan through the same scheduler as its button. A direct
+    // dispatch would leave dirty set and schedule a superseding Preview.
     h.state_mut().full_scan_requested = true;
-    h.state_mut().dispatch_render(&ctx);
-    h.run_steps(3);
-    assert!(h.state().render_job.is_some());
+    h.state_mut().dirty = true;
+    wait_until(h, |app| {
+        !app.dirty
+            && app
+                .render_job
+                .as_ref()
+                .is_some_and(|job| job.kind == RenderKind::Scan)
+    });
     let identity = h.state().retained_result_identity(&h.ctx);
     assert!(identity.contains("Preview"), "{identity}");
     assert!(identity.contains("128 × 64"), "{identity}");
@@ -109,11 +147,7 @@ fn header_keeps_preview_identity_and_quality_caveat_while_scan_is_pending() {
         h.query_by_label("Preview detail effects can differ from Scan.")
             .is_some()
     );
-    assert!(
-        h.state()
-            .operation_status_localized(&h.ctx)
-            .contains("Scan")
-    );
+    assert!(h.query_by_label("Rendering…").is_some());
     assert!(Arc::ptr_eq(
         &retained,
         h.state().output_image.as_ref().unwrap()

@@ -217,7 +217,6 @@ impl App {
             self.params.print_render.glare.active = false;
         }
         self.mark_parameters_changed();
-        self.force_preview = true;
     }
 
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
@@ -229,25 +228,13 @@ impl App {
             if ui
                 .add_enabled(
                     ready,
-                    egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.preview")),
-                )
-                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.preview_help"))
-                .clicked()
-            {
-                self.dirty = true;
-                self.force_preview = true;
-                self.full_scan_requested = false;
-            }
-            if ui
-                .add_enabled(
-                    ready,
                     egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.scan")),
                 )
                 .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.scan_help"))
                 .clicked()
             {
                 self.dirty = true;
-                self.force_preview = true;
+
                 self.full_scan_requested = true;
             }
             let save = ui
@@ -544,7 +531,6 @@ impl App {
                 app.source_render = None;
                 app.publish_input_viewer(view.oriented, view.raster);
                 app.dirty = true;
-                app.force_preview = true;
                 app.status = crate::app::Message::new("surfaces.status.rotated")
                     .arg("degrees", rotation * 90);
                 Ok(())
@@ -1124,10 +1110,6 @@ impl App {
         if let Some(action) = changes.action {
             self.start_calibration(action);
         }
-        if changes.preview_requested {
-            self.dirty = true;
-            self.force_preview = true;
-        }
     }
 
     fn display_profile_controls(&mut self, ui: &mut egui::Ui) {
@@ -1438,7 +1420,6 @@ impl App {
                                     ui.label("语言 / Language");
                                     self.language_selector(ui);
                                 });
-                                controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "Schedule a bounded Preview after accepted photographic adjustments.");
                                 self.settings_parameter_controls(ui, "Session");
                             }
                             "GUI parameters" => self.state_toolbar(ui),
@@ -1515,9 +1496,9 @@ impl App {
             &self.film_reference_illuminant,
             &self.data_dir,
         );
-        if changes.preview_requested {
+        if changes.runtime_changed {
             self.dirty = true;
-            self.force_preview = true;
+            self.dirty_since = Some(Instant::now());
         }
     }
 
@@ -1719,7 +1700,7 @@ impl App {
                         );
                     }
                 });
-                ui.label(egui::RichText::new(self.operation_status_localized(ui.ctx())).small());
+                ui.label(egui::RichText::new(self.status.localized(ui.ctx())).small());
             });
     }
 }
@@ -1729,7 +1710,6 @@ impl eframe::App for App {
         self.photograph.context = Some(ctx.clone());
         self.bind_language(ctx);
         self.protect_photograph_close(ctx);
-        self.render_progress.bind_context(ctx);
         if controls::release_operator_compare(ctx) {
             self.set_operator_compare(false);
         }
@@ -2018,8 +1998,29 @@ impl eframe::App for App {
                 || self.output_image.clone(),
                 |comparison| comparison.image.host_image().cloned(),
             );
+            let viewer_rect = ui.available_rect_before_wrap();
             self.viewer
                 .show(ui, self.oriented_input.as_ref(), displayed_output.as_ref());
+            if self.viewer_render_pending() {
+                let text = crate::i18n::text(ui.ctx(), "surfaces.viewer.rendering");
+                let font = egui::FontId::proportional(theme::SIZE_HINT);
+                let galley = ui
+                    .painter()
+                    .layout_no_wrap(text.into_owned(), font, theme::FG);
+                let inset = theme::SPACE_2;
+                let size = galley.size() + egui::vec2(inset * 2.0, inset);
+                let rect = egui::Rect::from_min_size(
+                    viewer_rect.right_top() + egui::vec2(-size.x - inset, inset),
+                    size,
+                );
+                ui.painter_at(viewer_rect)
+                    .rect_filled(rect, theme::RADIUS_CARD, theme::SURFACE2);
+                let label = ui.put(
+                    rect.shrink2(egui::vec2(inset, inset * 0.5)),
+                    egui::Label::new(galley).sense(egui::Sense::hover()),
+                );
+                controls::locate_row(ui, "viewer.rendering", &label);
+            }
         });
         // Accept drag-and-dropped image files.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
@@ -2044,14 +2045,13 @@ impl eframe::App for App {
             && self.calibration_job.is_none()
             && !self.export_dialog.is_open()
             && !self.stale_save_confirmation
-            && (self.gui_state.auto_preview() || self.force_preview)
         {
             let now = Instant::now();
             let dirty_since = *self.dirty_since.get_or_insert(now);
             let elapsed = now.saturating_duration_since(dirty_since);
             if elapsed >= PREVIEW_DEBOUNCE {
                 self.dispatch_render(ctx);
-                self.force_preview = false;
+
                 self.dirty = false;
                 self.dirty_since = None;
             } else {

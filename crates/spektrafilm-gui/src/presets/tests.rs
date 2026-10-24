@@ -62,7 +62,6 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         let epoch = app.calibration_epoch;
         let dirty = app.dirty;
         let dirty_since = app.dirty_since;
-        let force_preview = app.force_preview;
         app.load_preset(entry.group, &entry.name);
         assert!(
             app.status.to_string().starts_with("Preset error:"),
@@ -83,7 +82,6 @@ fn a_failed_preset_preserves_the_entire_application_transaction() {
         assert_eq!(app.dirty, dirty);
         assert_eq!(app.dirty_since, dirty_since);
         assert_eq!(app.params.output_mix.amount, 0.25);
-        assert_eq!(app.force_preview, force_preview);
     }
     std::fs::remove_dir_all(directory).unwrap();
 }

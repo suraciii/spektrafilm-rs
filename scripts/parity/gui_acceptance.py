@@ -164,6 +164,13 @@ class X11:
             time.sleep(.1)
         return result
 
+    def accept_numeric_and_click(self, text, point):
+        """Accept selected numeric text and click before automatic debounce."""
+        self.xd('type', '--delay', '0', '--clearmodifiers', '--', text)
+        self.xd('key', 'Return', 'mousemove', '--window', self.window,
+                int(point[0]), int(point[1]),
+                'mousedown', '1', 'sleep', '.03', 'mouseup', '1')
+
     def chooser_ready(self, env):
         guidance = ('Native chooser needs a session bus and GTK portal on the GUI display. '
                     "Run xvfb-run -a -s '-screen 0 1600x1100x24' "
@@ -297,8 +304,8 @@ class X11:
         lines.append([(text, data['left'][i] / 4, data['top'][i] / 4,
                        data['width'][i] / 4, data['height'][i] / 4)
                       for i, text in enumerate(data['text']) if text.strip()])
-        # Read the persistent sidebar action bar as complete rows so PREVIEW,
-        # SCAN and SAVE are distinguishable from nearby control labels.
+        # Read the persistent sidebar action bar as complete rows so SCAN and
+        # SAVE are distinguishable from nearby control labels.
         action_top = self.action_top
         action_left = self.action_left
         region = image.crop((action_left, action_top, image.width, image.height))
@@ -339,24 +346,24 @@ class X11:
     def match(self, lines, label, right=False):
         # OCR may transliterate the ellipsis; match words, with explicit boundaries.
         wanted = re.findall(r'[a-z0-9]+', label.lower())
-        if label.lower() in ('preview', 'scan', 'save'):
+        if label.lower() in ('scan', 'save'):
             words = [word for line in lines for word in line
                      if word[1] >= self.action_left and word[2] >= self.action_top]
             buttons = []
             for word in words:
-                # Workflow buttons are uppercase; Auto preview and Scan for
-                # print are separate controls even when OCR merges their rows.
+                # Workflow buttons are uppercase; Scan for print is a separate
+                # control even when OCR merges their rows.
                 token = re.sub(r'[^A-Za-z0-9]', '', word[0])
                 if token != label.upper():
                     continue
                 y = word[2] + word[4] / 2
                 row = {re.sub(r'[^A-Za-z0-9]', '', item[0]).lower() for item in words
                        if abs(item[2] + item[4] / 2 - y) < 8
-                       and re.sub(r'[^A-Za-z0-9]', '', item[0]) in ('PREVIEW', 'SCAN', 'SAVE')}
+                       and re.sub(r'[^A-Za-z0-9]', '', item[0]) in ('SCAN', 'SAVE')}
                 # Disabled SAVE and hovered buttons can lose their OCR label.
                 # The bottom action row still identifies an exact uppercase
                 # token, below the checkbox and workflow selector rows.
-                if {'preview', 'scan'} <= row or y >= self.action_top + 50:
+                if {'scan', 'save'} <= row or y >= self.action_top + 50:
                     point = (word[1] + word[3] / 2, y)
                     if point not in buttons:
                         buttons.append(point)
@@ -390,15 +397,9 @@ class X11:
                     if label.lower() == 'save' and selected[0][2] < 100:
                         continue
                     # Save must not select Save state or Save startup.
-                    # Preview must select the footer action button, not the
-                    # "Preview workflow" header or the "preview pack:" stat.
                     following = line[start + len(selected):start + len(selected) + 1]
                     if label.lower() == 'save' and following and following[0][0].lower() in ('state', 'startup'):
                         continue
-                    if label.lower() == 'preview':
-                        line_words = [w for word in line for w in re.findall(r'[a-z0-9]+', word[0].lower())]
-                        if 'scan' not in line_words:
-                            continue
                     matches.append((x + sum(w[3] for w in selected) / 2,
                                     selected[0][2] + selected[0][4] / 2))
         return matches
@@ -1084,6 +1085,20 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
             raise RuntimeError(f'Unsupported desktop input: {args}')
         return ''
 
+    def accept_numeric_and_click(self, text, point):
+        """Use native input without per-call pauses inside the debounce window."""
+        x, y, _, _ = self.bounds()
+        target = (x + int(point[0]), y + int(point[1]))
+        self.input.write(text, interval=0, _pause=False)
+        self.input.press('enter', _pause=False)
+        if sys.platform == 'win32':
+            require(self.os.SetCursorPos(*target), 'Windows rejected native cursor movement')
+        else:
+            self.input.moveTo(*target, _pause=False)
+        self.input.mouseDown(_pause=False)
+        time.sleep(.03)
+        self.input.mouseUp(_pause=False)
+
     def dialog_visible(self):
         if sys.platform == 'darwin':
             # Synchronous rfd dialogs without set_parent use runModal(), so
@@ -1259,12 +1274,11 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         wait_for(path.is_file, label + ' output', 30)
         return read_image(path)
 
-    def render(action, label):
-        driver.click(action.upper(), bottom=True)
-        report = driver.wait_report(label, action)
+    def scan_output(label):
+        driver.click('SCAN', bottom=True)
+        report = driver.wait_report(label, 'Scan')
         driver.snap(label)
-        driver.records.append({'parity_action': 'run_' + action.lower(),
-                               'report': report})
+        driver.records.append({'parity_action': 'run_scan', 'report': report})
         return report
     try:
         driver.start(gui, env)
@@ -1279,7 +1293,6 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         state['input_image']['input_color_space'] = 'sRGB'
         state['display']['preview_max_size'] = 64
         state['camera']['auto_exposure'] = False
-        state['simulation']['auto_preview'] = True
         if driver.backend_requested == 'wgpu':
             state.setdefault('rust', {})['export_backend'] = 'gpu'
         configured = root / 'configured.json'
@@ -1305,8 +1318,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         metadata.iptcData()['Iptc.Application2.Caption'] = 'GUI rotation caption'
         metadata.xmpData()['Xmp.dc.description'] = 'GUI rotation description'
         metadata.writeMetadata()
-        driver.open_image(standard, 'imported-rgb')
-        preview_report = render('Preview', 'explicit-preview')
+        preview_report = driver.open_image(standard, 'imported-rgb')
         preview_path = root / 'preview.exr'
         preview = save_pixels(preview_path, 'preview-output-saved')
         preview_reader = oiio.ImageInput.open(str(preview_path))
@@ -1314,7 +1326,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(str(preview_reader.spec().format) == 'half',
                 'EXR Save did not use extension-default 16-bit depth')
         preview_reader.close()
-        scan_report = render('Scan', 'explicit-scan')
+        scan_report = scan_output('explicit-scan')
         scan = save_pixels(root / 'scan-output.exr', 'scan-output-saved')
         require(scan.shape == pixels.shape, f'Scan dimensions differ: {scan.shape}')
         require(preview.shape[1] == 64 and preview.shape[0] < scan.shape[0],
@@ -1343,7 +1355,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
             require(not re.search(r'Dye\s+support', observed, re.I),
                     'Dye-only control remained visible for Fotufilm')
         driver.reveal('viewer.layer.output', 'Viewer', 'Viewer')
-        driver.click('Output', bottom=True)
+        driver.click('Modified', bottom=True)
         driver.reveal('film_render.grain.fotufilm.amount', 'Film', 'Grain')
         before_amount = driver.viewer_fingerprint()
         driver.drain_reports()
@@ -1355,13 +1367,12 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(grain['active'] is True and grain['engine'] == 'fotufilm'
                 and parameters_equal(grain['fotufilm']['amount'], 1.65),
                 f'Fotufilm control change not persisted: {grain}')
-        driver.state_action('Load from file', root / 'fotufilm-state.json')
+        fotufilm_preview = driver.state_action('Load from file', root / 'fotufilm-state.json')
         loaded = driver.state_action('Save current to file', root / 'fotufilm-loaded.json', save=True)
         require(loaded['rust']['runtime']['film_render']['grain'] == grain,
                 'Fotufilm state did not round-trip')
         for action in ('Preview', 'Scan'):
-            driver.click(action.upper(), bottom=True)
-            report = driver.wait_report('fotufilm-' + action.lower(), action)
+            report = fotufilm_preview if action == 'Preview' else scan_output('fotufilm-scan')
             require(report['configuration']['render']['grain']['active'] is True
                     and report['configuration']['render']['grain']['engine'] == 'fotufilm',
                     'Fotufilm render did not execute the active selected engine')
@@ -1416,13 +1427,12 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         viewing_path = root / 'viewing.json'
         viewing_path.write_text(json.dumps(viewing))
         driver.state_action('Load from file', viewing_path)
-        render('Preview', 'rotation-baseline')
         driver.drain_reports()
         driver.click('cw rotate')
         clockwise = driver.wait_report('clockwise-render-complete')
         require(clockwise['configuration']['working_dimensions'] == [96, 192],
                 'Clockwise rotation did not render portrait')
-        driver.click('Input')
+        driver.click('Original', bottom=True)
         _hover_float(driver, np.rot90(pixels, -1), driver.records)
         cw_bounds = driver.measure_viewer('clockwise-rotation')
         require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
@@ -1446,7 +1456,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         counterclockwise = driver.wait_report('counterclockwise-render-complete')
         require(counterclockwise['configuration']['working_dimensions'] == [192, 96],
                 'Counterclockwise rotation did not restore landscape')
-        driver.click('Input', bottom=True)
+        driver.click('Original', bottom=True)
         ccw_bounds = driver.measure_viewer('counterclockwise-rotation')
         require(ccw_bounds[2] - ccw_bounds[0] > ccw_bounds[3] - ccw_bounds[1],
                 f'Counterclockwise rotation did not restore landscape Input pixels: {ccw_bounds}')
@@ -1487,27 +1497,25 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         exported_path = root / 'full-export.tif'
         export_image(driver, exported_path)
         require(read_image(exported_path).shape == pixels.shape, 'Full export dimensions differ')
-        # Pause auto preview so the real loader's lens result remains visible.
-        raw_seed = json.loads(json.dumps(state))
-        raw_seed['simulation']['auto_preview'] = False
-        raw_seed_path = root / 'raw-seed.json'
-        raw_seed_path.write_text(json.dumps(raw_seed))
-        driver.state_action('Load from file', raw_seed_path)
+        driver.state_action('Load from file', configured)
         raw_input = root / ('raw-input' + raw.suffix.lower())
         shutil.copyfile(raw, raw_input)
-        driver.open_image(raw_input, 'raw-image-loaded')
-        raw_status = driver.wait_text(r'Lens\s+correction\s+(?:not\s+applied|applied)',
-                                      'raw-lens-correction-status', timeout=60)
+        raw_preview = driver.open_image(raw_input, 'raw-image-loaded')
+        require(raw_preview['configuration']['working_dimensions'] == [768, 512],
+                'RAW automatic preview did not retain the full source dimensions')
+        driver.reveal('extras.load_raw.white_balance', 'Input and capture', 'Import Raw')
+        raw_status = driver.wait_text(r'RAW decode settings match', 'raw-loader-settings-applied')
         raw_state = driver.state_action('Save current to file', root / 'raw-state.json', save=True)
         require(raw_state['input_image']['input_color_space'] == 'ACES2065-1',
                 'RAW load did not configure ACES input')
         require(raw_state['input_image']['input_cctf_decoding'] is False, 'RAW load enabled CCTF decode')
-        render('Preview', 'raw-preview')
-        render('Scan', 'raw-scan')
+        scan_output('raw-scan')
         raw_pixels = save_pixels(root / 'raw-scan.tif', 'raw-scan-saved')
         require(raw_pixels.shape == (512, 768, 3), 'RAW scan dimensions differ')
         driver.records.append({'parity_action': 'load_raw_image', 'scenario': 'raw_status',
-                               'raw_input_space': 'ACES2065-1', 'lens_status': raw_status,
+                               'raw_input_space': 'ACES2065-1', 'raw_settings_status': raw_status,
+                               'automatic_preview_report': raw_preview,
+                               'lens_status_scope': 'transient loader text is not retained or asserted',
                                'saved_shape': list(raw_pixels.shape)})
         large = root / 'large.tif'
         large_pixels = np.tile(np.linspace(.05, .8, 4096, dtype=np.float32)[None, :, None], (3072, 1, 3))

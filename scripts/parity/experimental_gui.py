@@ -174,7 +174,7 @@ class ExperimentalDesktop(X11):
                 continue
             if bottom and line[0][2] < image.height - 150:
                 continue
-            if bottom and label in ('PREVIEW', 'SCAN', 'SAVE'):
+            if bottom and label in ('SCAN', 'SAVE'):
                 candidates.extend((word[1] + word[3] / 2, word[2] + word[4] / 2)
                                   for word in line if word[0].strip('[]()|') == label)
             elif not exact or words(' '.join(word[0] for word in line)) == words(label):
@@ -202,7 +202,7 @@ class ExperimentalDesktop(X11):
                                             right=right, header=header),
                          f'visible control {label}', 25)
         self.snap('click-' + '-'.join(words(label)))
-        if label in ('PREVIEW', 'SCAN', 'SAVE', 'Export file'):
+        if label in ('SCAN', 'SAVE', 'Export file'):
             self.drain_reports()
         self.point_click(point)
 
@@ -278,11 +278,15 @@ class ExperimentalDesktop(X11):
     def open_image(self, path, label):
         self.close_settings()
         self.click('Open', header=True)
+        self.drain_reports()
         self.dialog(path)
         self.discard_photograph_changes()
         # Clear the pointer/hover tooltip from the source and header labels.
         self.xd('mousemove', '--window', self.window, 700, 100)
-        return self.wait_text(r'Source:\s*' + re.escape(path.name), label)
+        self.wait_text(r'Source:\s*' + re.escape(path.name), label)
+        report = self.wait_report(label + '-automatic-preview', 'Preview')
+        self.snap(label + '-automatic-preview')
+        return report
 
     def discard_photograph_changes(self):
         # Complete-state transitions protect accepted photograph adjustments.
@@ -313,14 +317,13 @@ class ExperimentalDesktop(X11):
             wait_for(path.is_file, 'native saved state', 20)
             result = json.loads(path.read_text())
         else:
-            # apply_state always requests one preview, even with auto-preview
-            # disabled. Its completion replaces the transient Loaded GUI state
-            # status before desktop OCR can capture it. Require that new report
-            # when an image is loaded; a pre-existing report cannot satisfy it.
+            # Loading complete state replaces the accepted source/output and
+            # automatically renders it. Consume that report here exactly once.
             has_source = bool(self.locate('Source:', header=True))
             expected = json.loads(path.read_text())
             if has_source and self.locate('No image loaded', header=True) is None:
                 report = self.wait_report('state-loaded-' + path.stem, 'Preview')
+                result = report
                 route = dict(zip(ROUTES, ('input', 'film_scan', 'film_print_scan',
                              'convert_film_print_scan', 'convert_film_scan_minus_base',
                              'convert_film_scan')))[expected['simulation']['route']]
@@ -479,8 +482,10 @@ class ExperimentalDesktop(X11):
             require(self.locate(label, header=True), f'Header lacks {label}')
         for name in ('Input and capture', 'Film', 'Print', 'Scan', 'Output'):
             self.stage(name)
-            for label in ('PREVIEW', 'SCAN', 'SAVE'):
+            for label in ('SCAN', 'SAVE'):
                 require(self.locate(label, bottom=True), f'{name}: persistent {label} missing')
+            require(self.locate('PREVIEW', bottom=True) is None,
+                    f'{name}: retired PREVIEW action remains visible')
         self.reveal('action.save_state', 'Settings', 'GUI parameters')
         require(self.locate('Save current to file'), 'Settings state controls missing')
         self.close_settings()
@@ -988,16 +993,16 @@ def main():
     provenance = json.loads((oracle_dir/'provenance.json').read_text())
     require(sha(args.factory_reference) == provenance['artifact_sha256']['factory_state.json'],
             'Factory reference is not the retained independent upstream oracle')
-    # Explicit contract changes since the retained upstream oracle: the retired
-    # output-lightness leaf and the optional inherited capture illuminant.
+    # Explicit contract changes since the retained upstream oracle: removed
+    # output-lightness/auto-preview leaves and inherited capture illuminant.
     factory['output_gamut_compress'].pop('lightness_compression')
+    factory['simulation'].pop('auto_preview')
     factory['camera']['capture_illuminant'] = None
     rust_factory = json.loads((repo/'crates/spektrafilm-gui/src/factory_state.json').read_text())
     require(parameters_equal({key: value for key, value in rust_factory.items() if key != 'rust'},
                              {key: value for key, value in factory.items() if key != 'rust'}),
             'Rust shared factory differs from independent upstream oracle')
     seed = json.loads(json.dumps(factory))
-    seed['simulation']['auto_preview'] = False
     seed['grain']['active'] = False
     seed['camera']['auto_exposure'] = False
     seed['input_image']['input_color_space'] = 'sRGB'
@@ -1035,9 +1040,8 @@ def main():
         profile_roundtrip(driver, root)
         driver.state_action('Load from file', seed_path)
         driver.open_image(source, 'imported-rgb')
-        driver.click('PREVIEW', bottom=True)
-        driver.rendered('initial-preview', action='Preview')
         for index, route in enumerate(ROUTES):
+            driver.drain_reports()
             driver.choose_route(index)
             state_path = root/f'route-{index}.json'
             state = driver.state_action('Save current to file', state_path, save=True)
@@ -1045,7 +1049,6 @@ def main():
                     f'Workflow selection {index} saved {state["simulation"].get("route")}')
             require('scan_film' not in state['simulation'], 'Legacy scan_film persisted')
             require('workflow' not in state['simulation'], 'Legacy nested workflow persisted')
-            driver.click('PREVIEW', bottom=True)
             status = driver.rendered(f'route-{index}-preview', action='Preview')
             driver.state_action('Save current to file', root/f'route-{index}-before-scan.json', save=True)
             driver.wait_text(r'Saved GUI state', f'route-{index}-before-scan')
@@ -1090,17 +1093,19 @@ def main():
         report['restored_factory_sha256'] = sha(restored_path)
         driver.state_action('Load from file', seed_path)
         require(sha(args.raw) == '37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc', 'Unexpected RAW fixture')
-        driver.open_image(args.raw.resolve(), 'imported-raw')
-        raw_text = driver.wait_text(
-            r'(?:Loaded[^\n]*768\s*[x×=*]\s*512|(?:Preview|Scan)[^\n]*(?:640\s*[x×=*]\s*426|768\s*[x×=*]\s*512))',
-            'raw-import-dimensions')
+        raw_preview = driver.open_image(args.raw.resolve(), 'imported-raw')
+        require(raw_preview['configuration']['working_dimensions'] == [768, 512],
+                'RAW import did not retain the full source dimensions')
         driver.records.append({'raw_fixture_sha256': sha(args.raw),
-                               'raw_input_size': [768, 512], 'observed_status': raw_text})
+                               'raw_input_size': [768, 512], 'automatic_preview_report': raw_preview})
         driver.reveal('extras.load_raw.white_balance', 'Input and capture', 'Import Raw')
         driver.choose('white balance', 'tungsten')
         driver.wait_text(r'RAW decode settings pending', 'raw-settings-pending')
+        driver.drain_reports()
         driver.click('Reprocess RAW', right=True)
-        driver.wait_text(r'Loaded[^\n]*768\s*[x×=*]\s*512', 'raw-reprocessed')
+        reprocessed = driver.wait_report('raw-reprocessed', 'Preview')
+        require(reprocessed['configuration']['working_dimensions'] == [768, 512],
+                'RAW reprocessing did not retain the full source dimensions')
         driver.wait_text(r'RAW decode settings match', 'raw-settings-applied')
         raw_state = saved(driver, root, 'raw-import-state')
         require(raw_state['input_image']['input_color_space'] == 'ACES2065-1', 'RAW input space differs')

@@ -31,9 +31,9 @@ These are target capabilities, not a statement of implementation. Delivery sched
 
 The workspace must keep three regions: a collapsible preset browser on the left, the retained-image viewer in the center, and the adjustment inspector on the right. The image must remain visible while a person chooses a preset or edits a photographic parameter.
 
-The header must expose Open image, Undo, Redo, application settings, and independent Export. It must identify the current source, material pair, and physical workflow. Material and workflow summaries outside the inspector must be read-only. The header remains the single operation-status surface.
+The header must expose Open image, Undo, Redo, application settings, and independent Export. It must identify the current source, material pair, and physical workflow. Material and workflow summaries outside the inspector must be read-only. Status ownership follows [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces).
 
-Preview, Scan, and Save must remain reachable without opening a photographic module. They must retain their distinct names and operation scopes. Delivery emphasis follows [Result identity and delivery guidance](../gui-workflow/spec.md#result-identity-and-delivery-guidance).
+Preview must update automatically under the [workflow contract](../gui-workflow/spec.md#contract), without a button or enablement preference. Scan and Save must remain reachable without opening a photographic module. Preview, Scan, Save, and Export retain their distinct operation scopes. Delivery emphasis follows [Result identity and delivery guidance](../gui-workflow/spec.md#result-identity-and-delivery-guidance).
 
 The inspector must present Input and capture, Film, Print, Scan, and Output in that order. A stage jump strip must reveal and scroll to the corresponding heading in the same inspector. It must not switch between mutually exclusive pages. Several stages and modules must be able to remain open together.
 
