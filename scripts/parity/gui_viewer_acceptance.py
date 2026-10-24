@@ -177,7 +177,7 @@ def _gray_canvas(driver):
 
 
 def _hover_float(driver, pixels, records):
-    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.layer.input", "Original")
     _viewer_control(driver, "viewer.zoom.100", "100%")
     bounds = driver.measure_viewer("viewer-float-inspection")
     x = bounds[0] + pixels.shape[1] // 2
@@ -193,7 +193,7 @@ def _hover_float(driver, pixels, records):
         status = status.resize((status.width * 4, status.height * 4))
         data = driver.ocr.image_to_data(status, config='--psm 7', output_type=driver.ocr.Output.DICT)
         text += '\n' + ' '.join(data['text'])
-        match = re.search(r"Input\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*RGB\s+([-+0-9.]+)\s*,\s*([-+0-9.]+)\s*,\s*([-+0-9.]+)", text, re.IGNORECASE)
+        match = re.search(r"Original\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*RGB\s+([-+0-9.]+)\s*,\s*([-+0-9.]+)\s*,\s*([-+0-9.]+)", text, re.IGNORECASE)
         if match:
             return image, text, np.asarray([float(value) for value in match.groups()[2:]]), (int(match[1]), int(match[2]))
         return None
@@ -213,7 +213,7 @@ def _hover_float(driver, pixels, records):
     _require(error <= 2e-5, f"Float inspection mismatch: actual={actual}, expected={expected}")
     screenshot = driver.root / f"{len(driver.records):02d}-viewer-float-inspection.png"
     image.save(screenshot)
-    record = {"scenario": "float_inspection", "action": "hover Input at 100%",
+    record = {"scenario": "float_inspection", "action": "hover Original at 100%",
               "assertion": "OCR RGB equals the known fixture pixel within tolerance",
               "screenshot": screenshot.name,
               "source_coordinate": list(coordinate),
@@ -257,7 +257,7 @@ def _save(driver, root, name):
 
 
 def _zoom(driver, pixels, records):
-    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.layer.input", "Original")
     original, _ = driver.image()
     required_width = 260 + 420 + pixels.shape[1] * 4 + 80
     required_height = pixels.shape[0] * 4 + 240
@@ -274,23 +274,23 @@ def _zoom(driver, pixels, records):
         expected = [pixels.shape[1] * scale for scale in (1, 2, 4)]
         _require(widths == expected, f"Exact zoom pixel widths differ: {widths}, expected {expected}")
         records.append({"scenario": "exact_zoom", "action": "select 100%, 200%, 400%",
-                        "assertion": "native Input raster widths equal source width times exact zoom",
+                        "assertion": "native Original raster widths equal source width times exact zoom",
                         "pixel_bounds": bounds, "pixel_widths": widths})
     finally:
         driver.resize_window(original.width, original.height)
         driver.search_point = None
     _viewer_control(driver, "viewer.reset", "reset view")
-    driver.await_viewer(label="fitted and recentered Input")
+    driver.await_viewer(label="fitted and recentered Original")
 
 
 def _display_evidence(driver, root, records):
     _viewer_control(driver, "viewer.zoom.100", "100%")
-    _viewer_control(driver, "viewer.layer.input", "Input")
+    _viewer_control(driver, "viewer.layer.input", "Original")
     input_image, _ = driver.await_viewer(label="input comparison")
     input_pixels = np.asarray(_viewer_crop(input_image), dtype=np.float32)
     input_path = root / "input-viewer-raster.png"
     _viewer_crop(input_image).save(input_path)
-    _viewer_control(driver, "viewer.layer.output", "Output")
+    _viewer_control(driver, "viewer.layer.output", "Modified")
     output_image, _ = driver.await_viewer(label="output comparison")
     output_pixels = np.asarray(_viewer_crop(output_image), dtype=np.float32)
     output_path = root / "output-viewer-raster.png"

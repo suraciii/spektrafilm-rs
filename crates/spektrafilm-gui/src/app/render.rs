@@ -152,7 +152,6 @@ impl App {
     }
 
     pub(crate) fn poll_render_job(&mut self, ctx: &egui::Context) {
-        self.poll_comparison_job();
         loop {
             let (response_job, operation, result) = match self.render_worker.rx.try_recv() {
                 Ok(response) => response,
@@ -180,9 +179,6 @@ impl App {
             }
             self.render_job = None;
             let kind = response_job.kind;
-            // A worker acceptance can replace disposable viewer artifacts, but
-            // the next presentation must still honor an inspected reference.
-            self.invalidate_comparison_presentation();
             match result {
                 Ok(r) => {
                     let handoff = operation.scope(

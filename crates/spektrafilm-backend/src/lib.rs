@@ -688,13 +688,12 @@ pub trait ComputeBackend: Send + Sync {
     }
     /// Native presentation boundary: all sampling/blending runs on device;
     /// only packed RGBA bytes cross to the frontend. An absent image composes
-    /// the empty canvas, without sampling previous or comparison layers.
+    /// the empty canvas, without sampling a previous layer.
     fn viewer_compose_retained(
         &self,
         _image: Option<&DeviceImage>,
         _paper: Option<&DeviceImage>,
         _previous: Option<&DeviceImage>,
-        _split: Option<&DeviceImage>,
         _params: &ViewerComposeGpuParams,
     ) -> Result<Vec<[u8; 4]>, String> {
         Err("backend has no retained viewer composition".into())

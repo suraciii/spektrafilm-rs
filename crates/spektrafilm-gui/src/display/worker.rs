@@ -44,10 +44,6 @@ pub(super) struct DisplayRequest {
     pub(super) raster: Option<DisplayRaster>,
     pub(super) paper_size: [usize; 2],
     pub(super) previous: Option<DisplayRaster>,
-    /// Before/after split: `(fraction of image_rect width, left-side raster)`.
-    /// When present and `layer == Output`, pixels left of the split sample the
-    /// left-side (input) raster while pixels right of it sample the output.
-    pub(super) split: Option<(f32, DisplayRaster)>,
     pub(super) source: Option<Arc<ImageBuf>>,
     pub(super) retained_source: Option<spektrafilm_backend::DeviceImage>,
     pub(super) prepared: Option<PreparedDisplay>,
@@ -471,7 +467,6 @@ fn compose_display_cancellable(
         mut raster,
         paper_size,
         previous,
-        split,
         source,
         retained_source,
         prepared,
@@ -643,19 +638,8 @@ fn compose_display_cancellable(
             } else {
                 sample_rect(raster, p, image_rect, interpolation)
             };
-            // Before/after split: left of the split samples the left-side
-            // (input) raster while pixels right of it keep the output.
-            if layer == ViewLayer::Output
-                && let Some((fraction, left)) = split.as_ref()
-            {
-                let split_x = image_rect.min.x + image_rect.width() * fraction.clamp(0.0, 1.0);
-                if p.x < split_x {
-                    rgb = sample_rect(left, p, image_rect, interpolation);
-                }
-            }
             if layer == ViewLayer::Output
                 && let Some(previous) = previous.as_ref()
-                && split.is_none()
             {
                 let a = frame as f32 / 10.0;
                 let old = sample_rect(previous, p, image_rect, interpolation);
@@ -929,22 +913,11 @@ fn compose_display_device(
                     .ok_or("previous viewer raster belongs to host backend")
             })
             .transpose()?;
-        let split = request
-            .split
-            .as_ref()
-            .filter(|_| image.is_some())
-            .map(|(_, r)| {
-                r.retained
-                    .as_ref()
-                    .ok_or("compare viewer raster belongs to host backend")
-            })
-            .transpose()?;
         let rect = |r: Rect| [r.min.x, r.min.y, r.max.x, r.max.y];
         let pixels = backend.viewer_compose_retained(
             image.as_ref(),
             cache.paper.as_ref().and_then(|r| r.retained.as_ref()),
             previous,
-            split,
             &spektrafilm_backend::ViewerComposeGpuParams {
                 width: request.texture_size[0] as u32,
                 height: request.texture_size[1] as u32,
@@ -960,7 +933,6 @@ fn compose_display_device(
                 interpolation: request.interpolation.discriminant(),
                 full_source: request.full_source && request.layer != ViewLayer::PaperBack,
                 output_layer: request.layer == ViewLayer::Output,
-                split: request.split.as_ref().map(|(f, _)| *f),
                 fade: request.frame as f32 / 10.0,
             },
         )?;
@@ -1076,7 +1048,6 @@ mod tests {
             raster: Some(DisplayRaster::new([1, 1], vec![[0.5; 3]]).unwrap()),
             paper_size: [128, 128],
             previous: None,
-            split: None,
             prepared: None,
             retained_source: None,
             source: Some(Arc::new(ImageBuf::from_data(
@@ -1503,9 +1474,8 @@ mod tests {
             absent.retained_source = None;
             absent.full_source = full_source;
             absent.polaroid = true;
-            // Neither animation nor a split can resurrect B without A.
+            // Animation must not resurrect a previous frame without output.
             absent.previous = Some(DisplayRaster::new([1, 1], vec![[0.0; 3]]).unwrap());
-            absent.split = Some((0.5, absent.previous.clone().unwrap()));
             let mut host = absent.clone();
             host.backend = Arc::new(spektrafilm_backend::cpu_backend::CpuBackend);
             let expected = compose_display(host, &mut CompositionCache::default());

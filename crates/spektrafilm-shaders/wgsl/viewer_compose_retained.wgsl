@@ -1,18 +1,17 @@
-// Native viewer composition: interpolation, split, crossfade and RGB8 packing.
+// Native viewer composition: interpolation, crossfade and RGB8 packing.
 struct Params {
  width:u32, height:u32, sw:u32, sh:u32,
- pw:u32, ph:u32, ow:u32, oh:u32, lw:u32, lh:u32,
- mode:u32, full:u32, output_layer:u32, pad0:u32, pad1:u32, pad2:u32,
+ pw:u32, ph:u32, ow:u32, oh:u32,
+ mode:u32, full:u32, output_layer:u32, pad0:u32,
  rect:vec4<f32>, border:vec4<f32>, paper_rect:vec4<f32>, image_rect:vec4<f32>,
- gray:vec3<f32>, split:f32, fade:f32, pad3:u32, pad4:u32, pad5:u32,
- windows:array<vec4<u32>,4>, first:u32,count:u32,pad6:u32,pad7:u32,
+ gray:vec3<f32>, fade:f32,
+ windows:array<vec4<u32>,3>, first:u32,count:u32,pad1:u32,pad2:u32,
 }
 @group(0) @binding(0) var<uniform> params:Params;
 @group(0) @binding(1) var<storage,read> source:array<f32>;
 @group(0) @binding(2) var<storage,read> paper:array<f32>;
 @group(0) @binding(3) var<storage,read> previous:array<f32>;
-@group(0) @binding(4) var<storage,read> left:array<f32>;
-@group(0) @binding(5) var<storage,read_write> out:array<u32>;
+@group(0) @binding(4) var<storage,read_write> out:array<u32>;
 fn radius(mode: u32) -> i32 {
     if mode <= 1u {
         return 1; // nearest, linear
@@ -90,7 +89,6 @@ fn pixel(which:u32,x:i32,y:i32,w:u32,h:u32)->vec3<f32> {
  let win=params.windows[which];let i=((u32(clamp(y,0,i32(h)-1))-win.y)*win.z+u32(clamp(x,0,i32(w)-1))-win.x)*3u;
  if which==1u { return vec3<f32>(paper[i],paper[i+1u],paper[i+2u]); }
  if which==2u { return vec3<f32>(previous[i],previous[i+1u],previous[i+2u]); }
- if which==3u { return vec3<f32>(left[i],left[i+1u],left[i+2u]); }
  return vec3<f32>(source[i],source[i+1u],source[i+2u]);
 }
 fn sample(which:u32,p:vec2<f32>,rect:vec4<f32>,w:u32,h:u32,mode:u32)->vec3<f32> {
@@ -111,8 +109,7 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) gr
  if params.pw>0u && contains(params.paper_rect,p) && !contains(params.image_rect,p){rgb=sample(1u,p,params.paper_rect,params.pw,params.ph,4u);}
  if params.sw>0u && contains(params.image_rect,p){
  if params.full!=0u {rgb=pixel(0u,i32(i%params.width),i32(i/params.width),params.sw,params.sh);}else{rgb=sample(0u,p,params.image_rect,params.sw,params.sh,params.mode);}
- if params.output_layer!=0u && params.lw>0u && p.x<params.image_rect.x+(params.image_rect.z-params.image_rect.x)*clamp(params.split,0.0,1.0){rgb=sample(3u,p,params.image_rect,params.lw,params.lh,params.mode);}
- if params.output_layer!=0u && params.ow>0u && params.lw==0u {let old=sample(2u,p,params.image_rect,params.ow,params.oh,params.mode);rgb=clamp(old,vec3<f32>(0.0),vec3<f32>(1.0))*(1.0-params.fade)+clamp(rgb,vec3<f32>(0.0),vec3<f32>(1.0))*params.fade;}
+ if params.output_layer!=0u && params.ow>0u {let old=sample(2u,p,params.image_rect,params.ow,params.oh,params.mode);rgb=clamp(old,vec3<f32>(0.0),vec3<f32>(1.0))*(1.0-params.fade)+clamp(rgb,vec3<f32>(0.0),vec3<f32>(1.0))*params.fade;}
  }
  let b=vec3<u32>(floor(clamp(rgb,vec3<f32>(0.0),vec3<f32>(1.0))*255.0+vec3<f32>(0.5)));
  out[local*3u]=b.x|(b.y<<8u)|(b.z<<16u)|0xff000000u;

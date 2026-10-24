@@ -458,7 +458,7 @@ fn nonprimary_pointer_holds_do_not_compare_or_invalidate_the_corrected_frame() {
 }
 
 #[test]
-fn gpu_operator_and_photograph_comparisons_keep_the_corrected_device_carrier() {
+fn gpu_operator_comparison_keeps_the_corrected_device_carrier() {
     let _device = spektrafilm_gpu::test_support::device_lock();
     let directory = tempfile::tempdir().unwrap();
     let (image, state) = deterministic_inputs(directory.path());
@@ -486,21 +486,8 @@ fn gpu_operator_and_photograph_comparisons_keep_the_corrected_device_carrier() {
     let corrected = h.state().output_retained.clone().unwrap();
     let samples = corrected.to_host(h.state().backend.as_ref()).unwrap();
     let source = h.state().image.clone().unwrap();
-    let ctx = h.ctx.clone();
-    assert!(h.state_mut().capture_comparison(&ctx));
-    wait_until(&mut h, |app| {
-        app.comparison_output()
-            .is_some_and(|a| a.retained.is_some())
-    });
-    let reference = h.state().comparison_output().unwrap();
-    assert!(reference.output.is_none());
-    assert!(Arc::ptr_eq(
-        reference.retained.unwrap().payload().unwrap(),
-        corrected.payload().unwrap()
-    ));
     settle_animation(&mut h);
     assert!(h.state().viewer.observation().pixels.is_some());
-    h.state_mut().clear_comparison();
     h.state_mut().set_operator_compare(true);
     wait_until(&mut h, |app| {
         app.operator_comparison.is_some() && app.render_job.is_none() && !app.force_preview
@@ -536,5 +523,27 @@ fn gpu_operator_and_photograph_comparisons_keep_the_corrected_device_carrier() {
     assert_eq!(
         corrected.to_host(h.state().backend.as_ref()).unwrap().data,
         samples.data
+    );
+    h.state_mut().set_operator_compare(false);
+    wait_until(&mut h, |app| {
+        !app.operator_compare && app.render_job.is_none() && !app.force_preview && !app.dirty
+    });
+    settle_animation(&mut h);
+    assert!(h.state().operator_comparison.is_none());
+    assert_eq!(
+        h.state().viewer.settings.layer,
+        crate::display::ViewLayer::Output
+    );
+    assert!(h.state().output_image.is_none());
+    assert_eq!(
+        h.state()
+            .output_retained
+            .as_ref()
+            .unwrap()
+            .to_host(h.state().backend.as_ref())
+            .unwrap()
+            .data,
+        samples.data,
+        "releasing automatic comparison must restore corrected device pixels"
     );
 }

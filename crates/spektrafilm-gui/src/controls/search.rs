@@ -380,16 +380,8 @@ mod tests {
                 "Photograph records",
             ),
             ("action.work_list", ControlOwner::Header, "Work list"),
-            (
-                "photo_work.compare.a",
-                ControlOwner::Viewer,
-                "A/B comparison",
-            ),
-            (
-                "photo_work.compare.adopt",
-                ControlOwner::Viewer,
-                "A/B comparison",
-            ),
+            ("viewer.layer.input", ControlOwner::Viewer, "Viewer"),
+            ("viewer.layer.output", ControlOwner::Viewer, "Viewer"),
             ("photo_work.list.copy", ControlOwner::WorkList, "Work list"),
             (
                 "photo_work.list.copy_scope",
@@ -426,7 +418,7 @@ mod tests {
         let (params, extras) = factory();
         for path in [
             "action.save_photo_record",
-            "photo_work.compare.capture",
+            "viewer.layer.input",
             "photo_work.list.add",
             "photo.queue.retry",
             "presets.discovery.favorites",
@@ -457,7 +449,7 @@ mod tests {
         for path in [
             "action.save_photo_record",
             "action.save_retained",
-            "photo_work.compare.a",
+            "viewer.layer.output",
             "photo_work.list.copy",
             "photo.queue.retry",
             "presets.discovery.favorites",

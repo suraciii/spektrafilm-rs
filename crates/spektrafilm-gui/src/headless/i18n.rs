@@ -20,7 +20,16 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
     language(h, LanguagePreference::SimplifiedChinese);
     assert_eq!(crate::i18n::locale(&h.ctx), Locale::SimplifiedChinese);
     for label in [
-        "打开", "撤销", "重做", "设置", "导出", "预览", "扫描", "保存",
+        "打开",
+        "撤销",
+        "重做",
+        "设置",
+        "导出",
+        "预览",
+        "扫描",
+        "保存",
+        "原图",
+        "修改图",
     ] {
         assert!(
             h.query_all_by_label(label).next().is_some(),
@@ -53,6 +62,8 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
     assert!(h.state().render_job.is_none());
     language(h, LanguagePreference::English);
     assert!(h.query_by_label("Search controls").is_some());
+    assert!(h.query_by_label("Original").is_some());
+    assert!(h.query_by_label("Modified").is_some());
     assert_eq!(
         h.get_by_label("Search controls").value(),
         Some("camera.film_format_mm".into())

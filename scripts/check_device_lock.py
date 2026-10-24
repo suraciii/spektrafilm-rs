@@ -60,7 +60,8 @@ INTEGRATION_TEST_DIR = re.compile(r"^crates/[^/]+/tests/")
 
 def tracked_rust_files() -> list[Path]:
     out = subprocess.check_output(["git", "ls-files", "-z", "--", "*.rs"], cwd=ROOT)
-    return [ROOT / name.decode() for name in out.split(b"\0") if name]
+    paths = [ROOT / name.decode() for name in out.split(b"\0") if name]
+    return [path for path in paths if path.is_file()]
 
 
 def cfg_test_line_ranges(lines: list[str]) -> list[tuple[int, int]]:

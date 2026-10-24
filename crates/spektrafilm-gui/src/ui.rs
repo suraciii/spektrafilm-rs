@@ -37,17 +37,10 @@ impl App {
             &self.params.io.input_color_space,
             self.params.io.input_cctf_decoding,
         );
-        let reference = self
-            .comparison_output()
-            .map(|a| (a.color_space.to_owned(), a.encoded));
-        let (space, encoded) = if let Some((space, encoded)) = &reference {
-            (space.as_str(), *encoded)
-        } else {
-            self.operator_comparison.as_ref().map_or(
-                (self.output_color_space.as_str(), self.output_cctf_encoding),
-                |comparison| (comparison.color_space.as_str(), comparison.encoded),
-            )
-        };
+        let (space, encoded) = self.operator_comparison.as_ref().map_or(
+            (self.output_color_space.as_str(), self.output_cctf_encoding),
+            |comparison| (comparison.color_space.as_str(), comparison.encoded),
+        );
         self.viewer.set_output_display_source(
             space,
             encoded,
@@ -495,7 +488,6 @@ impl App {
                 app.source_render = None;
                 app.retained_kind = None;
                 app.stale_save_confirmation = false;
-                app.clear_comparison();
                 app.dirty = true;
                 app.reset_adjustment_history();
                 if let Some(ctx) = &app.photograph.context {
@@ -1761,26 +1753,6 @@ impl eframe::App for App {
         let _ = frame;
         self.poll_input_job(ctx);
 
-        if self.dirty
-            && self.image.is_some()
-            && !self.input_transition_pending()
-            && self.calibration_job.is_none()
-            && !self.export_dialog.is_open()
-            && !self.stale_save_confirmation
-            && (self.gui_state.auto_preview() || self.force_preview)
-        {
-            let now = Instant::now();
-            let dirty_since = *self.dirty_since.get_or_insert(now);
-            let elapsed = now.saturating_duration_since(dirty_since);
-            if elapsed >= PREVIEW_DEBOUNCE {
-                self.dispatch_render(ctx);
-                self.force_preview = false;
-                self.dirty = false;
-                self.dirty_since = None;
-            } else {
-                ctx.request_repaint_after(PREVIEW_DEBOUNCE - elapsed);
-            }
-        }
         self.begin_adjustment_frame(ctx);
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
@@ -1964,7 +1936,6 @@ impl eframe::App for App {
         // Central viewer
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
-                self.comparison_controls(ui);
                 ui.horizontal_wrapped(|ui| {
                     self.viewer.layer_controls(ui);
                     ui.checkbox(
@@ -2017,62 +1988,6 @@ impl eframe::App for App {
                         ui.ctx().request_repaint();
                     }
                     ui.separator();
-                    // Comparison: the before/after toggle and its split.
-                    let compare_label = if self.compare_active {
-                        "compare ON"
-                    } else {
-                        "compare"
-                    };
-                    let compare = ui
-                        .selectable_label(
-                            self.compare_active,
-                            controls::localized(ui.ctx(), compare_label),
-                        )
-                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.compare_help"));
-                    controls::locate_row(ui, "viewer.compare", &compare);
-                    if compare.clicked() {
-                        self.compare_active = !self.compare_active;
-                        ui.ctx().request_repaint();
-                    }
-                    ui.add_space(theme::SPACE_GROUP);
-                    {
-                        let slider = ui.add_enabled(
-                            self.compare_active,
-                            egui::Slider::new(&mut self.compare_split, 0.0..=1.0)
-                                .fixed_decimals(2)
-                                .trailing_fill(false),
-                        );
-                        let accessible_name = crate::i18n::text(ui.ctx(), "surfaces.viewer.split");
-                        ui.ctx().accesskit_node_builder(slider.id, |node| {
-                            node.set_label(accessible_name)
-                        });
-                        controls::locate_row(ui, "viewer.compare_split", &slider);
-                        if slider.changed() {
-                            ui.ctx().request_repaint();
-                        }
-                        ui.label(
-                            egui::RichText::new(crate::tr!(
-                                ui.ctx(),
-                                "surfaces.viewer.comparison",
-                                input = format!("{:.0}", self.compare_split * 100.0),
-                                output = format!("{:.0}", (1.0 - self.compare_split) * 100.0)
-                            ))
-                            .color(theme::FG_MUTED)
-                            .size(theme::SIZE_HINT),
-                        )
-                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.split_help"));
-                        if !self.compare_active {
-                            ui.label(
-                                egui::RichText::new(crate::i18n::text(
-                                    ui.ctx(),
-                                    "surfaces.viewer.split_inactive",
-                                ))
-                                .color(theme::FG_MUTED)
-                                .small(),
-                            );
-                        }
-                    }
-                    ui.separator();
                     // Read-only: the current zoom.
                     let zoom = self.viewer.zoom_percent().map_or_else(
                         || {
@@ -2097,49 +2012,14 @@ impl eframe::App for App {
                     .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.zoom_help"));
                 });
             });
-            self.prepare_comparison_viewer();
             self.viewer
                 .set_display_max_size(self.params.settings.preview_max_size);
-            self.viewer.set_compare_split(if self.compare_active {
-                Some(self.compare_split)
-            } else {
-                None
-            });
-            let displayed_output = match self.comparison_output() {
-                Some(reference) => reference.output.cloned(),
-                None => match self.operator_comparison.as_ref() {
-                    Some(comparison) => comparison.image.host_image().cloned(),
-                    None => self.output_image.clone(),
-                },
-            };
+            let displayed_output = self.operator_comparison.as_ref().map_or_else(
+                || self.output_image.clone(),
+                |comparison| comparison.image.host_image().cloned(),
+            );
             self.viewer
                 .show(ui, self.oriented_input.as_ref(), displayed_output.as_ref());
-            // Before/after compare divider overlay
-            if self.compare_active {
-                let rect = ui.max_rect();
-                let painter = ui.painter_at(rect);
-                let x = rect.left() + rect.width() * self.compare_split;
-                // Divider line
-                painter.line_segment(
-                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                    egui::Stroke::new(2.0_f32, theme::ACCENT),
-                );
-                // Labels
-                painter.text(
-                    egui::pos2(x - 8.0, rect.top() + 12.0),
-                    egui::Align2::RIGHT_TOP,
-                    crate::i18n::text(ui.ctx(), "surfaces.viewer.input"),
-                    egui::FontId::proportional(10.0),
-                    theme::ACCENT,
-                );
-                painter.text(
-                    egui::pos2(x + 8.0, rect.top() + 12.0),
-                    egui::Align2::LEFT_TOP,
-                    crate::i18n::text(ui.ctx(), "surfaces.viewer.output"),
-                    egui::FontId::proportional(10.0),
-                    theme::ACCENT,
-                );
-            }
         });
         // Accept drag-and-dropped image files.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
@@ -2156,6 +2036,28 @@ impl eframe::App for App {
         self.settings_dialog(ctx);
         self.sync_display_controls();
         controls::end_control_frame();
+        // Accepted edits must schedule their wakeup in this frame, including
+        // the last input event before the native event loop becomes idle.
+        if self.dirty
+            && self.image.is_some()
+            && !self.input_transition_pending()
+            && self.calibration_job.is_none()
+            && !self.export_dialog.is_open()
+            && !self.stale_save_confirmation
+            && (self.gui_state.auto_preview() || self.force_preview)
+        {
+            let now = Instant::now();
+            let dirty_since = *self.dirty_since.get_or_insert(now);
+            let elapsed = now.saturating_duration_since(dirty_since);
+            if elapsed >= PREVIEW_DEBOUNCE {
+                self.dispatch_render(ctx);
+                self.force_preview = false;
+                self.dirty = false;
+                self.dirty_since = None;
+            } else {
+                ctx.request_repaint_after(PREVIEW_DEBOUNCE - elapsed);
+            }
+        }
     }
 
     /// Cancel pending export publication and drain its worker before exiting.

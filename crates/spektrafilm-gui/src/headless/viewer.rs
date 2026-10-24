@@ -11,7 +11,7 @@ fn click(h: &mut Harness<'_, App>, label: &str) {
     // This disables only widget animation; Viewer development still uses
     // RawInput.time and waits for every real composition response.
     h.step();
-    if matches!(label, "Input" | "Output" | "Paper back") {
+    if matches!(label, "Original" | "Modified" | "Paper back") {
         let viewport = h.state().viewer.observation().viewport;
         let nodes: Vec<_> = h
             .query_all_by_label(label)
@@ -173,13 +173,13 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
     let h = &mut s.harness;
     assert!(h.state().viewer.output.is_none());
     let layer = h.state().viewer.settings.layer;
-    click(h, "Output");
+    click(h, "Modified");
     assert_eq!(
         h.state().viewer.settings.layer,
         layer,
         "unavailable output is disabled"
     );
-    click(h, "Input");
+    click(h, "Original");
     let input = composed(h, 10.0);
     assert_eq!(h.state().viewer.settings.layer, ViewLayer::Input);
     assert_eq!(input.interpolation, Interpolation::Nearest);
@@ -192,7 +192,7 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
     display_controls(h);
     choose(h, "output interpolation", "nearest");
     close_settings(h);
-    click(h, "Output");
+    click(h, "Modified");
     let nearest = composed(h, 100.0);
     assert_eq!(nearest.interpolation, Interpolation::Nearest);
     display_controls(h);
@@ -217,7 +217,7 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
         delta > 0.01,
         "nearest/spline36 mean byte difference: {delta}"
     );
-    click(h, "Input");
+    click(h, "Original");
     let baseline = composed(h, 100.0).pixels.unwrap();
     display_controls(h);
     choose(h, "output interpolation", "nearest");
@@ -243,7 +243,7 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
             });
         let h = &mut harness;
         h.input_mut().max_texture_side = Some(4096);
-        click(h, "Input");
+        click(h, "Original");
         assert_eq!(h.state().viewer.settings.layer, ViewLayer::Input);
         h.state_mut().viewer.settings.gray_18_canvas = false;
         let mut time = 20.0;
@@ -403,7 +403,7 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
 fn click_steps_the_zoom_at_the_pointer_and_a_double_click_fits() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "Input");
+    click(h, "Original");
     let baseline = composed(h, 10.0);
     let image = baseline.image_rect;
     let at = image.center() + egui::vec2(24.0, -18.0);
@@ -434,7 +434,7 @@ fn click_steps_the_zoom_at_the_pointer_and_a_double_click_fits() {
 fn marquee_release_zooms_to_the_selection() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "Input");
+    click(h, "Original");
     let baseline = composed(h, 20.0);
     let viewport = baseline.viewport;
     let image = baseline.image_rect;
@@ -518,7 +518,7 @@ fn marquee_release_zooms_to_the_selection() {
 fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
     let mut s = session();
     let h = &mut s.harness;
-    click(h, "Input");
+    click(h, "Original");
     display_controls(h);
     let time = h.ctx.input(|input| input.time) + 1.0;
     let baseline = composed(h, time);
@@ -688,34 +688,6 @@ fn display_row_resets_restore_only_the_live_owned_field_without_adjustment_histo
 }
 
 #[test]
-fn comparison_split_locator_reveals_retained_disabled_value_without_enabling_comparison() {
-    let mut s = session();
-    let h = &mut s.harness;
-    assert!(!h.state().compare_active);
-    let split = h.state().compare_split;
-    let params = h.state().params.clone();
-    let revision = h.state().parameter_revision;
-
-    search_controls(h, "viewer.compare_split");
-    click(h, "Locate Viewer: Viewer");
-
-    let slider = h.get_by_role_and_label(egui::accesskit::Role::Slider, "comparison split");
-    assert!(slider.node().is_disabled());
-    assert_eq!(slider.node().numeric_value(), Some(split as f64));
-    assert!(
-        h.query_by_label("Comparison split inactive · enable compare; stored split retained.")
-            .is_some()
-    );
-    assert!(
-        !h.state().compare_active,
-        "locating the split must not enable comparison"
-    );
-    assert_eq!(h.state().compare_split.to_bits(), split.to_bits());
-    assert_eq!(h.state().params, params);
-    assert_eq!(h.state().parameter_revision, revision);
-}
-
-#[test]
 fn explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not() {
     let mut s = session();
     let h = &mut s.harness;
@@ -771,7 +743,7 @@ fn viewer_settings_do_not_change_saved_or_exported_pixels() {
     edit(h, "white padding", "0.2");
     choose(h, "output interpolation", "nearest");
     close_settings(h);
-    click(h, "Input");
+    click(h, "Original");
     click(h, "400%");
     let save_after = s.directory.path().join("save-after.exr");
     let export_after = s.directory.path().join("export-after.exr");

@@ -53,6 +53,10 @@ _Avoid_: Capture white balance, material gamma, scanner calibration
 **Digital output**: The color space, transfer encoding, geometry, and file representation used to deliver an image.
 _Avoid_: Scanned medium, negative conversion
 
+**Original**: The loaded photograph under its accepted input interpretation and orientation, before film simulation. It is not the scanner's automatic result.
+
+**Modified**: The photograph produced by the latest accepted Preview or Scan. It can remain visible after later adjustments make that result stale.
+
 **CIELAB**: A three-coordinate color representation under a declared reference white and observer. L* describes lightness; a* and b* describe opponent color directions. These coordinates describe color appearance, not film or photographic-paper record exposures or densities.
 _Avoid_: Lab Scan, film record channels
 

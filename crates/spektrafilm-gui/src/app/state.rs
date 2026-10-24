@@ -41,7 +41,6 @@ pub(crate) struct App {
     pub(crate) operator_compare: bool,
     pub(crate) operator_comparison: Option<super::render::OperatorComparison>,
     pub(crate) adjustment_history: super::history::AdjustmentHistory,
-    pub(crate) comparison: super::comparison::Comparison,
     pub(crate) photograph: crate::photograph::PhotographWork,
     pub(crate) retained_kind: Option<RenderKind>,
     pub(crate) stale_save_confirmation: bool,
@@ -52,10 +51,9 @@ pub(crate) struct App {
     pub(crate) raw_applied_settings: Option<serde_json::Value>,
     /// Quarter turns applied to the loaded source, used for the rotation status.
     pub(crate) input_rotation: i32,
-    /// The retained input with `input_rotation` applied, for presentation
-    /// only: the viewer and its before/after comparison. Rendering never reads
-    /// it — the pipeline receives the unrotated source plus the deferred
-    /// quarter turns, so orientation never rewrites the source pixels.
+    /// The retained input with `input_rotation` applied, for presentation only.
+    /// Rendering receives the unrotated source plus the deferred quarter turns,
+    /// so orientation never rewrites the source pixels.
     pub(crate) oriented_input: Option<crate::render::InputImage>,
     pub(crate) source_metadata: Option<ImageMetadata>,
     pub(crate) export_options: ExportOptions,
@@ -129,8 +127,6 @@ pub(crate) struct App {
     pub(crate) calibration_epoch: u64,
     pub(crate) parameter_revision: u64,
     pub(crate) histogram: histogram::HistogramStrip,
-    pub(crate) compare_active: bool,
-    pub(crate) compare_split: f32,
 }
 
 /// A fully validated candidate; source preparation must succeed before installation.
@@ -271,7 +267,6 @@ impl App {
             operator_compare: false,
             operator_comparison: None,
             adjustment_history: super::history::AdjustmentHistory::default(),
-            comparison: super::comparison::Comparison::default(),
             photograph: crate::photograph::PhotographWork::default(),
             retained_kind: None,
             stale_save_confirmation: false,
@@ -323,8 +318,6 @@ impl App {
             calibration_epoch: 0,
             parameter_revision: 0,
             histogram: histogram::HistogramStrip::new(),
-            compare_active: false,
-            compare_split: 0.5,
             filter: String::new(),
             factory_reset_confirm: false,
             section_labels: std::collections::HashMap::new(),
@@ -615,7 +608,6 @@ impl App {
             crate::numeric::NumericDrafts::take(ctx);
         }
         self.reset_adjustment_history();
-        self.clear_comparison();
         self.stale_save_confirmation = false;
         self.retained_kind = None;
         self.photograph.baseline = self.capture_photograph_settings().ok();
