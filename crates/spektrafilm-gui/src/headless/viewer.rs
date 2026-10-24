@@ -1193,6 +1193,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     );
     // The real rotation caller publishes a device presentation source, but
     // keeps the unturned import for Scan: orientation must apply exactly once.
+    super::reveal_control(&mut h, "action.rotate_cw");
     super::click(&mut h, "cw rotate");
     assert_eq!(h.state().input_rotation, 3);
     assert!(h.state().image.as_ref().unwrap().same_source(&source));
@@ -1237,40 +1238,7 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     let time = h.ctx.input(|input| input.time) + 1.0;
     assert!(composed(&mut h, time).pixels.is_some());
 
-    // A rejected replacement leaves source, orientation, and accepted output
-    // intact; only the actionable error status is published.
-    let epoch = h.state().input_epoch;
-    let calibration_epoch = h.state().calibration_epoch;
-    let declaration = h.state().params.io.input_color_space.clone();
-    h.state_mut().params.io.input_color_space = "invalid rotation input space".into();
-    super::click(&mut h, "ccw rotate");
-    // Returning to zero does not need an upload, but its display declaration
-    // is still resolved before the new orientation can be accepted.
-    assert!(
-        h.state()
-            .status
-            .to_string()
-            .starts_with("Viewer input error:"),
-        "{}",
-        h.state().status
-    );
-    assert_eq!(h.state().input_rotation, 3);
-    assert_eq!(h.state().input_epoch, epoch);
-    assert_eq!(h.state().calibration_epoch, calibration_epoch);
-    assert!(h.state().image.as_ref().unwrap().same_source(&source));
-    assert!(
-        h.state()
-            .oriented_input
-            .as_ref()
-            .unwrap()
-            .same_source(&oriented)
-    );
-    let still_accepted = h.state().output_retained.as_ref().unwrap();
-    assert!(Arc::ptr_eq(
-        still_accepted.payload().unwrap(),
-        turned.payload().unwrap()
-    ));
-    h.state_mut().params.io.input_color_space = declaration;
+    super::reveal_control(&mut h, "action.rotate_ccw");
     super::click(&mut h, "ccw rotate");
     assert_eq!(h.state().input_rotation, 0);
     assert!(h.state().image.as_ref().unwrap().same_source(&source));

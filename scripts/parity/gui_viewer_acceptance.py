@@ -66,10 +66,10 @@ def _text(lines):
 def _viewer_status_text(image, lines):
     # The overlay is at the top of the central canvas, below the header.
     left, _, right, _ = viewer_canvas_bounds(image)
-    top = 40 + (30 if sys.platform == "darwin" else 0)
+    top = 90 + (30 if sys.platform == "darwin" else 0)
     return _text([[word for word in line
                    if left <= word[1] + word[3] / 2 < right
-                   and top <= word[2] + word[4] / 2 < top + 70]
+                   and top <= word[2] + word[4] / 2 < top + 45]
                   for line in lines])
 
 
@@ -188,8 +188,8 @@ def _hover_float(driver, pixels, records):
         image, _, lines = driver.read()
         text = _text(lines)
         left, _, right, _ = viewer_canvas_bounds(image)
-        top = 40 + (30 if sys.platform == "darwin" else 0)
-        status = image.crop((left, top, right, top + 70))
+        top = 90 + (30 if sys.platform == "darwin" else 0)
+        status = image.crop((left, top, right, top + 45))
         status = status.resize((status.width * 4, status.height * 4))
         data = driver.ocr.image_to_data(status, config='--psm 7', output_type=driver.ocr.Output.DICT)
         text += '\n' + ' '.join(data['text'])
@@ -528,7 +528,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _viewer_control(driver, "viewer.layer.output", "Output")
     driver.await_viewer(label="crossfade baseline")
     driver.reveal("camera.auto_exposure", "Input and capture", "Camera")
-    driver.click("auto exposure", right=True)
+    driver.toggle('auto exposure')
     crossfade_frames = _preview_transition_frames(driver, records, "viewer-crossfade")
     crossfade_delta = float(max(np.max(np.abs(crossfade_frames[0] - frame)) for frame in crossfade_frames[1:]))
     records.append({"scenario": "crossfade", "action": "preview Output with Crossfade",

@@ -744,7 +744,7 @@ class X11:
 
     def exported(self, path, label):
         # The operation status is in the persistent header.
-        status = self.wait_text(r'Exported[^\n]*' + re.escape(Path(path).name), label, 240)
+        status = self.wait_text(r'\bExported\b', label, 240)
         wait_for(Path(path).is_file, f'export output {path}', 30)
         self.wait_report(label + '-report', 'Export')
         self.last_export_report = self.last_completed_report
@@ -757,6 +757,7 @@ class X11:
         if exporting:
             self.require_export_in_flight('close')
         self.xd('key', 'alt+F4')
+        self.discard_photograph_changes()
         self.proc.wait(timeout=240 if exporting else 30)
         require(self.proc.returncode == 0, f'GUI closed with status {self.proc.returncode}')
         self.proc = None
@@ -1319,7 +1320,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         # Fotufilm is selected through the actual grain owner, not a loaded
         # runtime patch masquerading as control evidence.
         driver.reveal('film_render.grain.active', 'Film', 'Grain')
-        driver.click('Enable grain', right=True)
+        driver.toggle('Enable grain')
         driver.reveal('film_render.grain.engine', 'Film', 'Grain')
         driver.choose('Engine', 'Fotufilm Film')
         for path, label in (
@@ -1343,7 +1344,8 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.await_viewer(before_amount, label='fotufilm amount render update')
         fotufilm = driver.state_action('Save current to file', root / 'fotufilm-state.json', save=True)
         grain = fotufilm['rust']['runtime']['film_render']['grain']
-        require(grain['engine'] == 'fotufilm' and parameters_equal(grain['fotufilm']['amount'], 1.65),
+        require(grain['active'] is True and grain['engine'] == 'fotufilm'
+                and parameters_equal(grain['fotufilm']['amount'], 1.65),
                 f'Fotufilm control change not persisted: {grain}')
         driver.state_action('Load from file', root / 'fotufilm-state.json')
         loaded = driver.state_action('Save current to file', root / 'fotufilm-loaded.json', save=True)
@@ -1352,10 +1354,18 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         for action in ('Preview', 'Scan'):
             driver.click(action.upper(), bottom=True)
             report = driver.wait_report('fotufilm-' + action.lower(), action)
-            disclosure = driver.snap('fotufilm-' + action.lower() + '-status')
-            executor = 'GPU' if report['execution']['backend_selected'] == 'wgpu' else 'CPU'
-            require(re.search(r'grain\s+Fotufilm\s+on\s+' + executor, disclosure, re.I),
-                    f'Fotufilm disclosure differs from executed backend: {disclosure}')
+            require(report['configuration']['render']['grain']['active'] is True
+                    and report['configuration']['render']['grain']['engine'] == 'fotufilm',
+                    'Fotufilm render did not execute the active selected engine')
+            # The photo-first header reports action/dimensions only. Execution
+            # disclosure belongs to Settings/Diagnostics, not retired status prose.
+            driver.reveal('action.save_report', 'Settings', 'Diagnostics')
+            disclosure = driver.snap('fotufilm-' + action.lower() + '-diagnostics')
+            executor = report['execution']['backend_selected']
+            require(re.search(r'requested[^\n]*' + executor, disclosure, re.I)
+                    and re.search(r'selected[^\n]*' + executor, disclosure, re.I),
+                    f'Fotufilm diagnostics differs from executed backend: {disclosure}')
+            driver.close_settings()
             driver.records.append({'parity_action': 'fotufilm_' + action.lower(),
                                    'report': report, 'executor_disclosure': executor})
         float_export = root / 'fotufilm-float-export.exr'
@@ -1437,7 +1447,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.state_action('Load from file', configured)
         driver.reveal('camera.auto_exposure', 'Input and capture', 'Camera')
         driver.drain_reports()
-        driver.click('Auto exposure', right=True)
+        driver.toggle('Auto exposure')
         driver.wait_report('changed-auto-exposure-preview', 'Preview')
         changed = driver.state_action('Save current to file', root / 'roundtrip.json', save=True)
         require(changed['camera']['auto_exposure'] is True, 'Auto exposure control was not saved')

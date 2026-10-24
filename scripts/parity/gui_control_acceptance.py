@@ -139,6 +139,12 @@ def scanner_readout(driver, root):
     require('lamp' not in edited['scanner'], 'Retired scanner lamp leaked into saved state')
     require(edited['scanner']['conversion_style'] == 'standard',
             'Current standard conversion was not retained')
+    require(edited['scanner']['scan_output'] == 'negative_to_positive',
+            'Scanner polarity selection was not accepted')
+    require(math.isclose(edited['scanner']['operator']['exposure_ev'], .75, abs_tol=1e-6),
+            'Finished exposure editor did not accept .75 EV')
+    require(math.isclose(edited['scanner']['lens_blur'], 2, abs_tol=1e-6),
+            'Readout optics editor did not accept sigma 2')
     driver.reveal('action.operator_restore_automatic', 'Scan', 'Scanner')
     driver.click('Restore automatic', right=True)
     automatic = saved(driver, root, 'scanner-automatic-restored')

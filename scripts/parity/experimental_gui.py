@@ -107,6 +107,22 @@ class ExperimentalDesktop(X11):
                    (max(0, image.width - 520), 150, image.width, image.height, 6),
                    (0, 0, int(image.width * .65), image.height - 70, 6),
                    (int(image.width * .18), 150, int(image.width * .82), image.height - 70, 6)]
+        regions.append((max(0, image.width // 2 - 340), max(0, image.height // 2 - 70),
+                        min(image.width, image.width // 2 + 340),
+                        min(image.height, image.height // 2 + 70), 6))
+        regions.append((260, 96, max(261, image.width - 320), 130, 7))
+        # The amber Export button has a different contrast from adjacent
+        # header text. A whole-row OCR pass drops its label; overlapping local
+        # observations retain the actual rendered button and its coordinates.
+        regions.extend((left, 0, min(image.width, left + 240), 26, 7)
+                       for left in range(0, image.width, 160))
+        regions.extend((left, 0, min(image.width, left + 80), 26, 13)
+                       for left in range(0, min(image.width, 800), 60))
+        if self.settings_open:
+            # egui places Settings beside the preset panel, not necessarily at
+            # the screen center. Observe the whole modal separately from the
+            # photograph, whose pixels can otherwise disrupt block segmentation.
+            regions.append((260, 90, min(image.width, 840), min(image.height, 800), 6))
         for left, top, right, bottom, segmentation in regions:
             crop = ImageOps.grayscale(image.crop((left, top, right, bottom)))
             if ImageStat.Stat(crop).median[0] < 128:
@@ -121,6 +137,31 @@ class ExperimentalDesktop(X11):
                     grouped.setdefault(key, []).append((text, left + data['left'][index] / 3,
                         top + data['top'][index] / 3, data['width'][index] / 3, data['height'][index] / 3))
             lines.extend(grouped.values())
+            if self.settings_open:
+                if segmentation != 13:
+                    for row in grouped.values():
+                        if not any(word[0].lower().startswith('requested') for word in row):
+                            continue
+                        row_left = max(0, int(min(word[1] for word in row) - 3))
+                        row_top = max(0, int(min(word[2] for word in row) - 3))
+                        region = (row_left, row_top, min(image.width, row_left + 500),
+                                  min(image.height, int(max(word[2] + word[4] for word in row) + 4)), 13)
+                        if region not in regions:
+                            regions.append(region)
+                # The state toolbar follows the observed GUI parameters
+                # heading. Read it as one row; block OCR drops highlighted Save.
+                for row in grouped.values():
+                    labels = [word for word in row if words(word[0]) in (['gui'], ['parameters'])]
+                    if {tuple(words(word[0])) for word in labels} != {('gui',), ('parameters',)}:
+                        continue
+                    if min(word[1] for word in labels) >= image.width - 520:
+                        continue
+                    left = max(0, int(min(word[1] for word in labels) - 12))
+                    top = int(max(word[2] + word[4] for word in labels) + 4)
+                    region = (left, top, min(image.width, left + 560),
+                              min(image.height, top + 30), 7)
+                    if region not in regions:
+                        regions.append(region)
         return image, bbox, lines
 
     def locate(self, label, *, exact=False, bottom=False, right=False, header=False):
@@ -167,8 +208,46 @@ class ExperimentalDesktop(X11):
 
     def close_settings(self):
         if self.settings_open:
-            self.click('Close settings')
+            # Escape is the production Settings close action and restores its
+            # caller's focus. Observe closure instead of updating a shadow flag.
+            self.xd('key', 'Escape')
+            wait_for(lambda: self.locate('Close settings') is None,
+                     'Settings dialog closed', 20)
             self.settings_open = False
+
+    def toggle(self, label):
+        """Toggle the observed on/off editor, not its separate row label."""
+        self.xd('mousemove', '--window', self.window, 700, 100)
+        image, _, lines = self.read()
+        wanted = ''.join(words(label))
+        spans = []
+        for line in lines:
+            for start in range(len(line)):
+                for end in range(start + 1, len(line) + 1):
+                    span = line[start:end]
+                    if (span[0][1] >= image.width - 350
+                            and ''.join(words(' '.join(word[0] for word in span))) == wanted):
+                        spans.append(span)
+        require(spans, f'Boolean control label is not visible: {label}')
+        from PIL import ImageOps
+        for span in spans:
+            right = int(max(word[1] + word[3] for word in span))
+            y = sum(word[2] + word[4] / 2 for word in span) / len(span)
+            # Adjacent flat on/off button has 12px padding after its label;
+            # exclude its border and locator focus ring before recognizing it.
+            left, top = right + 11, int(y - 8)
+            crop = ImageOps.invert(ImageOps.grayscale(
+                image.crop((left, top, min(image.width, left + 40), int(y + 9)))))
+            data = self.ocr.image_to_data(crop.resize((crop.width * 8, crop.height * 8)),
+                                          config='--psm 7', output_type=self.ocr.Output.DICT)
+            values = [(text, left + data['left'][i] / 8, top + data['top'][i] / 8,
+                       data['width'][i] / 8, data['height'][i] / 8)
+                      for i, text in enumerate(data['text']) if words(text) in (['on'], ['off'])]
+            if values:
+                value = values[0]
+                self.point_click((value[1] + value[3] / 2, value[2] + value[4] / 2))
+                return
+        raise RuntimeError(f'Boolean on/off editor is not visible: {label}')
 
     def search(self, query):
         self.close_settings()
@@ -200,21 +279,62 @@ class ExperimentalDesktop(X11):
         self.close_settings()
         self.click('Open', header=True)
         self.dialog(path)
+        self.discard_photograph_changes()
         # Clear the pointer/hover tooltip from the source and header labels.
         self.xd('mousemove', '--window', self.window, 700, 100)
         return self.wait_text(r'Source:\s*' + re.escape(path.name), label)
+
+    def discard_photograph_changes(self):
+        # Complete-state transitions protect accepted photograph adjustments.
+        # Isolated scenarios explicitly discard through the actual modal.
+        try:
+            confirmation = self.locate('Save this photograph’s adjustments')
+        except RuntimeError:
+            if self.proc.poll() is None:
+                raise
+            return
+        if confirmation:
+            self.snap('unsaved-photograph-confirmation')
+            self.click('Discard changes')
+            self.records.append({'photograph_transition': 'discard_changes',
+                                 'confirmation_observed': True})
 
     def state_action(self, label, path, save=False):
         self.reveal('action.save_state' if save else 'action.load_state',
                     'Settings', 'GUI parameters')
         self.click(label)
+        if not save:
+            self.drain_reports()
         self.dialog(path, save)
+        if not save:
+            self.discard_photograph_changes()
         result = None
         if save:
             wait_for(path.is_file, 'native saved state', 20)
             result = json.loads(path.read_text())
         else:
-            self.wait_text(r'Loaded GUI state', 'state-loaded-' + path.stem)
+            # apply_state always requests one preview, even with auto-preview
+            # disabled. Its completion replaces the transient Loaded GUI state
+            # status before desktop OCR can capture it. Require that new report
+            # when an image is loaded; a pre-existing report cannot satisfy it.
+            has_source = bool(self.locate('Source:', header=True))
+            expected = json.loads(path.read_text())
+            if has_source and self.locate('No image loaded', header=True) is None:
+                report = self.wait_report('state-loaded-' + path.stem, 'Preview')
+                route = dict(zip(ROUTES, ('input', 'film_scan', 'film_print_scan',
+                             'convert_film_print_scan', 'convert_film_scan_minus_base',
+                             'convert_film_scan')))[expected['simulation']['route']]
+                require(report['configuration']['render']['workflow_route'] == route,
+                        'State-load preview did not use the selected workflow route')
+                rendered = report['configuration']['render']
+                for state_key, report_key in (('scan_output', 'scan_output'),
+                                              ('conversion_style', 'conversion_style'),
+                                              ('operator', 'scan_operator')):
+                    require(parameters_equal(expected['scanner'][state_key], rendered[report_key]),
+                            f'State-load preview did not use loaded scanner {state_key}')
+                self.snap('state-loaded-' + path.stem)
+            else:
+                self.wait_text(r'Loaded GUI state', 'state-loaded-' + path.stem)
         self.close_settings()
         return result
 
@@ -242,8 +362,10 @@ class ExperimentalDesktop(X11):
         rows = []
         expected = ''.join(words(label))
         for line in lines:
-            if (not line or words(line[0][0]) == ['locate']
-                    or any(words(word[0]) == ['reset'] for word in line)):
+            line_tokens = words(' '.join(word[0] for word in line))
+            if (not line or line_tokens[:1] == ['locate']
+                    or 'reset' in line_tokens or 'factory' in line_tokens
+                    or any(token.startswith('reset') for token in line_tokens)):
                 continue
             for start in range(len(line)):
                 text = ''
@@ -318,7 +440,7 @@ class ExperimentalDesktop(X11):
                 # Popup rows need their own text block: the retained viewer
                 # image and adjacent inspector headings otherwise merge them.
                 from PIL import ImageOps, ImageStat
-                left = max(0, int(min(x, min(word[1] for word in candidates))) - 12)
+                left = max(0, int(min(word[1] for word in candidates)))
                 top = max(0, int(y + 9))
                 crop = ImageOps.grayscale(frame.crop((left, top, frame.width,
                                                        min(frame.height, top + 430))))
@@ -338,7 +460,8 @@ class ExperimentalDesktop(X11):
                 if options:
                     line = options[0]
                     self.snap('choice-' + '-'.join(words(option)), frame, rows)
-                    self.point_click((line[0][1] + 8, line[0][2] + line[0][4] / 2))
+                    self.point_click(((min(word[1] for word in line) + max(word[1] + word[3] for word in line)) / 2,
+                                      (min(word[2] for word in line) + max(word[2] + word[4] for word in line)) / 2))
                     return
                 self.xd('mousemove', '--window', self.window,
                         int(selected[1] + selected[3] / 2), int(y + 70))
@@ -497,7 +620,7 @@ class ExperimentalDesktop(X11):
                     bottom += 1
                 if bottom <= body_top + 1:
                     continue
-                box = (left, top, right, min(image.height, bottom + 2))
+                box = (left, top, right, min(image.height, bottom + header_bottom - top))
                 lines = modal_lines(image, box)
                 cancels = [span for line in lines
                            if (span := matched_span(line, 'Cancel'))

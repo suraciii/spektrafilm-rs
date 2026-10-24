@@ -471,6 +471,29 @@ After discovering a native chooser, visibility checks query that exact X11
 window rather than searching every GTK window again before each key press.
 The native header is read as one continuous row as well as in panel crops;
 long GPU adapter details can place an export's filename across a panel boundary.
+The photo-first header's highlighted Export button is also read in overlapping
+local header crops: whole-row OCR can omit its amber label even when adjacent
+Open, Undo, Redo and Settings are recognized. Coordinates still come from the
+rendered text; no fixed-position click substitutes for observing Export.
+The highlighted Settings state toolbar is similarly read as an independent
+row anchored below the observed GUI parameters heading, rather than being
+borrowed from inspector locator text or inferred from button order.
+Settings also has an independent modal observation beside the preset panel;
+once a photograph is rendered, including that photograph in the same OCR block
+can fragment the otherwise visible Close settings button.
+Settings closure uses its production Escape action and observes disappearance
+of Close settings before returning to inspector work. Scalar boolean rows such
+as Enable grain and Auto exposure have separate on/off editors; the driver
+clicks the observed value, not the label, and validates accepted state/execution.
+Loading photographic state with an image present always requests one Preview,
+including when automatic preview is disabled. The driver drains earlier reports
+before the chooser, then requires that new Preview report and its loaded route;
+the transient Loaded GUI state message can already have been replaced by the
+render status when OCR runs. Empty-source loads still require the load status.
+Complete-state reopen, image replacement, and window close can show the
+photo-first unsaved-adjustments confirmation. Isolated acceptance scenarios
+observe that modal and explicitly choose Discard changes; they do not bypass
+the protection or treat the confirmation as completed state loading.
 Scanner acceptance navigates canonical search paths to the actual Scan/Scanner
 owner. It exercises fixed-readout polarity, standard automatic conversion,
 finished-positive operator exposure, Restore automatic and readout optics, then
@@ -488,6 +511,9 @@ pixel-change threshold is not diluted by unrelated gray background. Rotation
 float inspection reads the overlay below the layer tabs, not the tabs themselves.
 Profile selection distinguishes its own label from Camera's inherited-profile
 prose, parks the pointer off text, and scrolls inside the observed popup.
+Inspector popup OCR starts at the observed selected value's left edge, not at
+the parameter label: adjacent inactive-help text can otherwise become a false
+leading digit on a complete option row. Exact option text remains required.
 Save/Export completion combines visible completed status, the exact destination,
 decoded pixels/depth and the GUI's actual operation report; tiny filename OCR
 errors cannot substitute for these publication checks. RAW intake loads a seed
