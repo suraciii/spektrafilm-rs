@@ -49,7 +49,7 @@ For a real negative scanner capture on `input > convert-film > scan`, disable vi
 
 The resident GPU route performs both density acquisition and convert-film inversion on the device. Negative-to-positive acquisition uses the profile-derived monotone axis of each record, including its finite endpoint extrapolation, and the resolved brightness, contrast, and maximum density of that channel's style. Scanner blur runs as density → transmission → reference Gaussian filter → density before interpretation; it is not applied a second time after interpretation.
 
-Convert-film uses a bounded eight-iteration inverse scan under `scanner.lamp`, with the declared input transfer, calibration matrix, and exposure compensation. The `scan`, `scan-minus-base`, and `print > scan` routes retain their respective base inclusion and paper stages. Output gamut processing, sharpening, transfer encoding, finishing, and output mix remain downstream. These device paths require native shader binary64; a selected GPU that cannot provide the required arithmetic reports an error rather than running image acquisition or inversion on the CPU.
+Convert-film uses a bounded eight-iteration inverse scan under `film_render.convert.scan_illuminant`, with the declared input transfer, calibration matrix, and exposure compensation. The `scan`, `scan-minus-base`, and `print > scan` routes retain their respective base inclusion and paper stages. Output gamut processing, sharpening, transfer encoding, and output mix remain downstream. These device paths require native shader binary64; a selected GPU that cannot provide the required arithmetic reports an error rather than running image acquisition or inversion on the CPU.
 
 ## Conversion styles
 

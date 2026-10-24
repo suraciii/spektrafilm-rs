@@ -32,7 +32,7 @@ cargo build --release -p spektrafilm-gui
 # f32 CLI — fast batch processor, defaults to WGPU
 cargo build --release -p spektrafilm-cli
 
-# f64 CLI — reference precision (CPU only; WGSL has no f64)
+# f64 reference CLI — GPU image storage and execution precision are reported separately
 cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-f64
 
 # instrument CLI — the research command surface at f64 reference precision
@@ -49,7 +49,7 @@ This produces:
 
 - `target/release/spektrafilm-gui` — desktop GUI.
 - `target/release/spektrafilm` — fast f32 CLI.
-- `target/release/spektrafilm-f64` — CPU reference exporter.
+- `target/release/spektrafilm-f64` — f64 reference exporter; explicit GPU selection retains the device execution contract.
 - `target/release/spektrafilm-lab` — the instrument command surface (f64 reference precision; shipped in packages).
 - `target/release/decode_raw_gui` — standalone RAW decoding helper.
 - `target/release/spektrafilm-bench` — benchmark-owned offline visual reports, for example `report photos`.
