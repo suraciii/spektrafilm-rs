@@ -60,7 +60,9 @@ select_backend(request, executable):
 
 GPU image computation takes priority over retaining a CPU-only optimization or a preview-only GPU approximation. It does not take priority over the selected algorithm or valid output.
 
-A selected GPU operation MUST run the complete computation scope on WGPU or fail before output publication. It MUST NOT silently fall back for a missing kernel, unsupported parameter, precision limitation, resource limit, or device failure. GUI failure MUST preserve the last accepted output.
+A selected GPU operation MUST run the complete computation scope on WGPU or fail before output publication. It MUST NOT silently fall back for a missing kernel, unsupported parameter, precision limitation, resource limit, or device failure.
+
+After GPU selection it MUST NOT restart the operation on CPU. GUI failure MUST preserve the last accepted output.
 
 A user MAY explicitly retry with CPU.
 

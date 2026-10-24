@@ -176,12 +176,12 @@ The telemetry vocabulary moves, but its ownership rules do not. [Telemetry](../t
 The move MUST proceed in this order, because each step MUST compile before the next begins:
 
 1. Create `spektrafilm-backend` with no device feature. Move the device-independent parameter records first — `DyeGpuParams` and its type chain, `GrainV2GpuParams`, `CpuStageFn`, `Lut3D`, `FilmChainParams`, `FrontPass`, and the `*GpuParams` records — because the trait signature references them.
-2. Splitting `dye_layers.rs` is part of this step, since those records share a file with device pass code. `spektrafilm-gpu` re-exports them so the tree still compiles.
-3. Move the `ComputeBackend` trait and its default implementations, `CpuBackend`, telemetry, timing, and observation binding into `spektrafilm-backend`. Keep the re-exports.
-4. Move `spektrafilm-model` to depend on `spektrafilm-backend` only.
-5. Update `spektrafilm-core`, `spektrafilm-cli`, and `spektrafilm-gui` import paths.
-6. Remove the `spektrafilm-gpu` re-exports and confirm no consumer reaches a moved item through the device crate.
-7. Split `test_support` and confirm a device-free build.
+   Splitting `dye_layers.rs` is part of this step, since those records share a file with device pass code. `spektrafilm-gpu` re-exports them so the tree still compiles.
+2. Move the `ComputeBackend` trait and its default implementations, `CpuBackend`, telemetry, timing, and observation binding into `spektrafilm-backend`. Keep the re-exports.
+3. Move `spektrafilm-model` to depend on `spektrafilm-backend` only.
+4. Update `spektrafilm-core`, `spektrafilm-cli`, and `spektrafilm-gui` import paths.
+5. Remove the `spektrafilm-gpu` re-exports and confirm no consumer reaches a moved item through the device crate.
+6. Split `test_support` and confirm a device-free build.
 
 A dry run of steps 1 and 2 produced a compiling `spektrafilm-backend` whose dependency tree contains no device crate. That result is the evidence this order is viable; it is not a claim that later steps are equally cheap.
 
