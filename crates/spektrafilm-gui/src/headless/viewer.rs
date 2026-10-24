@@ -716,7 +716,6 @@ fn first_output_and_scan_animate_but_automatic_parameter_update_does_not() {
         .build_eframe(move |cc| {
             theme::apply(&cc.egui_ctx);
             let mut app = app(state_path, image_path, browser_path);
-            assert!(app.dirty);
             assert!(app.viewer_render_pending());
             // Enable reveal before the first automatic output can be accepted.
             app.viewer.settings.reveal = true;
@@ -800,10 +799,9 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
     let active = h.state().render_worker.active.clone();
     let worker_guard = active.lock();
     h.state_mut().load_image_from_path(&image_path);
-    assert!(h.state().dirty);
     assert!(
         h.state().viewer_render_pending(),
-        "dirty debounce belongs to viewer work"
+        "input preparation and render debounce belong to viewer work"
     );
     frame(&mut h, 0.0);
     assert_rendering_overlay(&h);

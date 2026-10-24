@@ -513,6 +513,8 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     "assertion": "first automatic output retains intermediate reveal frames",
                     "frames": len(first_frames), "changed_handoff_frames": first_changed})
 
+    _viewer_control(driver, "viewer.layer.paper_back", "Paper back")
+    driver.await_viewer(label="Paper back before Scan reveal")
     scan_point = wait_for(lambda: driver.locate("SCAN", bottom=True), "persistent SCAN action", 25)
     reveal_frames = _render_transition_frames(driver, records, "viewer-scan-reveal", "Scan",
                                              lambda: driver.point_click(scan_point))
@@ -536,10 +538,14 @@ def accept_viewer(driver, root, state, pixels, exporter):
     editor, _ = numeric_editor(driver, "exposure compensation ev")
     driver.point_click(editor)
     driver.xd("key", "ctrl+a")
-    driver.xd("type", "--clearmodifiers", "--", "0.75")
     driver.xd("mousemove", "--window", driver.window, 100, 100)
+
+    def automatic_edit():
+        driver.xd("type", "--delay", "0", "--clearmodifiers", "--", "0.75")
+        driver.xd("key", "Return")
+
     automatic_frames = _render_transition_frames(driver, records, "viewer-automatic-edit", "Preview",
-                                                lambda: driver.xd("key", "Return"), bounds)
+                                                automatic_edit, bounds)
     edit_delta = float(np.mean(np.abs(automatic_frames[0] - automatic_frames[-1])))
     _require(edit_delta > .1, "Accepted automatic exposure edit did not change Output pixels")
     intermediate = [float(min(np.mean(np.abs(frame - automatic_frames[0])),
@@ -557,12 +563,12 @@ def accept_viewer(driver, root, state, pixels, exporter):
     scan_point = wait_for(lambda: driver.locate("SCAN", bottom=True), "persistent SCAN action", 25)
     driver.point_click(editor)
     driver.xd("key", "ctrl+a")
-    driver.xd("type", "--clearmodifiers", "--", "-0.75")
-    driver.xd("mousemove", "--window", driver.window, int(scan_point[0]), int(scan_point[1]))
 
     def changed_scan():
-        driver.xd("key", "Return")
-        driver.xd("click", 1)
+        driver.xd("type", "--delay", "0", "--clearmodifiers", "--", "-0.75")
+        driver.xd("key", "Return", "mousemove", "--window", driver.window,
+                  int(scan_point[0]), int(scan_point[1]),
+                  "mousedown", "1", "sleep", ".03", "mouseup", "1")
 
     crossfade_frames = _render_transition_frames(driver, records, "viewer-scan-crossfade", "Scan",
                                                 changed_scan, bounds)
