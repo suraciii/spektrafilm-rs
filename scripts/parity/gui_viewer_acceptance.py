@@ -541,7 +541,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.xd("mousemove", "--window", driver.window, 100, 100)
 
     def automatic_edit():
-        driver.xd("type", "--delay", "0", "--clearmodifiers", "--", "0.75")
+        driver.xd("type", "--clearmodifiers", "--", "0.75")
         driver.xd("key", "Return")
 
     automatic_frames = _render_transition_frames(driver, records, "viewer-automatic-edit", "Preview",
@@ -565,10 +565,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.xd("key", "ctrl+a")
 
     def changed_scan():
-        driver.xd("type", "--delay", "0", "--clearmodifiers", "--", "-0.75")
-        driver.xd("key", "Return", "mousemove", "--window", driver.window,
-                  int(scan_point[0]), int(scan_point[1]),
-                  "mousedown", "1", "sleep", ".03", "mouseup", "1")
+        driver.accept_numeric_and_click("-0.75", scan_point)
 
     crossfade_frames = _render_transition_frames(driver, records, "viewer-scan-crossfade", "Scan",
                                                 changed_scan, bounds)

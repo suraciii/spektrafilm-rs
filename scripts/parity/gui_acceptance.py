@@ -164,6 +164,13 @@ class X11:
             time.sleep(.1)
         return result
 
+    def accept_numeric_and_click(self, text, point):
+        """Accept selected numeric text and click before automatic debounce."""
+        self.xd('type', '--delay', '0', '--clearmodifiers', '--', text)
+        self.xd('key', 'Return', 'mousemove', '--window', self.window,
+                int(point[0]), int(point[1]),
+                'mousedown', '1', 'sleep', '.03', 'mouseup', '1')
+
     def chooser_ready(self, env):
         guidance = ('Native chooser needs a session bus and GTK portal on the GUI display. '
                     "Run xvfb-run -a -s '-screen 0 1600x1100x24' "
@@ -1077,6 +1084,20 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
         else:
             raise RuntimeError(f'Unsupported desktop input: {args}')
         return ''
+
+    def accept_numeric_and_click(self, text, point):
+        """Use native input without per-call pauses inside the debounce window."""
+        x, y, _, _ = self.bounds()
+        target = (x + int(point[0]), y + int(point[1]))
+        self.input.write(text, interval=0, _pause=False)
+        self.input.press('enter', _pause=False)
+        if sys.platform == 'win32':
+            self.send_pointer(*target)
+        else:
+            self.input.moveTo(*target, _pause=False)
+        self.input.mouseDown(_pause=False)
+        time.sleep(.03)
+        self.input.mouseUp(_pause=False)
 
     def dialog_visible(self):
         if sys.platform == 'darwin':
