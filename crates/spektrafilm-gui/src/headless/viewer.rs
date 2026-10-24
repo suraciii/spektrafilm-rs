@@ -1294,13 +1294,13 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
         .unwrap();
     assert_eq!(
         simulation.work.image_upload_count,
-        Some(1),
-        "host source uploads once in simulation"
+        Some(0),
+        "Scan reuses the source uploaded by the accepted Preview"
     );
     assert_eq!(
         simulation.work.image_upload_bytes,
-        Some(u64::from(original.width) * u64::from(original.height) * 3 * 4),
-        "only the source RGB f32 samples cross the host-to-device boundary"
+        Some(0),
+        "Preview-to-Scan reuse must not upload the same host samples again"
     );
     let display = report
         .phases
@@ -1312,6 +1312,31 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
             .stages
             .iter()
             .any(|stage| stage.name == "retained_histogram" && stage.parent_id == display.id)
+    );
+    h.state().render_worker.invalidate_runtime_cache();
+    super::click(&mut h, "SCAN");
+    wait_until(&mut h, |a| {
+        !a.dirty && a.render_job.is_none() && a.output_retained.is_some()
+    });
+    let invalidated = assert_retained_gpu_report(
+        h.state(),
+        &directory.path().join("invalidated-scan-report.json"),
+        "scan",
+        [original.width, original.height],
+    );
+    let simulation = invalidated
+        .phases
+        .iter()
+        .find(|phase| phase.name == "simulation")
+        .unwrap();
+    assert_eq!(
+        simulation.work.image_upload_count,
+        Some(1),
+        "context invalidation releases the raw upload"
+    );
+    assert_eq!(
+        simulation.work.image_upload_bytes,
+        Some(u64::from(original.width) * u64::from(original.height) * 3 * 4),
     );
     // Worker waits advance egui's implicit clock by an unpredictable number
     // of frames. Continue from that clock rather than resetting it to a fixed

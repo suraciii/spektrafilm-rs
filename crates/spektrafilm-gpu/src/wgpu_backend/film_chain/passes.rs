@@ -521,18 +521,14 @@ impl WgpuBackend {
             .map(|hp| build_highlight_boost_state(&self.device, hp, n_pixels, &buf_b, self))
             .transpose()?;
 
-        // One shared filter scratch and one destination serve the camera and
-        // scanner lens stages: they encode in different chain positions, and
-        // each copies its result into buf_b before the next stage runs.
-        let lens_blur_scratch = self.allocate_image_pages(
-            image_width.max(tail_width),
-            image_height.max(tail_height),
-            "lens_blur_scratch",
-        )?;
+        // The blur state retains its scratch pages for the encoded work.
+        // Allocate only once the corresponding optical stage is active.
         let camera_lens_blur_state = p
             .camera_lens_blur_px
             .filter(|&sigma| sigma > 0.0)
             .map(|sigma| {
+                let lens_blur_scratch =
+                    self.allocate_image_pages(image_width, image_height, "lens_blur_scratch")?;
                 build_simple_blur_state(
                     self,
                     sigma,
@@ -608,11 +604,11 @@ impl WgpuBackend {
             .map(|gp| build_glare_state(&self.device, gp, tail_width, tail_height, &tail_b, self))
             .transpose()?;
 
-        let tail_scratch = tail_buf("scanner_tail_scratch", tail_width, tail_height)?;
         let scanner_lens_blur_state = p
             .scanner_lens_blur_px
             .filter(|&sigma| sigma > 0.0)
             .map(|sigma| {
+                let tail_scratch = tail_buf("scanner_tail_scratch", tail_width, tail_height)?;
                 build_simple_blur_state(
                     self,
                     sigma,
@@ -1426,7 +1422,7 @@ pub(in crate::wgpu_backend) fn required_buffer_exceeds_limits(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spektrafilm_backend::{FilmChainParams, FrontPass};
+    use spektrafilm_backend::{ComputeBackend, FilmChainParams, FrontPass};
     use spektrafilm_backend::{Precision, RetainedImageMeta, SampleDomain};
     use spektrafilm_math::colorspace;
     use spektrafilm_math::image::ImageBuf;
@@ -1491,6 +1487,106 @@ mod tests {
             output_transfer: None,
             cmyk: None,
             input_decode: None,
+        }
+    }
+
+    #[test]
+    fn lens_scratch_is_lazy_and_active_states_retain_their_working_pages() {
+        use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
+
+        let gpu = crate::test_support::explicit_adapter();
+        let knots = [-1.0, 0.0, 1.0];
+        let curves = [[0.0; 3], [1.0; 3], [2.0; 3]];
+        let spectral = [[0.0; 3]; 81];
+        let base = [0.0; 81];
+        let light = [1.0; 81];
+        let mut p = params(256, 8);
+        p.film_log_exposure = &knots;
+        p.film_density_curves_normalized = &curves;
+        p.print_log_exposure = &knots;
+        p.print_density_curves = &curves;
+        p.film_channel_density = &spectral;
+        p.print_channel_density = &spectral;
+        p.film_base_density = &base;
+        p.print_base_density = &base;
+        p.print_illuminant = &light;
+        p.scan_illuminant = &light;
+        p.print_sensitivity = &spectral;
+        let mut host = ImageBuf::new(p.image_width, p.image_height);
+        let center = (4 * p.image_width as usize + 128) * 3;
+        host.data[center..center + 3].copy_from_slice(&[0.25 as _, 0.5 as _, 1.0 as _]);
+        let input = gpu
+            .retain_image(
+                &host,
+                &RetainedImageMeta {
+                    width: p.image_width,
+                    height: p.image_height,
+                    domain: SampleDomain::Linear,
+                    precision: Precision::host(),
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: None,
+                },
+            )
+            .unwrap();
+        // Warm coefficient resources, so the budget measures raster working
+        // storage rather than the small immutable calibration tables.
+        drop(gpu.setup_chain(&p, &input).unwrap());
+        let raster_bytes = u64::from(p.image_width) * u64::from(p.image_height) * 12;
+        for inactive in [None, Some(0.0), Some(-1.0)] {
+            p.camera_lens_blur_px = inactive;
+            p.scanner_lens_blur_px = inactive;
+            let context = ObservationContext::new(CollectionMode::Summary);
+            let mut observed = gpu.derived_explicit();
+            observed.context_mut(context.clone());
+            let _setup = observed.setup_chain(&p, &input).unwrap();
+            // Two chain rasters plus eleven pointwise windows; inactive
+            // camera/scanner optics may not add full-raster scratch buffers.
+            assert!(
+                context.snapshot().totals.buffer_create_bytes.unwrap() <= 13 * raster_bytes + 1024
+            );
+        }
+
+        p.camera_lens_blur_px = Some(1.0);
+        p.scanner_lens_blur_px = Some(2.0);
+        let setup = gpu.setup_chain(&p, &input).unwrap();
+        for page in &setup.buf_b {
+            let first = page.first_pixel as usize * 3;
+            let values = scalars_to_f32(&host.data[first..first + page.n_pixels as usize * 3]);
+            gpu.queue
+                .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&values));
+        }
+        // setup_chain's local scratch owners have already gone out of scope.
+        // Both optical states must retain the pages and preserve active output.
+        setup
+            .camera_lens_blur_state
+            .as_ref()
+            .unwrap()
+            .submit(&gpu, &setup.buf_b)
+            .unwrap();
+        setup
+            .scanner_lens_blur_state
+            .as_ref()
+            .unwrap()
+            .submit(&gpu, &setup.tail_b)
+            .unwrap();
+        let output = gpu.retain_image_pages(
+            setup.tail_b.clone(),
+            p.image_width,
+            p.image_height,
+            SampleDomain::Linear,
+            &colorspace::SRGB,
+            None,
+        );
+        let expected = gpu.gaussian_blur_gpu(&host, 1.0).unwrap();
+        let expected = gpu.gaussian_blur_gpu(&expected, 2.0).unwrap();
+        for (actual, expected) in output
+            .to_host(gpu.backend())
+            .unwrap()
+            .data
+            .iter()
+            .zip(&expected.data)
+        {
+            assert!((*actual as f64 - *expected as f64).abs() < 2e-6);
         }
     }
 

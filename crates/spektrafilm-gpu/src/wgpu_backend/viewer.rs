@@ -66,14 +66,29 @@ impl WgpuBackend {
         label: &'static str,
     ) -> Result<wgpu::Buffer, String> {
         self.check_cancelled()?;
-        #[cfg(test)]
-        self.pipe.test_operation(label)?;
         let bytes = u64::from(count) * 12;
         if count == 0 || bytes > self.viewer_limit() {
             return Err(format!(
                 "{label}: minimum viewer working buffer exceeds device limits"
             ));
         }
+        let out = self.viewer_buffer(bytes, label);
+        self.viewer_dispatch_into(shader, words, inputs, count, &out, label)?;
+        Ok(out)
+    }
+
+    fn viewer_dispatch_into(
+        &self,
+        shader: &'static str,
+        words: &[u32],
+        inputs: &[&wgpu::Buffer],
+        count: u32,
+        out: &wgpu::Buffer,
+        label: &'static str,
+    ) -> Result<(), String> {
+        self.check_cancelled()?;
+        #[cfg(test)]
+        self.pipe.test_operation(label)?;
         let mut aligned = words.to_vec();
         aligned.resize(words.len().next_multiple_of(4), 0);
         let params = self
@@ -83,7 +98,6 @@ impl WgpuBackend {
                 contents: bytemuck::cast_slice(&aligned),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
-        let out = self.viewer_buffer(bytes, label);
         let mut types = vec![wgpu::BufferBindingType::Uniform];
         types.extend(
             inputs
@@ -134,7 +148,7 @@ impl WgpuBackend {
         self.check_cancelled()?;
         self.queue.submit(Some(encoder.finish()));
         self.check_cancelled()?;
-        Ok(out)
+        Ok(())
     }
     fn viewer_window(&self, image: &DeviceImage, window: [u32; 4]) -> Result<wgpu::Buffer, String> {
         self.check_cancelled()?;
@@ -396,17 +410,21 @@ impl WgpuBackend {
         limit: u64,
     ) -> Result<Vec<[u8; 4]>, String> {
         self.check_cancelled()?;
+        let limit = limit.min(self.viewer_limit());
         let previous = previous.filter(|_| image.is_some());
         let count = p
             .width
             .checked_mul(p.height)
             .filter(|n| *n > 0)
             .ok_or("invalid viewer presentation dimensions")?;
+        if limit < 4 {
+            return Err("viewer composition footprint exceeds device limits".into());
+        }
         let mut result = Vec::with_capacity(count as usize);
         let mut first = 0;
         while first < count {
             self.check_cancelled()?;
-            let mut n = (count - first).min((limit / 12).min(u64::from(u32::MAX)) as u32);
+            let mut n = (count - first).min((limit / 4).min(u64::from(u32::MAX)) as u32);
             let windows = loop {
                 let mut windows = [[0, 0, 1, 1]; 3];
                 for (i, source) in [image, paper, previous].into_iter().enumerate() {
@@ -472,20 +490,21 @@ impl WgpuBackend {
             words.extend(windows.into_iter().flatten());
             words.extend([first, n, 0, 0]);
             let references: Vec<_> = buffers.iter().collect();
-            let out = self.viewer_dispatch(
+            let bytes = u64::from(n) * 4;
+            let out = self.viewer_buffer(bytes, "viewer_presentation");
+            self.viewer_dispatch_into(
                 include_str!("../../../spektrafilm-shaders/wgsl/viewer_compose_retained.wgsl"),
                 &words,
                 &references,
                 n,
+                &out,
                 "viewer_presentation",
             )?;
             result.extend(
                 self.pipe
-                    .readback_buffer_cancellable::<u32>(&out, u64::from(n) * 12)?
-                    .as_chunks::<3>()
-                    .0
-                    .iter()
-                    .map(|v| v[0].to_le_bytes()),
+                    .readback_buffer_cancellable::<u32>(&out, bytes)?
+                    .into_iter()
+                    .map(u32::to_le_bytes),
             );
             first += n;
         }
@@ -555,6 +574,107 @@ mod tests {
     };
 
     #[test]
+    fn packed_viewer_chunks_preserve_rgba_and_four_byte_resource_bound() {
+        let gpu = crate::test_support::explicit_adapter();
+        let mut observed = gpu.derived_explicit();
+        let context = ObservationContext::new(CollectionMode::Summary);
+        observed.context_mut(context.clone());
+        let rect = [0.0, 0.0, 37.0, 1.0];
+        let params = ViewerComposeGpuParams {
+            width: 37,
+            height: 1,
+            rect,
+            border: [8.0, 0.0, 21.0, 1.0],
+            paper_rect: rect,
+            image_rect: rect,
+            gray: [0.2, 0.4, 0.6],
+            interpolation: 0,
+            full_source: false,
+            output_layer: true,
+            fade: 1.0,
+        };
+        let pixels = observed
+            .viewer_compose_gpu_with_limit(None, None, None, &params, 28)
+            .unwrap();
+        let expected: Vec<_> = (0..37)
+            .map(|x| {
+                if (8..21).contains(&x) {
+                    [255; 4]
+                } else {
+                    [51, 102, 153, 255]
+                }
+            })
+            .collect();
+        assert_eq!(pixels, expected);
+        let work = context.snapshot().totals;
+        // Five seven-pixel chunks and a two-pixel tail. RGB source windows
+        // remain 12 bytes/pixel; only presentation and readback are packed.
+        assert_eq!(work.readback_count, Some(6));
+        assert_eq!(work.readback_bytes, Some(37 * 4));
+        // Per chunk: three absent RGB pixels and the 192-byte uniform.
+        // Output plus readback must fit two copies of the packed RGBA raster.
+        assert!(work.buffer_create_bytes.unwrap() <= 6 * (36 + 192) + 2 * 37 * 4);
+        assert!(
+            observed
+                .viewer_compose_gpu_with_limit(None, None, None, &params, 3)
+                .unwrap_err()
+                .contains("exceeds device limits")
+        );
+    }
+
+    #[test]
+    fn packed_viewer_source_chunks_preserve_channel_order_and_clamping() {
+        let gpu = crate::test_support::explicit_adapter();
+        let expected: Vec<_> = (0..15u8)
+            .map(|i| [i * 17, 255 - i * 13, i * 7, 255])
+            .collect();
+        let mut values: Vec<f32> = expected
+            .iter()
+            .flat_map(|v| v[..3].iter().map(|&v| f32::from(v) / 255.0))
+            .collect();
+        values[0] = -1.0;
+        values[1] = 2.0;
+        let host = ImageBuf::from_data(5, 3, f32_to_scalars(values));
+        let image = gpu
+            .retain_image(
+                &host,
+                &RetainedImageMeta {
+                    width: 5,
+                    height: 3,
+                    domain: SampleDomain::Encoded,
+                    precision: Precision::host(),
+                    space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+                    pixel_pitch_um: None,
+                },
+            )
+            .unwrap();
+        let rect = [0.0, 0.0, 5.0, 3.0];
+        let params = ViewerComposeGpuParams {
+            width: 5,
+            height: 3,
+            rect,
+            border: rect,
+            paper_rect: rect,
+            image_rect: rect,
+            gray: [0.0; 3],
+            interpolation: 0,
+            full_source: true,
+            output_layer: true,
+            fade: 1.0,
+        };
+        assert_eq!(
+            gpu.viewer_compose_gpu_with_limit(Some(&image), None, None, &params, 72)
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            gpu.viewer_compose_retained(Some(&image), None, None, &params)
+                .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
     fn viewer_page_cancellation_stops_readback_and_preserves_healthy_reuse() {
         let gpu = crate::test_support::explicit_adapter();
         let host = ImageBuf::from_data(1, 1, vec![0.5 as _; 3]);
@@ -571,9 +691,9 @@ mod tests {
                 },
             )
             .unwrap();
-        let rect = [0.0, 0.0, 6.0, 1.0];
+        let rect = [0.0, 0.0, 7.0, 1.0];
         let params = ViewerComposeGpuParams {
-            width: 6,
+            width: 7,
             height: 1,
             rect,
             border: rect,
@@ -614,7 +734,7 @@ mod tests {
         let pixels = healthy
             .viewer_compose_retained(Some(&image), None, None, &params)
             .unwrap();
-        assert_eq!(pixels, vec![[128, 128, 128, 255]; 6]);
+        assert_eq!(pixels, vec![[128, 128, 128, 255]; 7]);
         assert_eq!(
             gpu.viewer_compose_gpu_with_limit(Some(&image), None, None, &params, 24)
                 .unwrap(),

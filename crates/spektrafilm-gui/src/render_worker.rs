@@ -105,6 +105,88 @@ pub(super) struct RenderResult {
     pub(super) operator_compare: bool,
 }
 
+/// One immutable raw upload for the accepted input, before metering or geometry.
+/// Weak identities avoid retaining a second photograph or backend owner.
+#[derive(Default)]
+struct RetainedInputCache {
+    entry: Option<RetainedInput>,
+}
+
+struct RetainedInput {
+    source: std::sync::Weak<ImageBuf>,
+    backend: std::sync::Weak<dyn ComputeBackend>,
+    device: Option<u64>,
+    input_epoch: u64,
+    host_precision: spektrafilm_backend::Precision,
+    image: spektrafilm_backend::DeviceImage,
+}
+
+impl RetainedInputCache {
+    fn prepare(
+        &mut self,
+        input: &super::render::InputImage,
+        input_epoch: u64,
+        params: &spektrafilm_core::params::RuntimeParams,
+        backend_owner: &Arc<dyn ComputeBackend>,
+        backend: &dyn ComputeBackend,
+    ) -> Result<super::render::InputImage, String> {
+        let super::render::InputImage::Host(source) = input else {
+            self.entry = None;
+            return Ok(input.clone());
+        };
+        if !backend.is_gpu() {
+            self.entry = None;
+            return Ok(input.clone());
+        }
+        let space = spektrafilm_math::colorspace::resolve(&params.io.input_color_space)?;
+        let domain = if params.io.input_cctf_decoding {
+            spektrafilm_backend::SampleDomain::Encoded
+        } else {
+            spektrafilm_backend::SampleDomain::Linear
+        };
+        let precision = spektrafilm_backend::Precision::host();
+        let device = backend.preparation_device_id();
+        let reusable = self.entry.as_ref().is_some_and(|cached| {
+            cached.source.as_ptr() == Arc::as_ptr(source)
+                && std::ptr::addr_eq(cached.backend.as_ptr(), Arc::as_ptr(backend_owner))
+                && cached.device == device
+                && cached.input_epoch == input_epoch
+                && cached.host_precision == precision
+                && cached.image.space().name == space.name
+                && cached.image.domain() == domain
+        });
+        if !reusable {
+            self.entry = None;
+            let image = backend.retain_image(
+                source,
+                &spektrafilm_backend::RetainedImageMeta {
+                    width: source.width,
+                    height: source.height,
+                    domain,
+                    precision,
+                    space,
+                    pixel_pitch_um: None,
+                },
+            )?;
+            self.entry = Some(RetainedInput {
+                source: Arc::downgrade(source),
+                backend: Arc::downgrade(backend_owner),
+                device,
+                input_epoch,
+                host_precision: precision,
+                image,
+            });
+        }
+        Ok(super::render::InputImage::Device(
+            self.entry
+                .as_ref()
+                .expect("retained input installed")
+                .image
+                .clone(),
+        ))
+    }
+}
+
 impl RenderWorker {
     pub(super) fn new() -> Self {
         let state = Arc::new((Mutex::new(None::<RenderRequest>), Condvar::new()));
@@ -123,6 +205,7 @@ impl RenderWorker {
             .spawn(move || {
                 let mut runtime_cache = RuntimeCache::default();
                 let mut scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
+                let mut retained_input = RetainedInputCache::default();
                 let mut oriented_host: Option<(u64, u32, Arc<ImageBuf>)> = None;
                 loop {
                     let request = {
@@ -143,6 +226,7 @@ impl RenderWorker {
                         runtime_cache = RuntimeCache::default();
                         scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
                         oriented_host = None;
+                        retained_input = RetainedInputCache::default();
                     }
                     let mut operation = request.operation;
                     let attempt = operation.attempt(1);
@@ -176,115 +260,172 @@ impl RenderWorker {
                         );
                         // GPU geometry stays on device; the CPU full-frame scanner
                         // receives the oriented source before any preview resize.
-                        let image = request.image.interpreted(
-                            &runtime_params.io.input_color_space,
-                            runtime_params.io.input_cctf_decoding,
-                        ).map_err(|error| crate::app::Message::new("operations.simulation_error").arg("detail", error))?;
+                        let image = request
+                            .image
+                            .interpreted(
+                                &runtime_params.io.input_color_space,
+                                runtime_params.io.input_cctf_decoding,
+                            )
+                            .map_err(|error| {
+                                crate::app::Message::new("operations.simulation_error")
+                                    .arg("detail", error)
+                            })?;
                         let host_input = (|| -> Result<Option<Arc<ImageBuf>>, String> {
                             if request.backend.is_gpu() {
                                 return Ok(None);
                             }
-                            let bound = input_prepare.context().enabled().then(||
+                            let bound = input_prepare.context().enabled().then(|| {
                                 spektrafilm_backend::bind_backend(
-                                    request.backend.as_ref(), input_prepare.context().clone(),
-                                ));
+                                    request.backend.as_ref(),
+                                    input_prepare.context().clone(),
+                                )
+                            });
                             let backend = bound.as_deref().unwrap_or(request.backend.as_ref());
                             let _span = input_prepare.context().span().map(|span| span.enter());
                             let source = if rotation == 0 {
                                 match &image {
                                     super::render::InputImage::Host(image) => image.clone(),
-                                    super::render::InputImage::Device(_) => Arc::new(image.to_host(backend)?),
+                                    super::render::InputImage::Device(_) => {
+                                        Arc::new(image.to_host(backend)?)
+                                    }
                                 }
                             } else if let Some((epoch, turns, image)) = oriented_host.as_ref()
-                                && *epoch == job.input_epoch && *turns == rotation {
+                                && *epoch == job.input_epoch
+                                && *turns == rotation
+                            {
                                 image.clone()
                             } else {
-                                let image = Arc::new(image.to_host(backend)?.rotated_quarter_turns(rotation as i32));
+                                let image = Arc::new(
+                                    image
+                                        .to_host(backend)?
+                                        .rotated_quarter_turns(rotation as i32),
+                                );
                                 oriented_host = Some((job.input_epoch, rotation, image.clone()));
                                 image
                             };
-                            Ok(Some(if runtime_params.settings.preview_mode && !runtime_params.scanner.requires_full_frame() {
-                                Arc::new(spektrafilm_core::params_builder::resize_for_preview(
-                                    &source, runtime_params.settings.preview_max_size,
-                                ))
-                            } else {
-                                source
-                            }))
+                            Ok(Some(
+                                if runtime_params.settings.preview_mode
+                                    && !runtime_params.scanner.requires_full_frame()
+                                {
+                                    Arc::new(spektrafilm_core::params_builder::resize_for_preview(
+                                        &source,
+                                        runtime_params.settings.preview_max_size,
+                                    ))
+                                } else {
+                                    source
+                                },
+                            ))
                         })();
                         let host_input = observed_result(
-                            input_prepare, host_input,
-                            IssueCategory::Input, IssueBoundary::InputPrepare,
-                        ).map_err(|error| crate::app::Message::new("operations.simulation_error").arg("detail", error))?;
+                            input_prepare,
+                            host_input,
+                            IssueCategory::Input,
+                            IssueBoundary::InputPrepare,
+                        )
+                        .map_err(|error| {
+                            crate::app::Message::new("operations.simulation_error")
+                                .arg("detail", error)
+                        })?;
                         drop(prepare_unit);
                         let simulation =
                             observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
                         let processed = {
                             let _unit = spektrafilm_core::progress::report("simulation");
-                            let bound = (request.backend.is_gpu() && simulation.context().enabled()).then(||
-                                spektrafilm_backend::bind_backend(
-                                    request.backend.as_ref(), simulation.context().clone(),
-                                ));
-                            let backend = bound.as_deref().unwrap_or(request.backend.as_ref());
+                            if !runtime_params.scanner.requires_full_frame() {
+                                // A cached scan baseline also owns its raw source.
+                                // Release it when leaving the full-frame route.
+                                scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
+                            }
+                            let cancellable = request
+                                .backend
+                                .with_cancellation(request.snapshot.cancellation());
+                            let backend =
+                                cancellable.as_deref().unwrap_or(request.backend.as_ref());
+                            let bound =
+                                (backend.is_gpu() && simulation.context().enabled()).then(|| {
+                                    spektrafilm_backend::bind_backend(
+                                        backend,
+                                        simulation.context().clone(),
+                                    )
+                                });
+                            let backend = bound.as_deref().unwrap_or(backend);
                             let _span = simulation.context().span().map(|span| span.enter());
-                            let prepared = if request.backend.is_gpu() {
-                                let geometry = spektrafilm_core::pipeline::RetainedRender {
-                                    rotation_quarter_turns: rotation,
-                                    preview_max_size: runtime_params.settings.preview_mode
-                                        .then_some(runtime_params.settings.preview_max_size),
-                                };
-                                if runtime_params.scanner.requires_full_frame() {
-                                    match &image {
-                                        super::render::InputImage::Device(image) => pipeline_template
-                                            .process_device_scan_cached_retained_observed(
-                                                image, &mut scan_cache, geometry, &request.backend, simulation.context(),
-                                            ).map(Some),
-                                        super::render::InputImage::Host(image) => pipeline_template
-                                            .process_host_scan_cached_retained_observed(
-                                                image, &mut scan_cache, geometry, &request.backend, simulation.context(),
-                                            ).map(Some),
-                                    }
-                                } else { match &image {
-                                    super::render::InputImage::Device(image) => pipeline_template
-                                        .process_device_retained(image, geometry, backend)
-                                        .map(Some),
-                                    super::render::InputImage::Host(image) => {
-                                        let rendered = if runtime_params.settings.preview_mode {
-                                            pipeline_template.process_preview_retained_rotated(
-                                                image, runtime_params.settings.preview_max_size,
-                                                rotation, backend,
-                                            )
-                                        } else {
-                                            pipeline_template.process_retained_rotated(
-                                                image, rotation, backend,
-                                            )
-                                        };
-                                        rendered.and_then(|image| image.map(Some).ok_or_else(||
-                                            "selected GPU cannot render this input on the retained route".to_owned()))
-                                    }
-                                }
-                                }
+                            let prepared_input = if request.backend.is_gpu()
+                                && request.snapshot.cancellation().is_some()
+                                && cancellable.is_none()
+                            {
+                                Err("selected GPU cannot bind operation cancellation".to_owned())
                             } else {
-                                Ok(None)
+                                retained_input.prepare(
+                                    &image,
+                                    job.input_epoch,
+                                    runtime_params,
+                                    &request.backend,
+                                    backend,
+                                )
                             };
+                            let prepared = prepared_input.and_then(|image| {
+                                if request.backend.is_gpu() {
+                                    let super::render::InputImage::Device(image) = image else {
+                                        unreachable!("GPU input prepared on device");
+                                    };
+                                    let geometry = spektrafilm_core::pipeline::RetainedRender {
+                                        rotation_quarter_turns: rotation,
+                                        preview_max_size: runtime_params
+                                            .settings
+                                            .preview_mode
+                                            .then_some(runtime_params.settings.preview_max_size),
+                                    };
+                                    if runtime_params.scanner.requires_full_frame() {
+                                        pipeline_template
+                                            .process_device_scan_cached_retained_observed(
+                                                &image,
+                                                &mut scan_cache,
+                                                geometry,
+                                                &request.backend,
+                                                simulation.context(),
+                                            )
+                                            .map(Some)
+                                    } else {
+                                        pipeline_template
+                                            .process_device_retained(&image, geometry, backend)
+                                            .map(Some)
+                                    }
+                                } else {
+                                    Ok(None)
+                                }
+                            });
                             match prepared {
                                 // Explicit diagnostic taps alone materialize samples.
-                                Ok(Some(image)) if matches!(image.domain(),
-                                    spektrafilm_backend::SampleDomain::LogExposure
-                                        | spektrafilm_backend::SampleDomain::Density
-                                ) => image.to_host(backend).map(|image| (Some(image), None)),
+                                Ok(Some(image))
+                                    if matches!(
+                                        image.domain(),
+                                        spektrafilm_backend::SampleDomain::LogExposure
+                                            | spektrafilm_backend::SampleDomain::Density
+                                    ) =>
+                                {
+                                    image.to_host(backend).map(|image| (Some(image), None))
+                                }
                                 Ok(Some(image)) => Ok((None, Some(image))),
                                 Ok(None) => {
                                     let image = host_input.expect("CPU working image prepared");
                                     if runtime_params.scanner.requires_full_frame() {
                                         pipeline_template.process_scan_cached_observed(
-                                            &image, &mut scan_cache, &request.backend, simulation.context(),
+                                            &image,
+                                            &mut scan_cache,
+                                            &request.backend,
+                                            simulation.context(),
                                         )
                                     } else {
                                         pipeline_template.process_observed(
-                                            Arc::try_unwrap(image).unwrap_or_else(|image| (*image).clone()), request.backend.as_ref(), simulation.context(),
+                                            Arc::try_unwrap(image)
+                                                .unwrap_or_else(|image| (*image).clone()),
+                                            request.backend.as_ref(),
+                                            simulation.context(),
                                         )
-                                    }.map(|image| (Some(image), None))
-                                },
+                                    }
+                                    .map(|image| (Some(image), None))
+                                }
                                 Err(error) => Err(error),
                             }
                         };
@@ -304,34 +445,46 @@ impl RenderWorker {
                             Purpose::Image,
                         );
                         let display_result = (|| {
-                            let cancellable = request.backend.with_cancellation(
-                                request.snapshot.cancellation(),
-                            );
-                            let backend = cancellable.as_deref().unwrap_or(request.backend.as_ref());
-                            let bound = display_prepare.context().enabled().then(||
+                            let cancellable = request
+                                .backend
+                                .with_cancellation(request.snapshot.cancellation());
+                            let backend =
+                                cancellable.as_deref().unwrap_or(request.backend.as_ref());
+                            let bound = display_prepare.context().enabled().then(|| {
                                 spektrafilm_backend::bind_backend(
-                                    backend, display_prepare.context().clone(),
-                                ));
+                                    backend,
+                                    display_prepare.context().clone(),
+                                )
+                            });
                             let backend = bound.as_deref().unwrap_or(backend);
                             let _span = display_prepare.context().span().map(|span| span.enter());
-                            let histogram = retained.as_ref().map(|image| {
-                                backend.retained_histogram(image).map(crate::histogram::HistogramData::from_bins)
-                            }).transpose()?;
+                            let histogram = retained
+                                .as_ref()
+                                .map(|image| {
+                                    backend
+                                        .retained_histogram(image)
+                                        .map(crate::histogram::HistogramData::from_bins)
+                                })
+                                .transpose()?;
                             let _unit = spektrafilm_core::progress::report("display_prepare");
                             let displayed = if let Some(retained) = retained.as_ref() {
                                 display::output_display_raster_retained(
-                                    backend, retained,
+                                    backend,
+                                    retained,
                                     &runtime_params.io.output_color_space,
                                     runtime_params.io.output_cctf_encoding,
-                                    request.display_enabled, request.display_profile.as_deref(),
+                                    request.display_enabled,
+                                    request.display_profile.as_deref(),
                                     runtime_params.settings.preview_max_size as usize,
                                 )
                             } else {
                                 display::output_display_raster_with(
-                                    backend, output.as_ref().expect("CPU route produced host output"),
+                                    backend,
+                                    output.as_ref().expect("CPU route produced host output"),
                                     &runtime_params.io.output_color_space,
                                     runtime_params.io.output_cctf_encoding,
-                                    request.display_enabled, request.display_profile.as_deref(),
+                                    request.display_enabled,
+                                    request.display_profile.as_deref(),
                                     runtime_params.settings.preview_max_size as usize,
                                 )
                             };
@@ -494,5 +647,200 @@ pub(super) fn panic_message(panic: &(dyn std::any::Any + Send)) -> crate::app::M
         crate::app::Message::new("operations.worker_panic").arg("detail", s)
     } else {
         crate::app::Message::new("operations.worker_panic_no_detail")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::render::InputImage;
+    use spektrafilm_backend::{DeviceImage, SampleDomain};
+    use spektrafilm_core::params::RuntimeParams;
+
+    fn retained(input: InputImage) -> DeviceImage {
+        let InputImage::Device(image) = input else {
+            panic!("GPU source must remain retained");
+        };
+        image
+    }
+
+    fn same_payload(a: &DeviceImage, b: &DeviceImage) -> bool {
+        Arc::ptr_eq(a.payload().unwrap(), b.payload().unwrap())
+    }
+
+    #[test]
+    fn retained_input_cache_reuses_raw_samples_and_releases_invalidated_sources() {
+        spektrafilm_gpu::test_support::explicit_adapter().with_shared_backend_pair(
+            |backend, other| {
+                let backend = Arc::clone(backend);
+                let source = Arc::new(ImageBuf::from_data(
+                    3,
+                    2,
+                    (0..18)
+                        .map(|i| i as spektrafilm_math::precision::Scalar / 32.0)
+                        .collect(),
+                ));
+                let input = InputImage::Host(source.clone());
+                let mut params = RuntimeParams::default();
+                params.io.input_color_space = "sRGB".into();
+                params.io.input_cctf_decoding = true;
+                let mut cache = RetainedInputCache::default();
+                let first = retained(
+                    cache
+                        .prepare(&input, 1, &params, &backend, backend.as_ref())
+                        .unwrap(),
+                );
+                let warm = retained(
+                    cache
+                        .prepare(&input, 1, &params, &backend, backend.as_ref())
+                        .unwrap(),
+                );
+                assert!(same_payload(&first, &warm));
+                assert_eq!(first.to_host(backend.as_ref()).unwrap().data, source.data);
+                assert_eq!(
+                    Arc::strong_count(&source),
+                    2,
+                    "the cache only borrows host samples weakly"
+                );
+                params.settings.preview_max_size = 1;
+                params.settings.preview_mode = true;
+                let preview = retained(
+                    cache
+                        .prepare(&input, 1, &params, &backend, backend.as_ref())
+                        .unwrap(),
+                );
+                assert!(same_payload(&first, &preview));
+                assert_eq!(
+                    (preview.width(), preview.height()),
+                    (3, 2),
+                    "cache precedes preview geometry"
+                );
+                drop(warm);
+
+                // Cancelling an operation does not poison the retained raw carrier.
+                let cancellation = Arc::new(AtomicBool::new(false));
+                let operation = backend
+                    .with_cancellation(Some(cancellation.clone()))
+                    .unwrap();
+                let warm = retained(
+                    cache
+                        .prepare(&input, 1, &params, &backend, operation.as_ref())
+                        .unwrap(),
+                );
+                cancellation.store(true, Ordering::SeqCst);
+                assert!(
+                    InputImage::Device(warm.clone())
+                        .rotated(1, operation.as_ref(), "sRGB", true,)
+                        .unwrap_err()
+                        .contains("cancelled")
+                );
+                drop(operation);
+                let fresh = backend
+                    .with_cancellation(Some(Arc::new(AtomicBool::new(false))))
+                    .unwrap();
+                let rotated = InputImage::Device(warm.clone())
+                    .rotated(1, fresh.as_ref(), "sRGB", true)
+                    .unwrap();
+                assert_eq!((rotated.width(), rotated.height()), (2, 3));
+                assert!(same_payload(&first, &warm));
+                drop((warm, preview, rotated, fresh));
+                let released = Arc::downgrade(first.payload().unwrap());
+                drop(first);
+                let epoch = retained(
+                    cache
+                        .prepare(&input, 2, &params, &backend, backend.as_ref())
+                        .unwrap(),
+                );
+                assert!(
+                    released.upgrade().is_none(),
+                    "an epoch change releases the old upload"
+                );
+
+                let replacement = InputImage::Host(Arc::new((*source).clone()));
+                let replaced = retained(
+                    cache
+                        .prepare(&replacement, 2, &params, &backend, backend.as_ref())
+                        .unwrap(),
+                );
+                assert!(
+                    !same_payload(&epoch, &replaced),
+                    "equal samples do not alias different accepted inputs"
+                );
+                params.io.input_cctf_decoding = false;
+                let linear = retained(
+                    cache
+                        .prepare(&replacement, 2, &params, &backend, backend.as_ref())
+                        .unwrap(),
+                );
+                assert!(!same_payload(&replaced, &linear));
+                assert_eq!(linear.domain(), SampleDomain::Linear);
+                params.io.input_color_space = "Display P3".into();
+                let color = retained(
+                    cache
+                        .prepare(&replacement, 2, &params, &backend, backend.as_ref())
+                        .unwrap(),
+                );
+                assert!(!same_payload(&linear, &color));
+                assert_eq!(color.space().name, "Display P3");
+                assert_eq!(color.to_host(backend.as_ref()).unwrap().data, source.data);
+
+                let other = Arc::clone(other);
+                let switched = retained(
+                    cache
+                        .prepare(&replacement, 2, &params, &other, other.as_ref())
+                        .unwrap(),
+                );
+                assert!(!same_payload(&color, &switched));
+                assert!(backend.image_payload(&switched).is_err());
+                assert_eq!(switched.to_host(other.as_ref()).unwrap().data, source.data);
+
+                let released = Arc::downgrade(switched.payload().unwrap());
+                drop(switched);
+                let cpu: Arc<dyn ComputeBackend> =
+                    Arc::new(spektrafilm_backend::cpu_backend::CpuBackend);
+                let host = cache
+                    .prepare(&replacement, 2, &params, &cpu, cpu.as_ref())
+                    .unwrap();
+                assert!(host.same_source(&replacement));
+                assert!(
+                    released.upgrade().is_none(),
+                    "CPU selection releases the GPU upload"
+                );
+                let cancelled = backend
+                    .with_cancellation(Some(Arc::new(AtomicBool::new(true))))
+                    .unwrap();
+                assert!(
+                    cache
+                        .prepare(&replacement, 2, &params, &backend, cancelled.as_ref())
+                        .unwrap_err()
+                        .contains("cancelled")
+                );
+                assert!(
+                    cache.entry.is_none(),
+                    "cancelled uploads must not populate the cache"
+                );
+                drop(cancelled);
+                let uploaded = retained(
+                    cache
+                        .prepare(&replacement, 2, &params, &backend, backend.as_ref())
+                        .unwrap(),
+                );
+                let device_input = InputImage::Device(color.clone());
+                let device = retained(
+                    cache
+                        .prepare(&device_input, 3, &params, &backend, backend.as_ref())
+                        .unwrap(),
+                );
+                assert!(
+                    same_payload(&device, &color),
+                    "device RAW is not uploaded or copied"
+                );
+                assert!(
+                    cache.entry.is_none(),
+                    "a device source evicts the old host upload"
+                );
+                assert!(!same_payload(&uploaded, &device));
+            },
+        );
     }
 }

@@ -112,5 +112,5 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) gr
  if params.output_layer!=0u && params.ow>0u {let old=sample(2u,p,params.image_rect,params.ow,params.oh,params.mode);rgb=clamp(old,vec3<f32>(0.0),vec3<f32>(1.0))*(1.0-params.fade)+clamp(rgb,vec3<f32>(0.0),vec3<f32>(1.0))*params.fade;}
  }
  let b=vec3<u32>(floor(clamp(rgb,vec3<f32>(0.0),vec3<f32>(1.0))*255.0+vec3<f32>(0.5)));
- out[local*3u]=b.x|(b.y<<8u)|(b.z<<16u)|0xff000000u;
+ out[local]=b.x|(b.y<<8u)|(b.z<<16u)|0xff000000u;
 }

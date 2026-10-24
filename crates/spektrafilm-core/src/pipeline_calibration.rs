@@ -417,6 +417,34 @@ pub(crate) fn build_with_backend(
             neutral_cmy_f64 = Some(cmy);
         }
     }
+
+    // Input-only processing has no film exposure or printing reference. Keep
+    // validation and resolved controls above, and prepare its real output
+    // boundary without constructing unused spectral tables or gray cards.
+    if params.workflow.route_enum() == WorkflowRoute::Input {
+        let output_gamut = crate::gamut_compression::OutputGamutCompress::build_with_backend(
+            &params.io.output_gamut_compress,
+            &params.io.output_color_space,
+            backend,
+        )?;
+        return Ok(CalibrationResult {
+            front_illuminant: film.info.reference_illuminant.clone(),
+            film,
+            print,
+            params,
+            tc_lut: None,
+            prepared_tc_lut: None,
+            mallett_core: None,
+            convert_converter: None,
+            print_exposure_factor: 1.0,
+            print_illuminant: Vec::new(),
+            preflash_raw: [0.0; 3],
+            midgray_density: Vec::new(),
+            compensated_midgray_density: Vec::new(),
+            output_gamut,
+            data_dir: Some(data_dir.to_path_buf()),
+        });
+    }
     let cmy_f64 = neutral_cmy_f64.unwrap_or([
         params.enlarger.c_filter_neutral as f64,
         params.enlarger.m_filter_neutral as f64,

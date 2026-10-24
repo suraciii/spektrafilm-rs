@@ -61,6 +61,8 @@ Choose the base route in **Input and capture → Workflow → workflow**, the fi
 
 RGB imports retain their original host samples; GPU RAW imports retain the decoded device image and its color metadata. Preview, Scan, independent GPU Export, and input viewing consume that source without rewriting it. With a selected GPU, viewing a rotated RGB import uploads the original samples and turns them on the device; both RGB and RAW rotation produce a separate retained presentation image. Import and rotation prepare the replacement view before publishing the new source or orientation; failure preserves the previous accepted source and output. An explicit CPU reference export or source-analysis operation materializes device samples only at that requested host boundary.
 
+GPU Preview and Scan reuse the current RGB input upload while its source, device, and color interpretation stay unchanged. Full-resolution Original navigation also reuses its source upload across pans and zoom changes. These caches retain only the current input for their viewing or rendering scope; they do not preload the photograph list.
+
 Input color-space and CCTF controls reinterpret the accepted samples; they do not convert or rewrite the stored RAW carrier. Preview, Scan, input viewing, and Export use that accepted declaration, and queued exports keep the declaration captured at submission even if the active photograph changes.
 
 ### Film Format
@@ -125,7 +127,7 @@ The optional appearance applies to any supported base workflow, including the `i
 
 `cmyk.active` and `cmyk.strength` enable the treatment independently of the base workflow. There is no CMYK route. The treatment remains three-channel RGB. It does not generate CMYK files, separations, plates, press-ready output, halftone, or paper texture.
 
-The `input` workflow color-manages an already rendered image to the output space. Film and print profile selections do not affect it. See the [film-chain specification](../specs/film-chain/spec.md) and [CMYK ink style specification](../specs/cmyk-style/spec.md) for the workflow contracts.
+The `input` workflow color-manages an already rendered image to the output space. Film and print profile selections do not affect it. It skips film-exposure and print-calibration tables while retaining configuration validation and output color preparation. Switching to a film workflow prepares the selected materials. See the [film-chain specification](../specs/film-chain/spec.md) and [CMYK ink style specification](../specs/cmyk-style/spec.md) for the workflow contracts.
 
 ### Grain profiles
 
@@ -177,11 +179,11 @@ The footer switches between **Original** (原图), the retained input, and **Mod
 
 The collapsible tonal-distribution readout sits above inspector search and stage navigation and describes the retained output without another render. It is viewer-only. Its empty state and its source follow [viewer presentation](../specs/gui-workflow/spec.md#viewer-presentation).
 
-The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel.
+The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel. GPU hover readings arrive asynchronously without blocking viewer navigation. Moving to another source pixel or changing the source or layer clears the old reading until the current result is ready.
 
 The window header shows the current source, film profile, print profile, and exact workflow route as read-only text; hover the route for its physical description. A lightweight **Rendering…** status appears at the viewer's top-right, or **渲染中……** in Simplified Chinese. It covers debounce, pipeline work, and the latest viewer composition. It disappears on completion or failure and is absent without a source. The last completed image and pointer navigation remain available while it runs. The header does not repeat this running message; it retains import, Save, Export, completion, and error evidence, including Export elapsed time and cancellation. Status ownership follows [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
 
-With a selected GPU, the accepted render owns device samples through viewing and Save. Fitted resampling, display conversion, ICC evaluation, full-source interpolation, crossfade, development animation, and virtual-paper numerical synthesis use disposable device buffers; none rewrites the accepted render. The native egui frontend receives only packed presentation pixels. Histogram data and hovered source pixels are bounded readouts, not a full-image download followed by re-upload. A failed viewer computation keeps the last accepted texture and reports the display error.
+With a selected GPU, the accepted render owns device samples through viewing and Save. Fitted resampling, display conversion, ICC evaluation, full-source interpolation, crossfade, development animation, and virtual-paper numerical synthesis use disposable device buffers; none rewrites the accepted render. The native egui frontend receives only packed RGBA8 presentation pixels. Histogram data and hovered source pixels are bounded readouts, not a full-image download followed by re-upload. Inactive camera and scanner lens blur do not allocate their image-sized blur scratch buffers. A failed viewer computation keeps the last accepted texture and reports the display error.
 
 ### Display transform and ICC
 
