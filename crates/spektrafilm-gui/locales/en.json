@@ -1160,6 +1160,8 @@
   "operations.image.invalid_path": "Image path contains a null byte. Choose a path without null bytes.",
   "operations.image.invalid_image": "Invalid RGB buffer dimensions or sample count",
   "operations.image.invalid_color_space": "Invalid image color space: %{detail}",
+  "operations.image.convert": "Saving conversion failed: %{detail}",
+  "operations.image.sample_kind": "Converted samples are %{got}, but %{format} %{depth}-bit output requires %{expected}",
   "operations.image.load": "Image loading failed for %{path}: %{detail}",
   "operations.image.save": "Image saving failed for %{path}: %{detail}",
   "operations.image.staging": "Image staging failed for %{path}: %{detail}",

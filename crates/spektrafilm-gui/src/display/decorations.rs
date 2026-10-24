@@ -98,6 +98,7 @@ impl PolaroidState {
         DisplayRaster {
             size: self.size,
             rgb: rgb.into(),
+            retained: None,
         }
     }
 }
@@ -129,7 +130,7 @@ pub fn layer_coefficients(t: f32) -> [f32; 9] {
 
 // Original pinned virtual_paper_watermark.png embedded so the viewer requires no
 // Python installation or runtime asset path.
-fn logo_alpha() -> (usize, usize, Vec<f32>) {
+pub(super) fn logo_alpha() -> (usize, usize, Vec<f32>) {
     let image = image::load_from_memory(include_bytes!("../../assets/virtual_paper_watermark.png"))
         .expect("embedded watermark PNG")
         .to_rgba8();
@@ -328,7 +329,7 @@ pub fn virtual_paper_back(size: [usize; 2]) -> DisplayRaster {
             [value; 3]
         })
         .collect();
-    DisplayRaster { size, rgb }
+    DisplayRaster { size, rgb, retained: None }
 }
 
 #[cfg(test)]
@@ -460,7 +461,7 @@ pub(crate) fn virtual_paper_back_without_watermark(size: [usize; 2]) -> DisplayR
             [value; 3]
         })
         .collect();
-    DisplayRaster { size, rgb }
+    DisplayRaster { size, rgb, retained: None }
 }
 
 #[cfg(test)]

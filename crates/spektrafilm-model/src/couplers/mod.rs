@@ -322,6 +322,7 @@ fn curves_before_dir_langmuir(
 /// Full DIR coupler density correction pipeline.
 ///
 /// Port of Python `apply_density_correction_dir_couplers`.
+/// Returns backend density-curve interpolation errors unchanged.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_density_correction(
     density_cmy: &ImageBuf,
@@ -339,7 +340,7 @@ pub fn apply_density_correction(
     langmuir_donor_k: [f64; 3],
     langmuir_receiver_k: [f64; 3],
     backend: &dyn ComputeBackend,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let prepared = prepare_dir(
         density_curves,
         log_exposure,

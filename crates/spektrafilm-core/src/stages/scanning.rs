@@ -14,7 +14,7 @@ use crate::profile::Profile;
 mod interpretation;
 mod setup;
 mod spectral;
-pub(crate) use spectral::scan_spectral_rgb;
+pub(crate) use spectral::{scan_spectral_rgb, scanner_lut_bounds};
 
 fn negative_to_positive_requested(params: &RuntimeParams) -> bool {
     params.scanner.scan_output == "negative_to_positive"
@@ -59,6 +59,48 @@ fn positive_tone(log_e: f64, tone: &ChannelTone, params: &RuntimeParams) -> f64 
     (positive + denominator) / denominator
 }
 
+pub(crate) fn density_reading_gpu_params(
+    profile: &Profile,
+    tones: &[ChannelTone; 3],
+    params: &RuntimeParams,
+) -> Result<spektrafilm_backend::ScannerDensityGpuParams, String> {
+    let calibration = interpretation::DensityCalibration::prepare(profile)?;
+    let (density, exposure, offsets, counts) = calibration.gpu_axes();
+    let operator = PreparedOperator::new(&params.scanner.operator);
+    let standard_setup = params.scanner.uses_standard();
+    let setup_aim_density = calibration.neutral_density(operator.pivot).iter().sum::<f64>() / 3.0;
+    let setup_gamma = calibration.neutral_gamma(operator.pivot);
+    if standard_setup && (!setup_aim_density.is_finite() || !setup_gamma.is_finite() || setup_gamma <= 0.0) {
+        return Err("standard setup requires a finite positive neutral-curve slope at 16%".into());
+    }
+    let output = colorspace::resolve(&params.io.output_color_space)?;
+    let tone_to_output = if std::ptr::eq(output, &colorspace::SRGB) {
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    } else {
+        colorspace::conversion_matrix(&colorspace::SRGB, output)
+    };
+    Ok(spektrafilm_backend::ScannerDensityGpuParams {
+        density,
+        exposure,
+        offsets,
+        counts,
+        contrast: tones.map(|tone| tone.contrast),
+        dmax: tones.map(|tone| tone.dmax),
+        brightness_ev: tones.map(|tone| tone.brightness_ev),
+        denominator: tones.map(|tone| -(-std::f64::consts::LN_10 * tone.dmax).exp_m1()),
+        camera_ev: if standard_setup { 0.0 } else { interpretation::camera_ev(params) },
+        lens_blur: params.scanner.lens_blur,
+        standard_setup,
+        setup_aim_density,
+        setup_gamma,
+        operator_pivot: operator.pivot,
+        operator_contrast_delta: operator.contrast_delta,
+        operator_exposure_ev: operator.exposure_ev,
+        operator_color: operator.color,
+        tone_to_output,
+    })
+}
+
 /// Immutable reconstructed exposure after the full-frame setup. Deliberately
 /// f64 even in f32 builds: tone is evaluated only after operator correction.
 pub(crate) struct PreparedNegative {
@@ -84,6 +126,9 @@ pub(crate) fn prepare_negative(
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
 ) -> Result<PreparedNegative, String> {
+    if backend.is_gpu() {
+        return Err("selected GPU negative reconstruction requires the retained scanner acquisition".into());
+    }
     let observation = super::StageObservation::cpu(
         backend,
         "negative_reconstruction",
@@ -101,7 +146,7 @@ pub(crate) fn prepare_negative(
             .data
             .par_iter_mut()
             .for_each(|value| *value = from_f64(10.0f64.powf(-to_f64(*value))));
-        let mut blurred = backend.gaussian_blur(&transmitted, params.scanner.lens_blur);
+        let mut blurred = backend.gaussian_blur(&transmitted, params.scanner.lens_blur)?;
         blurred
             .data
             .par_iter_mut()
@@ -311,6 +356,9 @@ fn scan_with_capture(
 ) -> Result<ImageBuf, String> {
     let negative_to_positive = negative_to_positive_requested(params);
     if negative_to_positive {
+        if backend.is_gpu() {
+            return Err("selected GPU negative conversion requires the retained scanner acquisition; retry with an explicit CPU request for host stage execution".into());
+        }
         params.validate()?;
         crate::pipeline_calibration::validate_scan_output(params, profile)?;
     }
@@ -363,8 +411,9 @@ fn scan_with_capture(
     let mut rgb = if negative_to_positive {
         interpret_negative_density_stage(density, profile, tones, params, backend)?
     } else {
-        capture.unwrap_or_else(|| {
-            scan_spectral_rgb(
+        match capture {
+            Some(capture) => capture,
+            None => scan_spectral_rgb(
                 density,
                 profile,
                 params,
@@ -372,23 +421,23 @@ fn scan_with_capture(
                 &channel_density,
                 base_density,
                 scan_context,
-            )
-        })
+            )?,
+        }
     };
     // Scanner readout optics operate on the linear acquisition before glare,
     // interpretation, or output gamut correction. The density interpretation
     // keeps its dedicated transmission-domain blur above.
     if params.scanner.lens_blur > 0.0 && !negative_to_positive {
-        rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
+        rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur)?;
     }
-    Ok(finish_tail(
+    finish_tail(
         rgb,
         params,
         backend,
         gamut,
         scan_context,
         output_space,
-    ))
+    )
 }
 
 /// The post-capture tail shared by the full scan and a pre-captured readout:
@@ -402,7 +451,7 @@ fn finish_tail(
     gamut: &crate::gamut_compression::OutputGamutCompress,
     scan_context: &crate::chain_prep::ScanColorContext,
     output_space: &spektrafilm_math::colorspace::RgbColorSpace,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     // Viewing glare. Since CAT+matrix is linear, we equivalently add glare in
     // RGB space by pre-multiplying the lamp XYZ through the same matrix.
     // Direct-film scans get no viewing glare (`io.scan_film`); only the print
@@ -455,7 +504,6 @@ fn finish_tail(
     // Grain consumes native display-encoded RGB, with no internal transfer
     // or primaries conversion. The scanned image supplies its output space.
     let grain_v2_active = params.film_render.grain.active
-        && params.settings.rgb_to_raw_method != "mallett2019"
         && matches!(
             params.film_render.grain.engine,
             crate::params::grain::GrainEngine::Procedural
@@ -490,14 +538,18 @@ fn finish_tail(
             .film_render
             .grain
             .gpu_params(params.random_seed, params.debug.deactivate_spatial_effects);
-        rgb = backend.grain_v2(&rgb, &gpu_params).unwrap_or_else(|| {
-            let _cpu = super::StageObservation::cpu(
-                backend,
-                "grain_v2_cpu",
-                spektrafilm_backend::telemetry::CpuReason::GrainV2Unsupported,
-            );
-            spektrafilm_model::grain::v2::apply_cpu(&rgb, grain)
-        });
+        rgb = match backend.grain_v2(&rgb, &gpu_params)? {
+            Some(image) => image,
+            None if backend.is_gpu() => return Err("grain_v2: selected GPU has no device operation".into()),
+            None => {
+                let _cpu = super::StageObservation::cpu(
+                    backend,
+                    "grain_v2_cpu",
+                    spektrafilm_backend::telemetry::CpuReason::GrainV2Unsupported,
+                );
+                spektrafilm_model::grain::v2::apply_cpu(&rgb, grain)
+            }
+        };
     }
     // CMYK ink style is the final post-scan appearance, after scanner-domain
     // grain. A linear export uses the helper's finite transfer round-trip and
@@ -523,7 +575,7 @@ fn finish_tail(
         });
     }
 
-    rgb
+    Ok(rgb)
 }
 
 /// Finish an already-captured readout in the scanner's stage order:
@@ -539,7 +591,7 @@ pub fn finish_capture(
     let output_space = colorspace::resolve(&params.io.output_color_space)
         .expect("output color space must be validated before scanning");
     let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, true);
-    rgb = finish_tail(rgb, params, backend, gamut, &prepared.scan, output_space);
+    rgb = finish_tail(rgb, params, backend, gamut, &prepared.scan, output_space)?;
     Ok(rgb)
 }
 
@@ -557,7 +609,7 @@ pub fn capture_linear(
         );
     }
     let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, true);
-    Ok(scan_spectral_rgb(
+    scan_spectral_rgb(
         density_cmy,
         profile,
         params,
@@ -565,7 +617,7 @@ pub fn capture_linear(
         &crate::chain_prep::channel_density(profile),
         &profile.data.base_density,
         &prepared.scan,
-    ))
+    )
 }
 /// Scan with the film base included — the per-stage topology entry point.
 pub fn process(

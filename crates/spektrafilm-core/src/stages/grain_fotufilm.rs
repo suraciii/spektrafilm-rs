@@ -22,14 +22,14 @@ use std::sync::{Arc, Mutex};
 /// owns the full port statement; a unit test keeps the two in sync.
 pub const SOURCE_REVISION: &str = "59d43471dbef45c85ae442e507a291fdebfb2ec5";
 /// Implementation identity reported by [`configuration_report`].
-const IMPLEMENTATION: &str = "rust_cpu_film";
+const IMPLEMENTATION: &str = "rust_film";
 /// The engine reports authored effective appearance, never stock calibration.
 const APPEARANCE_STATUS: &str = "authored_effective_not_stock_calibration";
 /// Readout method identity: complete periodic tile integration.
 const READOUT_METHOD: &str = "complete_periodic_tile";
 /// Execution note reported when the engine is active.
 const EXECUTION_NOTE: &str =
-    "Fotufilm Film prepares its crystal population and samples the grain residual on the CPU.";
+    "Fotufilm Film resolves on the selected executor when rendering; compute-device availability is unchecked.";
 /// Precision of the samples this stage reads and writes. The population and
 /// the residual arithmetic are `f64`; the bank's tile light field is `f32`.
 const EXECUTION_PRECISION: &str = if std::mem::size_of::<spektrafilm_math::precision::Scalar>() == 8
@@ -268,6 +268,9 @@ struct Inner {
     /// Loaded film profile before calibration mutates it.
     reference: Profile,
     cache: Mutex<Option<(Identity, Arc<model::Bank>)>>,
+    /// The prepared population, cached alongside the bank so the device
+    /// readout reads the same fitted records the host bank was built from.
+    population_cache: Mutex<Option<(Identity, Arc<model::Population>)>>,
 }
 
 impl Prepared {
@@ -277,6 +280,7 @@ impl Prepared {
             inner: Arc::new(Inner {
                 reference: film.clone(),
                 cache: Mutex::new(None),
+                population_cache: Mutex::new(None),
             }),
         }
     }
@@ -284,8 +288,11 @@ impl Prepared {
     /// Read the requested film region out of the full developed source.
     ///
     /// `source` is the full-source developed CMY density at `source_pitch_um`.
-    /// The model runs on the CPU, so the observation records a CPU executor
-    /// with its reason whatever backend the surrounding stages use.
+    /// The device runs every image-dependent stage — the conservative
+    /// resample, the stochastic formation, the pitch statistics and the
+    /// residual sampling — when the backend has a Fotufilm path; a backend
+    /// without one keeps the reference's host readout, whose stage then
+    /// records the CPU executor and its published reason.
     #[allow(clippy::too_many_arguments)]
     pub fn readout(
         &self,
@@ -297,14 +304,167 @@ impl Prepared {
         backend: &dyn spektrafilm_backend::ComputeBackend,
         cancel: &(dyn Fn() -> Result<(), String> + Sync),
     ) -> Result<ImageBuf, String> {
-        let mut observation = super::StageObservation::cpu(
-            backend,
-            "grain_fotufilm",
-            spektrafilm_backend::telemetry::CpuReason::FotufilmFilmCpu,
+        self.readout_dispatch(
+            source, film, params, source_pitch_um, grid, backend, cancel,
+        )
+    }
+
+    /// Route to the device when the backend has a Fotufilm path, else to the
+    /// reference's host readout.
+    ///
+    /// A host readout is a CPU stage: it records the CPU executor and the
+    /// reason the resident route was declined, exactly as the Dye field does.
+    /// A device readout records its own executor through the device dispatch.
+    #[allow(clippy::too_many_arguments)]
+    fn readout_dispatch(
+        &self,
+        source: &ImageBuf,
+        film: &Profile,
+        params: &RuntimeParams,
+        source_pitch_um: f64,
+        grid: ReadoutGrid,
+        backend: &dyn spektrafilm_backend::ComputeBackend,
+        cancel: &(dyn Fn() -> Result<(), String> + Sync),
+    ) -> Result<ImageBuf, String> {
+        match self.device_readout(
+            source, film, params, source_pitch_um, grid, backend, cancel,
+        )? {
+            Some(image) => Ok(image),
+            None => {
+                let mut observation = super::StageObservation::cpu(
+                    backend,
+                    "grain_fotufilm",
+                    spektrafilm_backend::telemetry::CpuReason::FotufilmFilmCpu,
+                );
+                let result = self.readout_inner(
+                    source, film, params, source_pitch_um, grid, cancel,
+                );
+                observation.set_complete(result.is_ok());
+                result
+            }
+        }
+    }
+
+    /// Adapt fitted coefficients for a device readout. No host bank or image
+    /// intermediate is formed: the selected device owns stochastic formation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resident_device_params(
+        &self,
+        source_width: u32,
+        source_height: u32,
+        film: &Profile,
+        params: &RuntimeParams,
+        source_pitch_um: f64,
+        grid: ReadoutGrid,
+        cancel: &(dyn Fn() -> Result<(), String> + Sync),
+    ) -> Result<spektrafilm_backend::FotufilmGpuParams, String> {
+        self.device_params(source_width, source_height, film, params, source_pitch_um, grid, cancel)
+    }
+
+    /// Host-image boundary adapter for backends implementing Fotufilm.
+    #[allow(clippy::too_many_arguments)]
+    fn device_readout(
+        &self,
+        source: &ImageBuf,
+        film: &Profile,
+        params: &RuntimeParams,
+        source_pitch_um: f64,
+        grid: ReadoutGrid,
+        backend: &dyn spektrafilm_backend::ComputeBackend,
+        cancel: &(dyn Fn() -> Result<(), String> + Sync),
+    ) -> Result<Option<ImageBuf>, String> {
+        let device_params = self.device_params(source.width, source.height, film, params, source_pitch_um, grid, cancel)?;
+        match backend.fotufilm_grain(source, &device_params) {
+            Some(result) => Ok(Some(result?)),
+            None => Ok(None),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn device_params(
+        &self, source_width: u32, source_height: u32, film: &Profile,
+        params: &RuntimeParams, source_pitch_um: f64, grid: ReadoutGrid,
+        cancel: &(dyn Fn() -> Result<(), String> + Sync),
+    ) -> Result<spektrafilm_backend::FotufilmGpuParams, String> {
+        cancel()?;
+        let stock = film.info.stock.as_deref().unwrap_or("<unnamed>");
+        let resolved_reference = crate::profile::resolve_for_render(
+            self.inner.reference.clone(),
+            params.film_render.development_time,
         );
-        let result = self.readout_inner(source, film, params, source_pitch_um, grid, cancel);
-        observation.set_complete(result.is_ok());
-        result
+        let reference = build_curves(&resolved_reference, 1.0, stock)?;
+        let current = build_curves(film, params.film_render.density_curve_gamma as f64, stock)?;
+        let (metadata, look) = metadata_and_look(film, params)?;
+        let identity = Identity {
+            reference,
+            current,
+            metadata,
+        };
+        // The device forms its own banks from the same prepared population,
+        // so it needs the population's records rather than the host bank.
+        let population = self.population(&identity, cancel)?;
+        cancel()?;
+        let monochrome = population.device_monochrome();
+        let records = population
+            .device_records()
+            .into_iter()
+            .map(|record| spektrafilm_backend::FotufilmRecordGpuParams {
+                sublayers: record
+                    .sublayers
+                    .iter()
+                    .map(|sublayer| spektrafilm_backend::FotufilmSublayerGpuParams {
+                        cells: sublayer.cells,
+                        silver: sublayer.silver,
+                        sigma_mm: sublayer.sigma_mm,
+                        capacity: sublayer.capacity,
+                        edge: sublayer.edge,
+                        forming: sublayer.forming.clone(),
+                        thresholds: sublayer.thresholds.clone(),
+                        reach_texels: sublayer.reach_texels,
+                        // `light` bounds the uncovered square by the
+                        // sublayer's own largest mark, so the device receives
+                        // the model's resolved area per sublayer.
+                        occupied_area: sublayer.occupied_area,
+                    })
+                    .collect(),
+                d_min: record.d_min,
+                d_max: record.d_max,
+            })
+            .collect::<Vec<_>>();
+        cancel()?;
+        let size = look.size.clamp(0.5, 4.0);
+        let softness = look.softness.clamp(0.5, 4.0);
+        let pitch_texels = [
+            grid.pitch_um[0] / 1000.0 / 0.001 / size,
+            grid.pitch_um[1] / 1000.0 / 0.001 / size,
+        ];
+        let origin_texels = [
+            grid.origin_um[0] / 1000.0 / 0.001 / size,
+            grid.origin_um[1] / 1000.0 / 0.001 / size,
+        ];
+        let footprint_texels = [
+            pitch_texels[0] * softness,
+            pitch_texels[1] * softness,
+        ];
+        Ok(spektrafilm_backend::FotufilmGpuParams {
+            formation_seed: model::formation_seed(),
+            records,
+            monochrome,
+            source_pitch_um,
+            origin_um: origin_texels,
+            pitch_um: pitch_texels,
+            width: grid.width,
+            height: grid.height,
+            source_width,
+            source_height,
+            footprint_um: footprint_texels,
+            seed: params.random_seed,
+            amount: look.amount,
+            size,
+            softness,
+            color: look.color,
+            layers: look.layers,
+        })
     }
 
     fn readout_inner(
@@ -353,6 +513,40 @@ impl Prepared {
             "film grain Fotufilm: readout on CPU"
         );
         bank.apply(&input, geometry, look, params.random_seed, cancel)
+    }
+
+    /// The prepared population for `identity`, preparing it on first use.
+    ///
+    /// Preparation is host-side and image-independent: the population, its
+    /// calibration and its bank formation are the same inputs the device
+    /// reads, so the device never re-fits anything.
+    fn population(
+        &self,
+        identity: &Identity,
+        cancel: &(dyn Fn() -> Result<(), String> + Sync),
+    ) -> Result<Arc<model::Population>, String> {
+        if let Ok(cache) = self.inner.population_cache.lock()
+            && let Some((cached, population)) = cache.as_ref()
+            && cached == identity
+        {
+            return Ok(population.clone());
+        }
+        cancel()?;
+        let population = model::Population::prepare(
+            model::PopulationInput {
+                curves: identity.current.clone(),
+                reference_curves: Some(identity.reference.clone()),
+                metadata: identity.metadata.clone(),
+                reference_metadata: Some(identity.metadata.clone()),
+            },
+            cancel,
+        )
+        .map_err(|error| format!("film grain Fotufilm: {error}"))?;
+        let population = Arc::new(population);
+        if let Ok(mut cache) = self.inner.population_cache.lock() {
+            *cache = Some((identity.clone(), population.clone()));
+        }
+        Ok(population)
     }
 
     /// The immutable bank for `identity`, preparing it on first use.
@@ -559,7 +753,7 @@ pub fn configuration_report(params: &RuntimeParams) -> serde_json::Value {
         "active": active,
         "engine": "fotufilm",
         "implementation": IMPLEMENTATION,
-        "effective_backend": if active { Some("cpu") } else { None },
+        "effective_backend": serde_json::Value::Null,
         "note": if active { Some(EXECUTION_NOTE) } else { None },
         "appearance_status": APPEARANCE_STATUS,
         "execution_precision": EXECUTION_PRECISION,
@@ -869,16 +1063,16 @@ mod tests {
     }
 
     #[test]
-    fn configuration_report_identifies_the_cpu_port() {
+    fn configuration_report_defers_executor_selection() {
         let params = fotufilm_params(FotufilmMaterial::Auto);
         let report = configuration_report(&params);
         assert_eq!(report["active"], true);
         assert_eq!(report["engine"], "fotufilm");
         assert_eq!(report["implementation"], IMPLEMENTATION);
         assert_eq!(report["appearance_status"], APPEARANCE_STATUS);
-        assert_eq!(report["effective_backend"], "cpu");
+        assert_eq!(report["effective_backend"], serde_json::Value::Null);
         assert_eq!(report["execution_precision"], EXECUTION_PRECISION);
-        assert!(report["note"].as_str().unwrap().contains("CPU"));
+        assert!(report["note"].as_str().unwrap().contains("selected executor"));
         assert_eq!(report["readout"], READOUT_METHOD);
         assert_eq!(report["prepared"], false);
         assert_eq!(report["source_revision"], SOURCE_REVISION);

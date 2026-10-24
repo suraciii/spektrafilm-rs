@@ -28,7 +28,10 @@ use spektrafilm_math::spectral::TcLut;
 mod execution;
 mod exposure;
 mod material;
+mod retained;
+pub use retained::RetainedRender;
 mod output_mix;
+mod preflight;
 mod resident;
 pub(crate) mod scan_frame;
 mod stages;
@@ -87,10 +90,12 @@ pub struct Pipeline {
     pub print: Profile,
     pub params: RuntimeParams,
     tc_lut: Option<TcLut>,
+    prepared_tc_lut: Option<spektrafilm_backend::PreparedTable>,
     /// Mallett2019 reflectance-basis core matrix (linear-sRGB → raw), when that
     /// upsampler is selected instead of the hanatos2025 tc LUT. Mutually
     /// exclusive with `tc_lut`.
     mallett_core: Option<[[f64; 3]; 3]>,
+    convert_converter: Option<crate::stages::converting::Converter>,
     /// Illuminant used by the RGB→tc projection before TC LUT lookup.
     /// Most methods use the film reference illuminant; arctic2026alpha02
     /// recovers reflectance in D65 coordinates and relights separately.
@@ -151,7 +156,11 @@ impl Pipeline {
     /// Calibration-affecting runtime controls are detected and rebuilt from
     /// the spectral source data; rebuild and validation failures are returned
     /// instead of retaining stale calibration.
-    pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
+    pub fn with_params(self, params: RuntimeParams) -> Result<Self, String> {
+        self.with_params_with_backend(params, &spektrafilm_backend::cpu_backend::CpuBackend)
+    }
+
+    pub fn with_params_with_backend(mut self, params: RuntimeParams, backend: &dyn ComputeBackend) -> Result<Self, String> {
         let mut params = params;
         crate::params_builder::normalize_runtime_topology(&self.film, &mut params);
         params.validate()?;
@@ -169,8 +178,14 @@ impl Pipeline {
         let spectral_changed = crate::pipeline_calibration::spectral_changed(&self.params, &params);
         let calibration_changed =
             crate::pipeline_calibration::calibration_changed(&self.params, &params);
-        if spectral_changed || calibration_changed {
-            return self.rebuild_spectral(params);
+        let preparation_changed = match (&self.prepared_tc_lut, backend.preparation_device_id()) {
+            (Some(table), Some(device)) => table.values.backend_id() != device,
+            (Some(_), None) => true,
+            (None, Some(_)) => self.tc_lut.is_some(),
+            (None, None) => false,
+        };
+        if spectral_changed || calibration_changed || preparation_changed {
+            return self.rebuild_spectral_with_backend(params, backend);
         }
         if params.scanner.conversion_style != self.params.scanner.conversion_style {
             self.conversion_tones = crate::stages::scanning::style::resolve(
@@ -178,9 +193,10 @@ impl Pipeline {
                 self.data_dir.as_deref(),
             )?;
         }
-        self.output_gamut = crate::gamut_compression::OutputGamutCompress::build(
+        self.output_gamut = crate::gamut_compression::OutputGamutCompress::build_with_backend(
             &params.io.output_gamut_compress,
             &params.io.output_color_space,
+            backend,
         )?;
         self.params = params;
         Ok(self)
@@ -193,12 +209,16 @@ impl Pipeline {
     /// from the spectral and calibration control keys, so a caller that must
     /// refresh the resolved film cannot rely on `with_params` alone.
     pub(crate) fn rebuild_spectral(self, params: RuntimeParams) -> Result<Self, String> {
+        self.rebuild_spectral_with_backend(params, &spektrafilm_backend::cpu_backend::CpuBackend)
+    }
+
+    pub(crate) fn rebuild_spectral_with_backend(self, params: RuntimeParams, backend: &dyn ComputeBackend) -> Result<Self, String> {
         let data_dir = self
             .data_dir
             .clone()
             .ok_or_else(|| "pipeline lacks data_dir for calibration rebuild".to_owned())?;
         let mut rebuilt =
-            Self::new_with_spectral(self.film.clone(), self.print.clone(), params, &data_dir)?;
+            Self::new_with_spectral_backend(self.film.clone(), self.print.clone(), params, &data_dir, backend)?;
         rebuilt.original_film = self.original_film.clone();
         rebuilt.fotufilm_prepared = self.fotufilm_prepared.clone();
         rebuilt.cancellation = self.cancellation.clone();
@@ -279,12 +299,16 @@ impl Pipeline {
         )
         .expect("validated output gamut configuration");
         let front_illuminant = film.info.reference_illuminant.clone();
+        let convert_converter = crate::stages::converting::resolve_converter(&film, &params)
+            .expect("validated film conversion");
         Self {
             film,
             print,
             params,
             tc_lut: None,
+            prepared_tc_lut: None,
             mallett_core: None,
+            convert_converter,
             front_illuminant,
             print_exposure_factor: 1.0,
             print_illuminant,
@@ -301,12 +325,24 @@ impl Pipeline {
         }
     }
 
-    /// Create pipeline with full spectral calibration.
+    /// Create the CPU reference pipeline with full spectral calibration.
+    /// For selected-GPU processing use [`Self::new_with_spectral_backend`], or
+    /// migrate with [`Self::with_params_with_backend`] before processing.
     pub fn new_with_spectral(
         film: Profile,
         print: Profile,
         params: RuntimeParams,
         data_dir: &Path,
+    ) -> Result<Self, String> {
+        Self::new_with_spectral_backend(film, print, params, data_dir, &spektrafilm_backend::cpu_backend::CpuBackend)
+    }
+
+    pub fn new_with_spectral_backend(
+        film: Profile,
+        print: Profile,
+        params: RuntimeParams,
+        data_dir: &Path,
+        backend: &dyn ComputeBackend,
     ) -> Result<Self, String> {
         let original_print = Arc::new(print.clone());
         let original_film = Arc::new(film.clone());
@@ -318,13 +354,15 @@ impl Pipeline {
             &params.scanner.conversion_style,
             Some(data_dir),
         )?;
-        let calibrated = crate::pipeline_calibration::build(film, print, params, data_dir)?;
+        let calibrated = crate::pipeline_calibration::build_with_backend(film, print, params, data_dir, backend)?;
         Ok(Self {
             film: calibrated.film,
             print: calibrated.print,
             params: calibrated.params,
             tc_lut: calibrated.tc_lut,
+            prepared_tc_lut: calibrated.prepared_tc_lut,
             mallett_core: calibrated.mallett_core,
+            convert_converter: calibrated.convert_converter,
             front_illuminant: calibrated.front_illuminant,
             print_exposure_factor: calibrated.print_exposure_factor,
             print_illuminant: calibrated.print_illuminant,

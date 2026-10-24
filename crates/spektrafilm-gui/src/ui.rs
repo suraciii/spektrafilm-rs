@@ -257,7 +257,7 @@ impl App {
             }
             let save = ui
                 .add_enabled(
-                    self.output_image.is_some() && !busy,
+                    (self.output_image.is_some() || self.output_retained.is_some()) && !busy,
                     egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.save_retained")),
                 )
                 .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.save_help"));
@@ -422,15 +422,13 @@ impl App {
         let reprocess = self.image_path.as_deref() == Some(path);
         let previous_baseline = self.photograph.baseline.clone();
         let previous_record = self.photograph.record_path.clone();
-        let loaded = source_digest
-            .as_ref()
+        let loaded = source_digest.as_ref()
             .map_err(|error| anyhow::anyhow!("{error:#}"))
             .and_then(|_| {
                 if raw {
                     let settings = &self.gui_state.sections["load_raw"];
                     let options = spektrafilm_raw::RawOptions {
-                        white_balance: match settings["white_balance"].as_str().unwrap_or("as_shot")
-                        {
+                        white_balance: match settings["white_balance"].as_str().unwrap_or("as_shot") {
                             "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
                             "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
                             "custom" => spektrafilm_raw::WhiteBalance::Custom,
@@ -440,21 +438,26 @@ impl App {
                         tint: settings["tint"].as_f64(),
                         lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
                     };
-                    spektrafilm_raw::load(path, &options)
-                        .map(|result| {
+                    if self.backend.is_gpu() {
+                        spektrafilm_raw::load_retained_with_backend(path, &options, self.backend.as_ref())
+                            .map(|result| {
+                                raw_lens_info = Some(result.lens_info);
+                                lens_model_identity = result.lens_model_identity;
+                                (crate::render::InputImage::Device(result.image), image_io::read_metadata(path))
+                            }).map_err(anyhow::Error::msg)
+                    } else {
+                        spektrafilm_raw::load(path, &options).map(|result| {
                             raw_lens_info = Some(result.lens_info);
                             lens_model_identity = result.lens_model_identity;
-                            LoadedImage {
-                                image: result.image,
-                                metadata: image_io::read_metadata(path),
-                            }
-                        })
-                        .map_err(anyhow::Error::msg)
+                            (crate::render::InputImage::Host(Arc::new(result.image)), image_io::read_metadata(path))
+                        }).map_err(anyhow::Error::msg)
+                    }
                 } else {
-                    image_io::load(path).map_err(anyhow::Error::from)
+                    image_io::load(path).map(|loaded| (
+                        crate::render::InputImage::Host(Arc::new(loaded.image)), loaded.metadata,
+                    )).map_err(anyhow::Error::from)
                 }
-            })
-            .and_then(|loaded| {
+            }).and_then(|loaded| {
                 anyhow::ensure!(
                     source_digest.as_ref().ok() == Some(&Self::accepted_source_digest(path)?),
                     crate::app::Message::new("photo.error.source_changed")
@@ -462,10 +465,21 @@ impl App {
                 Ok(loaded)
             });
         match loaded {
-            Ok(LoadedImage {
-                image: img,
-                metadata,
-            }) => {
+            Ok((img, metadata)) => {
+                let declaration = if raw {
+                    ("ACES2065-1", false)
+                } else {
+                    (self.params.io.input_color_space.as_str(), self.params.io.input_cctf_decoding)
+                };
+                let (viewer_image, viewer_raster) = match self.prepare_input_viewer(
+                    &img, 0, declaration.0, declaration.1,
+                ) {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        self.status = crate::app::Message::new("surfaces.status.viewer_error").arg("error", error);
+                        return;
+                    }
+                };
                 if raw {
                     self.params.io.input_color_space = "ACES2065-1".into();
                     self.params.io.input_cctf_decoding = false;
@@ -479,8 +493,8 @@ impl App {
                 } else {
                     "surfaces.status.loaded"
                 })
-                .arg("width", img.width)
-                .arg("height", img.height)
+                .arg("width", img.width())
+                .arg("height", img.height())
                 .arg("mp", format!("{:.1}", img.pixel_count() as f64 / 1e6))
                 .arg("ms", format!("{:.0}", t.elapsed().as_secs_f32() * 1000.0));
                 self.raw_applied_settings =
@@ -501,10 +515,12 @@ impl App {
                 self.set_operator_compare(false);
                 self.render_worker.cancel_active();
                 self.full_scan_requested = false;
-                self.image = Some(Arc::new(img));
-                self.refresh_input_viewer();
+                self.image = Some(img);
+                self.publish_input_viewer(viewer_image, viewer_raster);
                 self.image_path = Some(path.to_path_buf());
                 self.output_image = None;
+                self.output_retained = None;
+                self.output_histogram = None;
                 self.output_metadata = None;
                 self.source_render = None;
                 self.retained_kind = None;
@@ -529,59 +545,106 @@ impl App {
         }
     }
 
+    /// Rotate the retained input by a quarter turn.
+    ///
+    /// Orientation is input metadata, not an edit of the source raster: the
+    /// selected GPU applies it in the working-geometry pass and the CPU
+    /// reference applies it before its own stages. Two opposite turns cancel
+    /// exactly, and a rotation never re-encodes or resamples the source.
     fn rotate_input_image(&mut self, clockwise: bool) {
-        let Some(image) = self.image.as_ref() else {
+        let Some(source) = self.image.as_ref() else {
             self.status = crate::app::Message::new("surfaces.status.rotate_requires_image");
             return;
         };
         let quarter_turns = if clockwise { -1 } else { 1 };
-        let rotated = image.rotated_quarter_turns(quarter_turns);
-        self.image = Some(Arc::new(rotated));
-        self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
+        let rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
+        let (viewer_image, viewer_raster) = match self.prepare_input_viewer(
+            source, rotation, &self.params.io.input_color_space,
+            self.params.io.input_cctf_decoding,
+        ) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.status = crate::app::Message::new("surfaces.status.viewer_error").arg("error", error);
+                return;
+            }
+        };
+        self.input_rotation = rotation;
         self.input_epoch = self.input_epoch.wrapping_add(1);
         self.set_operator_compare(false);
         self.render_worker.cancel_active();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.full_scan_requested = false;
         self.output_image = None;
+        self.output_retained = None;
+        self.output_histogram = None;
         self.output_metadata = None;
         self.source_render = None;
-        self.refresh_input_viewer();
+        self.publish_input_viewer(viewer_image, viewer_raster);
         self.dirty = true;
         self.force_preview = true;
         self.status = crate::app::Message::new("surfaces.status.rotated")
             .arg("degrees", self.input_rotation * 90);
     }
 
-    /// Hand the current input image to the viewer: capped input raster, its
-    /// display source, and the full-resolution source the viewer later prepares
-    /// display rasters from. Every path that replaces `image` ends here, so a
-    /// new handoff step cannot land in only one of them.
+    /// Rebuild presentation only; accepted source samples stay immutable.
     pub(crate) fn refresh_input_viewer(&mut self) {
-        let Some(image) = self.image.as_ref() else {
-            return;
-        };
-        match display::input_display_raster(
-            image,
-            &self.params.io.input_color_space,
-            self.params.io.input_cctf_decoding,
-            self.params.settings.preview_max_size as usize,
-        ) {
-            Ok(raster) => {
-                self.viewer
-                    .set_input(raster, [image.width as usize, image.height as usize]);
-                self.viewer.set_input_display_source(
-                    &self.params.io.input_color_space,
-                    self.params.io.input_cctf_decoding,
-                );
-                self.viewer
-                    .seed_prepared_input(image.clone(), self.params.settings.preview_max_size);
-            }
-            Err(e) => {
-                self.status =
-                    crate::app::Message::new("surfaces.status.viewer_error").arg("error", e)
-            }
+        let Some(source) = self.image.as_ref() else { return; };
+        match self.prepare_input_viewer(source, self.input_rotation,
+            &self.params.io.input_color_space, self.params.io.input_cctf_decoding) {
+            Ok((image, raster)) => self.publish_input_viewer(image, raster),
+            Err(error) => self.status = crate::app::Message::new("surfaces.status.viewer_error").arg("error", error),
         }
+    }
+    /// Prepare presentation geometry without changing the accepted input.
+    /// A selected GPU keeps orientation and display arithmetic on its device.
+    fn prepare_input_viewer(
+        &self,
+        source: &crate::render::InputImage,
+        rotation: i32,
+        input_color_space: &str,
+        input_cctf_decoding: bool,
+    ) -> Result<(crate::render::InputImage, display::DisplayRaster), String> {
+        let image = source.rotated(
+            rotation, self.backend.as_ref(), input_color_space, input_cctf_decoding,
+        )?;
+        let max_size = self.params.settings.preview_max_size as usize;
+        let raster = match &image {
+            crate::render::InputImage::Host(source) => display::input_display_raster_with(
+                self.backend.as_ref(), source, input_color_space, input_cctf_decoding, max_size,
+            )?,
+            crate::render::InputImage::Device(source) => display::output_display_raster_retained(
+                self.backend.as_ref(), source, source.space().name,
+                source.domain() == spektrafilm_backend::SampleDomain::Encoded,
+                true, None, max_size,
+            )?.0,
+        };
+        Ok((image, raster))
+    }
+
+    fn publish_input_viewer(
+        &mut self,
+        image: crate::render::InputImage,
+        raster: display::DisplayRaster,
+    ) {
+        self.viewer.set_input(raster, [image.width() as usize, image.height() as usize]);
+        let (space, encoded) = match &image {
+            crate::render::InputImage::Host(_) => (
+                self.params.io.input_color_space.as_str(), self.params.io.input_cctf_decoding,
+            ),
+            crate::render::InputImage::Device(source) => (
+                source.space().name, source.domain() == spektrafilm_backend::SampleDomain::Encoded,
+            ),
+        };
+        self.viewer.set_input_display_source(space, encoded);
+        match &image {
+            crate::render::InputImage::Host(source) => self.viewer.seed_prepared_input(
+                source.clone(), self.params.settings.preview_max_size,
+            ),
+            crate::render::InputImage::Device(source) => self.viewer.seed_prepared_device_input(
+                source.clone(), self.params.settings.preview_max_size,
+            ),
+        }
+        self.oriented_input = Some(image);
     }
 
     fn rotate_input_image_clockwise(&mut self) {
@@ -1494,7 +1557,8 @@ impl App {
     /// Result identity is independent from the current worker's operation.
     /// In particular, a pending Scan must not relabel a retained Preview.
     pub(crate) fn retained_result_identity(&self, ctx: &egui::Context) -> String {
-        let Some(output) = self.output_image.as_ref() else {
+        let Some([width, height]) = self.output_retained.as_ref().map(|image| [image.width(), image.height()])
+            .or_else(|| self.output_image.as_ref().map(|image| [image.width, image.height])) else {
             return crate::i18n::text(ctx, "result.identity.empty").into_owned();
         };
         let operation = self.retained_kind.map_or_else(
@@ -1505,8 +1569,8 @@ impl App {
             ctx,
             "result.identity.summary",
             operation = operation,
-            width = output.width,
-            height = output.height,
+            width = width,
+            height = height,
             currency = crate::i18n::text(
                 ctx,
                 if self.accepted_frame_is_stale() {
@@ -1657,7 +1721,7 @@ impl App {
                     ui.label(
                         egui::RichText::new(self.retained_result_identity(ui.ctx())).color(color),
                     );
-                    if self.output_image.is_some()
+                    if (self.output_image.is_some() || self.output_retained.is_some())
                         && self.retained_kind == Some(RenderKind::Preview)
                     {
                         ui.label(
@@ -1750,10 +1814,10 @@ impl eframe::App for App {
         // Share the renderer's exact crop and rescale rounding without
         // allocating an image just to describe its delivered dimensions.
         let export_dimensions = self
-            .image
+            .oriented_input
             .as_ref()
             .and_then(|image| {
-                crate::export::output_dimensions([image.width, image.height], &self.params.io).ok()
+                crate::export::output_dimensions([image.width(), image.height()], &self.params.io).ok()
             })
             .unwrap_or([0, 0]);
         let export_was_open = self.export_dialog.is_open();
@@ -1797,13 +1861,13 @@ impl eframe::App for App {
                 inspector.set_clip_rect(inspector_rect);
                 inspector.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                 let ui = &mut inspector;
-                let output_id = self
-                    .output_image
-                    .as_ref()
-                    .map(|o| Arc::as_ptr(o) as usize as u64)
-                    .unwrap_or(0);
-                self.histogram
-                    .update(&self.output_image, output_id, ui.ctx());
+                if let Some(data) = self.output_histogram.as_ref() {
+                    let output_id = self.source_render.as_ref().expect("accepted GPU output has source identity").operation_id;
+                    self.histogram.update_retained(data, output_id);
+                } else {
+                    let output_id = self.output_image.as_ref().map(|o| Arc::as_ptr(o) as usize as u64).unwrap_or(0);
+                    self.histogram.update(&self.output_image, output_id, ui.ctx());
+                }
                 self.histogram.render(ui);
                 ui.add_space(theme::SPACE_BLOCK);
                 ui.horizontal(|ui| {
@@ -2034,14 +2098,13 @@ impl eframe::App for App {
             });
             let displayed_output = match self.comparison_output() {
                 Some(reference) => reference.output.cloned(),
-                None => self
-                    .operator_comparison
-                    .as_ref()
-                    .map(|comparison| comparison.image.clone())
-                    .or_else(|| self.output_image.clone()),
+                None => match self.operator_comparison.as_ref() {
+                    Some(comparison) => comparison.image.host_image().cloned(),
+                    None => self.output_image.clone(),
+                },
             };
             self.viewer
-                .show(ui, self.image.as_ref(), displayed_output.as_ref());
+                .show(ui, self.oriented_input.as_ref(), displayed_output.as_ref());
             // Before/after compare divider overlay
             if self.compare_active {
                 let rect = ui.max_rect();

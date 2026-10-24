@@ -14,7 +14,7 @@ use anyhow::Result;
 use eframe::egui;
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_backend::telemetry::{CollectionMode, ObservationKind, Purpose};
-use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
+use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, SaveOptions};
 use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::presets::workflow_default;
 use spektrafilm_core::profile;
@@ -63,7 +63,9 @@ use profiles::{
 };
 #[cfg(test)]
 use render::RuntimeCache;
-use render::{RenderSnapshot, build_runtime_observed};
+use render::RenderSnapshot;
+#[cfg(test)]
+use render::build_runtime_observed;
 use render_worker::{RenderJob, RenderKind, RenderRequest, RenderWorker, observed_result};
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
@@ -108,7 +110,13 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
-    let backend = gui_backend();
+    let backend = match gui_backend() {
+        Ok(backend) => backend,
+        Err(error) => {
+            eprintln!("[spektrafilm] {error}");
+            std::process::exit(1);
+        }
+    };
     let diagnostics_dir = std::env::var_os("SPEKTRAFILM_GUI_DIAGNOSTICS_DIR").map(PathBuf::from);
     if let Some(directory) = diagnostics_dir.as_deref()
         && !directory.is_dir()
@@ -203,7 +211,7 @@ mod telemetry_lifecycle_tests {
         app.params.camera.auto_exposure = false;
         app.params.print_render.glare.active = false;
         app.params.settings.preview_max_size = 4;
-        app.image = Some(Arc::new(ImageBuf::from_data(
+        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::from_data(
             24,
             8,
             (0..24 * 8 * 3)
@@ -211,7 +219,7 @@ mod telemetry_lifecycle_tests {
                     spektrafilm_math::precision::from_f64(if i / 3 % 24 < 5 { 0.01 } else { 0.7 })
                 })
                 .collect(),
-        )));
+        ))));
         app
     }
 
@@ -227,7 +235,7 @@ mod telemetry_lifecycle_tests {
         let edited_runtime = build_runtime_observed(&edited, false, &context).unwrap();
         assert_eq!(edited_runtime.params().scanner.lens_blur, 2.5);
         assert_eq!(source_runtime.params().scanner.lens_blur, 0.0);
-        let input = app.image.as_ref().unwrap();
+        let input = app.image.as_ref().unwrap().host_image().unwrap();
         let before = source_runtime
             .process((**input).clone(), app.backend.as_ref())
             .unwrap();
@@ -249,7 +257,7 @@ mod telemetry_lifecycle_tests {
             let mut app = scanner_app();
             let snapshot = app.render_snapshot(app.params.clone());
             let context = ObservationContext::default();
-            let input = app.image.as_ref().unwrap().clone();
+            let input = app.image.as_ref().unwrap().host_image().unwrap().clone();
             let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
             let mut cache = RuntimeCache::default();
             let preview_first = first.unwrap();
@@ -325,7 +333,7 @@ mod telemetry_lifecycle_tests {
         app.params.workflow.route = "input > convert-film > scan".into();
         app.params.scanner.scan_output = "negative_to_positive".into();
         let context = ObservationContext::default();
-        let input = app.image.as_ref().unwrap().clone();
+        let input = app.image.as_ref().unwrap().host_image().unwrap().clone();
         app.params.camera.auto_exposure = false;
         let first = app.render_snapshot(app.params.clone());
         app.parameter_revision = app.parameter_revision.wrapping_add(1);
@@ -352,7 +360,7 @@ mod telemetry_lifecycle_tests {
         app.gui_state.sections["special"]["film_channel_swap"] = serde_json::json!([2, 0, 1]);
         app.gui_state.sections["special"]["print_channel_swap"] = serde_json::json!([1, 2, 0]);
         let snapshot = app.render_snapshot(app.params.clone());
-        let input = app.image.as_ref().unwrap().clone();
+        let input = app.image.as_ref().unwrap().host_image().unwrap().clone();
         let context = ObservationContext::default();
         let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
         let mut cache = RuntimeCache::default();
@@ -360,6 +368,7 @@ mod telemetry_lifecycle_tests {
         let canonical_output = canonical
             .process((*input).clone(), app.backend.as_ref())
             .unwrap();
+
         let actual_output = actual
             .process((*input).clone(), app.backend.as_ref())
             .unwrap();
@@ -397,6 +406,8 @@ mod telemetry_lifecycle_tests {
             request_id,
             kind: RenderKind::Preview,
             animate: false,
+            backend_name: "CPU".into(),
+            rotation_quarter_turns: 0,
             collection_mode: CollectionMode::Summary,
         }
     }

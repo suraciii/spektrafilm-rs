@@ -17,7 +17,7 @@ A supported image-processing configuration must have a complete GPU implementati
 The scope must cover these production operations:
 
 - RAW demosaicing, sensor corrections required by the selected decoder, camera orientation, selected white balance, lens correction, and transformation to normalized linear input.
-- Raster input transfer decoding and color interpretation, full-source exposure and scanner-setup measurements, crop, rotation, resize, antialiasing, and working pixel-pitch propagation.
+- Raster input transfer decoding and color interpretation, full-source exposure metering, crop, rotation, resize, antialiasing, and working pixel-pitch propagation.
 - All supported base workflows, including the `input` workflow, film scan, film-print-scan, and every supported convert-film route.
 - Both RGB-to-raw methods, selected input and output gamut operations, spectral integration, selected spectral-LUT evaluation, material exposure and development, independently filtered preflash, chemistry, and channel mapping.
 - Camera and enlarger diffusion, highlight boost, per-channel halation, DIR including its exponential tails and non-default coefficients, scanner optics, print viewing glare, and unsharp masking.
@@ -28,6 +28,8 @@ The scope must cover these production operations:
 - Pointwise LUT lattice evaluation through the calibrated runtime, with the existing bake neutralization and delivery rules.
 
 Existing route restrictions and named preview, diagnostic, spatial, stochastic, or LUT bypass rules remain authoritative. GPU selection must not add a bypass. Save must convert retained output without rerendering simulation or regenerating grain.
+
+Material-stage export and continuation currently remain CPU-only. Selected GPU execution must reject those boundaries before numerical processing or publication. This implementation gap does not narrow the complete-workflow target above.
 
 Native file reading, container parsing, compressed-sample unpacking, file encoding and compression, metadata handling, hashing, and atomic publication may run on the host. A native RAW call that also performs demosaicing, white balance, lens correction, or color conversion must not be classified entirely as file I/O. Those numerical operations remain in scope.
 
@@ -80,7 +82,7 @@ Unrepresentable dimensions, precision requirements, or minimum working sets must
 Acceptance must freeze the CPU reference, input and data identities, effective controls, seeds, stage domains, and comparison budgets before judging GPU candidates. Each budget must state its metric, units, population, absolute and relative bounds where applicable, and source. Bounds must follow reference calculations, repeatability, or numerical sensitivity. A missing justified budget means that numerical acceptance is incomplete, not passed.
 
 1. Exercise real GUI Preview, Scan, Export, Save, and viewer operations, CLI process and render, RAW ingestion, and pointwise LUT evaluation. Use the existing application entry points and readable published artifacts.
-2. Exercise every supported route, receiver, conversion method, grain engine and mode, color-space and gamut family, chemistry branch, spectral-LUT setting, and optical-effect family. Cover relevant combinations, not only isolated kernels. Default Spektra, active diffusion, negative conversion, and non-default DIR and slide points must complete without CPU image arithmetic.
+2. Exercise every supported route, conversion style, grain engine and mode, color-space and gamut family, chemistry branch, spectral-LUT setting, and optical-effect family. Cover relevant combinations, not only isolated kernels. Default Spektra, active diffusion, standard full-frame negative-to-positive setup and operator correction, declared fixed per-channel styles, non-default DIR, scanner lens blur, and unsharp masking must complete without CPU image arithmetic.
 3. Compare paired CPU native-f32, CPU f64, and hardware-GPU outputs from identical declared inputs. Compare stage-domain samples and complete outputs. Include neutral and chromatic wedges, toe and shoulder, extreme headroom, signed inputs where supported, fractional geometry, edges, and photographic scenes.
    CPU native-f32 is a separate comparison, not the authority for reference-sensitive discrete decisions. A precision comparison must identify the exact conditioning values supplied to each sampler.
 4. Prove stochastic alignment under the [stochastic contract](design.md#stochastic-alignment). Include zero and nonzero seeds, layered sampling, count-law transition boundaries, field overlap, cropped and tiled reads, and repeated execution. Statistical appearance evidence must supplement exact discrete checks and bounded sample comparisons.

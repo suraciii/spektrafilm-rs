@@ -789,66 +789,7 @@ pub struct TapsParams {
     pub collect: Option<String>,
 }
 
-/// Named pipeline boundary — the Rust spelling of upstream `Tap`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tap {
-    RgbIn,
-    RgbPre,
-    LogEFilm,
-    CmyFilm,
-    LogEPrint,
-    CmyPrint,
-    RgbOut,
-}
-
-impl Tap {
-    /// Parse a wire tap name. Errors mirror upstream's "unknown tap" and
-    /// "no node path" failures: the message lists every valid name so a
-    /// typo in a params file is immediately actionable.
-    pub fn parse(name: &str) -> Result<Self, String> {
-        match name {
-            "rgb_in" => Ok(Self::RgbIn),
-            "rgb_pre" => Ok(Self::RgbPre),
-            "log_e_film" => Ok(Self::LogEFilm),
-            "cmy_film" => Ok(Self::CmyFilm),
-            "log_e_print" => Ok(Self::LogEPrint),
-            "cmy_print" => Ok(Self::CmyPrint),
-            "rgb_out" => Ok(Self::RgbOut),
-            other => Err(format!(
-                "unknown tap {other:?}: valid taps are rgb_in, rgb_pre, log_e_film, \
-                 cmy_film, log_e_print, cmy_print, rgb_out"
-            )),
-        }
-    }
-
-    /// The boundary's position in the chain, counted from the input side. A
-    /// route that skips a stage removes it instead of renumbering the rest, so
-    /// positions stay comparable across topologies.
-    pub const fn position(self) -> u8 {
-        match self {
-            Self::RgbIn => 0,
-            Self::RgbPre => 1,
-            Self::LogEFilm => 2,
-            Self::CmyFilm => 3,
-            Self::LogEPrint => 4,
-            Self::CmyPrint => 5,
-            Self::RgbOut => 6,
-        }
-    }
-
-    /// The wire name (upstream `Tap` attribute values).
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::RgbIn => "rgb_in",
-            Self::RgbPre => "rgb_pre",
-            Self::LogEFilm => "log_e_film",
-            Self::CmyFilm => "cmy_film",
-            Self::LogEPrint => "log_e_print",
-            Self::CmyPrint => "cmy_print",
-            Self::RgbOut => "rgb_out",
-        }
-    }
-}
+pub use spektrafilm_backend::Tap;
 
 impl RuntimeParams {
     /// Validate enum-like string fields against the values the engine
@@ -972,8 +913,8 @@ impl RuntimeParams {
             )
             .arg("value", format!("{:?}", self.io.output_color_space))
         })?;
-        crate::input_gamut::InputGamutCompress::build_detailed(&self.io.input_gamut_compress)?;
-        crate::gamut_compression::OutputGamutCompress::build_detailed(
+        crate::input_gamut::InputGamutCompress::validate_detailed(&self.io.input_gamut_compress)?;
+        crate::gamut_compression::OutputGamutCompress::validate_detailed(
             &self.io.output_gamut_compress,
             &self.io.output_color_space,
         )?;

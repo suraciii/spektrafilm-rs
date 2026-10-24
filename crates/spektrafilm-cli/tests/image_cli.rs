@@ -324,7 +324,7 @@ fn raster_declaration_requires_supplied_components_without_publication() {
 }
 
 #[test]
-fn fotufilm_dry_run_reports_authored_controls_and_cpu_provenance() {
+fn fotufilm_dry_run_reports_authored_controls_without_selecting_an_executor() {
     let f = Fixture::new();
     let report = f.report(&[
         "--input-color-space", "sRGB", "--input-cctf-decoding", "true",
@@ -340,12 +340,12 @@ fn fotufilm_dry_run_reports_authored_controls_and_cpu_provenance() {
     assert_eq!(grain["fotufilm"]["material"], "dye_negative");
     let provenance = &report["film_grain_fotufilm"];
     assert_eq!(provenance["active"], true);
-    assert_eq!(provenance["implementation"], "rust_cpu_film");
-    assert_eq!(provenance["effective_backend"], "cpu");
+    assert_eq!(provenance["implementation"], "rust_film");
+    assert_eq!(provenance["effective_backend"], serde_json::Value::Null);
     assert!(
         provenance["note"]
             .as_str()
-            .is_some_and(|note| note.contains("CPU"))
+            .is_some_and(|note| note.contains("selected executor"))
     );
     assert_eq!(
         provenance["appearance_status"],
@@ -596,53 +596,106 @@ fn seed_repeats_stochastic_pixels_and_benchmark_attempts() {
     assert_ne!(buffers[0], buffers[2]);
 }
 
-/// `--backend gpu` is an explicit request: a configuration that still needs a
-/// host-executed stage (the default Spektra grain distribution is a fence) must
-/// fail at assembly without publishing an output file. Omitting the flag keeps
-/// automatic selection, which absorbs that stage as a CPU fence. A machine
-/// without an adapter fails earlier with the backend-unavailable message.
+
+/// Once automatic selection chooses WGPU, an impossible device working set
+/// must fail before writing output, both with and without diagnostics.
+#[cfg(not(feature = "precision-f64"))]
 #[test]
-fn explicit_gpu_request_fails_before_publication_and_automatic_still_renders() {
+fn selected_automatic_gpu_resource_failure_never_publishes_or_replaces_output() {
     let f = Fixture::new();
-    let input_flags = [
-        "--input-color-space",
-        "sRGB",
-        "--input-cctf-decoding",
-        "false",
-    ];
+    let output = f.0.join("gpu.tif");
+    let sentinel = b"previous successfully published image";
+    for diagnostics in [false, true] {
+        if diagnostics {
+            std::fs::write(&output, sentinel).unwrap();
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
+        command
+            .arg("process")
+            .arg(f.0.join("input.png"))
+            .arg("--output")
+            .arg(&output)
+            .args(["--film", "kodak_portra_400", "--data-dir"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
+            .args(["--input-color-space", "sRGB", "--input-cctf-decoding", "false"])
+            .env("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "1")
+            .env("RUST_LOG", "off")
+            .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+            .env_remove("SPEKTRAFILM_DATA_DIR")
+            .env_remove("SPEKTRAFILM_BACKEND");
+        let report_path = f.0.join("resource-failure.json");
+        if diagnostics {
+            command.arg("--diagnostics").arg(&report_path);
+        }
+        let result = command.output().unwrap();
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(!result.status.success(), "selected device failure succeeded: {stderr}");
+        assert!(stderr.contains("binding") || stderr.contains("working set"), "not a device resource failure: {stderr}");
+        if diagnostics {
+            assert_eq!(std::fs::read(&output).unwrap(), sentinel, "failed GPU render replaced prior output");
+            let report: Value = serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+            assert_eq!(report["execution"]["backend_requested"], "auto");
+            assert_eq!(report["execution"]["backend_selected"], "wgpu", "this acceptance requires a usable WGPU adapter");
+            assert_eq!(report["operation"]["outcome"], "failed");
+            assert!(report["configuration"]["published_dimensions"].is_null());
+            assert!(report["phases"].as_array().unwrap().iter().all(|phase| {
+                !matches!(phase["name"].as_str(), Some("saving_convert" | "file_write"))
+            }), "failed render entered output publication: {report}");
+        } else {
+            assert!(!output.exists(), "failed GPU render published a new output");
+        }
+    }
+}
 
-    let explicit = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
-        .arg("process")
-        .arg(f.0.join("input.png"))
-        .arg("--output")
-        .arg(f.0.join("gpu.tif"))
-        .args([
-            "--film",
-            "kodak_portra_400",
-            "--backend",
-            "gpu",
-            "--data-dir",
-        ])
-        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
-        .args(input_flags)
-        .env("RUST_LOG", "off")
-        .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
-        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
-        .env_remove("SPEKTRAFILM_DATA_DIR")
-        .env_remove("SPEKTRAFILM_BACKEND")
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&explicit.stderr);
-    assert!(!explicit.status.success(), "{stderr}");
-    assert!(
-        stderr.contains("explicit GPU request") || stderr.contains("GPU backend unavailable"),
-        "unexpected failure: {stderr}"
-    );
-    assert!(
-        !f.0.join("gpu.tif").exists(),
-        "a failed explicit GPU request wrote an output file"
-    );
+/// Hardware absence is an initial selection decision, not a selected-device
+/// failure: automatic CPU still publishes, while explicit WGPU must not.
+#[cfg(target_os = "linux")]
+#[test]
+fn unavailable_adapter_keeps_initial_automatic_cpu_selection_valid() {
+    let f = Fixture::new();
+    let output = f.0.join("selection.tif");
+    let run = |explicit: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
+        command.arg("process").arg(f.0.join("input.png"))
+            .arg("--output").arg(&output)
+            .args(["--film", "kodak_portra_400", "--data-dir"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
+            .args(["--input-color-space", "sRGB", "--input-cctf-decoding", "false"])
+            .env("VK_ICD_FILENAMES", "/dev/null")
+            .env("VK_DRIVER_FILES", "/dev/null")
+            .env("RUST_LOG", "off")
+            .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+            .env_remove("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES")
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+            .env_remove("SPEKTRAFILM_DATA_DIR");
+        if explicit {
+            command.env("SPEKTRAFILM_BACKEND", "wgpu");
+        } else {
+            command.env_remove("SPEKTRAFILM_BACKEND");
+        }
+        command.output().unwrap()
+    };
+    let automatic = run(false);
+    assert!(automatic.status.success(), "{}", String::from_utf8_lossy(&automatic.stderr));
+    assert!(output.exists(), "initial automatic CPU selection did not publish");
+    let published = std::fs::read(&output).unwrap();
+    let explicit = run(true);
+    assert!(!explicit.status.success());
+    assert!(String::from_utf8_lossy(&explicit.stderr).contains("no usable WGPU adapter"));
+    assert_eq!(std::fs::read(output).unwrap(), published, "unavailable explicit GPU replaced output");
+}
 
+
+
+/// `SPEKTRAFILM_BACKEND=wgpu` is the same explicit request as `--backend gpu`:
+/// when no adapter can serve it, the process fails with an actionable error
+/// instead of silently rendering on CPU and publishing output. The test does
+/// not depend on an adapter: it is skipped where one exists, because then the
+/// explicit request legitimately succeeds.
+#[test]
+fn explicit_env_gpu_request_never_silently_renders_on_cpu() {
+    let f = Fixture::new();
     let automatic = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
         .arg("process")
         .arg(f.0.join("input.png"))
@@ -650,22 +703,36 @@ fn explicit_gpu_request_fails_before_publication_and_automatic_still_renders() {
         .arg(f.0.join("auto.tif"))
         .args(["--film", "kodak_portra_400", "--data-dir"])
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
-        .args(input_flags)
+        .args([
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "false",
+        ])
         .env("RUST_LOG", "off")
         .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+        .env("SPEKTRAFILM_BACKEND", "wgpu")
         .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
         .env_remove("SPEKTRAFILM_DATA_DIR")
-        .env_remove("SPEKTRAFILM_BACKEND")
         .output()
         .unwrap();
+    if automatic.status.success() {
+        // An adapter is present: the explicit request ran on GPU, which is
+        // the other accepted outcome.
+        assert!(
+            f.0.join("auto.tif").exists(),
+            "an explicit GPU render published no output"
+        );
+        return;
+    }
+    let stderr = String::from_utf8_lossy(&automatic.stderr);
     assert!(
-        automatic.status.success(),
-        "{}",
-        String::from_utf8_lossy(&automatic.stderr)
+        stderr.contains("explicit GPU request"),
+        "unexpected failure: {stderr}"
     );
     assert!(
-        f.0.join("auto.tif").exists(),
-        "automatic render published no output"
+        !f.0.join("auto.tif").exists(),
+        "a failed explicit GPU request wrote an output file: {stderr}"
     );
 }
 

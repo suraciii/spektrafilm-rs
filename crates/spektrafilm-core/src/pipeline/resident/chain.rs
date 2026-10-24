@@ -1,6 +1,5 @@
 use super::super::Pipeline;
 use super::decision::{ResidentDecision, ResidentFallbackReason};
-use crate::stages::StageObservation;
 
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
@@ -12,10 +11,131 @@ impl Pipeline {
         pixel_size_um: f64,
         ae_ev: f64,
     ) -> Result<Option<ImageBuf>, String> {
+        // The upload below is a device operation. A host backend has no
+        // retained carrier and must take the per-stage route, exactly as the
+        // retained entry does — the chain's own guard below decides for a
+        // device, so the host case cannot fail here.
         if !backend.is_gpu() {
             return Ok(None);
         }
-        match self.resident_decision() {
+        // Compatibility route: the working image is uploaded once, the chain
+        // runs on the device, and the result is materialized at this boundary.
+        // A device that cannot hold the working image has no resident route;
+        // only an explicit GPU request turns that into a failure, and it names
+        // the limit so the caller can act on it.
+        let input = match self.retain_working_image(image, backend) {
+            Ok(input) => input,
+            Err(reason) => {
+                if backend.explicit_gpu_request() {
+                    return Err(match backend.image_binding_limit_reason(image) {
+                        Some(limit) => {
+                            format!("explicit GPU request exceeds the device resource limits: {limit}")
+                        }
+                        None => reason,
+                    });
+                }
+                return Ok(None);
+            }
+        };
+        match self.try_gpu_resident_retained(
+            &input,
+            backend,
+            pixel_size_um,
+            ae_ev,
+        )? {
+            Some(retained) => Ok(Some(retained.to_host(backend)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Upload one working image as the chain's retained input.
+    pub(in crate::pipeline) fn retain_working_image(
+        &self,
+        image: &ImageBuf,
+        backend: &dyn ComputeBackend,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        let space = spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)
+            .expect("input color space must be validated before filming");
+        backend.retain_image(
+            image,
+            &spektrafilm_backend::RetainedImageMeta {
+                width: image.width,
+                height: image.height,
+                // The upload keeps the samples' stored state; the chain's
+                // first device pass decodes the input transfer when the
+                // request asks for it.
+                domain: if self.params.io.input_cctf_decoding {
+                    spektrafilm_backend::SampleDomain::Encoded
+                } else {
+                    spektrafilm_backend::SampleDomain::Linear
+                },
+                precision: spektrafilm_backend::Precision::host(),
+                space,
+                pixel_pitch_um: None,
+            },
+        )
+    }
+
+    /// The production resident chain: consumes a retained input carrier and
+    /// returns a retained output carrier, with no host materialization between
+    /// the stages.
+    pub(in crate::pipeline) fn try_gpu_resident_retained(
+        &self,
+        input: &spektrafilm_backend::DeviceImage,
+        backend: &dyn ComputeBackend,
+        pixel_size_um: f64,
+        ae_ev: f64,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.try_gpu_resident_retained_with_taps(
+            input, backend, pixel_size_um, ae_ev,
+            spektrafilm_backend::Tap::RgbPre, spektrafilm_backend::Tap::RgbOut,
+        )
+    }
+
+    /// Execute exactly the selected topology span over an existing carrier.
+    pub(in crate::pipeline) fn try_gpu_resident_retained_with_taps(
+        &self,
+        input: &spektrafilm_backend::DeviceImage,
+        backend: &dyn ComputeBackend,
+        pixel_size_um: f64,
+        ae_ev: f64,
+        inject: spektrafilm_backend::Tap,
+        collect: spektrafilm_backend::Tap,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        use spektrafilm_backend::Tap;
+        let order = self.tap_order();
+        let ip = order.iter().position(|tap| *tap == inject)
+            .ok_or_else(|| format!("tap {inject:?} is not part of this topology (scan_film = {})", self.params.io.scan_film))?;
+        let cp = order.iter().position(|tap| *tap == collect)
+            .ok_or_else(|| format!("tap {collect:?} is not part of this topology (scan_film = {})", self.params.io.scan_film))?;
+        if cp < ip {
+            return Err(format!("no node path reaches tap {collect:?} from {inject:?}"));
+        }
+        if inject == collect {
+            return Ok(Some(input.clone()));
+        }
+        let includes = |tap| order.iter().position(|candidate| *candidate == tap)
+            .is_some_and(|position| ip <= position && position < cp);
+        let expose = includes(Tap::RgbPre);
+        let develop = includes(Tap::LogEFilm);
+        let scan = collect == Tap::RgbOut;
+        if !backend.is_gpu() {
+            return Ok(None);
+        }
+        let decision = match self.resident_decision() {
+            ResidentDecision::PerStage { mut reasons } => {
+                reasons.retain(|reason| match reason {
+                    ResidentFallbackReason::FilmGrainV3FieldCpu => develop,
+                    ResidentFallbackReason::MissingResidentFrontPass => expose,
+                    ResidentFallbackReason::UnsupportedOutputGamut => scan,
+                    _ => true,
+                });
+                if reasons.is_empty() { ResidentDecision::UseResident }
+                else { ResidentDecision::PerStage { reasons } }
+            }
+            decision => decision,
+        };
+        match decision {
             ResidentDecision::UseResident => {}
             ResidentDecision::PerStage { reasons } => {
                 if let Some(context) = backend.observation_context() {
@@ -23,8 +143,8 @@ impl Pipeline {
                         use spektrafilm_backend::telemetry::ResidentDeclineReason as R;
                         let reason = match reason {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
+
                             ResidentFallbackReason::FilmGrainV3FieldCpu => R::GrainV3FieldCpu,
-                            ResidentFallbackReason::FilmGrainFotufilmCpu => R::FotufilmFilmCpu,
                             ResidentFallbackReason::UnsupportedOutputGamut => {
                                 R::UnsupportedOutputGamut
                             }
@@ -33,9 +153,6 @@ impl Pipeline {
                             }
                             ResidentFallbackReason::MissingResidentFrontPass => {
                                 R::MissingResidentFrontPass
-                            }
-                            ResidentFallbackReason::MallettExecutionParity => {
-                                R::MallettExecutionParity
                             }
                         };
                         context.decline_resident(reason);
@@ -58,7 +175,6 @@ impl Pipeline {
                     let capability_missing = reasons.iter().any(|r| match r {
                         ResidentFallbackReason::WorkflowRoute
                         | ResidentFallbackReason::MissingResidentFrontPass
-                        | ResidentFallbackReason::MallettExecutionParity
                         | ResidentFallbackReason::UnsupportedOutputGamut => false,
                         ResidentFallbackReason::FilmGrainV3FieldCpu => host_field,
                         _ => true,
@@ -82,41 +198,38 @@ impl Pipeline {
                 return Ok(None);
             }
         }
-        // Input transfer decoding is shared preprocessing for the resident
-        // route (pipe architecture, capability class): the front pass
-        // assumes linear RGB exactly like `expose` produces for the
-        // per-stage route. Same expression as `expose`. It runs only on the
-        // resident arm so a declined route never decodes twice (the
-        // per-stage `expose` performs its own decode).
-        let decoded;
-        let image = if self.params.io.input_cctf_decoding {
-            let _decode = StageObservation::cpu(
-                backend,
-                "input_transfer",
-                spektrafilm_backend::telemetry::CpuReason::InputTransferDecoding,
-            );
+        // Input transfer decoding is the chain's first device pass (pipe
+        // architecture: input preparation). The front pass assumes linear RGB
+        // exactly like `expose` produces for the per-stage route, so the
+        // uploaded samples are decoded on the device instead of on the host.
+        // Same expression as `expose`; it runs only on the resident arm so a
+        // declined route never decodes twice (the per-stage `expose` performs
+        // its own decode).
+        let convert_route = self.params.workflow.route_enum().is_convert_film();
+        let scan_film = if convert_route {
+            self.params.workflow.route_enum() != crate::WorkflowRoute::ConvertFilmPrintScan
+        } else { self.params.io.scan_film };
+        let input_decode = (expose && self.params.io.input_cctf_decoding && !convert_route).then(|| {
             let input_space =
                 spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)
                     .expect("input color space must be validated before filming");
-            let mut rgb = image.clone();
-            use rayon::prelude::*;
-            use spektrafilm_math::precision::{from_f64, to_f64};
-            rgb.data.par_iter_mut().for_each(|v| {
-                *v = from_f64(spektrafilm_math::colorspace::cctf_decode(
-                    to_f64(*v),
-                    input_space.cctf,
-                ));
-            });
-            decoded = rgb;
-            &decoded
+            spektrafilm_backend::InputDecodeGpuParams {
+                cctf_kind: spektrafilm_backend::cctf_kind(input_space.cctf),
+            }
+        });
+        // Keep the inverse solver record on the stack for the entire backend
+        // submission; the front pass borrows it without an allocation.
+        let convert_params = if expose && convert_route {
+            self.convert_converter.as_ref().map(|converter| converter.gpu_params())
         } else {
-            image
+            None
         };
-        // A corrected scan — the negative-to-positive density reading —
-        // keeps the resident route: the acquisition itself runs on the host
-        // whenever the CPU route replaces it (PCHIP scanner LUT or the
-        // density reading).
-        let Some(front) = self.resident_front_pass(ae_ev) else {
+        // A suffix injection has no front transform. The inactive matrix is
+        // only a packed setup record; the typed span omits its dispatch.
+        let front = if expose { self.resident_front_pass(ae_ev, convert_params.as_ref()) } else {
+            Some(spektrafilm_backend::FrontPass::Mallett2019 { matrix: [[0.0; 3]; 3] })
+        };
+        let Some(front) = front else {
             if backend.explicit_gpu_request() {
                 return Err(
                     "explicit GPU request cannot prepare the resident front pass on WGPU; retry with an explicit CPU request"
@@ -143,12 +256,13 @@ impl Pipeline {
         // viewing illuminant and dye-density wavelength count come from the
         // film, not the print (mirrors the CPU scanning stage, which is
         // handed `self.film` as its profile when scan_film).
-        let scan_profile = if self.params.io.scan_film {
+        let scan_profile = if scan_film {
             &self.film
         } else {
             &self.print
         };
-        let prepared = crate::chain_prep::PreparedChain::for_scan(scan_profile, &self.params, true);
+        let include_base = self.params.workflow.route_enum() != crate::WorkflowRoute::ConvertFilmScanMinusBase;
+        let prepared = crate::chain_prep::PreparedChain::for_scan(scan_profile, &self.params, include_base);
         let scan_context = &prepared.scan;
         let scan_illu: &[f64] = &scan_context.illuminant;
         let scan_norm = scan_context.normalization;
@@ -164,37 +278,30 @@ impl Pipeline {
         let print_norm_factor = self.print_exposure_factor;
 
         // Halation in the resident chain — only built when the halation
-        // stage is active. Mirrors `apply_halation_um`: averages the
-        // per-channel µm sigmas, converts to pixel space, and passes the
-        // resulting scalars to the shaders.
-        let halation = if self.params.film_render.halation.active {
+        // stage is active. Preserve channel-specific profile controls.
+        let halation = if expose && self.params.film_render.halation.active {
             let h = &self.params.film_render.halation;
-            // GPU shaders take f32 — narrow at the boundary.
-            let avg_f64 = |a: [f64; 3]| (a[0] + a[1] + a[2]) / 3.0;
-            let strength_avg = (avg_f64(h.halation_strength) * h.halation_amount) as f32;
-            let a_tot = [
-                (h.halation_strength[0] * h.halation_amount) as f32,
-                (h.halation_strength[1] * h.halation_amount) as f32,
-                (h.halation_strength[2] * h.halation_amount) as f32,
-            ];
             Some(spektrafilm_backend::HalationGpuParams {
                 scatter_amount: h.scatter_amount as f32,
-                scatter_core_px: (avg_f64(h.scatter_core_um) * h.scatter_spatial_scale
-                    / pix_um as f64) as f32,
-                scatter_tail_px: (avg_f64(h.scatter_tail_um) * h.scatter_spatial_scale
-                    / pix_um as f64) as f32,
+                scatter_core_px: std::array::from_fn(|c| {
+                    (h.scatter_core_um[c] * h.scatter_spatial_scale / pix_um as f64) as f32
+                }),
+                scatter_tail_px: std::array::from_fn(|c| {
+                    (h.scatter_tail_um[c] * h.scatter_spatial_scale / pix_um as f64) as f32
+                }),
                 scatter_tail_weight: [
                     h.scatter_tail_weight[0] as f32,
                     h.scatter_tail_weight[1] as f32,
                     h.scatter_tail_weight[2] as f32,
                 ],
                 source_compression: h.source_compression as f32,
-                halation_amount: h.halation_amount as f32,
-                halation_strength_avg: strength_avg,
-                halation_a_tot: a_tot,
-                halation_first_sigma_px: (avg_f64(h.halation_first_sigma_um)
-                    * h.halation_spatial_scale
-                    / pix_um as f64) as f32,
+                halation_a_tot: std::array::from_fn(|c| {
+                    (h.halation_strength[c] * h.halation_amount) as f32
+                }),
+                halation_first_sigma_px: std::array::from_fn(|c| {
+                    (h.halation_first_sigma_um[c] * h.halation_spatial_scale
+                        / pix_um as f64) as f32
+                }),
                 halation_n_bounces: h.halation_n_bounces,
                 halation_bounce_decay: h.halation_bounce_decay as f32,
                 halation_renormalize: h.halation_renormalize,
@@ -210,7 +317,7 @@ impl Pipeline {
         // Held in this binding so `&density_curves_0_f64` outlives the
         // backend call.
         let dir = &self.params.film_render.dir_couplers;
-        let dir_inputs = if dir.active {
+        let dir_inputs = if develop && dir.active {
             let matrix = crate::chain_prep::dir_matrix(dir);
             let prepared = spektrafilm_model::couplers::prepare_dir(
                 &film_curves.raw,
@@ -266,7 +373,7 @@ impl Pipeline {
         // 0.3.4 disables viewing glare entirely on the `io.scan_film` path
         // (`glare = None`; `film_render.glare` is never read upstream) —
         // only `print_render.glare` reaches the print scan.
-        let glare = (!self.params.io.scan_film)
+        let glare = (scan && !scan_film)
             .then_some(&self.params.print_render.glare)
             .filter(|g| g.active && g.percent > 0.0)
             .map(|g| {
@@ -291,7 +398,7 @@ impl Pipeline {
 
         // Unsharp mask: scanner.unsharp_mask = [sigma, amount].
         let [usm_sigma, usm_amount] = self.params.scanner.unsharp_mask;
-        let unsharp = if usm_sigma > 0.0 && usm_amount > 0.0 {
+        let unsharp = if scan && usm_sigma > 0.0 && usm_amount > 0.0 {
             Some(spektrafilm_backend::UnsharpGpuParams {
                 sigma_px: usm_sigma as f32,
                 amount: usm_amount as f32,
@@ -300,7 +407,7 @@ impl Pipeline {
             None
         };
 
-        let camera_lens_blur_px = if self.params.camera.lens_blur_um > 0.0 {
+        let camera_lens_blur_px = if expose && self.params.camera.lens_blur_um > 0.0 {
             Some(self.params.camera.lens_blur_um / pix_um)
         } else {
             None
@@ -311,19 +418,22 @@ impl Pipeline {
         // never supplies a captured image, so the density reading is exactly
         // `n2p` (the `captured_rgb.is_none()` conjunct in `stages::scanning`
         // is always true here).
-        let density_reading = self.params.scanner.scan_output == "negative_to_positive";
+        let density_reading = scan && self.params.scanner.scan_output == "negative_to_positive";
+        let scan_readout = density_reading.then(|| crate::stages::scanning::density_reading_gpu_params(
+            scan_profile, &self.conversion_tones, &self.params,
+        )).transpose()?;
 
         // The acquisition replacement blurs the transmitted light inside the
         // acquisition (density domain), so the post-acquisition scanner lens
         // blur must not run again.
-        let scanner_lens_blur_px = if self.params.scanner.lens_blur > 0.0 && !density_reading {
+        let scanner_lens_blur_px = if scan && self.params.scanner.lens_blur > 0.0 && !density_reading {
             Some(self.params.scanner.lens_blur)
         } else {
             None
         };
 
         let hboost = &self.params.film_render.halation;
-        let highlight_boost = if hboost.boost_ev != 0.0 {
+        let highlight_boost = if expose && hboost.boost_ev != 0.0 {
             Some(spektrafilm_backend::HighlightBoostGpuParams {
                 boost_ev: hboost.boost_ev,
                 boost_range: hboost.boost_range,
@@ -332,7 +442,7 @@ impl Pipeline {
         } else {
             None
         };
-        let grain_v2 = if self.params.film_render.grain.active
+        let grain_v2 = if scan && self.params.film_render.grain.active
             && matches!(
                 self.params.film_render.grain.engine,
                 crate::params::grain::GrainEngine::Procedural
@@ -351,23 +461,50 @@ impl Pipeline {
         // experimental mass-law selector) keeps the host field as the
         // assembled density fence below, so an explicit GPU request fails by
         // name at assembly instead of silently running host arithmetic.
-        let grain_dye = if crate::stages::grain_v3::active(&self.params) {
-            match crate::stages::grain_v3::resident_device_params(
-                &self.film,
-                &self.params,
-                image,
-                pixel_size_um,
+        let dye_readout = if develop && crate::stages::grain_v3::active(&self.params) {
+            crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
+            let spatial_context = (scan && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                || (collect != Tap::CmyFilm && crate::stages::grain_v3::print_spatial_context(&self.params));
+            Some(crate::stages::grain_v3::readout_plan(
+                input.width(), input.height(), &self.params, pixel_size_um,
+                crate::stages::grain_v3::validate_aperture(&self.params)?, spatial_context,
+            )?)
+        } else { None };
+        let grain_dye = dye_readout.as_ref().map(|plan| {
+            crate::stages::grain_v3::resident_device_params_for_grid(
+                &self.film, &self.params, pixel_size_um, plan.grid,
+            )
+        }).transpose()?;
+        let fotufilm_readout = if develop && crate::stages::grain_fotufilm::active(&self.params) {
+            let spatial_context = (scan && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                || (collect != Tap::CmyFilm && crate::stages::grain_v3::print_spatial_context(&self.params));
+            Some(crate::stages::grain_v3::readout_plan(input.width(),input.height(),
+                &self.params,pixel_size_um,None,spatial_context)?)
+        } else { None };
+        let grain_fotufilm = fotufilm_readout.as_ref().map(|plan|
+            self.fotufilm_prepared.resident_device_params(input.width(),input.height(),
+                &self.film,&self.params,pixel_size_um,plan.grid,&|| self.check_cancelled())
+        ).transpose()?;
+        // Spektra v1 grain runs on the device in both sampling regimes; the
+        // pass takes the film density buffer in place in the density-fence
+        // position. The layered `fast_stats` regime is a per-pixel mapping,
+        // and the scipy MT19937 regime (the composite path always, and the
+        // layered path without `use_fast_stats`) is a sequential dispatch
+        // reproducing the reference draw order — all Poisson first, then all
+        // binomial — so the device never substitutes a different noise law.
+        let grain_v1 = if develop && !convert_route && self.params.film_render.grain.active
+            && matches!(
+                self.params.film_render.grain.engine,
+                crate::params::grain::GrainEngine::Spektra
             ) {
-                Ok(params) => Some(params),
-                Err(reason) => {
-                    tracing::info!(
-                        target: "spektrafilm_core::pipeline",
-                        %reason,
-                        "film grain Dye: the field falls back to the assembled host fence"
-                    );
-                    None
-                }
-            }
+            crate::stages::filming::spektra_grain_device_params(
+                &self.film,
+                &self.params.film_render.grain,
+                film_curves_norm,
+                self.params.settings.use_fast_stats,
+                self.params.random_seed,
+                pixel_size_um,
+            )
         } else {
             None
         };
@@ -377,83 +514,72 @@ impl Pipeline {
         // field from the normalized density; Dye reads the same buffer with
         // the identity readout geometry only when its field has no device
         // path (`stages::grain_v3::resident_device_params`).
-        let density_cpu_stage = self.density_cpu_stage(
+        let density_cpu_stage = if !develop || convert_route { None } else { self.density_cpu_stage(
             film_curves_norm,
             backend,
             pixel_size_um,
             grain_dye.is_some(),
-        );
+            grain_v1.is_some(),
+        ) };
 
         let scan_output_space =
             spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
                 .expect("validated output colour space");
-        let scan_channel_density: &[[f64; 3]] = if self.params.io.scan_film {
+        let scan_channel_density: &[[f64; 3]] = if scan_film {
             &film_channel_density
         } else {
             &print_channel_density
         };
-        let scan_base_density: &[f64] = if self.params.io.scan_film {
+        let scan_base_zero = vec![0.0; scan_profile.data.base_density.len()];
+        let scan_base_density: &[f64] = if !include_base { &scan_base_zero } else if scan_film {
             film_base_density
         } else {
             print_base_density
         };
-        // A fenced CPU stage executes inside the resident chain, so it must
-        // keep the executor observations the per-stage route publishes
-        // (telemetry metrics: an actual CPU image stage is identified from
-        // executor observations). Fence closures pass this observed CPU
-        // backend to the shared stage functions so the stage's own stage
-        // markers stay live.
-        // `use_scanner_lut` selects the PCHIP scanner LUT acquisition, and
-        // the density reading replaces the acquisition outright; both
-        // replace the GPU spectral integration on the CPU route, so the
-        // resident chain runs the same CPU acquisition as an assembled
-        // fence (pipe architecture, capability class).
-        let scan_acquisition_cpu_stage = self.scan_acquisition_cpu_stage(
-            density_reading,
+        let scanner_lut = (scan && !density_reading && self.params.settings.use_scanner_lut).then(|| {
+            let (minimum, maximum) = crate::stages::scanning::scanner_lut_bounds(scan_profile, &self.params);
+            spektrafilm_backend::ScannerSpectralLutGpuParams {
+                channel_density: scan_channel_density, base_density: scan_base_density,
+                illuminant: scan_illu, normalization: scan_norm,
+                cat: &scan_context.adapt, xyz_to_rgb: &scan_context.base_xyz_to_rgb,
+                minimum, maximum, size: self.params.settings.lut_resolution as u32,
+            }
+        });
+        let enlarger_lut = (includes(Tap::CmyFilm) && !scan_film && self.params.settings.use_enlarger_lut).then(|| {
+            let (minimum, maximum) = crate::stages::printing::enlarger_lut_bounds(&self.film, &self.params);
+            spektrafilm_backend::EnlargerSpectralLutGpuParams {
+                channel_density: &film_channel_density, base_density: film_base_density,
+                illuminant: &self.print_illuminant, sensitivity: &print_sens,
+                normalization: print_norm_factor, preflash: self.preflash_raw,
+                minimum, maximum, size: self.params.settings.lut_resolution as u32,
+            }
+        });
+        // Scanner LUT acquisition is a device operation, not a host fence.
+        let scan_acquisition_cpu_stage = if !scan || density_reading || scanner_lut.is_some() { None } else { self.scan_acquisition_cpu_stage(
+            false,
             scan_context,
             scan_profile,
             &self.params,
             scan_channel_density,
             scan_base_density,
             backend,
-        );
+        ) };
 
-        // Camera optical diffusion runs on the host as an assembled fence on
-        // the raw exposure buffer — after highlight reconstruction, before
-        // the camera lens blur (the CPU filming order; pipe architecture,
-        // capability class). The faithful discrete-PSF convolution matches
-        // the CPU reference exactly.
-        let camera_diffusion_cpu_stage = self.camera_diffusion_cpu_stage(backend, pixel_size_um);
-        // The PCHIP enlarger LUT and the enlarger diffusion filter run on
-        // the host as an assembled fence that replaces the fused print
-        // spectral pass (pipe architecture, capability class): the shared
-        // `expose_calibrated` already owns the LUT branch, the linear-domain
-        // diffusion, and the outer log, so the fence emits the same domain
-        // the fused shader produces and the GPU print density pass continues.
-        let edf = &self.params.enlarger.diffusion_filter;
-        let print_fence_requested =
-            self.params.settings.use_enlarger_lut || (edf.active && edf.strength > 0.0);
-        let print_acquisition_cpu_stage =
-            self.print_acquisition_cpu_stage(print_fence_requested, backend, pixel_size_um);
+        // Camera optical diffusion and the enlarger print acquisition run on
+        // the device: the chain's fused passes convolve the same discrete PSF
+        // and evaluate the same PCHIP lattice, so neither is assembled as a
+        // host fence.
         // Output transfer (pipe architecture, S4): encode the native
         // destination when the caller requested encoding and the
         // Procedural-grain pass hasn't already emitted encoded samples, or
         // restore linear when it has and no encoding was requested. This
         // moved the former post-readback host encode/decode onto the device.
-        let grain_v2_active = self.grain_emits_encoded();
-        let cctf_kind = match scan_output_space.cctf {
-            spektrafilm_math::colorspace::Cctf::Linear => 0,
-            spektrafilm_math::colorspace::Cctf::Acescct => 1,
-            spektrafilm_math::colorspace::Cctf::Srgb => 2,
-            spektrafilm_math::colorspace::Cctf::ProPhoto => 3,
-            spektrafilm_math::colorspace::Cctf::Rec2020 => 4,
-            spektrafilm_math::colorspace::Cctf::AdobeRgb1998 => 5,
-            spektrafilm_math::colorspace::Cctf::Gamma2_6 => 6,
-        };
+        let grain_v2_active = scan && self.grain_emits_encoded();
+        let cctf_kind = spektrafilm_backend::cctf_kind(scan_output_space.cctf);
         let identity_f32: [[f32; 3]; 3] = std::array::from_fn(|i| {
             std::array::from_fn(|j| scan_output_space.rgb_to_rgb_identity()[i][j] as f32)
         });
-        let output_transfer = if !grain_v2_active && self.params.io.output_cctf_encoding {
+        let output_transfer = if scan && !grain_v2_active && self.params.io.output_cctf_encoding {
             Some(spektrafilm_backend::OutputTransferGpuParams {
                 decode: false,
                 cctf_kind,
@@ -472,7 +598,7 @@ impl Pipeline {
         // active, even for a linear output; the final decode is appended
         // after CMYK to match the CPU scanner order exactly.
         let cmyk_encoded = grain_v2_active || self.params.io.output_cctf_encoding;
-        let cmyk = if self.params.cmyk.active && self.params.cmyk.strength > 0.0 {
+        let cmyk = if scan && self.params.cmyk.active && self.params.cmyk.strength > 0.0 {
             let (to_lab, from_lab) =
                 crate::cmyk::CmykTransform::new(scan_output_space).gpu_matrices();
             let f32m = |m: &[[f64; 3]; 3]| {
@@ -489,14 +615,34 @@ impl Pipeline {
             None
         };
 
+        let prepare_diffusion = |filter: &crate::params::diffusion::DiffusionFilterParams, enabled: bool,
+                                 width: u32, height: u32, pitch: f64| -> Result<_, String> {
+            if !enabled || !filter.active { return Ok(None); }
+            spektrafilm_model::diffusion::validate_family(&filter.filter_family)?;
+            Ok(spektrafilm_model::diffusion::resolve_psf(&filter.to_model(),pitch,width as usize,height as usize).ok())
+        };
+        let camera_diffusion = prepare_diffusion(&self.params.camera.diffusion_filter,expose,
+            input.width(),input.height(),pixel_size_um)?;
+        let print_grid = dye_readout.as_ref().or(fotufilm_readout.as_ref()).map(|plan|plan.grid);
+        let (print_width,print_height,print_pitch) = print_grid.map_or(
+            (input.width(),input.height(),pixel_size_um),
+            |grid| (grid.width,grid.height,grid.pitch_um[usize::from(input.height()>input.width())]),
+        );
+        let enlarger_diffusion = prepare_diffusion(&self.params.enlarger.diffusion_filter,
+            includes(Tap::CmyFilm) && !scan_film,print_width,print_height,print_pitch)?;
+
         let params = spektrafilm_backend::FilmChainParams {
-            image,
+            inject,
+            collect,
+            image_width: input.width(),
+            image_height: input.height(),
+            pixel_pitch_um: pixel_size_um,
             front,
             film_log_exposure: film_log_exp,
             film_density_curves_normalized: film_curves_norm,
             film_gamma: self.params.film_render.density_curve_gamma as f64,
             film_channel_density: &film_channel_density,
-            film_base_density,
+            film_base_density: if include_base { film_base_density } else { &scan_base_zero },
             print_illuminant: &self.print_illuminant,
             print_sensitivity: &print_sens,
             print_normalization_factor: print_norm_factor,
@@ -507,27 +653,43 @@ impl Pipeline {
             print_channel_density: &print_channel_density,
             print_base_density,
             preflash: self.preflash_raw,
+            enlarger_lut,
+            scanner_lut,
             scan_illuminant: scan_illu,
             scan_normalization: scan_norm,
             scan_xyz_to_rgb: &scan_xyz_to_rgb,
+            scan_cat: &scan_context.adapt,
+            scan_base_xyz_to_rgb: &scan_context.base_xyz_to_rgb,
             scan_output_space,
-            scan_film: self.params.io.scan_film,
+            scan_film,
             halation,
             dir_couplers,
             glare,
-            gamut: self.output_gamut.gpu_params(),
+            gamut: if scan { self.output_gamut.gpu_params() } else { None },
             unsharp,
             grain_v2,
             camera_lens_blur_px,
+            camera_diffusion: camera_diffusion.as_ref().map(|resolved| spektrafilm_backend::OpticalDiffusionGpuParams {
+                psf:&resolved.0,radius:resolved.1 as u32,scatter_fraction:resolved.2,
+            }),
+            enlarger_diffusion: enlarger_diffusion.as_ref().map(|resolved| spektrafilm_backend::OpticalDiffusionGpuParams {
+                psf:&resolved.0,radius:resolved.1 as u32,scatter_fraction:resolved.2,
+            }),
+            grain_dye_cell_spectral: crate::stages::grain_v3::validate_cell_spectral(&self.params)?,
+            grain_dye_aperture: dye_readout.as_ref().and_then(|plan| plan.aperture),
+            grain_dye_crop: dye_readout.as_ref().or(fotufilm_readout.as_ref())
+                .and_then(|plan| plan.deferred_crop).map(|r| [r.x as u32,r.y as u32,r.width as u32,r.height as u32]),
             scanner_lens_blur_px,
             highlight_boost,
             grain_dye,
+            grain_fotufilm,
+            grain_v1,
             density_cpu_stage,
             scan_acquisition_cpu_stage,
-            print_acquisition_cpu_stage,
-            camera_diffusion_cpu_stage,
+            scan_readout: scan_readout.as_ref(),
             output_transfer,
             cmyk,
+            input_decode,
         };
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {
@@ -550,32 +712,19 @@ impl Pipeline {
             }
             return Ok(None);
         }
-        // Pipe architecture fence policy: a fence is a transfer optimization
-        // for automatic selection, so an explicit GPU request must fail at
-        // assembly when any capability-missing stage would execute on the
-        // host (spec gpu-execution §Backend selection, pipe architecture
-        // "Policy"). The pre-fence decision rejected exactly these stages;
-        // the fences must not let an explicit request run them silently.
-        if backend.explicit_gpu_request() {
+        // A selected GPU cannot execute host image-stage fences, including
+        // automatically selected adapters and diagnostic spans.
+        if backend.is_gpu() {
             let mut host_stages: Vec<&str> = Vec::new();
-            if self.params.io.input_cctf_decoding {
-                host_stages.push("input transfer decoding");
-            }
-            if params.camera_diffusion_cpu_stage.is_some() {
-                host_stages.push("camera optical diffusion");
-            }
             if params.density_cpu_stage.is_some() {
                 host_stages.push("film grain distribution");
             }
             if params.scan_acquisition_cpu_stage.is_some() {
                 host_stages.push("scanner acquisition");
             }
-            if params.print_acquisition_cpu_stage.is_some() {
-                host_stages.push("print acquisition");
-            }
             if !host_stages.is_empty() {
                 return Err(format!(
-                    "explicit GPU request cannot run the complete computation scope on WGPU \
+                    "selected GPU request cannot run the complete computation scope on WGPU \
                      (host-executed stages: {}); retry with an explicit CPU request to use the \
                      per-stage route",
                     host_stages.join(", ")
@@ -583,7 +732,7 @@ impl Pipeline {
             }
         }
         let resident = crate::stages::StageObservation::new(backend, "film_chain");
-        let result = match resident.backend(backend).try_run_film_chain(&params) {
+        let result = match resident.backend(backend).try_run_film_chain_retained(input, &params) {
             Ok(result) => result,
             Err(error) => {
                 // A CPU fence could not calibrate its output, or the chain
@@ -616,7 +765,6 @@ impl Pipeline {
     /// decodes afterwards when the caller requested linear output).
     fn grain_emits_encoded(&self) -> bool {
         self.params.film_render.grain.active
-            && self.params.settings.rgb_to_raw_method != "mallett2019"
             && matches!(
                 self.params.film_render.grain.engine,
                 crate::params::grain::GrainEngine::Procedural

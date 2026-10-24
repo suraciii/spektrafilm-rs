@@ -653,6 +653,18 @@ fn pairwise_sum_f64(xs: &[f64]) -> f64 {
     }
 }
 
+/// Prepare the bounded erf4 coefficients for device TC-table construction.
+/// The full spectra cube and generated grids are deliberately not evaluated here.
+pub(super) fn device_erf4_window(params: &[f64]) -> Result<Vec<[f64; 3]>, String> {
+    if params.len() != 4 {
+        return Err(format!(
+            "hanatos2025 adaptation window requires exactly 4 erf4 parameters, got {}",
+            params.len()
+        ));
+    }
+    Ok(eval_erf4_bandpass(params))
+}
+
 /// Evaluate the erf4 spectral bandpass window.
 /// params: (c_uv, sigma_uv, c_ir, sigma_ir)
 /// Returns [81][3] window values (same for all 3 channels in erf4 model).

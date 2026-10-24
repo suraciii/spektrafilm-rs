@@ -278,10 +278,14 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
     if report.coverage.retained_observations != retained
         || report.coverage.detail_limit == 0
         || report.coverage.retained_observations > report.coverage.detail_limit
+        || report
+            .coverage
+            .omitted_high_level_observations
+            .is_some_and(|count| count > report.coverage.omitted_observations)
     {
         return Err(ValidationError::InvalidCoverage);
     }
-    if report.coverage.truncated != (report.coverage.omitted_observations > 0) {
+    if report.coverage.omitted_observations > 0 && !report.coverage.truncated {
         return Err(ValidationError::InvalidCoverage);
     }
     for total in report.coverage.fixed_duration_totals {
@@ -357,6 +361,7 @@ fn validate_observation_name(observation: &Observation) -> Result<(), Validation
         "negative_to_positive_tone",
         "standard_setup",
         "input_transfer",
+        "colorspace_convert",
         "output_transfer",
         "rgb_to_raw",
         "highlight_boost",
@@ -367,6 +372,12 @@ fn validate_observation_name(observation: &Observation) -> Result<(), Validation
         "glare",
         "output_gamut",
         "pipeline_create",
+        "raw_sensor",
+        "saving_convert",
+        "retained_histogram",
+        "viewer_resample",
+        "viewer_display_transform",
+        "viewer_full_source",
     ];
     let valid = match observation.kind {
         ObservationKind::Attempt => observation.name == "attempt",

@@ -53,8 +53,8 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     assert_eq!(h.state().image_path.as_ref(), Some(&replacement));
     assert_eq!(
         (
-            h.state().image.as_ref().unwrap().width,
-            h.state().image.as_ref().unwrap().height
+            h.state().image.as_ref().unwrap().width(),
+            h.state().image.as_ref().unwrap().height()
         ),
         (7, 3)
     );
@@ -62,7 +62,7 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     let status = h.state().status.clone();
     script(h, chooser::ChooserResult::Canceled);
     import_file(h, false);
-    assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &before));
+    assert!(h.state().image.as_ref().unwrap().same_source(&before));
     assert_eq!(h.state().status, status);
     let scan = render(h, "SCAN");
     open_export(h);
@@ -185,7 +185,7 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
         assert_eq!(h.state().params, params);
         assert_eq!(h.state().parameter_revision, revision);
         assert_eq!((h.state().can_undo(), h.state().can_redo()), history);
-        assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &image));
+        assert!(h.state().image.as_ref().unwrap().same_source(&image));
         assert!(Arc::ptr_eq(
             h.state().output_image.as_ref().unwrap(),
             &output
@@ -203,11 +203,54 @@ fn bad_state_and_bad_input_buttons_preserve_accepted_images_and_parameters() {
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().parameter_revision, revision);
     assert_eq!((h.state().can_undo(), h.state().can_redo()), history);
-    assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &image));
+    assert!(h.state().image.as_ref().unwrap().same_source(&image));
     assert!(Arc::ptr_eq(
         h.state().output_image.as_ref().unwrap(),
         &output
     ));
+}
+
+#[test]
+fn replacing_input_rejects_the_previous_sources_real_worker_result() {
+    let mut s = session();
+    let h = &mut s.harness;
+    choose(h, "workflow", "input");
+    render(h, "PREVIEW");
+    let previous = h.state().image.as_ref().unwrap().clone();
+    let epoch = h.state().input_epoch;
+    let ctx = h.ctx.clone();
+    let active = h.state().render_worker.active.clone();
+    let guard = active.lock();
+    h.state_mut().dispatch_render(&ctx);
+    let old_request = h.state().render_job.as_ref().unwrap().request_id;
+    assert_eq!(h.state().render_job.as_ref().unwrap().input_epoch, epoch);
+    // Keep the actual worker response in flight while replacing its source.
+    let replacement = s.directory.path().join("replacement.png");
+    let source = ImageBuf::from_data(3, 2, vec![spektrafilm_math::precision::from_f64(0.25); 18]);
+    image_io::save(&replacement, &source, SaveOptions {
+        depth: BitDepth::Eight,
+        color_space: "sRGB",
+        cctf_encoding: true,
+        jpeg_quality: None,
+        jpeg_subsampling: None,
+        compression: None,
+    }, None).unwrap();
+    h.state_mut().load_image_from_path(&replacement);
+    assert!(h.state().input_epoch > epoch);
+    let accepted = h.state().image.as_ref().unwrap().clone();
+    assert!(!accepted.same_source(&previous));
+    assert!(h.state().oriented_input.as_ref().unwrap().same_source(&accepted));
+    assert!(h.state().output_image.is_none());
+    assert!(h.state().output_retained.is_none());
+    drop(guard);
+    wait_until(h, |app| app.render_job.as_ref().is_none_or(|job| job.request_id != old_request));
+    assert!(h.state().image.as_ref().unwrap().same_source(&accepted));
+    assert!(h.state().output_image.is_none(), "stale source output was published");
+    assert!(h.state().output_retained.is_none(), "stale retained output was published");
+    assert!(h.state().source_render.is_none());
+    let output = render(h, "SCAN");
+    assert_eq!((output.width, output.height), (3, 2));
+    assert_eq!(h.state().source_render.as_ref().unwrap().input_revision, Some(h.state().input_epoch));
 }
 
 // Small uncompressed RGB TIFF, with real EXIF/IPTC/XMP consumed by image_io.
@@ -338,12 +381,15 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     click(h, "Discard changes");
     assert!(h.query_by_label("Discard changes").is_none());
     assert_eq!(h.state().image_path.as_ref(), Some(&path));
-    let original = h.state().image.as_ref().unwrap().clone();
+    let original = h.state().image.as_ref().unwrap().host_image().unwrap().clone();
     let baseline = render(h, "SCAN");
     reveal_control(h, "action.rotate_cw");
     click(h, "cw rotate");
     assert_eq!(h.state().input_rotation, 3);
-    let rotated = h.state().image.as_ref().unwrap();
+    // Orientation is deferred metadata: the retained source keeps its pixels
+    // and only the presentation source is turned.
+    assert_eq!(h.state().image.as_ref().unwrap().host_image().unwrap().data, original.data);
+    let rotated = h.state().oriented_input.as_ref().unwrap().host_image().unwrap();
     assert_eq!((rotated.width, rotated.height), (2, 4));
     for y in 0..2 {
         for x in 0..4 {
@@ -399,7 +445,8 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     reveal_control(h, "action.rotate_ccw");
     click(h, "ccw rotate");
     assert_eq!(h.state().input_rotation, 0);
-    assert_eq!(h.state().image.as_ref().unwrap().data, original.data);
+    assert_eq!(h.state().image.as_ref().unwrap().host_image().unwrap().data, original.data);
+    assert_eq!(h.state().oriented_input.as_ref().unwrap().host_image().unwrap().data, original.data);
     let restored = render(h, "SCAN");
     assert_eq!((restored.width, restored.height), (4, 2));
     assert_eq!(restored.data, baseline.data);

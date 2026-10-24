@@ -113,6 +113,18 @@ impl RuntimePhotoParams {
         drop(preparation);
         result
     }
+
+    pub fn into_runtime_with_backend(self, mode: DigestMode, backend: &dyn ComputeBackend) -> Result<Runtime, String> {
+        let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
+        let params = digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
+        Runtime::new_with_backend(self.film, self.print, params, &self.data_dir, backend)
+    }
+
+    pub fn into_runtime_observed_with_backend(self, mode: DigestMode, backend: &dyn ComputeBackend, context: &ObservationContext) -> Result<Runtime, String> {
+        let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
+        let params = digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
+        Runtime::new_observed_with_backend(self.film, self.print, params, &self.data_dir, backend, context)
+    }
 }
 
 #[derive(Clone)]
@@ -131,6 +143,9 @@ impl Runtime {
         self.pipeline = self.pipeline.with_cancellation(cancellation);
         self
     }
+    /// Prepare the CPU reference runtime. For selected-GPU processing use
+    /// [`Self::new_with_backend`], or migrate with [`Self::with_params_with_backend`]
+    /// before processing; immutable renders never upload a CPU-prepared TC table.
     pub fn new(
         film: profile::Profile,
         print: profile::Profile,
@@ -199,6 +214,45 @@ impl Runtime {
         result
     }
 
+    pub fn new_with_backend(
+        film: profile::Profile,
+        print: profile::Profile,
+        params: RuntimeParams,
+        data_dir: &Path,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
+        let pipeline = Pipeline::new_with_spectral_backend(film, print, params, data_dir, backend)?;
+        Ok(Self { pipeline, data_dir: data_dir.to_owned(),
+            timings: Arc::new(Mutex::new(BTreeMap::new())),
+            last_elapsed_seconds: Arc::new(Mutex::new(None)), cancellation: None })
+    }
+
+    pub fn new_observed_with_backend(
+        film: profile::Profile,
+        print: profile::Profile,
+        params: RuntimeParams,
+        data_dir: &Path,
+        backend: &dyn ComputeBackend,
+        context: &ObservationContext,
+    ) -> Result<Self, String> {
+        let mut preparation = context.scope("spectral_prepare", ObservationKind::Stage, Purpose::Calibration);
+        if !backend.is_gpu() {
+            preparation.context().record_executor(spektrafilm_backend::telemetry::Executor::Cpu,
+                Some(spektrafilm_backend::telemetry::CpuReason::CpuSelected));
+        }
+        let bound = spektrafilm_backend::bind_backend(backend, preparation.context().clone());
+        let _span = preparation.context().span().map(|span| span.enter());
+        let result = Self::new_with_backend(film, print, params, data_dir, bound.as_ref());
+        drop(_span);
+        preparation.set_complete(result.is_ok());
+        drop(bound);
+        drop(preparation);
+        result
+    }
+
+    /// Load stock profiles and prepare the CPU reference runtime.
+    /// Selected-GPU callers must migrate with [`Self::with_params_with_backend`]
+    /// or load profiles and construct with [`Self::new_with_backend`].
     pub fn from_stocks(
         film: &str,
         print: &str,
@@ -355,12 +409,135 @@ impl Runtime {
         result
     }
 
+    /// Render one image and keep the result on the device.
+    ///
+    /// This is the production entry point for uploaded raster sources. RAW
+    /// sources already produced on-device use [`Self::process_device_retained`]
+    /// instead. Both retain samples through saving conversion and viewing.
+    /// `Ok(None)` is reserved for an initially selected CPU backend.
+    pub fn process_retained(
+        &self,
+        image: &ImageBuf,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.process_retained_with(image, crate::pipeline::RetainedRender::FULL, backend)
+    }
+
+    /// Render an input already owned by the selected GPU, without a numerical
+    /// readback or source upload. Preview and deferred orientation use the same
+    /// full-source metering and working geometry as uploaded raster sources.
+    pub fn process_device_retained(
+        &self,
+        image: &spektrafilm_backend::DeviceImage,
+        request: crate::pipeline::RetainedRender,
+        backend: &dyn ComputeBackend,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.process_device_retained_with_taps(image, request, backend, None, None)
+    }
+
+    /// Retained RAW/raster diagnostic route. Explicit tap overrides retain
+    /// the same precedence and topology validation as the CPU reference.
+    pub fn process_device_retained_with_taps(
+        &self,
+        image: &spektrafilm_backend::DeviceImage,
+        request: crate::pipeline::RetainedRender,
+        backend: &dyn ComputeBackend,
+        inject: Option<Tap>,
+        collect: Option<Tap>,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        let started = Instant::now();
+        let result = self.pipeline.process_device_retained_with_taps(
+            image, request, backend, inject, collect,
+        );
+        self.record_elapsed(started, None);
+        result
+    }
+
+    /// [`Self::process_retained`] with a deferred input rotation.
+    pub fn process_retained_rotated(
+        &self,
+        image: &ImageBuf,
+        quarter_turns: u32,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.process_retained_with(
+            image,
+            crate::pipeline::RetainedRender::rotated(quarter_turns),
+            backend,
+        )
+    }
+
+    /// Preview render that measures the full source and keeps the result on the
+    /// device. The long-edge resample is the preview's triangle reference.
+    pub fn process_preview_retained(
+        &self,
+        image: &ImageBuf,
+        max_size: u32,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.process_retained_with(
+            image,
+            crate::pipeline::RetainedRender::preview(max_size),
+            backend,
+        )
+    }
+
+    /// [`Self::process_preview_retained`] with a deferred input rotation.
+    pub fn process_preview_retained_rotated(
+        &self,
+        image: &ImageBuf,
+        max_size: u32,
+        quarter_turns: u32,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.process_retained_with(
+            image,
+            crate::pipeline::RetainedRender {
+                rotation_quarter_turns: quarter_turns,
+                preview_max_size: Some(max_size),
+            },
+            backend,
+        )
+    }
+
+    /// Shared retained-render body: timings and cancellation follow the host
+    /// route. Scanner auto-setup is a device reduction over the retained
+    /// source, so a per-frame policy no longer selects the host route.
+    fn process_retained_with(
+        &self,
+        image: &ImageBuf,
+        request: crate::pipeline::RetainedRender,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        self.process_retained_with_taps(image, request, backend, None, None)
+    }
+
+    /// Host-source diagnostic counterpart of the retained device entry.
+    pub fn process_retained_with_taps(
+        &self,
+        image: &ImageBuf,
+        request: crate::pipeline::RetainedRender,
+        backend: &dyn ComputeBackend,
+        inject: Option<Tap>,
+        collect: Option<Tap>,
+    ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
+        let started = Instant::now();
+        let result = self.pipeline.process_retained_with_taps(image, request, backend, inject, collect);
+        self.record_elapsed(started, None);
+        result
+    }
+
     pub fn process_preview(
         &self,
         image: ImageBuf,
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
+        if backend.is_gpu() {
+            let retained = self.process_preview_retained(&image, max_size, backend)?
+                .ok_or_else(|| "selected GPU declined the retained preview route".to_owned())?;
+            return backend.materialize_retained(&retained);
+        }
         if self.params().scanner.requires_full_frame() {
             let output = self.process(image, backend)?;
             if self
@@ -401,6 +578,11 @@ impl Runtime {
     /// Return a runtime with updated parameters while retaining the facade state.
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
         self.pipeline = self.pipeline.with_params(params)?;
+        Ok(self)
+    }
+
+    pub fn with_params_with_backend(mut self, params: RuntimeParams, backend: &dyn ComputeBackend) -> Result<Self, String> {
+        self.pipeline = self.pipeline.with_params_with_backend(params, backend)?;
         Ok(self)
     }
 
@@ -510,11 +692,12 @@ pub fn simulate(
     } else {
         photo.params.clone()
     };
-    let runtime = Runtime::new(
+    let runtime = Runtime::new_with_backend(
         photo.film.clone(),
         photo.print.clone(),
         params,
         &photo.data_dir,
+        backend,
     )?;
     let result = runtime.process(image, backend);
     if print_timings {
@@ -531,29 +714,23 @@ pub fn simulate_preview(
     digest_params_first: bool,
     print_timings: bool,
 ) -> Result<ImageBuf, String> {
-    if photo.params.scanner.requires_full_frame() {
-        let output = simulate(image, photo, backend, digest_params_first, print_timings)?;
-        if photo
-            .params
-            .taps
-            .collect
-            .as_deref()
-            .is_none_or(|tap| tap == "rgb_out")
-        {
-            Ok(crate::params_builder::resize_for_preview(
-                &output,
-                photo.params.settings.preview_max_size,
-            ))
-        } else {
-            Ok(output)
-        }
+    let params = if digest_params_first {
+        photo.digested_params(DigestMode::ApplyStockSpecifics)?
     } else {
-        let preview = crate::params_builder::resize_for_preview(
-            &image,
-            photo.params.settings.preview_max_size,
-        );
-        simulate(preview, photo, backend, digest_params_first, print_timings)
+        photo.params.clone()
+    };
+    let runtime = Runtime::new_with_backend(
+        photo.film.clone(),
+        photo.print.clone(),
+        params,
+        &photo.data_dir,
+        backend,
+    )?;
+    let result = runtime.process_configured_preview(image, backend);
+    if print_timings {
+        runtime.print_timings();
     }
+    result
 }
 
 /// Legacy ART compatibility name.
@@ -749,87 +926,52 @@ mod tests {
     }
 
     #[test]
-    fn cached_scan_preserves_explicit_gpu_policy_and_automatic_cpu_acquisition() {
-        use spektrafilm_backend::telemetry::{CollectionMode, CpuReason, Executor};
+    fn cached_scan_selected_gpu_keeps_acquisition_and_preview_on_device() {
+        use spektrafilm_backend::telemetry::{CollectionMode, Executor};
 
         let mut params = scanner_params();
         params.scanner.lens_blur = 1.0;
         params.scanner.unsharp_mask = [0.0; 2];
+        params.io.output_color_space = "Display P3".into();
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.scanner.operator.exposure_ev = 0.5;
+        params.scanner.operator.warmth_ev = 0.25;
+        params.scanner.operator.tint_ev = -0.125;
+        params.scanner.operator.contrast = 0.75;
         let runtime = Runtime::from_stocks(
-            "kodak_portra_400",
-            "kodak_portra_endura",
-            params,
-            &data_dir(),
-        )
-        .unwrap();
+            "kodak_portra_400", "kodak_portra_endura", params, &data_dir(),
+        ).unwrap();
         let image = Arc::new(scanner_image());
-        let mut cache = ScanFrameCache::default();
-        spektrafilm_gpu::test_support::explicit_adapter().with_shared_backend(|backend| {
-            assert!(backend.is_gpu() && backend.explicit_gpu_request());
-            let ordinary = runtime
-                .process(image.as_ref().clone(), backend.as_ref())
-                .expect_err("ordinary processing must reject the host acquisition");
-            let context = ObservationContext::new(CollectionMode::Summary);
-            let cached = runtime
-                .process_scan_cached_observed(&image, &mut cache, backend, &context)
-                .expect_err("cached processing must not bypass explicit GPU policy");
-            for error in [&ordinary, &cached] {
-                assert!(error.contains("explicit GPU request"), "{error}");
-                assert!(error.contains("scanner acquisition"), "{error}");
-            }
-            assert_eq!(cache.retained_bytes(), 0);
-            assert!(context.snapshot().observations.iter().all(|stage| {
-                stage.name != "negative_reconstruction" && stage.name != "standard_setup"
-            }));
-        });
-        spektrafilm_gpu::test_support::adapter().with_shared_backend(|backend| {
-            assert!(backend.is_gpu() && !backend.explicit_gpu_request());
-            let context = ObservationContext::new(CollectionMode::Summary);
-            let cached = runtime
-                .process_scan_cached_observed(&image, &mut cache, backend, &context)
-                .expect("automatic GPU selection permits CPU acquisition");
-            assert_eq!((cached.width, cached.height), (4, 4));
-            assert!(cached.data.iter().all(|value| value.is_finite()));
-            assert!(cache.retained_bytes() > 0);
-            let snapshot = context.snapshot();
-            let acquisition = snapshot
-                .observations
-                .iter()
-                .find(|stage| stage.name == "negative_reconstruction")
-                .expect("real negative reconstruction must execute");
-            assert_eq!(acquisition.executor, Some(Executor::Cpu));
-            assert_eq!(
-                acquisition.cpu_reason,
-                Some(CpuReason::NegativeToPositiveOutput)
-            );
-            assert_eq!(
-                snapshot
-                    .observations
-                    .iter()
-                    .filter(|stage| stage.name == "standard_setup")
-                    .count(),
-                1
-            );
-            let ordinary = runtime
-                .process(image.as_ref().clone(), backend.as_ref())
-                .expect("ordinary automatic processing permits CPU acquisition");
-            assert_eq!((ordinary.width, ordinary.height), (4, 4));
-            assert!(ordinary.data.iter().all(|value| value.is_finite()));
-            // Ordinary rendering uses the resident front pass; the cache
-            // uses per-stage boundaries. Match the existing n2p fence budget.
-            let (sum, maximum) = cached.data.iter().zip(&ordinary.data).fold(
-                (0.0, 0.0_f64),
-                |(sum, maximum), (a, b)| {
-                    let difference = (*a as f64 - *b as f64).abs();
-                    (sum + difference, maximum.max(difference))
-                },
-            );
-            let mean = sum / cached.data.len() as f64;
-            assert!(
-                mean < 5e-2 && maximum < 5e-1,
-                "automatic cached/resident divergence: mean={mean} max={maximum}"
-            );
-        });
+        let expected = runtime.process_preview(image.as_ref().clone(), 2, &CpuBackend).unwrap();
+        for explicit in [true, false] {
+            let gpu = if explicit { spektrafilm_gpu::test_support::explicit_adapter() } else { spektrafilm_gpu::test_support::adapter() };
+            gpu.with_shared_backend(|backend| {
+                let runtime = runtime.clone()
+                    .with_params_with_backend(runtime.params().clone(), backend.as_ref()).unwrap();
+                let mut cache = ScanFrameCache::default();
+                let context = ObservationContext::new(CollectionMode::Summary);
+                let cached = runtime.process_scan_cached_observed(&image, &mut cache, backend, &context).unwrap();
+                assert_eq!((cached.width, cached.height), (4, 4));
+                assert!(cached.data.iter().all(|value| value.is_finite()));
+                assert_eq!(cache.retained_bytes(), 0, "GPU acquisition must not retain a host exposure cache");
+                let snapshot = context.snapshot();
+                assert!(!snapshot.observations.iter().any(|stage| stage.executor == Some(Executor::Cpu)),
+                    "selected GPU executed CPU image arithmetic: {:?}", snapshot.observations);
+                assert_eq!(snapshot.observations.iter().filter(|stage| stage.name == "standard_setup").count(), 1);
+                let preview = runtime.process_preview(image.as_ref().clone(), 2, backend.as_ref()).unwrap();
+                assert_eq!((preview.width, preview.height), (2, 2));
+                let mut sum = 0.0;
+                let mut maximum = 0.0_f64;
+                for (actual, expected) in preview.data.iter().zip(&expected.data) {
+                    let difference = (*actual as f64 - *expected as f64).abs();
+                    sum += difference;
+                    maximum = maximum.max(difference);
+                }
+                let mean = sum / expected.data.len() as f64;
+                assert!(mean < 5e-3 && maximum < 5e-2,
+                    "full-frame standard/operator/primaries preview divergence: mean={mean} max={maximum}");
+            });
+        }
     }
 
     #[test]
@@ -937,6 +1079,62 @@ mod tests {
             .unwrap();
         assert_eq!((explicit.width, explicit.height), (4, 4));
         assert_eq!(explicit.data, default.data);
+    }
+
+    #[test]
+    fn public_gpu_partial_taps_keep_autoexposure_on_the_retained_device_route() {
+        use spektrafilm_backend::telemetry::{CollectionMode, Executor, ObservationContext, ResidentDeclineReason};
+        let gpu = spektrafilm_gpu::test_support::adapter();
+        let dir = data_dir();
+        let mut params = scanner_params();
+        params.camera.auto_exposure = true;
+        params.io.input_color_space = "ACES2065-1".into();
+        params.io.input_cctf_decoding = false;
+        params.settings.rgb_to_raw_method = "mallett2019".into();
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.taps.inject = Some("rgb_in".into());
+        params.taps.collect = Some("rgb_pre".into());
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let runtime = Runtime::new(film, print, params, &dir).unwrap();
+        let image = scanner_image();
+        let expected = runtime.process_with_taps(
+            image.clone(), &CpuBackend, Some(Tap::RgbIn), Some(Tap::RgbPre),
+        ).unwrap();
+        let params = runtime.params().clone();
+        let runtime = runtime.with_params_with_backend(params, gpu.backend()).unwrap();
+        let context = ObservationContext::new(CollectionMode::Summary);
+        let actual = runtime.process_with_taps_observed(
+            image.clone(), gpu.backend(), Some(Tap::RgbIn), Some(Tap::RgbPre), &context,
+        ).unwrap();
+        assert_eq!((actual.width, actual.height), (image.width, image.height));
+        assert!(expected.data.iter().zip(&image.data)
+            .any(|(exposed, source)| (*exposed as f64 - *source as f64).abs() > 1e-4),
+            "fixture must exercise a nonidentity auto-exposure scale");
+        for (actual, expected) in actual.data.iter().zip(&expected.data) {
+            assert!((*actual as f64 - *expected as f64).abs() < 2e-5,
+                "partial-tap exposure differs: {actual} versus {expected}");
+        }
+        let snapshot = context.snapshot();
+        assert!(snapshot.totals.dispatch_count.unwrap_or(0) > 0);
+        assert!(!snapshot.observations.iter().any(|stage| stage.executor == Some(Executor::Cpu)),
+            "public partial taps executed a CPU numerical stage: {:?}", snapshot.observations);
+        assert!(!snapshot.execution.resident_decline_reasons.contains(&ResidentDeclineReason::DiagnosticTapRoute));
+        assert!(!snapshot.observations.iter().any(|stage|
+            matches!(stage.name.as_str(), "filming_expose" | "film_density" | "scan_spectral")),
+            "rgb_pre collection must stop before film exposure");
+        let borrowed_context = ObservationContext::new(CollectionMode::Summary);
+        let borrowed = runtime.process_resident_borrowed_observed(
+            &image, gpu.backend(), &borrowed_context,
+        ).unwrap().expect("selected GPU must serve borrowed diagnostic taps");
+        assert_eq!(borrowed.data, actual.data, "borrowed diagnostic route changed exposed pixels");
+        let borrowed_snapshot = borrowed_context.snapshot();
+        assert!(borrowed_snapshot.totals.dispatch_count.unwrap_or(0) > 0);
+        assert!(!borrowed_snapshot.observations.iter().any(|stage|
+            matches!(stage.executor, Some(Executor::Cpu | Executor::Mixed))),
+            "borrowed diagnostic tap executed host image arithmetic");
+        assert!(!borrowed_snapshot.execution.resident_decline_reasons
+            .contains(&ResidentDeclineReason::DiagnosticTapRoute));
     }
 
     #[test]

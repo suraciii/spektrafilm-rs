@@ -44,6 +44,9 @@ pub(super) struct RenderJob {
     pub(super) request_id: u64,
     pub(super) kind: RenderKind,
     pub(super) animate: bool,
+    pub(super) backend_name: String,
+    /// Counter-clockwise presentation orientation; the source stays immutable.
+    pub(super) rotation_quarter_turns: u32,
     pub(super) collection_mode: CollectionMode,
 }
 
@@ -62,11 +65,12 @@ impl RenderJob {
 
 pub(super) struct RenderRequest {
     pub(super) job: RenderJob,
-    pub(super) image: Arc<ImageBuf>,
+    pub(super) image: super::render::InputImage,
     pub(super) snapshot: RenderSnapshot,
     pub(super) backend: Arc<dyn ComputeBackend>,
     pub(super) source_metadata: Option<ImageMetadata>,
     pub(super) display_enabled: bool,
+    pub(super) display_profile: Option<std::path::PathBuf>,
     pub(super) ctx: egui::Context,
     pub(super) operation: Operation,
     pub(super) worker_wait: ObservationScope,
@@ -88,10 +92,13 @@ pub(super) struct RenderWorker {
 }
 
 pub(super) struct RenderResult {
-    pub(super) output: ImageBuf,
+    pub(super) output: Option<ImageBuf>,
+    pub(super) retained: Option<spektrafilm_backend::DeviceImage>,
+    pub(super) histogram: Option<crate::histogram::HistogramData>,
     pub(super) preview: display::DisplayRaster,
     pub(super) display_status: crate::app::Message,
     pub(super) display_enabled: bool,
+    pub(super) display_profile: Option<std::path::PathBuf>,
     pub(super) display_max_size: u32,
     pub(super) output_color_space: String,
     pub(super) output_cctf_encoding: bool,
@@ -120,6 +127,7 @@ impl RenderWorker {
                 let _progress = spektrafilm_core::progress::ProgressScope::new(progress);
                 let mut runtime_cache = RuntimeCache::default();
                 let mut scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
+                let mut oriented_host: Option<(u64, u32, Arc<ImageBuf>)> = None;
                 loop {
                     let request = {
                         let (lock, wake) = &*state_for_worker;
@@ -138,6 +146,7 @@ impl RenderWorker {
                     if invalidate_cache_for_worker.swap(false, Ordering::SeqCst) {
                         runtime_cache = RuntimeCache::default();
                         scan_cache = spektrafilm_core::runtime::ScanFrameCache::default();
+                        oriented_host = None;
                     }
                     let mut operation = request.operation;
                     let attempt = operation.attempt(1);
@@ -148,10 +157,11 @@ impl RenderWorker {
                     let ctx = request.ctx.clone();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let prepare_unit = spektrafilm_core::progress::report("input_prepare");
-                        let pipeline_template = runtime_cache.prepare_observed(
+                        let pipeline_template = runtime_cache.prepare_observed_with_backend(
                             &request.snapshot,
                             job.kind == RenderKind::Preview,
                             &observation,
+                            request.backend.as_ref(),
                         )?;
                         let pipeline_template = pipeline_template
                             .clone()
@@ -162,43 +172,111 @@ impl RenderWorker {
                             );
                         }
                         let runtime_params = pipeline_template.params();
+                        let rotation = job.rotation_quarter_turns;
                         let input_prepare = observation.scope(
                             "input_prepare",
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let working_image = if runtime_params.scanner.requires_full_frame() {
-                            None
-                        } else if runtime_params.settings.preview_mode {
-                            Some(spektrafilm_core::params_builder::resize_for_preview(
-                                &request.image,
-                                runtime_params.settings.preview_max_size,
-                            ))
-                        } else {
-                            Some((*request.image).clone())
-                        };
-                        drop(input_prepare);
+                        // GPU geometry stays on device; the CPU full-frame scanner
+                        // receives the oriented source before any preview resize.
+                        let host_input = (|| -> Result<Option<Arc<ImageBuf>>, String> {
+                            if request.backend.is_gpu() {
+                                return Ok(None);
+                            }
+                            let bound = input_prepare.context().enabled().then(||
+                                spektrafilm_backend::bind_backend(
+                                    request.backend.as_ref(), input_prepare.context().clone(),
+                                ));
+                            let backend = bound.as_deref().unwrap_or(request.backend.as_ref());
+                            let _span = input_prepare.context().span().map(|span| span.enter());
+                            let source = if rotation == 0 {
+                                match &request.image {
+                                    super::render::InputImage::Host(image) => image.clone(),
+                                    super::render::InputImage::Device(_) => Arc::new(request.image.to_host(backend)?),
+                                }
+                            } else if let Some((epoch, turns, image)) = oriented_host.as_ref()
+                                && *epoch == job.input_epoch && *turns == rotation {
+                                image.clone()
+                            } else {
+                                let image = Arc::new(request.image.to_host(backend)?.rotated_quarter_turns(rotation as i32));
+                                oriented_host = Some((job.input_epoch, rotation, image.clone()));
+                                image
+                            };
+                            Ok(Some(if runtime_params.settings.preview_mode && !runtime_params.scanner.requires_full_frame() {
+                                Arc::new(spektrafilm_core::params_builder::resize_for_preview(
+                                    &source, runtime_params.settings.preview_max_size,
+                                ))
+                            } else {
+                                source
+                            }))
+                        })();
+                        let host_input = observed_result(
+                            input_prepare, host_input,
+                            IssueCategory::Input, IssueBoundary::InputPrepare,
+                        ).map_err(|error| crate::app::Message::new("operations.simulation_error").arg("detail", error))?;
                         drop(prepare_unit);
                         let simulation =
                             observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
                         let processed = {
                             let _unit = spektrafilm_core::progress::report("simulation");
-                            if runtime_params.scanner.requires_full_frame() {
-                                pipeline_template.process_scan_cached_observed(
-                                    &request.image,
-                                    &mut scan_cache,
-                                    &request.backend,
-                                    simulation.context(),
-                                )
+                            let bound = (request.backend.is_gpu() && simulation.context().enabled()).then(||
+                                spektrafilm_backend::bind_backend(
+                                    request.backend.as_ref(), simulation.context().clone(),
+                                ));
+                            let backend = bound.as_deref().unwrap_or(request.backend.as_ref());
+                            let _span = simulation.context().span().map(|span| span.enter());
+                            let prepared = if request.backend.is_gpu() {
+                                let geometry = spektrafilm_core::pipeline::RetainedRender {
+                                    rotation_quarter_turns: rotation,
+                                    preview_max_size: runtime_params.settings.preview_mode
+                                        .then_some(runtime_params.settings.preview_max_size),
+                                };
+                                match &request.image {
+                                    super::render::InputImage::Device(image) => pipeline_template
+                                        .process_device_retained(image, geometry, backend)
+                                        .map(Some),
+                                    super::render::InputImage::Host(image) => {
+                                        let rendered = if runtime_params.settings.preview_mode {
+                                            pipeline_template.process_preview_retained_rotated(
+                                                image, runtime_params.settings.preview_max_size,
+                                                rotation, backend,
+                                            )
+                                        } else {
+                                            pipeline_template.process_retained_rotated(
+                                                image, rotation, backend,
+                                            )
+                                        };
+                                        rendered.and_then(|image| image.map(Some).ok_or_else(||
+                                            "selected GPU cannot render this input on the retained route".to_owned()))
+                                    }
+                                }
                             } else {
-                                pipeline_template.process_observed(
-                                    working_image.expect("non-standard working image prepared"),
-                                    request.backend.as_ref(),
-                                    simulation.context(),
-                                )
+                                Ok(None)
+                            };
+                            match prepared {
+                                // Explicit diagnostic taps alone materialize samples.
+                                Ok(Some(image)) if matches!(image.domain(),
+                                    spektrafilm_backend::SampleDomain::LogExposure
+                                        | spektrafilm_backend::SampleDomain::Density
+                                ) => image.to_host(backend).map(|image| (Some(image), None)),
+                                Ok(Some(image)) => Ok((None, Some(image))),
+                                Ok(None) => {
+                                    let image = host_input.expect("CPU working image prepared");
+                                    if runtime_params.scanner.requires_full_frame() {
+                                        pipeline_template.process_scan_cached_observed(
+                                            &image, &mut scan_cache, &request.backend, simulation.context(),
+                                        )
+                                    } else {
+                                        pipeline_template.process_observed(
+                                            Arc::try_unwrap(image).unwrap_or_else(|image| (*image).clone()), request.backend.as_ref(), simulation.context(),
+                                        )
+                                    }.map(|image| (Some(image), None))
+                                },
+                                Err(error) => Err(error),
                             }
                         };
-                        let output = observed_result(
+                        let (output, retained) = observed_result(
                             simulation,
                             processed,
                             IssueCategory::Simulation,
@@ -213,18 +291,41 @@ impl RenderWorker {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let display_result = {
+                        let display_result = (|| {
+                            let cancellable = request.backend.with_cancellation(
+                                request.snapshot.cancellation(),
+                            );
+                            let backend = cancellable.as_deref().unwrap_or(request.backend.as_ref());
+                            let bound = display_prepare.context().enabled().then(||
+                                spektrafilm_backend::bind_backend(
+                                    backend, display_prepare.context().clone(),
+                                ));
+                            let backend = bound.as_deref().unwrap_or(backend);
+                            let _span = display_prepare.context().span().map(|span| span.enter());
+                            let histogram = retained.as_ref().map(|image| {
+                                backend.retained_histogram(image).map(crate::histogram::HistogramData::from_bins)
+                            }).transpose()?;
                             let _unit = spektrafilm_core::progress::report("display_prepare");
-                            display::output_display_raster(
-                                &output,
-                                &runtime_params.io.output_color_space,
-                                runtime_params.io.output_cctf_encoding,
-                                request.display_enabled,
-                                None,
-                                runtime_params.settings.preview_max_size as usize,
-                            )
-                        };
-                        let (preview, display_status) = observed_result(
+                            let displayed = if let Some(retained) = retained.as_ref() {
+                                display::output_display_raster_retained(
+                                    backend, retained,
+                                    &runtime_params.io.output_color_space,
+                                    runtime_params.io.output_cctf_encoding,
+                                    request.display_enabled, request.display_profile.as_deref(),
+                                    runtime_params.settings.preview_max_size as usize,
+                                )
+                            } else {
+                                display::output_display_raster_with(
+                                    backend, output.as_ref().expect("CPU route produced host output"),
+                                    &runtime_params.io.output_color_space,
+                                    runtime_params.io.output_cctf_encoding,
+                                    request.display_enabled, request.display_profile.as_deref(),
+                                    runtime_params.settings.preview_max_size as usize,
+                                )
+                            };
+                            displayed.map(|(preview, status)| (preview, status, histogram))
+                        })();
+                        let (preview, display_status, histogram) = observed_result(
                             display_prepare,
                             display_result,
                             IssueCategory::Backend,
@@ -240,9 +341,12 @@ impl RenderWorker {
                             output_color_space: runtime_params.io.output_color_space.clone(),
                             output_cctf_encoding: runtime_params.io.output_cctf_encoding,
                             output,
+                            retained,
+                            histogram,
                             preview,
                             display_status,
                             display_enabled: request.display_enabled,
+                            display_profile: request.display_profile,
                             display_max_size: runtime_params.settings.preview_max_size,
                         })
                     }))

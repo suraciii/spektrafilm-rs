@@ -15,7 +15,7 @@ use crate::params::RuntimeParams;
 use crate::profile::Profile;
 
 mod metering;
-pub use metering::{measure_autoexposure_ev, meter_autoexposure_ev};
+pub use metering::{MAX_SIZE, MID_GREY, measure_autoexposure_ev, meter_autoexposure_ev};
 
 /// Per-pixel `raw = m · rgb` for the Mallett2019 path (f64 matmul, rayon-parallel).
 fn apply_mallett_matrix(image: &ImageBuf, m: &[[f64; 3]; 3]) -> ImageBuf {
@@ -31,6 +31,29 @@ fn apply_mallett_matrix(image: &ImageBuf, m: &[[f64; 3]; 3]) -> ImageBuf {
             dst[2] = from_f64(v[2]);
         });
     out
+}
+
+/// The reference host diffusion filter, with its telemetry marker.
+///
+/// Both the per-stage route and the resident chain's fence call this, so
+/// the published `optical_diffusion` CPU reason and the observed executor
+/// stay identical whichever route ran the convolution on the host.
+pub(crate) fn host_diffusion(
+    image: &ImageBuf,
+    filter: &spektrafilm_model::diffusion::DiffusionFilter<'_>,
+    pixel_size_um: f64,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> ImageBuf {
+    let _diffusion = super::StageObservation::cpu(
+        backend,
+        "optical_diffusion",
+        spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion,
+    );
+    // An invalid family is rejected by `RuntimeParams::validate` /
+    // `Pipeline::new_with_spectral` before any stage runs; reaching this
+    // point with an unknown family is a programming error.
+    spektrafilm_model::diffusion::apply_diffusion_filter_um(image, filter, pixel_size_um)
+        .expect("diffusion filter family validated at pipeline entry")
 }
 
 /// Expose: convert RGB to film raw exposure.
@@ -56,7 +79,7 @@ pub fn expose(
     front_illuminant: &[f32],
     pixel_size_um: f64,
     ae_ev: f64,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let pix_um = pixel_size_um as f32;
     let input_space = colorspace::resolve(&params.io.input_color_space)
         .expect("input color space must be validated before filming");
@@ -100,7 +123,7 @@ pub fn expose(
             &params.io.input_color_space,
             front_illuminant,
             params.settings.use_cat16,
-        )
+        )?
     } else {
         // Simplified fallback: treat RGB values as proportional to raw exposure
         rgb.clone()
@@ -130,29 +153,42 @@ pub fn expose(
     }
 
     // Diffusion filter (camera): lens diffusion-filter PSF on linear raw.
-    // Preview and export use the exact sampled PSF convolution.
+    // Preview and export use the exact sampled PSF convolution. A device
+    // convolution is the same discrete PSF and the same reflect extension;
+    // a backend without one keeps the reference host convolution.
     let df = &params.camera.diffusion_filter;
     if df.active {
-        let _diffusion = super::StageObservation::cpu(
-            backend,
-            "optical_diffusion",
-            spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion,
-        );
         let dm = df.to_model();
-        // An invalid family is rejected by `RuntimeParams::validate` /
-        // `Pipeline::new_with_spectral` before any stage runs; reaching
-        // this point with an unknown family is a programming error.
-        raw = if backend.is_gpu() {
-            spektrafilm_model::diffusion::apply_diffusion_filter_blur(
-                &raw,
-                &dm,
-                pixel_size_um,
-                backend,
-            )
-            .expect("camera diffusion filter family validated at pipeline entry")
-        } else {
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&raw, &dm, pixel_size_um)
-                .expect("camera diffusion filter family validated at pipeline entry")
+        // A device convolution evaluates the same discrete PSF; the host
+        // resolves the taps from the filter family so both routes use one
+        // authoritative kernel. The family is validated at pipeline entry,
+        // so a zero scatter fraction (an effective no-op) is the only
+        // resolution failure left, and that is a pass-through on both routes.
+        let resolved = spektrafilm_model::diffusion::resolve_psf(
+            &dm,
+            pixel_size_um,
+            raw.width as usize,
+            raw.height as usize,
+        )
+        .ok();
+        raw = match resolved {
+            Some((psf, radius, scatter_fraction)) => {
+                let params = spektrafilm_backend::OpticalDiffusionGpuParams {
+                    psf: &psf,
+                    radius: radius as u32,
+                    scatter_fraction,
+                };
+                match backend.optical_diffusion(&raw, &params) {
+                    Ok(Some(diffused)) => {
+                        let _device = super::StageObservation::new(backend, "optical_diffusion");
+                        diffused
+                    }
+                    Ok(None) if backend.is_gpu() => return Err("optical_diffusion: selected GPU has no camera diffusion operation".into()),
+                    Ok(None) => host_diffusion(&raw, &dm, pixel_size_um, backend),
+                    Err(error) => return Err(error),
+                }
+            }
+            None => raw,
         };
     }
 
@@ -163,7 +199,7 @@ pub fn expose(
             params.camera.lens_blur_um,
             pix_um,
             backend,
-        );
+        )?;
     }
 
     // Halation (on linear raw)
@@ -199,7 +235,7 @@ pub fn expose(
         *v = ((*v).max(zero) + eps).log10();
     });
 
-    raw
+    Ok(raw)
 }
 
 /// Develop: log_raw → density_cmy via density curves + DIR couplers + grain.
@@ -213,7 +249,7 @@ pub fn develop(
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
     pixel_size_um: f64,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let stage_timings = stage_timings_enabled();
     let pix_um = pixel_size_um as f32;
     let curves = crate::chain_prep::FilmCurves::prepare(film);
@@ -223,7 +259,7 @@ pub fn develop(
     let gamma = params.film_render.density_curve_gamma;
     let t = Instant::now();
     let mut density_cmy =
-        backend.density_curve_interp(log_raw, log_exposure_f64, norm_curves_f64, gamma as f64);
+        backend.density_curve_interp(log_raw, log_exposure_f64, norm_curves_f64, gamma as f64)?;
     print_stage_timing(stage_timings, "filming_develop.density_interp", t);
 
     // DIR couplers
@@ -247,7 +283,7 @@ pub fn develop(
             dir.langmuir_donor_k_rgb,
             dir.langmuir_receiver_k_rgb,
             backend,
-        );
+        )?;
         print_stage_timing(stage_timings, "filming_develop.dir_couplers", t);
     }
 
@@ -268,11 +304,161 @@ pub fn develop(
             params.random_seed,
             pixel_size_um,
             backend,
-        );
+        )?;
         print_stage_timing(stage_timings, "filming_develop.grain", t);
     }
 
-    density_cmy
+    Ok(density_cmy)
+}
+
+/// Profile sublayer curves and their per-sublayer, per-channel maxima.
+struct SpektraLayerTables {
+    layers_tensor: Vec<[[f64; 3]; 3]>,
+    density_max_layers: [[f64; 3]; 3],
+}
+
+/// The sublayer density tables the device pass reads, or the reason this film
+/// profile cannot realize the request.
+///
+/// One rule for both routes: `spektra_grain_device_params` builds from the
+/// returned tables, and the explicit-GPU preflight reports the reason, so the
+/// preflight cannot contradict the executed route.
+fn spektra_layer_tables(film: &Profile) -> Result<SpektraLayerTables, &'static str> {
+    let layers_tensor = film.density_curves_layers_f64();
+    if layers_tensor.is_empty() {
+        return Err("the film profile supplies no sublayer density curves");
+    }
+    let density_max_layers =
+        spektrafilm_model::density_curves::density_max_layers_f64(&layers_tensor);
+    if density_max_layers
+        .iter()
+        .any(|row| {
+            row.iter()
+                .any(|v| v.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater))
+        })
+    {
+        return Err("the film profile's per-sublayer density maxima are not positive");
+    }
+    Ok(SpektraLayerTables {
+        layers_tensor,
+        density_max_layers,
+    })
+}
+
+/// Why the resident chain cannot resolve Spektra grain on the device for this
+/// film profile, or `None` when it can realize the request.
+pub(crate) fn spektra_device_gap(film: &Profile) -> Option<&'static str> {
+    spektra_layer_tables(film).err()
+}
+
+/// Resolve the device Spektra v1 grain request for the resident chain, or
+/// `None` when the film profile cannot supply the curves the pass reads.
+///
+/// The device realizes both sampling regimes. The layered `fast_stats` regime
+/// (`spektrafilm_model::grain::v1::apply_grain_to_density_layers` with
+/// `use_fast_stats`) is a per-pixel mapping over independent `FastStatsRng`
+/// streams. The composite path hardcodes the scipy MT19937 regime upstream
+/// regardless of the setting, and the layered path uses it whenever
+/// `use_fast_stats` is false: one sequential generator advanced across the
+/// whole array with variable-length rejection consumption. The device
+/// reproduces that draw order exactly — all Poisson draws across the plane
+/// first, then all binomial draws — so it never substitutes a different noise
+/// law (`specs/gpu-execution/design.md` §Stochastic alignment).
+///
+/// Every f64 control is resolved here on the host from the profile and the
+/// request, exactly as the host stage resolves them, so the device pass
+/// performs no image-dependent arithmetic of its own.
+pub(crate) fn spektra_grain_device_params(
+    film: &Profile,
+    grain: &crate::params::grain::GrainParams,
+    norm_curves_f64: &[[f64; 3]],
+    use_fast_stats: bool,
+    random_seed: u64,
+    pixel_size_um: f64,
+) -> Option<spektrafilm_backend::GrainV1GpuParams> {
+    let SpektraLayerTables {
+        layers_tensor,
+        density_max_layers,
+    } = spektra_layer_tables(film).ok()?;
+    // Python: density_max_total = sum(density_max_layers, axis=sublayer);
+    //         fractions = density_max_layers / density_max_total;
+    //         density_min_layers = fractions * density_min;
+    //         density_max_layers += density_min_layers;
+    //         n_particles = pixel_area * fraction / particle_area_layer.
+    let pixel_area = pixel_size_um * pixel_size_um;
+    let mut total = [0.0f64; 3];
+    for layer in &density_max_layers {
+        for ch in 0..3 {
+            total[ch] += layer[ch];
+        }
+    }
+    let mut density_min_layers = [0.0f64; 9];
+    let mut density_max_adj = [0.0f64; 9];
+    let mut n_particles = [0.0f64; 9];
+    for (sl, layer) in density_max_layers.iter().enumerate() {
+        for (ch, &density_max) in layer.iter().enumerate() {
+            let slot = sl * 3 + ch;
+            let fraction = density_max / total[ch];
+            density_min_layers[slot] = fraction * grain.density_min[ch];
+            density_max_adj[slot] = density_max + density_min_layers[slot];
+            // Python multiplies the per-channel particle area by
+            // `particle_scale` before applying the sublayer scale.
+            let particle_area =
+                grain.particle_area_um2 * grain.particle_scale[ch] * grain.particle_scale_sublayers[sl];
+            n_particles[slot] = pixel_area * fraction / particle_area;
+        }
+    }
+    // The composite curve x column per channel, negated for a positive film —
+    // the same axis `interp_density_cmy_layers` looks up against.
+    let sign = if film.is_positive() { -1.0 } else { 1.0 };
+    let mut curve_x = Vec::with_capacity(norm_curves_f64.len() * 3);
+    for row in norm_curves_f64 {
+        for &value in row {
+            curve_x.push(value * sign);
+        }
+    }
+    let mut curve_layers = Vec::with_capacity(layers_tensor.len() * 9);
+    for row in &layers_tensor {
+        for layer in row {
+            for &value in layer {
+                curve_layers.push(value);
+            }
+        }
+    }
+    Some(spektrafilm_backend::GrainV1GpuParams {
+        base_seed: random_seed,
+        pixel_size_um,
+        particle_area: [
+            grain.particle_area_um2 * grain.particle_scale[0],
+            grain.particle_area_um2 * grain.particle_scale[1],
+            grain.particle_area_um2 * grain.particle_scale[2],
+        ],
+        particle_scale_layers: grain.particle_scale_sublayers,
+        density_min: grain.density_min,
+        uniformity: grain.uniformity,
+        density_min_layers,
+        density_max_adj,
+        n_particles,
+        monochrome: grain.monochrome,
+        lookup_sign: sign as f32,
+        blur_dye_clouds: grain.blur_dye_clouds_um,
+        reference_f64: std::mem::size_of::<spektrafilm_math::precision::Scalar>() == 8,
+        micro_sigma: grain.micro_structure[1] as f64 * 0.001 / pixel_size_um,
+        micro_blur_px: grain.micro_structure[0] as f64 / pixel_size_um,
+        grain_blur: grain.blur,
+        usm_sigma: grain.mult_usm_sigma,
+        usm_amount: grain.mult_usm_amount,
+        curve_x,
+        curve_layers,
+        sublayers_active: grain.sublayers_active,
+        n_sub_layers: grain.n_sub_layers,
+        mt19937_regime: !grain.sublayers_active || !use_fast_stats,
+        density_max_composite: spektrafilm_model::density_curves::max_density_f64(norm_curves_f64),
+        n_particles_composite: std::array::from_fn(|ch| {
+            let count = pixel_area / (grain.particle_area_um2 * grain.particle_scale[ch]);
+            if grain.n_sub_layers > 1 { count / grain.n_sub_layers as f64 } else { count }
+        }),
+    })
 }
 
 /// Spektra composite/layered grain on the developed film density (Python
@@ -295,7 +481,7 @@ pub(crate) fn apply_spektra_grain(
     random_seed: u64,
     pixel_size_um: f64,
     backend: &dyn ComputeBackend,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let particle_area_um2 = grain.particle_area_um2;
     if grain.sublayers_active {
         // Python `apply_grain_to_density_layers`: sublayer densities come
@@ -352,7 +538,7 @@ pub(crate) fn apply_spektra_grain(
             use_fast_stats,
             random_seed,
             backend,
-        );
+        )?;
     } else {
         let density_max = spektrafilm_model::density_curves::max_density_f64(norm_curves_f64);
         density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density(
@@ -368,9 +554,9 @@ pub(crate) fn apply_spektra_grain(
             grain.monochrome,
             random_seed,
             backend,
-        );
+        )?;
     }
-    density_cmy
+    Ok(density_cmy)
 }
 
 /// Full filming stage: expose + develop on an already-prepared working
@@ -384,7 +570,7 @@ pub fn process(
     backend: &dyn ComputeBackend,
     tc_lut: Option<&TcLut>,
     pixel_size_um: f64,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let ref_illuminant = select_illuminant(&film.info.reference_illuminant);
     let ae_ev = meter_autoexposure_ev(image, params);
     let log_raw = expose(
@@ -397,7 +583,7 @@ pub fn process(
         &ref_illuminant,
         pixel_size_um,
         ae_ev,
-    );
+    )?;
     develop(&log_raw, film, params, backend, pixel_size_um)
 }
 
@@ -485,7 +671,8 @@ mod tests {
             params.film_render.grain.active = false;
             let log_raw = log_raw();
 
-            let out = develop(&log_raw, &film, &params, &backend, 12.0);
+            let out = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("grain-disabled film development failed");
 
             let norm = spektrafilm_model::density_curves::normalize_density_curves_f64(
                 &film.density_curves_f64(),
@@ -495,7 +682,7 @@ mod tests {
                 &film.log_exposure_f64(),
                 &norm,
                 params.film_render.density_curve_gamma as f64,
-            );
+            ).expect("reference density interpolation failed");
             assert_eq!(out.data, expected.data);
         }
 
@@ -508,13 +695,17 @@ mod tests {
             let log_raw = log_raw();
             let mut params = base_params();
             params.film_render.grain.sublayers_active = true;
-            let layered = develop(&log_raw, &film, &params, &backend, 12.0);
-            let layered_again = develop(&log_raw, &film, &params, &backend, 12.0);
+            let layered = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("layered film development failed");
+            let layered_again = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("repeated layered film development failed");
             assert_eq!(layered.data, layered_again.data);
 
             params.film_render.grain.sublayers_active = false;
-            let composite = develop(&log_raw, &film, &params, &backend, 12.0);
-            let composite_again = develop(&log_raw, &film, &params, &backend, 12.0);
+            let composite = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("composite film development failed");
+            let composite_again = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("repeated composite film development failed");
             assert_eq!(composite.data, composite_again.data);
             assert_ne!(layered.data, composite.data);
         }
@@ -532,9 +723,11 @@ mod tests {
             params.film_render.grain.blur_dye_clouds_um = 0.0;
             params.film_render.grain.mult_usm_amount = 0.0;
             params.film_render.grain.particle_scale = [1.0, 1.0, 1.0];
-            let small_particles = develop(&log_raw, &film, &params, &backend, 12.0);
+            let small_particles = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("small-particle film development failed");
             params.film_render.grain.particle_scale[0] = 8.0;
-            let large_red_particles = develop(&log_raw, &film, &params, &backend, 12.0);
+            let large_red_particles = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("large-red-particle film development failed");
 
             let small_mean = ch_mean(&small_particles, 0);
             let large_mean = ch_mean(&large_red_particles, 0);
@@ -562,16 +755,20 @@ mod tests {
             let mut params = base_params();
             params.film_render.grain.sublayers_active = false;
             params.film_render.grain.n_sub_layers = 1;
-            let one = develop(&log_raw, &film, &params, &backend, 12.0);
+            let one = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("single-sublayer composite film development failed");
             params.film_render.grain.n_sub_layers = 3;
-            let three = develop(&log_raw, &film, &params, &backend, 12.0);
+            let three = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("three-sublayer composite film development failed");
             assert_ne!(one.data, three.data);
 
             params.film_render.grain.sublayers_active = true;
             params.film_render.grain.n_sub_layers = 1;
-            let l1 = develop(&log_raw, &film, &params, &backend, 12.0);
+            let l1 = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("layered film development with n_sub_layers=1 failed");
             params.film_render.grain.n_sub_layers = 4;
-            let l4 = develop(&log_raw, &film, &params, &backend, 12.0);
+            let l4 = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("layered film development with n_sub_layers=4 failed");
             assert_eq!(l1.data, l4.data);
         }
 
@@ -588,9 +785,11 @@ mod tests {
             params.film_render.grain.blur_dye_clouds_um = 0.0;
 
             params.settings.use_fast_stats = false;
-            let scipy = develop(&log_raw, &film, &params, &backend, 12.0);
+            let scipy = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("SciPy-statistics film development failed");
             params.settings.use_fast_stats = true;
-            let fast = develop(&log_raw, &film, &params, &backend, 12.0);
+            let fast = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("fast-statistics film development failed");
             assert_ne!(scipy.data, fast.data);
             for ch in 0..3 {
                 assert!(
@@ -617,8 +816,10 @@ mod tests {
             let params = base_params();
             let log_raw = log_raw();
 
-            let out = develop(&log_raw, &film, &params, &backend, 12.0);
-            let again = develop(&log_raw, &film, &params, &backend, 12.0);
+            let out = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("positive-profile film development failed");
+            let again = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("repeated positive-profile film development failed");
             assert!(out.data.iter().all(|v| v.is_finite()));
             assert_eq!(out.data, again.data);
             // Densities came out of the curve tables (not the raw log
@@ -636,7 +837,8 @@ mod tests {
             film.data.density_curves_layers.clear();
             let backend = CpuBackend;
             let params = base_params();
-            let _ = develop(&log_raw(), &film, &params, &backend, 12.0);
+            develop(&log_raw(), &film, &params, &backend, 12.0)
+                .expect("film development should panic for missing layer curves");
         }
 
         /// A monochrome (B&W) film runs the layered path with one shared
@@ -677,7 +879,8 @@ mod tests {
                 data,
             };
 
-            let out = develop(&log_raw, &film, &params, &backend, 12.0);
+            let out = develop(&log_raw, &film, &params, &backend, 12.0)
+                .expect("monochrome film development failed");
             let c0: Vec<Scalar> = out.pixels().map(|px| px[0]).collect();
             let c1: Vec<Scalar> = out.pixels().map(|px| px[1]).collect();
             let c2: Vec<Scalar> = out.pixels().map(|px| px[2]).collect();

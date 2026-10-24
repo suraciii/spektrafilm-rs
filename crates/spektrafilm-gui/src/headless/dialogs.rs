@@ -586,7 +586,7 @@ fn the_export_estimate_follows_the_input_while_the_dialog_is_open() {
     h.state_mut().load_image_from_path(&path);
     h.run_steps(3);
 
-    assert_eq!(h.state().image.as_ref().unwrap().width, 320);
+    assert_eq!(h.state().image.as_ref().unwrap().width(), 320);
     assert!(h.state().export_dialog.is_open());
     let replaced_with = estimated_output_size_row(h);
     assert_ne!(
@@ -788,7 +788,7 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     save_test_png(&dropped, 7, 3, 0.4);
     drop_file(h, &dropped);
     let expected = image_io::load(&dropped).unwrap().image;
-    let loaded = h.state().image.as_ref().unwrap();
+    let loaded = h.state().image.as_ref().unwrap().host_image().unwrap();
     assert_eq!(h.state().image_path.as_ref(), Some(&dropped));
     assert_eq!((loaded.width, loaded.height), (7, 3));
     assert_eq!(loaded.data, expected.data);
@@ -801,8 +801,8 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     );
     import_file(&mut imported.harness, false);
     assert_eq!(
-        h.state().image.as_ref().unwrap().data,
-        imported.harness.state().image.as_ref().unwrap().data
+        h.state().image.as_ref().unwrap().host_image().unwrap().data,
+        imported.harness.state().image.as_ref().unwrap().host_image().unwrap().data
     );
     assert_eq!(h.state().params, imported.harness.state().params);
     assert_eq!(h.state().image_path, imported.harness.state().image_path);
@@ -820,10 +820,7 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().parameter_revision, revision);
     assert_eq!((h.state().can_undo(), h.state().can_redo()), history);
-    assert!(Arc::ptr_eq(
-        h.state().image.as_ref().unwrap(),
-        &retained_image
-    ));
+    assert!(h.state().image.as_ref().unwrap().same_source(&retained_image));
     assert!(h.state().output_image.is_none());
 }
 

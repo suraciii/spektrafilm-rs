@@ -12,10 +12,26 @@ struct Collector {
     mode: CollectionMode,
     next: u64,
     snapshot: ObservationSnapshot,
+    retained_summaries: u64,
+    detail_bytes: u64,
+    detail_byte_limit: u64,
 }
 // Root facts, bounded issues, fixed phase totals and overflow field names reserve
 // enough space independently of detailed observation admission.
 const ROOT_BYTES: u64 = 16 * 1024;
+const OBSERVATION_LIMIT: usize = 1024;
+const SUMMARY_LIMIT: u64 = 512;
+const INITIAL_BYTES: u64 =
+    ROOT_BYTES + (OBSERVATION_LIMIT * std::mem::size_of::<Observation>()) as u64;
+// Leave half the dynamic storage for late attempts, phases, and stages.
+const DETAIL_BYTE_LIMIT: u64 = (1048576 - INITIAL_BYTES) / 2;
+
+fn is_summary(kind: ObservationKind) -> bool {
+    matches!(
+        kind,
+        ObservationKind::Attempt | ObservationKind::Phase | ObservationKind::Stage
+    )
+}
 
 fn execution_bytes(facts: &ExecutionFacts) -> u64 {
     (facts.resident_decline_reasons.capacity() * std::mem::size_of::<ResidentDeclineReason>()
@@ -82,16 +98,18 @@ impl ObservationContext {
                 start: Instant::now(),
                 mode,
                 next: root_id + 1,
+                retained_summaries: 0,
+                detail_bytes: 0,
+                detail_byte_limit: DETAIL_BYTE_LIMIT,
                 snapshot: ObservationSnapshot {
                     root_id,
                     duration: 0.0,
                     outcome: None,
-                    observations: Vec::with_capacity(1024),
+                    observations: Vec::with_capacity(OBSERVATION_LIMIT),
                     totals: WorkCounters::default(),
                     gpu_timing: GpuTimingMeasurements::default(),
                     coverage: Coverage {
-                        retained_bytes: ROOT_BYTES
-                            + (1024 * std::mem::size_of::<Observation>()) as u64,
+                        retained_bytes: INITIAL_BYTES,
                         ..Coverage::default()
                     },
                     execution: ExecutionFacts {
@@ -185,9 +203,17 @@ impl ObservationContext {
         let id = c.next;
         c.next = c.next.saturating_add(1);
         let bytes = name.len() as u64;
+        let summary = is_summary(kind);
+        let slots_available = if summary {
+            c.retained_summaries < SUMMARY_LIMIT
+        } else {
+            c.snapshot.coverage.retained_observations - c.retained_summaries
+                < OBSERVATION_LIMIT as u64 - SUMMARY_LIMIT
+        };
         let retain = self.retained
-            && c.snapshot.coverage.retained_observations < 1024
-            && c.snapshot.coverage.retained_bytes + bytes <= 1048576;
+            && slots_available
+            && c.snapshot.coverage.retained_bytes + bytes <= c.snapshot.coverage.byte_limit
+            && (summary || c.detail_bytes + bytes <= c.detail_byte_limit);
         let start = Instant::now();
         let offset = start.duration_since(c.start).as_secs_f64();
         if retain {
@@ -215,10 +241,22 @@ impl ObservationContext {
             });
             c.snapshot.coverage.retained_observations += 1;
             c.snapshot.coverage.retained_bytes += bytes;
+            if summary {
+                c.retained_summaries += 1;
+            } else {
+                c.detail_bytes += bytes;
+            }
         } else {
             c.snapshot.coverage.omitted_observations =
                 c.snapshot.coverage.omitted_observations.saturating_add(1);
             c.snapshot.coverage.truncated = true;
+            if summary {
+                c.snapshot.coverage.omitted_high_level_observations = c
+                    .snapshot
+                    .coverage
+                    .omitted_high_level_observations
+                    .and_then(|count| count.checked_add(1));
+            }
         }
         drop(c);
         let _entered = self.span.as_ref().map(|span| span.enter());
@@ -253,7 +291,13 @@ impl ObservationContext {
             if !self.retained {
                 0
             } else {
-                (1024 - c.snapshot.coverage.retained_observations) as u32
+                let slots = OBSERVATION_LIMIT as u64 - SUMMARY_LIMIT
+                    - (c.snapshot.coverage.retained_observations - c.retained_summaries);
+                let bytes = (c.detail_byte_limit - c.detail_bytes)
+                    .min(c.snapshot.coverage.byte_limit - c.snapshot.coverage.retained_bytes);
+                // Every pass name consumes at least one byte. Admission charges
+                // the actual name length as well as checking the slot budget.
+                slots.min(bytes) as u32
             }
         })
     }
@@ -458,32 +502,42 @@ impl ObservationContext {
         }
     }
     pub fn record_batch(&self, mut batch: BatchMeasurements) {
-        if !self.enabled() {
+        let Some(c) = &self.collector else {
             return;
-        }
+        };
         let _entered = self.span.as_ref().map(|span| span.enter());
         // Completion boundaries are backend vocabulary, never free-form diagnostics.
         bounded_description(&mut batch.completion_boundary);
         tracing::debug!(target:"spektrafilm::telemetry",parent:self.span.as_ref().and_then(|s|s.id()),event="batch",observation_root_id=self.root,observation_id=self.id,host_prepare_status=?batch.host_prepare.status,host_prepare=batch.host_prepare.value,submit_to_map_ready_status=?batch.submit_to_map_ready.status,submit_to_map_ready=batch.submit_to_map_ready.value,host_materialize_status=?batch.host_materialize.status,host_materialize=batch.host_materialize.value,compute_pass_sum_status=?batch.compute_pass_sum.status,compute_pass_sum=batch.compute_pass_sum.value,partial_compute_pass_sum_status=?batch.partial_compute_pass_sum.status,partial_compute_pass_sum=batch.partial_compute_pass_sum.value,completion_boundary=batch.completion_boundary.as_str());
-        self.mutate(|s| {
-            s.gpu_timing
-                .add(&batch.compute_pass_sum, &batch.partial_compute_pass_sum);
-            if let Some(o) = s.observations.iter_mut().find(|o| o.id == self.id) {
-                let old_bytes = observation_bytes(o);
-                let added = batch.completion_boundary.capacity() as u64;
-                let removed = o
-                    .batch
-                    .as_ref()
-                    .map_or(0, |b| b.completion_boundary.capacity() as u64);
-                if s.coverage.retained_bytes + added - removed <= s.coverage.byte_limit {
-                    o.batch = Some(batch);
-                    s.coverage.retained_bytes =
-                        s.coverage.retained_bytes - old_bytes + observation_bytes(o);
-                } else {
-                    s.coverage.truncated = true;
+        let mut c = c.lock();
+        c.snapshot
+            .gpu_timing
+            .add(&batch.compute_pass_sum, &batch.partial_compute_pass_sum);
+        if let Some(index) = c.snapshot.observations.iter().position(|o| o.id == self.id) {
+            let o = &c.snapshot.observations[index];
+            let old_bytes = observation_bytes(o);
+            let added = batch.completion_boundary.capacity() as u64;
+            let removed = o
+                .batch
+                .as_ref()
+                .map_or(0, |b| b.completion_boundary.capacity() as u64);
+            let summary = is_summary(o.kind);
+            if c.snapshot.coverage.retained_bytes + added - removed
+                <= c.snapshot.coverage.byte_limit
+                && (summary || c.detail_bytes + added - removed <= c.detail_byte_limit)
+            {
+                let o = &mut c.snapshot.observations[index];
+                o.batch = Some(batch);
+                let new_bytes = observation_bytes(o);
+                c.snapshot.coverage.retained_bytes =
+                    c.snapshot.coverage.retained_bytes - old_bytes + new_bytes;
+                if !summary {
+                    c.detail_bytes = c.detail_bytes + added - removed;
                 }
+            } else {
+                c.snapshot.coverage.truncated = true;
             }
-        });
+        }
     }
     pub fn record_pass(&self, occurrence: u64, duration: Measurement) {
         let _entered = self.span.as_ref().map(|span| span.enter());
@@ -625,6 +679,10 @@ mod tests {
         assert!(snapshot.coverage.retained_observations <= 1024);
         assert!(snapshot.coverage.truncated);
         assert!(snapshot.coverage.omitted_observations > 0);
+        assert_eq!(
+            snapshot.coverage.omitted_high_level_observations,
+            Some(1100 - SUMMARY_LIMIT)
+        );
     }
 }
 
@@ -636,7 +694,7 @@ mod collector_edges {
     fn omitted_descendants_keep_exact_ancestor_work() {
         let root = ObservationContext::new(CollectionMode::Summary);
         let stage = root.scope("scanning", ObservationKind::Stage, Purpose::Image);
-        for _ in 1..1024 {
+        for _ in 0..OBSERVATION_LIMIT as u64 - SUMMARY_LIMIT {
             drop(
                 stage
                     .context()
@@ -660,6 +718,36 @@ mod collector_edges {
         assert_eq!(snapshot.observations[0].work.dispatch_count, Some(7));
         assert_eq!(snapshot.coverage.omitted_observations, 2);
         assert!(snapshot.coverage.retained_bytes <= snapshot.coverage.byte_limit);
+    }
+
+    #[test]
+    fn batch_byte_pressure_cannot_consume_late_stage_storage() {
+        let root = ObservationContext::new(CollectionMode::Summary);
+        let phase = root.scope("simulation", ObservationKind::Phase, Purpose::Image);
+        for _ in 0..600 {
+            let batch = phase.context().scope("compute", ObservationKind::Batch, Purpose::Image);
+            batch.context().record_batch(BatchMeasurements {
+                host_prepare: Measurement::available(0.0),
+                submit_to_map_ready: Measurement::available(0.0),
+                host_materialize: Measurement::available(0.0),
+                completion_boundary: "界".repeat(256),
+                compute_pass_sum: Measurement::unavailable(AvailabilityReason::NotCollected),
+                partial_compute_pass_sum: Measurement::unavailable(AvailabilityReason::NotCollected),
+            });
+        }
+        let late = phase.context().scope("grain_v1", ObservationKind::Stage, Purpose::Image);
+        late.context().record_executor(Executor::Cpu, Some(CpuReason::GrainV1Sampler));
+        assert!(late.context().retained());
+        drop(late);
+        drop(phase);
+        let snapshot = root.snapshot();
+        assert!(snapshot.coverage.truncated);
+        assert!(snapshot.coverage.omitted_observations > 0);
+        assert_eq!(snapshot.coverage.omitted_high_level_observations, Some(0));
+        assert!(snapshot.coverage.retained_bytes <= snapshot.coverage.byte_limit);
+        let stage = snapshot.observations.iter().find(|o| o.name == "grain_v1").unwrap();
+        assert_eq!(stage.executor, Some(Executor::Cpu));
+        assert_eq!(stage.cpu_reason, Some(CpuReason::GrainV1Sampler));
     }
 
     #[test]

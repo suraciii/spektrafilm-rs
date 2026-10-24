@@ -6,7 +6,14 @@ impl Pipeline {
     /// Prepare the already decoded/RAW-corrected input before virtual camera
     /// exposure. Decode its configured transport before spatial resampling;
     /// Dye and Fotufilm defer result geometry but use this same requested grid.
-    pub(super) fn prepare_output_mix_source(&self, image: &ImageBuf) -> Result<ImageBuf, String> {
+    pub(super) fn prepare_output_mix_source(
+        &self,
+        image: &ImageBuf,
+        backend: &dyn ComputeBackend,
+    ) -> Result<ImageBuf, String> {
+        if backend.is_gpu() {
+            return Err("selected GPU output_mix source requires the retained device route".into());
+        }
         use spektrafilm_math::colorspace::{cctf_decode, conversion_matrix, convert_rgb, resolve};
         let input_space = resolve(&self.params.io.input_color_space)?;
         let output_space = resolve(&self.params.io.output_color_space)?;
@@ -60,11 +67,6 @@ impl Pipeline {
             return Ok(result);
         }
         let t = Instant::now();
-        let _mix = crate::stages::StageObservation::cpu(
-            backend,
-            "output_mix",
-            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
-        );
         let mut source = source.ok_or_else(|| {
             "output_mix.amount below 1 requires the prepared rgb_in source".to_owned()
         })?;
@@ -74,6 +76,31 @@ impl Pipeline {
         use spektrafilm_math::colorspace::{cctf_decode, cctf_encode, resolve};
         let space = resolve(&self.params.io.output_color_space)?;
         let encoded = self.params.io.output_cctf_encoding;
+        // Only CPU selection permits the host reference. A selected GPU
+        // must produce the device blend, even with automatic selection.
+        let device = backend
+            .mix_output(
+                &result,
+                &source,
+                &spektrafilm_backend::OutputMixGpuParams {
+                    amount: amount as f32,
+                    encoded,
+                    cctf_kind: spektrafilm_backend::cctf_kind(space.cctf),
+                },
+            )
+            .map_err(|error| format!("output_mix: {error}"))?;
+        if let Some(mixed) = device {
+            record_stage_timing(&mut timings, "output_mix", t);
+            return Ok(mixed);
+        }
+        if backend.is_gpu() {
+            return Err("selected GPU cannot execute output_mix composition".into());
+        }
+        let _mix = crate::stages::StageObservation::cpu(
+            backend,
+            "output_mix",
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
+        );
         let output = if amount == 0.0 {
             // Do not touch the processed operand at the exact source endpoint.
             if encoded {

@@ -2,7 +2,7 @@
 // dimensions: width, height, axis (0/1; 2 = native encoded input), optical.
 // taps: weight count, CCTF wire code (`Cctf::code()` in colorspace.rs),
 // reserved, reserved.
-struct Params { dimensions:vec4<u32>, taps:vec4<u32>, matrix:array<vec4<f32>,3> }
+struct Params { dimensions:vec4<u32>, taps:vec4<u32>, matrix:array<vec4<f32>,3>, window:vec4<u32> }
 @group(0) @binding(0) var<uniform> p:Params;
 @group(0) @binding(1) var<storage,read> input:array<f32>;
 @group(0) @binding(2) var<storage,read> weights:array<vec2<f32>>;
@@ -14,8 +14,12 @@ fn encode(v:f32)->f32 {
   case 3u: {if(v<=0.0031308){return 12.92*v;}return 1.055*pow(v,1./2.4)-0.055;}
   case 4u: {if(v<1./512.){return 16.*v;}return pow(v,1./1.8);}
   case 5u: {if(v<0.018){return 4.5*v;}return 1.099*pow(v,0.45)-0.099;}
-  case 6u: {if(v<0.){return bitcast<f32>(0x7fc00000u);}return pow(v,256./563.);}
-  case 7u: {if(v<0.){return bitcast<f32>(0x7fc00000u);}return pow(v,1./2.6);}
+  // The reference uses sign-preserving powers (`spow`) for both pure-power
+  // transfers, so negative headroom stays finite and signed. Returning NaN
+  // here made every negative sample of an Adobe RGB or DCI-P3 output poison
+  // the grain composition.
+  case 6u: {return sign(v)*pow(abs(v),256./563.);}
+  case 7u: {return sign(v)*pow(abs(v),1./2.6);}
   default: {return v;}
  }
 }
@@ -36,7 +40,14 @@ fn half_round(v:f32)->f32 {
 }
 fn at(pos:vec2<i32>)->vec3<f32> {
  let xy=vec2<u32>(clamp(pos,vec2<i32>(0),vec2<i32>(p.dimensions.xy)-1));
- let i=(xy.y*p.dimensions.x+xy.x)*3u;return vec3(input[i],input[i+1u],input[i+2u]);
+ var i=(xy.y*p.dimensions.x+xy.x)*3u;
+ if(p.window.w==1u){
+  let along=select(xy.x,xy.y,p.dimensions.z==1u);
+  let across=select(xy.y,xy.x,p.dimensions.z==1u);
+  let side=select(0u,1u,across>=p.taps.z);
+  i=(side*p.window.z+along-p.taps.w)*3u;
+ }
+ return vec3(input[i],input[i+1u],input[i+2u]);
 }
 fn bilinear(pos:vec2<f32>)->vec3<f32> {
  let q=pos-0.1;let base=vec2<i32>(floor(q));let t=fract(q);
@@ -45,8 +56,9 @@ fn bilinear(pos:vec2<f32>)->vec3<f32> {
 }
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) grid:vec3<u32>) {
- let idx=gid.x+gid.y*grid.x*256u;let width=p.dimensions.x;let height=p.dimensions.y;
- if(idx>=width*height){return;}let i=idx*3u;let xy=vec2<i32>(i32(idx%width),i32(idx/width));
+ let local=gid.x+gid.y*grid.x*256u;let width=p.dimensions.x;let height=p.dimensions.y;
+ if(local>=p.window.y){return;}let idx=p.window.x+local;let i=local*3u;var xy=vec2<i32>(i32(idx%width),i32(idx/width));
+ if(p.window.w==1u){xy=select(vec2<i32>(i32(idx),i32(p.taps.z)),vec2<i32>(i32(p.taps.z),i32(idx)),p.dimensions.z==1u);}
  var result=vec3<f32>(0.);
  if(p.dimensions.z==2u) {
   var rgb=vec3(input[i],input[i+1u],input[i+2u]);

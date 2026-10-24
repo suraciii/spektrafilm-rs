@@ -11,6 +11,13 @@ use super::dye_spatial::{self, BAND_BUFFERS, DyeBand, DyePlan, DyeSpatialState};
 use super::*;
 use spektrafilm_backend::dye_params::{DyeGpuParams, DyeReadoutGrid};
 
+#[path = "dye_optical.rs"]
+mod optical;
+
+#[path = "dye_paged.rs"]
+mod paged;
+pub(in crate::wgpu_backend) use paged::DyePagedState;
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct AccumulateParams {
@@ -40,83 +47,45 @@ impl AccumulatePass {
     }
 }
 
-struct BandState {
-    layers: LayerPass,
-    accumulate: AccumulatePass,
-    spatial: DyeSpatialState,
-}
-
-impl BandState {
-    fn encode(&self, encoder: &mut ObservedEncoder) {
-        self.layers.encode(encoder);
-        self.spatial.encode_remap(encoder);
-        self.accumulate.encode(encoder);
-        self.spatial.encode_formation_readout(encoder);
-    }
-}
-
-pub(in crate::wgpu_backend) struct DyeState {
-    bands: Vec<BandState>,
-    output: wgpu::Buffer,
-    status: wgpu::Buffer,
-    bytes: u64,
-}
-
-impl DyeState {
-    pub(in crate::wgpu_backend) fn status_buffer(&self) -> wgpu::Buffer {
-        self.status.clone()
-    }
-
-    fn submit_bands(&self, backend: &WgpuBackend) {
-        for band in &self.bands {
-            let mut encoder = backend.device.create_command_encoder(&Default::default());
-            band.encode(&mut encoder);
-            backend.queue.submit(Some(encoder.finish()));
-        }
-    }
-
-    /// Source reads finish before this final copy. The resident destination
-    /// can therefore be the developed density buffer without corrupting halos.
-    pub(in crate::wgpu_backend) fn append_stages<'a>(
-        self,
-        stages: &mut Vec<crate::wgpu_backend::pipe::ChainStage<'a>>,
-        destination: &wgpu::Buffer,
-    ) {
-        use crate::wgpu_backend::pipe::ChainStage;
-        for band in self.bands {
-            stages.push(ChainStage::Gpu {
-                name: "grain_dye",
-                encode: Box::new(move |encoder| band.encode(encoder)),
-            });
-        }
-        let destination = destination.clone();
-        stages.push(ChainStage::Gpu {
-            name: "grain_dye_readout",
-            encode: Box::new(move |encoder| {
-                encoder.copy_buffer_to_buffer(&self.output, 0, &destination, 0, self.bytes);
-            }),
-        });
-    }
-}
-
 impl WgpuBackend {
     /// Standalone materialization uses exactly the resident kernels. The full
     /// source remains available when a crop or fractional output grid is read.
     pub fn dye_field(&self, image: &ImageBuf, params: &DyeGpuParams) -> Result<ImageBuf, String> {
+        self.materialize_dye_paged(image, params, None)
+    }
+
+    pub fn dye_field_with_response(
+        &self,
+        image: &ImageBuf,
+        params: &DyeGpuParams,
+        response: &spektrafilm_backend::DyeResponseGpuParams<'_>,
+    ) -> Result<ImageBuf, String> {
+        self.materialize_dye_paged(image, params, Some(response))
+    }
+
+    fn materialize_dye_paged(&self, image: &ImageBuf, params: &DyeGpuParams, response: Option<&spektrafilm_backend::DyeResponseGpuParams<'_>>) -> Result<ImageBuf, String> {
+        use crate::wgpu_backend::film_chain::device_image::BufferPayload;
         self.validate_dye_resources(image.width, image.height, params)?;
-        let input = self.pipe.upload_image(
-            scalars_to_f32(&image.data).as_ref(),
-            image.pixel_count() as u32,
-        );
-        let state = self.prepare_dye(image.width, image.height, &input.buf, params)?;
-        state.submit_bands(self);
-        self.check_dye_status(&state.status)?;
-        let samples = self.pipe.readback_buffer(&state.output, state.bytes);
-        Ok(ImageBuf::from_data(
-            params.grid.width,
-            params.grid.height,
-            f32_to_scalars(samples),
-        ))
+        let pages = self.allocate_image_pages(image.width, image.height, "dye_source")?;
+        for page in &pages {
+            self.check_cancelled()?;
+            let start = page.first_pixel as usize * 3;
+            let end = start + page.n_pixels as usize * 3;
+            let samples = scalars_to_f32(&image.data[start..end]);
+            self.queue.write_buffer(&page.buffer, 0, bytemuck::cast_slice(&samples));
+        }
+        let input = BufferPayload::from_pages(self.backend_id(), pages, image.width, image.height);
+        let state = self.prepare_dye_paged(image.width, image.height, &input, params, response)?;
+        state.submit(self)?;
+        self.check_cancelled()?;
+        self.check_dye_status(&state.status_buffer())?;
+        let mut samples = Vec::with_capacity(params.grid.width as usize * params.grid.height as usize * 3);
+        for page in state.output_pages {
+            self.check_cancelled()?;
+            samples.extend(self.pipe.readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12));
+        }
+        self.check_cancelled()?;
+        Ok(ImageBuf::from_data(params.grid.width, params.grid.height, f32_to_scalars(samples)))
     }
 
     /// Preflight before chain allocations or sample upload.
@@ -130,7 +99,10 @@ impl WgpuBackend {
     }
 
     fn dye_plan(&self, width: u32, height: u32, params: &DyeGpuParams) -> Result<DyePlan, String> {
-        let limits = self.device.raw.limits();
+        let mut limits = self.device.raw.limits();
+        let effective = crate::wgpu_backend::bounded::storage_binding_limit(self)?;
+        limits.max_buffer_size = limits.max_buffer_size.min(effective);
+        limits.max_storage_buffer_binding_size = limits.max_storage_buffer_binding_size.min(effective.min(u64::from(u32::MAX)) as u32);
         if limits.max_storage_buffers_per_shader_stage < 5 {
             return Err(
                 "film grain Dye: device needs five storage bindings per shader stage".into(),
@@ -142,22 +114,7 @@ impl WgpuBackend {
             .min(u64::from(limits.max_storage_buffer_binding_size));
         // The band scratch sizes come from the one rule that bounds them, in
         // the order `band_fit` checks them; the plan-level buffers flank it.
-        for (name, bytes) in [
-            (
-                "source",
-                u64::from(width)
-                    .saturating_mul(u64::from(height))
-                    .saturating_mul(12),
-            ),
-            (
-                "output",
-                u64::from(params.grid.width)
-                    .saturating_mul(u64::from(params.grid.height))
-                    .saturating_mul(12),
-            ),
-        ]
-        .into_iter()
-        .chain(BAND_BUFFERS.iter().copied().zip(plan.max_band_bytes))
+        for (name, bytes) in BAND_BUFFERS.iter().copied().zip(plan.max_band_bytes)
         .chain([
             ("channel curves", params.tables.curves.len() as u64 * 4),
             ("formation taps", params.taps.len() as u64 * 4),
@@ -238,102 +195,6 @@ impl WgpuBackend {
             return Err("film grain Dye: channel curves are not representable in f32".into());
         }
         Ok(plan)
-    }
-
-    pub(in crate::wgpu_backend) fn prepare_dye(
-        &self,
-        width: u32,
-        height: u32,
-        input: &wgpu::Buffer,
-        params: &DyeGpuParams,
-    ) -> Result<DyeState, String> {
-        let plan = self.dye_plan(width, height, params)?;
-        // Certification needs this runtime device, so this cell cannot use a
-        // declaration-time initializer. Observed clones share the result.
-        self.pipe
-            .dye_certification
-            .get_or_init(|| {
-                self.certify_dye_counts()?;
-                self.certify_dye_layers()?;
-                self.certify_dye_accumulation()?;
-                self.certify_dye_spatial()
-            })
-            .clone()?;
-        let tables = self.pipe.static_buffer(
-            "dye_channel_tables",
-            bytemuck::cast_slice(&params.tables.tables),
-            wgpu::BufferUsages::STORAGE,
-        );
-        let curves = self.pipe.static_buffer(
-            "dye_channel_curves",
-            bytemuck::cast_slice(&params.tables.curves),
-            wgpu::BufferUsages::STORAGE,
-        );
-        let scratch = |label, bytes| {
-            self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: bytes,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            })
-        };
-        let status = scratch("dye_status", 4);
-        let [
-            source_layers_bytes,
-            cell_layers_bytes,
-            cells_bytes,
-            horizontal_bytes,
-            formed_bytes,
-        ] = plan.max_band_bytes;
-        let source_layers = scratch("dye_source_layers", source_layers_bytes);
-        let cell_layers = scratch("dye_cell_layers", cell_layers_bytes);
-        let cells = scratch("dye_cell_density", cells_bytes);
-        let horizontal = scratch("dye_horizontal", horizontal_bytes);
-        let formed = scratch("dye_formed", formed_bytes);
-        let bytes = u64::from(params.grid.width) * u64::from(params.grid.height) * 12;
-        let output = scratch("dye_readout", bytes);
-        let bands = plan
-            .bands
-            .iter()
-            .map(|band| {
-                let layers = dye_layers::build_layers(
-                    self,
-                    [width, height, band.source_x, band.source_y],
-                    [band.source_cols, band.source_rows],
-                    &tables,
-                    &curves,
-                    input,
-                    &source_layers,
-                    &status,
-                );
-                let accumulate =
-                    self.build_dye_accumulate(params, band, &tables, &cell_layers, &cells, &status);
-                let spatial = dye_spatial::build_spatial(
-                    self,
-                    params,
-                    band,
-                    width,
-                    height,
-                    &source_layers,
-                    &cell_layers,
-                    &cells,
-                    &horizontal,
-                    &formed,
-                    &output,
-                );
-                BandState {
-                    layers,
-                    accumulate,
-                    spatial,
-                }
-            })
-            .collect();
-        Ok(DyeState {
-            bands,
-            output,
-            status,
-            bytes,
-        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -433,8 +294,11 @@ impl WgpuBackend {
             expectation: false,
         };
         let band = DyeBand {
+            output_x: 0,
+            output_cols: 2,
             output_y: 0,
             output_rows: 1,
+            readout_flags: 0,
             source_x: 0,
             source_y: 0,
             source_cols: 2,
@@ -516,6 +380,7 @@ impl WgpuBackend {
         &self,
         status: &wgpu::Buffer,
     ) -> Result<(), String> {
+        self.check_cancelled()?;
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dye_status_readback"),
             size: 4,
@@ -526,6 +391,7 @@ impl WgpuBackend {
         encoder.copy_buffer_to_buffer(status, 0, &readback, 0, 4);
         self.queue.submit(Some(encoder.finish()));
         let code = self.read_mapped_u32(&readback, 4)[0];
+        self.check_cancelled()?;
         if code == 0 {
             return Ok(());
         }
@@ -535,6 +401,8 @@ impl WgpuBackend {
             "conditional dye mass or rate is not representable"
         } else if code & 4 != 0 {
             "a conditional count exceeded its exact-integer or draw budget"
+        } else if code & 8 != 0 {
+            "cell optical response returned a nonfinite linear value"
         } else {
             "unknown field validation failure"
         };
@@ -557,8 +425,11 @@ mod tests {
         let inverse = [1.0];
         let zero = [0.0; 2];
         let band = DyeBand {
+            output_x: 0,
+            output_cols: 64,
             output_y: 0,
             output_rows: 16,
+            readout_flags: 0,
             source_x: 0,
             source_y: 0,
             source_cols: 64,

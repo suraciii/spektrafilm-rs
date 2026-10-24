@@ -99,7 +99,7 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     assert_eq!(compared_composed.pixels, automatic_composed.pixels);
     assert_eq!(h.state().viewer.zoom_percent(), Some(100.0));
     let comparison = h.state().operator_comparison.as_ref().unwrap();
-    assert_eq!(comparison.image.data, automatic_scan.data);
+    assert_eq!(comparison.image.host_image().unwrap().data, automatic_scan.data);
     assert_eq!(comparison.color_space, automatic_space);
     assert_eq!(comparison.encoded, automatic_encoding);
     assert!(Arc::ptr_eq(
@@ -452,4 +452,55 @@ fn nonprimary_pointer_holds_do_not_compare_or_invalidate_the_corrected_frame() {
         });
         h.run_steps(3);
     }
+}
+
+#[test]
+fn gpu_operator_and_photograph_comparisons_keep_the_corrected_device_carrier() {
+    let _device = spektrafilm_gpu::test_support::device_lock();
+    let directory = tempfile::tempdir().unwrap();
+    let (image, state) = deterministic_inputs(directory.path());
+    let browser = directory.path().join("browser.json");
+    let backend: Arc<dyn ComputeBackend> = Arc::new(
+        spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().expect("GPU adapter required"),
+    );
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1500.0, 1400.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            App::new_with_browser_path(backend, Some(image), Some(state), None, browser, data_dir())
+        });
+    standard_operator(&mut h);
+    operator_edit(&mut h, "Finished exposure", "1.0");
+    click(&mut h, "SCAN");
+    wait_until(&mut h, |app| {
+        app.render_job.is_none() && !app.force_preview && !app.dirty
+            && app.retained_kind == Some(RenderKind::Scan) && app.output_retained.is_some()
+    });
+    let corrected = h.state().output_retained.clone().unwrap();
+    let samples = corrected.to_host(h.state().backend.as_ref()).unwrap();
+    let source = h.state().image.clone().unwrap();
+    let ctx = h.ctx.clone();
+    assert!(h.state_mut().capture_comparison(&ctx));
+    wait_until(&mut h, |app| app.comparison_output().is_some_and(|a| a.retained.is_some()));
+    let reference = h.state().comparison_output().unwrap();
+    assert!(reference.output.is_none());
+    assert!(Arc::ptr_eq(reference.retained.unwrap().payload().unwrap(), corrected.payload().unwrap()));
+    settle_animation(&mut h);
+    assert!(h.state().viewer.observation().pixels.is_some());
+    h.state_mut().clear_comparison();
+    h.state_mut().set_operator_compare(true);
+    wait_until(&mut h, |app| app.operator_comparison.is_some() && app.render_job.is_none() && !app.force_preview);
+    let baseline = &h.state().operator_comparison.as_ref().unwrap().image;
+    assert!(baseline.host_image().is_none(), "GPU automatic baseline must stay retained");
+    let crate::render::InputImage::Device(baseline) = baseline else { unreachable!() };
+    assert!(!Arc::ptr_eq(baseline.payload().unwrap(), corrected.payload().unwrap()));
+    settle_animation(&mut h);
+    assert!(h.state().viewer.observation().pixels.is_some());
+    assert!(h.state().output_image.is_none());
+    assert!(Arc::ptr_eq(h.state().output_retained.as_ref().unwrap().payload().unwrap(), corrected.payload().unwrap()));
+    assert!(h.state().image.as_ref().unwrap().same_source(&source));
+    let path = directory.path().join("corrected-comparison.tiff");
+    h.state_mut().save_to_path(&path);
+    assert!(path.is_file(), "{}", h.state().status);
+    assert_eq!(corrected.to_host(h.state().backend.as_ref()).unwrap().data, samples.data);
 }

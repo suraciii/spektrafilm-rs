@@ -30,17 +30,18 @@ pub fn apply_unsharp_mask(
 }
 
 /// Apply Gaussian blur in physical units (micrometers).
+/// Returns backend filtering errors without substituting a CPU filter.
 pub fn apply_gaussian_blur_um(
     image: &ImageBuf,
     sigma_um: f32,
     pixel_size_um: f32,
     backend: &dyn ComputeBackend,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let sigma_px = sigma_um / pixel_size_um;
     if sigma_px > 0.0 {
         backend.gaussian_blur(image, sigma_px)
     } else {
-        image.clone()
+        Ok(image.clone())
     }
 }
 

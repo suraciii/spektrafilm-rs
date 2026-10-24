@@ -410,15 +410,13 @@ pub fn resize_for_preview(
     use spektrafilm_math::image::ImageBuf;
     use spektrafilm_math::precision::{Scalar, from_f32, to_f32};
 
-    let max_size = max_size.max(1) as f32;
-    let (w, h) = (image.width as f32, image.height as f32);
-    if w.max(h) <= max_size {
+    // Python: resize(image, (int(h * scale), int(w * scale))) — int() truncates.
+    // The rule itself lives in `resizing::preview_dimensions`, which the device
+    // preview geometry resolves too, so both processors agree on the grid.
+    let (new_w, new_h) = crate::resizing::preview_dimensions(image.width, image.height, max_size);
+    if (new_w, new_h) == (image.width, image.height) {
         return image.clone();
     }
-    let scale_factor = max_size / w.max(h);
-    // Python: resize(image, (int(h * scale), int(w * scale))) — int() truncates.
-    let new_w = ((w * scale_factor) as u32).max(1);
-    let new_h = ((h * scale_factor) as u32).max(1);
     let f32buf: Vec<f32> = image.data.iter().map(|&v| to_f32(v)).collect();
     let src = image::ImageBuffer::<image::Rgb<f32>, _>::from_raw(image.width, image.height, f32buf)
         .expect("ImageBuf dims match its data length");

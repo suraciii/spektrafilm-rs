@@ -418,19 +418,32 @@ the replacement Export button instead.
 
 Export control OCR is bounded by the rendered dialog title bar and button row.
 Equalized and autocontrasted crops provide independent observations of each row;
-the driver does not combine their word widths or control coordinates. It checks
-the selected value before opening a menu and keeps the established dialog frame
-while a dropdown covers the buttons. It also distinguishes the sidebar Export
-button from the Export options heading.
+the driver does not combine their word widths or control coordinates. Selected
+combo values are read as single-line crops on the value side of their observed
+labels, before opening each menu and after selecting an option. Spaces and
+punctuation do not change option identity; the observed `WGPU 32` OCR spelling
+is accepted for `WGPU f32`, but CPU values cannot satisfy a GPU selection.
+The pointer parks in the measured blank header gap, not over the dialog title,
+so the captured cursor cannot corrupt title recognition in the next frame.
+Popup OCR uses the changed rectangle next to the observed combo button, not an
+expanded dialog crop that includes other controls or the preset browser. Only
+complete option rows are clickable; the color-space help paragraph is not an
+option. A clipped popup scrolls one wheel event at a time over an observed option,
+in the direction given by the option order in `ExportDialog::show`. The driver
+remeasures the popup after each scroll and the dialog after each selection.
+Before submitting, it checks the requested controls and rendered transfer rule
+again and locates Export file beside Cancel in that same frame. It distinguishes
+the sidebar opener from the Export options heading. These screen observations
+do not replace the operation report or decoded output checks.
 
 Each GUI launch keeps its operation reports in a separate directory under
 `diagnostics/`. Restart scenarios retain earlier reports; observations identify
 each session directory. Report publication failures appear in the GUI status on
 every tab.
 
-Viewer comparisons exclude both the preset browser and the controls sidebar.
-Exact zoom verification temporarily widens the window to 1560 pixels so the
-400% raster fits with the preset browser visible, then restores its dimensions.
+Viewer comparisons exclude both the 260px preset browser and the 320px controls
+sidebar in the default photo-first workspace. Exact zoom verification sizes the
+window to fit the full 400% raster, then restores its dimensions.
 Paper-back readiness uses the selected layer in the viewer status overlay;
 OCR ordering of the layer name and zoom text does not determine readiness.
 Zoom and rotation geometry use the known colored Input raster, selected after
@@ -443,8 +456,65 @@ then clicks Preview to request the animated render.
 The Linux file chooser driver tracks its native window through closure and
 locates the primary action beside Cancel in the window's bottom button row.
 It does not treat the Open files read-only checkbox as an Open action.
+Export-modal selection measures the rendered button fill and reads its interior
+separately from labels and summary text. Popup OCR uses the adjacent changed
+region, including color menus that expand beyond their button's width; selected
+values must then be visible in the closed controls. Failed popup observations
+retain before/open frames, a difference mask, and candidate bounds under the
+evidence directory rather than treating source-order guesses as selected state.
+Fixed-transfer EXR, JPEG, and PNG selections also read the modal's full-size
+transfer explanation; small summary text alone can lose letters during OCR.
+TIFF still requires its observed summary and editable transfer checkbox.
+The submit row is bounded by Cancel's rendered button fill, excluding the
+estimated-size paragraph above it; its label must be visible beside Cancel.
+After discovering a native chooser, visibility checks query that exact X11
+window rather than searching every GTK window again before each key press.
+The native header is read as one continuous row as well as in panel crops;
+long GPU adapter details can place an export's filename across a panel boundary.
+Scanner acceptance navigates canonical search paths to the actual Scan/Scanner
+owner. It exercises fixed-readout polarity, standard automatic conversion,
+finished-positive operator exposure, Restore automatic and readout optics, then
+round-trips state and compares decoded full-resolution Scan/Save pixels. The
+retired editable scanner lamp and neutral/custom-style probe are not controls
+of this acceptance flow; acquisition illumination remains a separate Convert
+owner check and must leave the scanner unchanged.
+Factory restore acceptance confirms the standalone Restore button and its
+completion status before comparing canonical state and restarting.
+Preview-cache resolution compares nonmagnifying fitted Input rasters: exact
+zoom and magnification intentionally sample the full source, independent of
+the preview-size bound. The comparison uses the same measured image rectangle
+in both captures and retains the whole-canvas delta separately; the unchanged
+pixel-change threshold is not diluted by unrelated gray background. Rotation
+float inspection reads the overlay below the layer tabs, not the tabs themselves.
+Profile selection distinguishes its own label from Camera's inherited-profile
+prose, parks the pointer off text, and scrolls inside the observed popup.
+Save/Export completion combines visible completed status, the exact destination,
+decoded pixels/depth and the GUI's actual operation report; tiny filename OCR
+errors cannot substitute for these publication checks. RAW intake loads a seed
+with automatic preview disabled until lens-correction status is captured.
 Numeric-entry acceptance uses native select-all, text entry, and Enter on each
 desktop platform.
+
+The rebased native gate uses `ExperimentalDesktop` as its single production
+stage/search driver on Linux and combines it with native Windows/macOS input
+and chooser utilities on those platforms. No five-page tab driver is active.
+The isolated configuration explicitly selects the supported English language
+preference (separate from photographic state), so an inherited Chinese system
+locale cannot silently change OCR labels; this does not claim Chinese runtime
+acceptance. Export has one shared modal observer, including visible backend,
+format, depth and transfer confirmation. `SPEKTRAFILM_BACKEND=wgpu` selects the
+production `GPU (WGPU f32)` export entry and requires matching requested/selected
+WGPU execution plus an actual adapter in each successful render/export report.
+Fotufilm disclosure is compared with the executed backend, not hardcoded to CPU.
+Cancel uses the action and in-flight status from one frame, then requires a
+cancelled operation report and absent output. Save and Export reports are
+consumed once, rather than waiting a second time for the same completed job.
+The source port retains Preview/Scan resolution isolation, measured preview
+ROI, reveal/crossfade intermediate frames, float inspection, rotation geometry
+and EXIF/IPTC/XMP preservation, retained Save versus independent Export, RAW,
+state restart/factory restore, cancellation and window-close checks. These
+rebased flow changes require fresh native runtime evidence; this text does not
+claim they have been executed.
 
 Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
 engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo,

@@ -185,7 +185,7 @@ impl TransformCache {
         let (ty0, ty1) = (lo_y / TILE, hi_y / TILE);
         if (tx1 - tx0 + 1) * (ty1 - ty0 + 1) * TILE * TILE > self.budget_px {
             fill_rows(&mut out, texture_size, rect, &|p| {
-                if image_rect.contains(p) {
+                if super::worker::contains_half_open(image_rect, p) {
                     sample_image_with(source, p, image_rect, interpolation, transform)
                 } else {
                     [0.0; 3]
@@ -223,7 +223,7 @@ impl TransformCache {
             height: h,
         };
         fill_rows(&mut out, texture_size, rect, &|p| {
-            if image_rect.contains(p) {
+            if super::worker::contains_half_open(image_rect, p) {
                 let (sx, sy) = source_coords(p, image_rect, identity.width, identity.height);
                 sample_f32(sx, sy, interpolation, |x, y| grid.fetch(x, y))
             } else {

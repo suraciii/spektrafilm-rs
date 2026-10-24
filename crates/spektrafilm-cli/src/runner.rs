@@ -81,6 +81,19 @@ fn render_recipe(
     params.io.output_cctf_encoding = true;
     params.io.scan_film = false;
     params.validate_color().map_err(anyhow::Error::msg)?;
+    // The selected backend is initialized here so the render and the
+    // published resource report read the same backend selection.
+    let backend = invocation.phase(
+        "backend_init",
+        IssueCategory::Backend,
+        IssueBoundary::BackendInit,
+        &context,
+        |backend_context| {
+            let backend = spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?;
+            telemetry::observe_backend(backend.as_ref(), backend_context);
+            Ok(backend)
+        },
+    )?;
     invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
     let film = profile::load_profile_by_name(data_dir, &recipe.film_profile)
         .with_context(|| format!("loading film profile {}", recipe.film_profile))?;
@@ -104,7 +117,7 @@ fn render_recipe(
         &context,
         |prepare_context| {
             photo
-                .into_runtime_observed(DigestMode::ApplyStockSpecifics, prepare_context)
+                .into_runtime_observed_with_backend(DigestMode::ApplyStockSpecifics, backend.as_ref(), prepare_context)
                 .map_err(anyhow::Error::msg)
                 .context("building spektrafilm-rs spectral runtime")
         },
@@ -143,17 +156,6 @@ fn render_recipe(
                 loaded.image
             };
             Ok(image)
-        },
-    )?;
-    let backend = invocation.phase(
-        "backend_init",
-        IssueCategory::Backend,
-        IssueBoundary::BackendInit,
-        &context,
-        |backend_context| {
-            let backend = spektrafilm_gpu::select_backend();
-            telemetry::observe_backend(backend.as_ref(), backend_context);
-            Ok(backend)
         },
     )?;
     let (attempt_id, result) = telemetry::simulation_attempt(invocation, 1, |simulation_context| {

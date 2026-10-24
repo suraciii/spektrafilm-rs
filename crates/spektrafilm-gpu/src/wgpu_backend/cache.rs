@@ -23,13 +23,19 @@ impl From<wgpu::BufferBindingType> for BufferBindingKey {
 struct PipelineKey {
     shader_source: usize,
     binding_types: Vec<BufferBindingKey>,
+    entry_point: &'static str,
 }
 
 impl PipelineKey {
-    fn new(shader_source: &'static str, binding_types: &[wgpu::BufferBindingType]) -> Self {
+    fn new(
+        shader_source: &'static str,
+        binding_types: &[wgpu::BufferBindingType],
+        entry_point: &'static str,
+    ) -> Self {
         Self {
             shader_source: shader_source.as_ptr() as usize,
             binding_types: binding_types.iter().copied().map(Into::into).collect(),
+            entry_point,
         }
     }
 }
@@ -57,7 +63,21 @@ impl PipelineCache {
         shader_source: &'static str,
         binding_types: &[wgpu::BufferBindingType],
     ) -> (CachedPipelineRef, bool) {
-        let key = PipelineKey::new(shader_source, binding_types);
+        self.get_or_compile_at(device, shader_source, binding_types, "main")
+    }
+
+    /// Compile (or fetch) the pipeline of one entry point. A shader module may
+    /// declare several entry points — the Fotufilm modules do — and each one
+    /// is its own pipeline with its own binding layout, so the entry point
+    /// names the cache entry alongside the source and the binding types.
+    pub(super) fn get_or_compile_at(
+        &self,
+        device: &wgpu::Device,
+        shader_source: &'static str,
+        binding_types: &[wgpu::BufferBindingType],
+        entry_point: &'static str,
+    ) -> (CachedPipelineRef, bool) {
+        let key = PipelineKey::new(shader_source, binding_types, entry_point);
         let mut cache = self.pipelines.lock();
         let hit = cache.contains_key(&key);
         if !hit {
@@ -93,7 +113,7 @@ impl PipelineCache {
                 label: Some("compute_pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: Some("main"),
+                entry_point: Some(entry_point),
                 compilation_options: Default::default(),
                 cache: None,
             });
@@ -113,5 +133,31 @@ impl PipelineCache {
             },
             hit,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_key_includes_binding_layout() {
+        let shader = "@compute @workgroup_size(1) fn main() {}";
+        let uniform = [wgpu::BufferBindingType::Uniform];
+        let readonly = [wgpu::BufferBindingType::Storage { read_only: true }];
+        let readwrite = [wgpu::BufferBindingType::Storage { read_only: false }];
+
+        assert_ne!(
+            PipelineKey::new(shader, &uniform, "main"),
+            PipelineKey::new(shader, &readonly, "main")
+        );
+        assert_ne!(
+            PipelineKey::new(shader, &readonly, "main"),
+            PipelineKey::new(shader, &readwrite, "main")
+        );
+        assert_ne!(
+            PipelineKey::new(shader, &readonly, "main"),
+            PipelineKey::new(shader, &readonly, "other")
+        );
     }
 }

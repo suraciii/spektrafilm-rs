@@ -29,7 +29,7 @@ fn main(
     if (index >= width * p.dims.w) { return; }
     let px = index % width;
     let py = index / width;
-    let kx = px;
+    let kx = p.phase.z + px;
     let ky = p.tile.w + py;
     let ix0 = cell_window_start(
         kx, p.ratios.y, p.fracs2.x, p.fracs2.y,
@@ -74,7 +74,8 @@ fn main(
                 formed[src], formed[src + 1u], formed[src + 2u]);
         }
     }
-    let dst = ((p.tile.w + py) * width + px) * 3u;
+    let dst = select(((p.tile.w + py) * p.phase.w + kx) * 3u,
+        index * 3u, p.ratios.w == 1u);
     output[dst] = acc.x - p.mins.x;
     output[dst + 1u] = acc.y - p.mins.y;
     output[dst + 2u] = acc.z - p.mins.z;

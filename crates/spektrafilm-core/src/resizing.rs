@@ -144,6 +144,123 @@ fn crop_rect(
     Ok((c0 as usize, r0 as usize, cw as usize, ch as usize))
 }
 
+/// Resolve the device geometry from the same host rules as the reference.
+///
+/// `preview_max_size` selects the preview stage: the reference resizes the
+/// whole rotated frame to the long-edge bound before any crop, with the
+/// triangle reference ([`preview_dimensions`]), so that stage carries no crop
+/// and no cubic upscale. Without it, `io.crop` resolves against the rotated
+/// frame (like [`crop_and_rescale`]) and `io.upscale_factor` selects the cubic
+/// spline reference.
+///
+/// The caller supplies the pitch already derived from the full source and
+/// adjusted for the selected resize; this helper only carries that value
+/// alongside the resolved geometry.
+pub fn resolve_device_geometry(
+    width: u32,
+    height: u32,
+    io: &IoParams,
+    rotation_quarter_turns: i32,
+    preview_max_size: Option<u32>,
+    pixel_pitch_um: f64,
+) -> Result<(spektrafilm_backend::InputGeometryGpuParams, (u32, u32)), String> {
+    use spektrafilm_backend::{InputGeometryGpuParams, InputResizeGpuParams, InputResizeMethod};
+
+    if width == 0 || height == 0 {
+        return Err("cannot resolve geometry for an empty image".into());
+    }
+    if !pixel_pitch_um.is_finite() || pixel_pitch_um <= 0.0 {
+        return Err(format!("working pixel pitch must be finite and > 0 (got {pixel_pitch_um})"));
+    }
+
+    let rotation_quarter_turns = rotation_quarter_turns.rem_euclid(4) as u32;
+    let (rotated_width, rotated_height) = if rotation_quarter_turns.is_multiple_of(2) {
+        (width, height)
+    } else {
+        (height, width)
+    };
+    // The preview stage is the reference's `resize_for_preview`: the whole
+    // rotated frame bounded on its long edge, resampled with the triangle
+    // reference. Its crop and upscale resolve later, against this frame.
+    if let Some(max_size) = preview_max_size {
+        let (preview_width, preview_height) =
+            preview_dimensions(rotated_width, rotated_height, max_size);
+        let resize = ((preview_width, preview_height) != (rotated_width, rotated_height))
+            .then_some(InputResizeGpuParams {
+                width: preview_width,
+                height: preview_height,
+                method: InputResizeMethod::PreviewTriangle,
+            });
+        return Ok((
+            InputGeometryGpuParams {
+                rotation_quarter_turns,
+                crop: None,
+                resize,
+                pixel_pitch_um,
+            },
+            (preview_width, preview_height),
+        ));
+    }
+    let crop = if io.crop {
+        let (x, y, crop_width, crop_height) =
+            requested_crop_rect(rotated_width, rotated_height, io)?;
+        Some([x as u32, y as u32, crop_width as u32, crop_height as u32])
+    } else {
+        None
+    };
+    let (cropped_width, cropped_height) = crop.map_or(
+        (rotated_width, rotated_height),
+        |rect| (rect[2], rect[3]),
+    );
+
+    let resize = if io.upscale_factor != 1.0 {
+        let (target_width, target_height) = spektrafilm_math::resize::rescaled_dimensions(
+            cropped_width,
+            cropped_height,
+            io.upscale_factor,
+        )?;
+        // `rescale_spline3` derives its working grid from the axis factors it
+        // will actually resample with (`round_ties_even(dim / factor)`), which
+        // can differ from the requested scale in the last ulp. Resolve the
+        // same way so the device target grid is the reference's own.
+        let factor_x = cropped_width as f64 / target_width as f64;
+        let factor_y = cropped_height as f64 / target_height as f64;
+        let width = (cropped_width as f64 * (1.0 / factor_x)).round_ties_even() as u32;
+        let height = (cropped_height as f64 * (1.0 / factor_y)).round_ties_even() as u32;
+        ((width, height) != (cropped_width, cropped_height)).then_some(InputResizeGpuParams {
+            width,
+            height,
+            method: InputResizeMethod::Spline3,
+        })
+    } else {
+        None
+    };
+    let dimensions = resize.map_or((cropped_width, cropped_height), |r| (r.width, r.height));
+
+    Ok((
+        InputGeometryGpuParams {
+            rotation_quarter_turns,
+            crop,
+            resize,
+            pixel_pitch_um,
+        },
+        dimensions,
+    ))
+}
+
+/// Preview's long-edge size rule shared by the CPU reference and retained
+/// device route. The reference computes its factor and truncates dimensions
+/// in f32, unlike the cubic working-image resize's ties-to-even dimensions.
+pub fn preview_dimensions(width: u32, height: u32, max_size: u32) -> (u32, u32) {
+    let max_size = max_size.max(1) as f32;
+    let (w, h) = (width as f32, height as f32);
+    if w.max(h) <= max_size {
+        return (width, height);
+    }
+    let scale = max_size / w.max(h);
+    (((w * scale) as u32).max(1), ((h * scale) as u32).max(1))
+}
+
 /// Source rectangle of the requested film region: the upstream crop
 /// rectangle when `io.crop` is set, the whole image otherwise.
 ///
@@ -418,6 +535,99 @@ mod tests {
             let err = crop_and_rescale(&img, &io, 35.0).unwrap_err();
             assert!(err.contains("upscale_factor"), "{err}");
         }
+    }
+
+    #[test]
+    fn device_geometry_resolves_the_reference_crop_in_the_rotated_frame() {
+        let io = IoParams {
+            crop: true,
+            crop_center: [0.5, 0.5],
+            crop_size: [0.5, 0.25],
+            ..IoParams::default()
+        };
+        // 100x60 rotated once is 60x100; the crop is a fraction of the long
+        // edge of that frame (100), so 50x25 px, centred.
+        let (params, dimensions) =
+            resolve_device_geometry(100, 60, &io, 1, None, 40.0).unwrap();
+        assert_eq!(params.rotation_quarter_turns, 1);
+        assert_eq!(dimensions, (50, 25));
+        assert_eq!(params.crop, Some([5, 38, 50, 25]));
+        assert!(params.resize.is_none());
+        assert_eq!(params.pixel_pitch_um, 40.0);
+    }
+
+    #[test]
+    fn device_geometry_uses_the_rescale_rounding_for_upscale() {
+        let io = IoParams {
+            upscale_factor: 1.5,
+            ..IoParams::default()
+        };
+        let (params, dimensions) = resolve_device_geometry(7, 5, &io, 0, None, 12.0).unwrap();
+        let reference = rescale_spline3(&coded_img(7, 5), 1.5).unwrap();
+        assert_eq!(dimensions, (reference.width, reference.height));
+        let resize = params.resize.unwrap();
+        assert_eq!((resize.width, resize.height), dimensions);
+        assert_eq!(
+            resize.method,
+            spektrafilm_backend::InputResizeMethod::Spline3
+        );
+    }
+
+    #[test]
+    fn device_geometry_preview_uses_the_reference_dimension_rule() {
+        let io = IoParams {
+            // A preview bounds the whole frame before any crop resolves, so
+            // the crop belongs to the stage that runs on the preview grid.
+            crop: true,
+            crop_size: [0.5, 0.5],
+            ..IoParams::default()
+        };
+        let (params, dimensions) =
+            resolve_device_geometry(1000, 500, &io, 0, Some(640), 8.0).unwrap();
+        assert_eq!(dimensions, (640, 320));
+        assert_eq!(dimensions, preview_dimensions(1000, 500, 640));
+        assert_eq!(params.rotation_quarter_turns, 0);
+        assert_eq!(params.crop, None);
+        assert_eq!(
+            params.resize.map(|r| r.method),
+            Some(spektrafilm_backend::InputResizeMethod::PreviewTriangle)
+        );
+        // The bound is the long edge of the rotated frame.
+        let (params, dimensions) =
+            resolve_device_geometry(500, 1000, &io, 1, Some(640), 8.0).unwrap();
+        assert_eq!(params.rotation_quarter_turns, 1);
+        assert_eq!(dimensions, (640, 320));
+        // Within the long-edge bound the preview keeps the whole frame.
+        let (params, dimensions) =
+            resolve_device_geometry(1000, 500, &io, 0, Some(1024), 8.0).unwrap();
+        assert_eq!(dimensions, (1000, 500));
+        assert!(params.resize.is_none());
+        assert_eq!(params.crop, None);
+    }
+
+    #[test]
+    fn device_geometry_is_identity_when_nothing_is_requested() {
+        let io = IoParams::default();
+        let (params, dimensions) = resolve_device_geometry(9, 4, &io, 0, None, 5.0).unwrap();
+        assert_eq!(params.rotation_quarter_turns, 0);
+        assert_eq!(params.crop, None);
+        assert!(params.resize.is_none());
+        assert_eq!(dimensions, (9, 4));
+        // A negative (clockwise) turn normalizes into the quarter-turn set.
+        let (params, dimensions) = resolve_device_geometry(9, 4, &io, -1, None, 5.0).unwrap();
+        assert_eq!(params.rotation_quarter_turns, 3);
+        assert_eq!(dimensions, (4, 9));
+    }
+
+    #[test]
+    fn device_geometry_rejects_an_empty_crop() {
+        let io = IoParams {
+            crop: true,
+            crop_center: [0.5, 0.5],
+            crop_size: [0.05, 0.05],
+            ..IoParams::default()
+        };
+        assert!(resolve_device_geometry(10, 10, &io, 0, None, 5.0).is_err());
     }
 
     #[test]

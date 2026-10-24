@@ -137,6 +137,72 @@ fn diagnostics_preserve_pixels_stdout_and_retain_indexed_attempts() {
 }
 
 #[test]
+#[ignore = "requires an external frozen camera RAW fixture and GPU adapter"]
+fn retained_raw_process_publishes_complete_gpu_diagnostics() {
+    let input = std::env::var_os("SPEKTRAFILM_RAW_PARITY_FIXTURE")
+        .expect("set camera RAW fixture");
+    let fixture = Fixture::new();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .arg("process")
+        .arg(input)
+        .arg("--output")
+        .arg(fixture.path("raw.tif"))
+        .arg("--diagnostics")
+        .arg(fixture.path("raw-report.json"))
+        .arg("--data-dir")
+        .arg(&data)
+        .args([
+            "--backend", "gpu", "--film", "kodak_portra_400",
+            "--route", "input > film > scan", "--iters", "2",
+            "--raw-white-balance", "custom", "--raw-temperature", "5000",
+            "--raw-tint", "1.05", "--seed", "42", "--bit-depth", "32",
+            "--saving-color-space", "sRGB", "--saving-cctf-encoding", "false",
+            "--set", "camera.auto_exposure=false",
+            "--set", "film_render.grain.active=false",
+            "--set", "io.output_color_space=sRGB",
+            "--set", "io.output_cctf_encoding=false",
+        ])
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", fixture.path("config"))
+        .env("SPEKTRAFILM_DATA_DIR", &data)
+        .env_remove("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES")
+        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .output()
+        .unwrap();
+    success(&output);
+    assert!(fixture.path("raw.tif").is_file());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Diagnostics report saved:"));
+    let report = fixture.report("raw-report.json");
+    assert_eq!(report["operation"]["outcome"], "succeeded");
+    assert_eq!(report["execution"]["backend_selected"], "wgpu");
+    assert_eq!(report["execution"]["path"], "gpu_resident");
+    assert_eq!(report["configuration"]["render"]["input_color_space"], "aces2065");
+    assert_eq!(report["configuration"]["render"]["input_transfer_decoded"], false);
+    assert_eq!(report["attempts"].as_array().unwrap().len(), 2);
+    let stages = report["stages"].as_array().unwrap();
+    for name in ["raw_sensor", "spectral_prepare", "film_chain", "saving_convert"] {
+        let matching: Vec<_> = stages.iter().filter(|stage| stage["name"] == name).collect();
+        assert!(!matching.is_empty(), "missing {name}: {report}");
+        assert!(matching.iter().all(|stage| stage["executor"] == "gpu"));
+    }
+    let saving = report["phases"].as_array().unwrap().iter()
+        .find(|phase| phase["name"] == "saving_convert").unwrap();
+    assert!(saving["work"]["readback_count"].as_u64().unwrap() > 0);
+    assert!(saving["work"]["readback_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(saving["work"]["image_upload_count"], 0);
+    assert!(stages.iter().any(|stage| stage["name"] == "saving_convert"
+        && stage["parent_id"] == saving["id"]));
+    assert!(stages.iter().all(|stage| !matches!(
+        stage["executor"].as_str(), Some("cpu" | "mixed")
+    )));
+    if report["coverage"]["truncated"] == true {
+        assert_eq!(report["coverage"]["omitted_high_level_observations"], 0);
+    }
+}
+
+#[test]
 fn existing_report_does_not_change_success_or_clobber() {
     let fixture = Fixture::new();
     fs::write(fixture.path("report.json"), b"retain me").unwrap();

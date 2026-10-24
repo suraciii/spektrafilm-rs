@@ -4,16 +4,14 @@
 //! strip in the control panel. It is viewer-only and never affects saved
 //! or exported pixels.
 //!
-//! The retained output is linear RGB (values may exceed `1.0` or fall below
-//! `0.0` out of gamut), so each channel is passed through the sRGB OETF
-//! before binning: the readout is a display-referred (sRGB-encoded) tonal
-//! distribution, not a distribution of linear values. Binning is derived
-//! from the retained output without a second render.
+//! Each channel is passed through the sRGB OETF before binning (retaining the
+//! existing readout rule even for encoded output). The encoded tone is clamped
+//! into 64 bins, and all three channels share one peak normalization.
 //!
-//! Binning is a full pass over the retained output, so it runs on a worker
-//! thread: the frame that reveals a new render paints the previous
-//! distribution until the replacement arrives, rather than waiting for the
-//! pass to finish.
+//! GPU renders reduce their retained output before atomic publication and
+//! return only the 192 normalized bins. CPU reference images are binned on a
+//! dedicated worker: the readout keeps its previous distribution until that
+//! replacement arrives. Neither route requests a second render.
 
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -40,6 +38,11 @@ pub struct HistogramData {
 }
 
 impl HistogramData {
+    pub(crate) fn from_bins(bins: [[f32; BINS]; 3]) -> Self {
+        let [r, g, b] = bins;
+        Self { r: r.into(), g: g.into(), b: b.into() }
+    }
+
     /// Compute histogram data from an image buffer.
     ///
     /// Each channel of the linear output RGB is converted to a display-referred
@@ -135,14 +138,15 @@ impl HistogramData {
     }
 }
 
-/// Identity of one accepted output image.
-///
-/// The generation is the caller's handle for the image it retained — the
-/// address of the `Arc` that owns it — and the sequence advances each time the
-/// readout accepts a different image. A later output can be allocated at an
-/// address an earlier one freed, so the pair, not the address alone, says which
-/// image a finished computation belongs to.
-type SourceId = (u64, u64);
+/// Allocation identities and operation IDs are distinct domains. The sequence
+/// also prevents a recycled host allocation from adopting old worker results.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceGeneration {
+    Host(u64),
+    Device(u64),
+}
+
+type SourceId = (SourceGeneration, u64);
 
 /// One binning request: the output image to bin and the identity its result
 /// carries back to the readout.
@@ -263,6 +267,17 @@ impl HistogramStrip {
             self.visible = visible;
         }
     }
+    /// Adopt the reduction completed in the same transaction as a retained
+    /// GPU output. No image samples or numerical reduction reach the UI.
+    pub(crate) fn update_retained(&mut self, data: &HistogramData, generation: u64) {
+        let generation = SourceGeneration::Device(generation);
+        if self.source_id.map(|source| source.0) != Some(generation) {
+            self.source_id = Some((generation, self.sequence));
+            self.sequence += 1;
+            self.data = Some(data.clone());
+        }
+    }
+
 
     /// Update the histogram from the current output image.
     ///
@@ -274,6 +289,7 @@ impl HistogramStrip {
     /// dropped, including one whose image shared an address with the output
     /// that replaced it.
     pub fn update(&mut self, output_image: &Option<Arc<ImageBuf>>, generation: u64, ctx: &Context) {
+        let generation = SourceGeneration::Host(generation);
         while let Some((finished, data)) = self.worker.next_result() {
             if self.source_id == Some(finished) {
                 self.data = Some(data);
@@ -395,6 +411,53 @@ mod tests {
         assert!(data.r[BINS - 1] > 0.0);
         assert!(data.r[1..BINS - 1].iter().all(|&v| v == 0.0));
     }
+    #[test]
+    fn retained_histogram_matches_reference_at_every_bin_boundary_and_nonfinite_value() {
+        use spektrafilm_backend::{Precision, RetainedImageMeta, SampleDomain};
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let context = spektrafilm_backend::telemetry::ObservationContext::new(spektrafilm_backend::telemetry::CollectionMode::Summary);
+        let observed = gpu.backend().with_observation_context(context.clone()).unwrap();
+        let mut values = vec![f32::NEG_INFINITY, -1.0, -0.0, 0.0, f32::from_bits(1), 1.0, 4.0, f32::INFINITY, f32::NAN, f32::from_bits(0xffc00001)];
+        for bin in 0..63 {
+            // Invert the actual CPU rule independently, then straddle the
+            // adjacent representable values rather than trusting shader pow.
+            let mut low = 0u32;
+            let mut high = 1.0f32.to_bits();
+            while low < high {
+                let middle = low + (high - low) / 2;
+                if (srgb_encode_f64(f32::from_bits(middle) as f64) * 63.0).round() as usize > bin {
+                    high = middle;
+                } else {
+                    low = middle + 1;
+                }
+            }
+            values.extend([f32::from_bits(low - 1), f32::from_bits(low), f32::from_bits(low + 1)]);
+        }
+        let image = ImageBuf::from_data(values.len() as u32, 1, values.iter().enumerate().flat_map(|(i, &v)| {
+            [v as _, values[(i * 7) % values.len()] as _, if i % 3 == 0 { 0.0 as _ } else { v as _ }]
+        }).collect());
+        let retained = gpu.backend().retain_image(&image, &RetainedImageMeta {
+            width: image.width, height: image.height, domain: SampleDomain::Linear,
+            precision: Precision::F32, space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(), pixel_pitch_um: None,
+        }).unwrap();
+        let actual = HistogramData::from_bins(observed.retained_histogram(&retained).unwrap());
+        assert_eq!(context.snapshot().totals.readback_bytes, Some(192 * 4));
+        let expected = HistogramData::compute(&image);
+        for (actual, expected) in [&actual.r, &actual.g, &actual.b].into_iter().zip([&expected.r, &expected.g, &expected.b]) {
+            for (bin, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+                assert_eq!(actual == 0.0, expected == 0.0, "bin {bin} occupancy differs");
+                assert!((actual - expected).abs() < 2e-6, "bin {bin}: device {actual}, reference {expected}");
+            }
+        }
+        // Inspection is an explicitly requested source pixel, not a display
+        // transform or histogram approximation, and reductions never edit it.
+        let pixel = observed.inspect_retained_pixel(&retained, 1, 0).unwrap();
+        assert_eq!(context.snapshot().totals.readback_bytes, Some(192 * 4 + 12));
+        for (actual, expected) in pixel.into_iter().zip(&image.data[3..6]) {
+            assert_eq!(actual.to_bits(), (*expected as f32).to_bits());
+        }
+    }
+
 
     /// Pump `update` until the worker has reported a result. `update` only
     /// adopts work the worker already finished, so repeating it with the same
@@ -532,6 +595,19 @@ mod tests {
             "the readout shows the image it is showing, not the one it replaced"
         );
     }
+    #[test]
+    fn retained_bins_cannot_adopt_a_pending_host_distribution_with_the_same_numeric_identity() {
+        let ctx = egui::Context::default();
+        let image = flat_image(0.5);
+        let mut strip = HistogramStrip::new();
+        strip.update(&image, 7, &ctx);
+        let retained = HistogramData::compute(&flat_image(0.25).unwrap());
+        strip.update_retained(&retained, 7);
+        assert_eq!(peak_bin(&strip.cached_data().unwrap().r), 34);
+        strip.update(&None, 0, &ctx);
+        assert!(strip.cached_data().is_none());
+    }
+
 
     #[test]
     fn visibility_state_persists_across_restore() {

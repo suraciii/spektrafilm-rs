@@ -20,6 +20,13 @@ parking_lot = "0.12"
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
+# Device tests compare the shader against the CPU reference, which lives in
+# the model crate. A dev-dependency keeps the library's acyclic build graph
+# while letting the tests reach the reference implementations.
+spektrafilm-model.workspace = true
+# The preview resample parity test compares the device kernel against the
+# reference `image::imageops::resize(Triangle)` call the preview uses.
+image.workspace = true
 
 [lints]
 workspace = true

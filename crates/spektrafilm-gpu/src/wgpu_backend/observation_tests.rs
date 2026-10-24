@@ -125,6 +125,8 @@ fn fresh_backend(
             name: "telemetry_test".into(),
             explicit: false,
             adapter: description,
+            backend_id: super::film_chain::device_image::next_backend_id(),
+            cancellation: None,
         },
     ))
 }
@@ -326,6 +328,44 @@ fn timestamps_match_pass_sum_and_preserve_real_compute_pixels() {
     assert_eq!(counters.telemetry_copy_bytes, Some(16));
     assert_eq!(counters.staging_copy_bytes, Some(BYTES));
     assert_eq!(counters.readback_bytes, Some(BYTES));
+}
+
+#[test]
+fn retained_upload_and_uniform_patch_preserve_transfer_categories() {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::empty()) else {
+        return;
+    };
+    let (context, stage) = observed(&mut backend, CollectionMode::Summary);
+    let image = spektrafilm_math::image::ImageBuf::new(2, 2);
+    let retained = backend.upload_retained(&image, &spektrafilm_backend::RetainedImageMeta {
+        width: 2,
+        height: 2,
+        domain: spektrafilm_backend::SampleDomain::Linear,
+        precision: spektrafilm_backend::Precision::host(),
+        space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+        pixel_pitch_um: None,
+    }).unwrap();
+    let uniform = backend.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("chunk_params"),
+        size: 8,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    backend.queue.write_buffer(&uniform, 0, bytemuck::cast_slice(&[4_u32, 1]));
+    let work = context.snapshot().totals;
+    assert_eq!(work.upload_count, Some(2));
+    assert_eq!(work.upload_bytes, Some(48 + 8));
+    assert_eq!(work.image_upload_count, Some(1));
+    assert_eq!(work.image_upload_bytes, Some(48));
+    assert_eq!(work.uniform_upload_count, Some(1));
+    assert_eq!(work.uniform_upload_bytes, Some(8));
+    assert_eq!(work.readback_count, Some(0), "upload must not invent a readback");
+    assert_eq!(work.readback_bytes, Some(0));
+    assert_eq!(retained.to_host(&backend).unwrap().data, image.data);
+    drop(stage);
+    let work = context.snapshot().totals;
+    assert_eq!(work.readback_count, Some(1));
+    assert_eq!(work.readback_bytes, Some(48));
 }
 
 #[test]
@@ -583,11 +623,11 @@ fn exhausted_details_report_detail_limit_on_timestamp_enabled_device() {
         return;
     };
     let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
-    for _ in 0..1023 {
+    for _ in 0..1024 {
         drop(
             stage
                 .context()
-                .scope("filled", ObservationKind::Stage, Purpose::Image),
+                .scope("filled", ObservationKind::Batch, Purpose::Image),
         );
     }
     let (scoped, guard) = backend.observed_batch("compute");
@@ -671,13 +711,15 @@ fn one_submission_of_multiple_command_buffers_has_exact_work_sum() {
 }
 
 #[test]
-fn more_than_1024_submitted_passes_bound_detail_and_keep_exact_counters() {
+fn submitted_pass_pressure_preserves_late_cpu_stage_and_exact_counters() {
     const PASSES: usize = 1030;
     let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
         return;
     };
     let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
     let (scoped, guard) = backend.observed_batch("compute");
+    let expected_adapter = context.snapshot().execution.adapter;
+    let admitted_passes = scoped.device.context.detail_remaining() as u64;
     let work = Workload::new(&scoped, false, &[0.0; 4]);
     scoped
         .queue
@@ -685,33 +727,66 @@ fn more_than_1024_submitted_passes_bound_detail_and_keep_exact_counters() {
     assert_eq!(work.materialize(&scoped), [0.0; 4]);
     drop(guard);
     drop(stage);
+    let late = context.scope("colorspace_convert", ObservationKind::Stage, Purpose::Image);
+    let cpu = spektrafilm_backend::bind_cpu_fallback(
+        late.context().clone(),
+        spektrafilm_backend::telemetry::CpuReason::CpuSelected,
+    );
+    let input = ImageBuf::from_data(1, 1, vec![0.25, 0.5, 0.75]);
+    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let output = cpu.colorspace_convert(&input, &identity).unwrap();
+    assert_eq!(output.data, input.data);
+    drop(cpu);
+    assert!(late.context().retained());
+    drop(late);
+    let unknown = context.scope("unobserved_executor", ObservationKind::Stage, Purpose::Image);
+    assert!(unknown.context().retained());
+    drop(unknown);
     let snapshot = context.snapshot();
-    assert_eq!(snapshot.observations.len(), 1024);
-    assert_eq!(snapshot.coverage.retained_observations, 1024);
+    assert!(snapshot.observations.len() <= snapshot.coverage.detail_limit as usize);
+    assert_eq!(
+        snapshot.coverage.retained_observations,
+        snapshot.observations.len() as u64
+    );
     assert_eq!(
         snapshot.coverage.omitted_observations,
-        (PASSES + 2 - 1024) as u64
+        PASSES as u64 - admitted_passes
     );
+    assert_eq!(snapshot.coverage.omitted_high_level_observations, Some(0));
+    assert_eq!(snapshot.execution.adapter, expected_adapter);
+    let late = snapshot.observations.iter().find(|o| o.name == "colorspace_convert").unwrap();
+    assert_eq!(late.executor, Some(Executor::Cpu));
+    assert_eq!(
+        late.cpu_reason,
+        Some(spektrafilm_backend::telemetry::CpuReason::CpuSelected)
+    );
+    let unknown = snapshot
+        .observations
+        .iter()
+        .find(|o| o.name == "unobserved_executor")
+        .unwrap();
+    assert_eq!(unknown.executor, None);
     assert!(snapshot.coverage.truncated);
     assert!(snapshot.coverage.retained_bytes <= snapshot.coverage.byte_limit);
     let counters = &snapshot.totals;
     assert_eq!(counters.executed_pass_count, Some(PASSES as u64));
     assert_eq!(counters.dispatch_count, Some(PASSES as u64));
-    assert_eq!(counters.timed_pass_count, Some(1022));
-    assert_eq!(counters.valid_pass_count, Some(1022));
-    assert_eq!(counters.omitted_pass_count, Some((PASSES - 1022) as u64));
+    assert!(admitted_passes > 0 && admitted_passes < PASSES as u64);
+    assert_eq!(counters.timed_pass_count, Some(admitted_passes));
+    assert_eq!(counters.valid_pass_count, Some(admitted_passes));
+    assert_eq!(counters.omitted_pass_count, Some(PASSES as u64 - admitted_passes));
     assert_eq!(counters.command_buffer_count, Some(1));
     assert_eq!(counters.submit_count, Some(1));
     assert_eq!(counters.host_wait_count, Some(1));
     assert_eq!(counters.readback_count, Some(1));
-    assert_eq!(counters.telemetry_copy_bytes, Some(1022 * 16));
+    assert_eq!(counters.telemetry_copy_bytes, Some(admitted_passes * 16));
     let parent = batch(&snapshot);
     let passes: Vec<_> = snapshot
         .observations
         .iter()
         .filter(|o| o.kind == ObservationKind::Pass)
         .collect();
-    assert_eq!(passes.len(), 1022);
+    assert_eq!(passes.len() as u64, admitted_passes);
     for (index, observation) in passes.iter().enumerate() {
         assert_eq!(observation.parent_id, parent.id);
         let pass = observation.pass.as_ref().unwrap();

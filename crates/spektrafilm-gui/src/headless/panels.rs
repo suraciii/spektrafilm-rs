@@ -363,12 +363,12 @@ fn paper_back_composition_shows_watermark_pixels_in_the_documented_center_region
     assert_eq!(h.state().viewer.settings.layer, ViewLayer::PaperBack);
     let image = observation.pixels.as_ref().unwrap();
     let source = h.state().image.as_ref().unwrap();
-    let long = source.width.max(source.height).max(1);
+    let long = source.width().max(source.height()).max(1);
     let paper_size = [
-        (source.width as f64 * 1024.0 / long as f64)
+        (source.width() as f64 * 1024.0 / long as f64)
             .round()
             .max(1.0) as usize,
-        (source.height as f64 * 1024.0 / long as f64)
+        (source.height() as f64 * 1024.0 / long as f64)
             .round()
             .max(1.0) as usize,
     ];

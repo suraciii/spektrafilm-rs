@@ -353,20 +353,26 @@ fn rendered_output_preserves_selected_encoding_and_float_samples() {
         ("tif", BitDepth::ThirtyTwo, false),
     ] {
         let path = directory.join(format!("{}.{extension}", depth.bits()));
-        image_io::save_rendered_output(
-            &path,
-            &image,
-            SaveOptions {
-                depth,
-                color_space: "Display P3",
-                cctf_encoding: encoded,
-                jpeg_quality: None,
-                jpeg_subsampling: None,
-                compression: None,
-            },
-            None,
-        )
-        .unwrap();
+        image_io::SavingPixels::Reference(image.clone())
+            .prepare_observed(
+                &path,
+                SaveOptions {
+                    depth,
+                    color_space: "Display P3",
+                    cctf_encoding: encoded,
+                    jpeg_quality: None,
+                    jpeg_subsampling: None,
+                    compression: None,
+                },
+                None,
+                true,
+                &spektrafilm_backend::telemetry::ObservationContext::new(
+                    spektrafilm_backend::telemetry::CollectionMode::Off,
+                ),
+            )
+            .unwrap()
+            .publish(true)
+            .unwrap();
         let decoded = image_io::load(&path).unwrap().image;
         assert_eq!((decoded.width, decoded.height), (1, 1));
         for (&actual, expected) in decoded.data.iter().zip(samples) {

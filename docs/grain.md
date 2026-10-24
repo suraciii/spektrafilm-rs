@@ -19,7 +19,7 @@ Spektra grain dispatch mirrors upstream `apply_grain`. `sublayers_active` runs t
 
 `settings.use_fast_stats` switches the layered sampler to the `fast_stats` kernels like upstream. The micro-structure clumping field always uses them, as upstream does. This field uses a documented deterministic seed because Python draws it from numba's unseeded thread-global RNG.
 
-Both Spektra composite and layered grain use the CPU sampler. No resident WGPU Spektra grain shader is maintained. Active Spektra grain rendering selects the faithful per-stage path. Preview disables active Spektra grain. The separate Grain Procedural implementation remains available.
+Spektra resolves on the selected executor in both sampling regimes. `settings.use_fast_stats` selects the per-element `fast_stats` streams; the composite path always samples the sequential scipy MT19937 regime, and the layered path does so whenever that setting is off. The device sampler reproduces the reference draw order exactly — all Poisson draws across the plane first, then all binomial draws — so it never substitutes a different noise law. A film profile without resolvable sublayer density curves keeps the faithful per-stage path. Preview disables active Spektra grain. The separate Grain Procedural implementation remains available.
 
 ## Procedural
 
@@ -98,7 +98,15 @@ When downstream spatial processing is active, Dye extends the output grid to cov
 
 ### Execution
 
-Dye resolves its field on the selected executor. On the resident route the device evaluates the count law, formation, and readout as bounded per-band passes on the developed film density; a crop or upscale the resident raster cannot express keeps the per-stage route and still reads the field from the device. A backend without a device field path, the experimental `SPEKTRAFILM_GRAIN_V3_MASS_LAW` selector, and the gated exact-cell spectral readout resolve on the host and name that reason. An explicit GPU request fails by name instead of demoting a device-incapable request silently. The CLI/GUI report the effective executor. Preview, LUT, stochastic, and spatial deactivation bypass Dye.
+Dye resolves its field on the selected executor. On the resident route the device evaluates the count law, formation, and readout as bounded per-band passes on the developed full-source film density. Crop and upscale use the resolved readout grid. A crop that needs surrounding film context runs on the enclosing lattice and is extracted on the device after downstream spatial processing. The gated exact-cell spectral response runs between cell formation and fractional readout. It subtracts `density_min` before the response and averages linear exposure or linear scan RGB. The aperture probe runs print exposure on a fine grid and collapses `log10(mean(10^log_exposure))` before paper development. The existing route and optical restrictions of both probes still apply.
+
+A backend without a device field path and the experimental `SPEKTRAFILM_GRAIN_V3_MASS_LAW` selector use the host reference and name that reason. Any selected GPU request fails by name instead of demoting a device-incapable request silently; host-only laws require selecting CPU. Device resource limits also fail by name; they never change cell pitch, support, or the count law. The CLI/GUI report the effective executor. Preview, LUT, stochastic, and spatial deactivation bypass Dye.
+
+Device carriers page full-source and output samples. Dye copies each source window on the device and partitions output rectangles along both axes when binding limits require it. An oversized individual footprint is split into formed-cell rectangles with complete formation halos. Their responses accumulate on the device with the original fractional weights; density readout subtracts its base only once after the final piece. Page and band boundaries do not change film coordinates or the stochastic address.
+
+The CPU reference uses the same partition rule: reduce output rectangles along both axes, then divide an oversized footprint into formed-cell pieces with full halos. Each piece uses the original global count addresses and overlap weights. Optical response remains per formed cell before integration, and partial readouts stay in `f64` until the final output conversion.
+
+When both optical probes are enabled, the exact-cell response reads the fine aperture grid. Linear-light collapse restores the requested raster before paper development. This also corrects the previous combined-probe CPU path, which skipped aperture collapse and delivered the fine raster.
 
 See [the Dye specification](../specs/film-grain/v3/spec.md) for experimental readouts and diagnostic controls.
 
@@ -119,7 +127,11 @@ New records automatically carry `dye-measurement-v2:` before the caller's algori
 
 Select Fotufilm Film with `film_render.grain.engine: "fotufilm"`. This adapted appearance population model fits resolved film curves. It is opt-in and uses `film_render.grain.fotufilm.*` controls.
 
-Fotufilm Film resolves on the CPU. It prepares its population before the first readout of a given population identity. It reuses the prepared bank for later renders of that identity.
+Fotufilm Film resolves on the selected executor. It prepares its fitted population before the first readout of a population identity. CPU rendering reuses the prepared host bank; device rendering forms and reads its bank without a host image intermediate.
+
+The device implementation retains crystal deposits, dye-cloud sums, per-sublayer capacity accumulation, tile prefix sums, and footprint probe statistics in device buffers. Tile mean transmittance reconstructs integrated light; the separate probe mean density centers the residual. A single global bank serves every bounded output window, with source and output pages addressed in full-image coordinates. Only a four-byte execution-status word is read during execution; image samples return at explicit materialization. Full-path comparisons against the CPU bank cover three raster sizes and fractional geometry with nondefault look controls; source-page, output-page, and readout-window partitions preserve the sampled field.
+
+Each Gaussian cloud term prepares its normalized binary32 taps once on the device, in the reference's ascending order. Both separable passes reuse those taps rather than regenerating the same exponential and normalization at every texel; the support, accumulation order, and four-term cloud law are unchanged.
 
 ## See also
 

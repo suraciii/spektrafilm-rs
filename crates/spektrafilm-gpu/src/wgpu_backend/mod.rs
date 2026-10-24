@@ -11,7 +11,7 @@ use crate::gpu_helpers::{
     f32_to_scalars, is_uniform_grid_endpoint, nan_safe_rows_to_f32, nan_safe_slice_to_f32,
     sanitize_spectral_inputs, scalars_to_f32,
 };
-#[cfg(feature = "wgpu-backend")]
+#[cfg(all(test, feature = "wgpu-backend"))]
 use spektrafilm_backend::cpu_backend;
 use spektrafilm_backend::{ComputeBackend, Lut3D};
 
@@ -19,6 +19,8 @@ use spektrafilm_backend::{ComputeBackend, Lut3D};
 mod cache;
 #[cfg(feature = "wgpu-backend")]
 mod film_chain;
+#[cfg(feature = "wgpu-backend")]
+mod paged;
 #[cfg(feature = "wgpu-backend")]
 use cache::{CachedPipelineRef, PipelineCache};
 #[cfg(feature = "wgpu-backend")]
@@ -29,13 +31,6 @@ mod pipe;
 use params::{CctfParams, DensityParams, FrontParams, ScanParams};
 #[cfg(feature = "wgpu-backend")]
 use pipe::GpuPipe;
-
-/// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
-/// can never build a multi-thousand-tap kernel that hangs the GPU (a
-/// monster kernel froze the display once). 256 → at
-/// most a 513-tap separable kernel; well above any legitimate σ here
-/// (halation tops out at tens of pixels).
-const MAX_BLUR_RADIUS: u32 = 256;
 
 // Keep in sync with the linear WGSL kernels. 256 is supported by the
 // default device limits; a two-dimensional grid preserves large-image support.
@@ -54,13 +49,9 @@ fn dispatch_linear(pass: &mut ObservedPass<'_>, n_values: u32) {
     pass.dispatch_workgroups(x, y, 1);
 }
 
-#[inline]
-fn fir_blur_radius(sigma: f32) -> u32 {
-    ((3.0_f32 * sigma).ceil() as u32).min(MAX_BLUR_RADIUS)
-}
 #[cfg(feature = "wgpu-backend")]
 #[inline]
-fn pack_matrix_columns(matrix: &[[f32; 3]; 3]) -> [[f32; 4]; 3] {
+pub(crate) fn pack_matrix_columns(matrix: &[[f32; 3]; 3]) -> [[f32; 4]; 3] {
     [
         [matrix[0][0], matrix[1][0], matrix[2][0], 0.0],
         [matrix[0][1], matrix[1][1], matrix[2][1], 0.0],
@@ -101,6 +92,11 @@ pub struct WgpuBackend {
     name: String,
     adapter: AdapterDescription,
     explicit: bool,
+    /// Identity of the device this backend owns, shared with every backend
+    /// derived from it. Retained carriers record it so a consumer refuses a
+    /// carrier from a different device instead of reading foreign memory.
+    backend_id: u64,
+    cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 #[cfg(feature = "wgpu-backend")]
@@ -134,6 +130,16 @@ impl WgpuBackend {
             if timestamp {
                 features |= adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
             }
+            // Spektra v1 grain conditions its Poisson/binomial decisions on
+            // f64 values the reference reads from JSON at full precision
+            // (`specs/film-grain/v1/design.md`: f32 conversion before those
+            // decisions is not allowed), and its per-element `fast_stats`
+            // streams are splitmix64. The device therefore asks for native
+            // f64 and 64-bit integers; an adapter without them simply does
+            // not report the features, and the Spektra pass declines to the
+            // host fence rather than approximating (see `grain::v1`).
+            features |=
+                adapter.features() & (wgpu::Features::SHADER_F64 | wgpu::Features::SHADER_INT64);
             wgpu::DeviceDescriptor {
                 label: Some("spektrafilm"),
                 required_features: features,
@@ -224,6 +230,8 @@ impl WgpuBackend {
             pipeline_cache,
             adapter: description,
             explicit: false,
+            backend_id: film_chain::device_image::next_backend_id(),
+            cancellation: None,
         })
     }
 
@@ -261,7 +269,13 @@ impl WgpuBackend {
             name: self.name.clone(),
             adapter: self.adapter.clone(),
             explicit: true,
+            backend_id: self.backend_id,
+            cancellation: self.cancellation.clone(),
         }
+    }
+
+    pub(in crate::wgpu_backend) fn check_cancelled(&self) -> Result<(), String> {
+        self.pipe.check_cancelled()
     }
 
     /// Generic GPU compute dispatch helper.
@@ -298,9 +312,24 @@ impl WgpuBackend {
         shader_source: &'static str,
         binding_types: &[wgpu::BufferBindingType],
     ) -> CachedPipelineRef {
-        let (cached, hit) =
-            self.pipeline_cache
-                .get_or_compile(&self.device.raw, shader_source, binding_types);
+        self.cached_pipeline_at(shader_source, binding_types, "main")
+    }
+
+    /// Get or compile the pipeline of one named entry point. A module may
+    /// declare several entry points — the Fotufilm modules do — and each is
+    /// its own pipeline over its own binding layout.
+    fn cached_pipeline_at(
+        &self,
+        shader_source: &'static str,
+        binding_types: &[wgpu::BufferBindingType],
+        entry_point: &'static str,
+    ) -> CachedPipelineRef {
+        let (cached, hit) = self.pipeline_cache.get_or_compile_at(
+            &self.device.raw,
+            shader_source,
+            binding_types,
+            entry_point,
+        );
         if self.device.context.enabled() {
             let mut w = WorkCounters::default();
             if hit {
@@ -348,6 +377,37 @@ impl GpuBuffer {
 
 #[cfg(feature = "wgpu-backend")]
 mod compute_backend;
+#[cfg(test)]
+mod failure_tests;
+#[cfg(feature = "wgpu-backend")]
+mod viewer;
+#[cfg(feature = "wgpu-backend")]
+mod viewer_icc;
+#[cfg(feature = "wgpu-backend")]
+mod viewer_paper;
+#[cfg(feature = "wgpu-backend")]
+mod viewer_polaroid;
+#[cfg(feature = "wgpu-backend")]
+mod histogram;
+
+#[cfg(feature = "wgpu-backend")]
+mod bounded;
+#[cfg(feature = "wgpu-backend")]
+mod pointwise_pages;
+#[cfg(feature = "wgpu-backend")]
+mod chain_chunks;
+#[cfg(feature = "wgpu-backend")]
+mod chain_finish;
+#[cfg(feature = "wgpu-backend")]
+mod lut_chunks;
+#[cfg(feature = "wgpu-backend")]
+mod pchip_chunks;
+#[cfg(feature = "wgpu-backend")]
+mod enlarger_resident;
+#[cfg(feature = "wgpu-backend")]
+mod preparation;
+#[cfg(feature = "wgpu-backend")]
+mod input_gamut_prepare;
 
 #[cfg(feature = "wgpu-backend")]
 mod blur;
@@ -369,6 +429,16 @@ mod halation;
 #[cfg(feature = "wgpu-backend")]
 mod highlight;
 #[cfg(feature = "wgpu-backend")]
+mod input;
+#[cfg(feature = "wgpu-backend")]
+mod metering;
+#[cfg(feature = "wgpu-backend")]
+mod optics;
+#[cfg(feature = "wgpu-backend")]
+mod raw;
+#[cfg(feature = "wgpu-backend")]
+mod scan;
+#[cfg(feature = "wgpu-backend")]
 mod unsharp;
 #[cfg(feature = "wgpu-backend")]
 use blur::*;
@@ -384,5 +454,9 @@ use grain::*;
 use halation::*;
 #[cfg(feature = "wgpu-backend")]
 use highlight::*;
+#[cfg(feature = "wgpu-backend")]
+use input::*;
+#[cfg(feature = "wgpu-backend")]
+use metering::*;
 #[cfg(feature = "wgpu-backend")]
 use unsharp::*;

@@ -14,7 +14,6 @@ use spektrafilm_core::image_io::{self};
 use spektrafilm_core::telemetry::OperationKind;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, Outcome};
-use spektrafilm_math::image::ImageBuf;
 
 use super::App;
 use super::diagnostics::BackendRequested;
@@ -97,7 +96,7 @@ impl App {
         self.start_export_to_path(ctx, options, &chosen_path);
     }
 
-    pub(super) fn export_input(&mut self) -> Option<Arc<ImageBuf>> {
+    pub(super) fn export_input(&mut self) -> Option<super::render::InputImage> {
         if self.export_job.is_some() || self.calibration_job.is_some() {
             self.status = crate::app::Message::new("operations.export_wait");
             return None;
@@ -140,7 +139,7 @@ impl App {
         options.normalize();
         let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
         operation.set_revisions(Some(self.input_epoch), Some(self.parameter_revision));
-        operation.set_input_dimensions(image.width, image.height);
+        operation.set_input_dimensions(image.width(), image.height());
         operation.set_backend_requested(match options.backend {
             ExportBackend::Cpu => BackendRequested::Cpu,
             ExportBackend::Gpu => BackendRequested::Wgpu,
@@ -181,6 +180,10 @@ impl App {
             .write_state(&mut self.gui_state.sections);
         self.search_index.reset();
         let snapshot = self.render_snapshot(params);
+        // Orientation is retained metadata, not a rewritten source: the
+        // retained render applies it on the device and the host reference
+        // applies it before its own stages.
+        let rotation_quarter_turns = self.input_rotation.rem_euclid(4) as u32;
         self.remember_dialog("export", &out_path);
         self.launch_export(
             ctx,
@@ -191,6 +194,7 @@ impl App {
                     .map(|path| path.display().to_string())
                     .unwrap_or_default(),
                 image,
+                rotation_quarter_turns,
                 snapshot,
                 metadata: self.source_metadata.clone(),
                 options,
@@ -222,6 +226,7 @@ impl App {
         });
         let crate::app::export_queue::QueueSubmission {
             image,
+            rotation_quarter_turns,
             snapshot,
             metadata,
             options,
@@ -280,30 +285,6 @@ impl App {
                                 )));
                             }
                         }
-                        let pipeline =
-                            super::build_runtime_observed(&snapshot, false, &observation)
-                                .map_err(anyhow::Error::new)?
-                                .with_cancellation(Some(Arc::clone(&cancel_for_worker)));
-                        if let Some(Ok(expected)) = &dependencies {
-                            let actual = snapshot.export_dependencies().inspect_err(|_| {
-                                observation.issue(
-                                    IssueCategory::Configuration,
-                                    IssueBoundary::RuntimePrepare,
-                                );
-                            })?;
-                            if &actual != expected {
-                                observation.issue(
-                                    IssueCategory::Configuration,
-                                    IssueBoundary::RuntimePrepare,
-                                );
-                                return Err(anyhow::Error::new(crate::app::Message::new(
-                                    "photo.queue.dependencies_changed",
-                                )));
-                            }
-                        }
-                        if let Some(slot) = &worker_configuration {
-                            *slot.lock() = Some(pipeline.telemetry_configuration());
-                        }
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
@@ -341,24 +322,96 @@ impl App {
                             IssueCategory::Backend,
                             IssueBoundary::BackendInit,
                         )?;
+                        let pipeline =
+                            super::render::build_runtime_observed_with_backend(
+                                &snapshot, false, &observation, backend.as_ref(),
+                            )
+                                .map_err(anyhow::Error::new)?
+                                .with_cancellation(Some(Arc::clone(&cancel_for_worker)));
+                        if let Some(Ok(expected)) = &dependencies {
+                            let actual = snapshot.export_dependencies().inspect_err(|_| {
+                                observation.issue(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
+                            })?;
+                            if &actual != expected {
+                                observation.issue(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
+                                return Err(anyhow::Error::new(crate::app::Message::new("photo.queue.dependencies_changed")));
+                            }
+                        }
+                        if let Some(slot) = &worker_configuration {
+                            *slot.lock() = Some(pipeline.telemetry_configuration());
+                        }
+                        if cancel_for_worker.load(Ordering::SeqCst) {
+                            anyhow::bail!("cancelled");
+                        }
                         let input_prepare = observation.scope(
                             "input_prepare",
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let working_image = (*image).clone();
-                        drop(input_prepare);
-                        let simulation =
-                            observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
-                        let processed = pipeline
-                            .process_observed(working_image, backend.as_ref(), simulation.context())
-                            .map_err(anyhow::Error::msg);
-                        let output = observed_result(
+                        let host_input = (|| -> Result<Option<spektrafilm_math::image::ImageBuf>> {
+                            if backend.is_gpu() {
+                                return Ok(None);
+                            }
+                            let bound = input_prepare.context().enabled().then(||
+                                spektrafilm_backend::bind_backend(
+                                    selected_backend.as_ref(), input_prepare.context().clone(),
+                                ));
+                            let source_backend = bound.as_deref().unwrap_or(selected_backend.as_ref());
+                            let _span = input_prepare.context().span().map(|span| span.enter());
+                            // Readback belongs to the backend which loaded the
+                            // source, not the separately selected CPU renderer.
+                            let source = image.to_host(source_backend)
+                                .map_err(anyhow::Error::msg)?;
+                            Ok(Some(if rotation_quarter_turns == 0 {
+                                source
+                            } else {
+                                source.rotated_quarter_turns(rotation_quarter_turns as i32)
+                            }))
+                        })();
+                        let host_input = observed_result(
+                            input_prepare, host_input,
+                            IssueCategory::Input, IssueBoundary::InputPrepare,
+                        )?;
+                        let simulation = observation.scope(
+                            "simulation", ObservationKind::Phase, Purpose::Image,
+                        );
+                        let processed = if backend.is_gpu() {
+                            let bound = simulation.context().enabled().then(||
+                                spektrafilm_backend::bind_backend(
+                                    backend.as_ref(), simulation.context().clone(),
+                                ));
+                            let backend = bound.as_deref().unwrap_or(backend.as_ref());
+                            let _span = simulation.context().span().map(|span| span.enter());
+                            match &image {
+                                super::render::InputImage::Device(image) => pipeline
+                                    .process_device_retained(
+                                        image,
+                                        spektrafilm_core::pipeline::RetainedRender::rotated(rotation_quarter_turns),
+                                        backend,
+                                    ).map(|image| (None, Some(image))),
+                                super::render::InputImage::Host(image) => pipeline
+                                    .process_retained_rotated(image, rotation_quarter_turns, backend)
+                                    .and_then(|image| image.ok_or_else(||
+                                        "selected GPU cannot export this input on the retained route".to_owned()))
+                                    .map(|image| (None, Some(image))),
+                            }
+                        } else {
+                            pipeline.process_observed(
+                                host_input.expect("the host route holds its rotated source"),
+                                backend.as_ref(), simulation.context(),
+                            ).map(|image| (Some(image), None))
+                        };
+                        let (output, retained) = observed_result(
                             simulation,
-                            processed,
+                            processed.map_err(anyhow::Error::msg),
                             IssueCategory::Simulation,
                             IssueBoundary::Simulation,
                         )?;
+                        let (output_width, output_height) = match (&output, &retained) {
+                            (Some(image), _) => (image.width, image.height),
+                            (None, Some(image)) => (image.width(), image.height()),
+                            (None, None) => unreachable!("the render always has samples"),
+                        };
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
@@ -367,26 +420,57 @@ impl App {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let converted = image_io::convert_image(
-                            &output,
-                            &pipeline.params().io.output_color_space,
-                            pipeline.params().io.output_cctf_encoding,
-                            &options.saving_color_space,
-                            options.saving_cctf_encoding,
-                        );
+                        let kind = image_io::output_sample_kind(
+                            options.image_format(),
+                            options.save_options().depth,
+                        )?;
+                        let converted = {
+                            let cancellable = backend.with_cancellation(Some(cancel_for_worker.clone()));
+                            let backend = cancellable.as_deref().unwrap_or(backend.as_ref());
+                            let bound = saving_convert.context().enabled().then(||
+                                spektrafilm_backend::bind_backend(
+                                    backend, saving_convert.context().clone(),
+                                ));
+                            let backend = bound.as_deref().unwrap_or(backend);
+                            let _span = saving_convert.context().span().map(|span| span.enter());
+                            match (&retained, &output) {
+                            (Some(image), _) => {
+                                image_io::convert_retained_samples_with_backend(
+                                    image,
+                                    &options.saving_color_space,
+                                    options.saving_cctf_encoding,
+                                    kind,
+                                    backend,
+                                )
+                            }
+                            (None, Some(image)) => image_io::convert_samples_with_backend(
+                                image,
+                                &pipeline.params().io.output_color_space,
+                                pipeline.params().io.output_cctf_encoding,
+                                &options.saving_color_space,
+                                options.saving_cctf_encoding,
+                                kind,
+                                backend,
+                            ),
+                            (None, None) => unreachable!("the render always has samples"),
+                            }
+                        };
                         let converted = observed_result(
                             saving_convert,
                             converted,
                             IssueCategory::Writing,
                             IssueBoundary::SavingConvert,
                         )?;
+                        if cancel_for_worker.load(Ordering::SeqCst) {
+                            anyhow::bail!("cancelled");
+                        }
                         let file_write =
                             observation.scope("file_write", ObservationKind::Phase, Purpose::Image);
-                        let staged = image_io::prepare_save_observed(
+                        let staged = converted.prepare_observed(
                             &out_path,
-                            &converted,
                             options.save_options(),
                             metadata.as_ref(),
+                            false,
                             file_write.context(),
                         );
                         let staged = observed_result(
@@ -413,7 +497,7 @@ impl App {
                                 .and_then(|s| s.to_str())
                                 .unwrap_or("(file)")
                                 .to_owned(),
-                            size: [output.width, output.height],
+                            size: [output_width, output_height],
                             staged,
                         })
                     },

@@ -91,91 +91,79 @@ fn dgemm_blas(
 pub struct CpuBackend;
 
 impl ComputeBackend for CpuBackend {
-    fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> ImageBuf {
-        let m: [[Scalar; 3]; 3] = [
-            [
-                from_f32(matrix[0][0]),
-                from_f32(matrix[0][1]),
-                from_f32(matrix[0][2]),
-            ],
-            [
-                from_f32(matrix[1][0]),
-                from_f32(matrix[1][1]),
-                from_f32(matrix[1][2]),
-            ],
-            [
-                from_f32(matrix[2][0]),
-                from_f32(matrix[2][1]),
-                from_f32(matrix[2][2]),
-            ],
-        ];
-        let mut out = img.clone();
-        out.par_pixels_mut().for_each(|px| {
-            let r = px[0];
-            let g = px[1];
-            let b = px[2];
-            px[0] = m[0][0] * r + m[0][1] * g + m[0][2] * b;
-            px[1] = m[1][0] * r + m[1][1] * g + m[1][2] * b;
-            px[2] = m[2][0] * r + m[2][1] * g + m[2][2] * b;
-        });
-        out
-    }
+    fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> Result<ImageBuf, String> { let m: [[Scalar; 3]; 3] = [
+        [
+            from_f32(matrix[0][0]),
+            from_f32(matrix[0][1]),
+            from_f32(matrix[0][2]),
+        ],
+        [
+            from_f32(matrix[1][0]),
+            from_f32(matrix[1][1]),
+            from_f32(matrix[1][2]),
+        ],
+        [
+            from_f32(matrix[2][0]),
+            from_f32(matrix[2][1]),
+            from_f32(matrix[2][2]),
+        ],
+    ];
+    let mut out = img.clone();
+    out.par_pixels_mut().for_each(|px| {
+        let r = px[0];
+        let g = px[1];
+        let b = px[2];
+        px[0] = m[0][0] * r + m[0][1] * g + m[0][2] * b;
+        px[1] = m[1][0] * r + m[1][1] * g + m[1][2] * b;
+        px[2] = m[2][0] * r + m[2][1] * g + m[2][2] * b;
+    });
+    Ok(out) }
 
-    fn cctf_encode_srgb(&self, img: &ImageBuf) -> ImageBuf {
-        let mut out = img.clone();
-        out.data
-            .par_iter_mut()
-            .for_each(|v| *v = spektrafilm_math::precision::srgb_encode(*v));
-        out
-    }
+    fn cctf_encode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String> { let mut out = img.clone();
+    out.data
+        .par_iter_mut()
+        .for_each(|v| *v = spektrafilm_math::precision::srgb_encode(*v));
+    Ok(out) }
 
-    fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
-        let mut out = img.clone();
-        out.data
-            .par_iter_mut()
-            .for_each(|v| *v = spektrafilm_math::precision::srgb_decode(*v));
-        out
-    }
+    fn cctf_decode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String> { let mut out = img.clone();
+    out.data
+        .par_iter_mut()
+        .for_each(|v| *v = spektrafilm_math::precision::srgb_decode(*v));
+    Ok(out) }
 
-    fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
-        if sigma <= 0.0 {
-            return img.clone();
+    fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> Result<ImageBuf, String> { if sigma <= 0.0 {
+        return Ok(img.clone());
+    }
+    Ok(spektrafilm_math::gaussian::gaussian_blur(img, sigma)) }
+
+    fn table_lookup(&self, img: &ImageBuf, table_x: &[f32], table_y: &[[f32; 3]]) -> Result<ImageBuf, String> { let mut out = img.clone();
+    out.par_pixels_mut().for_each(|px| {
+        for c in 0..3 {
+            let y_col: Vec<f32> = table_y.iter().map(|row| row[c]).collect();
+            px[c] = from_f32(spektrafilm_math::interp::interp_1d(
+                table_x,
+                &y_col,
+                to_f32(px[c]),
+            ));
         }
-        spektrafilm_math::gaussian::gaussian_blur(img, sigma)
-    }
+    });
+    Ok(out) }
 
-    fn table_lookup(&self, img: &ImageBuf, table_x: &[f32], table_y: &[[f32; 3]]) -> ImageBuf {
-        let mut out = img.clone();
-        out.par_pixels_mut().for_each(|px| {
-            for c in 0..3 {
-                let y_col: Vec<f32> = table_y.iter().map(|row| row[c]).collect();
-                px[c] = from_f32(spektrafilm_math::interp::interp_1d(
-                    table_x,
-                    &y_col,
-                    to_f32(px[c]),
-                ));
-            }
-        });
-        out
-    }
-
-    fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> ImageBuf {
-        let mut out = img.clone();
-        let size = lut.size as usize;
-        out.par_pixels_mut().for_each(|px| {
-            let rgb = spektrafilm_math::lut::trilinear_3d(
-                &lut.data,
-                size,
-                to_f32(px[0]),
-                to_f32(px[1]),
-                to_f32(px[2]),
-            );
-            px[0] = from_f32(rgb[0]);
-            px[1] = from_f32(rgb[1]);
-            px[2] = from_f32(rgb[2]);
-        });
-        out
-    }
+    fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> Result<ImageBuf, String> { let mut out = img.clone();
+    let size = lut.size as usize;
+    out.par_pixels_mut().for_each(|px| {
+        let rgb = spektrafilm_math::lut::trilinear_3d(
+            &lut.data,
+            size,
+            to_f32(px[0]),
+            to_f32(px[1]),
+            to_f32(px[2]),
+        );
+        px[0] = from_f32(rgb[0]);
+        px[1] = from_f32(rgb[1]);
+        px[2] = from_f32(rgb[2]);
+    });
+    Ok(out) }
 
     fn name(&self) -> &str {
         if cfg!(feature = "precision-f64") {

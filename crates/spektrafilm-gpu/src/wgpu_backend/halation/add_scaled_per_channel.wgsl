@@ -1,15 +1,14 @@
-// Per-channel variant of add_scaled: `dst[i,c] += scale[c] * src[i,c]`.
+// Per-channel `dst[i,c] = clear_first ? scale[c] * src[i,c]
+//                                   : dst[i,c] + scale[c] * src[i,c]`.
 //
-// Used by halation's final additive step where the halation strength
-// `a_tot[c] = halation_strength[c] * halation_amount` differs per
-// channel (e.g. Portra is `(0.05, 0.015, 0.0)` — blue gets no halation
-// at all). Averaging the scalar value produces a uniform cool halo
-// around bright edges; the per-channel variant preserves the film's
-// chromatic halation signature.
+// Used by halation's scatter accumulation (tail components) and final
+// additive step. The amplitude `a_tot[c] = halation_strength[c] *
+// halation_amount` differs per channel: Portra is (0.05, 0.015, 0.0), so
+// averaging the scalar produces a uniform cool halo around bright edges.
 
 struct Params {
     n_pixels: u32,
-    _pad0: u32,
+    clear_first: u32,
     _pad1: u32,
     _pad2: u32,
     scale: vec4<f32>, // .xyz used (per channel), .w padding
@@ -25,7 +24,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     if idx >= params.n_pixels { return; }
     let base = idx * 3u;
     let s = params.scale.xyz;
-    dst[base]      = dst[base]      + s.x * src[base];
-    dst[base + 1u] = dst[base + 1u] + s.y * src[base + 1u];
-    dst[base + 2u] = dst[base + 2u] + s.z * src[base + 2u];
+    if params.clear_first != 0u {
+        dst[base]      = s.x * src[base];
+        dst[base + 1u] = s.y * src[base + 1u];
+        dst[base + 2u] = s.z * src[base + 2u];
+    } else {
+        dst[base]      = dst[base]      + s.x * src[base];
+        dst[base + 1u] = dst[base + 1u] + s.y * src[base + 1u];
+        dst[base + 2u] = dst[base + 2u] + s.z * src[base + 2u];
+    }
 }

@@ -15,10 +15,11 @@ pub(crate) enum ComparisonReadiness {
 
 struct Reference {
     adjustments: Rc<AdjustmentState>,
-    source: Arc<ImageBuf>,
+    source: crate::render::InputImage,
     snapshot: RenderSnapshot,
     source_metadata: Option<ImageMetadata>,
     output: Option<Arc<ImageBuf>>,
+    retained: Option<spektrafilm_backend::DeviceImage>,
     color_space: String,
     encoded: bool,
     kind: RenderKind,
@@ -43,6 +44,7 @@ pub(crate) struct Comparison {
 /// `None` means the existing B/operator-baseline presentation remains selected.
 pub(crate) struct ComparisonOutput<'a> {
     pub(crate) output: Option<&'a Arc<ImageBuf>>,
+    pub(crate) retained: Option<&'a spektrafilm_backend::DeviceImage>,
     pub(crate) color_space: &'a str,
     pub(crate) encoded: bool,
 }
@@ -66,7 +68,7 @@ impl App {
     }
 
     pub(crate) fn capture_comparison(&mut self, ctx: &egui::Context) -> bool {
-        let Some(mut source) = self.image.clone() else {
+        let Some(source) = self.image.clone() else {
             return false;
         };
         let mut adjustments = (*self.accepted_adjustment()).clone();
@@ -74,10 +76,6 @@ impl App {
         // The RAW panel is a decode draft, not the interpretation of this image.
         if let Some(raw) = &self.raw_applied_settings {
             adjustments.raw_settings = raw.clone();
-        }
-        let turns = (adjustments.rotation - self.input_rotation).rem_euclid(4);
-        if turns != 0 {
-            source = Arc::new(source.rotated_quarter_turns(turns));
         }
         let params = adjustments.runtime_params(self);
         let seed = params.random_seed;
@@ -110,16 +108,18 @@ impl App {
             && controls_match
             && self.retained_kind.is_some();
         let output = matching.then(|| self.output_image.clone()).flatten();
-        let kind = if output.is_some() {
+        let retained = matching.then(|| self.output_retained.clone()).flatten();
+        let kind = if output.is_some() || retained.is_some() {
             self.retained_kind.expect("matching retained kind")
         } else {
             RenderKind::Preview
         };
-        let color_space = output.as_ref().map_or_else(
-            || params.io.output_color_space.clone(),
-            |_| self.output_color_space.clone(),
-        );
-        let encoded = if output.is_some() {
+        let color_space = if output.is_some() || retained.is_some() {
+            self.output_color_space.clone()
+        } else {
+            params.io.output_color_space.clone()
+        };
+        let encoded = if output.is_some() || retained.is_some() {
             self.output_cctf_encoding
         } else {
             params.io.output_cctf_encoding
@@ -142,6 +142,7 @@ impl App {
             snapshot,
             source_metadata: self.source_metadata.clone(),
             output,
+            retained,
             color_space,
             encoded,
             kind,
@@ -152,7 +153,7 @@ impl App {
             .comparison
             .reference
             .as_ref()
-            .is_some_and(|a| a.output.is_none())
+            .is_some_and(|a| a.output.is_none() && a.retained.is_none())
         {
             self.render_comparison(ctx);
         }
@@ -174,7 +175,7 @@ impl App {
             Some(self.comparison.generation),
             Some(self.comparison.generation),
         );
-        operation.set_input_dimensions(reference.source.width, reference.source.height);
+        operation.set_input_dimensions(reference.source.width(), reference.source.height());
         operation.set_backend_requested(diagnostics::preview_backend_requested());
         let request = RenderRequest {
             job: RenderJob {
@@ -183,6 +184,8 @@ impl App {
                 request_id: 0,
                 kind: reference.kind,
                 animate: false,
+                backend_name: self.backend.name().to_owned(),
+                rotation_quarter_turns: reference.adjustments.rotation.rem_euclid(4) as u32,
                 collection_mode: operation.mode(),
             },
             image: reference.source.clone(),
@@ -193,6 +196,7 @@ impl App {
             backend: self.backend.clone(),
             source_metadata: reference.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
+            display_profile: self.gui_state.display_profile().map(PathBuf::from),
             ctx: ctx.clone(),
             worker_wait: operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image),
             operation,
@@ -241,7 +245,8 @@ impl App {
             };
             match result {
                 Ok(rendered) => {
-                    reference.output = Some(Arc::new(rendered.output));
+                    reference.output = rendered.output.map(Arc::new);
+                    reference.retained = rendered.retained;
                     reference.color_space = rendered.output_color_space;
                     reference.encoded = rendered.output_cctf_encoding;
                     reference.kind = job.kind;
@@ -266,8 +271,8 @@ impl App {
         };
         let original = &a.adjustments.params.io;
         let current = &self.params.io;
-        a.source.width == source.width
-            && a.source.height == source.height
+        a.source.width() == source.width()
+            && a.source.height() == source.height()
             && a.adjustments.rotation == self.input_rotation
             && original.crop == current.crop
             && (!original.crop
@@ -282,7 +287,7 @@ impl App {
         };
         if !self.comparison_geometry_compatible() {
             ComparisonReadiness::Incompatible
-        } else if a.output.is_some() {
+        } else if a.output.is_some() || a.retained.is_some() {
             ComparisonReadiness::Ready
         } else if self.comparison.job.is_some() {
             ComparisonReadiness::Pending
@@ -301,6 +306,7 @@ impl App {
         let a = self.comparison.reference.as_ref()?;
         Some(ComparisonOutput {
             output: a.output.as_ref(),
+            retained: a.retained.as_ref(),
             color_space: &a.color_space,
             encoded: a.encoded,
         })
@@ -314,34 +320,28 @@ impl App {
         }
         let selected = self.comparison_output();
         let inspecting = selected.is_some();
-        let (image, space, encoded) = if let Some(a) = selected {
-            (a.output, a.color_space, a.encoded)
+        let (image, retained, space, encoded) = if let Some(a) = selected {
+            (a.output, a.retained, a.color_space, a.encoded)
         } else if let Some(operator) = &self.operator_comparison {
-            (
-                Some(&operator.image),
-                operator.color_space.as_str(),
-                operator.encoded,
-            )
+            let retained = match &operator.image {
+                crate::render::InputImage::Device(image) => Some(image),
+                crate::render::InputImage::Host(_) => None,
+            };
+            (operator.image.host_image(), retained, operator.color_space.as_str(), operator.encoded)
         } else {
-            (
-                self.output_image.as_ref(),
-                self.output_color_space.as_str(),
-                self.output_cctf_encoding,
-            )
+            (self.output_image.as_ref(), self.output_retained.as_ref(),
+                self.output_color_space.as_str(), self.output_cctf_encoding)
         };
-        let key = (
-            image.map_or(0, |image| Arc::as_ptr(image) as usize),
-            inspecting,
-        );
-        if self.comparison.presented == Some(key) && !self.comparison.select_output {
-            return;
-        }
-        let image = image.cloned();
+        let identity = image.map(|image| Arc::as_ptr(image) as usize)
+            .or_else(|| retained.and_then(|image| image.payload().map(|payload| Arc::as_ptr(payload) as *const () as usize)))
+            .unwrap_or(0);
+        let key = (identity, inspecting);
+        if self.comparison.presented == Some(key) && !self.comparison.select_output { return; }
+        let new_size = retained.map(|image| [image.width() as usize, image.height() as usize])
+            .or_else(|| image.map(|image| [image.width as usize, image.height as usize]));
+        let retained = retained.cloned();
         let space = space.to_owned();
         self.comparison.presented = Some(key);
-        let new_size = image
-            .as_ref()
-            .map(|image| [image.width as usize, image.height as usize]);
         let selecting_output = self.comparison.select_output;
         if inspecting
             || selecting_output
@@ -385,6 +385,7 @@ impl App {
         // Clear unrelated disposable rasters too: a pending A must never show B.
         self.viewer.output = None;
         self.viewer.output_size = new_size;
+        self.viewer.set_retained_output(retained);
         self.viewer.invalidate_display();
         if inspecting || selecting_output {
             self.viewer.settings.layer = display::ViewLayer::Output;
@@ -471,11 +472,10 @@ impl App {
             ui.ctx(),
             "photo_work.compare.reference_status",
             quality = a.kind.message().localized(ui.ctx()),
-            dimensions = a.output.as_ref().map_or_else(
-                || crate::i18n::text(ui.ctx(), "photo_work.compare.dimensions_pending")
-                    .into_owned(),
-                |image| format!("{} × {}", image.width, image.height)
-            ),
+            dimensions = a.retained.as_ref().map(|image| [image.width(), image.height()])
+                .or_else(|| a.output.as_ref().map(|image| [image.width, image.height]))
+                .map_or_else(|| crate::i18n::text(ui.ctx(), "photo_work.compare.dimensions_pending").into_owned(),
+                    |[width, height]| format!("{width} × {height}")),
             readiness = crate::i18n::text(
                 ui.ctx(),
                 match readiness {
@@ -493,14 +493,13 @@ impl App {
                 || crate::i18n::text(ui.ctx(), "photo_work.compare.unavailable").into_owned(),
                 |kind| kind.message().localized(ui.ctx())
             ),
-            dimensions = self.output_image.as_ref().map_or_else(
-                || crate::i18n::text(ui.ctx(), "photo_work.compare.dimensions_pending")
-                    .into_owned(),
-                |image| format!("{} × {}", image.width, image.height)
-            ),
+            dimensions = self.output_retained.as_ref().map(|image| [image.width(), image.height()])
+                .or_else(|| self.output_image.as_ref().map(|image| [image.width, image.height]))
+                .map_or_else(|| crate::i18n::text(ui.ctx(), "photo_work.compare.dimensions_pending").into_owned(),
+                    |[width, height]| format!("{width} × {height}")),
             readiness = crate::i18n::text(
                 ui.ctx(),
-                if self.output_image.is_none() {
+                if self.output_image.is_none() && self.output_retained.is_none() {
                     "photo_work.compare.unavailable"
                 } else if self.accepted_frame_is_stale() {
                     "photo_work.compare.stale"
@@ -509,14 +508,13 @@ impl App {
                 }
             )
         ));
-        if a.output.is_some()
-            && self.output_image.is_some()
+        if (a.output.is_some() || a.retained.is_some())
+            && (self.output_image.is_some() || self.output_retained.is_some())
             && (self.retained_kind != Some(a.kind)
-                || self
-                    .output_image
-                    .as_ref()
-                    .zip(a.output.as_ref())
-                    .is_some_and(|(b, a)| b.width != a.width || b.height != a.height))
+                || self.output_retained.as_ref().map(|image| [image.width(), image.height()])
+                    .or_else(|| self.output_image.as_ref().map(|image| [image.width, image.height]))
+                    != a.retained.as_ref().map(|image| [image.width(), image.height()])
+                        .or_else(|| a.output.as_ref().map(|image| [image.width, image.height])))
         {
             ui.label(crate::i18n::text(
                 ui.ctx(),
@@ -526,7 +524,7 @@ impl App {
         if let Some(error) = &a.failure {
             ui.label(error.localized(ui.ctx()));
         }
-        if a.output.is_none() && self.comparison.job.is_none() {
+        if a.output.is_none() && a.retained.is_none() && self.comparison.job.is_none() {
             let render = ui.button(crate::i18n::text(ui.ctx(), "photo_work.compare.render"));
             crate::controls::locate_row(ui, "photo_work.compare.render", &render);
             if render.clicked() {
@@ -560,7 +558,7 @@ mod tests {
         app.params.camera.auto_exposure = false;
         app.params.settings.preview_max_size = 64;
         app.params.random_seed = 4123;
-        app.image = Some(Arc::new(ImageBuf::from_data(8, 4, vec![0.2; 8 * 4 * 3])));
+        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::from_data(8, 4, vec![0.2; 8 * 4 * 3]))));
         app.reset_adjustment_history();
         (app, directory, egui::Context::default())
     }
@@ -913,7 +911,7 @@ mod failure_tests {
             directory.path().join("browser.json"),
             crate::headless::data_dir(),
         );
-        app.image = Some(Arc::new(ImageBuf::from_data(2, 1, vec![0.2; 6])));
+        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::from_data(2, 1, vec![0.2; 6]))));
         app.params.workflow.route = "input".into();
         app.reset_adjustment_history();
         let retained = Arc::new(ImageBuf::from_data(2, 1, vec![0.7; 6]));

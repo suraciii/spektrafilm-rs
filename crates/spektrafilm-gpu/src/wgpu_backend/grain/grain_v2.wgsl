@@ -1,8 +1,8 @@
 // Grain V2: independent deterministic noise, native encoded RGB composition.
 // Uniform layout: dimensions [width,height,phase_bits,mode], controls [amount,shadows,
 // midtones,highlights], geometry [raw_scale,cluster_size,rotation,color], flags
-// [resolution_factor,resolution_type,colored,clustered]. 64 bytes total.
-struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32> }
+// [resolution_factor,resolution_type,colored,clustered], window [first,count,0,0].
+struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32>, window:vec4<u32> }
 @group(0) @binding(0) var<uniform> p:Params;
 @group(0) @binding(1) var<storage,read> input_rgb:array<f32>;
 @group(0) @binding(2) var<storage,read_write> output_rgb:array<f32>;
@@ -190,24 +190,20 @@ fn generator(pos:vec2<f32>,size:vec2<f32>,luma:f32,rgb:vec3<f32>,digital:bool)->
 fn effective_control(v:f32)->f32 {let t=clamp(v,0.,1.);return 0.12*t*t+0.68*t+0.2;}
 fn overlay(b:f32,g:f32)->f32 {return clamp(select(1.-2.*(1.-b)*(1.-g),2.*b*g,b<0.5),0.,1.);}
 fn opacity(v:f32,c:f32)->f32 {let d=(v-c)*5.;return exp(-0.5*d*d);}
-fn source(x:u32,y:u32)->vec3<f32>{
- let i=(y*p.dimensions.x+x)*3u;
+fn gathered(local:u32,slot:u32,corner:u32)->vec3<f32>{
+ let i=((local*9u+slot)*4u+corner)*3u;
  return vec3(input_rgb[i],input_rgb[i+1u],input_rgb[i+2u]);
 }
-fn grain_source(coord:vec2<i32>,size:vec2<f32>)->vec3<f32> {
+fn grain_source(local:u32,slot:u32,coord:vec2<i32>,size:vec2<f32>)->vec3<f32> {
  let dims=p.dimensions.xy;
- if(all(size==vec2<f32>(dims))){return source(u32(coord.x),u32(coord.y));}
+ if(all(size==vec2<f32>(dims))){return gathered(local,slot,0u);}
  let pos=vec2<f32>(coord)/(size-1.)*(vec2<f32>(dims)-1.)-0.1;
- let at=vec2<i32>(floor(pos));let f=fract(pos);let hi=vec2<i32>(dims)-1;
- let a=vec2<u32>(clamp(at,vec2<i32>(0),hi));
- let b=vec2<u32>(clamp(at+vec2(1,0),vec2<i32>(0),hi));
- let c=vec2<u32>(clamp(at+vec2(0,1),vec2<i32>(0),hi));
- let d=vec2<u32>(clamp(at+vec2(1,1),vec2<i32>(0),hi));
- return mix(mix(source(a.x,a.y),source(b.x,b.y),f.x),mix(source(c.x,c.y),source(d.x,d.y),f.x),f.y);
+ let f=fract(pos);
+ return mix(mix(gathered(local,slot,0u),gathered(local,slot,1u),f.x),mix(gathered(local,slot,2u),gathered(local,slot,3u),f.x),f.y);
 }
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) grid:vec3<u32>){
- let idx=gid.x+gid.y*grid.x*256u;let width=p.dimensions.x;let height=p.dimensions.y;if(idx>=width*height){return;}let i=idx*3u;
+ let local=gid.x+gid.y*grid.x*256u;let width=p.dimensions.x;let height=p.dimensions.y;if(local>=p.window.y){return;}let idx=p.window.x+local;let i=local*3u;
  let x=idx%width;let y=idx/width;let raw_a=clamp(p.controls.x,0.,1.);let effective_a=effective_control(raw_a);let a=effective_a*select(1.,0.5,p.dimensions.w!=0u);let gsf=max(5200./f32(width),3100./f32(height));
  let rgb=vec3(working_rgb[i],working_rgb[i+1u],working_rgb[i+2u]);let luma=rgb.x*0.2125+rgb.y*0.7154+rgb.z*0.0721;
  let uv=vec2<f32>(f32(x),f32(y))*vec2(1./f32(max(width-1u,1u)),1./f32(max(height-1u,1u)));let size=floor(vec2<f32>(f32(width),f32(height))*gsf);var g=vec3<f32>(0.);
@@ -215,7 +211,7 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) gr
   let at=vec2<i32>(uv*(size/(1.+(p.geometry.x-1.)/47.*1.5)));
   for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){
    let coord=clamp(at+vec2<i32>(dx,dy),vec2<i32>(0),vec2<i32>(size)-1);
-   let grgb=grain_source(coord,size);let gluma=dot(grgb,vec3(0.2125,0.7154,0.0721));
+   let grgb=grain_source(local,u32((dy+1)*3+dx+1),coord,size);let gluma=dot(grgb,vec3(0.2125,0.7154,0.0721));
    let generated=generator(vec2<f32>(coord),size,gluma,grgb,false);
    g+=vec3(half_round(generated.x),half_round(generated.y),half_round(generated.z));
   }}g*=1./9.;

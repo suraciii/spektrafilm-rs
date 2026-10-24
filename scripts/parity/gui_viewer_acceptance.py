@@ -231,8 +231,7 @@ def _export(driver, root, name):
     driver.click("Export", header=True)
     driver.export_options(path)
     driver.dialog(path, True)
-    driver.wait_text(r"Exported[^\n]*" + re.escape(path.name), f"viewer-{name}-exported", timeout=240)
-    _wait_file(path, f"viewer export {name}")
+    driver.exported(path, f"viewer-{name}-exported")
     return path
 
 
@@ -243,6 +242,7 @@ def _save(driver, root, name):
     driver.click("SAVE", bottom=True)
     driver.dialog(path, True)
     driver.wait_text(r"Saved\s+" + re.escape(path.name), f"viewer-{name}-saved", timeout=30)
+    driver.wait_report(f"viewer-{name}-saved-report", 'Save')
     _wait_file(path, f"viewer save {name}")
     import OpenImageIO as oiio
     reader = oiio.ImageInput.open(str(path))
@@ -332,7 +332,11 @@ def accept_viewer(driver, root, state, pixels, exporter):
     small_preview_state.setdefault("display", {})["preview_max_size"] = 128
     small_preview_state.setdefault("rust", {}).setdefault("runtime", {}).setdefault("settings", {})["preview_max_size"] = 128
     small_preview_state["display"].update({"viewer_layer": "input", "crossfade": False})
-    small_preview_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "input", "crossfade": False})
+    viewer = small_preview_state.setdefault('rust', {}).setdefault('viewer', {})
+    viewer.setdefault('settings', {}).update({'viewer_layer': 'input', 'crossfade': False})
+    # Magnified Fit and every exact zoom intentionally use full-source pixels.
+    # A relative fitted zoom below 1:1 exposes the accepted preview raster.
+    viewer.update(zoom=0.15, zoom_percent=None, pan=[0, 0])
     small_preview_path = _state_path(root, "viewer-small-preview.json", small_preview_state)
     _load_state(driver, small_preview_path, "viewer-small-preview")
     _viewer_control(driver, "viewer.layer.input", "Input")
@@ -346,8 +350,22 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _viewer_control(driver, "viewer.layer.input", "Input")
     driver.await_viewer(label="large Input raster")
     large_input, _ = _record_snap(driver, records, "viewer-large-input-raster")
-    preview_delta = float(np.mean(np.abs(np.asarray(_viewer_crop(small_input), dtype=np.float32) -
-                                         np.asarray(_viewer_crop(large_input), dtype=np.float32))))
+    # The source occupies only a small part of a nonmagnifying canvas. Compare
+    # its observed colored raster, not unrelated gray background dilution.
+    small_canvas = np.asarray(_viewer_crop(small_input), dtype=np.float32)
+    large_canvas = np.asarray(_viewer_crop(large_input), dtype=np.float32)
+    def preview_bounds(image):
+        mask = ((image.max(axis=2) - image.min(axis=2) > 25)
+                & (image.max(axis=2) > 35))
+        ys, xs = np.where(mask)
+        _require(xs.size > 100, 'Preview raster is not measurable')
+        return [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
+    small_bounds, large_bounds = preview_bounds(small_canvas), preview_bounds(large_canvas)
+    _require(small_bounds == large_bounds, 'Preview-size change moved the Input raster')
+    left, top, right, bottom = small_bounds
+    preview_delta = float(np.mean(np.abs(small_canvas[top:bottom, left:right] -
+                                        large_canvas[top:bottom, left:right])))
+    canvas_delta = float(np.mean(np.abs(small_canvas - large_canvas)))
     _require(preview_delta > 0.01, "Preview max size did not refresh Input raster")
     full_export = _export(driver, root, "viewer-preview-resolution-export.exr")
     from gui_acceptance import read_image
@@ -355,6 +373,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
              "Input preview raster size reduced full-resolution Export")
     records.append({"parity_action": "refresh_preview_cache",
                     "scenario": "preview_size_isolation", "input_pixel_change": preview_delta,
+                    'input_raster_bounds': small_bounds, 'canvas_pixel_change': canvas_delta,
                     "assertion": "Input preview refreshes; Export retains source dimensions"})
     _load_state(driver, _state_path(root, "viewer-reset-after-preview.json", state), "viewer-reset-after-preview")
     baseline = _state_path(root, "viewer-baseline.json", copy.deepcopy(state))
@@ -600,8 +619,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     non_srgb.setdefault("simulation", {})["output_color_space"] = "Display P3"
     non_srgb["simulation"]["saving_color_space"] = "Display P3"
     runtime_io = non_srgb.setdefault('rust', {}).setdefault('runtime', {}).setdefault('io', {})
-    runtime_io.update(input_color_space='ProPhoto RGB', output_color_space='Display P3',
-                      saving_color_space='Display P3')
+    runtime_io.update(input_color_space='ProPhoto RGB', output_color_space='Display P3')
     non_srgb_path = _state_path(root, "viewer-non-srgb.json", non_srgb)
     driver.open_image(source, "viewer-non-srgb-source")
     _load_state(driver, non_srgb_path, "viewer-non-srgb-state")

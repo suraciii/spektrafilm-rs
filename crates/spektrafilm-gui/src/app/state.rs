@@ -47,17 +47,26 @@ pub(crate) struct App {
     pub(crate) stale_save_confirmation: bool,
     pub(crate) export_queue: super::export_queue::ExportQueue,
     pub(crate) image_path: Option<PathBuf>,
-    pub(crate) image: Option<Arc<ImageBuf>>,
+    pub(crate) image: Option<crate::render::InputImage>,
     pub(crate) raw_lens_info: Option<String>,
     pub(crate) raw_applied_settings: Option<serde_json::Value>,
     /// Quarter turns applied to the loaded source, used for the rotation status.
     pub(crate) input_rotation: i32,
+    /// The retained input with `input_rotation` applied, for presentation
+    /// only: the viewer and its before/after comparison. Rendering never reads
+    /// it — the pipeline receives the unrotated source plus the deferred
+    /// quarter turns, so orientation never rewrites the source pixels.
+    pub(crate) oriented_input: Option<crate::render::InputImage>,
     pub(crate) source_metadata: Option<ImageMetadata>,
     pub(crate) export_options: ExportOptions,
     pub(crate) export_dialog: ExportDialog,
     pub(crate) input_epoch: u64,
     /// Latest accepted floating output, shared with background viewing workers.
     pub(crate) output_image: Option<Arc<ImageBuf>>,
+    /// Device result from the same accepted transaction; Save and viewer reuse it.
+    pub(crate) output_retained: Option<spektrafilm_backend::DeviceImage>,
+    /// Reduced bins accepted atomically with the device output, never a host raster.
+    pub(crate) output_histogram: Option<histogram::HistogramData>,
     pub(crate) output_metadata: Option<ImageMetadata>,
     pub(crate) source_render: Option<SourceRender>,
     pub(crate) diagnostics: diagnostics::Diagnostics,
@@ -219,6 +228,7 @@ impl App {
         }
 
         let render_progress = Arc::new(progress::RenderProgress::default());
+        let viewer_backend = Arc::clone(&backend);
         let mut app = Self {
             backend,
             data_dir,
@@ -254,6 +264,7 @@ impl App {
             export_queue: super::export_queue::ExportQueue::default(),
             image_path: None,
             input_rotation: 0,
+            oriented_input: None,
             image: None,
             raw_lens_info: None,
             raw_applied_settings: None,
@@ -262,10 +273,12 @@ impl App {
             export_dialog: ExportDialog::default(),
             input_epoch: 0,
             output_image: None,
+            output_retained: None,
+            output_histogram: None,
             output_metadata: None,
             source_render: None,
             diagnostics: diagnostics::Diagnostics::default(),
-            viewer: display::Viewer::new(),
+            viewer: display::Viewer::with_backend(viewer_backend),
             settings_open: false,
             only_modified: false,
             pending_stage: None,
@@ -442,18 +455,21 @@ impl App {
                     tint: settings["tint"].as_f64(),
                     lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
                 };
-                let result = spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
                 params.io.input_color_space = "ACES2065-1".into();
                 params.io.input_cctf_decoding = false;
-                Some((
-                    result.image,
-                    image_io::read_metadata(path),
-                    Some(result.lens_info),
-                    result.lens_model_identity,
-                ))
+                if self.backend.is_gpu() {
+                    let result = spektrafilm_raw::load_retained_with_backend(path, &options, self.backend.as_ref())
+                        .map_err(anyhow::Error::msg)?;
+                    Some((crate::render::InputImage::Device(result.image), image_io::read_metadata(path),
+                        Some(result.lens_info), result.lens_model_identity))
+                } else {
+                    let result = spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
+                    Some((crate::render::InputImage::Host(Arc::new(result.image)), image_io::read_metadata(path),
+                        Some(result.lens_info), result.lens_model_identity))
+                }
             } else {
                 let result = image_io::load(path)?;
-                Some((result.image, result.metadata, None, None))
+                Some((crate::render::InputImage::Host(Arc::new(result.image)), result.metadata, None, None))
             }
         } else {
             None
@@ -504,7 +520,7 @@ impl App {
         self.full_scan_requested = false;
         self.render_worker.cancel_active();
         if let Some((image, metadata, lens_info, lens_model_identity)) = loaded {
-            self.image = Some(Arc::new(image));
+            self.image = Some(image);
             self.source_metadata = metadata;
             self.raw_lens_info = lens_info;
             self.photograph.lens_model_identity = lens_model_identity;
@@ -516,6 +532,9 @@ impl App {
             self.input_rotation = 0;
             self.input_epoch = self.input_epoch.wrapping_add(1);
             self.output_image = None;
+            self.output_retained = None;
+            self.output_histogram = None;
+            self.viewer.set_retained_output(None);
             self.output_metadata = None;
             self.source_render = None;
             self.refresh_input_viewer();

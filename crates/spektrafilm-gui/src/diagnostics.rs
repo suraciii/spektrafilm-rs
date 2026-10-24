@@ -304,6 +304,28 @@ fn mode_label(ctx: &egui::Context, mode: CollectionMode) -> std::borrow::Cow<'st
         },
     )
 }
+/// Effective backend label for Scan and Export reports. An active Dye field
+/// resolves on the device whenever the render backend has one and the
+/// request is device-representable, and on the host with its fallback reason
+/// otherwise (`grain_v3::effective_field_backend` is the authority), so the
+/// selected backend name alone would misreport where the grain runs.
+pub(crate) fn effective_backend_name(
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+    params: &spektrafilm_core::params::RuntimeParams,
+) -> String {
+    if spektrafilm_core::stages::grain_v3::active(params) {
+        let executor =
+            spektrafilm_core::stages::grain_v3::effective_field_backend(params, backend.is_gpu());
+        let executor = if executor == "gpu" { "GPU" } else { "CPU" };
+        format!("{} · grain Dye on {executor}", backend.name())
+    } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
+        let executor = if backend.is_gpu() { "GPU" } else { "CPU" };
+        format!("{} · grain Fotufilm on {executor}", backend.name())
+    } else {
+        backend.name().to_owned()
+    }
+}
+
 fn words(value: &impl serde::Serialize) -> String {
     serde_json::to_value(value)
         .map(|value| {

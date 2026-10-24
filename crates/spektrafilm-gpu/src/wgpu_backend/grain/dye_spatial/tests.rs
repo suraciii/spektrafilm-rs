@@ -364,7 +364,7 @@ fn field(i: i32, j: i32) -> [f32; 3] {
 
 fn case_for_rows(g: &Geometry, row0: u32, row1: u32) -> SpatialCase {
     let params = params_of(g);
-    let band = band_geometry(g.src_w, g.src_h, &params, row0, row1).expect("band geometry");
+    let band = tile_geometry(g.src_w, g.src_h, &params, [0, row0, g.out.0, row1 - row0]).expect("band geometry");
     let source_full = source_pattern(g.src_w, g.src_h);
     let mut source = Vec::with_capacity((band.source_cols * band.source_rows * 9) as usize);
     for sy in 0..band.source_rows {
@@ -715,12 +715,9 @@ fn crop_reads_keep_global_footprints() {
 // ── bounded resource planning ──
 
 #[test]
-fn resource_bounds_reduce_the_band_and_refuse_impossible_rows() {
-    // Host-only: `DyePlan::new` must decide the whole bounded
-    // decomposition before any device buffer exists, so an artificial
-    // storage limit reduces the band height and a geometry whose single
-    // row cannot fit fails with the named one-row error instead of
-    // failing after allocation.
+fn resource_bounds_reduce_both_axes_and_partition_large_footprints() {
+    // Resource limits partition the same global lattice; they never coarsen
+    // it. A single formed cell plus its formation halo is the minimum unit.
     let g = Geometry {
         src_w: 23,
         src_h: 19,
@@ -734,8 +731,8 @@ fn resource_bounds_reduce_the_band_and_refuse_impossible_rows() {
     };
     let params = params_of(&g);
     let largest_buffer = |band: &DyeBand| band_bytes(band).into_iter().fold(0, u64::max);
-    let one = band_geometry(g.src_w, g.src_h, &params, 0, 1).expect("one row");
-    let full = band_geometry(g.src_w, g.src_h, &params, 0, BAND_OUTPUT_ROWS).expect("full band");
+    let one = tile_geometry(g.src_w, g.src_h, &params, [0, 0, g.out.0, 1]).expect("one row");
+    let full = tile_geometry(g.src_w, g.src_h, &params, [0, 0, g.out.0, BAND_OUTPUT_ROWS]).expect("full band");
     // A device that admits a few rows of band storage, but not a full
     // 128-row band, must still serve the geometry.
     let bound = (largest_buffer(&one) + largest_buffer(&full)) / 2;
@@ -768,21 +765,103 @@ fn resource_bounds_reduce_the_band_and_refuse_impossible_rows() {
         "the bands must cover the complete output"
     );
 
-    // A device that cannot hold even one row of this geometry must fail
-    // with the named one-row error, before any allocation.
-    let impossible = largest_buffer(&one) - 1;
+    let narrow_bound = largest_buffer(&one) - 1;
     let tiny = wgpu::Limits {
-        max_buffer_size: impossible,
-        max_storage_buffer_binding_size: impossible as u32,
+        max_buffer_size: narrow_bound,
+        max_storage_buffer_binding_size: narrow_bound as u32,
         ..Default::default()
     };
-    let error = DyePlan::new(g.src_w, g.src_h, &params, &tiny)
-        .err()
-        .expect("one row should not fit the artificial device");
-    assert!(
-        error.contains("one output row"),
-        "unnamed one-row failure: {error}"
-    );
+    let narrow = DyePlan::new(g.src_w, g.src_h, &params, &tiny).expect("column-partitioned plan");
+    assert!(narrow.bands.iter().any(|band| band.output_cols < g.out.0));
+    assert_eq!(narrow.bands.iter().map(|band| u64::from(band.output_cols) * u64::from(band.output_rows)).sum::<u64>(), u64::from(g.out.0) * u64::from(g.out.1));
+    for band in &narrow.bands { band_fit(band, narrow_bound).unwrap(); }
+    let impossible = wgpu::Limits { max_buffer_size: 1, max_storage_buffer_binding_size: 1, ..Default::default() };
+    let error = DyePlan::new(g.src_w, g.src_h, &params, &impossible).err().expect("one cell cannot fit");
+    assert!(error.contains("one formed cell"), "unnamed cell failure: {error}");
+    let mut large = params_of(&g);
+    large.grid.width = 1;
+    large.grid.height = 1;
+    large.grid.pitch_um = [300.0, 270.0];
+    let bound = 64 * 1024;
+    let limits = wgpu::Limits { max_buffer_size: bound, max_storage_buffer_binding_size: bound as u32, ..Default::default() };
+    let footprint = tile_geometry(g.src_w, g.src_h, &large, [0, 0, 1, 1]).unwrap();
+    let plan = DyePlan::new(g.src_w, g.src_h, &large, &limits).expect("partitioned footprint");
+    assert!(plan.bands.len() > 1);
+    assert_eq!(plan.bands.first().unwrap().readout_flags, 2);
+    assert_eq!(plan.bands.last().unwrap().readout_flags, 1);
+    assert_eq!(plan.bands.iter().map(|b| u64::from(b.cols) * u64::from(b.rows)).sum::<u64>(), u64::from(footprint.cols) * u64::from(footprint.rows));
+    for (index, band) in plan.bands.iter().enumerate() {
+        band_fit(band, bound).unwrap();
+        assert_eq!((band.output_x, band.output_y, band.output_cols, band.output_rows), (0, 0, 1, 1));
+        assert_eq!(band.readout_flags & 1, u32::from(index > 0));
+        assert_eq!(band.readout_flags & 2, u32::from(index + 1 < plan.bands.len()) << 1);
+        for other in &plan.bands[..index] {
+            assert!(i64::from(band.cell_x) + i64::from(band.cols) <= i64::from(other.cell_x)
+                || i64::from(other.cell_x) + i64::from(other.cols) <= i64::from(band.cell_x)
+                || i64::from(band.cell_y) + i64::from(band.rows) <= i64::from(other.cell_y)
+                || i64::from(other.cell_y) + i64::from(other.rows) <= i64::from(band.cell_y));
+        }
+    }
+}
+
+#[test]
+fn cell_partitions_preserve_fractional_readout_and_single_base_subtraction() {
+    let backend = crate::test_support::adapter();
+    let g = Geometry {
+        src_w: 9, src_h: 7, h: 1.75, pitch: 1.13,
+        origin: [-7.3, 2.1], out_pitch: [12.9, 10.6], out: (3, 2),
+        taps: vec![0.05, 0.11, 0.18, 0.32, 0.18, 0.11, 0.05],
+        mins: [0.125, 0.25, 0.5],
+    };
+    let whole = case_for_rows(&g, 0, g.out.1);
+    let params = whole.params();
+    let expected = oracle_output(&whole).unwrap();
+    let [left, right] = split_cell_band(g.src_w, g.src_h, &params, whole.band).unwrap();
+    let mut pieces = Vec::new();
+    pieces.extend(split_cell_band(g.src_w, g.src_h, &params, left).unwrap());
+    pieces.extend(split_cell_band(g.src_w, g.src_h, &params, right).unwrap());
+    let alloc = |label, bytes| backend.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label), size: bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let bytes = u64::from(g.out.0) * u64::from(g.out.1) * 12;
+    for response in [false, true] {
+        let output = alloc("partition_output", bytes);
+        for (index, mut band) in pieces.iter().copied().enumerate() {
+            band.readout_flags = u32::from(index > 0) | (u32::from(index + 1 < pieces.len()) << 1);
+            let mut cells = Vec::new();
+            for row in 0..band.ext_rows {
+                let x = u32::try_from(band.cell_x - whole.band.cell_x).unwrap();
+                let y = u32::try_from(band.cell_y - whole.band.cell_y).unwrap() + row;
+                let start = ((y * whole.band.ext_cols + x) * 3) as usize;
+                cells.extend_from_slice(&whole.cells[start..start + band.ext_cols as usize * 3]);
+            }
+            let cells = backend.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("partition_cells"), contents: bytemuck::cast_slice(&cells),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let [sl, cl, _, h, f] = band_bytes(&band);
+            let source = alloc("partition_source", sl);
+            let layers = alloc("partition_layers", cl);
+            let horizontal = alloc("partition_horizontal", h);
+            let formed = alloc("partition_formed", f);
+            let spatial = build_spatial(&backend, &params, &band, g.src_w, g.src_h,
+                &source, &layers, &cells, &horizontal, &formed, &output);
+            let readout = build_band_readout(&backend, &params, &band, [g.src_w, g.src_h],
+                &formed, &output, response, true);
+            let mut encoder = backend.device.create_command_encoder(&Default::default());
+            spatial.encode_formation(&mut encoder);
+            readout.encode(&mut encoder);
+            backend.queue.submit(Some(encoder.finish()));
+        }
+        let actual = backend.pipe.readback_buffer(&output, bytes);
+        for (index, (&a, &e)) in actual.iter().zip(&expected).enumerate() {
+            let e = f64::from(e) + if response { g.mins[index % 3] } else { 0.0 };
+            assert!((f64::from(a) - e).abs() < 1e-5,
+                "partition response={response} sample={index}: actual={a} expected={e}");
+        }
+    }
 }
 
 // ── known-broken controls ──

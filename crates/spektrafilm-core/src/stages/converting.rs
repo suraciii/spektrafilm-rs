@@ -76,7 +76,8 @@ fn solve3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> [f64; 3] {
     x
 }
 
-struct Converter {
+#[derive(Clone)]
+pub(crate) struct Converter {
     dye: Vec<[f64; 3]>,
     base: Vec<f64>,
     illuminant: Vec<f64>,
@@ -88,6 +89,8 @@ struct Converter {
     gain: f64,
     seed_log_rgb: [f64; 3],
     seed_inverse: nalgebra::Matrix3<f64>,
+    cctf_kind: u32,
+    decode_input: bool,
 }
 
 impl Converter {
@@ -175,6 +178,8 @@ impl Converter {
             gain: 2.0f64.powf(params.film_render.convert.exposure_compensation_ev),
             seed_log_rgb: [0.0; 3],
             seed_inverse: nalgebra::Matrix3::zeros(),
+            cctf_kind: spektrafilm_backend::cctf_kind(input_space.cctf),
+            decode_input: params.io.input_cctf_decoding,
         };
         let (rgb, jacobian) = converter.forward_jacobian(cmy_max.map(|v| v * 0.5));
         converter.seed_log_rgb = rgb.map(|v| v.max(1e-12).log10());
@@ -188,6 +193,25 @@ impl Converter {
             .map_err(|error| format!("Cannot initialize film conversion seed: {error}"))?;
         Ok(converter)
     }
+    pub(crate) fn gpu_params(&self) -> spektrafilm_backend::ConvertSolverGpuParams<'_> {
+        spektrafilm_backend::ConvertSolverGpuParams {
+            dye: &self.dye,
+            base: &self.base,
+            illuminant: &self.illuminant,
+            cmfs: &self.cmfs,
+            normalization: self.normalization,
+            xyz_to_rgb: self.xyz_to_rgb,
+            cmy_max: self.cmy_max,
+            calibration: self.calibration,
+            gain: self.gain,
+            seed_log_rgb: self.seed_log_rgb,
+            seed_inverse: std::array::from_fn(|i| std::array::from_fn(|j| self.seed_inverse[(i, j)])),
+            cctf_kind: self.cctf_kind,
+            decode_input: self.decode_input,
+            n_wl: self.dye.len() as u32,
+        }
+    }
+
 
     fn forward_jacobian(&self, cmy: [f64; 3]) -> ([f64; 3], [[f64; 3]; 3]) {
         let mut xyz = [0.0; 3];
@@ -268,6 +292,13 @@ impl Converter {
         }
         cmy
     }
+}
+
+pub(crate) fn resolve_converter(
+    profile: &Profile,
+    params: &RuntimeParams,
+) -> Result<Option<Converter>, String> {
+    params.workflow.route_enum().is_convert_film().then(|| Converter::new(profile, params)).transpose()
 }
 
 pub fn process(
@@ -550,7 +581,7 @@ pub fn neutralize_filters(
         trial.enlarger.m_filter_shift = x[0] as f32;
         trial.enlarger.y_filter_shift = x[1] as f32;
         let pipeline =
-            crate::pipeline::Pipeline::new_with_spectral(film.clone(), print.clone(), trial, data)?;
+            crate::pipeline::Pipeline::new_with_spectral_backend(film.clone(), print.clone(), trial, data, backend)?;
         let output = pipeline.process(
             ImageBuf::from_data(2, 2, vec![from_f64(0.184); 12]),
             backend,

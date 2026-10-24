@@ -25,9 +25,8 @@ const SUPPORT_SIGMAS: f64 = 4.0;
 /// Output rows per readout band before the cell budget applies.
 const BAND_OUTPUT_ROWS: usize = 128;
 /// Largest cell or source-pixel count a single band may hold. Bands are
-/// storage partitions of the global field, so a band that would exceed it
-/// holds fewer output rows; the field is never coarsened. A single output
-/// row above the budget fails with an actionable error.
+/// storage partitions of the global field: reduce output rectangles first,
+/// then split the formed cells of an oversized individual footprint.
 const MAX_BAND_CELLS: u64 = 1 << 24;
 
 /// First stream tag reserved for the per-layer shared counts.
@@ -194,10 +193,6 @@ fn apply_impl(
     {
         return Err("film grain Dye: film coordinates and support halo exceed the signed 32-bit cell address range; reduce camera.film_format_mm or move the requested region closer to the film origin".to_owned());
     }
-    let inner_i0 = (x0 / h).floor() as i64;
-    let inner_i1 = (x1 / h).ceil() as i64 - 1;
-    let cols = (inner_i1 - inner_i0 + 1) as usize;
-    let ext_cols = cols + 2 * d as usize;
     let [col_w, row_w] = grid.pitch_um;
 
     if col_w <= 0.0
@@ -209,19 +204,18 @@ fn apply_impl(
     {
         return Err("film grain Dye: output footprints are below film-coordinate precision; reduce the output dimensions".to_owned());
     }
-    // Every output row must fit before any readout/source stencils or output
-    // storage are built. Ceil(width/h)+1 bounds cell coverage at any phase.
-    let row_cells = (row_w / h).ceil() as u64 + 1 + 2 * d as u64;
-    let band_cells = row_cells.saturating_mul(ext_cols as u64);
-    let source_cols =
-        (src_w as u64).min(((ext_cols as f64 * h / pitch_um).ceil() as u64).saturating_add(1));
-    let source_rows =
-        (src_h as u64).min(((row_cells as f64 * h / pitch_um).ceil() as u64).saturating_add(1));
-    let band_pixels = source_cols * source_rows;
-    if band_cells > max_band_cells || band_pixels > max_band_cells {
-        return Err(format!(
-            "film grain Dye: one output row needs up to {band_cells} field cells and {band_pixels} source pixels, above the {max_band_cells} limit; reduce the requested film region or increase the output size"
-        ));
+    let halo_extent = (2 * dr + 1) as u64;
+    if halo_extent.saturating_mul(halo_extent) > max_band_cells {
+        return Err(format!("film grain Dye: one formed cell and its formation halo exceed the {max_band_cells} cell/source-pixel budget"));
+    }
+    // Axis stencils precede field partitioning. Bound their total entries,
+    // not the size of an individual output footprint or output row.
+    let stencil_entries = [(out_width, col_w), (out_height, row_w)]
+        .into_iter().fold(0_u64, |sum, (extent, pitch)| {
+            sum.saturating_add(u64::from(extent).saturating_mul((pitch / h).ceil() as u64 + 1))
+        });
+    if stencil_entries > MAX_BAND_CELLS {
+        return Err("film grain Dye: output-axis stencil entries exceed the allocation budget; reduce the requested film region or increase the field pitch".into());
     }
     let output_bytes = (out_width as u64)
         .checked_mul(out_height as u64)
@@ -241,62 +235,71 @@ fn apply_impl(
     let y_read: Vec<Vec<(i64, f64)>> = (0..out_height)
         .map(|py| readout_stencil(y0 + py as f64 * row_w, y0 + (py + 1) as f64 * row_w, h))
         .collect();
-    // Cell-to-source overlap weights depend only on the axis index.
-    let x_stencils: Vec<Vec<(usize, f64)>> = (inner_i0 - d..=inner_i1 + d)
-        .map(|i| axis_stencil(i as f64 * h, (i + 1) as f64 * h, pitch_um, src_w))
-        .collect();
     let edge = |index: i64, extent: usize| index.clamp(0, extent as i64 - 1) as usize;
-    // Source pixels the band's cells can read. Edge targets extend constantly
-    // outside the film bounds, so this range stays inside the source.
-    let sx_lo = edge(((inner_i0 - d) as f64 * h / pitch_um).floor() as i64, src_w);
-    let sx_hi = edge(
-        ((((inner_i1 + d + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1),
-        src_w,
-    );
-
     let cell_area = h * h;
     let out_w = out_width as usize;
     let mut out = ImageBuf::new(out_width, out_height);
     let mut hbuf = Vec::new();
     let mut fbuf = Vec::new();
-    let mut py = 0usize;
-    // Coarse output pitches read many cells per row; halve the band until
-    // its cells and source pixels fit, and keep that height for later bands.
-    let mut band_rows = BAND_OUTPUT_ROWS;
-    while py < out_height as usize {
-        let (band_end, j_lo, j_hi, ext_j0, ext_j1, sy_lo, sy_hi) = loop {
-            let band_end = (py + band_rows).min(out_height as usize);
-            let j_lo = y_read[py].first().expect("non-empty stencil").0;
-            let j_hi = y_read[band_end - 1].last().expect("non-empty stencil").0;
-            let ext_j0 = j_lo - d;
-            let ext_j1 = j_hi + d;
-            let sy_lo = edge((ext_j0 as f64 * h / pitch_um).floor() as i64, src_h);
-            let sy_hi = edge(
-                ((((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1),
-                src_h,
-            );
-            let band_cells = ((ext_j1 - ext_j0 + 1) as u64).saturating_mul(ext_cols as u64);
-            let band_pixels = ((sy_hi - sy_lo + 1) as u64) * ((sx_hi - sx_lo + 1) as u64);
-            if band_cells <= max_band_cells && band_pixels <= max_band_cells {
-                break (band_end, j_lo, j_hi, ext_j0, ext_j1, sy_lo, sy_hi);
-            }
-            if band_rows == 1 {
-                return Err(format!(
-                    "film grain Dye: one output row needs {band_cells} field cells and \
-                     {band_pixels} source pixels, above the {max_band_cells} limit; reduce the \
-                     requested film region or increase the output size"
-                ));
-            }
-            band_rows /= 2;
-        };
-        let ext_rows = (ext_j1 - ext_j0 + 1) as usize;
+    // Each tuple keeps output bounds, formed-cell bounds, and first/final
+    // flags. Cell pieces of one footprint remain consecutive in this stack.
+    let tile = |px0: usize, px1: usize, py0: usize, py1: usize| {
+        (px0, px1, py0, py1,
+            x_read[px0].first().expect("non-empty stencil").0,
+            x_read[px1 - 1].last().expect("non-empty stencil").0,
+            y_read[py0].first().expect("non-empty stencil").0,
+            y_read[py1 - 1].last().expect("non-empty stencil").0, true, true)
+    };
+    let mut pending = Vec::new();
+    for py in (0..out_height as usize).step_by(BAND_OUTPUT_ROWS).rev() {
+        pending.push(tile(0, out_w, py, (py + BAND_OUTPUT_ROWS).min(out_height as usize)));
+    }
+    let mut partial_sum = [0.0_f64; 3];
+    while let Some((px0, px1, py, band_end, inner_i0, inner_i1, j_lo, j_hi, first, last)) = pending.pop() {
+        let ext_i0 = inner_i0 - d;
+        let ext_j0 = j_lo - d;
+        let ext_j1 = j_hi + d;
+        let cols = (inner_i1 - inner_i0 + 1) as usize;
         let rows = (j_hi - j_lo + 1) as usize;
+        let ext_cols = cols + 2 * dr;
+        let ext_rows = rows + 2 * dr;
+        let sx_lo = edge((ext_i0 as f64 * h / pitch_um).floor() as i64, src_w);
+        let sx_hi = edge(((((inner_i1 + d + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1), src_w);
+        let sy_lo = edge((ext_j0 as f64 * h / pitch_um).floor() as i64, src_h);
+        let sy_hi = edge(((((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1), src_h);
+        let px_rows = sy_hi - sy_lo + 1;
+        let px_cols = sx_hi - sx_lo + 1;
+        if (ext_cols as u64).saturating_mul(ext_rows as u64) > max_band_cells
+            || (px_cols as u64).saturating_mul(px_rows as u64) > max_band_cells
+        {
+            if band_end - py > 1 {
+                let mid = py + (band_end - py) / 2;
+                pending.push(tile(px0, px1, mid, band_end));
+                pending.push(tile(px0, px1, py, mid));
+            } else if px1 - px0 > 1 {
+                let mid = px0 + (px1 - px0) / 2;
+                pending.push(tile(mid, px1, py, band_end));
+                pending.push(tile(px0, mid, py, band_end));
+            } else if cols >= rows && cols > 1 {
+                let mid = inner_i0 + (cols / 2) as i64;
+                pending.push((px0, px1, py, band_end, mid, inner_i1, j_lo, j_hi, false, last));
+                pending.push((px0, px1, py, band_end, inner_i0, mid - 1, j_lo, j_hi, first, false));
+            } else if rows > 1 {
+                let mid = j_lo + (rows / 2) as i64;
+                pending.push((px0, px1, py, band_end, inner_i0, inner_i1, mid, j_hi, false, last));
+                pending.push((px0, px1, py, band_end, inner_i0, inner_i1, j_lo, mid - 1, first, false));
+            } else {
+                return Err(format!("film grain Dye: one formed cell and its formation halo exceed the {max_band_cells} cell/source-pixel budget"));
+            }
+            continue;
+        }
+        if first { partial_sum = [0.0; 3]; }
+        let x_stencils: Vec<Vec<(usize, f64)>> = (ext_i0..=inner_i1 + d)
+            .map(|i| axis_stencil(i as f64 * h, (i + 1) as f64 * h, pitch_um, src_w))
+            .collect();
         let y_stencils: Vec<Vec<(usize, f64)>> = (ext_j0..=ext_j1)
             .map(|j| axis_stencil(j as f64 * h, (j + 1) as f64 * h, pitch_um, src_h))
             .collect();
-        let px_rows = sy_hi - sy_lo + 1;
-        let px_cols = sx_hi - sx_lo + 1;
-
         // Sublayer targets are allocated on the source grid, once per source
         // pixel, and only then remapped conservatively to field cells.
         let mut planes: [Vec<[f64; 3]>; 3] = [
@@ -368,22 +371,24 @@ fn apply_impl(
                 }
                 continue;
             }
-            let band = &mut out.data[py * out_w * 3..band_end * out_w * 3];
-            band.par_chunks_mut(out_w * 3)
-                .enumerate()
-                .for_each(|(r, data)| {
-                    let yst = &y_read[py + r];
-                    for (px, xst) in x_read.iter().enumerate() {
-                        let mut acc = 0.0f64;
-                        for &(cj, wy) in yst {
-                            let fr = (cj - j_lo) as usize * cols;
-                            for &(ci, wx) in xst {
-                                acc += wy * wx * fbuf[fr + (ci - inner_i0) as usize];
-                            }
+            for (r, yst) in y_read.iter().enumerate().take(band_end).skip(py) {
+                for (px, xst) in x_read.iter().enumerate().take(px1).skip(px0) {
+                    let mut acc = if first { 0.0 } else { partial_sum[c] };
+                    for &(cj, wy) in yst {
+                        if cj < j_lo || cj > j_hi { continue; }
+                        let fr = (cj - j_lo) as usize * cols;
+                        for &(ci, wx) in xst {
+                            if ci < inner_i0 || ci > inner_i1 { continue; }
+                            acc += wy * wx * fbuf[fr + (ci - inner_i0) as usize];
                         }
-                        data[px * 3 + c] = from_f64(acc - min);
                     }
-                });
+                    if last {
+                        out.data[(r * out_w + px) * 3 + c] = from_f64(acc - min);
+                    } else {
+                        partial_sum[c] = acc;
+                    }
+                }
+            }
         }
         if let (Some(response), Some(formed)) = (response, formed) {
             let linear = response(&formed)?;
@@ -394,28 +399,29 @@ fn apply_impl(
             {
                 return Err("film grain Dye: cell response must preserve band dimensions and return finite linear values".to_owned());
             }
-            out.data[py * out_w * 3..band_end * out_w * 3]
-                .par_chunks_mut(out_w * 3)
-                .enumerate()
-                .for_each(|(r, data)| {
-                    for (px, xst) in x_read.iter().enumerate() {
-                        let mut sum = [0.0; 3];
-                        for &(cj, wy) in &y_read[py + r] {
-                            for &(ci, wx) in xst {
-                                let index =
-                                    ((cj - j_lo) as usize * cols + (ci - inner_i0) as usize) * 3;
-                                for (c, value) in sum.iter_mut().enumerate() {
-                                    *value += wy * wx * to_f64(linear.data[index + c]);
-                                }
+            for (r, yst) in y_read.iter().enumerate().take(band_end).skip(py) {
+                for (px, xst) in x_read.iter().enumerate().take(px1).skip(px0) {
+                    let mut sum = if first { [0.0; 3] } else { partial_sum };
+                    for &(cj, wy) in yst {
+                        if cj < j_lo || cj > j_hi { continue; }
+                        for &(ci, wx) in xst {
+                            if ci < inner_i0 || ci > inner_i1 { continue; }
+                            let index = ((cj - j_lo) as usize * cols + (ci - inner_i0) as usize) * 3;
+                            for (c, value) in sum.iter_mut().enumerate() {
+                                *value += wy * wx * to_f64(linear.data[index + c]);
                             }
                         }
-                        for c in 0..3 {
-                            data[px * 3 + c] = from_f64(sum[c]);
-                        }
                     }
-                });
+                    if last {
+                        for (c, value) in sum.iter().enumerate() {
+                            out.data[(r * out_w + px) * 3 + c] = from_f64(*value);
+                        }
+                    } else {
+                        partial_sum = sum;
+                    }
+                }
+            }
         }
-        py = band_end;
     }
     Ok(out)
 }

@@ -75,7 +75,7 @@ fn changed_accepted_source_cannot_be_saved_under_replacement_identity() {
     assert_eq!(std::fs::read(&record).unwrap(), saved_bytes);
     assert_eq!(app.photograph.baseline, baseline);
     assert_eq!(app.photograph.source_digest, digest);
-    assert!(Arc::ptr_eq(&image, app.image.as_ref().unwrap()));
+    assert!(image.same_source(app.image.as_ref().unwrap()));
     assert!(app.photograph_has_unsaved_changes());
     assert!(app.undo_adjustment());
     assert_eq!(app.params.camera.exposure_compensation_ev, 0.75);
@@ -94,13 +94,13 @@ fn failed_next_load_and_changed_record_source_preserve_pixels_and_history() {
     let invalid = directory.path().join("broken.png");
     std::fs::write(&invalid, b"not an image").unwrap();
     assert!(app.open_photograph(&invalid).is_err());
-    assert!(Arc::ptr_eq(&image, app.image.as_ref().unwrap()));
+    assert!(image.same_source(app.image.as_ref().unwrap()));
     assert_eq!(app.capture_photograph_settings().unwrap(), settings);
     assert_eq!(app.photograph.baseline, baseline);
     assert_eq!(app.input_epoch, epoch);
     source(app.image_path.as_deref().unwrap(), 0.7);
     assert!(app.reopen_photograph_record(&record, None).is_err());
-    assert!(Arc::ptr_eq(&image, app.image.as_ref().unwrap()));
+    assert!(image.same_source(app.image.as_ref().unwrap()));
     assert_eq!(app.capture_photograph_settings().unwrap(), settings);
     assert_eq!(app.input_epoch, epoch);
     assert!(app.undo_adjustment());
@@ -231,7 +231,7 @@ fn accepted_context_replacement_invalidates_materials_cached_by_real_worker() {
         .unwrap();
     let expected = runtime
         .process_observed(
-            (*app.image.clone().unwrap()).clone(),
+            (**app.image.as_ref().unwrap().host_image().unwrap()).clone(),
             app.backend.as_ref(),
             &observation,
         )
@@ -304,7 +304,7 @@ fn raw_record_reopens_saved_decode_and_interpretation_not_pending_raw_draft() {
     assert!(app.params.io.input_cctf_decoding);
     assert_eq!(app.raw_applied_settings.as_ref(), Some(&raw_accepted));
     assert_eq!(app.gui_state.sections["load_raw"], raw_accepted);
-    assert_eq!(app.image.as_ref().unwrap().data, pixels.data);
+    assert_eq!(app.image.as_ref().unwrap().host_image().unwrap().data, pixels.data);
     exposure(&mut app, &ctx, 0.75);
     let saved_bytes = std::fs::read(&record).unwrap();
     let baseline = app.photograph.baseline.clone();
@@ -314,7 +314,7 @@ fn raw_record_reopens_saved_decode_and_interpretation_not_pending_raw_draft() {
     assert!(app.save_photograph_record_to(&record).is_err());
     assert_eq!(std::fs::read(&record).unwrap(), saved_bytes);
     assert_eq!(app.photograph.baseline, baseline);
-    assert!(Arc::ptr_eq(&source_pixels, app.image.as_ref().unwrap()));
+    assert!(source_pixels.same_source(app.image.as_ref().unwrap()));
     app.add_work_paths(vec![directory.path().join("accepted.png")]);
     app.perform_work_select(1).unwrap();
     assert!(app.save_inactive_record_to(0, &record).is_err());
@@ -347,7 +347,7 @@ fn active_and_inactive_lens_identity_mismatch_preserves_records_and_history() {
     assert_eq!(std::fs::read(&record).unwrap(), saved_bytes);
     assert_eq!(app.photograph.baseline, baseline);
     assert_eq!(app.capture_photograph_settings().unwrap(), settings);
-    assert!(Arc::ptr_eq(&pixels, app.image.as_ref().unwrap()));
+    assert!(pixels.same_source(app.image.as_ref().unwrap()));
     let second = directory.path().join("second.png");
     source(&second, 0.4);
     app.add_work_paths(vec![second]);
@@ -355,7 +355,7 @@ fn active_and_inactive_lens_identity_mismatch_preserves_records_and_history() {
     let active_pixels = app.image.clone().unwrap();
     assert!(app.save_inactive_record_to(0, &record).is_err());
     assert_eq!(std::fs::read(&record).unwrap(), saved_bytes);
-    assert!(Arc::ptr_eq(&active_pixels, app.image.as_ref().unwrap()));
+    assert!(active_pixels.same_source(app.image.as_ref().unwrap()));
     app.perform_work_select(0).unwrap();
     assert_eq!(app.photograph.baseline, baseline);
     assert_eq!(app.capture_photograph_settings().unwrap(), settings);

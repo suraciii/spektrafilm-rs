@@ -149,6 +149,43 @@ fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
     (image_path, state_path)
 }
 
+/// Inspect the report returned by the real App worker, not a reconstructed
+/// execution snapshot. Device rendering and its transfers must share the
+/// operation's phase tree.
+fn assert_retained_gpu_report(
+    app: &App,
+    path: &Path,
+    kind: &str,
+    working_dimensions: [u32; 2],
+) -> spektrafilm_core::telemetry::Report {
+    use spektrafilm_backend::telemetry::{BackendSelected, ExecutionPath, Executor};
+    app.diagnostics.save_selected(path).unwrap();
+    let report: spektrafilm_core::telemetry::Report =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(serde_json::to_value(report.operation.kind).unwrap(), kind);
+    assert_eq!(report.operation.outcome, spektrafilm_core::telemetry::Outcome::Succeeded);
+    assert_eq!(report.execution.backend_selected, Some(BackendSelected::Wgpu));
+    assert_eq!(report.execution.path, Some(ExecutionPath::GpuResident));
+    assert_eq!(report.execution.adapter, app.backend.adapter_description());
+    assert!(report.execution.adapter.as_ref().is_some_and(|adapter| !adapter.name.is_empty()));
+    assert_eq!(report.configuration.working_dimensions, Some(working_dimensions));
+    let simulation = report.phases.iter().find(|phase| phase.name == "simulation")
+        .expect("retained rendering has a simulation phase");
+    let chain = report.stages.iter().find(|stage| stage.name == "film_chain")
+        .expect("the actual film chain must be observed");
+    assert_eq!(chain.parent_id, simulation.id);
+    assert_eq!(chain.executor, Some(Executor::Gpu));
+    assert!(chain.complete);
+    assert!(chain.work.dispatch_count.is_some_and(|count| count > 0));
+    assert!(chain.start_offset >= simulation.start_offset);
+    assert!(chain.start_offset + chain.duration <= simulation.start_offset + simulation.duration);
+    let conversion_phase = if kind == "export" { "saving_convert" } else { "display_prepare" };
+    let conversion = report.phases.iter().find(|phase| phase.name == conversion_phase).unwrap();
+    assert!(conversion.work.readback_count.is_some_and(|count| count > 0),
+        "bounded display/writer transfers belong to {conversion_phase}");
+    report
+}
+
 /// The shared harness deactivates stochastic effects so preview and scan
 /// comparisons stay deterministic.
 fn session_fixture() -> Session {
@@ -161,7 +198,7 @@ fn session_fixture() -> Session {
             theme::apply(&cc.egui_ctx);
             app(state_path, image_path, browser_path)
         });
-    assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
+    assert_eq!(harness.state().image.as_ref().unwrap().width(), 160);
     click(&mut harness, "◀");
     Session { harness, directory }
 }
@@ -180,7 +217,7 @@ fn snapshot_session() -> Session {
             theme::apply(&cc.egui_ctx);
             app(state_path, image_path, browser_path)
         });
-    assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
+    assert_eq!(harness.state().image.as_ref().unwrap().width(), 160);
     Session { harness, directory }
 }
 
@@ -680,10 +717,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
             h.state().current_state().unwrap().sections,
             accepted.sections
         );
-        assert!(Arc::ptr_eq(
-            h.state().image.as_ref().unwrap(),
-            &accepted_input
-        ));
+        assert!(h.state().image.as_ref().unwrap().same_source(&accepted_input));
         assert!(Arc::ptr_eq(
             h.state().output_image.as_ref().unwrap(),
             &accepted_output
@@ -939,7 +973,7 @@ mod layout_snapshots {
             .state()
             .image
             .as_ref()
-            .map(|image| [image.width, image.height])
+            .map(|image| [image.width(), image.height()])
             .unwrap_or([0, 0]);
         let mut modal = Harness::builder()
             .with_size(egui::vec2(700.0, 650.0))
@@ -1105,7 +1139,7 @@ fn style_session(styles: &[(&str, &str)]) -> Session {
                 data,
             )
         });
-    assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
+    assert_eq!(harness.state().image.as_ref().unwrap().width(), 160);
     click(&mut harness, "◀");
     Session { harness, directory }
 }
@@ -1224,10 +1258,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
         );
         assert_eq!(h.state().parameter_revision, revision);
         assert_eq!(h.state().calibration_epoch, epoch);
-        assert!(Arc::ptr_eq(
-            h.state().image.as_ref().unwrap(),
-            &accepted_input
-        ));
+        assert!(h.state().image.as_ref().unwrap().same_source(&accepted_input));
         assert!(Arc::ptr_eq(
             h.state().output_image.as_ref().unwrap(),
             &accepted_output

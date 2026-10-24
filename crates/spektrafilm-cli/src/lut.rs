@@ -232,7 +232,7 @@ fn load_bundle_spec(args: &BuildArgs) -> Result<BundleSpec> {
 
 fn build(args: BuildArgs) -> Result<()> {
     let spec = load_bundle_spec(&args)?;
-    let backend = spektrafilm_gpu::select_backend();
+    let backend = spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?;
     let builder = if let Some(path) = &args.params {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading RuntimeParams JSON: {}", path.display()))?;
@@ -388,7 +388,7 @@ pub fn export_lut(
         "topology": Topology::One,
         "resolution": resolution,
     }))?;
-    let backend = spektrafilm_gpu::select_backend();
+    let backend = spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?;
     let bundle = BundleBuilder::new(spec)
         .build(data_dir, backend.as_ref())
         .map_err(anyhow::Error::msg)?;

@@ -9,7 +9,8 @@ mod raster;
 mod viewer;
 mod worker;
 
-pub use colortransform::{input_display_raster, output_display_raster};
+pub use colortransform::{input_display_raster_with, output_display_raster_with};
+pub(crate) use colortransform::output_display_raster_retained;
 #[cfg(test)]
 pub use decorations::virtual_paper_back;
 #[cfg(test)]

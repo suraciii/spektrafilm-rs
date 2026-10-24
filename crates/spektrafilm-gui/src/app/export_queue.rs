@@ -1,12 +1,14 @@
 //! Session-local submissions. Only the shared export owner renders and publishes.
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
+#[cfg(test)]
 use std::sync::Arc;
 
 use anyhow::Result;
 use eframe::egui;
 use spektrafilm_core::image_io::ImageMetadata;
 use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome};
+#[cfg(test)]
 use spektrafilm_math::image::ImageBuf;
 
 use crate::diagnostics::BackendRequested;
@@ -20,7 +22,8 @@ use super::{App, Message};
 #[derive(Clone)]
 pub(crate) struct QueueSubmission {
     pub(crate) source_name: String,
-    pub(crate) image: Arc<ImageBuf>,
+    pub(crate) image: crate::render::InputImage,
+    pub(crate) rotation_quarter_turns: u32,
     pub(crate) snapshot: RenderSnapshot,
     pub(crate) metadata: Option<ImageMetadata>,
     pub(crate) options: ExportOptions,
@@ -178,7 +181,7 @@ impl App {
         let dependencies = entry.dependencies.clone();
         let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
         // Queued work belongs to the submission, not the currently active source.
-        operation.set_input_dimensions(submission.image.width, submission.image.height);
+        operation.set_input_dimensions(submission.image.width(), submission.image.height());
         operation.set_backend_requested(match submission.options.backend {
             ExportBackend::Cpu => BackendRequested::Cpu,
             ExportBackend::Gpu => BackendRequested::Wgpu,
@@ -378,7 +381,7 @@ mod tests {
         app.params.film_render.grain.active = false;
         app.params.camera.auto_exposure = false;
         app.params.print_render.glare.active = false;
-        app.image = Some(Arc::new(ImageBuf::from_data(
+        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::from_data(
             24,
             8,
             (0..24 * 8 * 3)
@@ -390,7 +393,7 @@ mod tests {
                     })
                 })
                 .collect(),
-        )));
+        ))));
         (app, directory, egui::Context::default())
     }
 
@@ -398,6 +401,7 @@ mod tests {
         QueueSubmission {
             source_name: "accepted source".into(),
             image: app.image.as_ref().unwrap().clone(),
+            rotation_quarter_turns: app.input_rotation.rem_euclid(4) as u32,
             snapshot: RenderSnapshot::new(
                 app.params.clone(),
                 app.film_name.clone(),
@@ -557,7 +561,7 @@ mod tests {
         app.enqueue_exports(&ctx, vec![item], false).unwrap();
         drain(&mut app, &ctx);
         assert_eq!(app.export_queue.entries[0].state, QueueState::Failed);
-        app.image = Some(Arc::new(ImageBuf::new(2, 2)));
+        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::new(2, 2))));
         app.params.camera.exposure_compensation_ev += 3.0;
         app.film_name = "unrelated-live-film".into();
         app.export_options.jpeg_quality = 23;
@@ -567,7 +571,7 @@ mod tests {
         drain(&mut app, &ctx);
         assert_eq!(app.export_queue.entries[0].state, QueueState::Completed);
         let captured = &app.export_queue.entries[0].submission;
-        assert!(Arc::ptr_eq(&captured.image, &submitted_image));
+        assert!(captured.image.same_source(&submitted_image));
         assert_eq!(
             serde_json::to_value(captured.snapshot.params()).unwrap(),
             submitted_params
@@ -580,7 +584,7 @@ mod tests {
                 .image
                 .data
         );
-        assert_eq!(app.image.as_ref().unwrap().width, 2);
+        assert_eq!(app.image.as_ref().unwrap().width(), 2);
         assert_eq!(app.film_name, "unrelated-live-film");
         assert_eq!(app.export_options.jpeg_quality, 23);
     }

@@ -4088,10 +4088,12 @@ name = "spektrafilm-gpu"
 version = "0.1.2"
 dependencies = [
  "bytemuck",
+ "image",
  "parking_lot",
  "pollster",
  "spektrafilm-backend",
  "spektrafilm-math",
+ "spektrafilm-model",
  "tracing",
  "tracing-subscriber",
  "wgpu",
@@ -4167,8 +4169,11 @@ dependencies = [
  "cc",
  "pkg-config",
  "serde",
+ "spektrafilm-backend",
+ "spektrafilm-gpu",
  "spektrafilm-math",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

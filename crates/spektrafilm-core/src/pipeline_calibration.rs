@@ -23,6 +23,8 @@ struct SpectralControlsKey {
     input_gamut_active: bool,
     input_gamut_algorithm: String,
     input_gamut_knee: [f32; 3],
+    input_gamut_boundary: String,
+    input_gamut_hull_detail: f64,
 }
 
 /// Runtime controls that invalidate print/front-end calibration data.
@@ -87,6 +89,8 @@ fn spectral_controls_key(params: &RuntimeParams) -> SpectralControlsKey {
         input_gamut_active: params.io.input_gamut_compress.active,
         input_gamut_algorithm: params.io.input_gamut_compress.algorithm.clone(),
         input_gamut_knee: params.io.input_gamut_compress.knee,
+        input_gamut_boundary: params.io.input_gamut_compress.boundary.clone(),
+        input_gamut_hull_detail: params.io.input_gamut_compress.hull_detail,
     }
 }
 pub(crate) struct CalibrationResult {
@@ -94,8 +98,13 @@ pub(crate) struct CalibrationResult {
     pub print: Profile,
     pub params: RuntimeParams,
     pub tc_lut: Option<TcLut>,
+    pub prepared_tc_lut: Option<spektrafilm_backend::PreparedTable>,
     pub mallett_core: Option<[[f64; 3]; 3]>,
     pub front_illuminant: String,
+    /// Resolved inverse-scan converter for a convert-film route. `None` on
+    /// every other route, which resolves an rgb→raw front pass instead; the
+    /// three are alternative chain heads.
+    pub convert_converter: Option<crate::stages::converting::Converter>,
     pub print_exposure_factor: f64,
     pub print_illuminant: Vec<f64>,
     pub preflash_raw: [f64; 3],
@@ -332,11 +341,12 @@ pub fn validate_scan_output_detailed(
     Ok(())
 }
 
-pub(crate) fn build(
+pub(crate) fn build_with_backend(
     film: Profile,
     print: Profile,
     mut params: RuntimeParams,
     data_dir: &Path,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<CalibrationResult, String> {
     // Reject malformed params (e.g. an unknown diffusion-filter family)
     // up front — Python raises ValueError mid-run, which also aborts
@@ -427,10 +437,11 @@ pub(crate) fn build(
     };
     let spectral_service::FilmingUpsampler {
         tc_lut,
+        prepared_tc_lut,
         mallett_core,
         front_illuminant,
         ..
-    } = spectral_service::build_filming_upsampler(&film, &spectral_params, data_dir)?;
+    } = spectral_service::build_filming_upsampler_with_backend(&film, &spectral_params, data_dir, backend)?;
 
     // Python parity: sensitivities are pre-balanced in the profile so midgray ≈ 1.0.
     // The TC LUT is used unnormalized — Python's `rgb_to_raw_hanatos2025` does NOT scale it.
@@ -449,7 +460,15 @@ pub(crate) fn build(
     // sRGB (Python `_rgb_to_film_raw` default), through whichever upsampler
     // is active. `scale` folds the EV compensation for the `_comp` branch.
     let midgray_raw = |scale: f64| -> [f64; 3] {
-        if let Some(lut) = &tc_lut {
+        if let Some(prepared) = &prepared_tc_lut {
+            let xyz = spectral_service::calibration_neutral_xyz(
+                &front_illuminant, params.settings.use_cat16, scale,
+            );
+            let brightness = xyz[0] + xyz[1] + xyz[2];
+            prepared.neutral.map(|value| spektrafilm_math::precision::to_f64(
+                spektrafilm_math::precision::from_f64(value * brightness),
+            ))
+        } else if let Some(lut) = &tc_lut {
             enlarger::midgray_raw_hanatos(
                 lut,
                 &select_illuminant(&front_illuminant),
@@ -559,15 +578,23 @@ pub(crate) fn build(
         "pipeline calibrated"
     );
 
-    let output_gamut = crate::gamut_compression::OutputGamutCompress::build(
+    let output_gamut = crate::gamut_compression::OutputGamutCompress::build_with_backend(
         &params.io.output_gamut_compress,
         &params.io.output_color_space,
+        backend,
     )?;
+    // The inverse-scan converter reads the resolved film's dye tables, the
+    // route, and the input colour space — all of which must be final before
+    // the record is built, so it resolves after every calibration mutation
+    // and before the result consumes the film and the params.
+    let convert_converter = crate::stages::converting::resolve_converter(&film, &params)?;
     Ok(CalibrationResult {
         film,
         print,
         params,
+        convert_converter,
         tc_lut,
+        prepared_tc_lut,
         mallett_core,
         front_illuminant,
         print_exposure_factor,
@@ -721,7 +748,7 @@ mod tests {
             params.enlarger.print_exposure_mode = mode;
             params.settings.print_exposure_ev_tracking = tracking;
             params.camera.exposure_compensation_ev = 0.5;
-            super::build(film.clone(), print.clone(), params, &dir)
+            super::build_with_backend(film.clone(), print.clone(), params, &dir, &spektrafilm_backend::cpu_backend::CpuBackend)
                 .unwrap()
                 .print_exposure_factor
         };

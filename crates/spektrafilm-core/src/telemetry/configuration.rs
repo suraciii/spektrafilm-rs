@@ -417,8 +417,6 @@ impl RenderConfiguration {
         let grain = &params.film_render.grain;
         let grain_active = grain.active
             && !params.debug.deactivate_stochastic_effects
-            && !(grain.engine == crate::params::GrainEngine::Procedural
-                && params.settings.rgb_to_raw_method == "mallett2019")
             && !(grain.engine == crate::params::GrainEngine::Fotufilm
                 && grain.fotufilm.amount == 0.0);
         let spatial_active = !params.debug.deactivate_spatial_effects;

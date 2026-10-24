@@ -250,10 +250,10 @@ impl Drop for BatchGuard {
     }
 }
 impl WgpuBackend {
-    #[cfg(test)]
-    pub(crate) fn context_mut(&mut self, context: ObservationContext) {
+    pub(super) fn context_mut(&mut self, context: ObservationContext) {
         self.device.context = context.clone();
         self.queue.context = context;
+        self.pipe = self.pipe.with_observed(self.device.clone(), self.queue.clone());
     }
     pub(super) fn observed_batch(&self, name: &'static str) -> (Self, BatchGuard) {
         let scope =
@@ -348,6 +348,8 @@ impl WgpuBackend {
             name: self.name.clone(),
             adapter: self.adapter.clone(),
             explicit: self.explicit,
+            backend_id: self.backend_id,
+            cancellation: self.cancellation.clone(),
         };
         (backend, BatchGuard { scope, state })
     }
@@ -506,13 +508,18 @@ impl ObservedQueue {
     pub fn write_buffer(&self, b: &wgpu::Buffer, offset: u64, data: &[u8]) {
         self.raw.write_buffer(b, offset, data);
         if self.context.enabled() {
-            let w = WorkCounters {
+            let mut w = WorkCounters {
                 upload_count: Some(1),
                 upload_bytes: Some(data.len() as u64),
-                image_upload_count: Some(1),
-                image_upload_bytes: Some(data.len() as u64),
                 ..Default::default()
             };
+            if b.usage().contains(wgpu::BufferUsages::UNIFORM) {
+                w.uniform_upload_count = Some(1);
+                w.uniform_upload_bytes = Some(data.len() as u64);
+            } else {
+                w.image_upload_count = Some(1);
+                w.image_upload_bytes = Some(data.len() as u64);
+            }
             self.context.record_work(&w);
         }
     }
@@ -592,6 +599,9 @@ impl ObservedQueue {
         // a batch may hold several submissions (a host fence splits the
         // resident chain), and a mapped readback must not outlive the
         // submission that follows it.
+        if dispatches > 0 {
+            self.context.record_executor(Executor::Gpu, None);
+        }
         self.context.record_work(&work);
         result
     }
@@ -760,6 +770,11 @@ impl ObservedEncoder {
             self.state.device_count += 1;
             self.state.device_bytes += size
         }
+    }
+    /// Device-side initialization is not a transfer: there is no source
+    /// payload, staging copy, upload, or materialization to count.
+    pub fn clear_buffer(&mut self, buffer: &wgpu::Buffer, offset: u64, size: Option<u64>) {
+        self.raw.clear_buffer(buffer, offset, size);
     }
     pub fn finish(mut self) -> ObservedCommand {
         if let Some(batch) = &self.batch {

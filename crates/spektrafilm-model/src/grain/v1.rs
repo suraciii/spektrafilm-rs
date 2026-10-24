@@ -154,6 +154,7 @@ fn observe_sampler(
 /// Port of Python `apply_grain_to_density` (the composite-density path,
 /// `grain.sublayers_active == false`). Upstream never passes `use_fast_stats`
 /// on this path, so it always samples the scipy regime.
+/// Returns any backend final-blur error without substituting a CPU filter.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_grain_to_density(
     density_cmy: &ImageBuf,
@@ -168,7 +169,7 @@ pub fn apply_grain_to_density(
     monochrome: bool,
     base_seed: u64,
     backend: &dyn ComputeBackend,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let stage_timings = stage_timings_enabled();
     let sampler = observe_sampler(backend);
     let w = density_cmy.width;
@@ -244,11 +245,11 @@ pub fn apply_grain_to_density(
     // `sigma_blur_pixel > 0.4`.
     if grain_blur > 0.4 {
         let t = Instant::now();
-        out = backend.gaussian_blur(&out, grain_blur);
+        out = backend.gaussian_blur(&out, grain_blur)?;
         print_stage_timing(stage_timings, "grain.final_blur", t);
     }
 
-    out
+    Ok(out)
 }
 
 /// Port of Python `add_micro_structure`: multiply each density channel by a
@@ -305,11 +306,11 @@ fn apply_multiplicative_unsharp_mask(
     sigma: f32,
     amount: f32,
     backend: &dyn ComputeBackend,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     if sigma <= 0.0 || amount <= 0.0 {
-        return image.clone();
+        return Ok(image.clone());
     }
-    let blurred = backend.gaussian_blur(image, sigma);
+    let blurred = backend.gaussian_blur(image, sigma)?;
     let mut out = image.clone();
     let mut sums = [0.0f64; 3];
     let mut out_sums = [0.0f64; 3];
@@ -336,7 +337,7 @@ fn apply_multiplicative_unsharp_mask(
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Apply layered (per-sublayer) grain to a CMY density image.
@@ -357,6 +358,7 @@ fn apply_multiplicative_unsharp_mask(
 /// are multiplied by the lognormal micro-structure, offset by the base
 /// `density_min`, and finally blurred by `grain_blur` (gated `> 0`, unlike
 /// the composite path's `> 0.4`).
+/// Returns backend final-blur or unsharp-mask filtering errors unchanged.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_grain_to_density_layers(
     density_cmy_layers: &[[Vec<Scalar>; 3]; 3],
@@ -377,7 +379,7 @@ pub fn apply_grain_to_density_layers(
     use_fast_stats: bool,
     base_seed: u64,
     backend: &dyn ComputeBackend,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let sampler = observe_sampler(backend);
     let stage_timings = stage_timings_enabled();
     let pixel_area = pixel_size_um * pixel_size_um;
@@ -472,16 +474,16 @@ pub fn apply_grain_to_density_layers(
     // density, before the per-channel density floor is removed.
     if grain_blur > 0.0 {
         let t = Instant::now();
-        out = backend.gaussian_blur(&out, grain_blur);
+        out = backend.gaussian_blur(&out, grain_blur)?;
         print_stage_timing(stage_timings, "grain.final_blur", t);
     }
-    out = apply_multiplicative_unsharp_mask(&out, mult_usm_sigma, mult_usm_amount, backend);
+    out = apply_multiplicative_unsharp_mask(&out, mult_usm_sigma, mult_usm_amount, backend)?;
     for px in out.pixels_mut() {
         for ch in 0..3 {
             px[ch] -= from_f64(density_min[ch]);
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -559,6 +561,7 @@ mod tests {
             0,
             &CpuBackend,
         )
+        .unwrap()
     }
 
     #[test]
@@ -672,6 +675,7 @@ mod tests {
                 0,
                 &CpuBackend,
             )
+            .unwrap()
         };
         let mono = run(true);
         assert_eq!(mono.extract_channel(0), mono.extract_channel(1));
@@ -733,6 +737,7 @@ mod tests {
                 seed,
                 &CpuBackend,
             )
+            .unwrap()
         };
         assert_eq!(
             run(0).data,

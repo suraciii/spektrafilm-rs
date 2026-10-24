@@ -4,7 +4,7 @@ use crate::*;
 use super::state::App;
 
 pub(crate) struct OperatorComparison {
-    pub(crate) image: Arc<ImageBuf>,
+    pub(crate) image: crate::render::InputImage,
     pub(crate) color_space: String,
     pub(crate) encoded: bool,
 }
@@ -29,7 +29,7 @@ impl App {
     }
 
     pub(crate) fn accepted_frame_is_stale(&self) -> bool {
-        self.output_image.is_some()
+        (self.output_image.is_some() || self.output_retained.is_some())
             && self.source_render.as_ref().is_none_or(|render| {
                 render.input_revision != Some(self.input_epoch)
                     || render.parameter_revision != Some(self.parameter_revision)
@@ -92,7 +92,7 @@ impl App {
             self.diagnostics.mode,
         );
         operation.set_revisions(Some(input_epoch), Some(self.parameter_revision));
-        operation.set_input_dimensions(image.width, image.height);
+        operation.set_input_dimensions(image.width(), image.height());
         operation.set_backend_requested(diagnostics::preview_backend_requested());
         let params = match self
             .current_state()
@@ -121,7 +121,9 @@ impl App {
                 kind,
                 animate: self.force_preview
                     || self.full_scan_requested
-                    || self.output_image.is_none(),
+                    || (self.output_image.is_none() && self.output_retained.is_none()),
+                backend_name: diagnostics::effective_backend_name(self.backend.as_ref(), &self.params),
+                rotation_quarter_turns: self.input_rotation.rem_euclid(4) as u32,
                 collection_mode: operation.mode(),
             },
             image,
@@ -129,6 +131,7 @@ impl App {
             backend: self.backend.clone(),
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
+            display_profile: self.gui_state.display_profile().map(std::path::PathBuf::from),
             ctx: ctx.clone(),
             worker_wait: operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image),
             operation,
@@ -180,32 +183,38 @@ impl App {
                         ObservationKind::Phase,
                         Purpose::Image,
                     );
+                    let (width, height) = if let Some(image) = r.retained.as_ref() {
+                        (image.width(), image.height())
+                    } else {
+                        let image = r.output.as_ref().expect("successful render has output samples");
+                        (image.width, image.height)
+                    };
                     if r.operator_compare {
                         self.viewer.transform_status = r.display_status;
                         self.viewer.set_output(
-                            r.preview,
-                            [r.output.width as usize, r.output.height as usize],
-                            ctx.input(|i| i.time),
-                            false,
+                            r.preview, [width as usize, height as usize],
+                            ctx.input(|i| i.time), false,
                         );
                         self.viewer.set_output_display_source(
-                            &r.output_color_space,
-                            r.output_cctf_encoding,
+                            &r.output_color_space, r.output_cctf_encoding,
                             self.viewer.settings.use_display_transform,
                             self.gui_state.display_profile().map(Path::new),
                         );
-                        let comparison = Arc::new(r.output);
-                        self.viewer.seed_prepared_output(
-                            comparison.clone(),
-                            &r.output_color_space,
-                            r.output_cctf_encoding,
-                            r.display_enabled,
-                            self.gui_state.display_profile().map(Path::new),
-                            r.display_max_size,
-                        );
+                        let comparison = if let Some(image) = r.retained {
+                            self.viewer.set_retained_output(Some(image.clone()));
+                            crate::render::InputImage::Device(image)
+                        } else {
+                            let image = Arc::new(r.output.expect("CPU comparison samples"));
+                            self.viewer.seed_prepared_output(
+                                image.clone(), &r.output_color_space, r.output_cctf_encoding,
+                                r.display_enabled, self.gui_state.display_profile().map(Path::new),
+                                r.display_max_size,
+                            );
+                            self.viewer.set_retained_output(None);
+                            crate::render::InputImage::Host(image)
+                        };
                         self.operator_comparison = Some(OperatorComparison {
-                            image: comparison,
-                            color_space: r.output_color_space,
+                            image: comparison, color_space: r.output_color_space,
                             encoded: r.output_cctf_encoding,
                         });
                         self.status = crate::app::Message::new("operations.comparing_baseline");
@@ -217,22 +226,23 @@ impl App {
                         operation.id(),
                         Some(response_job.input_epoch),
                         Some(response_job.parameter_revision),
-                        r.output.width,
-                        r.output.height,
+                        width,
+                        height,
                         response_job.collection_mode != CollectionMode::Off,
                         diagnostics::color_space(&r.output_color_space),
                         r.output_cctf_encoding,
                     ));
                     let display_current = r.display_enabled
                         == self.viewer.settings.use_display_transform
-                        && r.display_max_size == self.params.settings.preview_max_size;
+                        && r.display_max_size == self.params.settings.preview_max_size
+                        && r.display_profile.as_deref() == self.gui_state.display_profile().map(Path::new);
                     self.output_color_space = r.output_color_space;
                     self.output_cctf_encoding = r.output_cctf_encoding;
                     self.output_metadata = r.source_metadata;
                     self.viewer.transform_status = r.display_status;
                     self.viewer.set_output(
                         r.preview,
-                        [r.output.width as usize, r.output.height as usize],
+                        [width as usize, height as usize],
                         ctx.input(|i| i.time),
                         response_job.animate && display_current,
                     );
@@ -244,22 +254,21 @@ impl App {
                     );
                     self.status = crate::app::Message::new("operations.rendered")
                         .message_arg("operation", kind.message())
-                        .arg("width", r.output.width)
-                        .arg("height", r.output.height)
-                        .arg(
-                            "megapixels",
-                            format!("{:.1}", r.output.pixel_count() as f64 / 1e6),
+                        .arg("width", width)
+                        .arg("height", height)
+                        .arg("megapixels", format!("{:.1}", width as f64 * height as f64 / 1e6));
+                    let output = r.output.map(Arc::new);
+                    if let Some(output) = output.as_ref() {
+                        self.viewer.seed_prepared_output(
+                            output.clone(), &self.output_color_space,
+                            self.output_cctf_encoding, r.display_enabled,
+                            self.gui_state.display_profile().map(Path::new), r.display_max_size,
                         );
-                    let output = Arc::new(r.output);
-                    self.viewer.seed_prepared_output(
-                        output.clone(),
-                        &self.output_color_space,
-                        self.output_cctf_encoding,
-                        r.display_enabled,
-                        self.gui_state.display_profile().map(Path::new),
-                        r.display_max_size,
-                    );
-                    self.output_image = Some(output);
+                    }
+                    self.viewer.set_retained_output(r.retained.clone());
+                    self.output_retained = r.retained;
+                    self.output_image = output;
+                    self.output_histogram = r.histogram;
                     self.retained_kind = Some(kind);
                     drop(handoff);
                     self.diagnostics.finish(operation, Outcome::Succeeded);

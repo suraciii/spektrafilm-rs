@@ -1,5 +1,48 @@
 use std::{env, fs, path::PathBuf};
 
+// pkg-config's Library discards compiler-driver switches such as -fopenmp.
+// Query the same target package for those switches so the scoped X-Trans
+// guard controls the runtime selected by LibRaw, including downstream links.
+fn pkg_config_env(name: &str) -> Option<std::ffi::OsString> {
+    let target = env::var("TARGET").expect("Cargo TARGET");
+    let kind = if env::var("HOST").expect("Cargo HOST") == target { "HOST" } else { "TARGET" };
+    [format!("{name}_{target}"), format!("{name}_{}", target.replace('-', "_")), format!("{kind}_{name}"), name.to_owned()]
+        .iter().find_map(|key| {
+            println!("cargo:rerun-if-env-changed={key}");
+            env::var_os(key)
+        })
+}
+
+fn configure_libraw_openmp(build: &mut cc::Build, library: &pkg_config::Library) {
+    let mut command = std::process::Command::new(pkg_config_env("PKG_CONFIG").unwrap_or_else(|| "pkg-config".into()));
+    for name in ["PKG_CONFIG_PATH", "PKG_CONFIG_LIBDIR", "PKG_CONFIG_SYSROOT_DIR"] {
+        if let Some(value) = pkg_config_env(name) { command.env(name, value); }
+    }
+    if env::var_os("LIBRAW_STATIC").is_some() || (env::var_os("LIBRAW_DYNAMIC").is_none() && env::var_os("PKG_CONFIG_ALL_STATIC").is_some()) {
+        command.arg("--static");
+    }
+    let output = command.args(["--libs-only-other", "libraw"]).output().expect("query selected LibRaw OpenMP flags");
+    assert!(output.status.success(), "query selected LibRaw OpenMP flags: {}", String::from_utf8_lossy(&output.stderr));
+    let flags = String::from_utf8(output.stdout).expect("LibRaw package linker flags must be UTF-8");
+    let explicit_runtime = library.libs.iter().find(|name| ["gomp", "omp", "iomp5", "vcomp"].contains(&name.as_str()));
+    let openmp = flags.split_whitespace().find(|flag| *flag == "-fopenmp" || flag.starts_with("-fopenmp=") || flag.starts_with("/openmp"));
+    let runtime = explicit_runtime.map(String::as_str).or_else(|| openmp.map(|flag| match flag {
+        "-fopenmp=libgomp" => "gomp",
+        "-fopenmp=libomp" => "omp",
+        "-fopenmp=libiomp5" => "iomp5",
+        "-fopenmp" => {
+            assert!(build.get_compiler().is_like_gnu(), "LibRaw advertises ambiguous -fopenmp with a non-GNU bridge compiler; name its actual OpenMP runtime in libraw.pc (-lgomp, -lomp, -liomp5, or -fopenmp=lib...) so ordered X-Trans controls the same runtime");
+            "gomp"
+        },
+        flag if flag.starts_with("/openmp") => "vcomp",
+        _ => panic!("unsupported LibRaw OpenMP runtime flag: {flag}"),
+    }));
+    if let Some(runtime) = runtime {
+        build.define("SF_RAW_OPENMP", None);
+        if explicit_runtime.is_none() { println!("cargo:rustc-link-lib={runtime}"); }
+    }
+}
+
 fn link_libraw(library: &pkg_config::Library) {
     let target = env::var("TARGET").expect("Cargo TARGET");
     let windows = target.contains("windows");
@@ -143,6 +186,7 @@ fn main() {
         });
         if package == "libraw" {
             link_libraw(&library);
+            configure_libraw_openmp(&mut build, &library);
         }
         for include in library.include_paths {
             build.include(include);
@@ -151,4 +195,5 @@ fn main() {
     build.compile("spektrafilm_raw_native");
     println!("cargo:rerun-if-changed=native/raw.cpp");
     println!("cargo:rerun-if-changed=native/lens.cpp");
+    println!("cargo:rerun-if-changed=native/float_reference.cpp");
 }

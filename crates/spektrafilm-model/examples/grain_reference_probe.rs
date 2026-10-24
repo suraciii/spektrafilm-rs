@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         colored: p.colored,
         clustered: p.clustered,
     };
-    let out = gpu.grain_v2_gpu(&input, &gp);
+    let out = gpu.grain_v2_gpu(&input, &gp)?;
     save(format!("{}_gpu_rgb_f32le.bin", a[4]), &out)?;
     let max = cpu
         .data

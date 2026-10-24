@@ -25,12 +25,12 @@ struct Params {
     origin: vec4<u32>,      // x0 (hi, lo), y0 (hi, lo)
     footprint: vec4<u32>,   // pitch x (hi, lo), pitch y (hi, lo)
     pitches: vec4<u32>,     // cell (hi, lo), source (hi, lo)
-    dims: vec4<u32>,        // source width, source height, output width, output rows
+    dims: vec4<u32>,        // source width, source height, band output cols, output rows
     source_rect: vec4<u32>, // window x, window y, window cols, window rows
     cell_rect: vec4<u32>,   // cell x (i32 bits), cell y (i32 bits), ext cols, ext rows
     tile: vec4<u32>,        // radius d, cols, rows, output y
-    ratios: vec4<u32>,      // cell/source q, pitch x/cell q, pitch y/cell q, spare
-    phase: vec4<u32>,       // origin x/cell (i32 bits), origin y/cell (i32 bits), spare, spare
+    ratios: vec4<u32>,      // cell/source q, pitch x/cell q, pitch y/cell q, local-output flag
+    phase: vec4<u32>,       // origin x/cell, origin y/cell (i32 bits), output x, full output width
     fracs: vec4<f32>,       // cell/source r hi, r lo, origin x frac, origin y frac
     fracs2: vec4<f32>,      // pitch x/cell r hi, r lo, pitch y/cell r hi, r lo
     widths: vec4<f32>,      // pitch x, pitch y, cell, source (um)

@@ -9,6 +9,7 @@ use std::sync::Weak;
 #[derive(Default)]
 pub struct ScanFrameCache {
     entry: Option<PreparedFrame>,
+    device_entry: Option<PreparedDeviceFrame>,
 }
 
 impl ScanFrameCache {
@@ -24,6 +25,20 @@ impl ScanFrameCache {
     }
 }
 
+enum DeviceFrameSource {
+    Host(Weak<ImageBuf>),
+    Device(spektrafilm_backend::DeviceImage),
+}
+
+struct PreparedDeviceFrame {
+    source: DeviceFrameSource,
+    film: Arc<Profile>,
+    backend: Weak<dyn ComputeBackend>,
+    parameters: RuntimeParams,
+    rotation_quarter_turns: u32,
+    density: spektrafilm_backend::DeviceImage,
+    mix_source: Option<spektrafilm_backend::DeviceImage>,
+}
 struct PreparedFrame {
     input: Weak<ImageBuf>,
     film: Arc<Profile>,
@@ -42,6 +57,12 @@ impl Pipeline {
         backend_owner: &Arc<dyn ComputeBackend>,
     ) -> Result<ImageBuf, String> {
         self.check_cancelled()?;
+        if backend.is_gpu() {
+            let retained = self.process_host_scan_cached_retained(
+                image, cache, RetainedRender::FULL, backend, backend_owner,
+            )?;
+            return backend.materialize_retained(&retained);
+        }
         // Optical grain readout owns its full-frame context and final crop.
         // Recompute that exact route rather than substitute a density tap.
         let cacheable = self.params.scanner.requires_full_frame()
@@ -55,9 +76,6 @@ impl Pipeline {
         }
         self.params.validate()?;
         crate::pipeline_calibration::validate_scan_output(&self.params, &self.film)?;
-        if backend.explicit_gpu_request() {
-            return Err("explicit GPU request cannot run the complete computation scope on WGPU (host-executed stages: scanner acquisition); retry with an explicit CPU request to use the per-stage route".into());
-        }
         let mut parameters = self.params.clone();
         parameters.scanner.operator = Default::default();
         // Preview affects presentation only on this exact path.
@@ -70,11 +88,7 @@ impl Pipeline {
                 && frame.parameters == parameters
         });
         if let Some(context) = backend.observation_context() {
-            context.set_path(if backend.is_gpu() {
-                spektrafilm_backend::telemetry::ExecutionPath::PerStage
-            } else {
-                spektrafilm_backend::telemetry::ExecutionPath::Cpu
-            });
+            context.set_path(spektrafilm_backend::telemetry::ExecutionPath::Cpu);
         }
         let cpu_observed = backend.observation_context().map(|context| {
             spektrafilm_backend::bind_cpu_fallback(
@@ -89,16 +103,13 @@ impl Pipeline {
             // Release the old large raster before allocating the replacement.
             cache.entry = None;
             let mix_source = if self.params.output_mix.amount < 1.0 {
-                Some(self.prepare_output_mix_source(image)?)
+                Some(self.prepare_output_mix_source(image, backend)?)
             } else {
                 None
             };
             let density = if self.params.workflow.route_enum()
                 == crate::WorkflowRoute::ConvertFilmScan
             {
-                if backend.explicit_gpu_request() {
-                    return Err("explicit GPU request cannot run the complete conversion route on WGPU; retry with an explicit CPU request".into());
-                }
                 let (working, _) = self.rescale_working(image, backend)?;
                 let observation = crate::stages::StageObservation::cpu(
                     backend,

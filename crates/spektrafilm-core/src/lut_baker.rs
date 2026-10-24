@@ -70,6 +70,7 @@ impl BundleBuilder {
             data_dir,
             &neutral,
             self.base_params.as_ref(),
+            backend,
         )?;
         let wires = measure_wires(&first, &spec, input, backend)?;
         let mut luts = Vec::new();
@@ -97,6 +98,7 @@ impl BundleBuilder {
                     data_dir,
                     &neutral,
                     self.base_params.as_ref(),
+                    backend,
                 )?;
                 &extra
             };
@@ -243,6 +245,9 @@ fn validate_route_topology(topology: Topology, route: &str) -> Result<(), String
     Ok(())
 }
 
+// The bake recipe, selected stocks/spaces, profile resources, parameter baseline,
+// and execution backend are independent inputs to pipeline construction.
+#[allow(clippy::too_many_arguments)]
 fn make_pipeline(
     spec: &BundleSpec,
     print_stock: &str,
@@ -251,6 +256,7 @@ fn make_pipeline(
     data_dir: &Path,
     neutral: &NeutralFilters,
     base_params: Option<&RuntimeParams>,
+    backend: &dyn ComputeBackend,
 ) -> Result<Runtime, String> {
     let (film, print) = resolve_profiles(&spec.film_profile, print_stock, data_dir)?;
     let params = bake_params(
@@ -263,7 +269,7 @@ fn make_pipeline(
         base_params,
         true,
     )?;
-    Runtime::new(film, print, params, data_dir)
+    Runtime::new_with_backend(film, print, params, data_dir, backend)
 }
 
 /// Resolve film and print profiles from stock names. Shared by

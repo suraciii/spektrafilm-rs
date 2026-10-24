@@ -28,9 +28,9 @@ use spektrafilm_backend::dye_params::{DyeGpuParams, DyeReadoutGrid};
 
 /// Output rows per band before the cell budget applies.
 const BAND_OUTPUT_ROWS: u32 = 128;
-/// Largest cell or source-pixel count one band may hold. Bands are storage
-/// partitions of the global field; a single output row above the budget
-/// fails with an actionable error.
+/// Largest cell or source-pixel count one band may hold. Bands partition
+/// global output rectangles; only one footprint with its formation halo
+/// above the budget fails.
 const MAX_BAND_CELLS: u64 = 1 << 24;
 /// Largest scratch bytes one band may hold, independent of the device limit.
 ///
@@ -42,13 +42,9 @@ const MAX_BAND_CELLS: u64 = 1 << 24;
 /// limit large enough to accept that, then fails to commit the allocation
 /// and the dispatch takes the process down with an access violation.
 ///
-/// The five scratch buffers are allocated once at the plan's maximum band
-/// size and reused by every band, so this bounds the run's total scratch
-/// directly rather than per band. The band decomposition already halves its
-/// height until a band fits, so this is enforced by the existing loop: the
-/// geometry above decomposes into 8 bands of ~47 MB instead of one of
-/// 1.1 GB, and a normal scan is untouched. A single output row that still
-/// cannot fit is refused by name, as before.
+/// Scratch buffers are allocated once at the plan's maximum band size and
+/// reused. The plan reduces rows, then columns, without changing global
+/// coordinates, footprints, support, or the count law.
 const MAX_BAND_BYTES: u64 = 128 << 20;
 /// Fixed-point scale of the device coordinate lattice: `2^-42` um.
 const FX_SCALE: f64 = 4398046511104.0;
@@ -67,8 +63,13 @@ const WINDOW_MARGIN: i64 = 3;
 /// Storage partition of the global field for one run of the passes.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct DyeBand {
+    pub output_x: u32,
+    pub output_cols: u32,
     pub output_y: u32,
     pub output_rows: u32,
+    /// Readout flags: bit 0 adds a preceding cell partition, bit 1 defers
+    /// base subtraction and publication until the final partition.
+    pub readout_flags: u32,
     pub source_x: u32,
     pub source_y: u32,
     pub source_cols: u32,
@@ -89,6 +90,7 @@ pub(super) struct DyePlan {
     /// Per-band maxima of [`band_bytes`], in the same binding order: the
     /// scratch buffers `prepare_dye` allocates and `dye_plan` validates.
     pub max_band_bytes: [u64; 5],
+    pub max_output_bytes: u64,
 }
 
 /// Signed 64-bit fixed-point words `(high, low)` of one film coordinate in
@@ -133,21 +135,19 @@ fn row_cell_range(p: &DyeGpuParams, row0: u32, row1: u32) -> (i64, i64) {
     (lo, hi)
 }
 
-/// Geometry of output rows `[row0, row1)`: the inner formed rectangle with
-/// the window margins, its formation halo, and the source window the remap
-/// reads. Shared by the plan loop and the band-partitioning tests.
-fn band_geometry(
+fn tile_geometry(
     width: u32,
     height: u32,
     p: &DyeGpuParams,
-    row0: u32,
-    row1: u32,
+    output: [u32; 4],
 ) -> Result<DyeBand, String> {
+    let [col0, row0, output_cols, output_rows] = output;
+    let row1 = row0 + output_rows;
     let h = p.cell_um;
     let pitch = p.source_pitch_um;
     let d = (p.taps.len() / 2) as i64;
-    let [x0, _] = p.grid.origin_um;
-    let x1 = x0 + f64::from(p.grid.width) * p.grid.pitch_um[0];
+    let x0 = p.grid.origin_um[0] + f64::from(col0) * p.grid.pitch_um[0];
+    let x1 = x0 + f64::from(output_cols) * p.grid.pitch_um[0];
     let inner_x_lo = (x0 / h).floor() as i64 - WINDOW_MARGIN;
     let inner_x_hi = (x1 / h).ceil() as i64 - 1 + WINDOW_MARGIN;
     let (j_lo, j_hi) = row_cell_range(p, row0, row1);
@@ -164,8 +164,11 @@ fn band_geometry(
     let (source_x, source_cols) = source_window(cell_x, ext_cols, h, pitch, width);
     let (source_y, source_rows) = source_window(cell_y, ext_rows, h, pitch, height);
     Ok(DyeBand {
+        output_x: col0,
+        output_cols,
         output_y: row0,
         output_rows: row1 - row0,
+        readout_flags: 0,
         source_x,
         source_y,
         source_cols,
@@ -233,11 +236,41 @@ fn band_fit(band: &DyeBand, bound: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Split formed cells, not the output footprint. Each piece keeps its own
+/// complete formation halo and the original global readout coordinates.
+fn split_cell_band(width: u32, height: u32, p: &DyeGpuParams, band: DyeBand) -> Result<[DyeBand; 2], String> {
+    let horizontal = band.cols >= band.rows && band.cols > 1;
+    let extent = if horizontal { band.cols } else { band.rows };
+    if extent <= 1 {
+        return Err("film grain Dye: one formed cell and its formation halo exceed the device band budget".into());
+    }
+    let first = extent / 2;
+    let halo = (p.taps.len() - 1) as u32;
+    let mut pieces = [band; 2];
+    for (index, piece) in pieces.iter_mut().enumerate() {
+        let offset = if index == 0 { 0 } else { first };
+        let count = if index == 0 { first } else { extent - first };
+        if horizontal {
+            piece.cell_x = piece.cell_x.checked_add(offset as i32)
+                .ok_or("film grain Dye: partition exceeds the signed cell range")?;
+            piece.cols = count;
+        } else {
+            piece.cell_y = piece.cell_y.checked_add(offset as i32)
+                .ok_or("film grain Dye: partition exceeds the signed cell range")?;
+            piece.rows = count;
+        }
+        piece.ext_cols = piece.cols + halo;
+        piece.ext_rows = piece.rows + halo;
+        (piece.source_x, piece.source_cols) = source_window(i64::from(piece.cell_x), piece.ext_cols, p.cell_um, p.source_pitch_um, width);
+        (piece.source_y, piece.source_rows) = source_window(i64::from(piece.cell_y), piece.ext_rows, p.cell_um, p.source_pitch_um, height);
+    }
+    Ok(pieces)
+}
+
 impl DyePlan {
-    /// Validate the resolved geometry and partition the output into bounded
-    /// bands. Axes and resource bounds are decided before any band vector or
-    /// per-band uniform exists; a band that would exceed the budget holds
-    /// fewer output rows and only a single row above the budget fails.
+    /// Validate the resolved geometry and partition output into bounded
+    /// rectangles, then formed-cell pieces within oversized footprints.
+    /// A cell and its formation halo are the minimum working set.
     pub(super) fn new(
         width: u32,
         height: u32,
@@ -327,55 +360,61 @@ impl DyePlan {
         let bound = limits
             .max_buffer_size
             .min(u64::from(limits.max_storage_buffer_binding_size));
-        // One output row must fit before any band storage is sized.
-        let one_row = band_geometry(width, height, p, 0, 1)?;
-        if let Err(reason) = band_fit(&one_row, bound) {
-            return Err(format!(
-                "film grain Dye: one output row {reason}; reduce the requested film region or increase the output size"
-            ));
-        }
-
         let mut bands = Vec::new();
         let mut max_band_bytes = [0u64; 5];
-        // Coarse output pitches read many cells per row; halve the band
-        // until its cells, source pixels, and storage buffers fit and keep
-        // that height.
-        let mut band_rows = BAND_OUTPUT_ROWS;
-        let mut row0 = 0u32;
-        while row0 < out_height {
-            let band = loop {
-                let row1 = row0.saturating_add(band_rows).min(out_height);
-                let band = band_geometry(width, height, p, row0, row1)?;
-                match band_fit(&band, bound) {
-                    Ok(()) => break band,
-                    Err(reason) => {
-                        if band_rows == 1 {
-                            return Err(format!(
-                                "film grain Dye: one output row {reason}; reduce the requested \
-                                 film region or increase the output size"
-                            ));
-                        }
-                        band_rows /= 2;
+        let mut max_output_bytes = 0;
+        let mut pending = Vec::new();
+        let mut row = 0;
+        while row < out_height {
+            let rows = BAND_OUTPUT_ROWS.min(out_height - row);
+            pending.push([0, row, out_width, rows]);
+            row += rows;
+        }
+        while let Some([x, y, cols, rows]) = pending.pop() {
+            let band = tile_geometry(width, height, p, [x, y, cols, rows])?;
+            let output_bytes = u64::from(cols) * u64::from(rows) * 12;
+            let fit = band_fit(&band, bound);
+            if fit.is_ok() && output_bytes <= bound.min(MAX_BAND_BYTES) {
+                bands.push(band);
+            } else if rows > 1 {
+                let first = rows / 2;
+                pending.push([x, y + first, cols, rows - first]);
+                pending.push([x, y, cols, first]);
+            } else if cols > 1 {
+                let first = cols / 2;
+                pending.push([x + first, y, cols - first, rows]);
+                pending.push([x, y, first, rows]);
+            } else {
+                let start = bands.len();
+                let mut cells = vec![band];
+                while let Some(piece) = cells.pop() {
+                    if band_fit(&piece, bound).is_ok() {
+                        bands.push(piece);
+                    } else {
+                        let [first, second] = split_cell_band(width, height, p, piece)?;
+                        cells.push(second);
+                        cells.push(first);
                     }
                 }
-            };
-            for (max, bytes) in max_band_bytes.iter_mut().zip(band_bytes(&band)) {
+                let end = bands.len();
+                for (index, piece) in bands[start..end].iter_mut().enumerate() {
+                    piece.readout_flags = u32::from(index > 0)
+                        | (u32::from(index + 1 < end - start) << 1);
+                }
+            }
+        }
+        // Stable ordering keeps all cell partitions of a footprint together.
+        bands.sort_by_key(|band| (band.output_y, band.output_x));
+        for band in &bands {
+            for (max, bytes) in max_band_bytes.iter_mut().zip(band_bytes(band)) {
                 *max = (*max).max(bytes);
             }
-            row0 += band.output_rows;
-            bands.push(band);
-        }
-
-        // The output buffer is not bandable and stays whole.
-        let output_bytes = u64::from(out_width) * u64::from(out_height) * 12;
-        if output_bytes > bound {
-            return Err(format!(
-                "film grain Dye: output needs {output_bytes} bytes; device storage limit is {bound} bytes"
-            ));
+            max_output_bytes = max_output_bytes.max(u64::from(band.output_cols) * u64::from(band.output_rows) * 12);
         }
         Ok(Self {
             bands,
             max_band_bytes,
+            max_output_bytes,
         })
     }
 }
@@ -432,7 +471,7 @@ fn spatial_uniform(
             source_words[0],
             source_words[1],
         ],
-        dims: [width, height, p.grid.width, band.output_rows],
+        dims: [width, height, band.output_cols, band.output_rows],
         source_rect: [
             band.source_x,
             band.source_y,
@@ -452,7 +491,7 @@ fn spatial_uniform(
             band.output_y,
         ],
         ratios: [q_rp, q_x, q_y, 0],
-        phase: [ox_int as i64 as u32, oy_int as i64 as u32, 0, 0],
+        phase: [ox_int as i64 as u32, oy_int as i64 as u32, band.output_x, p.grid.width],
         fracs: [rp_hi, rp_lo, (ox - ox_int) as f32, (oy - oy_int) as f32],
         fracs2: [rx_hi, rx_lo, ry_hi, ry_lo],
         widths: [col_w as f32, row_w as f32, h as f32, pitch as f32],
@@ -465,7 +504,7 @@ fn spatial_uniform(
     }
 }
 
-struct SpatialPass {
+pub(super) struct SpatialPass {
     pipeline: CachedPipelineRef,
     group: wgpu::BindGroup,
     items: u32,
@@ -605,7 +644,7 @@ fn build_spatial_with(
                 &[&params, formed, output],
             ),
             pipeline: readout,
-            items: band.output_rows * p.grid.width,
+            items: band.output_rows * band.output_cols,
         },
     }
 }
@@ -640,6 +679,40 @@ pub(super) fn build_spatial(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_band_readout(
+    backend: &WgpuBackend,
+    p: &DyeGpuParams,
+    band: &DyeBand,
+    source_dims: [u32; 2],
+    input: &wgpu::Buffer,
+    output: &wgpu::Buffer,
+    response: bool,
+    local: bool,
+) -> SpatialPass {
+    let mut uniform = spatial_uniform(p, band, source_dims[0], source_dims[1]);
+    if response { uniform.mins = [0.0; 4]; }
+    uniform.ratios[3] = u32::from(local) | (band.readout_flags << 1);
+    let params = backend.pipe.static_buffer(
+        "dye_response_readout_params",
+        bytemuck::bytes_of(&uniform),
+        wgpu::BufferUsages::UNIFORM,
+    );
+    let pipeline = backend.cached_pipeline(
+        PRODUCTION_SHADERS.readout,
+        &[
+            wgpu::BufferBindingType::Uniform,
+            wgpu::BufferBindingType::Storage { read_only: true },
+            wgpu::BufferBindingType::Storage { read_only: false },
+        ],
+    );
+    SpatialPass {
+        group: spatial_group(backend, "dye_response_readout", &pipeline, &[&params, input, output]),
+        pipeline,
+        items: band.output_rows * band.output_cols,
+    }
+}
+
 impl DyeSpatialState {
     fn encode_pass(&self, encoder: &mut ObservedEncoder, label: &'static str, pass: &SpatialPass) {
         let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -656,11 +729,31 @@ impl DyeSpatialState {
         self.encode_pass(encoder, "dye_remap", &self.remap);
     }
 
-    /// G5: horizontal and vertical formation, then exact readout.
-    pub(super) fn encode_formation_readout(&self, encoder: &mut ObservedEncoder) {
+    pub(super) fn encode_formation(&self, encoder: &mut ObservedEncoder) {
         self.encode_pass(encoder, "dye_form_h", &self.form_h);
         self.encode_pass(encoder, "dye_form_v", &self.form_v);
+    }
+
+    pub(super) fn encode_readout(&self, encoder: &mut ObservedEncoder) {
         self.encode_pass(encoder, "dye_readout", &self.readout);
+    }
+
+    /// G5: horizontal and vertical formation, then exact density readout.
+    pub(super) fn encode_formation_readout(&self, encoder: &mut ObservedEncoder) {
+        self.encode_formation(encoder);
+        self.encode_readout(encoder);
+    }
+}
+
+impl SpatialPass {
+    pub(super) fn encode(&self, encoder: &mut ObservedEncoder) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("dye_response_readout"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline.pipeline);
+        pass.set_bind_group(0, &self.group, &[]);
+        dispatch_linear(&mut pass, self.items);
     }
 }
 
@@ -798,8 +891,11 @@ impl WgpuBackend {
         // The band must cover the complete configured output: three rows of
         // three pixels.
         let band = DyeBand {
+            output_x: 0,
+            output_cols: 3,
             output_y: 0,
             output_rows: 3,
+            readout_flags: 0,
             source_x: 0,
             source_y: 0,
             source_cols: 3,
@@ -872,8 +968,11 @@ impl WgpuBackend {
         // it after the base subtraction.
         let taps = vec![0.25, 0.5, 0.25];
         let band = DyeBand {
+            output_x: 0,
+            output_cols: 3,
             output_y: 0,
             output_rows: 3,
+            readout_flags: 0,
             source_x: 0,
             source_y: 0,
             source_cols: 1,
@@ -925,8 +1024,11 @@ impl WgpuBackend {
         // Subcell readout: a 1.5 cell footprint over constant cells must
         // keep the constant and the exact two-thirds/one-third split.
         let band = DyeBand {
+            output_x: 0,
+            output_cols: 3,
             output_y: 0,
             output_rows: 2,
+            readout_flags: 0,
             source_x: 0,
             source_y: 0,
             source_cols: 1,

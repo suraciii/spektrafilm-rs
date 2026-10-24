@@ -116,14 +116,10 @@ impl AdjustmentState {
         app.gui_state.sections["load_raw"] = self.raw_settings.clone();
         app.presets.state.applied = self.applied.clone();
         app.scan_for_print_snapshot = self.scan_for_print;
-        if app.input_rotation != self.rotation {
-            let turns = (self.rotation - app.input_rotation).rem_euclid(4);
-            if let Some(image) = &app.image {
-                app.image = Some(Arc::new(image.rotated_quarter_turns(turns)));
-                app.input_epoch = app.input_epoch.wrapping_add(1);
-                app.input_rotation = self.rotation;
-                app.refresh_input_viewer();
-            }
+        if app.input_rotation != self.rotation && app.image.is_some() {
+            app.input_epoch = app.input_epoch.wrapping_add(1);
+            app.input_rotation = self.rotation;
+            app.refresh_input_viewer();
         }
         app.viewer.set_input_display_source(
             &app.params.io.input_color_space,
@@ -930,7 +926,7 @@ mod tests {
     fn complete_state_preflight_failure_keeps_source_and_history_but_success_clears_it() {
         let (mut app, directory, ctx) = app();
         exposure(&mut app, &ctx, 1.0);
-        app.image = Some(Arc::new(ImageBuf::new(3, 2)));
+        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::new(3, 2))));
         let source = app.image.as_ref().unwrap().clone();
         app.image_path = Some(directory.path().join("missing.png"));
         let params = app.params.clone();
@@ -938,7 +934,7 @@ mod tests {
         let mut state = app.current_state().unwrap();
         state.sections["camera"]["exposure_compensation_ev"] = 2.0.into();
         assert!(app.apply_state(state).is_err());
-        assert!(Arc::ptr_eq(&source, app.image.as_ref().unwrap()));
+        assert!(source.same_source(app.image.as_ref().unwrap()));
         assert_eq!(app.params, params);
         assert_eq!(app.parameter_revision, revision);
         assert!(app.can_undo());
@@ -989,6 +985,8 @@ mod tests {
             request_id: 1,
             kind: RenderKind::Preview,
             animate: false,
+            backend_name: "CPU".into(),
+            rotation_quarter_turns: 0,
             collection_mode: CollectionMode::Off,
         };
         app.output_image = Some(Arc::new(ImageBuf::new(2, 1)));
@@ -1010,19 +1008,19 @@ mod tests {
     }
 
     #[test]
-    fn rotation_history_stores_only_orientation_and_restores_pixels_by_delta() {
+    fn rotation_history_preserves_source_and_restores_presentation_orientation() {
         let (mut app, _directory, ctx) = app();
         let image = ImageBuf::from_data(2, 1, vec![0.1, 0.2, 0.3, 0.7, 0.8, 0.9]);
-        app.image = Some(Arc::new(image.clone()));
+        app.image = Some(crate::render::InputImage::Host(Arc::new(image.clone())));
         app.reset_adjustment_history();
         app.begin_adjustment_frame(&ctx);
-        app.image = Some(Arc::new(image.rotated_quarter_turns(1)));
         app.input_rotation = 1;
+        app.refresh_input_viewer();
         app.input_epoch += 1;
         app.end_adjustment_frame(&ctx);
         let epoch = app.input_epoch;
         assert!(app.undo_adjustment());
-        let restored = app.image.as_ref().unwrap();
+        let restored = app.image.as_ref().unwrap().host_image().unwrap();
         assert_eq!((restored.width, restored.height), (2, 1));
         assert_eq!(restored.data, image.data);
         assert_eq!(app.input_rotation, 0);
@@ -1031,8 +1029,8 @@ mod tests {
         assert_eq!(app.input_rotation, 1);
         assert_eq!(
             (
-                app.image.as_ref().unwrap().width,
-                app.image.as_ref().unwrap().height
+                app.oriented_input.as_ref().unwrap().width(),
+                app.oriented_input.as_ref().unwrap().height()
             ),
             (1, 2)
         );

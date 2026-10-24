@@ -32,7 +32,7 @@ fn main(
     if (index >= width * p.dims.w) { return; }
     let px = index % width;
     let py = index / width;
-    let kx = px;
+    let kx = p.phase.z + px;
     let ky = p.tile.w + py;
     let ix0 = cell_window_start(
         kx, p.ratios.y, p.fracs2.x, p.fracs2.y,
@@ -59,8 +59,8 @@ fn main(
     // to the rectangle instead: the skipped cells contribute nothing.
     let lo_x = u32(max(0, inner_x - ix0));
     let lo_y = u32(max(0, inner_y - iy0));
-    let hi_x = min(span_x, u32(inner_x + i32(p.tile.y) - ix0));
-    let hi_y = min(span_y, u32(inner_y + i32(p.tile.z) - iy0));
+    let hi_x = min(span_x, u32(max(0, inner_x + i32(p.tile.y) - ix0)));
+    let hi_y = min(span_y, u32(max(0, inner_y + i32(p.tile.z) - iy0)));
     var acc = vec3<f32>(0.0);
     for (var sy = lo_y; sy < hi_y; sy = sy + 1u) {
         let j = iy0 + i32(sy);
@@ -81,8 +81,13 @@ fn main(
                 formed[src], formed[src + 1u], formed[src + 2u]);
         }
     }
-    let dst = ((p.tile.w + py) * width + px) * 3u;
-    output[dst] = acc.x - p.mins.x;
-    output[dst + 1u] = acc.y - p.mins.y;
-    output[dst + 2u] = acc.z - p.mins.z;
+    let dst = select(((p.tile.w + py) * p.phase.w + kx) * 3u,
+        index * 3u, (p.ratios.w & 1u) != 0u);
+    if ((p.ratios.w & 2u) != 0u) {
+        acc = acc + vec3<f32>(output[dst], output[dst + 1u], output[dst + 2u]);
+    }
+    if ((p.ratios.w & 4u) == 0u) { acc = acc - p.mins.xyz; }
+    output[dst] = acc.x;
+    output[dst + 1u] = acc.y;
+    output[dst + 2u] = acc.z;
 }

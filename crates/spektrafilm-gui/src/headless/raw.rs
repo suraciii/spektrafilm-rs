@@ -53,7 +53,7 @@ fn raw_import_through_the_app_sets_linear_aces_and_renders() {
     import_file(h, true);
 
     let image = h.state().image.as_ref().expect("RAW image loaded");
-    assert_eq!((image.width, image.height), (RAW_WIDTH, RAW_HEIGHT));
+    assert_eq!((image.width(), image.height()), (RAW_WIDTH, RAW_HEIGHT));
     assert_eq!(h.state().params.io.input_color_space, "ACES2065-1");
     assert!(!h.state().params.io.input_cctf_decoding);
     assert_eq!(
@@ -103,6 +103,121 @@ fn raw_import_through_the_app_sets_linear_aces_and_renders() {
     assert_eq!(saved["input_image"]["input_cctf_decoding"], false);
 }
 
+/// The GPU import/render/export entrypoints must keep the actual RAW source
+/// and accepted output on the device, not rebuild them from host RGB samples.
+#[cfg(feature = "gui-raw")]
+#[test]
+fn gpu_raw_import_preview_scan_and_export_reuse_retained_samples() {
+    let fixture = raw_fixture();
+    let _device = spektrafilm_gpu::test_support::device_lock();
+    let backend: Arc<dyn ComputeBackend> = Arc::new(
+        spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().expect("GPU adapter required"),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let state_path = deterministic_state(directory.path());
+    let browser_path = directory.path().join("browser.json");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1500.0, 1400.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            App::new_with_browser_path(backend, None, Some(state_path), None, browser_path, data_dir())
+        });
+    click(&mut h, "◀");
+    script(&mut h, chooser::Chooser::chooser_path(&fixture));
+    import_file(&mut h, true);
+    let source = h.state().image.clone().expect("GPU RAW import accepted");
+    assert!(source.host_image().is_none(), "GPU RAW must not retain decoded host RGB");
+    let crate::render::InputImage::Device(device_source) = &source else {
+        panic!("RAW source is not device-retained");
+    };
+    assert_eq!((device_source.width(), device_source.height()), (RAW_WIDTH, RAW_HEIGHT));
+    assert_eq!(h.state().params.io.input_color_space, "ACES2065-1");
+    assert!(!h.state().params.io.input_cctf_decoding);
+    // Auto preview is disabled by the deterministic state: import marks the
+    // input dirty without scheduling work. The explicit Preview below consumes
+    // that dirty state; waiting for !dirty here would never complete.
+    wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
+    h.state_mut().diagnostics.mode = spektrafilm_backend::telemetry::CollectionMode::Summary;
+    for button in ["PREVIEW", "SCAN"] {
+        let previous = h.state().output_retained.clone();
+        click(&mut h, button);
+        wait_until(&mut h, |a| {
+            !a.dirty && !a.force_preview && a.render_job.is_none()
+                && a.status.to_string().starts_with(if button == "SCAN" { "Scan ·" } else { "Preview ·" })
+                && a.output_retained.as_ref().is_some_and(|image| {
+                previous.as_ref().is_none_or(|old| {
+                    !Arc::ptr_eq(image.payload().unwrap(), old.payload().unwrap())
+                })
+            })
+        });
+        assert!(h.state().status.to_string().starts_with(if button == "SCAN" { "Scan ·" } else { "Preview ·" }), "{}", h.state().status);
+        assert!(h.state().output_image.is_none(), "GPU render must not publish a host compatibility raster");
+        assert!(h.state().output_histogram.is_some());
+        assert!(h.state().image.as_ref().unwrap().same_source(&source));
+        let output = h.state().output_retained.as_ref().unwrap();
+        let kind = if button == "SCAN" { "scan" } else { "preview" };
+        let report = assert_retained_gpu_report(
+            h.state(), &directory.path().join(format!("{kind}-report.json")), kind,
+            [output.width(), output.height()],
+        );
+        let simulation = report.phases.iter().find(|phase| phase.name == "simulation").unwrap();
+        assert_eq!(simulation.work.image_upload_count, Some(0), "RAW carrier is never reuploaded");
+        settle_animation(&mut h);
+    }
+    let scan = h.state().output_retained.clone().unwrap();
+    assert_eq!((scan.width(), scan.height()), (RAW_WIDTH, RAW_HEIGHT));
+    // Explicit test diagnostic boundary only: production viewing and Export
+    // must not materialize this full image. Freeze samples to detect mutation.
+    let accepted = scan.to_host(h.state().backend.as_ref()).unwrap();
+    assert!(accepted.data.iter().all(|value| value.is_finite()));
+    h.state_mut().viewer.set_zoom_percent(200.0);
+    settle_animation(&mut h);
+    assert!(h.state().viewer.observation().pixels.is_some());
+
+    let destination = directory.path().join("gpu-raw-export.tiff");
+    let mut options = h.state().export_options.clone();
+    options.backend = export::ExportBackend::Gpu;
+    options.format = export::ExportFormat::Tiff;
+    options.depth = BitDepth::ThirtyTwo;
+    options.saving_color_space = h.state().output_color_space.clone();
+    options.saving_cctf_encoding = h.state().output_cctf_encoding;
+    h.state_mut().export_options = options;
+    script(&mut h, chooser::Chooser::chooser_path(&destination));
+    open_export(&mut h);
+    assert!(h.state().export_dialog.is_open());
+    export_action(&mut h, "Export file…");
+    wait_until(&mut h, |a| a.export_job.is_none() && a.status.to_string().starts_with("Exported"));
+    assert_float_tiff(&destination);
+    assert_retained_gpu_report(
+        h.state(), &directory.path().join("export-report.json"), "export",
+        [RAW_WIDTH, RAW_HEIGHT],
+    );
+    let exported = image_io::load(&destination).unwrap().image;
+    assert_eq!((exported.width, exported.height), (RAW_WIDTH, RAW_HEIGHT));
+    assert_eq!(exported.data, accepted.data, "independent deterministic Export preserves the full Scan samples");
+    assert!(h.state().output_image.is_none());
+    assert!(h.state().image.as_ref().unwrap().same_source(&source));
+    assert!(Arc::ptr_eq(h.state().output_retained.as_ref().unwrap().payload().unwrap(), scan.payload().unwrap()));
+    assert_eq!(scan.to_host(h.state().backend.as_ref()).unwrap().data, accepted.data);
+
+    // A failed import is not allowed to replace either device-owned carrier.
+    let corrupt = directory.path().join("corrupt.KDC");
+    std::fs::write(&corrupt, b"not a raw file").unwrap();
+    let params = h.state().params.clone();
+    let input_epoch = h.state().input_epoch;
+    // Exercise the production operation after the chooser has returned its
+    // path. The successful import above covers the chooser; this failure
+    // assertion must not depend on sidebar scrolling/focus after Export.
+    h.state_mut().load_image_from_path(&corrupt);
+    assert!(h.state().status.to_string().starts_with("Load error:"), "{}", h.state().status);
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().input_epoch, input_epoch);
+    assert!(h.state().image.as_ref().unwrap().same_source(&source));
+    assert!(Arc::ptr_eq(h.state().output_retained.as_ref().unwrap().payload().unwrap(), scan.payload().unwrap()));
+    assert_eq!(scan.to_host(h.state().backend.as_ref()).unwrap().data, accepted.data);
+    eframe::App::on_exit(h.state_mut(), None);
+}
+
 #[test]
 fn raw_import_failure_keeps_the_previous_image_and_state() {
     let mut s = session();
@@ -117,7 +232,7 @@ fn raw_import_failure_keeps_the_previous_image_and_state() {
     script(h, chooser::Chooser::chooser_path(&corrupt));
     import_file(h, true);
     assert!(
-        Arc::ptr_eq(h.state().image.as_ref().unwrap(), &before),
+        h.state().image.as_ref().unwrap().same_source(&before),
         "a failed RAW import must retain the previous image"
     );
     assert_eq!(&h.state().params, &params_before);

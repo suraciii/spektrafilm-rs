@@ -49,7 +49,7 @@ fn switching_language_preserves_photographic_identity_and_bilingual_search() {
     assert_eq!(h.state().gui_state.sections, sections);
     assert_eq!(h.state().parameter_revision, revision);
     assert_eq!(h.state().input_epoch, input_epoch);
-    assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &input));
+    assert!(h.state().image.as_ref().unwrap().same_source(&input));
     assert!(h.state().render_job.is_none());
     language(h, LanguagePreference::English);
     assert!(h.query_by_label("Search controls").is_some());
@@ -589,7 +589,7 @@ fn raw_settings_draft_is_not_reprocessed_or_lost_by_language_switch() {
     let history = h.state().can_undo();
     language(h, LanguagePreference::SimplifiedChinese);
     assert_eq!(h.state().gui_state.sections["load_raw"], draft);
-    assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &source));
+    assert!(h.state().image.as_ref().unwrap().same_source(&source));
     assert_eq!(h.state().input_epoch, epoch);
     assert_eq!(h.state().parameter_revision, revision);
     assert_eq!(h.state().can_undo(), history);
@@ -743,6 +743,6 @@ fn invalid_calibration_state_keeps_accepted_photo_and_localizes_owned_validation
         assert!(!message.contains("must contain"), "{message}");
         assert_eq!(h.state().params, params);
         assert_eq!(h.state().parameter_revision, revision);
-        assert!(Arc::ptr_eq(h.state().image.as_ref().unwrap(), &source));
+        assert!(h.state().image.as_ref().unwrap().same_source(&source));
     }
 }

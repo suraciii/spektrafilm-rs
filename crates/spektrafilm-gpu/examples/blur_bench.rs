@@ -33,24 +33,34 @@ fn main() {
     let sigmas = [3.0_f32, 6.0, 12.0];
 
     // Warm up shader cache + driver.
-    let _ = backend.gaussian_blur(&img, 3.0);
-    let _ = backend.gaussian_blur_multi(&img, &sigmas);
+    backend
+        .gaussian_blur(&img, 3.0)
+        .expect("single-blur warm-up failed");
+    backend
+        .gaussian_blur_multi(&img, &sigmas)
+        .expect("multi-blur warm-up failed");
 
     println!("--- 6 MP, sigmas = {:?} ---", sigmas);
 
     for sigma in sigmas {
         time(&format!("single blur sigma={sigma:.0}"), || {
-            let _ = backend.gaussian_blur(&img, sigma);
+            backend
+                .gaussian_blur(&img, sigma)
+                .expect("single-blur benchmark failed");
         });
     }
 
     time("3 separate blurs (loop)", || {
         for &s in &sigmas {
-            let _ = backend.gaussian_blur(&img, s);
+            backend
+                .gaussian_blur(&img, s)
+                .expect("separate-blur benchmark failed");
         }
     });
 
     time("3 fused blurs (multi)", || {
-        let _ = backend.gaussian_blur_multi(&img, &sigmas);
+        backend
+            .gaussian_blur_multi(&img, &sigmas)
+            .expect("fused multi-blur benchmark failed");
     });
 }
