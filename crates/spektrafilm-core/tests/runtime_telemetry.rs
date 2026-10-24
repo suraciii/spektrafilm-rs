@@ -764,3 +764,110 @@ fn device_prepared_runtime_rejects_another_device_before_upload() {
             .is_some()
     );
 }
+
+#[test]
+fn standard_gpu_setup_report_persists_valid_hierarchy_and_actual_dispatches() {
+    use spektrafilm_backend::telemetry::{BackendSelected, Executor};
+    use spektrafilm_core::telemetry::{BackendRequested, Report};
+
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.scanner.scan_output = "negative_to_positive".into();
+    params.scanner.conversion_style = "standard".into();
+    params.scanner.operator.exposure_ev = 0.35;
+    params.scanner.operator.warmth_ev = -0.2;
+    params.scanner.operator.tint_ev = 0.1;
+    params.scanner.operator.contrast = 1.15;
+    params.io.output_color_space = "Display P3".into();
+    params.io.output_gamut_compress.algorithm = "off".into();
+    params.camera.auto_exposure = false;
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = true;
+    let runtime = Runtime::new_with_backend(
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),
+        params,
+        &data,
+        gpu.backend(),
+    )
+    .unwrap();
+    let (width, height) = (7, 6);
+    let image = ImageBuf::from_data(
+        width,
+        height,
+        (0..width * height * 3)
+            .map(|i| from_f64(0.03 + 0.8 * ((i * 37) % 101) as f64 / 100.0))
+            .collect(),
+    );
+    let unobserved = runtime.process(image.clone(), gpu.backend()).unwrap();
+
+    for mode in [CollectionMode::Summary, CollectionMode::GpuTiming] {
+        // Match the real diagnostics consumer hierarchy, not a standalone root
+        // context: operation -> attempt -> simulation -> stage -> batch -> pass.
+        let mut operation = Operation::new(OperationKind::Process, mode);
+        operation.set_backend_requested(BackendRequested::Wgpu);
+        operation.set_render_configuration(runtime.telemetry_configuration());
+        operation.set_input_dimensions(width, height);
+        let attempt = operation.attempt(1);
+        let simulation =
+            attempt
+                .context()
+                .scope("simulation", ObservationKind::Phase, Purpose::Image);
+        let actual = runtime
+            .process_observed(image.clone(), gpu.backend(), simulation.context())
+            .unwrap();
+        drop(simulation);
+        attempt.finish(Outcome::Succeeded);
+        let report = operation.finish(Outcome::Succeeded).unwrap();
+        report.validate().unwrap();
+        // Persistence validates the same tree again. This caught setup stages
+        // incorrectly parented beneath the outer film-chain Batch after pixels
+        // had already rendered successfully.
+        let decoded = Report::from_json(&report.to_json().unwrap()).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(
+            actual.data, unobserved.data,
+            "collection changed rendered pixels"
+        );
+        assert_eq!(
+            decoded.execution.backend_selected,
+            Some(BackendSelected::Wgpu)
+        );
+        assert_eq!(decoded.execution.path, Some(ExecutionPath::GpuResident));
+        let setup: Vec<_> = decoded
+            .stages
+            .iter()
+            .filter(|stage| stage.name == "standard_setup")
+            .collect();
+        assert_eq!(setup.len(), 1, "one complete-frame setup must be retained");
+        assert_eq!(setup[0].executor, Some(Executor::Gpu));
+        assert!(setup[0].complete);
+        assert!(
+            setup[0].work.dispatch_count.unwrap_or(0) > 0,
+            "setup must own real device dispatches"
+        );
+        assert!(setup[0].work.submit_count.unwrap_or(0) > 0);
+        assert_eq!(
+            setup[0].work.readback_count.unwrap_or(0),
+            0,
+            "setup statistics must stay on device"
+        );
+        let batch = decoded
+            .gpu_batches
+            .iter()
+            .find(|batch| batch.parent_id == setup[0].id)
+            .expect("actual setup dispatches have their own child batch");
+        assert!(batch.work.executed_pass_count.unwrap_or(0) > 0);
+        assert!(
+            !decoded
+                .stages
+                .iter()
+                .any(|stage| stage.purpose == Purpose::Image
+                    && matches!(stage.executor, Some(Executor::Cpu | Executor::Mixed))),
+            "selected standard scan must not perform CPU image arithmetic"
+        );
+    }
+}

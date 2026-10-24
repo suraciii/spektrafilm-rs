@@ -14,10 +14,10 @@ impl WgpuBackend {
         p: &spektrafilm_backend::FilmChainParams<'_>,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
         if !self.device.context.enabled() {
-            return self.run_film_chain_inner(p, input);
+            return self.run_film_chain_inner(p, input, &self.device.context);
         }
         let (backend, _batch) = self.observed_batch("film_chain");
-        backend.run_film_chain_inner(p, input)
+        backend.run_film_chain_inner(p, input, &self.device.context)
     }
 
     /// Compatibility entry point: the same resident chain, materialized once

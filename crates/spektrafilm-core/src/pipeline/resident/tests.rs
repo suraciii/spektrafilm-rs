@@ -1935,28 +1935,33 @@ fn retained_optical_grain_output_mix_replays_complete_geometry() {
             .collect(),
     );
     for engine in [GrainEngine::Dye, GrainEngine::Fotufilm] {
+        let mut params = dye_fence_params();
+        params.random_seed = 37;
+        params.film_render.grain.engine = engine;
+        params.camera.film_format_mm = 0.16;
+        params.film_render.grain.fotufilm.amount = 1.0;
+        params.io.input_cctf_decoding = true;
+        params.io.crop = true;
+        params.io.crop_center = [0.6, 0.4];
+        params.io.crop_size = [0.5, 0.5];
+        params.io.upscale_factor = 1.5;
+        // Isolate optical grain readout and its enclosing scanner field from
+        // unrelated full-source camera diffusion and viewing glare.
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.print_render.glare.active = false;
+        params.scanner.lens_blur = 0.6;
+        params.scanner.unsharp_mask = [0.0, 0.0];
+        params.enlarger.diffusion_filter.active = false;
+        let cpu =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir).unwrap();
+        let device = cpu
+            .clone()
+            .with_params_with_backend(params, gpu.backend())
+            .unwrap();
+        // Clones retain the same immutable fitted population and bank for
+        // full and preview geometry; raster size is not population identity.
         for preview in [None, Some(12)] {
-            let mut params = dye_fence_params();
-            params.random_seed = 37;
-            params.film_render.grain.engine = engine;
-            params.camera.film_format_mm = 0.16;
-            params.film_render.grain.fotufilm.amount = 1.0;
-            params.io.input_cctf_decoding = true;
-            params.io.crop = true;
-            params.io.crop_center = [0.6, 0.4];
-            params.io.crop_size = [0.5, 0.5];
-            params.io.upscale_factor = 1.5;
-            // Downstream optics require an enclosing field and deferred crop.
-            params.scanner.lens_blur = 0.6;
-            params.scanner.unsharp_mask = [0.0, 0.0];
-            params.enlarger.diffusion_filter.active = false;
-            let cpu =
-                Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir)
-                    .unwrap();
-            let device = cpu
-                .clone()
-                .with_params_with_backend(params, gpu.backend())
-                .unwrap();
             let oriented = image.rotated_quarter_turns(1);
             let working = preview.map_or_else(
                 || oriented.clone(),
@@ -2012,20 +2017,31 @@ fn retained_optical_grain_output_mix_replays_complete_geometry() {
                     let cpu_mixed = (1.0 - amount) * *source as f64 + amount * *cpu_full as f64;
                     assert!((expected.data[index] as f64 - cpu_mixed).abs() < 3e-6);
                 }
-                // Preserve the existing field-route mean/max budgets; the
-                // independent source algebra above has a tight sample bound.
                 let (mean, max) = parity_metrics(&actual, &expected);
-                assert!(
-                    mean < 5e-2 && max < 5e-1,
-                    "{engine:?} preview={preview:?} amount={amount}: mean={mean}, max={max}"
-                );
+                if engine == GrainEngine::Dye && amount != 0.0 {
+                    // CPU FastStatsRng uses SplitMix64/53-bit uniforms;
+                    // production dye_count.wgsl uses coordinate-mixed 32-bit
+                    // words/24-bit uniforms. Equal seeds do not pair draws.
+                    // specs/gpu-execution/design.md §Stochastic alignment
+                    // explicitly permits Dye's independent random words;
+                    // its law/formation certification remains separate.
+                    // This is a measurement, not numerical Dye acceptance.
+                    eprintln!(
+                        "unpaired Dye realization measurement preview={preview:?} amount={amount}: mean={mean}, max={max}; not an acceptance gate"
+                    );
+                } else {
+                    assert!(
+                        mean < 5e-3 && max < 5e-2,
+                        "{engine:?} preview={preview:?} amount={amount}: mean={mean}, max={max}"
+                    );
+                }
             }
         }
     }
 }
 
-/// Inverse scan already recovers developed CMY. Selecting an optical grain
-/// engine must not redevelop that density on any convert-film route.
+/// Inverse scan already recovers developed CMY. Fotufilm selection is inert
+/// there; active Dye rejects these routes before rendering on both executors.
 #[test]
 fn retained_convert_film_never_generates_dye_or_fotufilm_grain() {
     use crate::params::GrainEngine;
@@ -2070,11 +2086,50 @@ fn retained_convert_film_never_generates_dye_or_fotufilm_grain() {
                 .unwrap()
                 .to_host(gpu.backend())
                 .unwrap();
+            assert_eq!((cpu_off.width, cpu_off.height), (6, 9));
+            assert_eq!((gpu_off.width, gpu_off.height), (6, 9));
+            assert_eq!(gpu_off.data.len(), cpu_off.data.len());
+            let (mean, max) = parity_metrics(&gpu_off, &cpu_off);
+            assert!(
+                mean < 5e-3 && max < 5e-2,
+                "inactive {route} {engine:?}: mean={mean}, max={max}"
+            );
             params.film_render.grain.active = true;
             let cpu = cpu.with_params(params.clone()).unwrap();
             let device = device
                 .with_params_with_backend(params, gpu.backend())
                 .unwrap();
+            if engine == GrainEngine::Dye {
+                let expected = crate::stages::grain_v3::validate_supported(&cpu.film, &cpu.params)
+                    .unwrap_err();
+                assert!(
+                    expected.contains("film grain Dye: unsupported condition"),
+                    "{expected}"
+                );
+                assert_eq!(
+                    cpu.process(image.clone(), &CpuBackend).unwrap_err(),
+                    expected
+                );
+                let context = spektrafilm_backend::telemetry::ObservationContext::new(
+                    spektrafilm_backend::telemetry::CollectionMode::Summary,
+                );
+                let observed = spektrafilm_backend::bind_backend(gpu.backend(), context.clone());
+                assert_eq!(
+                    device
+                        .process_retained(
+                            &image,
+                            crate::pipeline::RetainedRender::FULL,
+                            observed.as_ref()
+                        )
+                        .unwrap_err(),
+                    expected
+                );
+                assert!(
+                    context.snapshot().observations.is_empty(),
+                    "unsupported Dye must fail before device work or host fallback"
+                );
+                continue;
+            }
             let cpu_on = cpu.process(image.clone(), &CpuBackend).unwrap();
             let gpu_on = device
                 .process_retained(&image, crate::pipeline::RetainedRender::FULL, gpu.backend())
@@ -2082,8 +2137,6 @@ fn retained_convert_film_never_generates_dye_or_fotufilm_grain() {
                 .unwrap()
                 .to_host(gpu.backend())
                 .unwrap();
-            assert_eq!((cpu_off.width, cpu_off.height), (6, 9));
-            assert_eq!((gpu_off.width, gpu_off.height), (6, 9));
             assert_eq!((cpu_on.width, cpu_on.height), (6, 9));
             assert_eq!((gpu_on.width, gpu_on.height), (6, 9));
             assert_eq!(
@@ -2098,7 +2151,7 @@ fn retained_convert_film_never_generates_dye_or_fotufilm_grain() {
             assert_eq!(gpu_on.data.len(), cpu_on.data.len());
             let (mean, max) = parity_metrics(&gpu_on, &cpu_on);
             assert!(
-                mean < 5e-2 && max < 5e-1,
+                mean < 5e-3 && max < 5e-2,
                 "{route} {engine:?}: mean={mean}, max={max}"
             );
         }
@@ -2151,7 +2204,7 @@ fn retained_inactive_optical_grain_keeps_ordinary_crop_and_rescale() {
             assert_eq!(actual.data.len(), expected.data.len());
             let (mean, max) = parity_metrics(&actual, &expected);
             assert!(
-                mean < 5e-2 && max < 5e-1,
+                mean < 5e-3 && max < 5e-2,
                 "{engine:?} scale={scale}: mean={mean}, max={max}"
             );
         }

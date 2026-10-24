@@ -53,25 +53,38 @@ impl ScanDensityState {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub(super) fn submit_setup(&self, backend: &WgpuBackend) -> Result<(), String> {
+        self.submit_setup_observed(backend, &backend.device.context)
+    }
+    pub(super) fn submit_setup_observed(
+        &self,
+        backend: &WgpuBackend,
+        context: &spektrafilm_backend::telemetry::ObservationContext,
+    ) -> Result<(), String> {
         let Some(setup) = &self.setup_pass else {
             return Ok(());
         };
         backend.check_cancelled()?;
-        if !backend.device.context.enabled() {
+        if !context.enabled() {
             return setup.submit(backend);
         }
-        let mut scope = backend.device.context.scope(
+        // Film-chain transport already has a batch. The caller supplies its
+        // Phase/Stage ancestor so this Stage is a sibling, never a batch child.
+        let mut scope = context.scope(
             "standard_setup",
             spektrafilm_backend::telemetry::ObservationKind::Stage,
-            backend.device.context.purpose(),
+            context.purpose(),
         );
         let mut observed = backend.derived_explicit();
         observed.explicit = backend.explicit;
         observed.context_mut(scope.context().clone());
-        // The rebound queue/encoders attribute actual submitted dispatches to
-        // this stage. A cache hit returns above without inventing execution.
-        let result = setup.submit(&observed);
+        // A dedicated child batch preserves actual pass timing and attributes
+        // submitted reduction dispatches to the real setup stage.
+        let result = {
+            let (batch, _guard) = observed.observed_batch("compute");
+            setup.submit(&batch)
+        };
         scope.set_complete(result.is_ok());
         result
     }

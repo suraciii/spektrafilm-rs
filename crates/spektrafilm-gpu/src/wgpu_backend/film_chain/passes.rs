@@ -728,6 +728,7 @@ impl WgpuBackend {
         &self,
         p: &spektrafilm_backend::FilmChainParams<'_>,
         input: &spektrafilm_backend::DeviceImage,
+        setup_context: &spektrafilm_backend::telemetry::ObservationContext,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
         self.check_cancelled()?;
         let t_start = std::time::Instant::now();
@@ -1085,7 +1086,7 @@ impl WgpuBackend {
             if readout.has_setup() {
                 stages.push(super::super::pipe::ChainStage::Device {
                     name: "standard_setup",
-                    execute: Box::new(move || readout.submit_setup(self)),
+                    execute: Box::new(move || readout.submit_setup_observed(self, setup_context)),
                 });
             }
             stages.push(super::super::pipe::ChainStage::Device {
