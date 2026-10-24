@@ -97,6 +97,62 @@ fn build() -> Pipeline {
 }
 
 #[test]
+fn input_preparation_and_route_changes_preserve_pixels_and_material_calibration() {
+    let base = build();
+    let mut params = base.params.clone();
+    params.workflow.route = "input".into();
+    params.film_render.grain.active = false;
+    params.print_render.glare.active = false;
+    params.camera.auto_exposure = false;
+    params.cmyk.active = false;
+    params.io.input_color_space = "ACES2065-1".into();
+    params.io.output_color_space = "ACES2065-1".into();
+    params.io.input_cctf_decoding = false;
+    params.io.output_cctf_encoding = false;
+    let image = ImageBuf::from_data(
+        4,
+        3,
+        (0..36).map(|i| from_f64(0.05 + i as f64 / 100.0)).collect(),
+    );
+    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let input = Pipeline::new_with_spectral(
+        (*base.original_film).clone(),
+        (*base.original_print).clone(),
+        params.clone(),
+        &data_dir(),
+    )
+    .unwrap();
+    assert!(input.tc_lut.is_none() && input.prepared_tc_lut.is_none());
+    assert!(input.mallett_core.is_none());
+    let output = input.process(image.clone(), &backend).unwrap();
+    for (actual, expected) in output.data.iter().zip(&image.data) {
+        assert!((to_f64(*actual) - to_f64(*expected)).abs() < 1e-6);
+    }
+
+    params.camera.filter_uv = [0.5, 415.0, 9.0];
+    let input = input.with_params(params.clone()).unwrap();
+    assert!(input.tc_lut.is_none() && input.prepared_tc_lut.is_none());
+    params.workflow.route = base.params.workflow.route.clone();
+    let film = input.with_params(params.clone()).unwrap();
+    assert!(film.tc_lut.is_some());
+    let fresh = Pipeline::new_with_spectral(
+        (*base.original_film).clone(),
+        (*base.original_print).clone(),
+        params.clone(),
+        &data_dir(),
+    )
+    .unwrap();
+    assert_eq!(
+        film.process(image.clone(), &backend).unwrap().data,
+        fresh.process(image.clone(), &backend).unwrap().data,
+    );
+    params.workflow.route = "input".into();
+    let input = film.with_params(params).unwrap();
+    assert!(input.tc_lut.is_none() && input.prepared_tc_lut.is_none());
+    assert_eq!(input.process(image, &backend).unwrap().data, output.data);
+}
+
+#[test]
 fn input_route_preserves_requested_crop_pixels_without_exposure() {
     let mut pipeline = build();
     pipeline.params.workflow.route = "input".into();

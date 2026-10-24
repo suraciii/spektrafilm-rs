@@ -99,12 +99,38 @@ impl DeviceFitEntry {
     }
 }
 
+/// Raw host uploads are independent of viewport geometry and viewing transforms.
+/// Each layer owns only its current source; replacement releases the old upload.
+struct DeviceSourceEntry {
+    source: Arc<ImageBuf>,
+    backend: Arc<dyn ComputeBackend>,
+    device_id: Option<u64>,
+    space: Option<String>,
+    encoded: bool,
+    image: spektrafilm_backend::DeviceImage,
+}
+impl DeviceSourceEntry {
+    fn matches(
+        &self,
+        source: &Arc<ImageBuf>,
+        backend: &Arc<dyn ComputeBackend>,
+        metadata: &DisplaySource,
+    ) -> bool {
+        Arc::ptr_eq(&self.source, source)
+            && Arc::ptr_eq(&self.backend, backend)
+            && self.device_id == backend.preparation_device_id()
+            && self.space == metadata.space
+            && self.encoded == metadata.encoded
+    }
+}
+
 #[derive(Default)]
 struct CompositionCache {
     paper: Option<DisplayRaster>,
     polaroid: Option<(DisplayRaster, PolaroidState)>,
     fit: [Option<FitCacheEntry>; 2],
     device_fit: [Option<DeviceFitEntry>; 4],
+    device_source: [Option<DeviceSourceEntry>; 2],
     full: TransformCache,
     #[cfg(test)]
     pause: Option<Arc<CompositionPause>>,
@@ -130,10 +156,35 @@ struct CompositionPause {
     finished: std::sync::mpsc::Sender<(u64, Option<String>)>,
 }
 
+#[cfg(test)]
+struct InspectionPause {
+    started: std::sync::mpsc::Sender<()>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+pub(super) struct InspectionRequest {
+    pub(super) generation: u64,
+    pub(super) image: spektrafilm_backend::DeviceImage,
+    pub(super) x: u32,
+    pub(super) y: u32,
+    pub(super) backend: Arc<dyn ComputeBackend>,
+    pub(super) ctx: egui::Context,
+}
+
+pub(super) struct InspectionResponse {
+    pub(super) generation: u64,
+    pub(super) rgb: Option<[f64; 3]>,
+}
+
 struct WorkerState {
     request: Option<DisplayRequest>,
     response: Option<DisplayResponse>,
     active_cancel: Option<Arc<AtomicBool>>,
+    inspection_request: Option<InspectionRequest>,
+    inspection_response: Option<InspectionResponse>,
+    active_inspection_cancel: Option<Arc<AtomicBool>>,
+    #[cfg(test)]
+    inspection_pause: Option<InspectionPause>,
     stopping: bool,
 }
 pub(super) struct DisplayWorker {
@@ -159,6 +210,11 @@ impl DisplayWorker {
                 request: None,
                 response: None,
                 active_cancel: None,
+                inspection_request: None,
+                inspection_response: None,
+                active_inspection_cancel: None,
+                #[cfg(test)]
+                inspection_pause: None,
                 stopping: false,
             }),
             Condvar::new(),
@@ -178,11 +234,54 @@ impl DisplayWorker {
                     let (request, cancellation) = {
                         let (lock, wake) = &*shared;
                         let mut state = lock.lock();
-                        while state.request.is_none() && !state.stopping {
+                        while state.request.is_none()
+                            && state.inspection_request.is_none()
+                            && !state.stopping
+                        {
                             wake.wait(&mut state);
                         }
                         if state.stopping {
                             break;
+                        }
+                        // Hover has its own latest-only slot: pointer movement
+                        // must not cancel the pending presentation.
+                        if state.request.is_none() {
+                            let request = state.inspection_request.take().unwrap();
+                            let cancellation = Arc::new(AtomicBool::new(false));
+                            state.active_inspection_cancel = Some(cancellation.clone());
+                            #[cfg(test)]
+                            let pause = state.inspection_pause.take();
+                            drop(state);
+                            #[cfg(test)]
+                            if let Some(pause) = pause {
+                                let _ = pause.started.send(());
+                                let _ = pause.release.lock().recv();
+                            }
+                            let cancellable = request
+                                .backend
+                                .with_cancellation(Some(cancellation.clone()));
+                            let backend =
+                                cancellable.as_deref().unwrap_or(request.backend.as_ref());
+                            let rgb = backend
+                                .inspect_retained_pixel(&request.image, request.x, request.y)
+                                .ok()
+                                .map(|rgb| rgb.map(f64::from));
+                            let mut state = lock.lock();
+                            state.active_inspection_cancel = None;
+                            if state.stopping {
+                                break;
+                            }
+                            if state.inspection_request.is_none()
+                                && !cancellation.load(Ordering::Relaxed)
+                            {
+                                state.inspection_response = Some(InspectionResponse {
+                                    generation: request.generation,
+                                    rgb,
+                                });
+                                drop(state);
+                                request.ctx.request_repaint();
+                            }
+                            continue;
                         }
                         let cancellation = Arc::new(AtomicBool::new(false));
                         state.active_cancel = Some(cancellation.clone());
@@ -236,6 +335,20 @@ impl DisplayWorker {
         let state = self.state.0.lock();
         state.request.is_some() || state.active_cancel.is_some() || state.response.is_some()
     }
+    /// Replace or clear hover work without disturbing composition.
+    pub(super) fn inspect(&self, request: Option<InspectionRequest>) {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock();
+        if let Some(cancellation) = &state.active_inspection_cancel {
+            cancellation.store(true, Ordering::Relaxed);
+        }
+        state.inspection_request = request;
+        state.inspection_response = None;
+        wake.notify_one();
+    }
+    pub(super) fn take_inspection(&self) -> Option<InspectionResponse> {
+        self.state.0.lock().inspection_response.take()
+    }
 }
 impl Drop for DisplayWorker {
     fn drop(&mut self) {
@@ -244,9 +357,14 @@ impl Drop for DisplayWorker {
         if let Some(cancellation) = &state.active_cancel {
             cancellation.store(true, Ordering::Relaxed);
         }
+        if let Some(cancellation) = &state.active_inspection_cancel {
+            cancellation.store(true, Ordering::Relaxed);
+        }
         state.stopping = true;
         state.request = None;
         state.response = None;
+        state.inspection_request = None;
+        state.inspection_response = None;
         wake.notify_one();
         drop(state);
         if let Some(thread) = self.thread.take() {
@@ -825,27 +943,43 @@ fn compose_display_device(
                 retained.clone()
             } else {
                 let source = source.ok_or("full-source viewer has no accepted source")?;
-                let space = spektrafilm_math::colorspace::resolve(
-                    metadata
-                        .space
-                        .as_deref()
-                        .ok_or("viewer source has no color space")?,
-                )?;
-                backend.retain_image(
-                    source,
-                    &spektrafilm_backend::RetainedImageMeta {
-                        width: source.width,
-                        height: source.height,
-                        domain: if metadata.encoded {
-                            spektrafilm_backend::SampleDomain::Encoded
-                        } else {
-                            spektrafilm_backend::SampleDomain::Linear
+                let slot =
+                    &mut cache.device_source[usize::from(request.layer == ViewLayer::Output)];
+                if !slot
+                    .as_ref()
+                    .is_some_and(|entry| entry.matches(source, &request.backend, metadata))
+                {
+                    let space = spektrafilm_math::colorspace::resolve(
+                        metadata
+                            .space
+                            .as_deref()
+                            .ok_or("viewer source has no color space")?,
+                    )?;
+                    let image = backend.retain_image(
+                        source,
+                        &spektrafilm_backend::RetainedImageMeta {
+                            width: source.width,
+                            height: source.height,
+                            domain: if metadata.encoded {
+                                spektrafilm_backend::SampleDomain::Encoded
+                            } else {
+                                spektrafilm_backend::SampleDomain::Linear
+                            },
+                            precision: spektrafilm_backend::Precision::host(),
+                            space,
+                            pixel_pitch_um: None,
                         },
-                        precision: spektrafilm_backend::Precision::host(),
-                        space,
-                        pixel_pitch_um: None,
-                    },
-                )?
+                    )?;
+                    *slot = Some(DeviceSourceEntry {
+                        source: source.clone(),
+                        backend: request.backend.clone(),
+                        device_id: request.backend.preparation_device_id(),
+                        space: metadata.space.clone(),
+                        encoded: metadata.encoded,
+                        image,
+                    });
+                }
+                slot.as_ref().expect("full source uploaded").image.clone()
             };
             // Pointwise viewing transform before interpolation, exactly as the
             // CPU full-source tap cache. Same-size resampling is an identity.
@@ -1075,6 +1209,90 @@ mod tests {
             ctx: egui::Context::default(),
             frame: 0,
         }
+    }
+
+    #[test]
+    fn full_source_upload_survives_pan_and_view_transform_but_not_source_or_interpretation() {
+        use spektrafilm_backend::DeviceImagePayload;
+        use std::sync::Weak;
+
+        fn raw(cache: &CompositionCache) -> Weak<dyn DeviceImagePayload> {
+            Arc::downgrade(
+                cache.device_source[1]
+                    .as_ref()
+                    .unwrap()
+                    .image
+                    .payload()
+                    .unwrap(),
+            )
+        }
+        fn transformed(cache: &CompositionCache) -> Weak<dyn DeviceImagePayload> {
+            Arc::downgrade(
+                cache.device_fit[3]
+                    .as_ref()
+                    .unwrap()
+                    .raster
+                    .retained
+                    .as_ref()
+                    .unwrap()
+                    .payload()
+                    .unwrap(),
+            )
+        }
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let backend: Arc<dyn ComputeBackend> = Arc::new(gpu.derived_explicit());
+        let mut current = request(1);
+        current.backend = backend;
+        current.max_size = 4;
+        current.frame = 10;
+        let mut cache = CompositionCache::default();
+        let first = compose_display(current.clone(), &mut cache);
+        assert!(first.error.is_none(), "{:?}", first.error);
+        let uploaded = raw(&cache);
+        let viewed = transformed(&cache);
+
+        current.image_rect = current.image_rect.translate(Vec2::new(1.0, 0.0));
+        let panned = compose_display(current.clone(), &mut cache);
+        assert!(panned.error.is_none(), "{:?}", panned.error);
+        assert!(std::sync::Weak::ptr_eq(&uploaded, &raw(&cache)));
+        assert!(std::sync::Weak::ptr_eq(&viewed, &transformed(&cache)));
+        let mut host = current.clone();
+        host.backend = Arc::new(spektrafilm_backend::cpu_backend::CpuBackend);
+        let expected = compose_display(host, &mut CompositionCache::default());
+        assert_eq!(panned.image.pixels, expected.image.pixels);
+
+        current.metadata.transform = true;
+        let response = compose_display(current.clone(), &mut cache);
+        assert!(response.error.is_none(), "{:?}", response.error);
+        assert!(std::sync::Weak::ptr_eq(&uploaded, &raw(&cache)));
+        assert!(!std::sync::Weak::ptr_eq(&viewed, &transformed(&cache)));
+
+        current.metadata.encoded = false;
+        let interpreted = compose_display(current.clone(), &mut cache);
+        assert!(interpreted.error.is_none(), "{:?}", interpreted.error);
+        assert!(
+            uploaded.upgrade().is_none(),
+            "interpretation replaces the upload"
+        );
+        let old = raw(&cache);
+        current.source = Some(Arc::new((**current.source.as_ref().unwrap()).clone()));
+        let replaced = compose_display(current.clone(), &mut cache);
+        assert!(replaced.error.is_none(), "{:?}", replaced.error);
+        assert!(
+            old.upgrade().is_none(),
+            "source replacement releases old device images"
+        );
+        assert_eq!(interpreted.image.pixels, replaced.image.pixels);
+
+        let old = raw(&cache);
+        current.backend = Arc::new(gpu.derived_explicit());
+        let rebound = compose_display(current, &mut cache);
+        assert!(rebound.error.is_none(), "{:?}", rebound.error);
+        assert!(
+            old.upgrade().is_none(),
+            "backend replacement invalidates the upload"
+        );
+        assert_eq!(replaced.image.pixels, rebound.image.pixels);
     }
 
     #[test]
@@ -1706,5 +1924,162 @@ mod shutdown_tests {
             );
             dropped.join().unwrap();
         });
+    }
+}
+
+#[cfg(test)]
+mod inspection_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn image(backend: &dyn ComputeBackend, value: f64) -> spektrafilm_backend::DeviceImage {
+        backend
+            .retain_image(
+                &ImageBuf::from_data(
+                    2,
+                    1,
+                    vec![
+                        value as _, 1.5 as _, -0.25 as _, 0.75 as _, 0.5 as _, value as _,
+                    ],
+                ),
+                &spektrafilm_backend::RetainedImageMeta {
+                    width: 2,
+                    height: 1,
+                    domain: spektrafilm_backend::SampleDomain::Linear,
+                    precision: spektrafilm_backend::Precision::host(),
+                    space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+                    pixel_pitch_um: None,
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn inspection_worker_coalesces_latest_source_and_coordinate_without_cancelling_composition() {
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let backend: Arc<dyn ComputeBackend> = Arc::new(gpu.derived_explicit());
+        let original = image(backend.as_ref(), 0.0);
+        let replacement = image(backend.as_ref(), 1.0);
+        let worker = DisplayWorker::new();
+        let (started, ready) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        worker.state.0.lock().inspection_pause = Some(InspectionPause {
+            started,
+            release: Mutex::new(released),
+        });
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput::default(), |_| {});
+        }
+        let (repaint, repainted) = std::sync::mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = repaint.send(());
+        });
+        worker.inspect(Some(InspectionRequest {
+            generation: 1,
+            image: original,
+            x: 0,
+            y: 0,
+            backend: backend.clone(),
+            ctx: ctx.clone(),
+        }));
+        ready
+            .recv_timeout(Duration::from_secs(30))
+            .expect("inspection started off thread");
+        let cancellation = worker
+            .state
+            .0
+            .lock()
+            .active_inspection_cancel
+            .clone()
+            .unwrap();
+        worker.submit(super::tests::request(99));
+        for generation in 2..=21 {
+            worker.inspect(Some(InspectionRequest {
+                generation,
+                image: replacement.clone(),
+                x: (generation % 2) as u32,
+                y: 0,
+                backend: backend.clone(),
+                ctx: ctx.clone(),
+            }));
+        }
+        let state = worker.state.0.lock();
+        let pending = state.inspection_request.as_ref().unwrap();
+        let latest = pending.generation == 21
+            && pending.x == 1
+            && Arc::ptr_eq(
+                pending.image.payload().unwrap(),
+                replacement.payload().unwrap(),
+            );
+        let composition_pending = state.request.as_ref().is_some_and(|r| r.generation == 99);
+        let cancelled = cancellation.load(Ordering::Relaxed);
+        drop(state);
+        release.send(()).unwrap();
+        assert!(latest, "only the latest hover may remain pending");
+        assert!(composition_pending, "hover must preserve composition work");
+        assert!(cancelled, "movement must cancel active readback work");
+        repainted
+            .recv_timeout(Duration::from_secs(30))
+            .expect("latest hover repaint");
+        let response = worker.take_inspection().expect("latest hover published");
+        assert_eq!(response.generation, 21);
+        assert_eq!(response.rgb, Some([0.75, 0.5, 1.0]));
+        let composition = worker
+            .take_response()
+            .expect("composition was not superseded by hover");
+        assert_eq!(composition.generation, 99);
+        assert!(composition.error.is_none());
+        worker.inspect(None);
+        assert!(worker.take_inspection().is_none());
+    }
+
+    #[test]
+    fn viewer_drop_cancels_active_inspection_before_joining() {
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let backend: Arc<dyn ComputeBackend> = Arc::new(gpu.derived_explicit());
+        let retained = image(backend.as_ref(), 0.5);
+        let worker = DisplayWorker::new();
+        let (started, ready) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        worker.state.0.lock().inspection_pause = Some(InspectionPause {
+            started,
+            release: Mutex::new(released),
+        });
+        worker.inspect(Some(InspectionRequest {
+            generation: 1,
+            image: retained.clone(),
+            x: 0,
+            y: 0,
+            backend: backend.clone(),
+            ctx: egui::Context::default(),
+        }));
+        ready
+            .recv_timeout(Duration::from_secs(30))
+            .expect("inspection started");
+        let state = worker.state.clone();
+        let cancellation = state.0.lock().active_inspection_cancel.clone().unwrap();
+        std::thread::scope(|scope| {
+            let dropped = scope.spawn(move || drop(worker));
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut locked = state.0.lock();
+            while !locked.stopping {
+                let remaining = deadline
+                    .checked_duration_since(Instant::now())
+                    .expect("drop must signal inspection shutdown");
+                state.1.wait_for(&mut locked, remaining);
+            }
+            let cancelled = cancellation.load(Ordering::Relaxed);
+            drop(locked);
+            release.send(()).unwrap();
+            assert!(cancelled, "drop must cancel inspection before joining");
+            dropped.join().unwrap();
+        });
+        assert!(state.0.lock().inspection_response.is_none());
+        assert_eq!(
+            backend.inspect_retained_pixel(&retained, 0, 0).unwrap(),
+            [0.5, 1.5, -0.25],
+            "shutdown cancellation must not poison the shared backend",
+        );
     }
 }

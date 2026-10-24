@@ -11,7 +11,10 @@ use std::time::Duration;
 #[cfg(windows)]
 use super::colortransform::discover_display_profile;
 use super::raster::{DisplayRaster, Interpolation};
-use super::worker::{DisplayRequest, DisplaySource, DisplayWorker, PreparedDisplay};
+use super::worker::{
+    DisplayRequest, DisplaySource, DisplayWorker, InspectionRequest, InspectionResponse,
+    PreparedDisplay,
+};
 use super::{ANIMATION_MAX_PIXELS, DisplaySettings, INTERPOLATIONS, ViewLayer};
 /// [width,height], with a common long edge of one. The output is fitted into
 /// this input bounding box rather than independently normalized.
@@ -56,6 +59,61 @@ pub struct PixelInspection {
     pub rgb: [f64; 3],
 }
 
+struct InspectionTarget {
+    image: spektrafilm_backend::DeviceImage,
+    layer: ViewLayer,
+    x: u32,
+    y: u32,
+}
+impl InspectionTarget {
+    fn matches(&self, other: &Self) -> bool {
+        self.layer == other.layer
+            && self.x == other.x
+            && self.y == other.y
+            && self
+                .image
+                .payload()
+                .zip(other.image.payload())
+                .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+    }
+}
+
+#[derive(Default)]
+struct InspectionState {
+    target: Option<InspectionTarget>,
+    generation: u64,
+    value: Option<PixelInspection>,
+}
+impl InspectionState {
+    fn set_target(&mut self, target: Option<InspectionTarget>) -> bool {
+        let unchanged = match (&self.target, &target) {
+            (Some(old), Some(new)) => old.matches(new),
+            (None, None) => true,
+            _ => false,
+        };
+        if unchanged {
+            return false;
+        }
+        self.target = target;
+        self.generation = self.generation.wrapping_add(1);
+        self.value = None;
+        true
+    }
+
+    fn accept(&mut self, response: InspectionResponse) {
+        if response.generation == self.generation
+            && let Some(target) = self.target.as_ref()
+        {
+            self.value = response.rgb.map(|rgb| PixelInspection {
+                layer: target.layer,
+                x: target.x,
+                y: target.y,
+                rgb,
+            });
+        }
+    }
+}
+
 struct Transition {
     start: f64,
     frame: usize,
@@ -95,6 +153,7 @@ pub struct Viewer {
     marquee: Option<(Pos2, Pos2)>,
     revision: u64,
     worker: DisplayWorker,
+    inspection: InspectionState,
     /// Compute backend for the viewer's resample and display transform.
     /// `None` keeps the host reference implementation, which is the same
     /// fallback a backend reports when it has no device path.
@@ -118,6 +177,30 @@ pub(crate) struct ViewerObservation {
 }
 
 impl Viewer {
+    fn inspect_retained(
+        &mut self,
+        target: Option<InspectionTarget>,
+        ctx: &egui::Context,
+    ) -> Option<PixelInspection> {
+        if self.inspection.set_target(target) {
+            let request = self.inspection.target.as_ref().and_then(|target| {
+                self.backend.as_ref().map(|backend| InspectionRequest {
+                    generation: self.inspection.generation,
+                    image: target.image.clone(),
+                    x: target.x,
+                    y: target.y,
+                    backend: backend.clone(),
+                    ctx: ctx.clone(),
+                })
+            });
+            self.worker.inspect(request);
+        }
+        if let Some(response) = self.worker.take_inspection() {
+            self.inspection.accept(response);
+        }
+        self.inspection.value
+    }
+
     #[cfg(test)]
     pub(crate) fn observation(&self) -> ViewerObservation {
         let (viewport, image_rect, interpolation, inspection) =
@@ -843,45 +926,45 @@ impl Viewer {
             ViewLayer::Output => output_float,
             ViewLayer::PaperBack => None,
         };
-        let inspection = response
+        let mut host_inspection = None;
+        let target = response
             .hover_pos()
             .filter(|p| super::worker::contains_half_open(image_rect, *p))
             .and_then(|p| {
-                if let Some(source) = source {
-                    let uv = (p - image_rect.min) / image_rect.size();
-                    let x = ((uv.x * source.width as f32).floor().max(0.0) as u32)
-                        .min(source.width.saturating_sub(1));
-                    let y = ((uv.y * source.height as f32).floor().max(0.0) as u32)
-                        .min(source.height.saturating_sub(1));
-                    Some(PixelInspection {
+                let image = match layer {
+                    ViewLayer::Input => self.retained_input.as_ref(),
+                    ViewLayer::Output => self.retained_output.as_ref(),
+                    ViewLayer::PaperBack => None,
+                };
+                let host = source
+                    .map(Arc::as_ref)
+                    .or_else(|| image.and_then(|image| image.host_image()));
+                let size = host
+                    .map(|host| [host.width, host.height])
+                    .or_else(|| image.map(|image| [image.width(), image.height()]))?;
+                let uv = (p - image_rect.min) / image_rect.size();
+                let x = ((uv.x * size[0] as f32).floor().max(0.0) as u32)
+                    .min(size[0].saturating_sub(1));
+                let y = ((uv.y * size[1] as f32).floor().max(0.0) as u32)
+                    .min(size[1].saturating_sub(1));
+                if let Some(host) = host {
+                    host_inspection = Some(PixelInspection {
                         layer,
                         x,
                         y,
-                        rgb: source.get(x, y).map(|v| v as f64),
-                    })
+                        rgb: host.get(x, y).map(|v| v as f64),
+                    });
+                    None
                 } else {
-                    let image = match layer {
-                        ViewLayer::Input => self.retained_input.as_ref(),
-                        ViewLayer::Output => self.retained_output.as_ref(),
-                        ViewLayer::PaperBack => None,
-                    }?;
-                    let backend = self.backend.as_ref()?;
-                    let uv = (p - image_rect.min) / image_rect.size();
-                    let x = ((uv.x * image.width() as f32).floor().max(0.0) as u32)
-                        .min(image.width().saturating_sub(1));
-                    let y = ((uv.y * image.height() as f32).floor().max(0.0) as u32)
-                        .min(image.height().saturating_sub(1));
-                    backend
-                        .inspect_retained_pixel(image, x, y)
-                        .ok()
-                        .map(|rgb| PixelInspection {
-                            layer,
-                            x,
-                            y,
-                            rgb: rgb.map(f64::from),
-                        })
+                    Some(InspectionTarget {
+                        image: image?.clone(),
+                        layer,
+                        x,
+                        y,
+                    })
                 }
             });
+        let inspection = self.inspect_retained(target, ui.ctx()).or(host_inspection);
         #[cfg(test)]
         {
             self.observed_geometry = Some((rect, image_rect, interpolation, inspection));
@@ -942,6 +1025,135 @@ mod tests {
     use super::super::raster::capped_raster;
     use super::*;
     use spektrafilm_backend::cpu_backend::CpuBackend;
+
+    #[test]
+    fn retained_hover_reuses_raw_values_and_rejects_stale_movement_layer_and_source() {
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let backend: Arc<dyn ComputeBackend> = Arc::new(gpu.derived_explicit());
+        let meta = spektrafilm_backend::RetainedImageMeta {
+            width: 2,
+            height: 1,
+            domain: spektrafilm_backend::SampleDomain::Linear,
+            precision: spektrafilm_backend::Precision::host(),
+            space: spektrafilm_math::colorspace::resolve("Display P3").unwrap(),
+            pixel_pitch_um: None,
+        };
+        let source = ImageBuf::from_data(
+            2,
+            1,
+            vec![
+                -0.25 as _, 1.5 as _, 0.5 as _, 0.75 as _, 0.0 as _, 1.0 as _,
+            ],
+        );
+        let image = backend.retain_image(&source, &meta).unwrap();
+        let replacement = backend.retain_image(&source, &meta).unwrap();
+        let mut viewer = Viewer::with_backend(backend);
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput::default(), |_| {});
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let target = |image: &spektrafilm_backend::DeviceImage, layer, x| InspectionTarget {
+            image: image.clone(),
+            layer,
+            x,
+            y: 0,
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let inspected = loop {
+            if let Some(value) =
+                viewer.inspect_retained(Some(target(&image, ViewLayer::Output, 0)), &ctx)
+            {
+                break value;
+            }
+            rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("retained hover worker repaint");
+        };
+        assert_eq!(
+            inspected.rgb,
+            [-0.25, 1.5, 0.5],
+            "raw, not display-transformed RGB"
+        );
+        let accepted_generation = viewer.inspection.generation;
+        for _ in 0..3 {
+            let reused = viewer
+                .inspect_retained(Some(target(&image, ViewLayer::Output, 0)), &ctx)
+                .unwrap();
+            assert_eq!(reused.rgb, inspected.rgb);
+            assert_eq!(viewer.inspection.generation, accepted_generation);
+        }
+
+        let mut stale_generation = accepted_generation;
+        for changed in [
+            Some(target(&image, ViewLayer::Output, 1)),
+            Some(target(&replacement, ViewLayer::Output, 1)),
+            Some(target(&replacement, ViewLayer::Input, 1)),
+            None,
+        ] {
+            assert!(viewer.inspection.set_target(changed));
+            assert!(viewer.inspection.value.is_none());
+            viewer.inspection.accept(InspectionResponse {
+                generation: stale_generation,
+                rgb: Some(inspected.rgb),
+            });
+            assert!(
+                viewer.inspection.value.is_none(),
+                "stale hover must stay hidden"
+            );
+            stale_generation = viewer.inspection.generation;
+        }
+        viewer.inspection.accept(InspectionResponse {
+            generation: stale_generation,
+            rgb: Some(inspected.rgb),
+        });
+        assert!(
+            viewer.inspection.value.is_none(),
+            "leaving the image clears inspection"
+        );
+    }
+
+    #[test]
+    fn host_carrier_hover_looks_up_raw_samples_without_a_backend_readback() {
+        let source = ImageBuf::from_data(1, 1, vec![-0.25 as _, 1.5 as _, 0.5 as _]);
+        let image = spektrafilm_backend::DeviceImage::host(
+            source.clone(),
+            spektrafilm_backend::RetainedImageMeta {
+                width: 1,
+                height: 1,
+                domain: spektrafilm_backend::SampleDomain::Linear,
+                precision: spektrafilm_backend::Precision::host(),
+                space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+                pixel_pitch_um: None,
+            },
+        );
+        let mut viewer = Viewer::with_backend(Arc::new(CpuBackend));
+        viewer.set_output(capped_raster(&source, 1).unwrap(), [1, 1], 0.0, false);
+        viewer.set_retained_output(Some(image));
+        let ctx = egui::Context::default();
+        let mut hover = None;
+        for _ in 0..2 {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(64.0))),
+                    events: hover.map(egui::Event::PointerMoved).into_iter().collect(),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        viewer.show(ui, None, None);
+                    });
+                },
+            );
+            hover = Some(viewer.observation().image_rect.center());
+        }
+        let inspected = viewer.observation().inspection.expect("host carrier hover");
+        assert_eq!(inspected.rgb, [-0.25, 1.5, 0.5]);
+        assert!(viewer.inspection.target.is_none());
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn transform_change_updates_the_next_crossfade_at_exact_zoom() {

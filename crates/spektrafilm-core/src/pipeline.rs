@@ -93,7 +93,7 @@ pub struct Pipeline {
     prepared_tc_lut: Option<spektrafilm_backend::PreparedTable>,
     /// Mallett2019 reflectance-basis core matrix (linear-sRGB → raw), when that
     /// upsampler is selected instead of the hanatos2025 tc LUT. Mutually
-    /// exclusive with `tc_lut`.
+    /// exclusive with `tc_lut`; neither is prepared for the input-only route.
     mallett_core: Option<[[f64; 3]; 3]>,
     convert_converter: Option<crate::stages::converting::Converter>,
     /// Illuminant used by the RGB→tc projection before TC LUT lookup.
@@ -179,16 +179,20 @@ impl Pipeline {
             )
             .map_err(|error| format!("invalid print density-curve model: {error}"))?;
         }
-        let spectral_changed = crate::pipeline_calibration::spectral_changed(&self.params, &params);
-        let calibration_changed =
-            crate::pipeline_calibration::calibration_changed(&self.params, &params);
         let preparation_changed = match (&self.prepared_tc_lut, backend.preparation_device_id()) {
             (Some(table), Some(device)) => table.values.backend_id() != device,
             (Some(_), None) => true,
             (None, Some(_)) => self.tc_lut.is_some(),
             (None, None) => false,
         };
-        if spectral_changed || calibration_changed || preparation_changed {
+        let route_changed = self.params.workflow.route_enum() != params.workflow.route_enum();
+        let prepares_film = params.workflow.route_enum() != crate::WorkflowRoute::Input;
+        if route_changed
+            || (prepares_film
+                && (crate::pipeline_calibration::spectral_changed(&self.params, &params)
+                    || crate::pipeline_calibration::calibration_changed(&self.params, &params)
+                    || preparation_changed))
+        {
             return self.rebuild_spectral_with_backend(params, backend);
         }
         if params.scanner.conversion_style != self.params.scanner.conversion_style {
@@ -225,13 +229,18 @@ impl Pipeline {
             .data_dir
             .clone()
             .ok_or_else(|| "pipeline lacks data_dir for calibration rebuild".to_owned())?;
-        let mut rebuilt = Self::new_with_spectral_backend(
-            self.film.clone(),
-            self.print.clone(),
-            params,
-            &data_dir,
-            backend,
-        )?;
+        // A different route prepares its own material state from the source
+        // profiles, not from the previous route's resolved density curves.
+        let route_changed = self.params.workflow.route_enum() != params.workflow.route_enum();
+        let (film, print) = if route_changed {
+            (
+                (*self.original_film).clone(),
+                (*self.original_print).clone(),
+            )
+        } else {
+            (self.film.clone(), self.print.clone())
+        };
+        let mut rebuilt = Self::new_with_spectral_backend(film, print, params, &data_dir, backend)?;
         rebuilt.original_film = self.original_film.clone();
         rebuilt.fotufilm_prepared = self.fotufilm_prepared.clone();
         rebuilt.cancellation = self.cancellation.clone();

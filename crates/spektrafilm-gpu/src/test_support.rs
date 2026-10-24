@@ -80,6 +80,23 @@ impl DeviceBackend {
         let shared: std::sync::Arc<dyn crate::ComputeBackend> = std::sync::Arc::new(backend);
         run(&shared);
     }
+
+    /// Exercise replacement by an independent device under the same guard.
+    /// Both shared owners must remain inside the callback.
+    pub fn with_shared_backend_pair(
+        self,
+        run: impl FnOnce(
+            &std::sync::Arc<dyn crate::ComputeBackend>,
+            &std::sync::Arc<dyn crate::ComputeBackend>,
+        ),
+    ) {
+        let Self { backend, _guard } = self;
+        let first: std::sync::Arc<dyn crate::ComputeBackend> = std::sync::Arc::new(backend);
+        let second: std::sync::Arc<dyn crate::ComputeBackend> = std::sync::Arc::new(
+            WgpuBackend::new_explicit().expect("WGPU adapter required for replacement tests"),
+        );
+        run(&first, &second);
+    }
 }
 
 /// Wrap an already-built backend in the device lock. The lock is acquired by
