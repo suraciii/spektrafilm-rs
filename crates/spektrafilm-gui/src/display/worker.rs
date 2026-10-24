@@ -72,10 +72,7 @@ pub(super) struct DisplaySource {
 }
 /// Matches device composition: the minimum edge belongs to the image, the maximum does not.
 pub(super) fn contains_half_open(rect: Rect, point: Pos2) -> bool {
-    rect.min.x <= point.x
-        && point.x < rect.max.x
-        && rect.min.y <= point.y
-        && point.y < rect.max.y
+    rect.min.x <= point.x && point.x < rect.max.x && rect.min.y <= point.y && point.y < rect.max.y
 }
 
 struct FitCacheEntry {
@@ -91,8 +88,18 @@ struct DeviceFitEntry {
     status: crate::app::Message,
 }
 impl DeviceFitEntry {
-    fn matches(&self, source: &spektrafilm_backend::DeviceImage, metadata: &DisplaySource, max_size: usize) -> bool {
-        self.source.payload().zip(source.payload()).is_some_and(|(a,b)| Arc::ptr_eq(a,b)) && self.metadata == *metadata && self.max_size == max_size
+    fn matches(
+        &self,
+        source: &spektrafilm_backend::DeviceImage,
+        metadata: &DisplaySource,
+        max_size: usize,
+    ) -> bool {
+        self.source
+            .payload()
+            .zip(source.payload())
+            .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+            && self.metadata == *metadata
+            && self.max_size == max_size
     }
 }
 
@@ -144,7 +151,10 @@ impl Default for DisplayWorker {
 }
 impl DisplayWorker {
     fn new() -> Self {
-        Self::start(#[cfg(test)] None)
+        Self::start(
+            #[cfg(test)]
+            None,
+        )
     }
 
     fn start(#[cfg(test)] pause: Option<Arc<CompositionPause>>) -> Self {
@@ -183,10 +193,16 @@ impl DisplayWorker {
                         (state.request.take().unwrap(), cancellation)
                     };
                     let ctx = request.ctx.clone();
-                    let response = compose_display_cancellable(request, &mut cache, Some(cancellation.clone()));
+                    let response = compose_display_cancellable(
+                        request,
+                        &mut cache,
+                        Some(cancellation.clone()),
+                    );
                     #[cfg(test)]
                     if let Some(pause) = &completion {
-                        let _ = pause.finished.send((response.generation, response.error.clone()));
+                        let _ = pause
+                            .finished
+                            .send((response.generation, response.error.clone()));
                     }
                     let (lock, _) = &*shared;
                     let mut state = lock.lock();
@@ -298,18 +314,56 @@ impl DisplaySource {
         };
         let mut status = None;
         if backend.is_gpu() {
-            let (prepared, message) = super::colortransform::output_display_raster_with(backend, source, name, encoded, enabled, if layer == ViewLayer::Output { self.profile.as_deref() } else { None }, usize::MAX).ok()?;
+            let (prepared, message) = super::colortransform::output_display_raster_with(
+                backend,
+                source,
+                name,
+                encoded,
+                enabled,
+                if layer == ViewLayer::Output {
+                    self.profile.as_deref()
+                } else {
+                    None
+                },
+                usize::MAX,
+            )
+            .ok()?;
             let transformed = prepared.retained.as_ref()?;
-            let image = backend.viewer_full_source_retained(transformed, &spektrafilm_backend::ViewerFullSourceGpuParams {
-                tex_width: texture_size[0] as u32, tex_height: texture_size[1] as u32,
-                rect_min: [rect.min.x,rect.min.y],rect_size:[rect.width(),rect.height()],image_min:[image_rect.min.x,image_rect.min.y],image_size:[image_rect.width(),image_rect.height()],
-                interpolation: interpolation.discriminant(),transform:false,src_cctf:0,decode:false,matrix:[[0.0;3];3],icc:false,icc_matrix:false,icc_matrix_fixed14:[[0;3];3],icc_offset_fixed14:[0;3],icc_first:&[Vec::new(),Vec::new(),Vec::new()],icc_second:&[Vec::new(),Vec::new(),Vec::new()],
-            }).ok()?;
+            let image = backend
+                .viewer_full_source_retained(
+                    transformed,
+                    &spektrafilm_backend::ViewerFullSourceGpuParams {
+                        tex_width: texture_size[0] as u32,
+                        tex_height: texture_size[1] as u32,
+                        rect_min: [rect.min.x, rect.min.y],
+                        rect_size: [rect.width(), rect.height()],
+                        image_min: [image_rect.min.x, image_rect.min.y],
+                        image_size: [image_rect.width(), image_rect.height()],
+                        interpolation: interpolation.discriminant(),
+                        transform: false,
+                        src_cctf: 0,
+                        decode: false,
+                        matrix: [[0.0; 3]; 3],
+                        icc: false,
+                        icc_matrix: false,
+                        icc_matrix_fixed14: [[0; 3]; 3],
+                        icc_offset_fixed14: [0; 3],
+                        icc_first: &[Vec::new(), Vec::new(), Vec::new()],
+                        icc_second: &[Vec::new(), Vec::new(), Vec::new()],
+                    },
+                )
+                .ok()?;
             // This API is only the explicit host-raster probe; production uses
             // compose_display_device and transfers packed presentation bytes.
             let host = image.to_host(backend).ok()?;
-            let rgb = host.data.as_chunks::<3>().0.iter().map(|v| [v[0] as f32,v[1] as f32,v[2] as f32]).collect();
-            return Some((DisplayRaster::new(texture_size,rgb).ok()?,Some(message)));
+            let rgb = host
+                .data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|v| [v[0] as f32, v[1] as f32, v[2] as f32])
+                .collect();
+            return Some((DisplayRaster::new(texture_size, rgb).ok()?, Some(message)));
         }
         let profile = if layer == ViewLayer::Output && enabled {
             self.profile.as_deref().and_then(|path| {
@@ -388,7 +442,6 @@ impl DisplaySource {
         let raster = DisplayRaster::new(texture_size, rgb).ok()?;
         Some((raster, status))
     }
-
 }
 
 #[cfg(test)]
@@ -396,7 +449,11 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
     compose_display_cancellable(request, cache, None)
 }
 
-fn compose_display_cancellable(request: DisplayRequest, cache: &mut CompositionCache, cancellation: Option<Arc<AtomicBool>>) -> DisplayResponse {
+fn compose_display_cancellable(
+    request: DisplayRequest,
+    cache: &mut CompositionCache,
+    cancellation: Option<Arc<AtomicBool>>,
+) -> DisplayResponse {
     if request.backend.is_gpu() {
         return compose_display_device(request, cache, cancellation);
     }
@@ -469,14 +526,26 @@ fn compose_display_cancellable(request: DisplayRequest, cache: &mut CompositionC
             } else {
                 if let Some(retained) = retained_source.as_ref() {
                     super::colortransform::output_display_raster_retained(
-                        backend.as_ref(), retained, space, metadata.encoded,
-                        metadata.transform, metadata.profile.as_deref(), max_size,
-                    ).map(|(raster,status)| (raster,Some(status)))
+                        backend.as_ref(),
+                        retained,
+                        space,
+                        metadata.encoded,
+                        metadata.transform,
+                        metadata.profile.as_deref(),
+                        max_size,
+                    )
+                    .map(|(raster, status)| (raster, Some(status)))
                 } else {
                     output_display_raster_with(
-                        backend.as_ref(), source, space, metadata.encoded,
-                        metadata.transform, metadata.profile.as_deref(), max_size,
-                    ).map(|(raster,status)| (raster,Some(status)))
+                        backend.as_ref(),
+                        source,
+                        space,
+                        metadata.encoded,
+                        metadata.transform,
+                        metadata.profile.as_deref(),
+                        max_size,
+                    )
+                    .map(|(raster, status)| (raster, Some(status)))
                 }
             };
             match result {
@@ -492,7 +561,9 @@ fn compose_display_cancellable(request: DisplayRequest, cache: &mut CompositionC
                     })
                 }
                 Err(message) => {
-                    status = Some(crate::app::Message::new("surfaces.display.error").arg("error", &message));
+                    status = Some(
+                        crate::app::Message::new("surfaces.display.error").arg("error", &message),
+                    );
                     error = Some(message);
                 }
             }
@@ -617,106 +688,308 @@ fn compose_display_cancellable(request: DisplayRequest, cache: &mut CompositionC
     }
 }
 
-/// A selected GPU never enters the host compositor. Failure produces no new
-/// presentation, so the UI keeps its last accepted texture and fit cache.
-fn compose_display_device(request: DisplayRequest, cache: &mut CompositionCache, cancellation: Option<Arc<AtomicBool>>) -> DisplayResponse {
+/// A selected GPU never enters the host compositor. Missing accepted output
+/// publishes an empty device-composed canvas; actual device failures keep the
+/// last accepted texture and fit cache.
+fn compose_display_device(
+    request: DisplayRequest,
+    cache: &mut CompositionCache,
+    cancellation: Option<Arc<AtomicBool>>,
+) -> DisplayResponse {
     let mut status = None;
     let mut prepared = None;
     let result = (|| -> Result<egui::ColorImage, String> {
         let cancellable = request.backend.with_cancellation(cancellation);
         let backend = cancellable.as_deref().unwrap_or(request.backend.as_ref());
-        if (request.layer == ViewLayer::PaperBack || !request.image_rect.contains_rect(request.paper_rect))
-            && cache.paper.as_ref().is_none_or(|r| r.size != request.paper_size || r.retained.is_none()) {
-            let (w,h,alpha) = super::decorations::logo_alpha();
+        if (request.layer == ViewLayer::PaperBack
+            || !request.image_rect.contains_rect(request.paper_rect))
+            && cache
+                .paper
+                .as_ref()
+                .is_none_or(|r| r.size != request.paper_size || r.retained.is_none())
+        {
+            let (w, h, alpha) = super::decorations::logo_alpha();
             cache.paper = Some(DisplayRaster::device(backend.viewer_paper_retained(
-                request.paper_size[0] as u32, request.paper_size[1] as u32, &alpha, w as u32, h as u32,
+                request.paper_size[0] as u32,
+                request.paper_size[1] as u32,
+                &alpha,
+                w as u32,
+                h as u32,
             )?));
         }
         let mut raster = request.raster.clone();
         if request.layer != ViewLayer::PaperBack {
             if let Some(source) = request.source.as_ref() {
-            let metadata = &request.metadata;
-            let space = metadata.space.as_deref().ok_or("viewer source has no color space")?;
-            let slot = &mut cache.fit[usize::from(request.layer == ViewLayer::Output)];
-            if !slot.as_ref().is_some_and(|e| e.prepared.matches(source, metadata, request.max_size)) {
-                if let Some(seed) = request.prepared.as_ref().filter(|s| s.matches(source, metadata, request.max_size) && s.raster.retained.is_some()) {
-                    *slot = Some(FitCacheEntry { prepared: seed.clone(), status: None });
-                } else {
-                    let (fit,message) = if let Some(image) = request.retained_source.as_ref() {
-                        super::colortransform::output_display_raster_retained(backend, image, space, metadata.encoded, metadata.transform, metadata.profile.as_deref(), request.max_size)?
+                let metadata = &request.metadata;
+                let space = metadata
+                    .space
+                    .as_deref()
+                    .ok_or("viewer source has no color space")?;
+                let slot = &mut cache.fit[usize::from(request.layer == ViewLayer::Output)];
+                if !slot
+                    .as_ref()
+                    .is_some_and(|e| e.prepared.matches(source, metadata, request.max_size))
+                {
+                    if let Some(seed) = request.prepared.as_ref().filter(|s| {
+                        s.matches(source, metadata, request.max_size) && s.raster.retained.is_some()
+                    }) {
+                        *slot = Some(FitCacheEntry {
+                            prepared: seed.clone(),
+                            status: None,
+                        });
                     } else {
-                        output_display_raster_with(backend, source, space, metadata.encoded, metadata.transform, metadata.profile.as_deref(), request.max_size)?
-                    };
-                    *slot = Some(FitCacheEntry { prepared: PreparedDisplay { source: source.clone(), metadata: metadata.clone(), max_size: request.max_size, raster: fit }, status: Some(message) });
+                        let (fit, message) = if let Some(image) = request.retained_source.as_ref() {
+                            super::colortransform::output_display_raster_retained(
+                                backend,
+                                image,
+                                space,
+                                metadata.encoded,
+                                metadata.transform,
+                                metadata.profile.as_deref(),
+                                request.max_size,
+                            )?
+                        } else {
+                            output_display_raster_with(
+                                backend,
+                                source,
+                                space,
+                                metadata.encoded,
+                                metadata.transform,
+                                metadata.profile.as_deref(),
+                                request.max_size,
+                            )?
+                        };
+                        *slot = Some(FitCacheEntry {
+                            prepared: PreparedDisplay {
+                                source: source.clone(),
+                                metadata: metadata.clone(),
+                                max_size: request.max_size,
+                                raster: fit,
+                            },
+                            status: Some(message),
+                        });
+                    }
                 }
-            }
-            if let Some(entry) = slot.as_ref() {
-                raster = Some(entry.prepared.raster.clone());
-                status = entry.status.clone();
-                prepared = Some(entry.prepared.clone());
-            }
-            } else {
-                let source = request.retained_source.as_ref().ok_or("viewer has no accepted source")?;
+                if let Some(entry) = slot.as_ref() {
+                    raster = Some(entry.prepared.raster.clone());
+                    status = entry.status.clone();
+                    prepared = Some(entry.prepared.clone());
+                }
+            } else if let Some(source) = request.retained_source.as_ref() {
                 let metadata = &request.metadata;
                 let slot = &mut cache.device_fit[usize::from(request.layer == ViewLayer::Output)];
-                if !slot.as_ref().is_some_and(|e| e.matches(source, metadata, request.max_size)) {
-                    let (fit,message) = super::colortransform::output_display_raster_retained(backend, source, metadata.space.as_deref().ok_or("viewer source has no color space")?, metadata.encoded, metadata.transform, metadata.profile.as_deref(), request.max_size)?;
-                    *slot = Some(DeviceFitEntry { source: source.clone(), metadata: metadata.clone(), max_size: request.max_size, raster: fit, status: message });
+                if !slot
+                    .as_ref()
+                    .is_some_and(|e| e.matches(source, metadata, request.max_size))
+                {
+                    let (fit, message) = super::colortransform::output_display_raster_retained(
+                        backend,
+                        source,
+                        metadata
+                            .space
+                            .as_deref()
+                            .ok_or("viewer source has no color space")?,
+                        metadata.encoded,
+                        metadata.transform,
+                        metadata.profile.as_deref(),
+                        request.max_size,
+                    )?;
+                    *slot = Some(DeviceFitEntry {
+                        source: source.clone(),
+                        metadata: metadata.clone(),
+                        max_size: request.max_size,
+                        raster: fit,
+                        status: message,
+                    });
                 }
                 let entry = slot.as_ref().expect("device fit prepared");
                 raster = Some(entry.raster.clone());
                 status = Some(entry.status.clone());
             }
-        } else { raster = cache.paper.clone(); }
-        let mut image = raster.as_ref().and_then(|r| r.retained.clone()).ok_or("viewer raster is not device-retained")?;
-        if request.polaroid {
-            image = backend.viewer_polaroid_retained(&image, super::decorations::layer_coefficients(request.frame as f32 / 49.0))?;
+        } else {
+            raster = cache.paper.clone();
+        }
+        let mut image = raster
+            .as_ref()
+            .map(|r| {
+                r.retained
+                    .clone()
+                    .ok_or("viewer raster is not device-retained")
+            })
+            .transpose()?;
+        if request.polaroid
+            && let Some(current) = image.as_ref()
+        {
+            image = Some(backend.viewer_polaroid_retained(
+                current,
+                super::decorations::layer_coefficients(request.frame as f32 / 49.0),
+            )?);
         }
         #[cfg(test)]
         if let Some(pause) = cache.pause.take() {
             let _ = pause.started.send(());
             let _ = pause.release.lock().recv();
         }
-        if request.full_source && request.layer != ViewLayer::PaperBack {
+        if request.full_source && request.layer != ViewLayer::PaperBack && image.is_some() {
             let source = request.source.as_ref();
             let metadata = &request.metadata;
-            let raw = if let Some(retained) = request.retained_source.as_ref() { retained.clone() } else {
+            let raw = if let Some(retained) = request.retained_source.as_ref() {
+                retained.clone()
+            } else {
                 let source = source.ok_or("full-source viewer has no accepted source")?;
-                let space = spektrafilm_math::colorspace::resolve(metadata.space.as_deref().ok_or("viewer source has no color space")?)?;
-                backend.retain_image(source, &spektrafilm_backend::RetainedImageMeta { width: source.width, height: source.height, domain: if metadata.encoded { spektrafilm_backend::SampleDomain::Encoded } else { spektrafilm_backend::SampleDomain::Linear }, precision: spektrafilm_backend::Precision::host(), space, pixel_pitch_um: None })?
+                let space = spektrafilm_math::colorspace::resolve(
+                    metadata
+                        .space
+                        .as_deref()
+                        .ok_or("viewer source has no color space")?,
+                )?;
+                backend.retain_image(
+                    source,
+                    &spektrafilm_backend::RetainedImageMeta {
+                        width: source.width,
+                        height: source.height,
+                        domain: if metadata.encoded {
+                            spektrafilm_backend::SampleDomain::Encoded
+                        } else {
+                            spektrafilm_backend::SampleDomain::Linear
+                        },
+                        precision: spektrafilm_backend::Precision::host(),
+                        space,
+                        pixel_pitch_um: None,
+                    },
+                )?
             };
             // Pointwise viewing transform before interpolation, exactly as the
             // CPU full-source tap cache. Same-size resampling is an identity.
             let slot = &mut cache.device_fit[2 + usize::from(request.layer == ViewLayer::Output)];
-            if !slot.as_ref().is_some_and(|e| e.matches(&raw,metadata,usize::MAX)) {
-                let (transformed,message) = super::colortransform::output_display_raster_retained(backend, &raw, metadata.space.as_deref().ok_or("viewer source has no color space")?, metadata.encoded, metadata.transform, metadata.profile.as_deref(), usize::MAX)?;
-                *slot = Some(DeviceFitEntry { source: raw.clone(), metadata: metadata.clone(), max_size: usize::MAX, raster: transformed, status: message });
+            if !slot
+                .as_ref()
+                .is_some_and(|e| e.matches(&raw, metadata, usize::MAX))
+            {
+                let (transformed, message) = super::colortransform::output_display_raster_retained(
+                    backend,
+                    &raw,
+                    metadata
+                        .space
+                        .as_deref()
+                        .ok_or("viewer source has no color space")?,
+                    metadata.encoded,
+                    metadata.transform,
+                    metadata.profile.as_deref(),
+                    usize::MAX,
+                )?;
+                *slot = Some(DeviceFitEntry {
+                    source: raw.clone(),
+                    metadata: metadata.clone(),
+                    max_size: usize::MAX,
+                    raster: transformed,
+                    status: message,
+                });
             }
-            let entry = slot.as_ref().expect("full-source viewing transform prepared");
+            let entry = slot
+                .as_ref()
+                .expect("full-source viewing transform prepared");
             let transformed = &entry.raster;
             status = Some(entry.status.clone());
-            image = backend.viewer_full_source_retained(transformed.retained.as_ref().ok_or("missing transformed source")?, &spektrafilm_backend::ViewerFullSourceGpuParams {
-                tex_width: request.texture_size[0] as u32, tex_height: request.texture_size[1] as u32,
-                rect_min: [request.rect.min.x, request.rect.min.y], rect_size: [request.rect.width(), request.rect.height()],
-                image_min: [request.image_rect.min.x, request.image_rect.min.y], image_size: [request.image_rect.width(), request.image_rect.height()],
-                interpolation: request.interpolation.discriminant(), transform: false, src_cctf: 0, decode: false, matrix: [[0.0;3];3],
-                icc: false, icc_matrix: false, icc_matrix_fixed14: [[0;3];3], icc_offset_fixed14: [0;3], icc_first: &[Vec::new(),Vec::new(),Vec::new()], icc_second: &[Vec::new(),Vec::new(),Vec::new()],
-            })?;
+            image = Some(
+                backend.viewer_full_source_retained(
+                    transformed
+                        .retained
+                        .as_ref()
+                        .ok_or("missing transformed source")?,
+                    &spektrafilm_backend::ViewerFullSourceGpuParams {
+                        tex_width: request.texture_size[0] as u32,
+                        tex_height: request.texture_size[1] as u32,
+                        rect_min: [request.rect.min.x, request.rect.min.y],
+                        rect_size: [request.rect.width(), request.rect.height()],
+                        image_min: [request.image_rect.min.x, request.image_rect.min.y],
+                        image_size: [request.image_rect.width(), request.image_rect.height()],
+                        interpolation: request.interpolation.discriminant(),
+                        transform: false,
+                        src_cctf: 0,
+                        decode: false,
+                        matrix: [[0.0; 3]; 3],
+                        icc: false,
+                        icc_matrix: false,
+                        icc_matrix_fixed14: [[0; 3]; 3],
+                        icc_offset_fixed14: [0; 3],
+                        icc_first: &[Vec::new(), Vec::new(), Vec::new()],
+                        icc_second: &[Vec::new(), Vec::new(), Vec::new()],
+                    },
+                )?,
+            );
         }
-        let previous = request.previous.as_ref().map(|r| r.retained.as_ref().ok_or("previous viewer raster belongs to host backend")).transpose()?;
-        let split = request.split.as_ref().map(|(_,r)| r.retained.as_ref().ok_or("compare viewer raster belongs to host backend")).transpose()?;
-        let rect = |r: Rect| [r.min.x,r.min.y,r.max.x,r.max.y];
-        let pixels = backend.viewer_compose_retained(&image, cache.paper.as_ref().and_then(|r| r.retained.as_ref()), previous, split, &spektrafilm_backend::ViewerComposeGpuParams {
-            width: request.texture_size[0] as u32, height: request.texture_size[1] as u32,
-            rect: rect(request.rect), border: rect(request.border), paper_rect: rect(request.paper_rect), image_rect: rect(request.image_rect),
-            gray: [request.gray.r() as f32 /255.0, request.gray.g() as f32 /255.0, request.gray.b() as f32 /255.0],
-            interpolation: request.interpolation.discriminant(), full_source: request.full_source && request.layer != ViewLayer::PaperBack,
-            output_layer: request.layer == ViewLayer::Output, split: request.split.as_ref().map(|(f,_)| *f), fade: request.frame as f32 /10.0,
-        })?;
-        Ok(egui::ColorImage { size: request.texture_size, pixels: pixels.into_iter().map(|p| Color32::from_rgba_premultiplied(p[0],p[1],p[2],p[3])).collect() })
+        let previous = request
+            .previous
+            .as_ref()
+            .filter(|_| image.is_some())
+            .map(|r| {
+                r.retained
+                    .as_ref()
+                    .ok_or("previous viewer raster belongs to host backend")
+            })
+            .transpose()?;
+        let split = request
+            .split
+            .as_ref()
+            .filter(|_| image.is_some())
+            .map(|(_, r)| {
+                r.retained
+                    .as_ref()
+                    .ok_or("compare viewer raster belongs to host backend")
+            })
+            .transpose()?;
+        let rect = |r: Rect| [r.min.x, r.min.y, r.max.x, r.max.y];
+        let pixels = backend.viewer_compose_retained(
+            image.as_ref(),
+            cache.paper.as_ref().and_then(|r| r.retained.as_ref()),
+            previous,
+            split,
+            &spektrafilm_backend::ViewerComposeGpuParams {
+                width: request.texture_size[0] as u32,
+                height: request.texture_size[1] as u32,
+                rect: rect(request.rect),
+                border: rect(request.border),
+                paper_rect: rect(request.paper_rect),
+                image_rect: rect(request.image_rect),
+                gray: [
+                    request.gray.r() as f32 / 255.0,
+                    request.gray.g() as f32 / 255.0,
+                    request.gray.b() as f32 / 255.0,
+                ],
+                interpolation: request.interpolation.discriminant(),
+                full_source: request.full_source && request.layer != ViewLayer::PaperBack,
+                output_layer: request.layer == ViewLayer::Output,
+                split: request.split.as_ref().map(|(f, _)| *f),
+                fade: request.frame as f32 / 10.0,
+            },
+        )?;
+        Ok(egui::ColorImage {
+            size: request.texture_size,
+            pixels: pixels
+                .into_iter()
+                .map(|p| Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]))
+                .collect(),
+        })
     })();
-    let (image,error) = match result { Ok(image) => (image,None), Err(error) => (egui::ColorImage {size:[0,0],pixels:Vec::new()},Some(error)) };
-    DisplayResponse { key: request.key, generation: request.generation, image, status, error, prepared }
+    let (image, error) = match result {
+        Ok(image) => (image, None),
+        Err(error) => (
+            egui::ColorImage {
+                size: [0, 0],
+                pixels: Vec::new(),
+            },
+            Some(error),
+        ),
+    };
+    DisplayResponse {
+        key: request.key,
+        generation: request.generation,
+        image,
+        status,
+        error,
+        prepared,
+    }
 }
 
 /// Fills canvas pixels in row-major order on the calling thread. The parallel
@@ -1023,11 +1296,7 @@ mod tests {
                     let x = (i % w) as f64 / (w - 1) as f64;
                     let y = (i / w) as f64 / (h - 1) as f64;
                     let encode = |v: f64| from_f64(1.4 * v - 0.2);
-                    [
-                        encode(x),
-                        encode(y * 0.8 + 0.1),
-                        encode(x * y + 0.05),
-                    ]
+                    [encode(x), encode(y * 0.8 + 0.1), encode(x * y + 0.05)]
                 })
                 .collect(),
         ));
@@ -1152,54 +1421,183 @@ mod tests {
         request.backend = backend.clone();
         let original = request.source.as_ref().unwrap().clone();
         let saved = original.data.clone();
-        let meta = spektrafilm_backend::RetainedImageMeta { width: original.width, height: original.height, domain: spektrafilm_backend::SampleDomain::Encoded, precision: spektrafilm_backend::Precision::host(), space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(), pixel_pitch_um: None };
+        let meta = spektrafilm_backend::RetainedImageMeta {
+            width: original.width,
+            height: original.height,
+            domain: spektrafilm_backend::SampleDomain::Encoded,
+            precision: spektrafilm_backend::Precision::host(),
+            space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+            pixel_pitch_um: None,
+        };
         let retained = backend.retain_image(&original, &meta).unwrap();
         request.retained_source = Some(retained.clone());
-        let old = ImageBuf::from_data(4,1,vec![0.0 as _;12]);
-        request.previous = Some(super::super::colortransform::output_display_raster_with(backend.as_ref(), &old, "sRGB", true, false, None, 4).unwrap().0);
+        let old = ImageBuf::from_data(4, 1, vec![0.0 as _; 12]);
+        request.previous = Some(
+            super::super::colortransform::output_display_raster_with(
+                backend.as_ref(),
+                &old,
+                "sRGB",
+                true,
+                false,
+                None,
+                4,
+            )
+            .unwrap()
+            .0,
+        );
         let mut cache = CompositionCache::default();
         let composed = compose_display(request.clone(), &mut cache);
         assert!(composed.error.is_none(), "{:?}", composed.error);
-        assert_eq!(composed.image.pixels, vec![Color32::BLACK, Color32::from_gray(128), Color32::BLACK, Color32::from_gray(128)]);
+        assert_eq!(
+            composed.image.pixels,
+            vec![
+                Color32::BLACK,
+                Color32::from_gray(128),
+                Color32::BLACK,
+                Color32::from_gray(128)
+            ]
+        );
         assert_eq!(original.data, saved);
         assert_eq!(retained.to_host(backend.as_ref()).unwrap().data, saved);
         request.generation = 2;
         request.frame = 10;
         let final_frame = compose_display(request.clone(), &mut cache);
-        assert_eq!(final_frame.image.pixels, vec![Color32::BLACK, Color32::WHITE, Color32::BLACK, Color32::WHITE]);
+        assert_eq!(
+            final_frame.image.pixels,
+            vec![
+                Color32::BLACK,
+                Color32::WHITE,
+                Color32::BLACK,
+                Color32::WHITE
+            ]
+        );
         // A host carrier cannot be reinterpreted as this device's storage.
-        request.retained_source = Some(spektrafilm_backend::DeviceImage::host((*original).clone(), meta));
+        request.retained_source = Some(spektrafilm_backend::DeviceImage::host(
+            (*original).clone(),
+            meta,
+        ));
         request.max_size = 3;
         let failed = compose_display(request, &mut cache);
         assert!(failed.error.is_some());
-        assert!(failed.image.pixels.is_empty(), "failure must not publish substitute pixels");
+        assert!(
+            failed.image.pixels.is_empty(),
+            "failure must not publish substitute pixels"
+        );
         assert_eq!(retained.to_host(backend.as_ref()).unwrap().data, saved);
     }
     #[test]
+    fn missing_device_output_matches_empty_cpu_canvas_and_reuses_healthy_fit() {
+        let device = spektrafilm_gpu::test_support::explicit_adapter();
+        let backend: Arc<dyn ComputeBackend> = Arc::new(device.derived_explicit());
+        let mut healthy = request(1);
+        healthy.backend = backend.clone();
+        healthy.raster = None;
+        healthy.max_size = 4;
+        let mut cache = CompositionCache::default();
+        let accepted = compose_display(healthy.clone(), &mut cache);
+        assert!(accepted.error.is_none(), "{:?}", accepted.error);
+        for full_source in [false, true] {
+            let mut absent = healthy.clone();
+            absent.generation = 2;
+            absent.source = None;
+            absent.retained_source = None;
+            absent.full_source = full_source;
+            absent.polaroid = true;
+            // Neither animation nor a split can resurrect B without A.
+            absent.previous = Some(DisplayRaster::new([1, 1], vec![[0.0; 3]]).unwrap());
+            absent.split = Some((0.5, absent.previous.clone().unwrap()));
+            let mut host = absent.clone();
+            host.backend = Arc::new(spektrafilm_backend::cpu_backend::CpuBackend);
+            let expected = compose_display(host, &mut CompositionCache::default());
+            let empty = compose_display(absent, &mut cache);
+            assert!(empty.error.is_none(), "{:?}", empty.error);
+            assert_eq!(empty.image.size, expected.image.size);
+            assert_eq!(empty.image.pixels, expected.image.pixels);
+            assert_eq!(empty.image.pixels, vec![Color32::WHITE; 4]);
+            assert_ne!(empty.image.pixels, accepted.image.pixels);
+            assert!(empty.prepared.is_none());
+        }
+        let reused = compose_display(healthy.clone(), &mut cache);
+        assert!(reused.error.is_none(), "{:?}", reused.error);
+        assert_eq!(reused.image.pixels, accepted.image.pixels);
+        let fit = cache.fit[1].as_ref().unwrap();
+        assert!(
+            fit.prepared
+                .matches(healthy.source.as_ref().unwrap(), &healthy.metadata, 4)
+        );
+    }
+
+    #[test]
     fn resident_paper_and_development_keep_the_pinned_viewer_algorithms() {
         let backend = spektrafilm_gpu::test_support::explicit_adapter();
-        let (w,h,alpha) = super::super::decorations::logo_alpha();
+        let (w, h, alpha) = super::super::decorations::logo_alpha();
         // Odd full-frame length exercises PCG low/high words across the two
         // whole-image random draws, rather than interleaved per-pixel draws.
-        let paper = backend.viewer_paper_retained(65,33,&alpha,w as u32,h as u32).unwrap();
+        let paper = backend
+            .viewer_paper_retained(65, 33, &alpha, w as u32, h as u32)
+            .unwrap();
         let got = paper.to_host(backend.backend()).unwrap();
-        let reference = super::super::decorations::virtual_paper_back([65,33]);
-        for (pixel,want) in got.data.as_chunks::<3>().0.iter().zip(reference.rgb.iter()) {
-            assert_eq!([pixel[0] as f32,pixel[1] as f32,pixel[2] as f32],*want);
+        let reference = super::super::decorations::virtual_paper_back([65, 33]);
+        for (pixel, want) in got.data.as_chunks::<3>().0.iter().zip(reference.rgb.iter()) {
+            assert_eq!([pixel[0] as f32, pixel[1] as f32, pixel[2] as f32], *want);
         }
-        let source = ImageBuf::from_data(4,2,(0..24).map(|i| (0.02 + i as f32*0.039) as _).collect());
-        let meta = spektrafilm_backend::RetainedImageMeta {width:4,height:2,domain:spektrafilm_backend::SampleDomain::Encoded,precision:spektrafilm_backend::Precision::host(),space:spektrafilm_math::colorspace::resolve("sRGB").unwrap(),pixel_pitch_um:None};
-        let retained = backend.retain_image(&source,&meta).unwrap();
-        let raster = DisplayRaster::new([4,2],source.data.as_chunks::<3>().0.iter().map(|p|[p[0] as f32,p[1] as f32,p[2] as f32]).collect()).unwrap();
+        let source = ImageBuf::from_data(
+            4,
+            2,
+            (0..24).map(|i| (0.02 + i as f32 * 0.039) as _).collect(),
+        );
+        let meta = spektrafilm_backend::RetainedImageMeta {
+            width: 4,
+            height: 2,
+            domain: spektrafilm_backend::SampleDomain::Encoded,
+            precision: spektrafilm_backend::Precision::host(),
+            space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+            pixel_pitch_um: None,
+        };
+        let retained = backend.retain_image(&source, &meta).unwrap();
+        let raster = DisplayRaster::new(
+            [4, 2],
+            source
+                .data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+                .collect(),
+        )
+        .unwrap();
         let state = PolaroidState::new(&raster);
-        for t in [0.0,0.5,1.0] {
-            let developed = backend.viewer_polaroid_retained(&retained,super::super::decorations::layer_coefficients(t)).unwrap().to_host(backend.backend()).unwrap();
+        for t in [0.0, 0.5, 1.0] {
+            let developed = backend
+                .viewer_polaroid_retained(
+                    &retained,
+                    super::super::decorations::layer_coefficients(t),
+                )
+                .unwrap()
+                .to_host(backend.backend())
+                .unwrap();
             let reference = state.frame(t);
-            for (pixel,want) in developed.data.as_chunks::<3>().0.iter().zip(reference.rgb.iter()) {
-                for c in 0..3 { assert!((pixel[c] as f32-want[c]).abs() <= 2e-5,"development t={t}, channel={c}: {} != {}",pixel[c],want[c]); }
+            for (pixel, want) in developed
+                .data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .zip(reference.rgb.iter())
+            {
+                for c in 0..3 {
+                    assert!(
+                        (pixel[c] as f32 - want[c]).abs() <= 2e-5,
+                        "development t={t}, channel={c}: {} != {}",
+                        pixel[c],
+                        want[c]
+                    );
+                }
             }
         }
-        assert_eq!(retained.to_host(backend.backend()).unwrap().data,source.data);
+        assert_eq!(
+            retained.to_host(backend.backend()).unwrap().data,
+            source.data
+        );
     }
 }
 
@@ -1216,16 +1614,22 @@ mod cancellation_tests {
         let (release, released) = std::sync::mpsc::channel();
         let (finished, results) = std::sync::mpsc::channel();
         let worker = DisplayWorker::start(Some(Arc::new(CompositionPause {
-            started, release: Mutex::new(released), finished,
+            started,
+            release: Mutex::new(released),
+            finished,
         })));
         let mut first = super::tests::request(1);
         first.backend = backend.clone();
         first.max_size = 4;
         first.frame = 10;
         let (repaint, repainted) = std::sync::mpsc::channel();
-        first.ctx.set_request_repaint_callback(move |_| { let _ = repaint.send(()); });
+        first.ctx.set_request_repaint_callback(move |_| {
+            let _ = repaint.send(());
+        });
         worker.submit(first.clone());
-        ready.recv_timeout(Duration::from_secs(30)).expect("first GPU fit completed");
+        ready
+            .recv_timeout(Duration::from_secs(30))
+            .expect("first GPU fit completed");
         let cancellation = worker.state.0.lock().active_cancel.clone().unwrap();
         assert!(!cancellation.load(Ordering::Relaxed));
         first.generation = 2;
@@ -1233,23 +1637,52 @@ mod cancellation_tests {
         worker.submit(first);
         let cancelled = cancellation.load(Ordering::Relaxed);
         release.send(()).unwrap();
-        assert!(cancelled, "supersession must cancel active work, not just reject its response");
-        assert_eq!(results.recv_timeout(Duration::from_secs(30)).unwrap(), (1, Some("operation cancelled".into())));
-        repainted.recv_timeout(Duration::from_secs(30)).expect("replacement viewer completed");
+        assert!(
+            cancelled,
+            "supersession must cancel active work, not just reject its response"
+        );
+        assert_eq!(
+            results.recv_timeout(Duration::from_secs(30)).unwrap(),
+            (1, Some("operation cancelled".into()))
+        );
+        repainted
+            .recv_timeout(Duration::from_secs(30))
+            .expect("replacement viewer completed");
         let response = worker.take_response().expect("replacement presentation");
         assert!(response.matches(2, &[2]));
         assert!(response.error.is_none(), "{:?}", response.error);
-        assert_eq!(response.image.pixels, vec![Color32::BLACK, Color32::WHITE, Color32::BLACK, Color32::WHITE]);
+        assert_eq!(
+            response.image.pixels,
+            vec![
+                Color32::BLACK,
+                Color32::WHITE,
+                Color32::BLACK,
+                Color32::WHITE
+            ]
+        );
         drop(worker);
-        let healthy = backend.retain_image(
-            &ImageBuf::from_data(1, 1, vec![0.5 as _; 3]),
-            &spektrafilm_backend::RetainedImageMeta {
-                width: 1, height: 1, domain: spektrafilm_backend::SampleDomain::Encoded,
-                precision: spektrafilm_backend::Precision::host(),
-                space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(), pixel_pitch_um: None,
-            },
-        ).unwrap();
-        assert_eq!(backend.viewer_fit_retained(&healthy, 1, 1, None, None).unwrap().to_host(backend.as_ref()).unwrap().data, vec![spektrafilm_math::precision::from_f64(0.5); 3]);
+        let healthy = backend
+            .retain_image(
+                &ImageBuf::from_data(1, 1, vec![0.5 as _; 3]),
+                &spektrafilm_backend::RetainedImageMeta {
+                    width: 1,
+                    height: 1,
+                    domain: spektrafilm_backend::SampleDomain::Encoded,
+                    precision: spektrafilm_backend::Precision::host(),
+                    space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+                    pixel_pitch_um: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            backend
+                .viewer_fit_retained(&healthy, 1, 1, None, None)
+                .unwrap()
+                .to_host(backend.as_ref())
+                .unwrap()
+                .data,
+            vec![spektrafilm_math::precision::from_f64(0.5); 3]
+        );
     }
 }
 
@@ -1266,13 +1699,17 @@ mod shutdown_tests {
         let (release, released) = std::sync::mpsc::channel();
         let (finished, results) = std::sync::mpsc::channel();
         let worker = DisplayWorker::start(Some(Arc::new(CompositionPause {
-            started, release: Mutex::new(released), finished,
+            started,
+            release: Mutex::new(released),
+            finished,
         })));
         let mut request = super::tests::request(1);
         request.backend = backend;
         request.max_size = 4;
         worker.submit(request);
-        ready.recv_timeout(Duration::from_secs(30)).expect("GPU fit completed before shutdown");
+        ready
+            .recv_timeout(Duration::from_secs(30))
+            .expect("GPU fit completed before shutdown");
         let state = worker.state.clone();
         let cancellation = state.0.lock().active_cancel.clone().unwrap();
         std::thread::scope(|scope| {
@@ -1280,14 +1717,19 @@ mod shutdown_tests {
             let deadline = Instant::now() + Duration::from_secs(30);
             let mut locked = state.0.lock();
             while !locked.stopping {
-                let remaining = deadline.checked_duration_since(Instant::now()).expect("drop must signal worker shutdown");
+                let remaining = deadline
+                    .checked_duration_since(Instant::now())
+                    .expect("drop must signal worker shutdown");
                 state.1.wait_for(&mut locked, remaining);
             }
             let cancelled = cancellation.load(Ordering::Relaxed);
             drop(locked);
             release.send(()).unwrap();
             assert!(cancelled, "drop must cancel before joining");
-            assert_eq!(results.recv_timeout(Duration::from_secs(30)).unwrap(), (1, Some("operation cancelled".into())));
+            assert_eq!(
+                results.recv_timeout(Duration::from_secs(30)).unwrap(),
+                (1, Some("operation cancelled".into()))
+            );
             dropped.join().unwrap();
         });
     }

@@ -183,7 +183,12 @@ pub fn expose(
                         let _device = super::StageObservation::new(backend, "optical_diffusion");
                         diffused
                     }
-                    Ok(None) if backend.is_gpu() => return Err("optical_diffusion: selected GPU has no camera diffusion operation".into()),
+                    Ok(None) if backend.is_gpu() => {
+                        return Err(
+                            "optical_diffusion: selected GPU has no camera diffusion operation"
+                                .into(),
+                        );
+                    }
                     Ok(None) => host_diffusion(&raw, &dm, pixel_size_um, backend),
                     Err(error) => return Err(error),
                 }
@@ -330,13 +335,10 @@ fn spektra_layer_tables(film: &Profile) -> Result<SpektraLayerTables, &'static s
     }
     let density_max_layers =
         spektrafilm_model::density_curves::density_max_layers_f64(&layers_tensor);
-    if density_max_layers
-        .iter()
-        .any(|row| {
-            row.iter()
-                .any(|v| v.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater))
-        })
-    {
+    if density_max_layers.iter().any(|row| {
+        row.iter()
+            .any(|v| v.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater))
+    }) {
         return Err("the film profile's per-sublayer density maxima are not positive");
     }
     Ok(SpektraLayerTables {
@@ -403,8 +405,9 @@ pub(crate) fn spektra_grain_device_params(
             density_max_adj[slot] = density_max + density_min_layers[slot];
             // Python multiplies the per-channel particle area by
             // `particle_scale` before applying the sublayer scale.
-            let particle_area =
-                grain.particle_area_um2 * grain.particle_scale[ch] * grain.particle_scale_sublayers[sl];
+            let particle_area = grain.particle_area_um2
+                * grain.particle_scale[ch]
+                * grain.particle_scale_sublayers[sl];
             n_particles[slot] = pixel_area * fraction / particle_area;
         }
     }
@@ -456,7 +459,11 @@ pub(crate) fn spektra_grain_device_params(
         density_max_composite: spektrafilm_model::density_curves::max_density_f64(norm_curves_f64),
         n_particles_composite: std::array::from_fn(|ch| {
             let count = pixel_area / (grain.particle_area_um2 * grain.particle_scale[ch]);
-            if grain.n_sub_layers > 1 { count / grain.n_sub_layers as f64 } else { count }
+            if grain.n_sub_layers > 1 {
+                count / grain.n_sub_layers as f64
+            } else {
+                count
+            }
         }),
     })
 }
@@ -677,12 +684,14 @@ mod tests {
             let norm = spektrafilm_model::density_curves::normalize_density_curves_f64(
                 &film.density_curves_f64(),
             );
-            let expected = backend.density_curve_interp(
-                &log_raw,
-                &film.log_exposure_f64(),
-                &norm,
-                params.film_render.density_curve_gamma as f64,
-            ).expect("reference density interpolation failed");
+            let expected = backend
+                .density_curve_interp(
+                    &log_raw,
+                    &film.log_exposure_f64(),
+                    &norm,
+                    params.film_render.density_curve_gamma as f64,
+                )
+                .expect("reference density interpolation failed");
             assert_eq!(out.data, expected.data);
         }
 

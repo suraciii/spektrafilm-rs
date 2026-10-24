@@ -66,11 +66,13 @@ fn device_input_decode_matches_the_cpu_reference() {
         (6, spektrafilm_math::colorspace::Cctf::Gamma2_6),
     ] {
         let params = spektrafilm_backend::InputDecodeGpuParams { cctf_kind: kind };
-        let image = backend.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("input_decode_probe"),
-            contents: bytemuck::cast_slice(&data),
-            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-        });
+        let image = backend
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("input_decode_probe"),
+                contents: bytemuck::cast_slice(&data),
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            });
         let state = build_input_decode_state(&backend.device, &params, &image, n, &backend)
             .expect("the probe state stays within device binding limits");
         state.submit(&backend).expect("input decode submission");

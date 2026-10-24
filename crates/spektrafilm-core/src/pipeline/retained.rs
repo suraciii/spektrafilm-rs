@@ -14,8 +14,8 @@
 use super::*;
 use crate::WorkflowRoute;
 use spektrafilm_backend::{
-    ConvertColorspaceGpuParams, DeviceImage, InputGeometryGpuParams, Precision,
-    RetainedImageMeta, SampleDomain,
+    ConvertColorspaceGpuParams, DeviceImage, InputGeometryGpuParams, Precision, RetainedImageMeta,
+    SampleDomain,
 };
 
 /// One retained render request.
@@ -84,10 +84,15 @@ impl Pipeline {
         if !backend.is_gpu() {
             return Ok(None);
         }
-        let cancellation_backend = self.cancellation.as_ref().map(|token| {
-            backend.with_cancellation(Some(token.clone()))
-                .ok_or_else(|| "selected GPU cannot bind operation cancellation".to_owned())
-        }).transpose()?;
+        let cancellation_backend = self
+            .cancellation
+            .as_ref()
+            .map(|token| {
+                backend
+                    .with_cancellation(Some(token.clone()))
+                    .ok_or_else(|| "selected GPU cannot bind operation cancellation".to_owned())
+            })
+            .transpose()?;
         let backend = cancellation_backend.as_deref().unwrap_or(backend);
         self.validate_retained_request(backend)?;
         let input_space = spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)?;
@@ -135,10 +140,15 @@ impl Pipeline {
         if !backend.is_gpu() || !image.is_retained() {
             return self.fail("device input requires its selected GPU backend");
         }
-        let cancellation_backend = self.cancellation.as_ref().map(|token| {
-            backend.with_cancellation(Some(token.clone()))
-                .ok_or_else(|| "selected GPU cannot bind operation cancellation".to_owned())
-        }).transpose()?;
+        let cancellation_backend = self
+            .cancellation
+            .as_ref()
+            .map(|token| {
+                backend
+                    .with_cancellation(Some(token.clone()))
+                    .ok_or_else(|| "selected GPU cannot bind operation cancellation".to_owned())
+            })
+            .transpose()?;
         let backend = cancellation_backend.as_deref().unwrap_or(backend);
         self.validate_retained_request(backend)?;
         backend.image_payload(image)?;
@@ -163,33 +173,63 @@ impl Pipeline {
         Ok(())
     }
 
-    fn retained_taps(&self, inject: Option<Tap>, collect: Option<Tap>) -> Result<(Tap, Tap), String> {
+    fn retained_taps(
+        &self,
+        inject: Option<Tap>,
+        collect: Option<Tap>,
+    ) -> Result<(Tap, Tap), String> {
         let inject = match inject {
             Some(tap) => tap,
-            None => self.params.taps.inject.as_deref().map(Tap::parse).transpose()?.unwrap_or(Tap::RgbIn),
+            None => self
+                .params
+                .taps
+                .inject
+                .as_deref()
+                .map(Tap::parse)
+                .transpose()?
+                .unwrap_or(Tap::RgbIn),
         };
         let collect = match collect {
             Some(tap) => tap,
-            None => self.params.taps.collect.as_deref().map(Tap::parse).transpose()?.unwrap_or(Tap::RgbOut),
+            None => self
+                .params
+                .taps
+                .collect
+                .as_deref()
+                .map(Tap::parse)
+                .transpose()?
+                .unwrap_or(Tap::RgbOut),
         };
         let order = self.tap_order();
         for tap in [inject, collect] {
             if !order.contains(&tap) {
-                return Err(format!("tap {tap:?} is not part of this topology (scan_film = {})", self.params.io.scan_film));
+                return Err(format!(
+                    "tap {tap:?} is not part of this topology (scan_film = {})",
+                    self.params.io.scan_film
+                ));
             }
         }
         if collect.position() < inject.position() {
-            return Err(format!("no node path reaches tap {collect:?} from {inject:?}"));
+            return Err(format!(
+                "no node path reaches tap {collect:?} from {inject:?}"
+            ));
         }
         if collect == Tap::RgbOut && self.params.output_mix.amount < 1.0 && inject != Tap::RgbIn {
-            return Err("output_mix.amount below 1 requires rgb_in injection for final rgb_out collection".into());
+            return Err(
+                "output_mix.amount below 1 requires rgb_in injection for final rgb_out collection"
+                    .into(),
+            );
         }
         let aperture = crate::stages::grain_v3::validate_aperture(&self.params)?;
         Self::validate_grain_v3_taps(
             crate::stages::grain_v3::validate_cell_spectral(&self.params)?,
-            inject, collect, self.params.io.scan_film,
+            inject,
+            collect,
+            self.params.io.scan_film,
         )?;
-        if aperture.is_some() && (collect != Tap::RgbOut || inject.position() > Tap::LogEFilm.position()) {
+        if aperture.is_some()
+            && (collect != Tap::RgbOut || inject.position() > Tap::LogEFilm.position())
+        {
             return Err("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR requires injection at or before log_e_film and collect=rgb_out".into());
         }
         Ok((inject, collect))
@@ -205,15 +245,32 @@ impl Pipeline {
         collect: Tap,
     ) -> Result<Option<DeviceImage>, String> {
         let defer_preview = self.params.scanner.requires_full_frame();
-        let working_preview = if defer_preview { None } else { request.preview_max_size };
+        let working_preview = if defer_preview {
+            None
+        } else {
+            request.preview_max_size
+        };
         if inject == collect {
             let (geometry, _) = crate::resizing::resolve_device_geometry(
-                image.width(), image.height(), &self.params.io,
+                image.width(),
+                image.height(),
+                &self.params.io,
                 request.rotation_quarter_turns as i32,
-                Some(if collect == Tap::RgbOut { request.preview_max_size } else { working_preview }.unwrap_or(u32::MAX)),
-                image.pixel_pitch_um().unwrap_or_else(|| crate::resizing::pixel_size_um(
-                    self.params.camera.film_format_mm, image.width(), image.height(),
-                )),
+                Some(
+                    if collect == Tap::RgbOut {
+                        request.preview_max_size
+                    } else {
+                        working_preview
+                    }
+                    .unwrap_or(u32::MAX),
+                ),
+                image.pixel_pitch_um().unwrap_or_else(|| {
+                    crate::resizing::pixel_size_um(
+                        self.params.camera.film_format_mm,
+                        image.width(),
+                        image.height(),
+                    )
+                }),
             )?;
             let result = self.retained_geometry_stage(image, &geometry, backend)?;
             if let Some(context) = backend.observation_context() {
@@ -290,7 +347,7 @@ impl Pipeline {
         // 2. Working geometry on the device. Dye and Fotufilm develop the full
         //    source: their field readout owns the crop and the output lattice,
         //    so the generic geometry stage stays identity for them.
-        let full_source_fields = route != WorkflowRoute::Input
+        let full_source_fields = route.exposes_film()
             && (crate::stages::grain_v3::active(&self.params)
                 || crate::stages::grain_fotufilm::active(&self.params));
         let mut working_pitch = source_pitch;
@@ -365,33 +422,53 @@ impl Pipeline {
         if inject == Tap::RgbIn && full_source_fields {
             // Optical grain owns crop/upscale, but input orientation and an
             // ordinary preview still precede development of its full source.
-            let (width, height) = working_preview.map_or(
-                (carrier.width(), carrier.height()),
-                |max_size| crate::resizing::preview_dimensions(carrier.width(), carrier.height(), max_size),
-            );
-            working_pitch = crate::resizing::pixel_size_um(self.params.camera.film_format_mm, width, height);
+            let (width, height) =
+                working_preview.map_or((carrier.width(), carrier.height()), |max_size| {
+                    crate::resizing::preview_dimensions(carrier.width(), carrier.height(), max_size)
+                });
+            working_pitch =
+                crate::resizing::pixel_size_um(self.params.camera.film_format_mm, width, height);
             let (geometry, _) = crate::resizing::resolve_device_geometry(
-                carrier.width(), carrier.height(), &self.params.io,
+                carrier.width(),
+                carrier.height(),
+                &self.params.io,
                 request.rotation_quarter_turns as i32,
-                Some(working_preview.unwrap_or(u32::MAX)), working_pitch,
+                Some(working_preview.unwrap_or(u32::MAX)),
+                working_pitch,
             )?;
             carrier = self.retained_geometry_stage(&carrier, &geometry, backend)?;
             applied_geometry.push(geometry);
+            if collect == Tap::RgbOut && self.params.output_mix.amount < 1.0 {
+                // The optical field owns result geometry, not the source
+                // branch. Replay its requested crop/upscale after orientation
+                // and preview, without applying either to field conditioning.
+                let (geometry, _) = crate::resizing::resolve_device_geometry(
+                    carrier.width(),
+                    carrier.height(),
+                    &self.params.io,
+                    0,
+                    None,
+                    working_pitch / self.params.io.upscale_factor as f64,
+                )?;
+                applied_geometry.push(geometry);
+            }
         }
         if inject != Tap::RgbIn {
             // Preview and deferred orientation precede even an injected
             // diagnostic image; camera metering, crop and upscale do not.
-            let (width, height) = working_preview.map_or(
-                (carrier.width(), carrier.height()),
-                |max_size| crate::resizing::preview_dimensions(carrier.width(), carrier.height(), max_size),
-            );
-            working_pitch = crate::resizing::pixel_size_um(
-                self.params.camera.film_format_mm, width, height,
-            );
+            let (width, height) =
+                working_preview.map_or((carrier.width(), carrier.height()), |max_size| {
+                    crate::resizing::preview_dimensions(carrier.width(), carrier.height(), max_size)
+                });
+            working_pitch =
+                crate::resizing::pixel_size_um(self.params.camera.film_format_mm, width, height);
             let (geometry, _) = crate::resizing::resolve_device_geometry(
-                carrier.width(), carrier.height(), &self.params.io,
+                carrier.width(),
+                carrier.height(),
+                &self.params.io,
                 request.rotation_quarter_turns as i32,
-                Some(working_preview.unwrap_or(u32::MAX)), working_pitch,
+                Some(working_preview.unwrap_or(u32::MAX)),
+                working_pitch,
             )?;
             carrier = self.retained_geometry_stage(&carrier, &geometry, backend)?;
         }
@@ -406,40 +483,45 @@ impl Pipeline {
             return Ok(Some(carrier));
         }
 
-        if route == WorkflowRoute::Input {
+        let mut result = if route == WorkflowRoute::Input {
             let result = self.retained_input_route(&carrier, input_space, output_space, backend)?;
             if let Some(context) = backend.observation_context() {
                 context.set_path(spektrafilm_backend::telemetry::ExecutionPath::GpuResident);
             }
-            return Ok(Some(result));
-        }
-
-        // 3. The resident chain, from the retained working image. Auto-exposure
-        //    already ran above, so the front pass receives `ae_ev = 0` exactly
-        //    as the host route passes it after `expose_full_input`.
-        // A convert-film route resolves no rgb→raw front pass: its head is
-        // the scanner inverse solve, which `resident_front_pass` builds
-        // from the profile and the convert controls instead.
-        if inject.position() <= Tap::RgbPre.position()
-            && self.tc_lut.is_none()
-            && self.mallett_core.is_none()
-            && !route.is_convert_film()
-        {
-            return self.declines_or_fails(
+            result
+        } else {
+            // Auto-exposure already ran above. Convert-film instead starts
+            // at the scanner inverse solve, with no RGB-to-raw front pass.
+            if inject.position() <= Tap::RgbPre.position()
+                && self.tc_lut.is_none()
+                && self.mallett_core.is_none()
+                && !route.is_convert_film()
+            {
+                return self.declines_or_fails(
+                    backend,
+                    "no RGB-to-raw front pass was resolved for the retained route",
+                );
+            }
+            match self.try_gpu_resident_retained_with_taps(
+                &carrier,
                 backend,
-                "no RGB-to-raw front pass was resolved for the retained route",
-            );
-        }
-        let mut result = match self.try_gpu_resident_retained_with_taps(
-            &carrier,
-            backend,
-            working_pitch,
-            0.0,
-            if inject == Tap::RgbIn { Tap::RgbPre } else { inject },
-            collect,
-        )? {
-            Some(result) => result,
-            None => return self.declines_or_fails(backend, "the selected GPU declined the retained stage chain"),
+                working_pitch,
+                0.0,
+                if inject == Tap::RgbIn {
+                    Tap::RgbPre
+                } else {
+                    inject
+                },
+                collect,
+            )? {
+                Some(result) => result,
+                None => {
+                    return self.declines_or_fails(
+                        backend,
+                        "the selected GPU declined the retained stage chain",
+                    );
+                }
+            }
         };
 
         // 4. The final mix reads the prepared source from the same upload.
@@ -469,14 +551,22 @@ impl Pipeline {
                 }
             };
         }
-        if defer_preview && collect == Tap::RgbOut
+        if defer_preview
+            && collect == Tap::RgbOut
             && let Some(max_size) = request.preview_max_size
         {
-            let (width, height) = crate::resizing::preview_dimensions(result.width(), result.height(), max_size);
+            let (width, height) =
+                crate::resizing::preview_dimensions(result.width(), result.height(), max_size);
             let pitch = result.pixel_pitch_um().unwrap_or(working_pitch)
-                * result.width().max(result.height()) as f64 / width.max(height) as f64;
+                * result.width().max(result.height()) as f64
+                / width.max(height) as f64;
             let (geometry, _) = crate::resizing::resolve_device_geometry(
-                result.width(), result.height(), &self.params.io, 0, Some(max_size), pitch,
+                result.width(),
+                result.height(),
+                &self.params.io,
+                0,
+                Some(max_size),
+                pitch,
             )?;
             result = self.retained_geometry_stage(&result, &geometry, backend)?;
         }
@@ -495,17 +585,16 @@ impl Pipeline {
         params: &InputGeometryGpuParams,
         backend: &dyn ComputeBackend,
     ) -> Result<DeviceImage, String> {
-        let identity = params.rotation_quarter_turns == 0
-            && params.crop.is_none()
-            && params.resize.is_none();
+        let identity =
+            params.rotation_quarter_turns == 0 && params.crop.is_none() && params.resize.is_none();
         if identity {
             return Ok(carrier.clone());
         }
         match backend.input_geometry(carrier, params)? {
             Some(staged) => Ok(staged),
-            None => self.fail(
-                "the selected backend cannot apply working geometry to a retained image",
-            ),
+            None => {
+                self.fail("the selected backend cannot apply working geometry to a retained image")
+            }
         }
     }
 
@@ -544,14 +633,15 @@ impl Pipeline {
                 Some(converted) => converted,
                 None => {
                     return self.fail(
-                        "the selected backend cannot convert a retained image between colour spaces",
-                    );
+                    "the selected backend cannot convert a retained image between colour spaces",
+                );
                 }
             };
         if self.params.cmyk.active && self.params.cmyk.strength > 0.0 {
             let (to_lab, from_lab) = crate::cmyk::CmykTransform::new(output_space).gpu_matrices();
-            let f32m =
-                |m: &[[f64; 3]; 3]| std::array::from_fn(|i| std::array::from_fn(|j| m[i][j] as f32));
+            let f32m = |m: &[[f64; 3]; 3]| {
+                std::array::from_fn(|i| std::array::from_fn(|j| m[i][j] as f32))
+            };
             let cmyk = spektrafilm_backend::CmykGpuParams {
                 strength: self.params.cmyk.strength.clamp(0.0, 1.0) as f32,
                 encoded: self.params.io.output_cctf_encoding,
@@ -571,11 +661,9 @@ impl Pipeline {
         Ok(converted)
     }
 
-    /// The prepared output-mix source, resolved from the same uploaded carrier
-    /// the simulation started from. The reference decodes the input transport,
-    /// then crops and rescales, then converts primaries
-    /// (`prepare_output_mix_source`), so this runs the same three device
-    /// passes in that order over the untouched upload.
+    /// Prepare the untouched source branch: preview the stored transport,
+    /// decode, apply requested crop/upscale, then convert primaries. Optical
+    /// readouts defer result geometry but the source uses the delivered grid.
     pub(super) fn retained_output_mix_source(
         &self,
         mix_input: &DeviceImage,
@@ -584,33 +672,43 @@ impl Pipeline {
         output_space: &'static spektrafilm_math::colorspace::RgbColorSpace,
         backend: &dyn ComputeBackend,
     ) -> Result<DeviceImage, String> {
+        // CPU preview bounds the encoded source before pipeline ingress.
+        // Unlike crop/spline geometry, that triangle stage precedes decode.
+        let (preview, geometry) =
+            geometry.split_at(usize::from(geometry.first().is_some_and(|stage| {
+                stage.resize.is_some_and(|resize| {
+                    resize.method == spektrafilm_backend::InputResizeMethod::PreviewTriangle
+                })
+            })));
+        let mut preview_input = mix_input.clone();
+        for params in preview {
+            preview_input = self.retained_geometry_stage(&preview_input, params, backend)?;
+        }
         // 1. Decode the source transport (identity matrix: transfer only).
-        let mut carrier =
-            if self.params.io.input_cctf_decoding {
-                let decode = ConvertColorspaceGpuParams {
-                    src_cctf: spektrafilm_backend::cctf_kind(input_space.cctf),
-                    dst_cctf: spektrafilm_backend::cctf_kind(input_space.cctf),
-                    decode: true,
-                    encode: false,
-                    matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                };
-                match backend.convert_colorspace_retained(
-                    mix_input,
-                    &decode,
-                    input_space,
-                    SampleDomain::Linear,
-                )? {
-                    Some(decoded) => decoded,
-                    None => {
-                        return self.fail(
-                            "the selected backend cannot decode the prepared output-mix source",
-                        );
-                    }
-                }
-            } else {
-                mix_input.clone()
+        let mut carrier = if self.params.io.input_cctf_decoding {
+            let decode = ConvertColorspaceGpuParams {
+                src_cctf: spektrafilm_backend::cctf_kind(input_space.cctf),
+                dst_cctf: spektrafilm_backend::cctf_kind(input_space.cctf),
+                decode: true,
+                encode: false,
+                matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             };
-        // 2. The same working geometry the simulation consumed.
+            match backend.convert_colorspace_retained(
+                &preview_input,
+                &decode,
+                input_space,
+                SampleDomain::Linear,
+            )? {
+                Some(decoded) => decoded,
+                None => {
+                    return self
+                        .fail("the selected backend cannot decode the prepared output-mix source");
+                }
+            }
+        } else {
+            preview_input
+        };
+        // 2. Requested source geometry, including deferred optical readout crop.
         for params in geometry {
             carrier = self.retained_geometry_stage(&carrier, params, backend)?;
         }
@@ -707,25 +805,52 @@ mod tests {
         let mut pipeline = pipeline();
         pipeline.params.taps.inject = Some("log_e_film".into());
         pipeline.params.taps.collect = Some("cmy_film".into());
-        assert_eq!(pipeline.retained_taps(None, None).unwrap(), (Tap::LogEFilm, Tap::CmyFilm));
-        assert_eq!(pipeline.retained_taps(Some(Tap::RgbIn), Some(Tap::RgbOut)).unwrap(),
-            (Tap::RgbIn, Tap::RgbOut));
-        assert!(pipeline.retained_taps(Some(Tap::CmyPrint), Some(Tap::RgbOut))
-            .unwrap_err().contains("not part of this topology"));
-        assert!(pipeline.retained_taps(Some(Tap::CmyFilm), Some(Tap::LogEFilm))
-            .unwrap_err().contains("no node path"));
+        assert_eq!(
+            pipeline.retained_taps(None, None).unwrap(),
+            (Tap::LogEFilm, Tap::CmyFilm)
+        );
+        assert_eq!(
+            pipeline
+                .retained_taps(Some(Tap::RgbIn), Some(Tap::RgbOut))
+                .unwrap(),
+            (Tap::RgbIn, Tap::RgbOut)
+        );
+        assert!(
+            pipeline
+                .retained_taps(Some(Tap::CmyPrint), Some(Tap::RgbOut))
+                .unwrap_err()
+                .contains("not part of this topology")
+        );
+        assert!(
+            pipeline
+                .retained_taps(Some(Tap::CmyFilm), Some(Tap::LogEFilm))
+                .unwrap_err()
+                .contains("no node path")
+        );
         pipeline.params.output_mix.amount = 0.5;
-        assert!(pipeline.retained_taps(Some(Tap::LogEFilm), Some(Tap::RgbOut))
-            .unwrap_err().contains("requires rgb_in injection"));
+        assert!(
+            pipeline
+                .retained_taps(Some(Tap::LogEFilm), Some(Tap::RgbOut))
+                .unwrap_err()
+                .contains("requires rgb_in injection")
+        );
     }
 
     #[test]
     fn automatic_selected_gpu_decline_never_restarts_on_cpu() {
         struct AutomaticGpu;
         impl ComputeBackend for AutomaticGpu {
-            fn name(&self) -> &str { "automatic GPU" }
-            fn is_gpu(&self) -> bool { true }
-            fn colorspace_convert(&self, _: &ImageBuf, _: &[[f32; 3]; 3]) -> Result<ImageBuf, String> {
+            fn name(&self) -> &str {
+                "automatic GPU"
+            }
+            fn is_gpu(&self) -> bool {
+                true
+            }
+            fn colorspace_convert(
+                &self,
+                _: &ImageBuf,
+                _: &[[f32; 3]; 3],
+            ) -> Result<ImageBuf, String> {
                 panic!("a decline must not execute host conversion")
             }
             fn cctf_encode_srgb(&self, _: &ImageBuf) -> Result<ImageBuf, String> {
@@ -737,14 +862,24 @@ mod tests {
             fn gaussian_blur(&self, _: &ImageBuf, _: f32) -> Result<ImageBuf, String> {
                 panic!("a decline must not execute host blur")
             }
-            fn table_lookup(&self, _: &ImageBuf, _: &[f32], _: &[[f32; 3]]) -> Result<ImageBuf, String> {
+            fn table_lookup(
+                &self,
+                _: &ImageBuf,
+                _: &[f32],
+                _: &[[f32; 3]],
+            ) -> Result<ImageBuf, String> {
                 panic!("a decline must not execute host lookup")
             }
-            fn lut3d_interp(&self, _: &ImageBuf, _: &spektrafilm_backend::Lut3D) -> Result<ImageBuf, String> {
+            fn lut3d_interp(
+                &self,
+                _: &ImageBuf,
+                _: &spektrafilm_backend::Lut3D,
+            ) -> Result<ImageBuf, String> {
                 panic!("a decline must not execute host lattice interpolation")
             }
         }
-        let error = pipeline().declines_or_fails::<DeviceImage>(&AutomaticGpu, "missing RAW stage")
+        let error = pipeline()
+            .declines_or_fails::<DeviceImage>(&AutomaticGpu, "missing RAW stage")
             .unwrap_err();
         assert!(error.contains("missing RAW stage"));
         assert!(error.contains("explicit CPU request"));

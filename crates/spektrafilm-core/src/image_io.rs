@@ -1017,14 +1017,9 @@ impl SavingPixels {
     ) -> Result<PreparedImageOutput, ImageIoError> {
         let observation = context.enabled().then_some(context);
         match self {
-            Self::Reference(image) => prepare_inner(
-                path,
-                image,
-                options,
-                metadata,
-                rendered_output,
-                observation,
-            ),
+            Self::Reference(image) => {
+                prepare_inner(path, image, options, metadata, rendered_output, observation)
+            }
             Self::Converted(samples) => prepare_samples_inner(
                 path,
                 samples,

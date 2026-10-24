@@ -458,18 +458,36 @@ impl App {
                 params.io.input_color_space = "ACES2065-1".into();
                 params.io.input_cctf_decoding = false;
                 if self.backend.is_gpu() {
-                    let result = spektrafilm_raw::load_retained_with_backend(path, &options, self.backend.as_ref())
-                        .map_err(anyhow::Error::msg)?;
-                    Some((crate::render::InputImage::Device(result.image), image_io::read_metadata(path),
-                        Some(result.lens_info), result.lens_model_identity))
+                    let result = spektrafilm_raw::load_retained_with_backend(
+                        path,
+                        &options,
+                        self.backend.as_ref(),
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                    Some((
+                        crate::render::InputImage::Device(result.image),
+                        image_io::read_metadata(path),
+                        Some(result.lens_info),
+                        result.lens_model_identity,
+                    ))
                 } else {
-                    let result = spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
-                    Some((crate::render::InputImage::Host(Arc::new(result.image)), image_io::read_metadata(path),
-                        Some(result.lens_info), result.lens_model_identity))
+                    let result =
+                        spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
+                    Some((
+                        crate::render::InputImage::Host(Arc::new(result.image)),
+                        image_io::read_metadata(path),
+                        Some(result.lens_info),
+                        result.lens_model_identity,
+                    ))
                 }
             } else {
                 let result = image_io::load(path)?;
-                Some((crate::render::InputImage::Host(Arc::new(result.image)), result.metadata, None, None))
+                Some((
+                    crate::render::InputImage::Host(Arc::new(result.image)),
+                    result.metadata,
+                    None,
+                    None,
+                ))
             }
         } else {
             None

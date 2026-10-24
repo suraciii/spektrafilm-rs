@@ -209,26 +209,39 @@ impl WgpuBackend {
     ) -> Result<OutputSampleData, String> {
         let n_pixels = u64::from(image.width) * u64::from(image.height);
         if image.data.len() as u64 != n_pixels * 3 {
-            return Err("saving conversion: image sample count does not match its dimensions"
-                .to_owned());
+            return Err(
+                "saving conversion: image sample count does not match its dimensions".to_owned(),
+            );
         }
         let mut values = empty_samples(params.kind);
         let pixels = super::super::bounded::chunk_elements(
-            super::super::bounded::storage_binding_limit(self)?, 12,
+            super::super::bounded::storage_binding_limit(self)?,
+            12,
         )?;
         for samples in image.data.chunks(pixels * 3) {
             self.check_cancelled()?;
             let samples = scalars_to_f32(samples);
-            let source = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("output_sample_input"), contents: bytemuck::cast_slice(&samples),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            });
+            let source = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("output_sample_input"),
+                    contents: bytemuck::cast_slice(&samples),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                });
             let n = (samples.len() / 3) as u32;
             let words = self.encode_output_samples_buffer(&source, u64::from(n), params)?;
-            append_samples(&mut values, self.read_output_samples(&words, n, 1, params.kind)?.values);
+            append_samples(
+                &mut values,
+                self.read_output_samples(&words, n, 1, params.kind)?.values,
+            );
         }
         self.check_cancelled()?;
-        Ok(OutputSampleData { width: image.width, height: image.height, kind: params.kind, values })
+        Ok(OutputSampleData {
+            width: image.width,
+            height: image.height,
+            kind: params.kind,
+            values,
+        })
     }
 
     /// Saving conversion of a retained carrier. The payload's backend identity
@@ -241,7 +254,11 @@ impl WgpuBackend {
     ) -> Result<OutputSampleData, String> {
         let payload = self.buffer_payload(image)?;
         let domain = image.domain();
-        if matches!(domain, spektrafilm_backend::SampleDomain::Density | spektrafilm_backend::SampleDomain::LogExposure) {
+        if matches!(
+            domain,
+            spektrafilm_backend::SampleDomain::Density
+                | spektrafilm_backend::SampleDomain::LogExposure
+        ) {
             return Err(
                 "saving conversion: retained samples are diagnostic exposure/density, not output RGB".to_owned(),
             );
@@ -261,14 +278,21 @@ impl WgpuBackend {
         let mut values = empty_samples(params.kind);
         for page in &payload.pages {
             self.check_cancelled()?;
-            let words = self.encode_output_samples_buffer(
-                &page.buffer, u64::from(page.n_pixels), params,
-            )?;
-            append_samples(&mut values,
-                self.read_output_samples(&words, page.n_pixels, 1, params.kind)?.values);
+            let words =
+                self.encode_output_samples_buffer(&page.buffer, u64::from(page.n_pixels), params)?;
+            append_samples(
+                &mut values,
+                self.read_output_samples(&words, page.n_pixels, 1, params.kind)?
+                    .values,
+            );
         }
         self.check_cancelled()?;
-        Ok(OutputSampleData { width: image.width(), height: image.height(), kind: params.kind, values })
+        Ok(OutputSampleData {
+            width: image.width(),
+            height: image.height(),
+            kind: params.kind,
+            values,
+        })
     }
 }
 
@@ -297,9 +321,13 @@ fn unpack_samples(
                 .map(|i| (words[i / 2] >> (16 * (i % 2))) as u16)
                 .collect(),
         ),
-        OutputSampleKind::F32 => {
-            OutputSampleValues::F32(words.iter().take(count).map(|w| f32::from_bits(*w)).collect())
-        }
+        OutputSampleKind::F32 => OutputSampleValues::F32(
+            words
+                .iter()
+                .take(count)
+                .map(|w| f32::from_bits(*w))
+                .collect(),
+        ),
     };
     OutputSampleData {
         width,
@@ -331,25 +359,47 @@ fn append_samples(destination: &mut OutputSampleValues, chunk: OutputSampleValue
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spektrafilm_backend::{ComputeBackend, SampleDomain};
     use spektrafilm_backend::telemetry::ObservationContext;
-    use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}};
+    use spektrafilm_backend::{ComputeBackend, SampleDomain};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
 
     #[test]
     fn output_page_cancellation_discards_partial_samples_and_keeps_device_reusable() {
         let gpu = crate::test_support::explicit_adapter();
         let values = [0.0f32, 0.25, 0.5, 0.75, 1.0, 0.125, 0.5, 0.0, 1.0];
-        let pages = values.chunks(3).enumerate().map(|(index, samples)| super::super::super::paged::ImagePage {
-            first_pixel: index as u32, n_pixels: 1,
-            buffer: gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("cancelled_writer_page"), contents: bytemuck::cast_slice(samples),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-            }),
-        }).collect();
-        let image = gpu.retain_image_pages(pages, 3, 1, SampleDomain::Linear,
-            spektrafilm_math::colorspace::resolve("sRGB").unwrap(), None);
+        let pages = values
+            .chunks(3)
+            .enumerate()
+            .map(|(index, samples)| super::super::super::paged::ImagePage {
+                first_pixel: index as u32,
+                n_pixels: 1,
+                buffer: gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("cancelled_writer_page"),
+                        contents: bytemuck::cast_slice(samples),
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_SRC
+                            | wgpu::BufferUsages::COPY_DST,
+                    }),
+            })
+            .collect();
+        let image = gpu.retain_image_pages(
+            pages,
+            3,
+            1,
+            SampleDomain::Linear,
+            spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+            None,
+        );
         let params = OutputSampleGpuParams {
-            src_cctf: 0, decode: false, dst_cctf: 0, encode: false,
+            src_cctf: 0,
+            decode: false,
+            dst_cctf: 0,
+            encode: false,
             matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             kind: OutputSampleKind::F32,
         };
@@ -364,21 +414,50 @@ mod tests {
             }
         });
         let operation = gpu.with_cancellation(Some(cancellation.clone())).unwrap();
-        let observed = operation.with_observation_context(ObservationContext::default()).unwrap();
-        assert_eq!(observed.convert_retained_samples(&image, &params).unwrap_err(), "operation cancelled");
-        assert_eq!(readbacks.load(Ordering::Relaxed), 1, "cancelled writer must not read the next page");
+        let observed = operation
+            .with_observation_context(ObservationContext::default())
+            .unwrap();
+        assert_eq!(
+            observed
+                .convert_retained_samples(&image, &params)
+                .unwrap_err(),
+            "operation cancelled"
+        );
+        assert_eq!(
+            readbacks.load(Ordering::Relaxed),
+            1,
+            "cancelled writer must not read the next page"
+        );
         gpu.pipe.test_on_readback(|| {});
-        let replacement = observed.with_cancellation(Some(Arc::new(AtomicBool::new(false)))).unwrap();
+        let replacement = observed
+            .with_cancellation(Some(Arc::new(AtomicBool::new(false))))
+            .unwrap();
         let cleared = observed.with_cancellation(None).unwrap();
         for backend in [gpu.backend(), replacement.as_ref(), cleared.as_ref()] {
-            let samples = backend.convert_retained_samples(&image, &params).unwrap().unwrap();
-            let OutputSampleValues::F32(actual) = samples.values else { panic!("expected float writer samples") };
+            let samples = backend
+                .convert_retained_samples(&image, &params)
+                .unwrap()
+                .unwrap();
+            let OutputSampleValues::F32(actual) = samples.values else {
+                panic!("expected float writer samples")
+            };
             assert_eq!(actual, values);
         }
-        assert_eq!(scalars_to_f32(&image.to_host(gpu.backend()).unwrap().data).as_ref(), values.as_slice());
-        assert!(cancellation.load(Ordering::Relaxed), "healthy reuse must not reset another operation's token");
+        assert_eq!(
+            scalars_to_f32(&image.to_host(gpu.backend()).unwrap().data).as_ref(),
+            values.as_slice()
+        );
+        assert!(
+            cancellation.load(Ordering::Relaxed),
+            "healthy reuse must not reset another operation's token"
+        );
         gpu.pipe.test_fail_operation("output_samples");
-        assert!(cleared.convert_retained_samples(&image, &params).unwrap_err().contains("injected device resource failure"));
+        assert!(
+            cleared
+                .convert_retained_samples(&image, &params)
+                .unwrap_err()
+                .contains("injected device resource failure")
+        );
         assert_eq!(gpu.pipe.test_failure_attempts(), 1);
     }
 }

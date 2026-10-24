@@ -238,11 +238,19 @@ fn band_fit(band: &DyeBand, bound: u64) -> Result<(), String> {
 
 /// Split formed cells, not the output footprint. Each piece keeps its own
 /// complete formation halo and the original global readout coordinates.
-fn split_cell_band(width: u32, height: u32, p: &DyeGpuParams, band: DyeBand) -> Result<[DyeBand; 2], String> {
+fn split_cell_band(
+    width: u32,
+    height: u32,
+    p: &DyeGpuParams,
+    band: DyeBand,
+) -> Result<[DyeBand; 2], String> {
     let horizontal = band.cols >= band.rows && band.cols > 1;
     let extent = if horizontal { band.cols } else { band.rows };
     if extent <= 1 {
-        return Err("film grain Dye: one formed cell and its formation halo exceed the device band budget".into());
+        return Err(
+            "film grain Dye: one formed cell and its formation halo exceed the device band budget"
+                .into(),
+        );
     }
     let first = extent / 2;
     let halo = (p.taps.len() - 1) as u32;
@@ -251,18 +259,34 @@ fn split_cell_band(width: u32, height: u32, p: &DyeGpuParams, band: DyeBand) -> 
         let offset = if index == 0 { 0 } else { first };
         let count = if index == 0 { first } else { extent - first };
         if horizontal {
-            piece.cell_x = piece.cell_x.checked_add(offset as i32)
+            piece.cell_x = piece
+                .cell_x
+                .checked_add(offset as i32)
                 .ok_or("film grain Dye: partition exceeds the signed cell range")?;
             piece.cols = count;
         } else {
-            piece.cell_y = piece.cell_y.checked_add(offset as i32)
+            piece.cell_y = piece
+                .cell_y
+                .checked_add(offset as i32)
                 .ok_or("film grain Dye: partition exceeds the signed cell range")?;
             piece.rows = count;
         }
         piece.ext_cols = piece.cols + halo;
         piece.ext_rows = piece.rows + halo;
-        (piece.source_x, piece.source_cols) = source_window(i64::from(piece.cell_x), piece.ext_cols, p.cell_um, p.source_pitch_um, width);
-        (piece.source_y, piece.source_rows) = source_window(i64::from(piece.cell_y), piece.ext_rows, p.cell_um, p.source_pitch_um, height);
+        (piece.source_x, piece.source_cols) = source_window(
+            i64::from(piece.cell_x),
+            piece.ext_cols,
+            p.cell_um,
+            p.source_pitch_um,
+            width,
+        );
+        (piece.source_y, piece.source_rows) = source_window(
+            i64::from(piece.cell_y),
+            piece.ext_rows,
+            p.cell_um,
+            p.source_pitch_um,
+            height,
+        );
     }
     Ok(pieces)
 }
@@ -398,8 +422,8 @@ impl DyePlan {
                 }
                 let end = bands.len();
                 for (index, piece) in bands[start..end].iter_mut().enumerate() {
-                    piece.readout_flags = u32::from(index > 0)
-                        | (u32::from(index + 1 < end - start) << 1);
+                    piece.readout_flags =
+                        u32::from(index > 0) | (u32::from(index + 1 < end - start) << 1);
                 }
             }
         }
@@ -409,7 +433,8 @@ impl DyePlan {
             for (max, bytes) in max_band_bytes.iter_mut().zip(band_bytes(band)) {
                 *max = (*max).max(bytes);
             }
-            max_output_bytes = max_output_bytes.max(u64::from(band.output_cols) * u64::from(band.output_rows) * 12);
+            max_output_bytes = max_output_bytes
+                .max(u64::from(band.output_cols) * u64::from(band.output_rows) * 12);
         }
         Ok(Self {
             bands,
@@ -491,7 +516,12 @@ fn spatial_uniform(
             band.output_y,
         ],
         ratios: [q_rp, q_x, q_y, 0],
-        phase: [ox_int as i64 as u32, oy_int as i64 as u32, band.output_x, p.grid.width],
+        phase: [
+            ox_int as i64 as u32,
+            oy_int as i64 as u32,
+            band.output_x,
+            p.grid.width,
+        ],
         fracs: [rp_hi, rp_lo, (ox - ox_int) as f32, (oy - oy_int) as f32],
         fracs2: [rx_hi, rx_lo, ry_hi, ry_lo],
         widths: [col_w as f32, row_w as f32, h as f32, pitch as f32],
@@ -691,7 +721,9 @@ pub(super) fn build_band_readout(
     local: bool,
 ) -> SpatialPass {
     let mut uniform = spatial_uniform(p, band, source_dims[0], source_dims[1]);
-    if response { uniform.mins = [0.0; 4]; }
+    if response {
+        uniform.mins = [0.0; 4];
+    }
     uniform.ratios[3] = u32::from(local) | (band.readout_flags << 1);
     let params = backend.pipe.static_buffer(
         "dye_response_readout_params",
@@ -707,7 +739,12 @@ pub(super) fn build_band_readout(
         ],
     );
     SpatialPass {
-        group: spatial_group(backend, "dye_response_readout", &pipeline, &[&params, input, output]),
+        group: spatial_group(
+            backend,
+            "dye_response_readout",
+            &pipeline,
+            &[&params, input, output],
+        ),
         pipeline,
         items: band.output_rows * band.output_cols,
     }

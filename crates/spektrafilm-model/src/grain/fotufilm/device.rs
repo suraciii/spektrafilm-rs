@@ -10,8 +10,8 @@
 //! coefficients of the formation law; the device evaluates that law over the
 //! stochastic coating grid and reads the result out.
 
-use super::{population, tiles};
 use super::*;
+use super::{population, tiles};
 
 /// Formation taps of one sublayer's developing-fraction table.
 pub const FORMING_TAPS: usize = 129;
@@ -28,8 +28,12 @@ pub const TILE_EDGE: usize = 256;
 /// Periodic bank block edge, in texels.
 pub const BLOCK: f64 = 128.0;
 /// The four dye cloud terms: `(sigma scale, weight)`.
-pub const CLOUD_TERMS: [(f32, f32); 4] =
-    [(0.1162, 0.1096), (0.3089, 0.2167), (0.7469, 0.4030), (1.732, 0.2510)];
+pub const CLOUD_TERMS: [(f32, f32); 4] = [
+    (0.1162, 0.1096),
+    (0.3089, 0.2167),
+    (0.7469, 0.4030),
+    (1.732, 0.2510),
+];
 
 /// One sublayer's formation coefficients.
 #[derive(Clone, Debug)]

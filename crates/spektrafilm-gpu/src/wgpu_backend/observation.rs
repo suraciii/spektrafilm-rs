@@ -253,7 +253,9 @@ impl WgpuBackend {
     pub(super) fn context_mut(&mut self, context: ObservationContext) {
         self.device.context = context.clone();
         self.queue.context = context;
-        self.pipe = self.pipe.with_observed(self.device.clone(), self.queue.clone());
+        self.pipe = self
+            .pipe
+            .with_observed(self.device.clone(), self.queue.clone());
     }
     pub(super) fn observed_batch(&self, name: &'static str) -> (Self, BatchGuard) {
         let scope =
@@ -345,6 +347,7 @@ impl WgpuBackend {
                 context,
             },
             pipeline_cache: self.pipeline_cache.clone(),
+            scan_cache: self.scan_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
             explicit: self.explicit,

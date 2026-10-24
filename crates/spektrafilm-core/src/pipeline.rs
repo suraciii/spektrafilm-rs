@@ -160,7 +160,11 @@ impl Pipeline {
         self.with_params_with_backend(params, &spektrafilm_backend::cpu_backend::CpuBackend)
     }
 
-    pub fn with_params_with_backend(mut self, params: RuntimeParams, backend: &dyn ComputeBackend) -> Result<Self, String> {
+    pub fn with_params_with_backend(
+        mut self,
+        params: RuntimeParams,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
         let mut params = params;
         crate::params_builder::normalize_runtime_topology(&self.film, &mut params);
         params.validate()?;
@@ -212,13 +216,22 @@ impl Pipeline {
         self.rebuild_spectral_with_backend(params, &spektrafilm_backend::cpu_backend::CpuBackend)
     }
 
-    pub(crate) fn rebuild_spectral_with_backend(self, params: RuntimeParams, backend: &dyn ComputeBackend) -> Result<Self, String> {
+    pub(crate) fn rebuild_spectral_with_backend(
+        self,
+        params: RuntimeParams,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
         let data_dir = self
             .data_dir
             .clone()
             .ok_or_else(|| "pipeline lacks data_dir for calibration rebuild".to_owned())?;
-        let mut rebuilt =
-            Self::new_with_spectral_backend(self.film.clone(), self.print.clone(), params, &data_dir, backend)?;
+        let mut rebuilt = Self::new_with_spectral_backend(
+            self.film.clone(),
+            self.print.clone(),
+            params,
+            &data_dir,
+            backend,
+        )?;
         rebuilt.original_film = self.original_film.clone();
         rebuilt.fotufilm_prepared = self.fotufilm_prepared.clone();
         rebuilt.cancellation = self.cancellation.clone();
@@ -334,7 +347,13 @@ impl Pipeline {
         params: RuntimeParams,
         data_dir: &Path,
     ) -> Result<Self, String> {
-        Self::new_with_spectral_backend(film, print, params, data_dir, &spektrafilm_backend::cpu_backend::CpuBackend)
+        Self::new_with_spectral_backend(
+            film,
+            print,
+            params,
+            data_dir,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
+        )
     }
 
     pub fn new_with_spectral_backend(
@@ -354,7 +373,9 @@ impl Pipeline {
             &params.scanner.conversion_style,
             Some(data_dir),
         )?;
-        let calibrated = crate::pipeline_calibration::build_with_backend(film, print, params, data_dir, backend)?;
+        let calibrated = crate::pipeline_calibration::build_with_backend(
+            film, print, params, data_dir, backend,
+        )?;
         Ok(Self {
             film: calibrated.film,
             print: calibrated.print,
@@ -392,10 +413,11 @@ impl Pipeline {
             "geometry",
             spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
-        // Dye develops the full source; its field readout owns the crop and
-        // output grid so that overlapping reads keep the same film coordinates.
-        let resized = if crate::stages::grain_v3::active(&self.params)
-            || crate::stages::grain_fotufilm::active(&self.params)
+        // Only routes forming film defer crop/upscale to an optical field.
+        // Inverse scan recovers existing density and uses ordinary geometry.
+        let resized = if self.params.workflow.route_enum().exposes_film()
+            && (crate::stages::grain_v3::active(&self.params)
+                || crate::stages::grain_fotufilm::active(&self.params))
         {
             Ok((
                 std::borrow::Cow::Borrowed(image),

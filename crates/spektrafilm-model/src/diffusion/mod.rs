@@ -441,7 +441,13 @@ pub fn resolve_psf(
     let cap = (image_height.min(image_width) / 2).saturating_sub(1).max(1);
     radius = radius.min(cap);
 
-    let psf = diffusion_filter_psf(2 * radius + 1, &cfg, df.spatial_scale, pixel_size_um, df.halo_warmth);
+    let psf = diffusion_filter_psf(
+        2 * radius + 1,
+        &cfg,
+        df.spatial_scale,
+        pixel_size_um,
+        df.halo_warmth,
+    );
     Ok((psf, radius, p_s))
 }
 

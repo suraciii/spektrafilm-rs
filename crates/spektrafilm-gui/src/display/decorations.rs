@@ -329,7 +329,11 @@ pub fn virtual_paper_back(size: [usize; 2]) -> DisplayRaster {
             [value; 3]
         })
         .collect();
-    DisplayRaster { size, rgb, retained: None }
+    DisplayRaster {
+        size,
+        rgb,
+        retained: None,
+    }
 }
 
 #[cfg(test)]
@@ -461,7 +465,11 @@ pub(crate) fn virtual_paper_back_without_watermark(size: [usize; 2]) -> DisplayR
             [value; 3]
         })
         .collect();
-    DisplayRaster { size, rgb, retained: None }
+    DisplayRaster {
+        size,
+        rgb,
+        retained: None,
+    }
 }
 
 #[cfg(test)]

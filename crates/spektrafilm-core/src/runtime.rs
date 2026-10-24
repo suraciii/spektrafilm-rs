@@ -114,16 +114,34 @@ impl RuntimePhotoParams {
         result
     }
 
-    pub fn into_runtime_with_backend(self, mode: DigestMode, backend: &dyn ComputeBackend) -> Result<Runtime, String> {
+    pub fn into_runtime_with_backend(
+        self,
+        mode: DigestMode,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Runtime, String> {
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
-        let params = digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
+        let params =
+            digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
         Runtime::new_with_backend(self.film, self.print, params, &self.data_dir, backend)
     }
 
-    pub fn into_runtime_observed_with_backend(self, mode: DigestMode, backend: &dyn ComputeBackend, context: &ObservationContext) -> Result<Runtime, String> {
+    pub fn into_runtime_observed_with_backend(
+        self,
+        mode: DigestMode,
+        backend: &dyn ComputeBackend,
+        context: &ObservationContext,
+    ) -> Result<Runtime, String> {
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
-        let params = digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
-        Runtime::new_observed_with_backend(self.film, self.print, params, &self.data_dir, backend, context)
+        let params =
+            digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
+        Runtime::new_observed_with_backend(
+            self.film,
+            self.print,
+            params,
+            &self.data_dir,
+            backend,
+            context,
+        )
     }
 }
 
@@ -222,9 +240,13 @@ impl Runtime {
         backend: &dyn ComputeBackend,
     ) -> Result<Self, String> {
         let pipeline = Pipeline::new_with_spectral_backend(film, print, params, data_dir, backend)?;
-        Ok(Self { pipeline, data_dir: data_dir.to_owned(),
+        Ok(Self {
+            pipeline,
+            data_dir: data_dir.to_owned(),
             timings: Arc::new(Mutex::new(BTreeMap::new())),
-            last_elapsed_seconds: Arc::new(Mutex::new(None)), cancellation: None })
+            last_elapsed_seconds: Arc::new(Mutex::new(None)),
+            cancellation: None,
+        })
     }
 
     pub fn new_observed_with_backend(
@@ -235,10 +257,16 @@ impl Runtime {
         backend: &dyn ComputeBackend,
         context: &ObservationContext,
     ) -> Result<Self, String> {
-        let mut preparation = context.scope("spectral_prepare", ObservationKind::Stage, Purpose::Calibration);
+        let mut preparation = context.scope(
+            "spectral_prepare",
+            ObservationKind::Stage,
+            Purpose::Calibration,
+        );
         if !backend.is_gpu() {
-            preparation.context().record_executor(spektrafilm_backend::telemetry::Executor::Cpu,
-                Some(spektrafilm_backend::telemetry::CpuReason::CpuSelected));
+            preparation.context().record_executor(
+                spektrafilm_backend::telemetry::Executor::Cpu,
+                Some(spektrafilm_backend::telemetry::CpuReason::CpuSelected),
+            );
         }
         let bound = spektrafilm_backend::bind_backend(backend, preparation.context().clone());
         let _span = preparation.context().span().map(|span| span.enter());
@@ -446,8 +474,99 @@ impl Runtime {
         collect: Option<Tap>,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
         let started = Instant::now();
-        let result = self.pipeline.process_device_retained_with_taps(
-            image, request, backend, inject, collect,
+        let result = self
+            .pipeline
+            .process_device_retained_with_taps(image, request, backend, inject, collect);
+        self.record_elapsed(started, None);
+        result
+    }
+    /// Render a host source using the frame-owned immutable device scan baseline.
+    pub fn process_host_scan_cached_retained(
+        &self,
+        image: &Arc<ImageBuf>,
+        cache: &mut ScanFrameCache,
+        request: crate::pipeline::RetainedRender,
+        backend: &Arc<dyn ComputeBackend>,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        let started = Instant::now();
+        let result = self.pipeline.process_host_scan_cached_retained(
+            image,
+            cache,
+            request,
+            backend.as_ref(),
+            backend,
+        );
+        self.record_elapsed(started, None);
+        result
+    }
+
+    /// Render a device source using the frame-owned immutable device scan baseline.
+    pub fn process_device_scan_cached_retained(
+        &self,
+        image: &spektrafilm_backend::DeviceImage,
+        cache: &mut ScanFrameCache,
+        request: crate::pipeline::RetainedRender,
+        backend: &Arc<dyn ComputeBackend>,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        let started = Instant::now();
+        let result = self.pipeline.process_device_scan_cached_retained(
+            image,
+            cache,
+            request,
+            backend.as_ref(),
+            backend,
+        );
+        self.record_elapsed(started, None);
+        result
+    }
+
+    /// Observed host-source cache entry retaining the original backend owner identity.
+    pub fn process_host_scan_cached_retained_observed(
+        &self,
+        image: &Arc<ImageBuf>,
+        cache: &mut ScanFrameCache,
+        request: crate::pipeline::RetainedRender,
+        backend: &Arc<dyn ComputeBackend>,
+        context: &ObservationContext,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        if !context.enabled() {
+            return self.process_host_scan_cached_retained(image, cache, request, backend);
+        }
+        let started = Instant::now();
+        let _span = context.span().map(|span| span.enter());
+        let bound = spektrafilm_backend::bind_backend(backend.as_ref(), context.clone());
+        let result = self.pipeline.process_host_scan_cached_retained(
+            image,
+            cache,
+            request,
+            bound.as_ref(),
+            backend,
+        );
+        self.record_elapsed(started, None);
+        result
+    }
+
+    /// Observed device-source cache entry retaining the original backend owner identity.
+    pub fn process_device_scan_cached_retained_observed(
+        &self,
+        image: &spektrafilm_backend::DeviceImage,
+        cache: &mut ScanFrameCache,
+        request: crate::pipeline::RetainedRender,
+        backend: &Arc<dyn ComputeBackend>,
+        context: &ObservationContext,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        if !context.enabled() {
+            return self.process_device_scan_cached_retained(image, cache, request, backend);
+        }
+        let started = Instant::now();
+        let _span = context.span().map(|span| span.enter());
+        let bound = spektrafilm_backend::bind_backend(backend.as_ref(), context.clone());
+        let result = self.pipeline.process_device_scan_cached_retained(
+            image,
+            cache,
+            request,
+            bound.as_ref(),
+            backend,
         );
         self.record_elapsed(started, None);
         result
@@ -522,7 +641,9 @@ impl Runtime {
         collect: Option<Tap>,
     ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
         let started = Instant::now();
-        let result = self.pipeline.process_retained_with_taps(image, request, backend, inject, collect);
+        let result = self
+            .pipeline
+            .process_retained_with_taps(image, request, backend, inject, collect);
         self.record_elapsed(started, None);
         result
     }
@@ -534,7 +655,8 @@ impl Runtime {
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
         if backend.is_gpu() {
-            let retained = self.process_preview_retained(&image, max_size, backend)?
+            let retained = self
+                .process_preview_retained(&image, max_size, backend)?
                 .ok_or_else(|| "selected GPU declined the retained preview route".to_owned())?;
             return backend.materialize_retained(&retained);
         }
@@ -581,7 +703,11 @@ impl Runtime {
         Ok(self)
     }
 
-    pub fn with_params_with_backend(mut self, params: RuntimeParams, backend: &dyn ComputeBackend) -> Result<Self, String> {
+    pub fn with_params_with_backend(
+        mut self,
+        params: RuntimeParams,
+        backend: &dyn ComputeBackend,
+    ) -> Result<Self, String> {
         self.pipeline = self.pipeline.with_params_with_backend(params, backend)?;
         Ok(self)
     }
@@ -939,12 +1065,22 @@ mod tests {
         params.scanner.operator.tint_ev = -0.125;
         params.scanner.operator.contrast = 0.75;
         let runtime = Runtime::from_stocks(
-            "kodak_portra_400", "kodak_portra_endura", params, &data_dir(),
-        ).unwrap();
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
         let image = Arc::new(scanner_image());
-        let expected = runtime.process_preview(image.as_ref().clone(), 2, &CpuBackend).unwrap();
+        let expected = runtime
+            .process_preview(image.as_ref().clone(), 2, &CpuBackend)
+            .unwrap();
         for explicit in [true, false] {
-            let gpu = if explicit { spektrafilm_gpu::test_support::explicit_adapter() } else { spektrafilm_gpu::test_support::adapter() };
+            let gpu = if explicit {
+                spektrafilm_gpu::test_support::explicit_adapter()
+            } else {
+                spektrafilm_gpu::test_support::adapter()
+            };
             gpu.with_shared_backend(|backend| {
                 let runtime = runtime.clone()
                     .with_params_with_backend(runtime.params().clone(), backend.as_ref()).unwrap();
@@ -958,7 +1094,12 @@ mod tests {
                 assert!(!snapshot.observations.iter().any(|stage| stage.executor == Some(Executor::Cpu)),
                     "selected GPU executed CPU image arithmetic: {:?}", snapshot.observations);
                 assert_eq!(snapshot.observations.iter().filter(|stage| stage.name == "standard_setup").count(), 1);
-                let preview = runtime.process_preview(image.as_ref().clone(), 2, backend.as_ref()).unwrap();
+                let reused = ObservationContext::new(CollectionMode::Summary);
+                let preview = runtime.process_host_scan_cached_retained_observed(&image, &mut cache,
+                    crate::pipeline::RetainedRender::preview(2), backend, &reused).unwrap().to_host(backend.as_ref()).unwrap();
+                assert!(!reused.snapshot().observations.iter().any(|stage|
+                    matches!(stage.name.as_str(), "standard_setup" | "filming_expose" | "film_density" | "converting")),
+                    "unchanged prepared scan must not repeat upstream computation or setup");
                 assert_eq!((preview.width, preview.height), (2, 2));
                 let mut sum = 0.0;
                 let mut maximum = 0.0_f64;
@@ -970,6 +1111,20 @@ mod tests {
                 let mean = sum / expected.data.len() as f64;
                 assert!(mean < 5e-3 && maximum < 5e-2,
                     "full-frame standard/operator/primaries preview divergence: mean={mean} max={maximum}");
+                let mut corrected = runtime.params().clone();
+                corrected.scanner.operator.exposure_ev += 0.5;
+                let corrected = runtime.clone().with_params_with_backend(corrected, backend.as_ref()).unwrap();
+                let changed = ObservationContext::new(CollectionMode::Summary);
+                let actual = corrected.process_host_scan_cached_retained_observed(&image, &mut cache,
+                    crate::pipeline::RetainedRender::FULL, backend, &changed).unwrap().to_host(backend.as_ref()).unwrap();
+                assert!(!changed.snapshot().observations.iter().any(|stage| stage.name == "standard_setup"),
+                    "operator edit must reuse immutable automatic setup");
+                assert!(actual.data.iter().zip(&cached.data).any(|(a,b)| (*a as f64 - *b as f64).abs() > 1e-4),
+                    "operator edit must change actual output pixels");
+                let fresh = corrected.process(image.as_ref().clone(), backend.as_ref()).unwrap();
+                for (actual, fresh) in actual.data.iter().zip(&fresh.data) {
+                    assert!((*actual as f64 - *fresh as f64).abs() < 1e-5, "cached operator output differs from fresh fullframe render");
+                }
             });
         }
     }
@@ -1083,7 +1238,9 @@ mod tests {
 
     #[test]
     fn public_gpu_partial_taps_keep_autoexposure_on_the_retained_device_route() {
-        use spektrafilm_backend::telemetry::{CollectionMode, Executor, ObservationContext, ResidentDeclineReason};
+        use spektrafilm_backend::telemetry::{
+            CollectionMode, Executor, ObservationContext, ResidentDeclineReason,
+        };
         let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let mut params = scanner_params();
@@ -1098,43 +1255,90 @@ mod tests {
         let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         let runtime = Runtime::new(film, print, params, &dir).unwrap();
         let image = scanner_image();
-        let expected = runtime.process_with_taps(
-            image.clone(), &CpuBackend, Some(Tap::RgbIn), Some(Tap::RgbPre),
-        ).unwrap();
+        let expected = runtime
+            .process_with_taps(
+                image.clone(),
+                &CpuBackend,
+                Some(Tap::RgbIn),
+                Some(Tap::RgbPre),
+            )
+            .unwrap();
         let params = runtime.params().clone();
-        let runtime = runtime.with_params_with_backend(params, gpu.backend()).unwrap();
+        let runtime = runtime
+            .with_params_with_backend(params, gpu.backend())
+            .unwrap();
         let context = ObservationContext::new(CollectionMode::Summary);
-        let actual = runtime.process_with_taps_observed(
-            image.clone(), gpu.backend(), Some(Tap::RgbIn), Some(Tap::RgbPre), &context,
-        ).unwrap();
+        let actual = runtime
+            .process_with_taps_observed(
+                image.clone(),
+                gpu.backend(),
+                Some(Tap::RgbIn),
+                Some(Tap::RgbPre),
+                &context,
+            )
+            .unwrap();
         assert_eq!((actual.width, actual.height), (image.width, image.height));
-        assert!(expected.data.iter().zip(&image.data)
-            .any(|(exposed, source)| (*exposed as f64 - *source as f64).abs() > 1e-4),
-            "fixture must exercise a nonidentity auto-exposure scale");
+        assert!(
+            expected
+                .data
+                .iter()
+                .zip(&image.data)
+                .any(|(exposed, source)| (*exposed as f64 - *source as f64).abs() > 1e-4),
+            "fixture must exercise a nonidentity auto-exposure scale"
+        );
         for (actual, expected) in actual.data.iter().zip(&expected.data) {
-            assert!((*actual as f64 - *expected as f64).abs() < 2e-5,
-                "partial-tap exposure differs: {actual} versus {expected}");
+            assert!(
+                (*actual as f64 - *expected as f64).abs() < 2e-5,
+                "partial-tap exposure differs: {actual} versus {expected}"
+            );
         }
         let snapshot = context.snapshot();
         assert!(snapshot.totals.dispatch_count.unwrap_or(0) > 0);
-        assert!(!snapshot.observations.iter().any(|stage| stage.executor == Some(Executor::Cpu)),
-            "public partial taps executed a CPU numerical stage: {:?}", snapshot.observations);
-        assert!(!snapshot.execution.resident_decline_reasons.contains(&ResidentDeclineReason::DiagnosticTapRoute));
-        assert!(!snapshot.observations.iter().any(|stage|
-            matches!(stage.name.as_str(), "filming_expose" | "film_density" | "scan_spectral")),
-            "rgb_pre collection must stop before film exposure");
+        assert!(
+            !snapshot
+                .observations
+                .iter()
+                .any(|stage| stage.executor == Some(Executor::Cpu)),
+            "public partial taps executed a CPU numerical stage: {:?}",
+            snapshot.observations
+        );
+        assert!(
+            !snapshot
+                .execution
+                .resident_decline_reasons
+                .contains(&ResidentDeclineReason::DiagnosticTapRoute)
+        );
+        assert!(
+            !snapshot.observations.iter().any(|stage| matches!(
+                stage.name.as_str(),
+                "filming_expose" | "film_density" | "scan_spectral"
+            )),
+            "rgb_pre collection must stop before film exposure"
+        );
         let borrowed_context = ObservationContext::new(CollectionMode::Summary);
-        let borrowed = runtime.process_resident_borrowed_observed(
-            &image, gpu.backend(), &borrowed_context,
-        ).unwrap().expect("selected GPU must serve borrowed diagnostic taps");
-        assert_eq!(borrowed.data, actual.data, "borrowed diagnostic route changed exposed pixels");
+        let borrowed = runtime
+            .process_resident_borrowed_observed(&image, gpu.backend(), &borrowed_context)
+            .unwrap()
+            .expect("selected GPU must serve borrowed diagnostic taps");
+        assert_eq!(
+            borrowed.data, actual.data,
+            "borrowed diagnostic route changed exposed pixels"
+        );
         let borrowed_snapshot = borrowed_context.snapshot();
         assert!(borrowed_snapshot.totals.dispatch_count.unwrap_or(0) > 0);
-        assert!(!borrowed_snapshot.observations.iter().any(|stage|
-            matches!(stage.executor, Some(Executor::Cpu | Executor::Mixed))),
-            "borrowed diagnostic tap executed host image arithmetic");
-        assert!(!borrowed_snapshot.execution.resident_decline_reasons
-            .contains(&ResidentDeclineReason::DiagnosticTapRoute));
+        assert!(
+            !borrowed_snapshot
+                .observations
+                .iter()
+                .any(|stage| matches!(stage.executor, Some(Executor::Cpu | Executor::Mixed))),
+            "borrowed diagnostic tap executed host image arithmetic"
+        );
+        assert!(
+            !borrowed_snapshot
+                .execution
+                .resident_decline_reasons
+                .contains(&ResidentDeclineReason::DiagnosticTapRoute)
+        );
     }
 
     #[test]

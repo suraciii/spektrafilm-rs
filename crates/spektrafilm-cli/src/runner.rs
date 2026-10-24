@@ -117,7 +117,11 @@ fn render_recipe(
         &context,
         |prepare_context| {
             photo
-                .into_runtime_observed_with_backend(DigestMode::ApplyStockSpecifics, backend.as_ref(), prepare_context)
+                .into_runtime_observed_with_backend(
+                    DigestMode::ApplyStockSpecifics,
+                    backend.as_ref(),
+                    prepare_context,
+                )
                 .map_err(anyhow::Error::msg)
                 .context("building spektrafilm-rs spectral runtime")
         },

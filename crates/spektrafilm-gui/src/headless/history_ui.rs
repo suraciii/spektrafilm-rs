@@ -157,3 +157,138 @@ fn keyboard_history_works_with_nontext_focus_and_preserves_text_edit_ownership()
     h.run_steps(3);
     assert_eq!(h.state().params.camera.exposure_compensation_ev, 1.25);
 }
+
+#[test]
+fn rotation_undo_redo_keeps_completed_output_viewable_and_saveable_without_auto_preview() {
+    let _device = spektrafilm_gpu::test_support::device_lock();
+    for gpu in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let (image_path, state_path) = deterministic_inputs(directory.path());
+        let browser_path = directory.path().join("browser.json");
+        let backend: Arc<dyn ComputeBackend> = if gpu {
+            Arc::new(
+                spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit()
+                    .expect("GPU adapter required"),
+            )
+        } else {
+            Arc::new(CpuBackend)
+        };
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1500.0, 1400.0))
+            .build_eframe(move |cc| {
+                theme::apply(&cc.egui_ctx);
+                App::new_with_browser_path(
+                    backend,
+                    Some(image_path),
+                    Some(state_path),
+                    None,
+                    browser_path,
+                    data_dir(),
+                )
+            });
+        click(&mut h, "◀");
+        wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
+        let source = h.state().image.as_ref().unwrap().clone();
+        reveal_control(&mut h, "action.rotate_cw");
+        click(&mut h, "cw rotate");
+        assert_eq!(h.state().input_rotation, 3);
+        wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
+        click(&mut h, "SCAN");
+        wait_until(&mut h, |a| {
+            !a.dirty
+                && !a.force_preview
+                && a.render_job.is_none()
+                && a.status.to_string().starts_with("Scan ·")
+        });
+        // Paper geometry follows the newly oriented input. Hold output at an
+        // exact source-pixel zoom and compare its interior, not that changing
+        // fit framing or the surrounding paper/canvas.
+        h.state_mut().viewer.set_zoom_percent(100.0);
+        settle_animation(&mut h);
+        let retained_host = h.state().output_image.clone();
+        let retained_device = h.state().output_retained.clone();
+        let saved = directory.path().join("before-undo.tiff");
+        h.state_mut().save_to_path(&saved);
+        assert!(saved.exists(), "{}", h.state().status);
+        let saved_image = image_io::load(&saved).unwrap().image;
+        let output_pixels = |observation: crate::display::ViewerObservation| {
+            let image = observation.pixels.unwrap();
+            let width = (observation.image_rect.width().round() as usize).saturating_sub(8);
+            let height = (observation.image_rect.height().round() as usize).saturating_sub(8);
+            assert!(width > 0 && height > 0);
+            let x = (image.size[0] - width) / 2;
+            let y = (image.size[1] - height) / 2;
+            (0..height)
+                .flat_map(|row| {
+                    image.pixels
+                        [(y + row) * image.size[0] + x..(y + row) * image.size[0] + x + width]
+                        .iter()
+                        .copied()
+                })
+                .collect::<Vec<_>>()
+        };
+        let shown = output_pixels(h.state().viewer.observation());
+        for (action, rotation) in [("Undo", 0), ("Redo", 3)] {
+            click(&mut h, action);
+            assert_eq!(h.state().input_rotation, rotation);
+            assert_eq!(
+                h.state().viewer.settings.layer,
+                crate::display::ViewLayer::Output
+            );
+            settle_animation(&mut h);
+            assert_eq!(
+                output_pixels(h.state().viewer.observation()),
+                shown,
+                "{action} must keep displaying the completed output; GPU={gpu}"
+            );
+            assert!(h.state().accepted_frame_is_stale());
+            assert!(h.state().render_job.is_none(), "auto preview is off");
+            assert!(h.state().image.as_ref().unwrap().same_source(&source));
+            if let Some(retained) = &retained_host {
+                assert!(Arc::ptr_eq(
+                    h.state().output_image.as_ref().unwrap(),
+                    retained
+                ));
+            }
+            if let Some(retained) = &retained_device {
+                assert!(Arc::ptr_eq(
+                    h.state()
+                        .output_retained
+                        .as_ref()
+                        .unwrap()
+                        .payload()
+                        .unwrap(),
+                    retained.payload().unwrap()
+                ));
+                assert!(h.state().output_image.is_none());
+            }
+            // Inspecting the refreshed input must not replace Save's carrier.
+            h.state_mut().viewer.settings.layer = crate::display::ViewLayer::Input;
+            settle_animation(&mut h);
+            assert_ne!(output_pixels(h.state().viewer.observation()), shown);
+            h.state_mut().viewer.settings.layer = crate::display::ViewLayer::Output;
+            settle_animation(&mut h);
+            assert_eq!(output_pixels(h.state().viewer.observation()), shown);
+            h.state_mut().save_to_path(&saved);
+            let saved_after = image_io::load(&saved).unwrap().image;
+            assert_eq!(
+                (saved_after.width, saved_after.height),
+                (saved_image.width, saved_image.height)
+            );
+            for (&after, &before) in saved_after.data.iter().zip(&saved_image.data) {
+                assert!(
+                    (after - before).abs() <= 1e-6,
+                    "{action} and input/output viewing must preserve saved pixels; GPU={gpu}"
+                );
+            }
+        }
+        let destination = directory.path().join("confirmed-retained.tiff");
+        script(&mut h, chooser::Chooser::chooser_path(&destination));
+        click(&mut h, "SAVE");
+        assert!(h.state().stale_save_confirmation);
+        click(&mut h, "Continue saving retained pixels");
+        super::panels::assert_float_images_equal(&saved, &destination);
+        assert!(h.state().render_job.is_none());
+        eframe::App::on_exit(h.state_mut(), None);
+    }
+}

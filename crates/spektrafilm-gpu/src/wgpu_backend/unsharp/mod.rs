@@ -1,6 +1,6 @@
-use super::grain::raster::{paged_transport, RasterStorage};
-use super::grain::v1::blur::{build_grain_blur_paged, GrainBlurState as BlurJob};
-use super::highlight::{image_transport_bytes, pointwise_job, PointwiseAccess, PointwiseJob};
+use super::grain::raster::{RasterStorage, paged_transport};
+use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged};
+use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, pointwise_job};
 use super::*;
 
 /// Reference blur is completed over the full source before bounded pointwise
@@ -27,16 +27,40 @@ pub(super) fn build_unsharp_state(
     let buf_b = &source_pages;
     let blur_dst = paged_transport(backend, img_bytes, "unsharp_blurred")?;
     let blur = build_grain_blur_paged(
-        backend, width, height, buf_b, &blur_dst, [up.sigma_px.max(0.01) as f64; 3], 0, 0,
-    ).map_err(|e| format!("unsharp Gaussian: {e}"))?;
+        backend,
+        width,
+        height,
+        buf_b,
+        &blur_dst,
+        [up.sigma_px.max(0.01) as f64; 3],
+        0,
+        0,
+    )
+    .map_err(|e| format!("unsharp Gaussian: {e}"))?;
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct CombineParams { n_pixels: u32, amount: f32, _pad: [u32; 2] }
+    struct CombineParams {
+        n_pixels: u32,
+        amount: f32,
+        _pad: [u32; 2],
+    }
     let combine = pointwise_job(
-        backend, u64::from(n_pixels), 12, include_str!("unsharp_combine.wgsl"),
-        &CombineParams { n_pixels, amount: up.amount, _pad: [0; 2] },
-        &[(buf_b, PointwiseAccess::Read), (&blur_dst, PointwiseAccess::Read), (buf_b, PointwiseAccess::Write)],
-        None, "unsharp_combine",
+        backend,
+        u64::from(n_pixels),
+        12,
+        include_str!("unsharp_combine.wgsl"),
+        &CombineParams {
+            n_pixels,
+            amount: up.amount,
+            _pad: [0; 2],
+        },
+        &[
+            (buf_b, PointwiseAccess::Read),
+            (&blur_dst, PointwiseAccess::Read),
+            (buf_b, PointwiseAccess::Write),
+        ],
+        None,
+        "unsharp_combine",
     )?;
     Ok(UnsharpState { blur, combine })
 }

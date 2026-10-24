@@ -63,7 +63,12 @@ impl WgpuBackend {
         self.materialize_dye_paged(image, params, Some(response))
     }
 
-    fn materialize_dye_paged(&self, image: &ImageBuf, params: &DyeGpuParams, response: Option<&spektrafilm_backend::DyeResponseGpuParams<'_>>) -> Result<ImageBuf, String> {
+    fn materialize_dye_paged(
+        &self,
+        image: &ImageBuf,
+        params: &DyeGpuParams,
+        response: Option<&spektrafilm_backend::DyeResponseGpuParams<'_>>,
+    ) -> Result<ImageBuf, String> {
         use crate::wgpu_backend::film_chain::device_image::BufferPayload;
         self.validate_dye_resources(image.width, image.height, params)?;
         let pages = self.allocate_image_pages(image.width, image.height, "dye_source")?;
@@ -72,20 +77,29 @@ impl WgpuBackend {
             let start = page.first_pixel as usize * 3;
             let end = start + page.n_pixels as usize * 3;
             let samples = scalars_to_f32(&image.data[start..end]);
-            self.queue.write_buffer(&page.buffer, 0, bytemuck::cast_slice(&samples));
+            self.queue
+                .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&samples));
         }
         let input = BufferPayload::from_pages(self.backend_id(), pages, image.width, image.height);
         let state = self.prepare_dye_paged(image.width, image.height, &input, params, response)?;
         state.submit(self)?;
         self.check_cancelled()?;
         self.check_dye_status(&state.status_buffer())?;
-        let mut samples = Vec::with_capacity(params.grid.width as usize * params.grid.height as usize * 3);
+        let mut samples =
+            Vec::with_capacity(params.grid.width as usize * params.grid.height as usize * 3);
         for page in state.output_pages {
             self.check_cancelled()?;
-            samples.extend(self.pipe.readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12));
+            samples.extend(
+                self.pipe
+                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+            );
         }
         self.check_cancelled()?;
-        Ok(ImageBuf::from_data(params.grid.width, params.grid.height, f32_to_scalars(samples)))
+        Ok(ImageBuf::from_data(
+            params.grid.width,
+            params.grid.height,
+            f32_to_scalars(samples),
+        ))
     }
 
     /// Preflight before chain allocations or sample upload.
@@ -102,7 +116,9 @@ impl WgpuBackend {
         let mut limits = self.device.raw.limits();
         let effective = crate::wgpu_backend::bounded::storage_binding_limit(self)?;
         limits.max_buffer_size = limits.max_buffer_size.min(effective);
-        limits.max_storage_buffer_binding_size = limits.max_storage_buffer_binding_size.min(effective.min(u64::from(u32::MAX)) as u32);
+        limits.max_storage_buffer_binding_size = limits
+            .max_storage_buffer_binding_size
+            .min(effective.min(u64::from(u32::MAX)) as u32);
         if limits.max_storage_buffers_per_shader_stage < 5 {
             return Err(
                 "film grain Dye: device needs five storage bindings per shader stage".into(),
@@ -114,11 +130,15 @@ impl WgpuBackend {
             .min(u64::from(limits.max_storage_buffer_binding_size));
         // The band scratch sizes come from the one rule that bounds them, in
         // the order `band_fit` checks them; the plan-level buffers flank it.
-        for (name, bytes) in BAND_BUFFERS.iter().copied().zip(plan.max_band_bytes)
-        .chain([
-            ("channel curves", params.tables.curves.len() as u64 * 4),
-            ("formation taps", params.taps.len() as u64 * 4),
-        ]) {
+        for (name, bytes) in BAND_BUFFERS
+            .iter()
+            .copied()
+            .zip(plan.max_band_bytes)
+            .chain([
+                ("channel curves", params.tables.curves.len() as u64 * 4),
+                ("formation taps", params.taps.len() as u64 * 4),
+            ])
+        {
             if bytes == 0 || bytes > bound {
                 return Err(format!(
                     "film grain Dye: {name} needs {bytes} bytes; device storage limit is {bound} bytes"

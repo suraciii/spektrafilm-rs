@@ -6,8 +6,8 @@
 //! back to the host. CPU `fotufilm::tiles` remains the numerical authority.
 
 use super::*;
-use spektrafilm_backend::{FotufilmGpuParams, FotufilmRecordGpuParams, FotufilmSublayerGpuParams};
 use crate::wgpu_backend::film_chain::device_image::{BufferPayload, ImagePage};
+use spektrafilm_backend::{FotufilmGpuParams, FotufilmRecordGpuParams, FotufilmSublayerGpuParams};
 
 /// Sample texels per bank formation axis. Both the model's coating lattice and
 /// this device's scratch are `SAMPLE × SAMPLE`, as `tiles` fixes it.
@@ -290,8 +290,12 @@ const COMPOSE_BINDINGS: [wgpu::BufferBindingType; 4] = [
 ];
 
 /// The four dye cloud terms, `(sigma scale, weight)`, the source's own table.
-const CLOUD_TERMS: [(f32, f32); 4] =
-    [(0.1162, 0.1096), (0.3089, 0.2167), (0.7469, 0.4030), (1.732, 0.2510)];
+const CLOUD_TERMS: [(f32, f32); 4] = [
+    (0.1162, 0.1096),
+    (0.3089, 0.2167),
+    (0.7469, 0.4030),
+    (1.732, 0.2510),
+];
 
 struct ResidentRecord {
     sums: wgpu::Buffer,
@@ -319,7 +323,9 @@ pub(in crate::wgpu_backend) struct FotufilmPagedState {
 }
 
 impl FotufilmPagedState {
-    pub(in crate::wgpu_backend) fn output_pages(&self) -> Vec<ImagePage> { self.output_pages.clone() }
+    pub(in crate::wgpu_backend) fn output_pages(&self) -> Vec<ImagePage> {
+        self.output_pages.clone()
+    }
 
     pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
         backend.check_cancelled()?;
@@ -341,68 +347,140 @@ impl FotufilmPagedState {
         let capacity = u64::from(self.window_side) * u64::from(self.window_side);
         let accumulated = backend.fotufilm_scratch(capacity * 24, "fotufilm_resample_accumulator");
         let resampled = backend.fotufilm_scratch(capacity * 12, "fotufilm_resampled");
-        let residual = backend.fotufilm_scratch(capacity * 8 * p.records.len() as u64, "fotufilm_residual");
+        let residual =
+            backend.fotufilm_scratch(capacity * 8 * p.records.len() as u64, "fotufilm_residual");
         let output = backend.fotufilm_scratch(capacity * 12, "fotufilm_output_window");
         for y in (0..self.height).step_by(self.window_side as usize) {
             for x in (0..self.width).step_by(self.window_side as usize) {
                 backend.check_cancelled()?;
                 let width = self.window_side.min(self.width - x);
                 let height = self.window_side.min(self.height - y);
-                let groups = (width.div_ceil(GRID_WORKGROUP), height.div_ceil(GRID_WORKGROUP));
+                let groups = (
+                    width.div_ceil(GRID_WORKGROUP),
+                    height.div_ceil(GRID_WORKGROUP),
+                );
                 let mut encoder = backend.device.create_command_encoder(&Default::default());
                 encoder.clear_buffer(&accumulated, 0, None);
                 encoder.clear_buffer(&residual, 0, None);
                 let physical_scale = p.size.clamp(0.5, 4.0);
                 let mut resample = ResampleUniform {
-                    origin_x: p.origin_um[0] * physical_scale, origin_y: p.origin_um[1] * physical_scale,
-                    pitch_x: p.pitch_um[0] * physical_scale, pitch_y: p.pitch_um[1] * physical_scale,
-                    source_pitch: p.source_pitch_um, pad_align: 0, pad_align2: 0,
-                    source_width: p.source_width, source_height: p.source_height,
-                    output_width: width, output_height: height,
-                    output_x: x, output_y: y, page_first: 0, page_pixels: 0,
+                    origin_x: p.origin_um[0] * physical_scale,
+                    origin_y: p.origin_um[1] * physical_scale,
+                    pitch_x: p.pitch_um[0] * physical_scale,
+                    pitch_y: p.pitch_um[1] * physical_scale,
+                    source_pitch: p.source_pitch_um,
+                    pad_align: 0,
+                    pad_align2: 0,
+                    source_width: p.source_width,
+                    source_height: p.source_height,
+                    output_width: width,
+                    output_height: height,
+                    output_x: x,
+                    output_y: y,
+                    page_first: 0,
+                    page_pixels: 0,
                 };
                 for page in &self.source.pages {
                     backend.check_cancelled()?;
                     resample.page_first = page.first_pixel;
                     resample.page_pixels = page.n_pixels;
                     let uniform = backend.uniform_buffer(bytemuck::bytes_of(&resample));
-                    backend.fotufilm_encode(&mut encoder, RESAMPLE_SHADER, &RESAMPLE_BINDINGS,
-                        "main", &[&uniform, &page.buffer, &accumulated, &resampled], groups);
+                    backend.fotufilm_encode(
+                        &mut encoder,
+                        RESAMPLE_SHADER,
+                        &RESAMPLE_BINDINGS,
+                        "main",
+                        &[&uniform, &page.buffer, &accumulated, &resampled],
+                        groups,
+                    );
                 }
                 let uniform = backend.uniform_buffer(bytemuck::bytes_of(&resample));
-                backend.fotufilm_encode(&mut encoder, RESAMPLE_SHADER, &RESAMPLE_BINDINGS,
-                    "finalize", &[&uniform, &self.source.pages[0].buffer, &accumulated, &resampled], groups);
+                backend.fotufilm_encode(
+                    &mut encoder,
+                    RESAMPLE_SHADER,
+                    &RESAMPLE_BINDINGS,
+                    "finalize",
+                    &[
+                        &uniform,
+                        &self.source.pages[0].buffer,
+                        &accumulated,
+                        &resampled,
+                    ],
+                    groups,
+                );
                 for (r, record) in bank.iter().enumerate() {
                     backend.check_cancelled()?;
-                    if p.records[r].sublayers.is_empty() || (p.monochrome && r != 1) { continue; }
+                    if p.records[r].sublayers.is_empty() || (p.monochrome && r != 1) {
+                        continue;
+                    }
                     let uniform = backend.uniform_buffer(bytemuck::bytes_of(&ResidualUniform {
                         origin_x: p.origin_um[0] + f64::from(x) * p.pitch_um[0],
                         origin_y: p.origin_um[1] + f64::from(y) * p.pitch_um[1],
-                        pitch_x: p.pitch_um[0], pitch_y: p.pitch_um[1],
-                        footprint_x: p.footprint_um[0], footprint_y: p.footprint_um[1],
-                        width, height, seed: p.seed as u32, record: r as u32,
-                        pad_align: 0, pad_align2: 0, d_min: p.records[r].d_min, d_max: p.records[r].d_max,
-                        monochrome: u32::from(p.monochrome), residual_offset: r as u32 * width * height,
-                        pad0: 0, pad1: 0,
+                        pitch_x: p.pitch_um[0],
+                        pitch_y: p.pitch_um[1],
+                        footprint_x: p.footprint_um[0],
+                        footprint_y: p.footprint_um[1],
+                        width,
+                        height,
+                        seed: p.seed as u32,
+                        record: r as u32,
+                        pad_align: 0,
+                        pad_align2: 0,
+                        d_min: p.records[r].d_min,
+                        d_max: p.records[r].d_max,
+                        monochrome: u32::from(p.monochrome),
+                        residual_offset: r as u32 * width * height,
+                        pad0: 0,
+                        pad1: 0,
                     }));
-                    backend.fotufilm_encode(&mut encoder, RESIDUAL_SHADER, &RESIDUAL_BINDINGS,
-                        "residual", &[&uniform, &record.sums, &record.tile_means,
-                        &record.correlation, &resampled, &residual, &record.probe_means], groups);
+                    backend.fotufilm_encode(
+                        &mut encoder,
+                        RESIDUAL_SHADER,
+                        &RESIDUAL_BINDINGS,
+                        "residual",
+                        &[
+                            &uniform,
+                            &record.sums,
+                            &record.tile_means,
+                            &record.correlation,
+                            &resampled,
+                            &residual,
+                            &record.probe_means,
+                        ],
+                        groups,
+                    );
                 }
                 backend.check_cancelled()?;
                 let uniform = backend.uniform_buffer(bytemuck::bytes_of(&ComposeUniform {
-                    amount: p.amount, size: physical_scale, own: p.color.clamp(0.0, 1.0), pad_align: 0.0,
+                    amount: p.amount,
+                    size: physical_scale,
+                    own: p.color.clamp(0.0, 1.0),
+                    pad_align: 0.0,
                     layers: [p.layers[0], p.layers[1], p.layers[2], 0.0],
-                    width, height, records: p.records.len() as u32, monochrome: u32::from(p.monochrome),
+                    width,
+                    height,
+                    records: p.records.len() as u32,
+                    monochrome: u32::from(p.monochrome),
                     pad_tail: [0; 4],
                 }));
-                backend.fotufilm_encode(&mut encoder, COMPOSE_SHADER, &COMPOSE_BINDINGS,
-                    "main", &[&uniform, &residual, &resampled, &output], groups);
+                backend.fotufilm_encode(
+                    &mut encoder,
+                    COMPOSE_SHADER,
+                    &COMPOSE_BINDINGS,
+                    "main",
+                    &[&uniform, &residual, &resampled, &output],
+                    groups,
+                );
                 for row in 0..height {
                     backend.check_cancelled()?;
-                    backend.copy_samples_from(&mut encoder, &output, u64::from(row * width) * 3,
-                        &self.output_pages, (u64::from(y + row) * u64::from(self.width) + u64::from(x)) * 3,
-                        u64::from(width) * 3)?;
+                    backend.copy_samples_from(
+                        &mut encoder,
+                        &output,
+                        u64::from(row * width) * 3,
+                        &self.output_pages,
+                        (u64::from(y + row) * u64::from(self.width) + u64::from(x)) * 3,
+                        u64::from(width) * 3,
+                    )?;
                 }
                 backend.queue.submit(Some(encoder.finish()));
             }
@@ -414,39 +492,75 @@ impl FotufilmPagedState {
 
 impl WgpuBackend {
     pub(in crate::wgpu_backend) fn prepare_fotufilm_paged(
-        &self, width: u32, height: u32, input: &BufferPayload, params: &FotufilmGpuParams,
+        &self,
+        width: u32,
+        height: u32,
+        input: &BufferPayload,
+        params: &FotufilmGpuParams,
     ) -> Result<FotufilmPagedState, String> {
         self.check_cancelled()?;
-        if width == 0 || height == 0 || input.width != width || input.height != height
-            || params.source_width != width || params.source_height != height
-            || params.width == 0 || params.height == 0 || input.pages.is_empty() {
-            return Err("Fotufilm source/output geometry does not match its retained raster".into());
+        if width == 0
+            || height == 0
+            || input.width != width
+            || input.height != height
+            || params.source_width != width
+            || params.source_height != height
+            || params.width == 0
+            || params.height == 0
+            || input.pages.is_empty()
+        {
+            return Err(
+                "Fotufilm source/output geometry does not match its retained raster".into(),
+            );
         }
         if params.records.len() != 3 {
             return Err("Fotufilm requires three indexed records (including empty records)".into());
         }
         let limit = super::super::bounded::storage_binding_limit(self)?;
         if u64::from(LEVELS * SUMS_LEVEL) * 4 > limit || u64::from(SAMPLE * SAMPLE) * 4 > limit {
-            return Err("Fotufilm fixed bank lattices exceed the device storage binding limit".into());
+            return Err(
+                "Fotufilm fixed bank lattices exceed the device storage binding limit".into(),
+            );
         }
         let mut side = 256u32;
-        while u64::from(side) * u64::from(side) * 24 > limit && side > 1 { side /= 2; }
+        while u64::from(side) * u64::from(side) * 24 > limit && side > 1 {
+            side /= 2;
+        }
         if u64::from(side) * u64::from(side) * 24 > limit {
             return Err("Fotufilm cannot bind one output sample on this device".into());
         }
         Ok(FotufilmPagedState {
-            source: BufferPayload::from_pages(self.backend_id(), input.pages.clone(), width, height),
-            params: params.clone(), width: params.width, height: params.height,
-            output_pages: self.allocate_image_pages(params.width, params.height, "fotufilm_output")?,
+            source: BufferPayload::from_pages(
+                self.backend_id(),
+                input.pages.clone(),
+                width,
+                height,
+            ),
+            params: params.clone(),
+            width: params.width,
+            height: params.height,
+            output_pages: self.allocate_image_pages(
+                params.width,
+                params.height,
+                "fotufilm_output",
+            )?,
             window_side: side,
         })
     }
 
     pub(in crate::wgpu_backend) fn fotufilm_grain_device(
-        &self, img: &ImageBuf, params: &FotufilmGpuParams,
-    ) -> Option<Result<ImageBuf, String>> { Some(self.fotufilm_grain_inner(img, params)) }
+        &self,
+        img: &ImageBuf,
+        params: &FotufilmGpuParams,
+    ) -> Option<Result<ImageBuf, String>> {
+        Some(self.fotufilm_grain_inner(img, params))
+    }
 
-    fn fotufilm_grain_inner(&self, img: &ImageBuf, params: &FotufilmGpuParams) -> Result<ImageBuf, String> {
+    fn fotufilm_grain_inner(
+        &self,
+        img: &ImageBuf,
+        params: &FotufilmGpuParams,
+    ) -> Result<ImageBuf, String> {
         self.check_cancelled()?;
         let pages = self.allocate_image_pages(img.width, img.height, "fotufilm_source")?;
         for page in &pages {
@@ -454,7 +568,8 @@ impl WgpuBackend {
             let first = page.first_pixel as usize * 3;
             let end = first + page.n_pixels as usize * 3;
             let samples = scalars_to_f32(&img.data[first..end]);
-            self.queue.write_buffer(&page.buffer, 0, bytemuck::cast_slice(samples.as_ref()));
+            self.queue
+                .write_buffer(&page.buffer, 0, bytemuck::cast_slice(samples.as_ref()));
         }
         let input = BufferPayload::from_pages(self.backend_id(), pages, img.width, img.height);
         let state = self.prepare_fotufilm_paged(img.width, img.height, &input, params)?;
@@ -462,14 +577,22 @@ impl WgpuBackend {
         let mut data = Vec::with_capacity(params.width as usize * params.height as usize * 3);
         for page in &state.output_pages {
             self.check_cancelled()?;
-            data.extend(f32_to_scalars(self.pipe.readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)));
+            data.extend(f32_to_scalars(
+                self.pipe
+                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+            ));
         }
         self.check_cancelled()?;
         Ok(ImageBuf::from_data(params.width, params.height, data))
     }
 
-    fn form_record(&self, record: &FotufilmRecordGpuParams, r: u32, params: &FotufilmGpuParams,
-        status: &wgpu::Buffer) -> Result<ResidentRecord, String> {
+    fn form_record(
+        &self,
+        record: &FotufilmRecordGpuParams,
+        r: u32,
+        params: &FotufilmGpuParams,
+        status: &wgpu::Buffer,
+    ) -> Result<ResidentRecord, String> {
         self.check_cancelled()?;
         let bank = ResidentRecord {
             sums: self.fotufilm_scratch(u64::from(LEVELS * SUMS_LEVEL) * 4, "fotufilm_bank_sums"),
@@ -477,7 +600,9 @@ impl WgpuBackend {
             probe_means: self.fotufilm_scratch(u64::from(LEVELS) * 8, "fotufilm_probe_means"),
             correlation: self.fotufilm_scratch(u64::from(LEVELS - 1) * 8, "fotufilm_correlation"),
         };
-        if record.sublayers.is_empty() || (params.monochrome && r != 1) { return Ok(bank); }
+        if record.sublayers.is_empty() || (params.monochrome && r != 1) {
+            return Ok(bank);
+        }
         let bytes = u64::from(SAMPLE * SAMPLE) * 4;
         let deposits = self.fotufilm_scratch(bytes, "fotufilm_deposits");
         let uncovered = self.fotufilm_scratch(bytes, "fotufilm_uncovered");
@@ -497,9 +622,15 @@ impl WgpuBackend {
             for (s, _) in CLOUD_TERMS {
                 let spread = s * sigma;
                 let mut factor = (spread / 1.6).floor().max(1.0) as u32;
-                while factor > 1 && !SAMPLE.is_multiple_of(factor) { factor -= 1; }
+                while factor > 1 && !SAMPLE.is_multiple_of(factor) {
+                    factor -= 1;
+                }
                 let f = factor as f32;
-                let blur_sigma = if factor == 1 { spread } else { (spread * spread - f * f / 3.0).sqrt() / f };
+                let blur_sigma = if factor == 1 {
+                    spread
+                } else {
+                    (spread * spread - f * f / 3.0).sqrt() / f
+                };
                 max_radius = max_radius.max((3.5 * blur_sigma).ceil().max(1.0) as u64);
             }
         }
@@ -510,14 +641,22 @@ impl WgpuBackend {
             let margin = layer.reach_texels.ceil() as u32;
             let region = (cell_texels.ceil() as u32 + 2 * margin).max(1);
             let per_row = u64::from(layer.cells) * u64::from(region) * u64::from(region) * 4;
-            let limit = super::super::bounded::storage_binding_limit(self)?.min(MAX_BAND_SCRATCH_BYTES);
+            let limit =
+                super::super::bounded::storage_binding_limit(self)?.min(MAX_BAND_SCRATCH_BYTES);
             let rows = BAND_ROWS.min((limit / per_row) as u32);
-            if rows == 0 { return Err(format!("Fotufilm record {r} sublayer {b} cannot bind one formation row")); }
+            if rows == 0 {
+                return Err(format!(
+                    "Fotufilm record {r} sublayer {b} cannot bind one formation row"
+                ));
+            }
             formation.push(FormationBuffers {
-                deposits: self.fotufilm_scratch(per_row * u64::from(rows), "fotufilm_band_deposits"),
-                uncovered: self.fotufilm_scratch(per_row * u64::from(rows), "fotufilm_band_uncovered"),
+                deposits: self
+                    .fotufilm_scratch(per_row * u64::from(rows), "fotufilm_band_deposits"),
+                uncovered: self
+                    .fotufilm_scratch(per_row * u64::from(rows), "fotufilm_band_uncovered"),
                 thresholds: self.storage_ro_buffer(bytemuck::cast_slice(&layer.thresholds)),
-                forming: self.storage_ro_buffer(bytemuck::cast_slice(&layer.forming)), rows,
+                forming: self.storage_ro_buffer(bytemuck::cast_slice(&layer.forming)),
+                rows,
             });
         }
         let span = (record.d_max - record.d_min).max(1e-6);
@@ -529,50 +668,135 @@ impl WgpuBackend {
             let gross = record.d_min + span * f64::from(level) / f64::from(LEVELS - 1);
             for (b, layer) in record.sublayers.iter().enumerate() {
                 self.check_cancelled()?;
-                self.form_sublayer(layer, r, b as u32, gross, record, params.formation_seed,
-                    &deposits, &uncovered, status, &formation[b])?;
-                if !layer.silver { self.cloud_sublayer(layer, &deposits, &demand, &cloud_scratch, &cloud_kernel)?; }
+                self.form_sublayer(
+                    layer,
+                    r,
+                    b as u32,
+                    gross,
+                    record,
+                    params.formation_seed,
+                    &deposits,
+                    &uncovered,
+                    status,
+                    &formation[b],
+                )?;
+                if !layer.silver {
+                    self.cloud_sublayer(layer, &deposits, &demand, &cloud_scratch, &cloud_kernel)?;
+                }
                 let uniform = self.uniform_buffer(bytemuck::bytes_of(&CapacityUniform {
-                    capacity: layer.capacity as f32, silver: u32::from(layer.silver),
-                    demand_offset: 0, uncovered_offset: 0, log_offset: 0, pad0: 0, pad1: 0, pad2: 0,
+                    capacity: layer.capacity as f32,
+                    silver: u32::from(layer.silver),
+                    demand_offset: 0,
+                    uncovered_offset: 0,
+                    log_offset: 0,
+                    pad0: 0,
+                    pad1: 0,
+                    pad2: 0,
                 }));
                 let mut encoder = self.device.create_command_encoder(&Default::default());
-                self.fotufilm_encode(&mut encoder, TILE_SHADER, &COMPOSE_BINDINGS, "transmittance",
-                    &[&uniform, if layer.silver { &deposits } else { &demand }, &uncovered, &log_light],
-                    (SAMPLE.div_ceil(GRID_WORKGROUP), SAMPLE.div_ceil(GRID_WORKGROUP)));
+                self.fotufilm_encode(
+                    &mut encoder,
+                    TILE_SHADER,
+                    &COMPOSE_BINDINGS,
+                    "transmittance",
+                    &[
+                        &uniform,
+                        if layer.silver { &deposits } else { &demand },
+                        &uncovered,
+                        &log_light,
+                    ],
+                    (
+                        SAMPLE.div_ceil(GRID_WORKGROUP),
+                        SAMPLE.div_ceil(GRID_WORKGROUP),
+                    ),
+                );
                 self.queue.submit(Some(encoder.finish()));
             }
             self.check_cancelled()?;
             let mut encoder = self.device.create_command_encoder(&Default::default());
             let uniform = self.uniform_buffer(bytemuck::cast_slice(&[0u32; 4]));
-            self.fotufilm_encode(&mut encoder, DOWNSAMPLE_SHADER, &DOWNSAMPLE_BINDINGS, "downsample",
-                &[&uniform, &log_light, &tile], (TILE.div_ceil(GRID_WORKGROUP), TILE.div_ceil(GRID_WORKGROUP)));
+            self.fotufilm_encode(
+                &mut encoder,
+                DOWNSAMPLE_SHADER,
+                &DOWNSAMPLE_BINDINGS,
+                "downsample",
+                &[&uniform, &log_light, &tile],
+                (TILE.div_ceil(GRID_WORKGROUP), TILE.div_ceil(GRID_WORKGROUP)),
+            );
             let uniform = self.uniform_buffer(bytemuck::bytes_of(&SumsUniform {
-                tile_offset: 0, sums_offset: level * SUMS_LEVEL, mean_offset: level, pad0: 0,
+                tile_offset: 0,
+                sums_offset: level * SUMS_LEVEL,
+                mean_offset: level,
+                pad0: 0,
             }));
-            self.fotufilm_encode(&mut encoder, TILE_SHADER, &SUMS_BINDINGS, "running_sums",
-                &[&uniform, &tile, &bank.sums, &bank.tile_means], (1, 1));
+            self.fotufilm_encode(
+                &mut encoder,
+                TILE_SHADER,
+                &SUMS_BINDINGS,
+                "running_sums",
+                &[&uniform, &tile, &bank.sums, &bank.tile_means],
+                (1, 1),
+            );
             self.queue.submit(Some(encoder.finish()));
         }
         self.check_cancelled()?;
-        let density = self.fotufilm_scratch(u64::from(PROBE * PROBE * LEVELS) * 8, "fotufilm_probe_density");
+        let density = self.fotufilm_scratch(
+            u64::from(PROBE * PROBE * LEVELS) * 8,
+            "fotufilm_probe_density",
+        );
         let uniform = self.uniform_buffer(bytemuck::bytes_of(&PitchUniform {
-            footprint_x: params.footprint_um[0], footprint_y: params.footprint_um[1], record: r, pad0: 0,
+            footprint_x: params.footprint_um[0],
+            footprint_y: params.footprint_um[1],
+            record: r,
+            pad0: 0,
         }));
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        let buffers = [&uniform, &bank.sums, &bank.tile_means, &density, &bank.correlation, &bank.probe_means];
-        self.fotufilm_encode(&mut encoder, RESIDUAL_SHADER, &PITCH_BINDINGS, "pitch", &buffers,
-            (PROBE.div_ceil(GRID_WORKGROUP), PROBE.div_ceil(GRID_WORKGROUP)));
+        let buffers = [
+            &uniform,
+            &bank.sums,
+            &bank.tile_means,
+            &density,
+            &bank.correlation,
+            &bank.probe_means,
+        ];
+        self.fotufilm_encode(
+            &mut encoder,
+            RESIDUAL_SHADER,
+            &PITCH_BINDINGS,
+            "pitch",
+            &buffers,
+            (
+                PROBE.div_ceil(GRID_WORKGROUP),
+                PROBE.div_ceil(GRID_WORKGROUP),
+            ),
+        );
         self.check_cancelled()?;
-        self.fotufilm_encode(&mut encoder, RESIDUAL_SHADER, &PITCH_BINDINGS, "correlate", &buffers, (LEVELS, 1));
+        self.fotufilm_encode(
+            &mut encoder,
+            RESIDUAL_SHADER,
+            &PITCH_BINDINGS,
+            "correlate",
+            &buffers,
+            (LEVELS, 1),
+        );
         self.queue.submit(Some(encoder.finish()));
         Ok(bank)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn form_sublayer(&self, layer: &FotufilmSublayerGpuParams, r: u32, b: u32, gross: f64,
-        record: &FotufilmRecordGpuParams, seed: u32, deposits: &wgpu::Buffer, uncovered: &wgpu::Buffer,
-        status: &wgpu::Buffer, buffers: &FormationBuffers) -> Result<(), String> {
+    fn form_sublayer(
+        &self,
+        layer: &FotufilmSublayerGpuParams,
+        r: u32,
+        b: u32,
+        gross: f64,
+        record: &FotufilmRecordGpuParams,
+        seed: u32,
+        deposits: &wgpu::Buffer,
+        uncovered: &wgpu::Buffer,
+        status: &wgpu::Buffer,
+        buffers: &FormationBuffers,
+    ) -> Result<(), String> {
         let cells = layer.cells;
         let cell_texels = SAMPLE as f32 / cells as f32;
         let sigma = layer.sigma_mm as f32 / (0.001 / 3.0);
@@ -591,30 +815,74 @@ impl WgpuBackend {
             self.check_cancelled()?;
             let rows = (cells - first_row).min(band_rows);
             let uniform = self.uniform_buffer(bytemuck::bytes_of(&FormationUniform {
-                cells, record: r, sublayer: b, seed, first_row, rows, silver: u32::from(layer.silver),
-                margin, region_w, max_crystals: MAX_CRYSTALS_PER_CELL, cells_in_band: rows * cells,
-                pad_align: 0, gross, d_min: record.d_min, d_max: record.d_max, cell_texels, sigma,
-                resolved: ((sigma - 0.5) / 1.5).clamp(0.0, 1.0), edge: layer.edge as f32,
-                pad0: 0, pad1: 0, pad2: 0, pad3: 0,
+                cells,
+                record: r,
+                sublayer: b,
+                seed,
+                first_row,
+                rows,
+                silver: u32::from(layer.silver),
+                margin,
+                region_w,
+                max_crystals: MAX_CRYSTALS_PER_CELL,
+                cells_in_band: rows * cells,
+                pad_align: 0,
+                gross,
+                d_min: record.d_min,
+                d_max: record.d_max,
+                cell_texels,
+                sigma,
+                resolved: ((sigma - 0.5) / 1.5).clamp(0.0, 1.0),
+                edge: layer.edge as f32,
+                pad0: 0,
+                pad1: 0,
+                pad2: 0,
+                pad3: 0,
             }));
             let mut encoder = self.device.create_command_encoder(&Default::default());
-            self.fotufilm_encode(&mut encoder, FORM_SHADER, &FORM_BINDINGS, "main",
-                &[&uniform, thresholds, forming, band_deposits, band_uncovered, status],
-                ((rows * cells).div_ceil(64), 1));
+            self.fotufilm_encode(
+                &mut encoder,
+                FORM_SHADER,
+                &FORM_BINDINGS,
+                "main",
+                &[
+                    &uniform,
+                    thresholds,
+                    forming,
+                    band_deposits,
+                    band_uncovered,
+                    status,
+                ],
+                ((rows * cells).div_ceil(64), 1),
+            );
             let first = (first_row as f32 * cell_texels).floor() as i32 - margin as i32;
-            let end = ((first_row + rows - 1) as f32 * cell_texels).floor() as i32
-                - margin as i32 + region_w as i32;
+            let end = ((first_row + rows - 1) as f32 * cell_texels).floor() as i32 - margin as i32
+                + region_w as i32;
             let mut chunk_first = first;
             while chunk_first < end {
                 self.check_cancelled()?;
                 let chunk_rows = (end - chunk_first).min(SAMPLE as i32) as u32;
                 let uniform = self.uniform_buffer(bytemuck::bytes_of(&ReduceUniform {
-                    cells, first_row, rows, margin, region_w, chunk_first, chunk_rows,
-                    cell_texels, pad0: 0, pad1: 0, pad2: 0,
+                    cells,
+                    first_row,
+                    rows,
+                    margin,
+                    region_w,
+                    chunk_first,
+                    chunk_rows,
+                    cell_texels,
+                    pad0: 0,
+                    pad1: 0,
+                    pad2: 0,
                 }));
-                self.fotufilm_encode(&mut encoder, FORM_SHADER, &REDUCE_BINDINGS, "reduce",
+                self.fotufilm_encode(
+                    &mut encoder,
+                    FORM_SHADER,
+                    &REDUCE_BINDINGS,
+                    "reduce",
                     &[&uniform, band_deposits, band_uncovered, deposits, uncovered],
-                    (chunk_rows.div_ceil(64), 1));
+                    (chunk_rows.div_ceil(64), 1),
+                );
                 chunk_first += chunk_rows as i32;
             }
             self.queue.submit(Some(encoder.finish()));
@@ -622,8 +890,14 @@ impl WgpuBackend {
         Ok(())
     }
 
-    fn cloud_sublayer(&self, layer: &FotufilmSublayerGpuParams,
-        deposits: &wgpu::Buffer, demand: &wgpu::Buffer, scratch: &[wgpu::Buffer; 3], kernel: &wgpu::Buffer) -> Result<(), String> {
+    fn cloud_sublayer(
+        &self,
+        layer: &FotufilmSublayerGpuParams,
+        deposits: &wgpu::Buffer,
+        demand: &wgpu::Buffer,
+        scratch: &[wgpu::Buffer; 3],
+        kernel: &wgpu::Buffer,
+    ) -> Result<(), String> {
         let [horizontal, blurred, coarse] = scratch;
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.clear_buffer(demand, 0, None);
@@ -632,40 +906,93 @@ impl WgpuBackend {
             self.check_cancelled()?;
             let spread = s * sigma;
             let mut factor = (spread / 1.6).floor().max(1.0) as u32;
-            while factor > 1 && !SAMPLE.is_multiple_of(factor) { factor -= 1; }
+            while factor > 1 && !SAMPLE.is_multiple_of(factor) {
+                factor -= 1;
+            }
             let scale = weight * 2.0 * std::f32::consts::PI * spread * spread;
             let n = SAMPLE / factor;
-            let mut p = BlurUniform { n, radius: 0, vertical: 0, scale: 1.0,
-                sigma: spread, pad0: factor, pad1: 0, pad2: 0 };
+            let mut p = BlurUniform {
+                n,
+                radius: 0,
+                vertical: 0,
+                scale: 1.0,
+                sigma: spread,
+                pad0: factor,
+                pad1: 0,
+                pad2: 0,
+            };
             if factor > 1 {
                 let uniform = self.uniform_buffer(bytemuck::bytes_of(&p));
-                self.fotufilm_encode(&mut encoder, CLOUD_SHADER, &CLOUD_BINDINGS, "tent",
-                    &[&uniform, deposits, horizontal], (n.div_ceil(8), SAMPLE.div_ceil(8)));
+                self.fotufilm_encode(
+                    &mut encoder,
+                    CLOUD_SHADER,
+                    &CLOUD_BINDINGS,
+                    "tent",
+                    &[&uniform, deposits, horizontal],
+                    (n.div_ceil(8), SAMPLE.div_ceil(8)),
+                );
                 p.vertical = 1;
                 let uniform = self.uniform_buffer(bytemuck::bytes_of(&p));
-                self.fotufilm_encode(&mut encoder, CLOUD_SHADER, &CLOUD_BINDINGS, "tent",
-                    &[&uniform, horizontal, coarse], (n.div_ceil(8), n.div_ceil(8)));
+                self.fotufilm_encode(
+                    &mut encoder,
+                    CLOUD_SHADER,
+                    &CLOUD_BINDINGS,
+                    "tent",
+                    &[&uniform, horizontal, coarse],
+                    (n.div_ceil(8), n.div_ceil(8)),
+                );
                 let f = factor as f32;
                 p.sigma = (spread * spread - f * f / 3.0).sqrt() / f;
             }
             p.radius = (3.5 * p.sigma).ceil().max(1.0) as i32;
             p.vertical = 0;
             let uniform = self.uniform_buffer(bytemuck::bytes_of(&p));
-            self.fotufilm_encode(&mut encoder, CLOUD_SHADER, &CLOUD_BLUR_BINDINGS, "prepare_kernel",
-                &[&uniform, deposits, horizontal, kernel], (1, 1));
-            self.fotufilm_encode(&mut encoder, CLOUD_SHADER, &CLOUD_BLUR_BINDINGS, "main",
-                &[&uniform, if factor == 1 { deposits } else { coarse }, horizontal, kernel],
-                (n.div_ceil(8), n.div_ceil(8)));
+            self.fotufilm_encode(
+                &mut encoder,
+                CLOUD_SHADER,
+                &CLOUD_BLUR_BINDINGS,
+                "prepare_kernel",
+                &[&uniform, deposits, horizontal, kernel],
+                (1, 1),
+            );
+            self.fotufilm_encode(
+                &mut encoder,
+                CLOUD_SHADER,
+                &CLOUD_BLUR_BINDINGS,
+                "main",
+                &[
+                    &uniform,
+                    if factor == 1 { deposits } else { coarse },
+                    horizontal,
+                    kernel,
+                ],
+                (n.div_ceil(8), n.div_ceil(8)),
+            );
             p.vertical = 1;
             p.scale = if factor == 1 { scale } else { 1.0 };
             let uniform = self.uniform_buffer(bytemuck::bytes_of(&p));
-            self.fotufilm_encode(&mut encoder, CLOUD_SHADER, &CLOUD_BLUR_BINDINGS, "main",
-                &[&uniform, horizontal, blurred, kernel], (n.div_ceil(8), n.div_ceil(8)));
+            self.fotufilm_encode(
+                &mut encoder,
+                CLOUD_SHADER,
+                &CLOUD_BLUR_BINDINGS,
+                "main",
+                &[&uniform, horizontal, blurred, kernel],
+                (n.div_ceil(8), n.div_ceil(8)),
+            );
             p.scale = scale;
             let uniform = self.uniform_buffer(bytemuck::bytes_of(&p));
-            self.fotufilm_encode(&mut encoder, CLOUD_SHADER, &CLOUD_BINDINGS,
-                if factor == 1 { "accumulate" } else { "upsample_add" },
-                &[&uniform, blurred, demand], (SAMPLE.div_ceil(8), SAMPLE.div_ceil(8)));
+            self.fotufilm_encode(
+                &mut encoder,
+                CLOUD_SHADER,
+                &CLOUD_BINDINGS,
+                if factor == 1 {
+                    "accumulate"
+                } else {
+                    "upsample_add"
+                },
+                &[&uniform, blurred, demand],
+                (SAMPLE.div_ceil(8), SAMPLE.div_ceil(8)),
+            );
         }
         self.queue.submit(Some(encoder.finish()));
         self.check_cancelled()?;
@@ -674,35 +1001,61 @@ impl WgpuBackend {
 
     fn fotufilm_scratch(&self, bytes: u64, label: &str) -> wgpu::Buffer {
         self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label), size: bytes, mapped_at_creation: false,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            label: Some(label),
+            size: bytes,
+            mapped_at_creation: false,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
         })
     }
 
     fn uniform_buffer(&self, contents: &[u8]) -> wgpu::Buffer {
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("fotufilm_uniform"), contents, usage: wgpu::BufferUsages::UNIFORM,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fotufilm_uniform"),
+                contents,
+                usage: wgpu::BufferUsages::UNIFORM,
+            })
     }
 
     fn storage_ro_buffer(&self, contents: &[u8]) -> wgpu::Buffer {
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("fotufilm_coefficients"), contents, usage: wgpu::BufferUsages::STORAGE,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fotufilm_coefficients"),
+                contents,
+                usage: wgpu::BufferUsages::STORAGE,
+            })
     }
 
-    fn fotufilm_encode(&self, encoder: &mut ObservedEncoder, shader: &'static str,
-        bindings: &[wgpu::BufferBindingType], entry_point: &'static str,
-        buffers: &[&wgpu::Buffer], groups: (u32, u32)) {
-        let (cached, _) = self.pipeline_cache.get_or_compile_at(&self.device.raw, shader, bindings, entry_point);
-        let entries: Vec<_> = buffers.iter().enumerate().map(|(i, buffer)| wgpu::BindGroupEntry {
-            binding: i as u32, resource: buffer.as_entire_binding(),
-        }).collect();
+    fn fotufilm_encode(
+        &self,
+        encoder: &mut ObservedEncoder,
+        shader: &'static str,
+        bindings: &[wgpu::BufferBindingType],
+        entry_point: &'static str,
+        buffers: &[&wgpu::Buffer],
+        groups: (u32, u32),
+    ) {
+        let (cached, _) =
+            self.pipeline_cache
+                .get_or_compile_at(&self.device.raw, shader, bindings, entry_point);
+        let entries: Vec<_> = buffers
+            .iter()
+            .enumerate()
+            .map(|(i, buffer)| wgpu::BindGroupEntry {
+                binding: i as u32,
+                resource: buffer.as_entire_binding(),
+            })
+            .collect();
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fotufilm_bind_group"), layout: &cached.layout, entries: &entries,
+            label: Some("fotufilm_bind_group"),
+            layout: &cached.layout,
+            entries: &entries,
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some(entry_point), timestamp_writes: None,
+            label: Some(entry_point),
+            timestamp_writes: None,
         });
         pass.set_pipeline(&cached.pipeline);
         pass.set_bind_group(0, &group, &[]);
@@ -878,7 +1231,10 @@ mod tests {
         for (index, want) in expected.data.iter().enumerate() {
             let got = to_f64(device.data[index]);
             let delta = (got - to_f64(*want)).abs();
-            assert!(delta.is_finite(), "nonfinite device readout at sample {index}");
+            assert!(
+                delta.is_finite(),
+                "nonfinite device readout at sample {index}"
+            );
             mean += delta;
             max = max.max(delta);
         }
@@ -909,7 +1265,9 @@ mod tests {
     fn prepared_cloud_kernel_matches_reference_blur() {
         let backend = crate::test_support::adapter();
         let n = 16u32;
-        let source: Vec<f32> = (0..n * n).map(|i| ((i * 37 + i / n * 11) % 101) as f32 / 101.0).collect();
+        let source: Vec<f32> = (0..n * n)
+            .map(|i| ((i * 37 + i / n * 11) % 101) as f32 / 101.0)
+            .collect();
         let input = backend.storage_ro_buffer(bytemuck::cast_slice(&source));
         let horizontal = backend.fotufilm_scratch(u64::from(n * n) * 4, "cloud_test_horizontal");
         let output = backend.fotufilm_scratch(u64::from(n * n) * 4, "cloud_test_output");
@@ -918,16 +1276,20 @@ mod tests {
             // normalization sum, ascending x taps, then ascending y taps.
             let radius = (3.5 * sigma).ceil().max(1.0) as i32;
             let mut taps: Vec<f32> = (-radius..=radius)
-                .map(|t| (-(t * t) as f32 / (2.0 * sigma * sigma)).exp()).collect();
+                .map(|t| (-(t * t) as f32 / (2.0 * sigma * sigma)).exp())
+                .collect();
             let sum = taps.iter().sum::<f32>();
-            for tap in &mut taps { *tap /= sum; }
+            for tap in &mut taps {
+                *tap /= sum;
+            }
             let mut across = vec![0.0f32; source.len()];
             let mut expected = vec![0.0f32; source.len()];
             for y in 0..n as i32 {
                 for x in 0..n as i32 {
                     for (t, weight) in taps.iter().enumerate() {
                         across[(y * n as i32 + x) as usize] += weight
-                            * source[(y * n as i32 + (x + t as i32 - radius).rem_euclid(n as i32)) as usize];
+                            * source[(y * n as i32 + (x + t as i32 - radius).rem_euclid(n as i32))
+                                as usize];
                     }
                 }
             }
@@ -935,31 +1297,69 @@ mod tests {
                 for x in 0..n as i32 {
                     for (t, weight) in taps.iter().enumerate() {
                         expected[(y * n as i32 + x) as usize] += weight
-                            * across[((y + t as i32 - radius).rem_euclid(n as i32) * n as i32 + x) as usize];
+                            * across[((y + t as i32 - radius).rem_euclid(n as i32) * n as i32 + x)
+                                as usize];
                     }
                 }
             }
             let kernel = backend.fotufilm_scratch(taps.len() as u64 * 4, "cloud_test_kernel");
-            let mut p = BlurUniform { n, radius, vertical: 0, scale: 1.0, sigma, pad0: 0, pad1: 0, pad2: 0 };
+            let mut p = BlurUniform {
+                n,
+                radius,
+                vertical: 0,
+                scale: 1.0,
+                sigma,
+                pad0: 0,
+                pad1: 0,
+                pad2: 0,
+            };
             let mut encoder = backend.device.create_command_encoder(&Default::default());
             let uniform = backend.uniform_buffer(bytemuck::bytes_of(&p));
-            backend.fotufilm_encode(&mut encoder, CLOUD_SHADER, &CLOUD_BLUR_BINDINGS, "prepare_kernel",
-                &[&uniform, &input, &horizontal, &kernel], (1, 1));
-            backend.fotufilm_encode(&mut encoder, CLOUD_SHADER, &CLOUD_BLUR_BINDINGS, "main",
-                &[&uniform, &input, &horizontal, &kernel], (n.div_ceil(8), n.div_ceil(8)));
+            backend.fotufilm_encode(
+                &mut encoder,
+                CLOUD_SHADER,
+                &CLOUD_BLUR_BINDINGS,
+                "prepare_kernel",
+                &[&uniform, &input, &horizontal, &kernel],
+                (1, 1),
+            );
+            backend.fotufilm_encode(
+                &mut encoder,
+                CLOUD_SHADER,
+                &CLOUD_BLUR_BINDINGS,
+                "main",
+                &[&uniform, &input, &horizontal, &kernel],
+                (n.div_ceil(8), n.div_ceil(8)),
+            );
             p.vertical = 1;
             let uniform = backend.uniform_buffer(bytemuck::bytes_of(&p));
-            backend.fotufilm_encode(&mut encoder, CLOUD_SHADER, &CLOUD_BLUR_BINDINGS, "main",
-                &[&uniform, &horizontal, &output, &kernel], (n.div_ceil(8), n.div_ceil(8)));
+            backend.fotufilm_encode(
+                &mut encoder,
+                CLOUD_SHADER,
+                &CLOUD_BLUR_BINDINGS,
+                "main",
+                &[&uniform, &horizontal, &output, &kernel],
+                (n.div_ceil(8), n.div_ceil(8)),
+            );
             backend.queue.submit(Some(encoder.finish()));
             let actual_taps = backend.pipe.readback_buffer(&kernel, taps.len() as u64 * 4);
             let actual = backend.pipe.readback_buffer(&output, u64::from(n * n) * 4);
-            let tap_max = actual_taps.iter().zip(&taps).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
-            let max = actual.iter().zip(&expected).map(|(a, b)| {
-                assert!(a.is_finite());
-                (a - b).abs()
-            }).fold(0.0f32, f32::max);
-            println!("Fotufilm prepared cloud kernel sigma {sigma}: tap max {tap_max:.6e}, blur max {max:.6e}");
+            let tap_max = actual_taps
+                .iter()
+                .zip(&taps)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            let max = actual
+                .iter()
+                .zip(&expected)
+                .map(|(a, b)| {
+                    assert!(a.is_finite());
+                    (a - b).abs()
+                })
+                .fold(0.0f32, f32::max);
+            println!(
+                "Fotufilm prepared cloud kernel sigma {sigma}: tap max {tap_max:.6e}, blur max {max:.6e}"
+            );
             assert!(tap_max < 1e-7, "kernel sigma {sigma}: {tap_max}");
             assert!(max < 1e-6, "blur sigma {sigma}: {max}");
         }
@@ -969,19 +1369,36 @@ mod tests {
     fn conservative_resample_preserves_constant_density_far_outside_source() {
         let backend = crate::test_support::adapter();
         for source_side in [1, 2] {
-            let input = ImageBuf::from_data(source_side, source_side,
-                (0..source_side * source_side).flat_map(|_| [0.2, 0.7, 1.3].map(from_f64)).collect());
+            let input = ImageBuf::from_data(
+                source_side,
+                source_side,
+                (0..source_side * source_side)
+                    .flat_map(|_| [0.2, 0.7, 1.3].map(from_f64))
+                    .collect(),
+            );
             let mut params = device_params(&[], (source_side, source_side), (37, 29));
             // Empty records disable grain without changing resample execution.
-            params.records = vec![FotufilmRecordGpuParams { sublayers: Vec::new(), d_min: 0.0, d_max: 2.0 }; 3];
+            params.records = vec![
+                FotufilmRecordGpuParams {
+                    sublayers: Vec::new(),
+                    d_min: 0.0,
+                    d_max: 2.0
+                };
+                3
+            ];
             params.size = 1.7;
             params.origin_um = [-103.25 / params.size, 506.75 / params.size];
             params.pitch_um = [7.5 / params.size, 12.5 / params.size];
-            let output = backend.fotufilm_grain_inner(&input, &params).expect("constant edge resample");
+            let output = backend
+                .fotufilm_grain_inner(&input, &params)
+                .expect("constant edge resample");
             for (index, sample) in output.data.iter().enumerate() {
                 let expected = [0.2, 0.7, 1.3][index % 3];
-                assert!((to_f64(*sample) - expected).abs() < 1e-6,
-                    "source side {source_side}, sample {index}: {} instead of {expected}", to_f64(*sample));
+                assert!(
+                    (to_f64(*sample) - expected).abs() < 1e-6,
+                    "source side {source_side}, sample {index}: {} instead of {expected}",
+                    to_f64(*sample)
+                );
             }
         }
     }
@@ -996,13 +1413,32 @@ mod tests {
         // A 4x4 source contains four constant quadrants separated at 40um.
         // Their transition is interior, so its exact area average is analytical
         // even with the reference's virtual edge-cell merging convention.
-        let quadrants: [[f64; 3]; 4] = [[0.2, 0.4, 0.7], [1.1, 0.8, 0.3], [0.6, 1.3, 0.9], [1.4, 0.2, 1.0]];
-        let input = ImageBuf::from_data(4, 4, (0..4).flat_map(|y| (0..4).flat_map(move |x| {
-            quadrants[usize::from(y >= 2) * 2 + usize::from(x >= 2)].map(from_f64)
-        })).collect());
+        let quadrants: [[f64; 3]; 4] = [
+            [0.2, 0.4, 0.7],
+            [1.1, 0.8, 0.3],
+            [0.6, 1.3, 0.9],
+            [1.4, 0.2, 1.0],
+        ];
+        let input = ImageBuf::from_data(
+            4,
+            4,
+            (0..4)
+                .flat_map(|y| {
+                    (0..4).flat_map(move |x| {
+                        quadrants[usize::from(y >= 2) * 2 + usize::from(x >= 2)].map(from_f64)
+                    })
+                })
+                .collect(),
+        );
         let origin: [f64; 2] = [-3.25, 6.75];
         let pitch: [f64; 2] = [7.5, 12.5];
-        let look = Look { amount: 0.8, size: 1.7, softness: 1.3, color: 0.65, layers: [0.9, 1.1, 0.7] };
+        let look = Look {
+            amount: 0.8,
+            size: 1.7,
+            softness: 1.3,
+            color: 0.65,
+            layers: [0.9, 1.1, 0.7],
+        };
         let (width, height) = (37, 29);
         let mut averaged = ImageBuf::new(width, height);
         for y in 0..height {
@@ -1013,15 +1449,28 @@ mod tests {
                 let wx = ((40.0 - left) / pitch[0]).clamp(0.0, 1.0);
                 for (c, &upper_left) in quadrants[0].iter().enumerate() {
                     averaged.data[((y * width + x) * 3) as usize + c] = from_f64(
-                        wx * wy * upper_left + (1.0 - wx) * wy * quadrants[1][c]
-                        + wx * (1.0 - wy) * quadrants[2][c] + (1.0 - wx) * (1.0 - wy) * quadrants[3][c]);
+                        wx * wy * upper_left
+                            + (1.0 - wx) * wy * quadrants[1][c]
+                            + wx * (1.0 - wy) * quadrants[2][c]
+                            + (1.0 - wx) * (1.0 - wy) * quadrants[3][c],
+                    );
                 }
             }
         }
-        let expected = bank.apply(&averaged, Geometry {
-            source_pitch_mm: [0.02; 2], origin_mm: origin.map(|v| v / 1000.0),
-            output_pitch_mm: pitch.map(|v| v / 1000.0), footprint_mm: pitch.map(|v| v / 1000.0),
-        }, look, 12345, &|| Ok(())).expect("CPU physical readout");
+        let expected = bank
+            .apply(
+                &averaged,
+                Geometry {
+                    source_pitch_mm: [0.02; 2],
+                    origin_mm: origin.map(|v| v / 1000.0),
+                    output_pitch_mm: pitch.map(|v| v / 1000.0),
+                    footprint_mm: pitch.map(|v| v / 1000.0),
+                },
+                look,
+                12345,
+                &|| Ok(()),
+            )
+            .expect("CPU physical readout");
         let mut params = device_params(&records, (4, 4), (width, height));
         params.source_pitch_um = 20.0;
         params.origin_um = origin.map(|v| v / look.size);
@@ -1032,26 +1481,47 @@ mod tests {
         params.softness = look.softness;
         params.color = look.color;
         params.layers = look.layers;
-        let contiguous = backend.fotufilm_grain_inner(&input, &params).expect("contiguous readout");
+        let contiguous = backend
+            .fotufilm_grain_inner(&input, &params)
+            .expect("contiguous readout");
         let mut pages = Vec::new();
         for pixel in 0..16 {
             let buffer = backend.fotufilm_scratch(12, "fotufilm_test_source_page");
             let samples = scalars_to_f32(&input.data[pixel * 3..pixel * 3 + 3]);
-            backend.queue.write_buffer(&buffer, 0, bytemuck::cast_slice(samples.as_ref()));
-            pages.push(ImagePage { first_pixel: pixel as u32, n_pixels: 1, buffer });
+            backend
+                .queue
+                .write_buffer(&buffer, 0, bytemuck::cast_slice(samples.as_ref()));
+            pages.push(ImagePage {
+                first_pixel: pixel as u32,
+                n_pixels: 1,
+                buffer,
+            });
         }
         let payload = BufferPayload::from_pages(backend.backend_id(), pages, 4, 4);
-        let mut split = backend.prepare_fotufilm_paged(4, 4, &payload, &params).expect("paged preparation");
+        let mut split = backend
+            .prepare_fotufilm_paged(4, 4, &payload, &params)
+            .expect("paged preparation");
         split.window_side = 17;
-        split.output_pages = (0..width * height).step_by(19).map(|first| {
-            let count = (width * height - first).min(19);
-            ImagePage { first_pixel: first, n_pixels: count,
-                buffer: backend.fotufilm_scratch(u64::from(count) * 12, "fotufilm_test_output_page") }
-        }).collect();
+        split.output_pages = (0..width * height)
+            .step_by(19)
+            .map(|first| {
+                let count = (width * height - first).min(19);
+                ImagePage {
+                    first_pixel: first,
+                    n_pixels: count,
+                    buffer: backend
+                        .fotufilm_scratch(u64::from(count) * 12, "fotufilm_test_output_page"),
+                }
+            })
+            .collect();
         split.submit(&backend).expect("split readout");
         let mut paged = Vec::new();
         for page in &split.output_pages {
-            paged.extend(backend.pipe.readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12));
+            paged.extend(
+                backend
+                    .pipe
+                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+            );
         }
         let mut max = 0.0f64;
         let mut mean = 0.0f64;
@@ -1064,9 +1534,16 @@ mod tests {
             page_max = page_max.max((f64::from(paged[i]) - to_f64(contiguous.data[i])).abs());
         }
         mean /= expected.data.len() as f64;
-        println!("fotufilm fractional geometry: mean {mean:.6e}, max {max:.6e}; page/window split max {page_max:.6e}");
-        assert!(max < 5e-2, "fractional geometry max {max:.6e}, mean {mean:.6e}");
-        assert!(page_max < 1e-6, "page/window partition changed the physical field by {page_max:.6e}");
+        println!(
+            "fotufilm fractional geometry: mean {mean:.6e}, max {max:.6e}; page/window split max {page_max:.6e}"
+        );
+        assert!(
+            max < 5e-2,
+            "fractional geometry max {max:.6e}, mean {mean:.6e}"
+        );
+        assert!(
+            page_max < 1e-6,
+            "page/window partition changed the physical field by {page_max:.6e}"
+        );
     }
-
 }

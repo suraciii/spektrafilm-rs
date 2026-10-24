@@ -357,7 +357,9 @@ fn execute(
     telemetry::observe_backend(backend.as_ref(), &context);
     eprintln!("Backend: {}", backend.name());
     if backend.is_gpu() {
-        bail!("selected GPU cannot execute material stage export or continuation; use --backend cpu");
+        bail!(
+            "selected GPU cannot execute material stage export or continuation; use --backend cpu"
+        );
     }
     let seed = params.random_seed;
     let output_space = params.io.output_color_space.clone();

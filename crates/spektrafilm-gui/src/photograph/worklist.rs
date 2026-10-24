@@ -498,7 +498,13 @@ impl App {
             .as_ref()
             .or(self.photograph.work_list.entries[index].context.as_ref())
             .expect("prepared destination");
-        let settings = copied_settings(source, &context.settings, scope, &self.data_dir, self.backend.as_ref())?;
+        let settings = copied_settings(
+            source,
+            &context.settings,
+            scope,
+            &self.data_dir,
+            self.backend.as_ref(),
+        )?;
         let film = profile::load_profile_by_name(&self.data_dir, &settings.film)?;
         let print = profile::load_profile_by_name(&self.data_dir, &settings.print)?;
         if let Some(prepared) = prepared {
@@ -1413,7 +1419,14 @@ mod tests {
         source.params.io.crop = !destination.params.io.crop;
         source.rotation = 1;
         for scope in [CopyScope::Look, CopyScope::Section(Section::Convert)] {
-            let copied = copied_settings(&source, &destination, scope, &app.data_dir, app.backend.as_ref()).unwrap();
+            let copied = copied_settings(
+                &source,
+                &destination,
+                scope,
+                &app.data_dir,
+                app.backend.as_ref(),
+            )
+            .unwrap();
             assert_eq!(
                 copied.params.film_render.convert.scan_illuminant,
                 destination.params.film_render.convert.scan_illuminant
@@ -1438,7 +1451,14 @@ mod tests {
         source.params.scanner.operator.contrast = -1.0;
         let before = destination.clone();
         assert!(
-            copied_settings(&source, &destination, CopyScope::Operator, &app.data_dir, app.backend.as_ref()).is_err()
+            copied_settings(
+                &source,
+                &destination,
+                CopyScope::Operator,
+                &app.data_dir,
+                app.backend.as_ref()
+            )
+            .is_err()
         );
         assert_eq!(destination, before);
     }
@@ -1466,7 +1486,14 @@ mod tests {
             FeatureProfileFamily::Halation,
         ] {
             let scope = CopyScope::Feature(family);
-            let copied = copied_settings(&source, &destination, scope, &app.data_dir, app.backend.as_ref()).unwrap();
+            let copied = copied_settings(
+                &source,
+                &destination,
+                scope,
+                &app.data_dir,
+                app.backend.as_ref(),
+            )
+            .unwrap();
             assert_eq!(
                 feature_profiles::effective_values(family, &copied.params),
                 feature_profiles::effective_values(family, &source.params)

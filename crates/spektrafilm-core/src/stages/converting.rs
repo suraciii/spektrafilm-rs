@@ -205,13 +205,14 @@ impl Converter {
             calibration: self.calibration,
             gain: self.gain,
             seed_log_rgb: self.seed_log_rgb,
-            seed_inverse: std::array::from_fn(|i| std::array::from_fn(|j| self.seed_inverse[(i, j)])),
+            seed_inverse: std::array::from_fn(|i| {
+                std::array::from_fn(|j| self.seed_inverse[(i, j)])
+            }),
             cctf_kind: self.cctf_kind,
             decode_input: self.decode_input,
             n_wl: self.dye.len() as u32,
         }
     }
-
 
     fn forward_jacobian(&self, cmy: [f64; 3]) -> ([f64; 3], [[f64; 3]; 3]) {
         let mut xyz = [0.0; 3];
@@ -298,7 +299,12 @@ pub(crate) fn resolve_converter(
     profile: &Profile,
     params: &RuntimeParams,
 ) -> Result<Option<Converter>, String> {
-    params.workflow.route_enum().is_convert_film().then(|| Converter::new(profile, params)).transpose()
+    params
+        .workflow
+        .route_enum()
+        .is_convert_film()
+        .then(|| Converter::new(profile, params))
+        .transpose()
 }
 
 pub fn process(
@@ -580,8 +586,13 @@ pub fn neutralize_filters(
         let mut trial = p.clone();
         trial.enlarger.m_filter_shift = x[0] as f32;
         trial.enlarger.y_filter_shift = x[1] as f32;
-        let pipeline =
-            crate::pipeline::Pipeline::new_with_spectral_backend(film.clone(), print.clone(), trial, data, backend)?;
+        let pipeline = crate::pipeline::Pipeline::new_with_spectral_backend(
+            film.clone(),
+            print.clone(),
+            trial,
+            data,
+            backend,
+        )?;
         let output = pipeline.process(
             ImageBuf::from_data(2, 2, vec![from_f64(0.184); 12]),
             backend,

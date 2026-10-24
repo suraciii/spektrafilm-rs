@@ -14,8 +14,8 @@ pub mod telemetry;
 pub use telemetry::{
     AdapterDescription, CpuReason, Executor, Observation, ObservationContext, ObservationKind,
 };
-mod observed_backend;
 pub mod device_image;
+mod observed_backend;
 pub use device_image::{
     DeviceImage, DeviceImagePayload, Precision, RetainedImageMeta, SampleDomain,
 };
@@ -25,7 +25,9 @@ pub mod cpu_backend;
 pub mod viewer_params;
 pub use viewer_params::ViewerComposeGpuParams;
 pub mod preparation;
-pub use preparation::{GamutTableParams, InputGamutTableParams, PreparedTable, SpectralTcLutParams};
+pub use preparation::{
+    GamutTableParams, InputGamutTableParams, PreparedTable, SpectralTcLutParams,
+};
 
 /// CPU stage closure type shared by all pipe fence fields.
 pub type CpuStageFn<'a> = Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>;
@@ -84,14 +86,24 @@ pub struct Lut3D {
 /// spectral methods for massive speedups.
 pub trait ComputeBackend: Send + Sync {
     /// Generate and retain the spectral exposure table on the selected device.
-    fn prepare_spectral_tc_lut(&self, _params: &SpectralTcLutParams<'_>) -> Result<Option<PreparedTable>, String> {
+    fn prepare_spectral_tc_lut(
+        &self,
+        _params: &SpectralTcLutParams<'_>,
+    ) -> Result<Option<PreparedTable>, String> {
         Ok(None)
     }
     /// Bisect and retain the destination-specific perceptual gamut boundary.
-    fn prepare_gamut_table(&self, _params: &GamutTableParams) -> Result<Option<PreparedTable>, String> {
+    fn prepare_gamut_table(
+        &self,
+        _params: &GamutTableParams,
+    ) -> Result<Option<PreparedTable>, String> {
         Ok(None)
     }
-    fn remap_input_gamut_table(&self, _source: &PreparedTable, _params: &InputGamutTableParams<'_>) -> Result<PreparedTable, String> {
+    fn remap_input_gamut_table(
+        &self,
+        _source: &PreparedTable,
+        _params: &InputGamutTableParams<'_>,
+    ) -> Result<PreparedTable, String> {
         Err("selected backend cannot prepare input gamut remapping".to_owned())
     }
     fn observation_context(&self) -> Option<&telemetry::ObservationContext> {
@@ -118,7 +130,11 @@ pub trait ComputeBackend: Send + Sync {
     fn preparation_device_id(&self) -> Option<u64> {
         None
     }
-    fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> Result<ImageBuf, String>;
+    fn colorspace_convert(
+        &self,
+        img: &ImageBuf,
+        matrix: &[[f32; 3]; 3],
+    ) -> Result<ImageBuf, String>;
     fn cctf_encode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String>;
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String>;
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> Result<ImageBuf, String>;
@@ -131,7 +147,12 @@ pub trait ComputeBackend: Send + Sync {
     fn gaussian_blur_multi(&self, img: &ImageBuf, sigmas: &[f32]) -> Result<Vec<ImageBuf>, String> {
         sigmas.iter().map(|&s| self.gaussian_blur(img, s)).collect()
     }
-    fn table_lookup(&self, img: &ImageBuf, table_x: &[f32], table_y: &[[f32; 3]]) -> Result<ImageBuf, String>;
+    fn table_lookup(
+        &self,
+        img: &ImageBuf,
+        table_x: &[f32],
+        table_y: &[[f32; 3]],
+    ) -> Result<ImageBuf, String>;
     fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> Result<ImageBuf, String>;
 
     /// Spectral scanning: density CMY → RGB via spectral integration.
@@ -143,106 +164,123 @@ pub trait ComputeBackend: Send + Sync {
     /// output channel which compounds to ~5e-6 of drift in the bare
     /// chain. GPU may collapse for performance.
     #[allow(clippy::too_many_arguments)]
-    fn scan_spectral(&self,
-    density_cmy: &ImageBuf,
-    channel_density: &[[f64; 3]],
-    base_density: &[f64],
-    illuminant: &[f64],
-    normalization: f64,
-    cat: &[[f64; 3]; 3],
-    xyz_to_rgb: &[[f64; 3]; 3],) -> Result<ImageBuf, String> {
-    if self.is_gpu() { return Err("scan_spectral: selected GPU has no device implementation".into()); }
-    let _observation = self.observation_context().map(|context| {
-        let scope = context.scope(
-            "scan_spectral",
-            telemetry::ObservationKind::Stage,
-            context.purpose(),
-        );
-        scope.context().record_executor(
-            telemetry::Executor::Cpu,
-            Some(telemetry::CpuReason::BackendDefault),
-        );
-        scope
-    });
-    Ok(cpu_backend::scan_spectral_cpu(
-        density_cmy,
-        channel_density,
-        base_density,
-        illuminant,
-        normalization,
-        cat,
-        xyz_to_rgb,
-    )) }
+    fn scan_spectral(
+        &self,
+        density_cmy: &ImageBuf,
+        channel_density: &[[f64; 3]],
+        base_density: &[f64],
+        illuminant: &[f64],
+        normalization: f64,
+        cat: &[[f64; 3]; 3],
+        xyz_to_rgb: &[[f64; 3]; 3],
+    ) -> Result<ImageBuf, String> {
+        if self.is_gpu() {
+            return Err("scan_spectral: selected GPU has no device implementation".into());
+        }
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "scan_spectral",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
+        Ok(cpu_backend::scan_spectral_cpu(
+            density_cmy,
+            channel_density,
+            base_density,
+            illuminant,
+            normalization,
+            cat,
+            xyz_to_rgb,
+        ))
+    }
 
     /// Runtime-grid scan. A selected GPU must implement the full grid;
     /// the CPU reference preserves all runtime CMF samples.
     #[allow(clippy::too_many_arguments)]
-    fn scan_spectral_with_cmfs(&self,
-    density_cmy: &ImageBuf,
-    channel_density: &[[f64; 3]],
-    base_density: &[f64],
-    illuminant: &[f64],
-    cmfs: &[[f64; 3]],
-    normalization: f64,
-    cat: &[[f64; 3]; 3],
-    xyz_to_rgb: &[[f64; 3]; 3],) -> Result<ImageBuf, String> {
-    if self.is_gpu() { return Err("scan_spectral_with_cmfs: selected GPU has no device implementation".into()); }
-    let _observation = self.observation_context().map(|context| {
-        let scope = context.scope(
-            "scan_spectral",
-            telemetry::ObservationKind::Stage,
-            context.purpose(),
-        );
-        scope.context().record_executor(
-            telemetry::Executor::Cpu,
-            Some(telemetry::CpuReason::BackendDefault),
-        );
-        scope
-    });
-    Ok(cpu_backend::scan_spectral_cpu_with_cmfs(
-        density_cmy,
-        channel_density,
-        base_density,
-        illuminant,
-        cmfs,
-        normalization,
-        cat,
-        xyz_to_rgb,
-    )) }
+    fn scan_spectral_with_cmfs(
+        &self,
+        density_cmy: &ImageBuf,
+        channel_density: &[[f64; 3]],
+        base_density: &[f64],
+        illuminant: &[f64],
+        cmfs: &[[f64; 3]],
+        normalization: f64,
+        cat: &[[f64; 3]; 3],
+        xyz_to_rgb: &[[f64; 3]; 3],
+    ) -> Result<ImageBuf, String> {
+        if self.is_gpu() {
+            return Err(
+                "scan_spectral_with_cmfs: selected GPU has no device implementation".into(),
+            );
+        }
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "scan_spectral",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
+        Ok(cpu_backend::scan_spectral_cpu_with_cmfs(
+            density_cmy,
+            channel_density,
+            base_density,
+            illuminant,
+            cmfs,
+            normalization,
+            cat,
+            xyz_to_rgb,
+        ))
+    }
 
     /// Spectral printing: film density CMY → print log-exposure via spectral integration.
     /// GPU backends override this with a compute shader.
     #[allow(clippy::too_many_arguments)]
-    fn print_spectral(&self,
-    density_cmy: &ImageBuf,
-    channel_density: &[[f64; 3]],
-    base_density: &[f64],
-    illuminant: &[f64],
-    sensitivity: &[[f64; 3]],
-    normalization_factor: f64,
-    preflash: [f64; 3],) -> Result<ImageBuf, String> {
-    if self.is_gpu() { return Err("print_spectral: selected GPU has no device implementation".into()); }
-    let _observation = self.observation_context().map(|context| {
-        let scope = context.scope(
-            "print_spectral",
-            telemetry::ObservationKind::Stage,
-            context.purpose(),
-        );
-        scope.context().record_executor(
-            telemetry::Executor::Cpu,
-            Some(telemetry::CpuReason::BackendDefault),
-        );
-        scope
-    });
-    Ok(cpu_backend::print_spectral_cpu(
-        density_cmy,
-        channel_density,
-        base_density,
-        illuminant,
-        sensitivity,
-        normalization_factor,
-        preflash,
-    )) }
+    fn print_spectral(
+        &self,
+        density_cmy: &ImageBuf,
+        channel_density: &[[f64; 3]],
+        base_density: &[f64],
+        illuminant: &[f64],
+        sensitivity: &[[f64; 3]],
+        normalization_factor: f64,
+        preflash: [f64; 3],
+    ) -> Result<ImageBuf, String> {
+        if self.is_gpu() {
+            return Err("print_spectral: selected GPU has no device implementation".into());
+        }
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "print_spectral",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
+        Ok(cpu_backend::print_spectral_cpu(
+            density_cmy,
+            channel_density,
+            base_density,
+            illuminant,
+            sensitivity,
+            normalization_factor,
+            preflash,
+        ))
+    }
 
     /// Hanatos2025 RGB → film raw exposure (the per-pixel bicubic LUT lookup).
     ///
@@ -251,64 +289,78 @@ pub trait ComputeBackend: Send + Sync {
     /// fusing both matrices into a single matmul gives a different ULP than
     /// applying them sequentially. GPU backends override and may collapse
     /// the two into a single matrix per the precision budget for live preview.
-    fn hanatos2025_rgb_to_raw(&self,
-    image: &ImageBuf,
-    tc_lut: &spektrafilm_math::spectral::TcLut,
-    color_space: &str,
-    ref_illuminant: &[f32],
-    cat16: bool,) -> Result<ImageBuf, String> {
-    if self.is_gpu() { return Err("hanatos2025_rgb_to_raw: selected GPU has no device implementation".into()); }
-    let _observation = self.observation_context().map(|context| {
-        let scope = context.scope(
-            "rgb_to_raw",
-            telemetry::ObservationKind::Stage,
-            context.purpose(),
-        );
-        scope.context().record_executor(
-            telemetry::Executor::Cpu,
-            Some(telemetry::CpuReason::BackendDefault),
-        );
-        scope
-    });
-    Ok(spektrafilm_math::spectral::hanatos2025_rgb_to_raw(
-        image,
-        tc_lut,
-        color_space,
-        ref_illuminant,
-        cat16,
-    )) }
+    fn hanatos2025_rgb_to_raw(
+        &self,
+        image: &ImageBuf,
+        tc_lut: &spektrafilm_math::spectral::TcLut,
+        color_space: &str,
+        ref_illuminant: &[f32],
+        cat16: bool,
+    ) -> Result<ImageBuf, String> {
+        if self.is_gpu() {
+            return Err("hanatos2025_rgb_to_raw: selected GPU has no device implementation".into());
+        }
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "rgb_to_raw",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
+        Ok(spektrafilm_math::spectral::hanatos2025_rgb_to_raw(
+            image,
+            tc_lut,
+            color_space,
+            ref_illuminant,
+            cat16,
+        ))
+    }
 
     /// log_raw → density_cmy via per-channel curve interpolation.
     ///
     /// Called twice per render (filming.develop + printing.develop). GPU
     /// backends override with `density_curve_interp.wgsl`; CPU falls back to
     /// the f64 curve interpolation in `spektrafilm-model::density_curves`.
-    fn density_curve_interp(&self,
-    log_raw: &ImageBuf,
-    log_exposure: &[f64],
-    density_curves: &[[f64; 3]],
-    gamma_factor: f64,) -> Result<ImageBuf, String> {
-    if self.is_gpu() { return Err("density_curve_interp: selected GPU has no device implementation".into()); }
-    let _observation = self.observation_context().map(|context| {
-        let scope = context.scope(
-            "density_curve_interp",
-            telemetry::ObservationKind::Stage,
-            context.purpose(),
-        );
-        scope.context().record_executor(
-            telemetry::Executor::Cpu,
-            Some(telemetry::CpuReason::BackendDefault),
-        );
-        scope
-    });
-    // CPU fallback — uses the f64 reference (`fast_interp_image_f64`).
-    // Scalar gamma is broadcast to all channels; we just stretch the x-axis once.
-    let scaled: Vec<f64> = if (gamma_factor - 1.0).abs() < 1e-12 {
-        log_exposure.to_vec()
-    } else {
-        log_exposure.iter().map(|&v| v / gamma_factor).collect()
-    };
-    Ok(spektrafilm_math::interp::fast_interp_image_f64(log_raw, &scaled, density_curves)) }
+    fn density_curve_interp(
+        &self,
+        log_raw: &ImageBuf,
+        log_exposure: &[f64],
+        density_curves: &[[f64; 3]],
+        gamma_factor: f64,
+    ) -> Result<ImageBuf, String> {
+        if self.is_gpu() {
+            return Err("density_curve_interp: selected GPU has no device implementation".into());
+        }
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "density_curve_interp",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
+        // CPU fallback — uses the f64 reference (`fast_interp_image_f64`).
+        // Scalar gamma is broadcast to all channels; we just stretch the x-axis once.
+        let scaled: Vec<f64> = if (gamma_factor - 1.0).abs() < 1e-12 {
+            log_exposure.to_vec()
+        } else {
+            log_exposure.iter().map(|&v| v / gamma_factor).collect()
+        };
+        Ok(spektrafilm_math::interp::fast_interp_image_f64(
+            log_raw,
+            &scaled,
+            density_curves,
+        ))
+    }
 
     /// Return a rendered Grain Procedural image when this backend supports the shader.
     /// Input and output are native encoded RGB in the caller's color space;
@@ -316,7 +368,11 @@ pub trait ComputeBackend: Send + Sync {
     /// and final composition round to binary16 while sampling and noise use f32.
     /// Only a CPU-selected caller may use the independent reference on None.
     /// A selected device reports dispatch/resource failures through Err.
-    fn grain_v2(&self, _image: &ImageBuf, _params: &GrainV2GpuParams) -> Result<Option<ImageBuf>, String> {
+    fn grain_v2(
+        &self,
+        _image: &ImageBuf,
+        _params: &GrainV2GpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
         Ok(None)
     }
 
@@ -356,11 +412,26 @@ pub trait ComputeBackend: Send + Sync {
     }
 
     fn dye_field_with_response(
-        &self, _image: &ImageBuf, _params: &DyeGpuParams, _response: &DyeResponseGpuParams<'_>,
-    ) -> Option<Result<ImageBuf, String>> { None }
-    fn dye_aperture_collapse(&self, _image: &ImageBuf, _factor: u32) -> Option<Result<ImageBuf, String>> { None }
-    fn dye_log10(&self, _image: &ImageBuf) -> Option<Result<ImageBuf, String>> { None }
-    fn dye_crop(&self, _image: &ImageBuf, _rect: [u32; 4]) -> Option<Result<ImageBuf, String>> { None }
+        &self,
+        _image: &ImageBuf,
+        _params: &DyeGpuParams,
+        _response: &DyeResponseGpuParams<'_>,
+    ) -> Option<Result<ImageBuf, String>> {
+        None
+    }
+    fn dye_aperture_collapse(
+        &self,
+        _image: &ImageBuf,
+        _factor: u32,
+    ) -> Option<Result<ImageBuf, String>> {
+        None
+    }
+    fn dye_log10(&self, _image: &ImageBuf) -> Option<Result<ImageBuf, String>> {
+        None
+    }
+    fn dye_crop(&self, _image: &ImageBuf, _rect: [u32; 4]) -> Option<Result<ImageBuf, String>> {
+        None
+    }
 
     /// Upload host samples as one retained computation image.
     ///
@@ -522,7 +593,6 @@ pub trait ComputeBackend: Send + Sync {
         Ok(None)
     }
 
-
     /// Measure the auto-exposure EV for `image` on the compute device.
     ///
     /// Full-source metering is a reduction, and a reduction is image
@@ -599,45 +669,71 @@ pub trait ComputeBackend: Send + Sync {
     /// Prepare disposable fitted viewing samples without materializing the source.
     /// `None` display means raw output-space viewing; ICC follows the display pass.
     fn viewer_fit_retained(
-        &self, _image: &DeviceImage, _width: u32, _height: u32,
-        _display: Option<&DisplayTransformGpuParams>, _icc: Option<&ViewerIccGpuParams<'_>>,
+        &self,
+        _image: &DeviceImage,
+        _width: u32,
+        _height: u32,
+        _display: Option<&DisplayTransformGpuParams>,
+        _icc: Option<&ViewerIccGpuParams<'_>>,
     ) -> Result<DeviceImage, String> {
         Err("backend has no retained viewer preparation".into())
     }
     /// Transform source taps before interpolation for a magnified view.
     fn viewer_full_source_retained(
-        &self, _image: &DeviceImage, _params: &ViewerFullSourceGpuParams<'_>,
+        &self,
+        _image: &DeviceImage,
+        _params: &ViewerFullSourceGpuParams<'_>,
     ) -> Result<DeviceImage, String> {
         Err("backend has no retained full-source viewer".into())
     }
     /// Native presentation boundary: all sampling/blending runs on device;
-    /// only packed RGBA bytes cross to the frontend.
+    /// only packed RGBA bytes cross to the frontend. An absent image composes
+    /// the empty canvas, without sampling previous or comparison layers.
     fn viewer_compose_retained(
-        &self, _image: &DeviceImage, _paper: Option<&DeviceImage>,
-        _previous: Option<&DeviceImage>, _split: Option<&DeviceImage>,
+        &self,
+        _image: Option<&DeviceImage>,
+        _paper: Option<&DeviceImage>,
+        _previous: Option<&DeviceImage>,
+        _split: Option<&DeviceImage>,
         _params: &ViewerComposeGpuParams,
     ) -> Result<Vec<[u8; 4]>, String> {
         Err("backend has no retained viewer composition".into())
     }
     /// Pinned virtual-paper synthesis from the decoded static watermark asset.
     fn viewer_paper_retained(
-        &self, _width: u32, _height: u32, _logo: &[f32], _logo_width: u32, _logo_height: u32,
+        &self,
+        _width: u32,
+        _height: u32,
+        _logo: &[f32],
+        _logo_width: u32,
+        _logo_height: u32,
     ) -> Result<DeviceImage, String> {
         Err("backend has no device virtual-paper synthesis".into())
     }
     /// Nine-layer reveal, including full-image density maxima, on the device.
     fn viewer_polaroid_retained(
-        &self, _image: &DeviceImage, _coefficients: [f32; 9],
+        &self,
+        _image: &DeviceImage,
+        _coefficients: [f32; 9],
     ) -> Result<DeviceImage, String> {
         Err("backend has no device viewer reveal".into())
     }
 
     /// Evaluate a parsed display-profile pipeline without host image samples.
-    fn viewer_icc_retained(&self, _image: &DeviceImage, _params: &ViewerIccGpuParams<'_>) -> Result<DeviceImage, String> {
+    fn viewer_icc_retained(
+        &self,
+        _image: &DeviceImage,
+        _params: &ViewerIccGpuParams<'_>,
+    ) -> Result<DeviceImage, String> {
         Err("backend has no retained ICC evaluation".into())
     }
     /// Inspect one retained source pixel; a bounded readback, never a display raster.
-    fn inspect_retained_pixel(&self, _image: &DeviceImage, _x: u32, _y: u32) -> Result<[f32; 3], String> {
+    fn inspect_retained_pixel(
+        &self,
+        _image: &DeviceImage,
+        _x: u32,
+        _y: u32,
+    ) -> Result<[f32; 3], String> {
         Err("backend has no retained pixel inspection".into())
     }
     /// Display-referred sRGB tonal bins, normalized together to a peak of one.
@@ -830,13 +926,20 @@ pub trait ComputeBackend: Send + Sync {
 /// Optical response averaged over the realized Dye field cells.
 pub enum DyeResponseGpuParams<'a> {
     Print {
-        channel_density: &'a [[f64; 3]], base_density: &'a [f64],
-        illuminant: &'a [f64], sensitivity: &'a [[f64; 3]],
-        normalization_factor: f64, exposure_scale: f64, preflash: [f64; 3],
+        channel_density: &'a [[f64; 3]],
+        base_density: &'a [f64],
+        illuminant: &'a [f64],
+        sensitivity: &'a [[f64; 3]],
+        normalization_factor: f64,
+        exposure_scale: f64,
+        preflash: [f64; 3],
     },
     Scan {
-        channel_density: &'a [[f64; 3]], base_density: &'a [f64],
-        illuminant: &'a [f64], normalization: f64, xyz_to_rgb: &'a [[f64; 3]; 3],
+        channel_density: &'a [[f64; 3]],
+        base_density: &'a [f64],
+        illuminant: &'a [f64],
+        normalization: f64,
+        xyz_to_rgb: &'a [[f64; 3]; 3],
     },
 }
 
@@ -941,8 +1044,8 @@ pub struct FilmChainParams<'a> {
     /// Precombined response used only by the exact-cell Dye scan readout.
     pub scan_xyz_to_rgb: &'a [[f64; 3]; 3],
     /// Ordered CPU scanner colour transforms (not precombined).
-    pub scan_cat: &'a [[f64;3];3],
-    pub scan_base_xyz_to_rgb: &'a [[f64;3];3],
+    pub scan_cat: &'a [[f64; 3]; 3],
+    pub scan_base_xyz_to_rgb: &'a [[f64; 3]; 3],
     /// Scan the developed film directly instead of printing onto paper.
     /// When true the print_spectral + print density-curve passes are
     /// skipped and scan_spectral runs on the film density buffer using the
@@ -1007,6 +1110,12 @@ pub struct FilmChainParams<'a> {
     pub density_cpu_stage: Option<CpuStageFn<'a>>,
     /// Device record-density acquisition, including transmission-domain optics.
     pub scan_readout: Option<&'a ScannerDensityGpuParams>,
+    /// Immutable retained film-density owner for prepared scanner acquisition.
+    /// Only a CmyFilm injection may provide this identity; ordinary chains
+    /// leave it absent. Backends retain the owner rather than keying mutable
+    /// scratch buffers or unowned addresses. Operator and tone changes may
+    /// reuse acquisition only while this owner and acquisition controls match.
+    pub scan_preparation_key: Option<&'a std::sync::Arc<dyn DeviceImagePayload>>,
     /// Optional explicit host acquisition fence. Selected scanner LUTs use
     /// `scanner_lut`, and negative-to-positive acquisition uses `scan_readout`.
     /// Receives density and returns captured RGB.
@@ -1330,9 +1439,9 @@ impl FilmChainParams<'_> {
             && self.scanner_lens_blur_px.is_none_or(supports)
             && self.unsharp.is_none_or(|p| supports(p.sigma_px))
             && self.glare.is_none_or(|p| supports(p.blur_px))
-            && self.dir_couplers.is_none_or(|p| {
-                supports(p.diffusion_size_px) && supports(p.diffusion_tail_px)
-            })
+            && self
+                .dir_couplers
+                .is_none_or(|p| supports(p.diffusion_size_px) && supports(p.diffusion_tail_px))
             && self.halation.is_none_or(|p| {
                 (0..3).all(|c| {
                     supports(p.scatter_core_px[c])
@@ -1340,9 +1449,10 @@ impl FilmChainParams<'_> {
                         && supports(p.halation_first_sigma_px[c])
                 })
             })
-            && self.grain_v1.as_ref().is_none_or(|p| {
-                p.grain_blur <= 0.0 || supports(p.grain_blur)
-            })
+            && self
+                .grain_v1
+                .as_ref()
+                .is_none_or(|p| p.grain_blur <= 0.0 || supports(p.grain_blur))
     }
 }
 
@@ -1810,4 +1920,3 @@ pub struct FotufilmSublayerGpuParams {
     /// the uncovered square's side.
     pub occupied_area: f64,
 }
-

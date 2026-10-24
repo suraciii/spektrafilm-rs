@@ -10,8 +10,10 @@ pub struct PreparedTable {
 }
 impl std::fmt::Debug for PreparedTable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PreparedTable").field("backend_id", &self.values.backend_id())
-            .field("neutral", &self.neutral).finish()
+        f.debug_struct("PreparedTable")
+            .field("backend_id", &self.values.backend_id())
+            .field("neutral", &self.neutral)
+            .finish()
     }
 }
 pub struct SpectralTcLutParams<'a> {

@@ -84,11 +84,15 @@ impl App {
                             // Explicit source-analysis action, not a stage in
                             // the selected GPU numerical render.
                             let image = image.to_host(backend.as_ref())?;
-                            spektrafilm_core::stages::converting::detect_base(&image, &film, &params)
-                                .map(|(params, exposure_ev)| CalibrationResult::Base {
+                            spektrafilm_core::stages::converting::detect_base(
+                                &image, &film, &params,
+                            )
+                            .map(|(params, exposure_ev)| {
+                                CalibrationResult::Base {
                                     params,
                                     exposure_ev,
-                                })
+                                }
+                            })
                         }
                         controls::CalibrationAction::BlindCalibration => {
                             let image = image.to_host(backend.as_ref())?;

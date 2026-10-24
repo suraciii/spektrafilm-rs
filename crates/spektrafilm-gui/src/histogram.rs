@@ -40,7 +40,11 @@ pub struct HistogramData {
 impl HistogramData {
     pub(crate) fn from_bins(bins: [[f32; BINS]; 3]) -> Self {
         let [r, g, b] = bins;
-        Self { r: r.into(), g: g.into(), b: b.into() }
+        Self {
+            r: r.into(),
+            g: g.into(),
+            b: b.into(),
+        }
     }
 
     /// Compute histogram data from an image buffer.
@@ -278,7 +282,6 @@ impl HistogramStrip {
         }
     }
 
-
     /// Update the histogram from the current output image.
     ///
     /// The image itself is binned on the worker thread, so this returns
@@ -415,9 +418,25 @@ mod tests {
     fn retained_histogram_matches_reference_at_every_bin_boundary_and_nonfinite_value() {
         use spektrafilm_backend::{Precision, RetainedImageMeta, SampleDomain};
         let gpu = spektrafilm_gpu::test_support::explicit_adapter();
-        let context = spektrafilm_backend::telemetry::ObservationContext::new(spektrafilm_backend::telemetry::CollectionMode::Summary);
-        let observed = gpu.backend().with_observation_context(context.clone()).unwrap();
-        let mut values = vec![f32::NEG_INFINITY, -1.0, -0.0, 0.0, f32::from_bits(1), 1.0, 4.0, f32::INFINITY, f32::NAN, f32::from_bits(0xffc00001)];
+        let context = spektrafilm_backend::telemetry::ObservationContext::new(
+            spektrafilm_backend::telemetry::CollectionMode::Summary,
+        );
+        let observed = gpu
+            .backend()
+            .with_observation_context(context.clone())
+            .unwrap();
+        let mut values = vec![
+            f32::NEG_INFINITY,
+            -1.0,
+            -0.0,
+            0.0,
+            f32::from_bits(1),
+            1.0,
+            4.0,
+            f32::INFINITY,
+            f32::NAN,
+            f32::from_bits(0xffc00001),
+        ];
         for bin in 0..63 {
             // Invert the actual CPU rule independently, then straddle the
             // adjacent representable values rather than trusting shader pow.
@@ -431,22 +450,59 @@ mod tests {
                     low = middle + 1;
                 }
             }
-            values.extend([f32::from_bits(low - 1), f32::from_bits(low), f32::from_bits(low + 1)]);
+            values.extend([
+                f32::from_bits(low - 1),
+                f32::from_bits(low),
+                f32::from_bits(low + 1),
+            ]);
         }
-        let image = ImageBuf::from_data(values.len() as u32, 1, values.iter().enumerate().flat_map(|(i, &v)| {
-            [v as _, values[(i * 7) % values.len()] as _, if i % 3 == 0 { 0.0 as _ } else { v as _ }]
-        }).collect());
-        let retained = gpu.backend().retain_image(&image, &RetainedImageMeta {
-            width: image.width, height: image.height, domain: SampleDomain::Linear,
-            precision: Precision::F32, space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(), pixel_pitch_um: None,
-        }).unwrap();
+        let image = ImageBuf::from_data(
+            values.len() as u32,
+            1,
+            values
+                .iter()
+                .enumerate()
+                .flat_map(|(i, &v)| {
+                    [
+                        v as _,
+                        values[(i * 7) % values.len()] as _,
+                        if i % 3 == 0 { 0.0 as _ } else { v as _ },
+                    ]
+                })
+                .collect(),
+        );
+        let retained = gpu
+            .backend()
+            .retain_image(
+                &image,
+                &RetainedImageMeta {
+                    width: image.width,
+                    height: image.height,
+                    domain: SampleDomain::Linear,
+                    precision: Precision::F32,
+                    space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+                    pixel_pitch_um: None,
+                },
+            )
+            .unwrap();
         let actual = HistogramData::from_bins(observed.retained_histogram(&retained).unwrap());
         assert_eq!(context.snapshot().totals.readback_bytes, Some(192 * 4));
         let expected = HistogramData::compute(&image);
-        for (actual, expected) in [&actual.r, &actual.g, &actual.b].into_iter().zip([&expected.r, &expected.g, &expected.b]) {
+        for (actual, expected) in [&actual.r, &actual.g, &actual.b].into_iter().zip([
+            &expected.r,
+            &expected.g,
+            &expected.b,
+        ]) {
             for (bin, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
-                assert_eq!(actual == 0.0, expected == 0.0, "bin {bin} occupancy differs");
-                assert!((actual - expected).abs() < 2e-6, "bin {bin}: device {actual}, reference {expected}");
+                assert_eq!(
+                    actual == 0.0,
+                    expected == 0.0,
+                    "bin {bin} occupancy differs"
+                );
+                assert!(
+                    (actual - expected).abs() < 2e-6,
+                    "bin {bin}: device {actual}, reference {expected}"
+                );
             }
         }
         // Inspection is an explicitly requested source pixel, not a display
@@ -457,7 +513,6 @@ mod tests {
             assert_eq!(actual.to_bits(), (*expected as f32).to_bits());
         }
     }
-
 
     /// Pump `update` until the worker has reported a result. `update` only
     /// adopts work the worker already finished, so repeating it with the same
@@ -607,7 +662,6 @@ mod tests {
         strip.update(&None, 0, &ctx);
         assert!(strip.cached_data().is_none());
     }
-
 
     #[test]
     fn visibility_state_persists_across_restore() {

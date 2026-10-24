@@ -123,7 +123,12 @@ pub fn build_filming_upsampler(
     params: &RuntimeParams,
     data_dir: &Path,
 ) -> Result<FilmingUpsampler, String> {
-    build_filming_upsampler_with_backend(film, params, data_dir, &spektrafilm_backend::cpu_backend::CpuBackend)
+    build_filming_upsampler_with_backend(
+        film,
+        params,
+        data_dir,
+        &spektrafilm_backend::cpu_backend::CpuBackend,
+    )
 }
 
 pub fn build_filming_upsampler_with_backend(
@@ -226,14 +231,25 @@ pub fn build_filming_upsampler_with_backend(
             };
             let tc_lut = if backend.is_gpu() {
                 let (lut, prepared) = prepare_registered_tc_lut(
-                    data_dir, "hanatos2025", &sensitivity, &ref_illuminant_f64,
-                    Some(&adaptation), &front_illuminant, params, backend,
+                    data_dir,
+                    "hanatos2025",
+                    &sensitivity,
+                    &ref_illuminant_f64,
+                    Some(&adaptation),
+                    &front_illuminant,
+                    params,
+                    backend,
                 )?;
                 prepared_tc_lut = Some(prepared);
                 lut
             } else {
-                compute_registered_tc_lut(data_dir, "hanatos2025", &sensitivity,
-                    &ref_illuminant_f64, Some(&adaptation))?
+                compute_registered_tc_lut(
+                    data_dir,
+                    "hanatos2025",
+                    &sensitivity,
+                    &ref_illuminant_f64,
+                    Some(&adaptation),
+                )?
             };
 
             (Some(tc_lut), None)
@@ -254,14 +270,25 @@ pub fn build_filming_upsampler_with_backend(
             };
             let tc_lut = if backend.is_gpu() {
                 let (lut, prepared) = prepare_registered_tc_lut(
-                    data_dir, method_name, &sensitivity, &select_illuminant_f64(projection_illuminant),
-                    None, &front_illuminant, params, backend,
+                    data_dir,
+                    method_name,
+                    &sensitivity,
+                    &select_illuminant_f64(projection_illuminant),
+                    None,
+                    &front_illuminant,
+                    params,
+                    backend,
                 )?;
                 prepared_tc_lut = Some(prepared);
                 lut
             } else {
-                compute_registered_tc_lut(data_dir, method_name, &sensitivity,
-                    &select_illuminant_f64(projection_illuminant), None)?
+                compute_registered_tc_lut(
+                    data_dir,
+                    method_name,
+                    &sensitivity,
+                    &select_illuminant_f64(projection_illuminant),
+                    None,
+                )?
             };
             (Some(tc_lut), None)
         }
@@ -330,14 +357,20 @@ fn prepare_registered_tc_lut(
     let spectra = load_lut(data_dir, identifier)?;
     let reflectance = descriptor.kind == "reflectance";
     if !reflectance && descriptor.kind != "irradiance" {
-        return Err(format!("unsupported spectral LUT kind {:?}", descriptor.kind));
+        return Err(format!(
+            "unsupported spectral LUT kind {:?}",
+            descriptor.kind
+        ));
     }
     let reference_xy = if reflectance {
-        let scene = descriptor.scene_illuminant.as_deref()
+        let scene = descriptor
+            .scene_illuminant
+            .as_deref()
             .ok_or_else(|| "reflectance descriptor missing scene_illuminant".to_owned())?;
         spectral::illuminant_to_xy(&select_illuminant(scene))
     } else {
-        adaptation.ok_or_else(|| "hanatos2025 requires sensitivity adaptation".to_owned())?
+        adaptation
+            .ok_or_else(|| "hanatos2025 requires sensitivity adaptation".to_owned())?
             .reference_illuminant_xy
     };
     let reference_tc = spectral::xy_to_tc(reference_xy.0, reference_xy.1);
@@ -350,41 +383,66 @@ fn prepare_registered_tc_lut(
         Some(a) if a.apply_surface => a.surface_params,
         _ => &[],
     };
-    let mut prepared = backend.prepare_spectral_tc_lut(&spektrafilm_backend::SpectralTcLutParams {
-        spectra: &spectra.data,
-        size: spectra.size as u32,
-        n_wavelengths: spectra.n_wavelengths as u32,
-        sensitivity,
-        illuminant,
-        gaussian_sigma: adaptation.map_or(0.0, |a| a.spectral_gaussian_blur),
-        window: &window,
-        surface,
-        reference_tc: [reference_tc.0, reference_tc.1],
-        reflectance,
-        neutral_tc,
-    })?.ok_or_else(|| "selected GPU cannot prepare the spectral exposure table".to_owned())?;
+    let mut prepared = backend
+        .prepare_spectral_tc_lut(&spektrafilm_backend::SpectralTcLutParams {
+            spectra: &spectra.data,
+            size: spectra.size as u32,
+            n_wavelengths: spectra.n_wavelengths as u32,
+            sensitivity,
+            illuminant,
+            gaussian_sigma: adaptation.map_or(0.0, |a| a.spectral_gaussian_blur),
+            window: &window,
+            surface,
+            reference_tc: [reference_tc.0, reference_tc.1],
+            reflectance,
+            neutral_tc,
+        })?
+        .ok_or_else(|| "selected GPU cannot prepare the spectral exposure table".to_owned())?;
     let gamut = &params.io.input_gamut_compress;
     if gamut.active && gamut.algorithm != "off" {
         let algorithm = match gamut.algorithm.as_str() {
             "xy" => 0,
             "oklch" => 1,
-            other => return Err(format!("unknown input gamut compression algorithm {other:?}")),
+            other => {
+                return Err(format!(
+                    "unknown input gamut compression algorithm {other:?}"
+                ));
+            }
         };
         let boundary = match gamut.boundary.as_str() {
             "locus" => 0,
             "inscribed_hull" => 1,
             other => return Err(format!("unknown input gamut boundary {other:?}")),
         };
-        let remap_illuminant = if identifier == "hanatos2025" { "D65" } else { front_illuminant };
+        let remap_illuminant = if identifier == "hanatos2025" {
+            "D65"
+        } else {
+            front_illuminant
+        };
         let white = spectral::illuminant_to_xy(&select_illuminant(remap_illuminant));
         let locus = crate::input_gamut::spectral_locus_xy();
-        prepared = backend.remap_input_gamut_table(&prepared, &spektrafilm_backend::InputGamutTableParams {
-            size: spectra.size as u32, algorithm, boundary, hull_detail: gamut.hull_detail,
-            knee: gamut.knee.map(f64::from), white_xy: [white.0, white.1], neutral_tc,
-            locus: &locus,
-        })?;
+        prepared = backend.remap_input_gamut_table(
+            &prepared,
+            &spektrafilm_backend::InputGamutTableParams {
+                size: spectra.size as u32,
+                algorithm,
+                boundary,
+                hull_detail: gamut.hull_detail,
+                knee: gamut.knee.map(f64::from),
+                white_xy: [white.0, white.1],
+                neutral_tc,
+                locus: &locus,
+            },
+        )?;
     }
-    Ok((TcLut { size: spectra.size, channels: 3, data: Vec::new() }, prepared))
+    Ok((
+        TcLut {
+            size: spectra.size,
+            channels: 3,
+            data: Vec::new(),
+        },
+        prepared,
+    ))
 }
 
 fn calibration_neutral_tc(front_illuminant: &str, use_cat16: bool) -> [f64; 2] {
@@ -394,17 +452,25 @@ fn calibration_neutral_tc(front_illuminant: &str, use_cat16: bool) -> [f64; 2] {
     [x, y]
 }
 
-pub(crate) fn calibration_neutral_xyz(front_illuminant: &str, use_cat16: bool, scale: f64) -> [f64; 3] {
+pub(crate) fn calibration_neutral_xyz(
+    front_illuminant: &str,
+    use_cat16: bool,
+    scale: f64,
+) -> [f64; 3] {
     let reference = select_illuminant(front_illuminant);
     let rgb_to_xyz = spectral::colorspace_to_xyz_f64("sRGB");
     let source_white = spectral::colorspace_white_xyz_f64("sRGB");
     let target_white = spectral::illuminant_xyz_f64(&reference);
     let adapt = if use_cat16 {
-        spektrafilm_math::colorspace::chromatic_adaptation_matrix_cat16_f64(source_white, target_white)
+        spektrafilm_math::colorspace::chromatic_adaptation_matrix_cat16_f64(
+            source_white,
+            target_white,
+        )
     } else {
         spektrafilm_math::colorspace::chromatic_adaptation_matrix_f64(source_white, target_white)
     };
-    let gray = spektrafilm_math::precision::to_f64(spektrafilm_math::precision::from_f64(0.184 * scale));
+    let gray =
+        spektrafilm_math::precision::to_f64(spektrafilm_math::precision::from_f64(0.184 * scale));
     let native = rgb_to_xyz.map(|row| row[0] * gray + row[1] * gray + row[2] * gray);
     adapt.map(|row| row[0] * native[0] + row[1] * native[1] + row[2] * native[2])
 }

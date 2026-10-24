@@ -135,9 +135,17 @@ unsafe extern "C" {
         error_length: usize,
     ) -> i32;
     fn sf_raw_free(pixels: *mut f32);
-    fn sf_raw_geometry_reference(input: *const f32, width: u32, height: u32,
-        fuji_width: u32, aspect: f64, colors: u32, pixels: *mut *mut f32,
-        out_width: *mut u32, out_height: *mut u32) -> i32;
+    fn sf_raw_geometry_reference(
+        input: *const f32,
+        width: u32,
+        height: u32,
+        fuji_width: u32,
+        aspect: f64,
+        colors: u32,
+        pixels: *mut *mut f32,
+        out_width: *mut u32,
+        out_height: *mut u32,
+    ) -> i32;
     fn sf_raw_version() -> *const c_char;
     fn sf_raw_lens_model_identity(
         path: *const c_char,
@@ -147,17 +155,36 @@ unsafe extern "C" {
     ) -> i32;
     fn sf_raw_free_lens_identity(identity: *mut c_char);
     #[cfg(test)]
-    fn sf_raw_float_reference(input: *const f32, count: u32, channels: u32, fmaximum: f32,
-        metadata: *const u32, black_map: *const u32, output: *mut *mut f32,
-        out_metadata: *mut u32, out_black_map: *mut u32) -> i32;
+    fn sf_raw_float_reference(
+        input: *const f32,
+        count: u32,
+        channels: u32,
+        fmaximum: f32,
+        metadata: *const u32,
+        black_map: *const u32,
+        output: *mut *mut f32,
+        out_metadata: *mut u32,
+        out_black_map: *mut u32,
+    ) -> i32;
     #[cfg(test)]
-    fn sf_raw_xtrans_reference(input: *const u32, width: u32, height: u32,
-        pattern: *const u8, output: *mut *mut f32) -> i32;
+    fn sf_raw_xtrans_reference(
+        input: *const u32,
+        width: u32,
+        height: u32,
+        pattern: *const u8,
+        output: *mut *mut f32,
+    ) -> i32;
     #[cfg(test)]
     fn sf_raw_ordered_xtrans_threading_reference() -> i32;
     #[cfg(test)]
-    fn sf_raw_xtrans_threaded_reference(input: *const u32, width: u32, height: u32,
-        pattern: *const u8, threads: i32, output: *mut *mut f32) -> i32;
+    fn sf_raw_xtrans_threaded_reference(
+        input: *const u32,
+        width: u32,
+        height: u32,
+        pattern: *const u8,
+        threads: i32,
+        output: *mut *mut f32,
+    ) -> i32;
 }
 
 pub fn decoder_version() -> String {
@@ -200,19 +227,56 @@ impl Drop for NativePixels {
 
 /// Invoke the linked native geometry methods on a synthetic four-channel
 /// integer plane, for CPU/device boundary probes without camera-file fixtures.
-pub fn geometry_reference(input: &[f32], width: u32, height: u32, fuji_width: u32, pixel_aspect: f64, colors: u32) -> Result<(Vec<f32>, u32, u32), RawError> {
-    if width.checked_mul(height).and_then(|v| v.checked_mul(4)).map(|v| v as usize) != Some(input.len())
-        || !(1..=4).contains(&colors) || !(2..=u16::MAX as u32).contains(&width)
-        || !(2..=u16::MAX as u32).contains(&height) || !pixel_aspect.is_finite() || !(0.1..=10.0).contains(&pixel_aspect)
-        || fuji_width >= height || input.iter().any(|&v| !v.is_finite() || !(0.0..=65535.0).contains(&v)) {
-        return Err(RawError::Native("Invalid synthetic RAW geometry boundary".into()));
+pub fn geometry_reference(
+    input: &[f32],
+    width: u32,
+    height: u32,
+    fuji_width: u32,
+    pixel_aspect: f64,
+    colors: u32,
+) -> Result<(Vec<f32>, u32, u32), RawError> {
+    if width
+        .checked_mul(height)
+        .and_then(|v| v.checked_mul(4))
+        .map(|v| v as usize)
+        != Some(input.len())
+        || !(1..=4).contains(&colors)
+        || !(2..=u16::MAX as u32).contains(&width)
+        || !(2..=u16::MAX as u32).contains(&height)
+        || !pixel_aspect.is_finite()
+        || !(0.1..=10.0).contains(&pixel_aspect)
+        || fuji_width >= height
+        || input
+            .iter()
+            .any(|&v| !v.is_finite() || !(0.0..=65535.0).contains(&v))
+    {
+        return Err(RawError::Native(
+            "Invalid synthetic RAW geometry boundary".into(),
+        ));
     }
     let mut output = std::ptr::null_mut();
     let (mut ow, mut oh) = (0, 0);
-    let status = unsafe { sf_raw_geometry_reference(input.as_ptr(), width, height, fuji_width, pixel_aspect, colors, &mut output, &mut ow, &mut oh) };
-    if status != 0 { return Err(RawError::Native("Native RAW geometry boundary failed".into())); }
+    let status = unsafe {
+        sf_raw_geometry_reference(
+            input.as_ptr(),
+            width,
+            height,
+            fuji_width,
+            pixel_aspect,
+            colors,
+            &mut output,
+            &mut ow,
+            &mut oh,
+        )
+    };
+    if status != 0 {
+        return Err(RawError::Native(
+            "Native RAW geometry boundary failed".into(),
+        ));
+    }
     let owned = NativePixels(output);
-    let values = unsafe { std::slice::from_raw_parts(owned.0, ow as usize * oh as usize * 4) }.to_vec();
+    let values =
+        unsafe { std::slice::from_raw_parts(owned.0, ow as usize * oh as usize * 4) }.to_vec();
     Ok((values, ow, oh))
 }
 
@@ -380,7 +444,7 @@ pub fn unpack(path: &Path) -> Result<RawSensor, RawError> {
         other => {
             return Err(RawError::Native(format!(
                 "LibRaw returned unknown sensor layout {other}"
-            )))
+            )));
         }
     };
     if native.channels != layout.channels() {
@@ -424,8 +488,12 @@ pub fn unpack(path: &Path) -> Result<RawSensor, RawError> {
         height: native.height,
         copied_width: native.copied_width,
         copied_height: native.copied_height,
-        allocation_row_stride_bytes: native.allocation_row_stride * layout.channels()
-            * if matches!(layout, RawSensorLayout::FloatCfa | RawSensorLayout::Float3 | RawSensorLayout::Float4) {
+        allocation_row_stride_bytes: native.allocation_row_stride
+            * layout.channels()
+            * if matches!(
+                layout,
+                RawSensorLayout::FloatCfa | RawSensorLayout::Float3 | RawSensorLayout::Float4
+            ) {
                 4
             } else {
                 2
@@ -489,12 +557,15 @@ pub fn plan(sensor: &RawSensor, options: &RawOptions) -> Result<RawGpuParams, Ra
         adaptation_active,
         tint: tint_multiplier(options),
         adjust_maximum_threshold: 0.75,
-        white_balance: if options.white_balance == WhiteBalance::AsShot && sensor.camera_multipliers[0] <= 0.00001 {
+        white_balance: if options.white_balance == WhiteBalance::AsShot
+            && sensor.camera_multipliers[0] <= 0.00001
+        {
             sensor.default_multipliers
         } else {
             white_balance(sensor, options.white_balance == WhiteBalance::AsShot)
         },
-        auto_white_balance: options.white_balance == WhiteBalance::AsShot && sensor.camera_multipliers[0] <= 0.00001,
+        auto_white_balance: options.white_balance == WhiteBalance::AsShot
+            && sensor.camera_multipliers[0] <= 0.00001,
         maximum,
         green_merge,
         green_merge_row,
@@ -532,10 +603,12 @@ pub fn load_retained_with_backend(
     if !backend.is_gpu() {
         let result = load(path, options)?;
         let meta = spektrafilm_backend::RetainedImageMeta {
-            width: result.image.width, height: result.image.height,
+            width: result.image.width,
+            height: result.image.height,
             domain: spektrafilm_backend::SampleDomain::Linear,
             precision: spektrafilm_backend::Precision::host(),
-            space: &spektrafilm_math::colorspace::ACES2065_1, pixel_pitch_um: None,
+            space: &spektrafilm_math::colorspace::ACES2065_1,
+            pixel_pitch_um: None,
         };
         return Ok(RetainedRawResult {
             image: spektrafilm_backend::DeviceImage::host(result.image, meta),
@@ -550,11 +623,20 @@ pub fn load_retained_with_backend(
         let (correction, summary, identity) = lens::prepare(path, width, height)?;
         params.lens = correction;
         (summary, Some(identity))
-    } else { (String::new(), None) };
-    let image = backend.raw_process_sensor_retained(&sensor, &params)
+    } else {
+        (String::new(), None)
+    };
+    let image = backend
+        .raw_process_sensor_retained(&sensor, &params)
         .map_err(RawError::Native)?
-        .ok_or_else(|| RawError::Native("the selected backend has no retained RAW pipeline".into()))?;
-    Ok(RetainedRawResult { image, lens_info, lens_model_identity })
+        .ok_or_else(|| {
+            RawError::Native("the selected backend has no retained RAW pipeline".into())
+        })?;
+    Ok(RetainedRawResult {
+        image,
+        lens_info,
+        lens_model_identity,
+    })
 }
 
 fn decode_on_device(
@@ -596,10 +678,12 @@ fn demosaic_for(sensor: &RawSensor) -> RawDemosaic {
     // dcraw_process dispatches after pre_interpolate has cleared the second
     // green bit. Counting the original code3 falsely selects VNG for Bayer.
     let merge = sensor.filters > 1000 && sensor.colors == 3;
-    let filters = if merge { sensor.filters & !((sensor.filters & 0x5555_5555) << 1) } else { sensor.filters };
-    let fc = |row: u32, column: u32| {
-        (filters >> ((((row << 1) & 14) | (column & 1)) << 1)) & 3
+    let filters = if merge {
+        sensor.filters & !((sensor.filters & 0x5555_5555) << 1)
+    } else {
+        sensor.filters
     };
+    let fc = |row: u32, column: u32| (filters >> ((((row << 1) & 14) | (column & 1)) << 1)) & 3;
     let mut real_colors = sensor.colors;
     let mut bad_bayer = false;
     if sensor.filters > 1000 {
@@ -649,7 +733,11 @@ fn color(sensor: &RawSensor, row: u32, column: u32) -> u32 {
 /// `convert_to_rgb`'s `out_cam` for ACES AP0 output.
 fn camera_to_aces(sensor: &RawSensor) -> [[f32; 4]; 3] {
     if sensor.raw_color {
-        return [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
+        return [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ];
     }
     let mut out = sensor.rgb_camera;
     for (i, row) in out.iter_mut().enumerate() {
@@ -689,13 +777,17 @@ fn white_balance(sensor: &RawSensor, camera_wb: bool) -> [f32; 4] {
             for channel in 0..4 {
                 multipliers[channel] = sums[channel + 4] as f32 / sums[channel] as f32;
             }
-        } else if sensor.camera_multipliers[0] > 0.00001 && sensor.camera_multipliers[2] > 0.00001
-        {
+        } else if sensor.camera_multipliers[0] > 0.00001 && sensor.camera_multipliers[2] > 0.00001 {
             multipliers = sensor.camera_multipliers;
         }
     }
-    if sensor.as_shot_wb_applied && !camera_wb && sensor.camera_multipliers[..3].iter().all(|&v| v > 0.00001) {
-        for (multiplier, &camera_multiplier) in multipliers[..3].iter_mut().zip(&sensor.camera_multipliers) {
+    if sensor.as_shot_wb_applied
+        && !camera_wb
+        && sensor.camera_multipliers[..3].iter().all(|&v| v > 0.00001)
+    {
+        for (multiplier, &camera_multiplier) in
+            multipliers[..3].iter_mut().zip(&sensor.camera_multipliers)
+        {
             *multiplier /= camera_multiplier;
         }
     }
@@ -876,7 +968,11 @@ mod tests {
             black_map: Vec::new(),
             camera_multipliers: [2.0, 1.0, 1.5, 1.0],
             default_multipliers: [1.0, 1.0, 1.0, 1.0],
-            rgb_camera: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+            rgb_camera: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
             xyz_camera: [[0.0; 4]; 3],
             white: [1000; 64],
             as_shot_wb_applied: false,
@@ -937,7 +1033,10 @@ mod tests {
         // adjust_maximum: a measured maximum below 75% of the white level is
         // ignored, and one above it replaces the white level.
         assert_eq!(params.adjusted_maximum(16383 / 2), 16383);
-        assert_eq!(params.adjusted_maximum(16383 * 3 / 4 + 1), 16383 * 3 / 4 + 1);
+        assert_eq!(
+            params.adjusted_maximum(16383 * 3 / 4 + 1),
+            16383 * 3 / 4 + 1
+        );
         assert_eq!(params.adjusted_maximum(0), 16383);
     }
 
@@ -1027,8 +1126,11 @@ mod tests {
         for aspect in [0.5, 1.7, 256.0 / 235.0] {
             let width = 32;
             let height = 24;
-            let samples: Vec<f32> = (0..width * height * 4).map(|i| (i % 60000) as f32).collect();
-            let (output, ow, oh) = geometry_reference(&samples, width, height, 0, aspect, 3).unwrap();
+            let samples: Vec<f32> = (0..width * height * 4)
+                .map(|i| (i % 60000) as f32)
+                .collect();
+            let (output, ow, oh) =
+                geometry_reference(&samples, width, height, 0, aspect, 3).unwrap();
             let mut metadata = sensor(0, 3);
             metadata.width = width;
             metadata.height = height;
@@ -1038,9 +1140,16 @@ mod tests {
             let length = if aspect < 1.0 { oh } else { ow };
             for target in 0..length {
                 let source = coordinate as u32;
-                let (ox, oy, sx, sy) = if aspect < 1.0 { (7, target, 7, source) } else { (target, 7, source, 7) };
+                let (ox, oy, sx, sy) = if aspect < 1.0 {
+                    (7, target, 7, source)
+                } else {
+                    (target, 7, source, 7)
+                };
                 for c in 0..3 {
-                    assert_eq!(output[((oy * ow + ox) * 4 + c) as usize], samples[((sy * width + sx) * 4 + c) as usize]);
+                    assert_eq!(
+                        output[((oy * ow + ox) * 4 + c) as usize],
+                        samples[((sy * width + sx) * 4 + c) as usize]
+                    );
                 }
                 coordinate += if aspect < 1.0 { aspect } else { 1.0 / aspect };
             }
@@ -1060,14 +1169,36 @@ mod tests {
             input.layout = RawSensorLayout::Interleaved4;
             input.raw_color = true;
             input.fixed_maximum = true;
-            input.samples = (0..32 * 24).flat_map(|i| [(i * 23 + 1000) as f32, (i * 11 + 2000) as f32, (i * 7 + 3000) as f32, 0.0]).collect();
-            let params = plan(&input, &RawOptions { white_balance: WhiteBalance::Daylight, ..Default::default() }).unwrap();
-            let (expected, width, height) = geometry_reference(&input.samples, 32, 24, 0, aspect, 3).unwrap();
+            input.samples = (0..32 * 24)
+                .flat_map(|i| {
+                    [
+                        (i * 23 + 1000) as f32,
+                        (i * 11 + 2000) as f32,
+                        (i * 7 + 3000) as f32,
+                        0.0,
+                    ]
+                })
+                .collect();
+            let params = plan(
+                &input,
+                &RawOptions {
+                    white_balance: WhiteBalance::Daylight,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let (expected, width, height) =
+                geometry_reference(&input.samples, 32, 24, 0, aspect, 3).unwrap();
             let actual = gpu.raw_process_sensor(&input, &params).unwrap().unwrap();
             assert_eq!((actual.width, actual.height), (width, height));
-            for i in 0..(width * height) as usize { for c in 0..3 {
-                assert_eq!(spektrafilm_math::precision::to_f64(actual.data[i * 3 + c]), f64::from(expected[i * 4 + c] / 65535.0));
-            }}
+            for i in 0..(width * height) as usize {
+                for c in 0..3 {
+                    assert_eq!(
+                        spektrafilm_math::precision::to_f64(actual.data[i * 3 + c]),
+                        f64::from(expected[i * 4 + c] / 65535.0)
+                    );
+                }
+            }
         }
     }
     #[test]
@@ -1077,7 +1208,19 @@ mod tests {
         let mut output = std::ptr::null_mut();
         let mut result = [0u32; 9];
         let mut map = [0u32];
-        let code = unsafe { sf_raw_float_reference(samples.as_ptr(), 4, 1, 2.0, metadata.as_ptr(), map.as_ptr(), &mut output, result.as_mut_ptr(), map.as_mut_ptr()) };
+        let code = unsafe {
+            sf_raw_float_reference(
+                samples.as_ptr(),
+                4,
+                1,
+                2.0,
+                metadata.as_ptr(),
+                map.as_ptr(),
+                &mut output,
+                result.as_mut_ptr(),
+                map.as_mut_ptr(),
+            )
+        };
         assert_eq!(code, 0);
         let owned = NativePixels(output);
         let values = unsafe { std::slice::from_raw_parts(owned.0, samples.len()) };
@@ -1094,21 +1237,36 @@ mod tests {
     #[test]
     fn native_xtrans_multitile_output_is_independent_of_callers_thread_count() {
         let pattern: [u8; 36] = [
-            1,0,1,1,2,1, 2,1,2,0,1,0, 1,0,1,1,2,1,
-            1,2,1,1,0,1, 0,1,0,2,1,2, 1,2,1,1,0,1,
+            1, 0, 1, 1, 2, 1, 2, 1, 2, 0, 1, 0, 1, 0, 1, 1, 2, 1, 1, 2, 1, 1, 0, 1, 0, 1, 0, 2, 1,
+            2, 1, 2, 1, 1, 0, 1,
         ];
         // Two dependent native top rows, with chromatic structure across the
         // overlap; this exercises the actual linked interpolation, not a race
         // assertion whose outcome depends on the machine's scheduler.
         let (width, height) = (512usize, 1012usize);
         let mut input = vec![0u32; width * height * 4];
-        for y in 0..height { for x in 0..width {
-            let color = pattern[(y % 6) * 6 + x % 6] as usize;
-            input[(y * width + x) * 4 + color] = ((x * 997 + y * 1731 + (x * y % 31) * 103 + color * 193) & 65535) as u32;
-        }}
+        for y in 0..height {
+            for x in 0..width {
+                let color = pattern[(y % 6) * 6 + x % 6] as usize;
+                input[(y * width + x) * 4 + color] =
+                    ((x * 997 + y * 1731 + (x * y % 31) * 103 + color * 193) & 65535) as u32;
+            }
+        }
         let decode = |threads| {
             let mut output = std::ptr::null_mut();
-            assert_eq!(unsafe { sf_raw_xtrans_threaded_reference(input.as_ptr(), width as u32, height as u32, pattern.as_ptr(), threads, &mut output) }, 0);
+            assert_eq!(
+                unsafe {
+                    sf_raw_xtrans_threaded_reference(
+                        input.as_ptr(),
+                        width as u32,
+                        height as u32,
+                        pattern.as_ptr(),
+                        threads,
+                        &mut output,
+                    )
+                },
+                0
+            );
             NativePixels(output)
         };
         let serial = decode(1);
@@ -1121,22 +1279,25 @@ mod tests {
     #[test]
     fn linked_native_xtrans_constant_fixture_boundary() {
         let pattern: [u8; 36] = [
-            1,0,1,1,2,1,
-            2,1,2,0,1,0,
-            1,0,1,1,2,1,
-            1,2,1,1,0,1,
-            0,1,0,2,1,2,
-            1,2,1,1,0,1,
+            1, 0, 1, 1, 2, 1, 2, 1, 2, 0, 1, 0, 1, 0, 1, 1, 2, 1, 1, 2, 1, 1, 0, 1, 0, 1, 0, 2, 1,
+            2, 1, 2, 1, 1, 0, 1,
         ];
         let mut input = vec![0u32; 512 * 512 * 4];
-        for y in 0..512 { for x in 0..512 {
-            let color = pattern[(y % 6) * 6 + x % 6] as usize;
-            input[(y * 512 + x) * 4 + color] = [101,207,311][color];
-        }}
+        for y in 0..512 {
+            for x in 0..512 {
+                let color = pattern[(y % 6) * 6 + x % 6] as usize;
+                input[(y * 512 + x) * 4 + color] = [101, 207, 311][color];
+            }
+        }
         let mut output = std::ptr::null_mut();
-        assert_eq!(unsafe { sf_raw_xtrans_reference(input.as_ptr(), 512, 512, pattern.as_ptr(), &mut output) }, 0);
+        assert_eq!(
+            unsafe {
+                sf_raw_xtrans_reference(input.as_ptr(), 512, 512, pattern.as_ptr(), &mut output)
+            },
+            0
+        );
         let owned = NativePixels(output);
         let pixels = unsafe { std::slice::from_raw_parts(owned.0, input.len()) };
-        assert_eq!(&pixels[2566 * 4..2566 * 4 + 3], &[101.0,207.0,311.0]);
+        assert_eq!(&pixels[2566 * 4..2566 * 4 + 3], &[101.0, 207.0, 311.0]);
     }
 }

@@ -267,13 +267,28 @@ pub fn crop_output(image: ImageBuf, rect: SourceRect) -> ImageBuf {
 }
 
 /// Extract the final crop on the selected executor.
-pub fn crop_output_on_backend(image: ImageBuf, rect: SourceRect, backend: &dyn spektrafilm_backend::ComputeBackend) -> Result<ImageBuf, String> {
+pub fn crop_output_on_backend(
+    image: ImageBuf,
+    rect: SourceRect,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> Result<ImageBuf, String> {
     if backend.is_gpu() {
-        match backend.dye_crop(&image, [rect.x as u32, rect.y as u32, rect.width as u32, rect.height as u32]) {
+        match backend.dye_crop(
+            &image,
+            [
+                rect.x as u32,
+                rect.y as u32,
+                rect.width as u32,
+                rect.height as u32,
+            ],
+        ) {
             Some(result) => return result,
-            None if backend.explicit_gpu_request() => return Err(format!(
-                "explicit GPU request cannot extract film readout crop: {} has no device crop path", backend.name()
-            )),
+            None if backend.explicit_gpu_request() => {
+                return Err(format!(
+                    "explicit GPU request cannot extract film readout crop: {} has no device crop path",
+                    backend.name()
+                ));
+            }
             None => {}
         }
     }
@@ -281,18 +296,26 @@ pub fn crop_output_on_backend(image: ImageBuf, rect: SourceRect, backend: &dyn s
 }
 
 /// Return linear cell response to log exposure without adding another floor.
-pub fn log_response_on_backend(mut image: ImageBuf, backend: &dyn spektrafilm_backend::ComputeBackend) -> Result<ImageBuf, String> {
+pub fn log_response_on_backend(
+    mut image: ImageBuf,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> Result<ImageBuf, String> {
     if backend.is_gpu() {
         match backend.dye_log10(&image) {
             Some(result) => return result,
-            None if backend.explicit_gpu_request() => return Err(format!(
-                "explicit GPU request cannot convert film grain Dye response to log exposure: {} has no device logarithm path", backend.name()
-            )),
+            None if backend.explicit_gpu_request() => {
+                return Err(format!(
+                    "explicit GPU request cannot convert film grain Dye response to log exposure: {} has no device logarithm path",
+                    backend.name()
+                ));
+            }
             None => {}
         }
     }
     image.data.par_iter_mut().for_each(|value| {
-        *value = spektrafilm_math::precision::from_f64(spektrafilm_math::precision::to_f64(*value).log10());
+        *value = spektrafilm_math::precision::from_f64(
+            spektrafilm_math::precision::to_f64(*value).log10(),
+        );
     });
     Ok(image)
 }
@@ -560,9 +583,12 @@ pub fn collapse_log_exposure_on_backend(
     if backend.is_gpu() {
         match backend.dye_aperture_collapse(fine, factor) {
             Some(result) => return result,
-            None if backend.explicit_gpu_request() => return Err(format!(
-                "explicit GPU request cannot run film grain Dye aperture collapse: {} has no device reduction path", backend.name()
-            )),
+            None if backend.explicit_gpu_request() => {
+                return Err(format!(
+                    "explicit GPU request cannot run film grain Dye aperture collapse: {} has no device reduction path",
+                    backend.name()
+                ));
+            }
             None => {}
         }
     }
@@ -743,9 +769,12 @@ pub fn readout_with_response(
                 let observed = observation.backend(backend);
                 match observed.dye_field_with_response(source, &device, device_response) {
                     Some(result) => return result,
-                    None if backend.explicit_gpu_request() => return Err(format!(
-                        "explicit GPU request cannot run film grain Dye exact-cell response: {} has no device response path", backend.name()
-                    )),
+                    None if backend.explicit_gpu_request() => {
+                        return Err(format!(
+                            "explicit GPU request cannot run film grain Dye exact-cell response: {} has no device response path",
+                            backend.name()
+                        ));
+                    }
                     None => {}
                 }
             }
@@ -859,7 +888,14 @@ pub fn resident_readout_plan_for_dims(
     validate_supported(film, params)?;
     validate_cell_spectral(params)?;
     let aperture = validate_aperture(params)?;
-    readout_plan(width, height, params, source_pitch_um, aperture, full_route_spatial_context(params))
+    readout_plan(
+        width,
+        height,
+        params,
+        source_pitch_um,
+        aperture,
+        full_route_spatial_context(params),
+    )
 }
 
 /// Named reason an active Dye field resolves on the host instead of the
@@ -989,13 +1025,27 @@ mod tests {
     fn combined_cell_spectral_aperture_collapses_before_paper_development() {
         let params = supported_params();
         let plan = readout_plan(2, 1, &params, 2.0, Some(2), false).unwrap();
-        let linear = ImageBuf::from_data(4, 2,
+        let linear = ImageBuf::from_data(
+            4,
+            2,
             [1.0, 100.0, 10.0, 1000.0, 1.0, 100.0, 10.0, 1000.0]
-                .into_iter().flat_map(|v| [from_f64(v); 3]).collect());
+                .into_iter()
+                .flat_map(|v| [from_f64(v); 3])
+                .collect(),
+        );
         let backend = spektrafilm_backend::cpu_backend::CpuBackend;
         let paper_log = finish_print_response_on_backend(linear, plan.aperture, &backend).unwrap();
-        assert_eq!((paper_log.width, paper_log.height), (plan.geometry.width, plan.geometry.height));
-        for (pixel, exposure) in paper_log.data.as_chunks::<3>().0.iter().zip([50.5_f64, 505.0]) {
+        assert_eq!(
+            (paper_log.width, paper_log.height),
+            (plan.geometry.width, plan.geometry.height)
+        );
+        for (pixel, exposure) in paper_log
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip([50.5_f64, 505.0])
+        {
             for &value in pixel {
                 assert!((value as f64 - exposure.log10()).abs() < read_tolerance());
             }
@@ -1008,18 +1058,35 @@ mod tests {
         for factor in [2, 3, 24] {
             let width = factor * 2;
             let height = factor * 3;
-            let fine = ImageBuf::from_data(width, height, (0..width * height * 3)
-                .map(|i| from_f64(-8.0 + f64::from(i % 37) * 0.25)).collect());
+            let fine = ImageBuf::from_data(
+                width,
+                height,
+                (0..width * height * 3)
+                    .map(|i| from_f64(-8.0 + f64::from(i % 37) * 0.25))
+                    .collect(),
+            );
             let expected = collapse_log_exposure(&fine, factor).unwrap();
             let actual = backend.dye_aperture_collapse(&fine, factor).unwrap();
             assert!(max_abs_diff(&expected, &actual) <= 1e-5);
-            let expected_crop = crop_output(expected, SourceRect { x: 1, y: 1, width: 1, height: 2 });
+            let expected_crop = crop_output(
+                expected,
+                SourceRect {
+                    x: 1,
+                    y: 1,
+                    width: 1,
+                    height: 2,
+                },
+            );
             let actual_crop = backend.dye_crop(&actual, [1, 1, 1, 2]).unwrap();
             assert!(max_abs_diff(&expected_crop, &actual_crop) <= 1e-5);
         }
         for factor in [0, 2] {
-            assert!(backend.dye_aperture_collapse(&ImageBuf::new(3, 2), factor)
-                .unwrap_err().contains("divisible"));
+            assert!(
+                backend
+                    .dye_aperture_collapse(&ImageBuf::new(3, 2), factor)
+                    .unwrap_err()
+                    .contains("divisible")
+            );
         }
     }
 
@@ -1031,7 +1098,12 @@ mod tests {
         resolved.expectation = true;
         resolved.density_min = [0.12, 0.23, 0.34];
         let source = density_target(9, 7);
-        let grid = ReadoutGrid { origin_um: [-1.25, 0.75], pitch_um: [2.125, 1.375], width: 9, height: 131 };
+        let grid = ReadoutGrid {
+            origin_um: [-1.25, 0.75],
+            pitch_um: [2.125, 1.375],
+            width: 9,
+            height: 131,
+        };
         let device = device_params(&resolved, 2.0, grid).unwrap();
         let cd = [[0.8, 0.2, 0.1], [0.1, 0.9, 0.3]];
         let bd = [0.1, 0.2];
@@ -1042,27 +1114,47 @@ mod tests {
             for scale in [0.0, 0.7] {
                 let response = if scan {
                     spektrafilm_backend::DyeResponseGpuParams::Scan {
-                        channel_density: &cd, base_density: &bd, illuminant: &lamp,
-                        normalization: 0.8, xyz_to_rgb: &matrix,
+                        channel_density: &cd,
+                        base_density: &bd,
+                        illuminant: &lamp,
+                        normalization: 0.8,
+                        xyz_to_rgb: &matrix,
                     }
                 } else {
                     spektrafilm_backend::DyeResponseGpuParams::Print {
-                        channel_density: &cd, base_density: &bd, illuminant: &lamp,
-                        sensitivity: &sensitivity, normalization_factor: 0.9,
-                        exposure_scale: scale, preflash: [0.0, 0.01, -1.0],
+                        channel_density: &cd,
+                        base_density: &bd,
+                        illuminant: &lamp,
+                        sensitivity: &sensitivity,
+                        normalization_factor: 0.9,
+                        exposure_scale: scale,
+                        preflash: [0.0, 0.01, -1.0],
                     }
                 };
                 let reference = v3::apply_with_response(&source, 2.0, grid, &resolved, |cells| {
                     let mut out = ImageBuf::new(cells.width, cells.height);
-                    for (src, dst) in cells.data.as_chunks::<3>().0.iter().zip(out.data.as_chunks_mut::<3>().0) {
+                    for (src, dst) in cells
+                        .data
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
+                        .zip(out.data.as_chunks_mut::<3>().0)
+                    {
                         let mut raw = [0.0; 3];
                         for wl in 0..2 {
-                            let density = (0..3).map(|c| src[c] as f64 * cd[wl][c]).sum::<f64>() + bd[wl];
+                            let density =
+                                (0..3).map(|c| src[c] as f64 * cd[wl][c]).sum::<f64>() + bd[wl];
                             let light = 10.0_f64.powf(-density) * lamp[wl];
                             for c in 0..3 {
                                 let weight = if scan {
-                                    [spektrafilm_math::spectral::CMF_X[wl], spektrafilm_math::spectral::CMF_Y[wl], spektrafilm_math::spectral::CMF_Z[wl]][c] as f64
-                                } else { sensitivity[wl][c] };
+                                    [
+                                        spektrafilm_math::spectral::CMF_X[wl],
+                                        spektrafilm_math::spectral::CMF_Y[wl],
+                                        spektrafilm_math::spectral::CMF_Z[wl],
+                                    ][c] as f64
+                                } else {
+                                    sensitivity[wl][c]
+                                };
                                 raw[c] += light * weight;
                             }
                         }
@@ -1070,7 +1162,9 @@ mod tests {
                             let value = if scan {
                                 (0..3).map(|j| matrix[c][j] * raw[j] / 0.8).sum()
                             } else {
-                                let inner = ((raw[c] * 0.9 + [0.0, 0.01, -1.0][c]).max(0.0) + 1e-10).log10();
+                                let inner = ((raw[c] * 0.9 + [0.0, 0.01, -1.0][c]).max(0.0)
+                                    + 1e-10)
+                                    .log10();
                                 let outer = (10.0_f64.powf(inner) * scale).max(0.0) + 1e-10;
                                 10.0_f64.powf(outer.log10())
                             };
@@ -1078,10 +1172,16 @@ mod tests {
                         }
                     }
                     Ok(out)
-                }).unwrap();
-                let actual = backend.dye_field_with_response(&source, &device, &response).unwrap();
+                })
+                .unwrap();
+                let actual = backend
+                    .dye_field_with_response(&source, &device, &response)
+                    .unwrap();
                 let worst = max_abs_diff(&reference, &actual);
-                assert!(worst <= 1e-4, "cell response scan={scan} scale={scale}: {worst}");
+                assert!(
+                    worst <= 1e-4,
+                    "cell response scan={scan} scale={scale}: {worst}"
+                );
             }
         }
     }
@@ -1093,27 +1193,46 @@ mod tests {
         let mut resolved = resolve(&film, &supported_params()).unwrap();
         resolved.expectation = true;
         let source = density_target(3, 2);
-        let grid = ReadoutGrid { origin_um: [-0.25, 0.75], pitch_um: [2.125, 1.375], width: 3, height: 2 };
+        let grid = ReadoutGrid {
+            origin_um: [-0.25, 0.75],
+            pitch_um: [2.125, 1.375],
+            width: 3,
+            height: 2,
+        };
         let device = device_params(&resolved, 2.0, grid).unwrap();
         let cd = [[0.8, 0.2, 0.1], [f64::NAN, 0.9, 0.3], [0.1, 0.2, 0.8]];
         let bd = [0.1, 0.2, f64::NAN];
         let lamp = [0.7, 1.2, 1.5];
         let sensitivity = [[0.1, 0.2, 0.3], [0.3, 0.1, 0.2], [0.2, 0.3, 0.1]];
         let response = spektrafilm_backend::DyeResponseGpuParams::Print {
-            channel_density: &cd, base_density: &bd, illuminant: &lamp,
-            sensitivity: &sensitivity, normalization_factor: 0.9,
-            exposure_scale: 0.7, preflash: [0.0, 0.01, 0.02],
+            channel_density: &cd,
+            base_density: &bd,
+            illuminant: &lamp,
+            sensitivity: &sensitivity,
+            normalization_factor: 0.9,
+            exposure_scale: 0.7,
+            preflash: [0.0, 0.01, 0.02],
         };
         let reference = v3::apply_with_response(&source, 2.0, grid, &resolved, |cells| {
             let mut linear = spektrafilm_backend::cpu_backend::print_spectral_cpu(
-                cells, &cd, &bd, &lamp, &sensitivity, 0.9, [0.0, 0.01, 0.02]);
+                cells,
+                &cd,
+                &bd,
+                &lamp,
+                &sensitivity,
+                0.9,
+                [0.0, 0.01, 0.02],
+            );
             for value in &mut linear.data {
                 let outer = (10.0_f64.powf(*value as f64) * 0.7).max(0.0) + 1e-10;
                 *value = from_f64(10.0_f64.powf(outer.log10()));
             }
             Ok(linear)
-        }).unwrap();
-        let actual = backend.dye_field_with_response(&source, &device, &response).unwrap();
+        })
+        .unwrap();
+        let actual = backend
+            .dye_field_with_response(&source, &device, &response)
+            .unwrap();
         let worst = max_abs_diff(&reference, &actual);
         assert!(worst <= 1e-4, "missing spectral row response: {worst}");
     }
@@ -1392,7 +1511,10 @@ mod tests {
         let resident = resident_readout_plan_for_dims(&film, &params, 200, 100, 180.0).unwrap();
         assert_eq!(resident, plan);
         let device = resident_device_params_for_dims(&film, &params, 200, 100, 180.0).unwrap();
-        assert_eq!((device.grid.width, device.grid.height), (plan.grid.width, plan.grid.height));
+        assert_eq!(
+            (device.grid.width, device.grid.height),
+            (plan.grid.width, plan.grid.height)
+        );
         assert_eq!(device.grid.origin_um, plan.grid.origin_um);
         assert_eq!(device.grid.pitch_um, plan.grid.pitch_um);
     }
@@ -1419,7 +1541,10 @@ mod tests {
         let keep = enclosing.deferred_crop.expect("enclosing plan defers");
         assert_eq!(
             (keep.width, keep.height),
-            (requested.grid.width as usize, requested.grid.height as usize)
+            (
+                requested.grid.width as usize,
+                requested.grid.height as usize
+            )
         );
         assert!(enclosing.grid.width >= requested.grid.width);
         let run = |grid: ReadoutGrid| {

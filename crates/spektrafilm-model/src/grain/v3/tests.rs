@@ -1325,7 +1325,10 @@ fn shrinking_the_cell_budget_preserves_every_output_value() {
 fn cell_partition_budget_preserves_global_density_and_optical_response() {
     let target = patterned(9, 7);
     let grid = ReadoutGrid {
-        origin_um: [-3.7, 2.1], pitch_um: [17.9, 15.3], width: 3, height: 2,
+        origin_um: [-3.7, 2.1],
+        pitch_um: [17.9, 15.3],
+        width: 3,
+        height: 2,
     };
     for expectation in [false, true] {
         let p = params(None, expectation, 0xA11CE, 1.28);
@@ -1340,11 +1343,14 @@ fn cell_partition_budget_preserves_global_density_and_optical_response() {
             let mut linear = density.clone();
             for pixel in linear.data.as_chunks_mut::<3>().0 {
                 let cmy = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
-                for c in 0..3 { pixel[c] = from_f64(10.0_f64.powf(-cmy[c] - 0.4 * cmy[(c + 1) % 3])); }
+                for c in 0..3 {
+                    pixel[c] = from_f64(10.0_f64.powf(-cmy[c] - 0.4 * cmy[(c + 1) % 3]));
+                }
             }
             Ok(linear)
         };
-        let reference = apply_impl(&target, PITCH, grid, &p, MAX_BAND_CELLS, Some(&response)).unwrap();
+        let reference =
+            apply_impl(&target, PITCH, grid, &p, MAX_BAND_CELLS, Some(&response)).unwrap();
         let bounded = apply_impl(&target, PITCH, grid, &p, 500, Some(&response)).unwrap();
         for (&a, &b) in reference.data.iter().zip(&bounded.data) {
             assert!((to_f64(a) - to_f64(b)).abs() < precision_tol());

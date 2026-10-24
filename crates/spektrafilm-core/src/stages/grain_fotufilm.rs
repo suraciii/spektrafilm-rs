@@ -28,8 +28,7 @@ const APPEARANCE_STATUS: &str = "authored_effective_not_stock_calibration";
 /// Readout method identity: complete periodic tile integration.
 const READOUT_METHOD: &str = "complete_periodic_tile";
 /// Execution note reported when the engine is active.
-const EXECUTION_NOTE: &str =
-    "Fotufilm Film resolves on the selected executor when rendering; compute-device availability is unchecked.";
+const EXECUTION_NOTE: &str = "Fotufilm Film resolves on the selected executor when rendering; compute-device availability is unchecked.";
 /// Precision of the samples this stage reads and writes. The population and
 /// the residual arithmetic are `f64`; the bank's tile light field is `f32`.
 const EXECUTION_PRECISION: &str = if std::mem::size_of::<spektrafilm_math::precision::Scalar>() == 8
@@ -304,9 +303,7 @@ impl Prepared {
         backend: &dyn spektrafilm_backend::ComputeBackend,
         cancel: &(dyn Fn() -> Result<(), String> + Sync),
     ) -> Result<ImageBuf, String> {
-        self.readout_dispatch(
-            source, film, params, source_pitch_um, grid, backend, cancel,
-        )
+        self.readout_dispatch(source, film, params, source_pitch_um, grid, backend, cancel)
     }
 
     /// Route to the device when the backend has a Fotufilm path, else to the
@@ -326,9 +323,7 @@ impl Prepared {
         backend: &dyn spektrafilm_backend::ComputeBackend,
         cancel: &(dyn Fn() -> Result<(), String> + Sync),
     ) -> Result<ImageBuf, String> {
-        match self.device_readout(
-            source, film, params, source_pitch_um, grid, backend, cancel,
-        )? {
+        match self.device_readout(source, film, params, source_pitch_um, grid, backend, cancel)? {
             Some(image) => Ok(image),
             None => {
                 let mut observation = super::StageObservation::cpu(
@@ -336,9 +331,8 @@ impl Prepared {
                     "grain_fotufilm",
                     spektrafilm_backend::telemetry::CpuReason::FotufilmFilmCpu,
                 );
-                let result = self.readout_inner(
-                    source, film, params, source_pitch_um, grid, cancel,
-                );
+                let result =
+                    self.readout_inner(source, film, params, source_pitch_um, grid, cancel);
                 observation.set_complete(result.is_ok());
                 result
             }
@@ -358,7 +352,15 @@ impl Prepared {
         grid: ReadoutGrid,
         cancel: &(dyn Fn() -> Result<(), String> + Sync),
     ) -> Result<spektrafilm_backend::FotufilmGpuParams, String> {
-        self.device_params(source_width, source_height, film, params, source_pitch_um, grid, cancel)
+        self.device_params(
+            source_width,
+            source_height,
+            film,
+            params,
+            source_pitch_um,
+            grid,
+            cancel,
+        )
     }
 
     /// Host-image boundary adapter for backends implementing Fotufilm.
@@ -373,7 +375,15 @@ impl Prepared {
         backend: &dyn spektrafilm_backend::ComputeBackend,
         cancel: &(dyn Fn() -> Result<(), String> + Sync),
     ) -> Result<Option<ImageBuf>, String> {
-        let device_params = self.device_params(source.width, source.height, film, params, source_pitch_um, grid, cancel)?;
+        let device_params = self.device_params(
+            source.width,
+            source.height,
+            film,
+            params,
+            source_pitch_um,
+            grid,
+            cancel,
+        )?;
         match backend.fotufilm_grain(source, &device_params) {
             Some(result) => Ok(Some(result?)),
             None => Ok(None),
@@ -382,8 +392,13 @@ impl Prepared {
 
     #[allow(clippy::too_many_arguments)]
     fn device_params(
-        &self, source_width: u32, source_height: u32, film: &Profile,
-        params: &RuntimeParams, source_pitch_um: f64, grid: ReadoutGrid,
+        &self,
+        source_width: u32,
+        source_height: u32,
+        film: &Profile,
+        params: &RuntimeParams,
+        source_pitch_um: f64,
+        grid: ReadoutGrid,
         cancel: &(dyn Fn() -> Result<(), String> + Sync),
     ) -> Result<spektrafilm_backend::FotufilmGpuParams, String> {
         cancel()?;
@@ -442,10 +457,7 @@ impl Prepared {
             grid.origin_um[0] / 1000.0 / 0.001 / size,
             grid.origin_um[1] / 1000.0 / 0.001 / size,
         ];
-        let footprint_texels = [
-            pitch_texels[0] * softness,
-            pitch_texels[1] * softness,
-        ];
+        let footprint_texels = [pitch_texels[0] * softness, pitch_texels[1] * softness];
         Ok(spektrafilm_backend::FotufilmGpuParams {
             formation_seed: model::formation_seed(),
             records,
@@ -1072,7 +1084,12 @@ mod tests {
         assert_eq!(report["appearance_status"], APPEARANCE_STATUS);
         assert_eq!(report["effective_backend"], serde_json::Value::Null);
         assert_eq!(report["execution_precision"], EXECUTION_PRECISION);
-        assert!(report["note"].as_str().unwrap().contains("selected executor"));
+        assert!(
+            report["note"]
+                .as_str()
+                .unwrap()
+                .contains("selected executor")
+        );
         assert_eq!(report["readout"], READOUT_METHOD);
         assert_eq!(report["prepared"], false);
         assert_eq!(report["source_revision"], SOURCE_REVISION);

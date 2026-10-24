@@ -11,7 +11,7 @@ struct Params {
     denominator: vec4<f64>,
     camera: vec4<f64>,
     setup: vec4<f64>,
-    operator: vec4<f64>,
+    operator_terms: vec4<f64>,
     color: vec4<f64>,
     destination: array<vec4<f64>, 3>,
 }

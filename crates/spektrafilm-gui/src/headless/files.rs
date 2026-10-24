@@ -227,30 +227,55 @@ fn replacing_input_rejects_the_previous_sources_real_worker_result() {
     // Keep the actual worker response in flight while replacing its source.
     let replacement = s.directory.path().join("replacement.png");
     let source = ImageBuf::from_data(3, 2, vec![spektrafilm_math::precision::from_f64(0.25); 18]);
-    image_io::save(&replacement, &source, SaveOptions {
-        depth: BitDepth::Eight,
-        color_space: "sRGB",
-        cctf_encoding: true,
-        jpeg_quality: None,
-        jpeg_subsampling: None,
-        compression: None,
-    }, None).unwrap();
+    image_io::save(
+        &replacement,
+        &source,
+        SaveOptions {
+            depth: BitDepth::Eight,
+            color_space: "sRGB",
+            cctf_encoding: true,
+            jpeg_quality: None,
+            jpeg_subsampling: None,
+            compression: None,
+        },
+        None,
+    )
+    .unwrap();
     h.state_mut().load_image_from_path(&replacement);
     assert!(h.state().input_epoch > epoch);
     let accepted = h.state().image.as_ref().unwrap().clone();
     assert!(!accepted.same_source(&previous));
-    assert!(h.state().oriented_input.as_ref().unwrap().same_source(&accepted));
+    assert!(
+        h.state()
+            .oriented_input
+            .as_ref()
+            .unwrap()
+            .same_source(&accepted)
+    );
     assert!(h.state().output_image.is_none());
     assert!(h.state().output_retained.is_none());
     drop(guard);
-    wait_until(h, |app| app.render_job.as_ref().is_none_or(|job| job.request_id != old_request));
+    wait_until(h, |app| {
+        app.render_job
+            .as_ref()
+            .is_none_or(|job| job.request_id != old_request)
+    });
     assert!(h.state().image.as_ref().unwrap().same_source(&accepted));
-    assert!(h.state().output_image.is_none(), "stale source output was published");
-    assert!(h.state().output_retained.is_none(), "stale retained output was published");
+    assert!(
+        h.state().output_image.is_none(),
+        "stale source output was published"
+    );
+    assert!(
+        h.state().output_retained.is_none(),
+        "stale retained output was published"
+    );
     assert!(h.state().source_render.is_none());
     let output = render(h, "SCAN");
     assert_eq!((output.width, output.height), (3, 2));
-    assert_eq!(h.state().source_render.as_ref().unwrap().input_revision, Some(h.state().input_epoch));
+    assert_eq!(
+        h.state().source_render.as_ref().unwrap().input_revision,
+        Some(h.state().input_epoch)
+    );
 }
 
 // Small uncompressed RGB TIFF, with real EXIF/IPTC/XMP consumed by image_io.
@@ -381,15 +406,31 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     click(h, "Discard changes");
     assert!(h.query_by_label("Discard changes").is_none());
     assert_eq!(h.state().image_path.as_ref(), Some(&path));
-    let original = h.state().image.as_ref().unwrap().host_image().unwrap().clone();
+    let original = h
+        .state()
+        .image
+        .as_ref()
+        .unwrap()
+        .host_image()
+        .unwrap()
+        .clone();
     let baseline = render(h, "SCAN");
     reveal_control(h, "action.rotate_cw");
     click(h, "cw rotate");
     assert_eq!(h.state().input_rotation, 3);
     // Orientation is deferred metadata: the retained source keeps its pixels
     // and only the presentation source is turned.
-    assert_eq!(h.state().image.as_ref().unwrap().host_image().unwrap().data, original.data);
-    let rotated = h.state().oriented_input.as_ref().unwrap().host_image().unwrap();
+    assert_eq!(
+        h.state().image.as_ref().unwrap().host_image().unwrap().data,
+        original.data
+    );
+    let rotated = h
+        .state()
+        .oriented_input
+        .as_ref()
+        .unwrap()
+        .host_image()
+        .unwrap();
     assert_eq!((rotated.width, rotated.height), (2, 4));
     for y in 0..2 {
         for x in 0..4 {
@@ -445,8 +486,20 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     reveal_control(h, "action.rotate_ccw");
     click(h, "ccw rotate");
     assert_eq!(h.state().input_rotation, 0);
-    assert_eq!(h.state().image.as_ref().unwrap().host_image().unwrap().data, original.data);
-    assert_eq!(h.state().oriented_input.as_ref().unwrap().host_image().unwrap().data, original.data);
+    assert_eq!(
+        h.state().image.as_ref().unwrap().host_image().unwrap().data,
+        original.data
+    );
+    assert_eq!(
+        h.state()
+            .oriented_input
+            .as_ref()
+            .unwrap()
+            .host_image()
+            .unwrap()
+            .data,
+        original.data
+    );
     let restored = render(h, "SCAN");
     assert_eq!((restored.width, restored.height), (4, 2));
     assert_eq!(restored.data, baseline.data);

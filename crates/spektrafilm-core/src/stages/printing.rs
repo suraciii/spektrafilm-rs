@@ -30,13 +30,21 @@ fn print_spectral_via_lut(
     steps: usize,
 ) -> Result<ImageBuf, String> {
     let device_params = spektrafilm_backend::EnlargerSpectralLutGpuParams {
-        channel_density, base_density, illuminant: print_illuminant,
-        sensitivity: print_sensitivity, normalization: exposure_factor,
-        preflash, minimum: data_min, maximum: data_max, size: steps as u32,
+        channel_density,
+        base_density,
+        illuminant: print_illuminant,
+        sensitivity: print_sensitivity,
+        normalization: exposure_factor,
+        preflash,
+        minimum: data_min,
+        maximum: data_max,
+        size: steps as u32,
     };
     match backend.enlarger_spectral_lut(cmy_film, &device_params)? {
         Some(image) => return Ok(image),
-        None if backend.is_gpu() => return Err("enlarger_spectral_lut: selected GPU has no device implementation".into()),
+        None if backend.is_gpu() => {
+            return Err("enlarger_spectral_lut: selected GPU has no device implementation".into());
+        }
         None => {}
     }
     let grid = build_lut_grid(steps, data_min, data_max);
@@ -92,7 +100,9 @@ fn print_spectral_via_lut(
             let _device = super::StageObservation::new(backend, "enlarger_lut_interpolate");
             Ok(interpolated)
         }
-        None if backend.is_gpu() => Err("enlarger_lut_interp: selected GPU has no device implementation".into()),
+        None if backend.is_gpu() => {
+            Err("enlarger_lut_interp: selected GPU has no device implementation".into())
+        }
         None => {
             let _interpolation = super::StageObservation::cpu(
                 backend,
@@ -282,7 +292,12 @@ pub fn expose_calibrated(
                         let _device = super::StageObservation::new(backend, "optical_diffusion");
                         diffused
                     }
-                    Ok(None) if backend.is_gpu() => return Err("optical_diffusion: selected GPU has no enlarger diffusion operation".into()),
+                    Ok(None) if backend.is_gpu() => {
+                        return Err(
+                            "optical_diffusion: selected GPU has no enlarger diffusion operation"
+                                .into(),
+                        );
+                    }
                     Ok(None) => super::filming::host_diffusion(&lin, &dm, pixel_size_um, backend),
                     Err(error) => return Err(error),
                 }

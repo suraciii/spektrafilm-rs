@@ -66,8 +66,8 @@ Film-only output retains an explicit future print selection by name without load
 
 `--dry-run` resolves the artifact header without decoding large numeric payloads or creating outputs. Its report distinguishes inherited and planned operations, seed origin, and unchecked payload integrity. It is not proof of integrity or compute-device availability. See the [stage artifact contract](../specs/cli/stage-artifacts.md) for the persistence and precision rules.
 
-
 Material output and continuation currently require `--backend cpu`. A selected GPU, including automatic GPU selection, fails before numerical processing or output publication for these routes. This limitation does not apply to retained GPU image-output workflows.
+
 `--debug` is a Boolean stderr-only diagnostic flag. It accepts no directory or value and creates no files. It does not change parameters, results, stdout, dry-run reports, artifact contents, or GPU timing collection. Redirect stderr with the shell to save text. `--diagnostics report.json` remains an independent structured-report request. The retired public `--stage-evidence` option has no alias; dedicated instrument native observations remain research data, not resumable material artifacts.
 
 The selected backend also owns RAW numerical processing. With a selected GPU,

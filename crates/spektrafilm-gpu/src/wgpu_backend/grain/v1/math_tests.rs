@@ -18,37 +18,69 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#
     );
-    let input = [-700.0f64, -30.0, -2.0, -0.5, -0.49999999999999994, -1e-8,
-        1e-8, 0.1, 0.49999999999999994, 0.5, 1.0, 2.0, 30.0, 700.0];
+    let input = [
+        -700.0f64,
+        -30.0,
+        -2.0,
+        -0.5,
+        -0.49999999999999994,
+        -1e-8,
+        1e-8,
+        0.1,
+        0.49999999999999994,
+        0.5,
+        1.0,
+        2.0,
+        30.0,
+        700.0,
+    ];
     let bytes = (input.len() * 4 * 8) as u64;
-    let source = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("binary64_math_input"), contents: bytemuck::cast_slice(&input),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    let source = gpu
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("binary64_math_input"),
+            contents: bytemuck::cast_slice(&input),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
     let destination = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("binary64_math_output"), size: bytes,
+        label: Some("binary64_math_output"),
+        size: bytes,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("binary64_math_readback"), size: bytes,
+        label: Some("binary64_math_readback"),
+        size: bytes,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let pipe = gpu.cached_pipeline(SHADER, &[
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ]);
+    let pipe = gpu.cached_pipeline(
+        SHADER,
+        &[
+            wgpu::BufferBindingType::Storage { read_only: true },
+            wgpu::BufferBindingType::Storage { read_only: false },
+        ],
+    );
     let bindings = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("binary64_math_bindings"), layout: &pipe.layout,
+        label: Some("binary64_math_bindings"),
+        layout: &pipe.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: source.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: destination.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: source.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: destination.as_entire_binding(),
+            },
         ],
     });
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     {
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("binary64_math"), timestamp_writes: None });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("binary64_math"),
+            timestamp_writes: None,
+        });
         pass.set_pipeline(&pipe.pipeline);
         pass.set_bind_group(0, &bindings, &[]);
         pass.dispatch_workgroups(1, 1, 1);
@@ -63,8 +95,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             // The reduced Taylor/atanh remainder is below binary64 epsilon;
             // 32 eps covers operation rounding and the range-reduction sum.
             let bound = expected.abs().max(f64::MIN_POSITIVE) * 32.0 * f64::EPSILON;
-            assert!(actual.is_finite() && (actual - expected).abs() <= bound,
-                "operation {operation} at {x}: device {actual:e}, reference {expected:e}, bound {bound:e}");
+            assert!(
+                actual.is_finite() && (actual - expected).abs() <= bound,
+                "operation {operation} at {x}: device {actual:e}, reference {expected:e}, bound {bound:e}"
+            );
         }
     }
 }

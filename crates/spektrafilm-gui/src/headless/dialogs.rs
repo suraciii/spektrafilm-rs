@@ -802,7 +802,15 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     import_file(&mut imported.harness, false);
     assert_eq!(
         h.state().image.as_ref().unwrap().host_image().unwrap().data,
-        imported.harness.state().image.as_ref().unwrap().host_image().unwrap().data
+        imported
+            .harness
+            .state()
+            .image
+            .as_ref()
+            .unwrap()
+            .host_image()
+            .unwrap()
+            .data
     );
     assert_eq!(h.state().params, imported.harness.state().params);
     assert_eq!(h.state().image_path, imported.harness.state().image_path);
@@ -820,7 +828,13 @@ fn dropped_png_uses_the_import_path_and_bad_drop_preserves_accepted_images() {
     assert_eq!(h.state().params, params);
     assert_eq!(h.state().parameter_revision, revision);
     assert_eq!((h.state().can_undo(), h.state().can_redo()), history);
-    assert!(h.state().image.as_ref().unwrap().same_source(&retained_image));
+    assert!(
+        h.state()
+            .image
+            .as_ref()
+            .unwrap()
+            .same_source(&retained_image)
+    );
     assert!(h.state().output_image.is_none());
 }
 

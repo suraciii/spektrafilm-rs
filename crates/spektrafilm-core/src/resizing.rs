@@ -170,7 +170,9 @@ pub fn resolve_device_geometry(
         return Err("cannot resolve geometry for an empty image".into());
     }
     if !pixel_pitch_um.is_finite() || pixel_pitch_um <= 0.0 {
-        return Err(format!("working pixel pitch must be finite and > 0 (got {pixel_pitch_um})"));
+        return Err(format!(
+            "working pixel pitch must be finite and > 0 (got {pixel_pitch_um})"
+        ));
     }
 
     let rotation_quarter_turns = rotation_quarter_turns.rem_euclid(4) as u32;
@@ -208,10 +210,8 @@ pub fn resolve_device_geometry(
     } else {
         None
     };
-    let (cropped_width, cropped_height) = crop.map_or(
-        (rotated_width, rotated_height),
-        |rect| (rect[2], rect[3]),
-    );
+    let (cropped_width, cropped_height) =
+        crop.map_or((rotated_width, rotated_height), |rect| (rect[2], rect[3]));
 
     let resize = if io.upscale_factor != 1.0 {
         let (target_width, target_height) = spektrafilm_math::resize::rescaled_dimensions(
@@ -547,8 +547,7 @@ mod tests {
         };
         // 100x60 rotated once is 60x100; the crop is a fraction of the long
         // edge of that frame (100), so 50x25 px, centred.
-        let (params, dimensions) =
-            resolve_device_geometry(100, 60, &io, 1, None, 40.0).unwrap();
+        let (params, dimensions) = resolve_device_geometry(100, 60, &io, 1, None, 40.0).unwrap();
         assert_eq!(params.rotation_quarter_turns, 1);
         assert_eq!(dimensions, (50, 25));
         assert_eq!(params.crop, Some([5, 38, 50, 25]));

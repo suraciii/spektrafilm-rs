@@ -441,7 +441,12 @@ pub(crate) fn build_with_backend(
         mallett_core,
         front_illuminant,
         ..
-    } = spectral_service::build_filming_upsampler_with_backend(&film, &spectral_params, data_dir, backend)?;
+    } = spectral_service::build_filming_upsampler_with_backend(
+        &film,
+        &spectral_params,
+        data_dir,
+        backend,
+    )?;
 
     // Python parity: sensitivities are pre-balanced in the profile so midgray ≈ 1.0.
     // The TC LUT is used unnormalized — Python's `rgb_to_raw_hanatos2025` does NOT scale it.
@@ -462,12 +467,16 @@ pub(crate) fn build_with_backend(
     let midgray_raw = |scale: f64| -> [f64; 3] {
         if let Some(prepared) = &prepared_tc_lut {
             let xyz = spectral_service::calibration_neutral_xyz(
-                &front_illuminant, params.settings.use_cat16, scale,
+                &front_illuminant,
+                params.settings.use_cat16,
+                scale,
             );
             let brightness = xyz[0] + xyz[1] + xyz[2];
-            prepared.neutral.map(|value| spektrafilm_math::precision::to_f64(
-                spektrafilm_math::precision::from_f64(value * brightness),
-            ))
+            prepared.neutral.map(|value| {
+                spektrafilm_math::precision::to_f64(spektrafilm_math::precision::from_f64(
+                    value * brightness,
+                ))
+            })
         } else if let Some(lut) = &tc_lut {
             enlarger::midgray_raw_hanatos(
                 lut,
@@ -748,9 +757,15 @@ mod tests {
             params.enlarger.print_exposure_mode = mode;
             params.settings.print_exposure_ev_tracking = tracking;
             params.camera.exposure_compensation_ev = 0.5;
-            super::build_with_backend(film.clone(), print.clone(), params, &dir, &spektrafilm_backend::cpu_backend::CpuBackend)
-                .unwrap()
-                .print_exposure_factor
+            super::build_with_backend(
+                film.clone(),
+                print.clone(),
+                params,
+                &dir,
+                &spektrafilm_backend::cpu_backend::CpuBackend,
+            )
+            .unwrap()
+            .print_exposure_factor
         };
         let auto_follow = factor(Auto, FollowMode);
         let auto_never = factor(Auto, Never);

@@ -1,6 +1,6 @@
-use super::grain::raster::{paged_transport, RasterStorage};
-use super::grain::v1::blur::{build_grain_blur_paged, GrainBlurState as BlurJob};
-use super::highlight::{image_transport_bytes, pointwise_job, PointwiseAccess, PointwiseJob};
+use super::grain::raster::{RasterStorage, paged_transport};
+use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged};
+use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, pointwise_job};
 use super::*;
 
 /// Full-source glare: generation uses original pixel indices, then reference
@@ -38,17 +38,39 @@ pub(super) fn build_glare_state(
         _pad: [u32; 3],
     }
     let gen_dispatch = pointwise_job(
-        backend, u64::from(n_pixels), 12, include_str!("glare_gen.wgsl"),
-        &GenParams { n_pixels, base_seed: gp.base_seed, mu: gp.mu, sigma: gp.sigma, first_pixel: 0, _pad: [0; 3] },
-        &[(&scratch, PointwiseAccess::Write)], Some(4), "glare_gen",
+        backend,
+        u64::from(n_pixels),
+        12,
+        include_str!("glare_gen.wgsl"),
+        &GenParams {
+            n_pixels,
+            base_seed: gp.base_seed,
+            mu: gp.mu,
+            sigma: gp.sigma,
+            first_pixel: 0,
+            _pad: [0; 3],
+        },
+        &[(&scratch, PointwiseAccess::Write)],
+        Some(4),
+        "glare_gen",
     )?;
     let blur = if gp.blur_px > 0.0 {
         let out = paged_transport(backend, img_bytes, "glare_blurred")?;
         let job = build_grain_blur_paged(
-            backend, width, height, &scratch, &out, [gp.blur_px.max(0.01) as f64; 3], 0, 0,
-        ).map_err(|e| format!("glare Gaussian: {e}"))?;
+            backend,
+            width,
+            height,
+            &scratch,
+            &out,
+            [gp.blur_px.max(0.01) as f64; 3],
+            0,
+            0,
+        )
+        .map_err(|e| format!("glare Gaussian: {e}"))?;
         Some((job, out))
-    } else { None };
+    } else {
+        None
+    };
     let glare_input = blur.as_ref().map_or(&scratch, |(_, out)| out);
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -58,17 +80,35 @@ pub(super) fn build_glare_state(
         offset: [f32; 4],
     }
     let apply_dispatch = pointwise_job(
-        backend, u64::from(n_pixels), 12, include_str!("glare_apply.wgsl"),
-        &ApplyParams { n_pixels, _pad: [0; 3], offset: [gp.rgb_offset[0], gp.rgb_offset[1], gp.rgb_offset[2], 0.0] },
-        &[(glare_input, PointwiseAccess::Read), (buf_b, PointwiseAccess::ReadWrite)], None, "glare_apply",
+        backend,
+        u64::from(n_pixels),
+        12,
+        include_str!("glare_apply.wgsl"),
+        &ApplyParams {
+            n_pixels,
+            _pad: [0; 3],
+            offset: [gp.rgb_offset[0], gp.rgb_offset[1], gp.rgb_offset[2], 0.0],
+        },
+        &[
+            (glare_input, PointwiseAccess::Read),
+            (buf_b, PointwiseAccess::ReadWrite),
+        ],
+        None,
+        "glare_apply",
     )?;
-    Ok(GlareState { gen_dispatch, blur: blur.map(|(job, _)| job), apply_dispatch })
+    Ok(GlareState {
+        gen_dispatch,
+        blur: blur.map(|(job, _)| job),
+        apply_dispatch,
+    })
 }
 
 impl GlareState {
     pub(super) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
         self.gen_dispatch.execute(backend)?;
-        if let Some(blur) = &self.blur { blur.submit(backend)?; }
+        if let Some(blur) = &self.blur {
+            blur.submit(backend)?;
+        }
         self.apply_dispatch.execute(backend)
     }
 }

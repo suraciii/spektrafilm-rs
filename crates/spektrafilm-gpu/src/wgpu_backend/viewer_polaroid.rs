@@ -1,6 +1,6 @@
 //! Device-only preparation and evaluation of the viewer's nine Polaroid layers.
-use super::{ObservedEncoder, WgpuBackend};
 use super::paged::ImagePage;
+use super::{ObservedEncoder, WgpuBackend};
 use spektrafilm_backend::{DeviceImage, SampleDomain};
 
 impl WgpuBackend {
@@ -14,7 +14,12 @@ impl WgpuBackend {
     ) -> Result<DeviceImage, String> {
         self.check_cancelled()?;
         let source = self.buffer_payload(image)?;
-        let max_page = source.pages.iter().map(|page| page.n_pixels).max().unwrap_or(0);
+        let max_page = source
+            .pages
+            .iter()
+            .map(|page| page.n_pixels)
+            .max()
+            .unwrap_or(0);
         if max_page == 0 || max_page > u32::MAX / 3 {
             return Err("viewer Polaroid: page size exceeds the shader's RGB index range".into());
         }
@@ -42,11 +47,15 @@ impl WgpuBackend {
             || limits.max_bindings_per_bind_group < 5
             || limits.max_uniform_buffer_binding_size < 64
         {
-            return Err("viewer Polaroid: device cannot support the 256-lane reduction resources".into());
+            return Err(
+                "viewer Polaroid: device cannot support the 256-lane reduction resources".into(),
+            );
         }
         let axis_limit = limits.max_compute_workgroups_per_dimension;
         if axis_limit == 0 || u64::from(groups) > u64::from(axis_limit) * u64::from(axis_limit) {
-            return Err("viewer Polaroid: reduction dispatch exceeds device workgroup grid limits".into());
+            return Err(
+                "viewer Polaroid: reduction dispatch exceeds device workgroup grid limits".into(),
+            );
         }
         let make_storage = |label, size| {
             self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -60,16 +69,24 @@ impl WgpuBackend {
         };
         // Mirror the input page boundaries, so no image-sized staging or page
         // repacking is needed. The reduction scratch is bounded by one page.
-        let density: Vec<_> = source.pages.iter().map(|page| ImagePage {
-            first_pixel: page.first_pixel,
-            n_pixels: page.n_pixels,
-            buffer: make_storage("viewer_polaroid_density", u64::from(page.n_pixels) * 12),
-        }).collect();
-        let output: Vec<_> = source.pages.iter().map(|page| ImagePage {
-            first_pixel: page.first_pixel,
-            n_pixels: page.n_pixels,
-            buffer: make_storage("viewer_polaroid_output", u64::from(page.n_pixels) * 12),
-        }).collect();
+        let density: Vec<_> = source
+            .pages
+            .iter()
+            .map(|page| ImagePage {
+                first_pixel: page.first_pixel,
+                n_pixels: page.n_pixels,
+                buffer: make_storage("viewer_polaroid_density", u64::from(page.n_pixels) * 12),
+            })
+            .collect();
+        let output: Vec<_> = source
+            .pages
+            .iter()
+            .map(|page| ImagePage {
+                first_pixel: page.first_pixel,
+                n_pixels: page.n_pixels,
+                buffer: make_storage("viewer_polaroid_output", u64::from(page.n_pixels) * 12),
+            })
+            .collect();
         let statistics_a = make_storage("viewer_polaroid_statistics_a", statistics_bytes);
         let statistics_b = make_storage("viewer_polaroid_statistics_b", statistics_bytes);
         let divisor = make_storage("viewer_polaroid_global_divisor", 32);
@@ -101,11 +118,26 @@ impl WgpuBackend {
                 label: Some("viewer_polaroid_reduction"),
                 layout: &reduction.layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: source_buffer.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: input.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: destination.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: density_buffer.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: source_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: input.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: destination.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: density_buffer.as_entire_binding(),
+                    },
                 ],
             });
             let workgroups = count.div_ceil(256);
@@ -123,21 +155,46 @@ impl WgpuBackend {
         for mode in [0, 1] {
             for (page, prepared) in source.pages.iter().zip(&density) {
                 self.check_cancelled()?;
-                let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("viewer_polaroid_page_reduction"),
-                });
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("viewer_polaroid_page_reduction"),
+                        });
                 let mut reduced = &statistics_a;
                 let mut scratch = &statistics_b;
-                reduce(&mut encoder, &page.buffer, &prepared.buffer, &divisor,
-                    reduced, page.n_pixels, mode);
+                reduce(
+                    &mut encoder,
+                    &page.buffer,
+                    &prepared.buffer,
+                    &divisor,
+                    reduced,
+                    page.n_pixels,
+                    mode,
+                );
                 let mut count = page.n_pixels.div_ceil(256);
                 while count > 1 {
-                    reduce(&mut encoder, &page.buffer, &prepared.buffer, reduced, scratch, count, 2);
+                    reduce(
+                        &mut encoder,
+                        &page.buffer,
+                        &prepared.buffer,
+                        reduced,
+                        scratch,
+                        count,
+                        2,
+                    );
                     std::mem::swap(&mut reduced, &mut scratch);
                     count = count.div_ceil(256);
                 }
                 let global = if mode == 0 { &divisor } else { &maxima };
-                reduce(&mut encoder, &page.buffer, &prepared.buffer, reduced, global, 1, 3);
+                reduce(
+                    &mut encoder,
+                    &page.buffer,
+                    &prepared.buffer,
+                    reduced,
+                    global,
+                    1,
+                    3,
+                );
                 self.check_cancelled()?;
                 self.queue.submit(Some(encoder.finish()));
             }
@@ -162,8 +219,18 @@ impl WgpuBackend {
             let params = FrameParams {
                 header: [prepared.n_pixels, 0, 0, 0],
                 coefficients: [
-                    [coefficients[0], coefficients[1], coefficients[2], coefficients[3]],
-                    [coefficients[4], coefficients[5], coefficients[6], coefficients[7]],
+                    [
+                        coefficients[0],
+                        coefficients[1],
+                        coefficients[2],
+                        coefficients[3],
+                    ],
+                    [
+                        coefficients[4],
+                        coefficients[5],
+                        coefficients[6],
+                        coefficients[7],
+                    ],
                     [coefficients[8], 0.0, 0.0, 0.0],
                 ],
             };
@@ -176,15 +243,29 @@ impl WgpuBackend {
                 label: Some("viewer_polaroid_frame"),
                 layout: &frame.layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: prepared.buffer.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: maxima.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: destination.buffer.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: prepared.buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: maxima.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: destination.buffer.as_entire_binding(),
+                    },
                 ],
             });
-            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("viewer_polaroid_page_frame"),
-            });
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("viewer_polaroid_page_frame"),
+                });
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("viewer_polaroid_frame"),

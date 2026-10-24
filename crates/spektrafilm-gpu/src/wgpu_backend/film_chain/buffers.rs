@@ -5,9 +5,7 @@
 //! parameter; every buffer it produced is returned in [`ChainBuffers`].
 use super::super::is_uniform_grid_endpoint;
 use super::super::pack_matrix_columns_f64;
-use super::super::{
-    DensityParams, FrontParams, nan_safe_rows_to_f32, sanitize_spectral_inputs,
-};
+use super::super::{DensityParams, FrontParams, nan_safe_rows_to_f32, sanitize_spectral_inputs};
 
 /// Every static buffer and uniform the chain uploads once per call.
 pub(super) struct ChainBuffers {
@@ -71,7 +69,6 @@ pub(super) fn upload(
     let print_log_exp_buf = mk_storage("print_log_exp", bytemuck::cast_slice(&print_log_exp_f32));
     let print_curves_buf = mk_storage("print_curves", bytemuck::cast_slice(&print_curves_f32));
 
-
     // ── Param structs ────────────────────────────────────────────────
     // Front pass (hanatos LUT lookup or mallett matmul). Both shaders
     // share this uniform layout; `lut_size` is hanatos-only (0 for
@@ -111,7 +108,6 @@ pub(super) fn upload(
     };
     let film_density_params_buf =
         mk_uniform("film_dens_params", bytemuck::bytes_of(&film_density_params));
-
 
     let print_density_params = DensityParams {
         width: image_width,

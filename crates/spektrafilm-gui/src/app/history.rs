@@ -102,6 +102,9 @@ impl AdjustmentState {
     }
 
     fn restore(&self, app: &mut App) {
+        let refresh_input = app.input_rotation != self.rotation
+            || app.params.io.input_color_space != self.params.io.input_color_space
+            || app.params.io.input_cctf_decoding != self.params.io.input_cctf_decoding;
         app.params = self.runtime_params(app);
         app.film_name.clone_from(&self.film_name);
         app.print_name.clone_from(&self.print_name);
@@ -116,7 +119,7 @@ impl AdjustmentState {
         app.gui_state.sections["load_raw"] = self.raw_settings.clone();
         app.presets.state.applied = self.applied.clone();
         app.scan_for_print_snapshot = self.scan_for_print;
-        if app.input_rotation != self.rotation && app.image.is_some() {
+        if refresh_input && app.image.is_some() {
             app.input_epoch = app.input_epoch.wrapping_add(1);
             app.input_rotation = self.rotation;
             app.refresh_input_viewer();
@@ -926,7 +929,9 @@ mod tests {
     fn complete_state_preflight_failure_keeps_source_and_history_but_success_clears_it() {
         let (mut app, directory, ctx) = app();
         exposure(&mut app, &ctx, 1.0);
-        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::new(3, 2))));
+        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::new(
+            3, 2,
+        ))));
         let source = app.image.as_ref().unwrap().clone();
         app.image_path = Some(directory.path().join("missing.png"));
         let params = app.params.clone();
@@ -985,7 +990,6 @@ mod tests {
             request_id: 1,
             kind: RenderKind::Preview,
             animate: false,
-            backend_name: "CPU".into(),
             rotation_quarter_turns: 0,
             collection_mode: CollectionMode::Off,
         };

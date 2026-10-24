@@ -152,9 +152,19 @@ pub(in crate::wgpu_backend) fn build_grain_blur(
     let bytes = region_bytes(width, height)?;
     if needs_bounded(backend, source_offset, destination_offset, bytes)?
         || !source.usage().contains(wgpu::BufferUsages::STORAGE)
-        || !destination.usage().contains(wgpu::BufferUsages::STORAGE) {
-        return build_bounded(backend, width, height, source, destination, None, sigma,
-            source_offset, destination_offset);
+        || !destination.usage().contains(wgpu::BufferUsages::STORAGE)
+    {
+        return build_bounded(
+            backend,
+            width,
+            height,
+            source,
+            destination,
+            None,
+            sigma,
+            source_offset,
+            destination_offset,
+        );
     }
     let scratch = backend.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("grain_gaussian_scratch"),
@@ -201,9 +211,19 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
     if needs_bounded(backend, source_offset, destination_offset, bytes)?
         || !source.usage().contains(wgpu::BufferUsages::STORAGE)
         || !destination.usage().contains(wgpu::BufferUsages::STORAGE)
-        || !scratch.usage().contains(wgpu::BufferUsages::STORAGE) {
-        return build_bounded(backend, width, height, source, destination, Some(scratch), sigma,
-            source_offset, destination_offset);
+        || !scratch.usage().contains(wgpu::BufferUsages::STORAGE)
+    {
+        return build_bounded(
+            backend,
+            width,
+            height,
+            source,
+            destination,
+            Some(scratch),
+            sigma,
+            source_offset,
+            destination_offset,
+        );
     }
     let region = validate_resources(
         backend,
@@ -224,15 +244,42 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
     let copy = backend.cached_pipeline(include_str!("blur_copy.wgsl"), &IMAGE_LAYOUT);
     let channels = [
         build_channel(
-            backend, &region, source, destination, scratch, 0, sigma[0], &fir, &iir, &copy,
+            backend,
+            &region,
+            source,
+            destination,
+            scratch,
+            0,
+            sigma[0],
+            &fir,
+            &iir,
+            &copy,
             max_groups,
         )?,
         build_channel(
-            backend, &region, source, destination, scratch, 1, sigma[1], &fir, &iir, &copy,
+            backend,
+            &region,
+            source,
+            destination,
+            scratch,
+            1,
+            sigma[1],
+            &fir,
+            &iir,
+            &copy,
             max_groups,
         )?,
         build_channel(
-            backend, &region, source, destination, scratch, 2, sigma[2], &fir, &iir, &copy,
+            backend,
+            &region,
+            source,
+            destination,
+            scratch,
+            2,
+            sigma[2],
+            &fir,
+            &iir,
+            &copy,
             max_groups,
         )?,
     ];
@@ -252,30 +299,56 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
 /// COPY_SRC; destination pages require COPY_SRC | COPY_DST.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::wgpu_backend) fn build_grain_blur_paged(
-    backend: &WgpuBackend, width: u32, height: u32,
+    backend: &WgpuBackend,
+    width: u32,
+    height: u32,
     source: &[crate::wgpu_backend::paged::ImagePage],
-    destination: &[crate::wgpu_backend::paged::ImagePage], sigma: [f64; 3],
-    source_sample: u64, destination_sample: u64,
+    destination: &[crate::wgpu_backend::paged::ImagePage],
+    sigma: [f64; 3],
+    source_sample: u64,
+    destination_sample: u64,
 ) -> Result<GrainBlurState, String> {
-    build_grain_blur_paged_with_scratch(backend, width, height, source, destination,
-        None, sigma, source_sample, destination_sample)
+    build_grain_blur_paged_with_scratch(
+        backend,
+        width,
+        height,
+        source,
+        destination,
+        None,
+        sigma,
+        source_sample,
+        destination_sample,
+    )
 }
 
 /// Reuse paged full-image scratch across sequential jobs (for example halation
 /// bounces). Scratch must be distinct and provide COPY_SRC | COPY_DST.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::wgpu_backend) fn build_grain_blur_paged_with_scratch(
-    backend: &WgpuBackend, width: u32, height: u32,
+    backend: &WgpuBackend,
+    width: u32,
+    height: u32,
     source: &[crate::wgpu_backend::paged::ImagePage],
     destination: &[crate::wgpu_backend::paged::ImagePage],
-    scratch: Option<&[crate::wgpu_backend::paged::ImagePage]>, sigma: [f64; 3],
-    source_sample: u64, destination_sample: u64,
+    scratch: Option<&[crate::wgpu_backend::paged::ImagePage]>,
+    sigma: [f64; 3],
+    source_sample: u64,
+    destination_sample: u64,
 ) -> Result<GrainBlurState, String> {
-    Ok(GrainBlurState { execution: Execution::Bounded(bounded::BoundedBlur::build_paged(
-        backend, width, height, source, destination, scratch, sigma,
-        source_sample, destination_sample,
-        super::super::super::bounded::storage_binding_limit(backend)?,
-    )?) })
+    Ok(GrainBlurState {
+        execution: Execution::Bounded(bounded::BoundedBlur::build_paged(
+            backend,
+            width,
+            height,
+            source,
+            destination,
+            scratch,
+            sigma,
+            source_sample,
+            destination_sample,
+            super::super::super::bounded::storage_binding_limit(backend)?,
+        )?),
+    })
 }
 
 /// Bytes of one image-sized RGB sample region, validated against the shader's
@@ -301,25 +374,52 @@ fn region_bytes(width: u32, height: u32) -> Result<u64, String> {
 fn check_region_limit(backend: &WgpuBackend, bytes: u64) -> Result<(), String> {
     let limit = super::super::super::bounded::storage_binding_limit(backend)?;
     if bytes > limit {
-        return Err(format!("Gaussian blur binding requires {bytes} bytes; limit is {limit}"));
+        return Err(format!(
+            "Gaussian blur binding requires {bytes} bytes; limit is {limit}"
+        ));
     }
     Ok(())
 }
 
-fn needs_bounded(backend: &WgpuBackend, source: u32, destination: u32, bytes: u64) -> Result<bool, String> {
+fn needs_bounded(
+    backend: &WgpuBackend,
+    source: u32,
+    destination: u32,
+    bytes: u64,
+) -> Result<bool, String> {
     let limit = super::super::super::bounded::storage_binding_limit(backend)?;
     let alignment = storage_alignment(backend)?;
-    Ok([source, destination].iter().any(|offset| bytes + u64::from(*offset) * 4 % alignment > limit))
+    Ok([source, destination]
+        .iter()
+        .any(|offset| bytes + u64::from(*offset) * 4 % alignment > limit))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_bounded(backend: &WgpuBackend, width: u32, height: u32,
-    source: &wgpu::Buffer, destination: &wgpu::Buffer, scratch: Option<&wgpu::Buffer>, sigma: [f64; 3],
-    source_offset: u32, destination_offset: u32) -> Result<GrainBlurState, String> {
-    Ok(GrainBlurState { execution: Execution::Bounded(bounded::BoundedBlur::build(
-        backend, width, height, source, destination, scratch, sigma, source_offset, destination_offset,
-        super::super::super::bounded::storage_binding_limit(backend)?,
-    )?) })
+fn build_bounded(
+    backend: &WgpuBackend,
+    width: u32,
+    height: u32,
+    source: &wgpu::Buffer,
+    destination: &wgpu::Buffer,
+    scratch: Option<&wgpu::Buffer>,
+    sigma: [f64; 3],
+    source_offset: u32,
+    destination_offset: u32,
+) -> Result<GrainBlurState, String> {
+    Ok(GrainBlurState {
+        execution: Execution::Bounded(bounded::BoundedBlur::build(
+            backend,
+            width,
+            height,
+            source,
+            destination,
+            scratch,
+            sigma,
+            source_offset,
+            destination_offset,
+            super::super::super::bounded::storage_binding_limit(backend)?,
+        )?),
+    })
 }
 
 fn storage_alignment(backend: &WgpuBackend) -> Result<u64, String> {
@@ -397,8 +497,13 @@ fn validate_resources(
 ) -> Result<Region, String> {
     let bytes = region_bytes(width, height)?;
     let source_range = binding_range(backend, "source", source, source_offset, bytes)?;
-    let destination_range =
-        binding_range(backend, "destination", destination, destination_offset, bytes)?;
+    let destination_range = binding_range(
+        backend,
+        "destination",
+        destination,
+        destination_offset,
+        bytes,
+    )?;
     let scratch_range = binding_range(backend, "scratch", scratch, 0, bytes)?;
     Ok(Region {
         width,
@@ -438,10 +543,7 @@ fn build_channel(
     let pixels = u64::from(region.width) * u64::from(region.height);
     let sigma: Scalar = from_f64(sigma_f64);
     if sigma_f64 <= 0.0 {
-        let grid = bounded_grid(
-            pixels.div_ceil(u64::from(FIR_WORKGROUP_SIZE)),
-            max_groups,
-        )?;
+        let grid = bounded_grid(pixels.div_ceil(u64::from(FIR_WORKGROUP_SIZE)), max_groups)?;
         return Ok(ChannelPasses {
             first: make_copy_pass(backend, copy, region, channel, grid, source, destination),
             second: None,
@@ -455,15 +557,14 @@ fn build_channel(
             .and_then(|count| count.checked_mul(4))
             .ok_or_else(|| "Gaussian FIR kernel size overflows".to_owned())?;
         check_region_limit(backend, kernel_bytes)?;
-        let kernel = backend.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain_gaussian_kernel"),
-            contents: bytemuck::cast_slice(&weights),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let grid = bounded_grid(
-            pixels.div_ceil(u64::from(FIR_WORKGROUP_SIZE)),
-            max_groups,
-        )?;
+        let kernel = backend
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("grain_gaussian_kernel"),
+                contents: bytemuck::cast_slice(&weights),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let grid = bounded_grid(pixels.div_ceil(u64::from(FIR_WORKGROUP_SIZE)), max_groups)?;
         let vertical = make_fir_pass(
             backend,
             fir,
@@ -584,17 +685,13 @@ fn iir_coefficients(sigma_f64: f64) -> (f32, f32, f32, f32) {
     let q = if sigma >= from_f64(2.5) {
         from_f64(0.98711) * sigma - from_f64(0.96330)
     } else {
-        from_f64(3.97156)
-            - from_f64(4.14554) * (from_f64(1.0) - from_f64(0.26891) * sigma).sqrt()
+        from_f64(3.97156) - from_f64(4.14554) * (from_f64(1.0) - from_f64(0.26891) * sigma).sqrt()
     };
     let q2 = q * q;
     let q3 = q2 * q;
-    let b0 = from_f64(1.57825)
-        + from_f64(2.44413) * q
-        + from_f64(1.4281) * q2
-        + from_f64(0.422205) * q3;
-    let b1_raw =
-        from_f64(2.44413) * q + from_f64(2.85619) * q2 + from_f64(1.26661) * q3;
+    let b0 =
+        from_f64(1.57825) + from_f64(2.44413) * q + from_f64(1.4281) * q2 + from_f64(0.422205) * q3;
+    let b1_raw = from_f64(2.44413) * q + from_f64(2.85619) * q2 + from_f64(1.26661) * q3;
     let b2_raw = -(from_f64(1.4281) * q2 + from_f64(1.26661) * q3);
     let b3_raw = from_f64(0.422205) * q3;
     let a = from_f64(1.0) - (b1_raw + b2_raw + b3_raw) / b0;
@@ -629,42 +726,46 @@ fn make_fir_pass(
     destination: (&wgpu::Buffer, &BindingRange),
 ) -> Pass {
     let (destination_buffer, destination_range) = destination;
-    let params = backend.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grain_gaussian_fir_params"),
-        contents: bytemuck::bytes_of(&FirParams {
-            width: region.width,
-            height: region.height,
-            radius,
-            channel,
-            vertical: u32::from(vertical),
-            grid_width: grid.0,
-            source_base: source_range.base,
-            destination_base: destination_range.base,
-        }),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let bind_group = backend.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("grain_gaussian_fir_bind_group"),
-        layout: &pipeline.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: params.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: bind(source, source_range),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: kernel.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: bind(destination_buffer, destination_range),
-            },
-        ],
-    });
+    let params = backend
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grain_gaussian_fir_params"),
+            contents: bytemuck::bytes_of(&FirParams {
+                width: region.width,
+                height: region.height,
+                radius,
+                channel,
+                vertical: u32::from(vertical),
+                grid_width: grid.0,
+                source_base: source_range.base,
+                destination_base: destination_range.base,
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+    let bind_group = backend
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("grain_gaussian_fir_bind_group"),
+            layout: &pipeline.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: bind(source, source_range),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: kernel.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: bind(destination_buffer, destination_range),
+                },
+            ],
+        });
     Pass {
         _params: params,
         bind_group,
@@ -687,42 +788,46 @@ fn make_iir_pass(
     destination: (&wgpu::Buffer, &BindingRange),
 ) -> Pass {
     let (destination_buffer, destination_range) = destination;
-    let params = backend.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grain_gaussian_iir_params"),
-        contents: bytemuck::bytes_of(&IirParams {
-            width: region.width,
-            height: region.height,
-            channel,
-            vertical: u32::from(vertical),
-            a: coefficients.0,
-            b1: coefficients.1,
-            b2: coefficients.2,
-            b3: coefficients.3,
-            grid_width: grid.0,
-            source_base: source_range.base,
-            destination_base: destination_range.base,
-            _pad: 0,
-        }),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let bind_group = backend.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("grain_gaussian_iir_bind_group"),
-        layout: &pipeline.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: params.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: bind(source, source_range),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: bind(destination_buffer, destination_range),
-            },
-        ],
-    });
+    let params = backend
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grain_gaussian_iir_params"),
+            contents: bytemuck::bytes_of(&IirParams {
+                width: region.width,
+                height: region.height,
+                channel,
+                vertical: u32::from(vertical),
+                a: coefficients.0,
+                b1: coefficients.1,
+                b2: coefficients.2,
+                b3: coefficients.3,
+                grid_width: grid.0,
+                source_base: source_range.base,
+                destination_base: destination_range.base,
+                _pad: 0,
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+    let bind_group = backend
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("grain_gaussian_iir_bind_group"),
+            layout: &pipeline.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: bind(source, source_range),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bind(destination_buffer, destination_range),
+                },
+            ],
+        });
     Pass {
         _params: params,
         bind_group,
@@ -740,37 +845,41 @@ fn make_copy_pass(
     source: &wgpu::Buffer,
     destination: &wgpu::Buffer,
 ) -> Pass {
-    let params = backend.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grain_gaussian_copy_params"),
-        contents: bytemuck::bytes_of(&CopyParams {
-            width: region.width,
-            height: region.height,
-            channel,
-            grid_width: grid.0,
-            source_base: region.source.base,
-            destination_base: region.destination.base,
-            _pad: [0; 2],
-        }),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let bind_group = backend.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("grain_gaussian_copy_bind_group"),
-        layout: &pipeline.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: params.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: bind(source, &region.source),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: bind(destination, &region.destination),
-            },
-        ],
-    });
+    let params = backend
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grain_gaussian_copy_params"),
+            contents: bytemuck::bytes_of(&CopyParams {
+                width: region.width,
+                height: region.height,
+                channel,
+                grid_width: grid.0,
+                source_base: region.source.base,
+                destination_base: region.destination.base,
+                _pad: [0; 2],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+    let bind_group = backend
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("grain_gaussian_copy_bind_group"),
+            layout: &pipeline.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: bind(source, &region.source),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bind(destination, &region.destination),
+                },
+            ],
+        });
     Pass {
         _params: params,
         bind_group,
@@ -789,7 +898,8 @@ impl GrainBlurState {
                 for channel in &direct.channels {
                     for pass in std::iter::once(&channel.first).chain(channel.second.iter()) {
                         backend.check_cancelled()?;
-                        let mut encoder = backend.device.create_command_encoder(&Default::default());
+                        let mut encoder =
+                            backend.device.create_command_encoder(&Default::default());
                         direct.encode_pass(&mut encoder, pass);
                         backend.check_cancelled()?;
                         backend.queue.submit(Some(encoder.finish()));
@@ -859,15 +969,15 @@ mod tests {
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
             });
-        let destination_buffer =
-            gpu.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("grain_blur_test_destination"),
-                    contents: bytemuck::cast_slice(&destination),
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                });
+        let destination_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("grain_blur_test_destination"),
+                contents: bytemuck::cast_slice(&destination),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            });
         let state = build_grain_blur(
             gpu,
             width,

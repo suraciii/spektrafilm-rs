@@ -280,9 +280,8 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
                     "fractional device origin: {origin}"
                 );
             }
-            let first_device_pixel = |coordinate: f32| {
-                (f64::from(coordinate) * f64::from(dpi) - 0.5).ceil() as isize
-            };
+            let first_device_pixel =
+                |coordinate: f32| (f64::from(coordinate) * f64::from(dpi) - 0.5).ceil() as isize;
             let pixels = observation
                 .pixels
                 .as_ref()
@@ -297,12 +296,9 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
                 viewport_pixel_extent(observation.viewport.min.y, observation.viewport.max.y),
             ];
             assert_eq!(
-                pixels.size,
-                expected_viewport_size,
+                pixels.size, expected_viewport_size,
                 "unclipped viewer texture required: dpi={dpi}, pixels={:?}, viewport={:?}, image_rect={:?}",
-                pixels.size,
-                observation.viewport,
-                observation.image_rect
+                pixels.size, observation.viewport, observation.image_rect
             );
             let viewport_first_x = first_device_pixel(observation.viewport.min.x);
             let viewport_first_y = first_device_pixel(observation.viewport.min.y);
@@ -316,8 +312,14 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
             };
             let row = &pixels.pixels[center_y * pixels.size[0]..(center_y + 1) * pixels.size[0]];
             let image_width = row.iter().filter(|pixel| is_image_pixel(**pixel)).count();
-            let black_width = row.iter().filter(|pixel| **pixel == egui::Color32::BLACK).count();
-            let white_width = row.iter().filter(|pixel| **pixel == egui::Color32::WHITE).count();
+            let black_width = row
+                .iter()
+                .filter(|pixel| **pixel == egui::Color32::BLACK)
+                .count();
+            let white_width = row
+                .iter()
+                .filter(|pixel| **pixel == egui::Color32::WHITE)
+                .count();
             assert_eq!(
                 image_width,
                 expected_width,
@@ -328,9 +330,17 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
                 observation.image_rect.center()
             );
             let column = pixels.pixels.iter().skip(center_x).step_by(pixels.size[0]);
-            let image_height = column.clone().filter(|pixel| is_image_pixel(**pixel)).count();
-            let black_height = column.clone().filter(|pixel| **pixel == egui::Color32::BLACK).count();
-            let white_height = column.filter(|pixel| **pixel == egui::Color32::WHITE).count();
+            let image_height = column
+                .clone()
+                .filter(|pixel| is_image_pixel(**pixel))
+                .count();
+            let black_height = column
+                .clone()
+                .filter(|pixel| **pixel == egui::Color32::BLACK)
+                .count();
+            let white_height = column
+                .filter(|pixel| **pixel == egui::Color32::WHITE)
+                .count();
             assert_eq!(
                 image_height,
                 expected_height,
@@ -344,16 +354,12 @@ fn exact_zoom_obeys_dpi_drag_pans_double_click_resets_and_hover_reads_float_sour
             assert!(
                 ((image_first_x as f32 + 0.5) / dpi - observation.image_rect.min.x).abs() < 0.01
             );
-            assert!(
-                ((next_x + 0.5) / dpi - observation.image_rect.max.x).abs() < 0.01
-            );
+            assert!(((next_x + 0.5) / dpi - observation.image_rect.max.x).abs() < 0.01);
             let next_y = (image_first_y + expected_height as isize) as f32;
             assert!(
                 ((image_first_y as f32 + 0.5) / dpi - observation.image_rect.min.y).abs() < 0.01
             );
-            assert!(
-                ((next_y + 0.5) / dpi - observation.image_rect.max.y).abs() < 0.01
-            );
+            assert!(((next_y + 0.5) / dpi - observation.image_rect.max.y).abs() < 0.01);
         }
         assert_eq!(h.ctx.pixels_per_point(), dpi);
         time += 1.0;
@@ -999,106 +1005,192 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
 fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     let _device = spektrafilm_gpu::test_support::device_lock();
     let directory = tempfile::tempdir().unwrap();
-    let (image_path,state_path) = deterministic_inputs(directory.path());
+    let (image_path, state_path) = deterministic_inputs(directory.path());
     let browser_path = directory.path().join("browser.json");
-    let backend: Arc<dyn ComputeBackend> = Arc::new(spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().expect("GPU adapter required"));
-    let mut h = Harness::builder().with_size(egui::vec2(720.0,600.0)).build_eframe(move |cc| {
-        theme::apply(&cc.egui_ctx);
-        App::new_with_browser_path(backend,Some(image_path),Some(state_path),None,browser_path,data_dir())
-    });
-    wait_until(&mut h,|a| a.render_job.is_none() && !a.force_preview);
+    let backend: Arc<dyn ComputeBackend> = Arc::new(
+        spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit().expect("GPU adapter required"),
+    );
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(720.0, 600.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            App::new_with_browser_path(
+                backend,
+                Some(image_path),
+                Some(state_path),
+                None,
+                browser_path,
+                data_dir(),
+            )
+        });
+    wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
     let source = h.state().image.as_ref().unwrap().clone();
     let original = source.host_image().unwrap().clone();
     for (space, encoded) in [("Display P3", true), ("ACES2065-1", false)] {
         for turns in [-1, 1, 2, 4] {
             let cpu = source.rotated(turns, &CpuBackend, space, encoded).unwrap();
-            let gpu = source.rotated(turns, h.state().backend.as_ref(), space, encoded).unwrap();
+            let gpu = source
+                .rotated(turns, h.state().backend.as_ref(), space, encoded)
+                .unwrap();
             let expected = cpu.host_image().unwrap();
             let actual = gpu.to_host(h.state().backend.as_ref()).unwrap();
-            assert_eq!((actual.width, actual.height), (expected.width, expected.height));
+            assert_eq!(
+                (actual.width, actual.height),
+                (expected.width, expected.height)
+            );
             for (&actual, &expected) in actual.data.iter().zip(&expected.data) {
                 assert_eq!(actual as f32, expected as f32, "quarter turns: {turns}");
             }
             if turns == 4 {
-                assert!(gpu.same_source(&source), "a complete turn reuses the source");
+                assert!(
+                    gpu.same_source(&source),
+                    "a complete turn reuses the source"
+                );
             } else {
                 let crate::render::InputImage::Device(retained) = &gpu else {
                     panic!("selected GPU rotated host source samples on the CPU");
                 };
                 assert_eq!(retained.space().name, space);
-                assert_eq!(retained.domain(), if encoded {
-                    spektrafilm_backend::SampleDomain::Encoded
-                } else {
-                    spektrafilm_backend::SampleDomain::Linear
-                });
+                assert_eq!(
+                    retained.domain(),
+                    if encoded {
+                        spektrafilm_backend::SampleDomain::Encoded
+                    } else {
+                        spektrafilm_backend::SampleDomain::Linear
+                    }
+                );
                 assert_eq!(retained.pixel_pitch_um(), None);
-                // A retained source already owns its declaration; presentation
-                // must not reinterpret it through the host input controls.
-                let restored = gpu.rotated(-turns, h.state().backend.as_ref(), "sRGB", !encoded).unwrap();
+                // Reinterpretation changes only this consumer's declaration;
+                // rotation still restores the exact immutable source samples.
+                let restored = gpu
+                    .rotated(-turns, h.state().backend.as_ref(), "sRGB", !encoded)
+                    .unwrap();
                 let crate::render::InputImage::Device(restored) = restored else {
                     panic!("retained rotation lost its device carrier");
                 };
-                assert_eq!(restored.space().name, space);
-                assert_eq!(restored.domain(), retained.domain());
+                assert_eq!(restored.space().name, "sRGB");
+                assert_eq!(
+                    restored.domain(),
+                    if !encoded {
+                        spektrafilm_backend::SampleDomain::Encoded
+                    } else {
+                        spektrafilm_backend::SampleDomain::Linear
+                    }
+                );
                 assert_eq!(restored.pixel_pitch_um(), None);
                 let restored = restored.to_host(h.state().backend.as_ref()).unwrap();
-                assert_eq!((restored.width, restored.height), (original.width, original.height));
+                assert_eq!(
+                    (restored.width, restored.height),
+                    (original.width, original.height)
+                );
                 for (&actual, &expected) in restored.data.iter().zip(&original.data) {
                     assert_eq!(actual as f32, expected as f32);
                 }
             }
         }
     }
-    let cancelled = h.state().backend.with_cancellation(Some(Arc::new(
-        std::sync::atomic::AtomicBool::new(true),
-    ))).unwrap();
-    assert!(source.rotated(1, cancelled.as_ref(), "sRGB", true).unwrap_err().contains("cancelled"));
+    let cancelled = h
+        .state()
+        .backend
+        .with_cancellation(Some(Arc::new(std::sync::atomic::AtomicBool::new(true))))
+        .unwrap();
+    assert!(
+        source
+            .rotated(1, cancelled.as_ref(), "sRGB", true)
+            .unwrap_err()
+            .contains("cancelled")
+    );
     drop(cancelled);
     assert!(h.state().image.as_ref().unwrap().same_source(&source));
     assert_eq!(source.host_image().unwrap().data, original.data);
     h.state_mut().diagnostics.mode = spektrafilm_backend::telemetry::CollectionMode::Summary;
-    super::click(&mut h,"SCAN");
+    super::click(&mut h, "SCAN");
     wait_until(&mut h, |a| {
-        !a.dirty && !a.force_preview && a.render_job.is_none()
-            && a.output_retained.is_some() && a.status.to_string().starts_with("Scan ·")
+        !a.dirty
+            && !a.force_preview
+            && a.render_job.is_none()
+            && a.output_retained.is_some()
+            && a.status.to_string().starts_with("Scan ·")
     });
-    assert!(h.state().output_image.is_none(),"GPU Scan must not retain a compatibility host raster");
-    assert!(h.state().output_histogram.is_some(),"GPU histogram belongs to accepted render");
+    assert!(
+        h.state().output_image.is_none(),
+        "GPU Scan must not retain a compatibility host raster"
+    );
+    assert!(
+        h.state().output_histogram.is_some(),
+        "GPU histogram belongs to accepted render"
+    );
     let accepted = h.state().output_retained.clone().unwrap();
     let samples = accepted.to_host(h.state().backend.as_ref()).unwrap();
-    assert_eq!((samples.width, samples.height), (original.width, original.height));
+    assert_eq!(
+        (samples.width, samples.height),
+        (original.width, original.height)
+    );
     let report = assert_retained_gpu_report(
-        h.state(), &directory.path().join("scan-report.json"), "scan",
+        h.state(),
+        &directory.path().join("scan-report.json"),
+        "scan",
         [original.width, original.height],
     );
-    let simulation = report.phases.iter().find(|phase| phase.name == "simulation").unwrap();
-    assert_eq!(simulation.work.image_upload_count, Some(1), "host source uploads once in simulation");
-    assert_eq!(simulation.work.image_upload_bytes,
+    let simulation = report
+        .phases
+        .iter()
+        .find(|phase| phase.name == "simulation")
+        .unwrap();
+    assert_eq!(
+        simulation.work.image_upload_count,
+        Some(1),
+        "host source uploads once in simulation"
+    );
+    assert_eq!(
+        simulation.work.image_upload_bytes,
         Some(u64::from(original.width) * u64::from(original.height) * 3 * 4),
-        "only the source RGB f32 samples cross the host-to-device boundary");
-    let display = report.phases.iter().find(|phase| phase.name == "display_prepare").unwrap();
-    assert!(report.stages.iter().any(|stage| stage.name == "retained_histogram"
-        && stage.parent_id == display.id));
+        "only the source RGB f32 samples cross the host-to-device boundary"
+    );
+    let display = report
+        .phases
+        .iter()
+        .find(|phase| phase.name == "display_prepare")
+        .unwrap();
+    assert!(
+        report
+            .stages
+            .iter()
+            .any(|stage| stage.name == "retained_histogram" && stage.parent_id == display.id)
+    );
     // Worker waits advance egui's implicit clock by an unpredictable number
     // of frames. Continue from that clock rather than resetting it to a fixed
     // timestamp when switching to explicitly timed viewer composition.
     let time = h.ctx.input(|input| input.time) + 1.0;
-    let fit = composed(&mut h,time);
+    let fit = composed(&mut h, time);
     assert!(fit.pixels.is_some());
-    assert!(h.state().histogram.cached_data().is_some(),"accepted device histogram is visible");
+    assert!(
+        h.state().histogram.cached_data().is_some(),
+        "accepted device histogram is visible"
+    );
     h.state_mut().viewer.set_zoom_percent(200.0);
-    let magnified = composed(&mut h,time + 1.0);
+    let magnified = composed(&mut h, time + 1.0);
     assert!(magnified.pixels.is_some());
-    assert_eq!(accepted.to_host(h.state().backend.as_ref()).unwrap().data,samples.data);
+    assert_eq!(
+        accepted.to_host(h.state().backend.as_ref()).unwrap().data,
+        samples.data
+    );
     let saved = directory.path().join("accepted.tiff");
     h.state_mut().save_to_path(&saved);
-    assert!(saved.exists(),"{}",h.state().status);
+    assert!(saved.exists(), "{}", h.state().status);
     let bytes = std::fs::read(&saved).unwrap();
     h.state_mut().viewer.set_zoom_percent(100.0);
-    composed(&mut h,time + 2.0);
+    composed(&mut h, time + 2.0);
     h.state_mut().save_to_path(&saved);
-    assert_eq!(std::fs::read(&saved).unwrap(),bytes,"view changes must not change Save samples");
-    assert_eq!(accepted.to_host(h.state().backend.as_ref()).unwrap().data,samples.data);
+    assert_eq!(
+        std::fs::read(&saved).unwrap(),
+        bytes,
+        "view changes must not change Save samples"
+    );
+    assert_eq!(
+        accepted.to_host(h.state().backend.as_ref()).unwrap().data,
+        samples.data
+    );
     // The real rotation caller publishes a device presentation source, but
     // keeps the unturned import for Scan: orientation must apply exactly once.
     super::click(&mut h, "cw rotate");
@@ -1109,7 +1201,10 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
         panic!("GPU input viewer must retain device-rotated source samples");
     };
     let expected_source = original.rotated_quarter_turns(3);
-    assert_eq!((presentation.width(), presentation.height()), (original.height, original.width));
+    assert_eq!(
+        (presentation.width(), presentation.height()),
+        (original.height, original.width)
+    );
     let presentation_samples = presentation.to_host(h.state().backend.as_ref()).unwrap();
     for (&actual, &expected) in presentation_samples.data.iter().zip(&expected_source.data) {
         assert_eq!(actual as f32, expected as f32);
@@ -1120,15 +1215,24 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     // accepted. Wait for the request to dispatch and accept a Scan, not merely
     // for the still-idle worker and that previous capped Preview carrier.
     wait_until(&mut h, |a| {
-        !a.dirty && !a.force_preview && a.render_job.is_none()
-            && a.output_retained.is_some() && a.status.to_string().starts_with("Scan ·")
+        !a.dirty
+            && !a.force_preview
+            && a.render_job.is_none()
+            && a.output_retained.is_some()
+            && a.status.to_string().starts_with("Scan ·")
     });
     let turned = h.state().output_retained.clone().unwrap();
     let turned_samples = turned.to_host(h.state().backend.as_ref()).unwrap();
     let expected_scan = samples.rotated_quarter_turns(3);
-    assert_eq!((turned_samples.width, turned_samples.height), (expected_scan.width, expected_scan.height));
+    assert_eq!(
+        (turned_samples.width, turned_samples.height),
+        (expected_scan.width, expected_scan.height)
+    );
     for (&actual, &expected) in turned_samples.data.iter().zip(&expected_scan.data) {
-        assert!((actual - expected).abs() < 2e-6, "rotation must not be applied twice");
+        assert!(
+            (actual - expected).abs() < 2e-6,
+            "rotation must not be applied twice"
+        );
     }
     let time = h.ctx.input(|input| input.time) + 1.0;
     assert!(composed(&mut h, time).pixels.is_some());
@@ -1142,19 +1246,41 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     super::click(&mut h, "ccw rotate");
     // Returning to zero does not need an upload, but its display declaration
     // is still resolved before the new orientation can be accepted.
-    assert!(h.state().status.to_string().starts_with("Viewer input error:"), "{}", h.state().status);
+    assert!(
+        h.state()
+            .status
+            .to_string()
+            .starts_with("Viewer input error:"),
+        "{}",
+        h.state().status
+    );
     assert_eq!(h.state().input_rotation, 3);
     assert_eq!(h.state().input_epoch, epoch);
     assert_eq!(h.state().calibration_epoch, calibration_epoch);
     assert!(h.state().image.as_ref().unwrap().same_source(&source));
-    assert!(h.state().oriented_input.as_ref().unwrap().same_source(&oriented));
+    assert!(
+        h.state()
+            .oriented_input
+            .as_ref()
+            .unwrap()
+            .same_source(&oriented)
+    );
     let still_accepted = h.state().output_retained.as_ref().unwrap();
-    assert!(Arc::ptr_eq(still_accepted.payload().unwrap(), turned.payload().unwrap()));
+    assert!(Arc::ptr_eq(
+        still_accepted.payload().unwrap(),
+        turned.payload().unwrap()
+    ));
     h.state_mut().params.io.input_color_space = declaration;
     super::click(&mut h, "ccw rotate");
     assert_eq!(h.state().input_rotation, 0);
     assert!(h.state().image.as_ref().unwrap().same_source(&source));
-    assert!(h.state().oriented_input.as_ref().unwrap().same_source(&source));
+    assert!(
+        h.state()
+            .oriented_input
+            .as_ref()
+            .unwrap()
+            .same_source(&source)
+    );
     assert_eq!(source.host_image().unwrap().data, original.data);
     wait_until(&mut h, |a| a.render_job.is_none() && !a.force_preview);
     // A real active Fotufilm request must retain the same worker observation
@@ -1171,15 +1297,23 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
     }
     super::click(&mut h, "SCAN");
     wait_until(&mut h, |a| {
-        !a.dirty && !a.force_preview && a.render_job.is_none()
-            && a.output_retained.is_some() && a.status.to_string().starts_with("Scan ·")
+        !a.dirty
+            && !a.force_preview
+            && a.render_job.is_none()
+            && a.output_retained.is_some()
+            && a.status.to_string().starts_with("Scan ·")
     });
     let report = assert_retained_gpu_report(
-        h.state(), &directory.path().join("fotufilm-scan-report.json"), "scan",
+        h.state(),
+        &directory.path().join("fotufilm-scan-report.json"),
+        "scan",
         [original.width, original.height],
     );
     let grain = &report.configuration.render.as_ref().unwrap().grain;
     assert!(grain.active);
-    assert_eq!(grain.engine, spektrafilm_core::telemetry::GrainEngine::Fotufilm);
-    eframe::App::on_exit(h.state_mut(),None);
+    assert_eq!(
+        grain.engine,
+        spektrafilm_core::telemetry::GrainEngine::Fotufilm
+    );
+    eframe::App::on_exit(h.state_mut(), None);
 }

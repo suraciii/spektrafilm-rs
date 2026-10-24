@@ -16,30 +16,35 @@ impl Pipeline {
     ///
     /// Metering is a full-source reduction. A selected GPU must provide its
     /// device meter; only a CPU backend may run the host reference.
-    pub(super) fn meter_autoexposure(&self, image: &ImageBuf, backend: &dyn ComputeBackend) -> Result<f64, String> {
+    pub(super) fn meter_autoexposure(
+        &self,
+        image: &ImageBuf,
+        backend: &dyn ComputeBackend,
+    ) -> Result<f64, String> {
         if !self.params.camera.auto_exposure {
             return Ok(0.0);
         }
         let space = spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)
             .expect("validated input color space");
-        let device = backend
-            .meter_autoexposure(
-                image,
-                &spektrafilm_backend::MeterAutoexposureParams {
-                    width: image.width,
-                    height: image.height,
-                    max_size: crate::stages::filming::MAX_SIZE as u32,
-                    y_row: space.matrix_rgb_to_xyz[1],
-                    cctf_kind: self
-                        .params
-                        .io
-                        .input_cctf_decoding
-                        .then(|| spektrafilm_backend::cctf_kind(space.cctf)),
-                    method: self.params.camera.auto_exposure_method.clone(),
-                    mid_grey: crate::stages::filming::MID_GREY,
-                },
-            )?;
-        if let Some(ev) = device { return Ok(ev); }
+        let device = backend.meter_autoexposure(
+            image,
+            &spektrafilm_backend::MeterAutoexposureParams {
+                width: image.width,
+                height: image.height,
+                max_size: crate::stages::filming::MAX_SIZE as u32,
+                y_row: space.matrix_rgb_to_xyz[1],
+                cctf_kind: self
+                    .params
+                    .io
+                    .input_cctf_decoding
+                    .then(|| spektrafilm_backend::cctf_kind(space.cctf)),
+                method: self.params.camera.auto_exposure_method.clone(),
+                mid_grey: crate::stages::filming::MID_GREY,
+            },
+        )?;
+        if let Some(ev) = device {
+            return Ok(ev);
+        }
         if backend.is_gpu() {
             // Name the resource limit when available; a declined device
             // meter never authorizes the host reference after GPU selection.
@@ -51,9 +56,14 @@ impl Pipeline {
             });
         }
         let _meter = crate::stages::StageObservation::cpu(
-            backend, "metering", spektrafilm_backend::telemetry::CpuReason::BackendDefault,
+            backend,
+            "metering",
+            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
-        Ok(crate::stages::filming::meter_autoexposure_ev(image, &self.params))
+        Ok(crate::stages::filming::meter_autoexposure_ev(
+            image,
+            &self.params,
+        ))
     }
 
     /// Metering plus the reference exposure multiply under the `metering`

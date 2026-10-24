@@ -1,7 +1,7 @@
-use super::grain::raster::{paged_transport, RasterStorage};
-use super::grain::v1::blur::{build_grain_blur_paged_with_scratch, GrainBlurState as BlurJob};
+use super::grain::raster::{RasterStorage, paged_transport};
+use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged_with_scratch};
+use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, pointwise_job};
 use super::paged::ImagePage;
-use super::highlight::{image_transport_bytes, pointwise_job, PointwiseAccess, PointwiseJob};
 use super::*;
 
 /// Device scatter and multi-bounce halation.
@@ -65,13 +65,30 @@ fn per_channel_job(
     label: &str,
 ) -> Result<PointwiseJob, String> {
     pointwise_job(
-        backend, u64::from(n_pixels), 12, include_str!("add_scaled_per_channel.wgsl"),
+        backend,
+        u64::from(n_pixels),
+        12,
+        include_str!("add_scaled_per_channel.wgsl"),
         &ChannelScaleParams {
-            n_pixels, clear_first: u32::from(clear_first), _pad1: 0, _pad2: 0,
+            n_pixels,
+            clear_first: u32::from(clear_first),
+            _pad1: 0,
+            _pad2: 0,
             scale: [scale[0], scale[1], scale[2], 0.0],
         },
-        &[(src, PointwiseAccess::Read), (dst, if clear_first { PointwiseAccess::Write } else { PointwiseAccess::ReadWrite })],
-        None, label,
+        &[
+            (src, PointwiseAccess::Read),
+            (
+                dst,
+                if clear_first {
+                    PointwiseAccess::Write
+                } else {
+                    PointwiseAccess::ReadWrite
+                },
+            ),
+        ],
+        None,
+        label,
     )
 }
 
@@ -113,8 +130,17 @@ pub(super) fn build_halation_state(
             }
         });
         let core = build_grain_blur_paged_with_scratch(
-            backend, width, height, buf_b, &buf_c, Some(&blur_scratch), core_sigma, 0, 0,
-        ).map_err(|e| format!("halation scatter core Gaussian: {e}"))?;
+            backend,
+            width,
+            height,
+            buf_b,
+            &buf_c,
+            Some(&blur_scratch),
+            core_sigma,
+            0,
+            0,
+        )
+        .map_err(|e| format!("halation scatter core Gaussian: {e}"))?;
         // `acc = (1-wt)·core`
         let init = per_channel_job(
             backend,
@@ -135,8 +161,17 @@ pub(super) fn build_halation_state(
         for (amp, ratio) in spektrafilm_math::gaussian::EXPONENTIAL_GAUSSIAN_FITS {
             let sigma: [f64; 3] = std::array::from_fn(|c| tail_lambda[c] * ratio);
             let blur = build_grain_blur_paged_with_scratch(
-                backend, width, height, buf_b, &buf_c, Some(&blur_scratch), sigma, 0, 0,
-            ).map_err(|e| format!("halation scatter tail Gaussian: {e}"))?;
+                backend,
+                width,
+                height,
+                buf_b,
+                &buf_c,
+                Some(&blur_scratch),
+                sigma,
+                0,
+                0,
+            )
+            .map_err(|e| format!("halation scatter tail Gaussian: {e}"))?;
             let accumulate = per_channel_job(
                 backend,
                 n_pixels as u32,
@@ -164,7 +199,10 @@ pub(super) fn build_halation_state(
             amount: [f32; 4],
         }
         let finish = pointwise_job(
-            backend, n_pixels as u64, 12, include_str!("scatter_finish.wgsl"),
+            backend,
+            n_pixels as u64,
+            12,
+            include_str!("scatter_finish.wgsl"),
             &ScatterFinishParams {
                 n_pixels: n_pixels as u32,
                 _pad0: 0,
@@ -180,8 +218,12 @@ pub(super) fn build_halation_state(
                     }
                 }),
             },
-            &[(&buf_d, PointwiseAccess::Read), (buf_b, PointwiseAccess::ReadWrite)],
-            None, "halation_scatter_finish",
+            &[
+                (&buf_d, PointwiseAccess::Read),
+                (buf_b, PointwiseAccess::ReadWrite),
+            ],
+            None,
+            "halation_scatter_finish",
         )?;
         Some(ScatterPasses {
             core,
@@ -198,7 +240,9 @@ pub(super) fn build_halation_state(
     let halation_source_active = hp.source_compression > 0.0
         && hp.halation_n_bounces > 0
         && hp.halation_a_tot.iter().any(|&value| value > 0.0);
-    let buf_e = halation_source_active.then(|| paged_transport(backend, img_bytes, "halation_e")).transpose()?;
+    let buf_e = halation_source_active
+        .then(|| paged_transport(backend, img_bytes, "halation_e"))
+        .transpose()?;
     let halation_source = if halation_source_active {
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -209,15 +253,25 @@ pub(super) fn build_halation_state(
             _pad1: u32,
         }
         Some(pointwise_job(
-            backend, n_pixels as u64, 12, include_str!("source_response.wgsl"),
+            backend,
+            n_pixels as u64,
+            12,
+            include_str!("source_response.wgsl"),
             &SourceParams {
                 n_pixels: n_pixels as u32,
                 compression: hp.source_compression,
                 _pad0: 0,
                 _pad1: 0,
             },
-            &[(buf_b, PointwiseAccess::Read), (buf_e.as_ref().expect("active halation source"), PointwiseAccess::Write)],
-            None, "halation_source_response",
+            &[
+                (buf_b, PointwiseAccess::Read),
+                (
+                    buf_e.as_ref().expect("active halation source"),
+                    PointwiseAccess::Write,
+                ),
+            ],
+            None,
+            "halation_source_response",
         )?)
     } else {
         None
@@ -230,8 +284,8 @@ pub(super) fn build_halation_state(
     // `1 + a_tot[c]`. A channel whose first sigma is non-positive is skipped
     // for the add but still participates in renormalization; both effects
     // are reproduced here.
-    let halation_runs = hp.halation_n_bounces >= 1
-        && hp.halation_a_tot.iter().any(|&value| value > 0.0);
+    let halation_runs =
+        hp.halation_n_bounces >= 1 && hp.halation_a_tot.iter().any(|&value| value > 0.0);
     let a_eff: [f32; 3] = std::array::from_fn(|c| {
         if hp.halation_first_sigma_px[c] > 0.0 {
             hp.halation_a_tot[c]
@@ -259,9 +313,20 @@ pub(super) fn build_halation_state(
                 let sigma: [f64; 3] = std::array::from_fn(|c| {
                     (f64::from(hp.halation_first_sigma_px[c]) * ((k as f64) + 1.0).sqrt()).max(1e-6)
                 });
-                blurs.push(build_grain_blur_paged_with_scratch(
-                    backend, width, height, halation_src, &buf_c, Some(&blur_scratch), sigma, 0, 0,
-                ).map_err(|e| format!("halation bounce {k} Gaussian: {e}"))?);
+                blurs.push(
+                    build_grain_blur_paged_with_scratch(
+                        backend,
+                        width,
+                        height,
+                        halation_src,
+                        &buf_c,
+                        Some(&blur_scratch),
+                        sigma,
+                        0,
+                        0,
+                    )
+                    .map_err(|e| format!("halation bounce {k} Gaussian: {e}"))?,
+                );
                 accumulate.push(per_channel_job(
                     backend,
                     n_pixels as u32,
@@ -294,7 +359,10 @@ pub(super) fn build_halation_state(
                 inv_factor: [f32; 4],
             }
             Some(pointwise_job(
-                backend, n_pixels as u64, 12, include_str!("halation_renormalize.wgsl"),
+                backend,
+                n_pixels as u64,
+                12,
+                include_str!("halation_renormalize.wgsl"),
                 &RenormParams {
                     n_pixels: n_pixels as u32,
                     _pad: 0,
@@ -306,9 +374,13 @@ pub(super) fn build_halation_state(
                         0.0,
                     ],
                 },
-                &[(buf_b, PointwiseAccess::ReadWrite)], None, "halation_renormalize",
+                &[(buf_b, PointwiseAccess::ReadWrite)],
+                None,
+                "halation_renormalize",
             )?)
-        } else { None };
+        } else {
+            None
+        };
         Some(HalationPasses {
             blurs,
             accumulate,
@@ -341,14 +413,20 @@ impl HalationState {
             }
             scatter.finish.execute(backend)?;
         }
-        if let Some(source) = &self.halation_source { source.execute(backend)?; }
+        if let Some(source) = &self.halation_source {
+            source.execute(backend)?;
+        }
         if let Some(halation) = &self.halation {
             for (blur, accumulate) in halation.blurs.iter().zip(&halation.accumulate) {
                 blur.submit(backend)?;
                 accumulate.execute(backend)?;
             }
-            if !halation.blurs.is_empty() { halation.final_add.execute(backend)?; }
-            if let Some(renormalize) = &halation.renormalize { renormalize.execute(backend)?; }
+            if !halation.blurs.is_empty() {
+                halation.final_add.execute(backend)?;
+            }
+            if let Some(renormalize) = &halation.renormalize {
+                renormalize.execute(backend)?;
+            }
         }
         Ok(())
     }

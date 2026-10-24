@@ -24,8 +24,15 @@ impl App {
         if !self.stale_save_confirmation {
             return;
         }
-        let dimensions = self.output_retained.as_ref().map(|image| [image.width(), image.height()])
-            .or_else(|| self.output_image.as_ref().map(|image| [image.width, image.height]));
+        let dimensions = self
+            .output_retained
+            .as_ref()
+            .map(|image| [image.width(), image.height()])
+            .or_else(|| {
+                self.output_image
+                    .as_ref()
+                    .map(|image| [image.width, image.height])
+            });
         let Some([width, height]) = dimensions else {
             self.stale_save_confirmation = false;
             return;
@@ -148,12 +155,21 @@ impl App {
         };
         let pixels = match if let Some(retained) = self.output_retained.as_ref() {
             image_io::convert_retained_samples_with_backend(
-                retained, destination, encoded, kind, self.backend.as_ref(),
+                retained,
+                destination,
+                encoded,
+                kind,
+                self.backend.as_ref(),
             )
         } else {
             image_io::convert_samples_with_backend(
-                self.output_image.as_ref().expect("accepted CPU output"), &self.output_color_space, self.output_cctf_encoding,
-                destination, encoded, kind, self.backend.as_ref(),
+                self.output_image.as_ref().expect("accepted CPU output"),
+                &self.output_color_space,
+                self.output_cctf_encoding,
+                destination,
+                encoded,
+                kind,
+                self.backend.as_ref(),
             )
         } {
             Ok(image) => image,

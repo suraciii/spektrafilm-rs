@@ -348,6 +348,10 @@ impl App {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
+                        let image = image.interpreted(
+                            &pipeline.params().io.input_color_space,
+                            pipeline.params().io.input_cctf_decoding,
+                        ).map_err(anyhow::Error::msg)?;
                         let host_input = (|| -> Result<Option<spektrafilm_math::image::ImageBuf>> {
                             if backend.is_gpu() {
                                 return Ok(None);

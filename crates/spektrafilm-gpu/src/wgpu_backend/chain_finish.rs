@@ -26,19 +26,21 @@ impl WgpuBackend {
             col2: [f32; 4],
         }
         let columns = pack_matrix_columns(&params.matrix);
-        let uniform = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("cctf_transfer_params"),
-            contents: bytemuck::bytes_of(&TransferParams {
-                n_pixels,
-                mode: u32::from(params.decode),
-                cctf_kind: params.cctf_kind,
-                _pad: 0,
-                col0: columns[0],
-                col1: columns[1],
-                col2: columns[2],
-            }),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
-        });
+        let uniform = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("cctf_transfer_params"),
+                contents: bytemuck::bytes_of(&TransferParams {
+                    n_pixels,
+                    mode: u32::from(params.decode),
+                    cctf_kind: params.cctf_kind,
+                    _pad: 0,
+                    col0: columns[0],
+                    col1: columns[1],
+                    col2: columns[2],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
+            });
         let pipeline = self.cached_pipeline(
             concat!(
                 include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
@@ -85,23 +87,25 @@ impl WgpuBackend {
         }
         let to = pack_matrix_columns(&params.to_lab);
         let from = pack_matrix_columns(&params.from_lab);
-        let uniform = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("cmyk_params"),
-            contents: bytemuck::bytes_of(&CmykParams {
-                n_pixels,
-                cctf_kind: params.cctf_kind,
-                encoded: u32::from(params.encoded),
-                _pad0: 0,
-                strength_pad: [params.strength, 0.0, 0.0, 0.0],
-                to_col0: to[0],
-                to_col1: to[1],
-                to_col2: to[2],
-                from_col0: from[0],
-                from_col1: from[1],
-                from_col2: from[2],
-            }),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
-        });
+        let uniform = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("cmyk_params"),
+                contents: bytemuck::bytes_of(&CmykParams {
+                    n_pixels,
+                    cctf_kind: params.cctf_kind,
+                    encoded: u32::from(params.encoded),
+                    _pad0: 0,
+                    strength_pad: [params.strength, 0.0, 0.0, 0.0],
+                    to_col0: to[0],
+                    to_col1: to[1],
+                    to_col2: to[2],
+                    from_col0: from[0],
+                    from_col1: from[1],
+                    from_col2: from[2],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
+            });
         let pipeline = self.cached_pipeline(
             concat!(
                 include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),

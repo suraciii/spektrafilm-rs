@@ -15,11 +15,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     if pixel >= p.header.x { return; }
     var x = vec3<f64>(input[3u*pixel],input[3u*pixel+1u],input[3u*pixel+2u]);
     if p.flags.y != 0u {
-        let stops = (x - vec3<f64>(p.operator.x)) / 0.3010299956639812;
+        let stops = (x - vec3<f64>(p.operator_terms.x)) / 0.3010299956639812;
         let mean = ((stops.x + stops.y) + stops.z) / 3.0;
-        let common = p.operator.y * mean + p.operator.z;
-        x = vec3<f64>(p.operator.x) + 0.3010299956639812 * (stops + vec3<f64>(common) + p.color.xyz);
-        if !finite64(mean) || !finite64(common) { atomicOr(&status,16u); }
+        let operator_shift = p.operator_terms.y * mean + p.operator_terms.z;
+        x = vec3<f64>(p.operator_terms.x) + 0.3010299956639812 * (stops + vec3<f64>(operator_shift) + p.color.xyz);
+        if !finite64(mean) || !finite64(operator_shift) { atomicOr(&status,16u); }
     }
     var linear_srgb = vec3<f64>(0.0);
     for (var c = 0u; c < 3u; c++) {
@@ -29,7 +29,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
         var t: f64;
         if z >= 0.0 { t = 1.0 / (1.0 + sf64_exp(-z)); }
         else { let a = sf64_exp(z); t = a / (1.0 + a); }
-        let positive = exp_m1(-2.302585092994046 * p.dmax[c] * (1.0 - t));
+        // Form density first, like CPU positive_tone: multiplying LN_10 by
+        // a valid huge dmax before the zero shoulder would overflow to NaN.
+        let tone_density = p.dmax[c] * (1.0 - t);
+        let positive = exp_m1(-2.302585092994046 * tone_density);
         linear_srgb[c] = (positive + p.denominator[c]) / p.denominator[c];
     }
     for (var c = 0u; c < 3u; c++) {

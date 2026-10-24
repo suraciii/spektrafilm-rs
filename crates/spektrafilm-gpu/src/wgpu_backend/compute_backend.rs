@@ -9,13 +9,23 @@ impl ComputeBackend for WgpuBackend {
     fn preparation_device_id(&self) -> Option<u64> {
         Some(self.backend_id)
     }
-    fn prepare_spectral_tc_lut(&self, p: &spektrafilm_backend::SpectralTcLutParams<'_>) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
+    fn prepare_spectral_tc_lut(
+        &self,
+        p: &spektrafilm_backend::SpectralTcLutParams<'_>,
+    ) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
         self.prepare_spectral_table_device(p).map(Some)
     }
-    fn prepare_gamut_table(&self, p: &spektrafilm_backend::GamutTableParams) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
+    fn prepare_gamut_table(
+        &self,
+        p: &spektrafilm_backend::GamutTableParams,
+    ) -> Result<Option<spektrafilm_backend::PreparedTable>, String> {
         self.prepare_gamut_table_device(p).map(Some)
     }
-    fn remap_input_gamut_table(&self, source: &spektrafilm_backend::PreparedTable, p: &spektrafilm_backend::InputGamutTableParams<'_>) -> Result<spektrafilm_backend::PreparedTable, String> {
+    fn remap_input_gamut_table(
+        &self,
+        source: &spektrafilm_backend::PreparedTable,
+        p: &spektrafilm_backend::InputGamutTableParams<'_>,
+    ) -> Result<spektrafilm_backend::PreparedTable, String> {
         self.remap_input_gamut_table_gpu(source, p)
     }
     fn observation_context(&self) -> Option<&ObservationContext> {
@@ -47,6 +57,7 @@ impl ComputeBackend for WgpuBackend {
             device,
             queue,
             pipeline_cache: self.pipeline_cache.clone(),
+            scan_cache: self.scan_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
             explicit: self.explicit,
@@ -55,7 +66,8 @@ impl ComputeBackend for WgpuBackend {
         }))
     }
     fn with_cancellation(
-        &self, cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        &self,
+        cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Option<Box<dyn ComputeBackend + '_>> {
         let mut backend = self.derived_explicit();
         backend.explicit = self.explicit;
@@ -63,7 +75,11 @@ impl ComputeBackend for WgpuBackend {
         backend.cancellation = cancellation;
         Some(Box::new(backend))
     }
-    fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> Result<ImageBuf, String> {
+    fn colorspace_convert(
+        &self,
+        img: &ImageBuf,
+        matrix: &[[f32; 3]; 3],
+    ) -> Result<ImageBuf, String> {
         let scope = if self.device.context.enabled() {
             Some(self.device.context.scope(
                 "colorspace_convert",
@@ -115,11 +131,17 @@ impl ComputeBackend for WgpuBackend {
             2,
             "colorspace_convert",
         );
-        let result = result.ok_or_else(|| "colorspace_convert: device resource limits prevent dispatch".to_owned())?;
+        let result = result.ok_or_else(|| {
+            "colorspace_convert: device resource limits prevent dispatch".to_owned()
+        })?;
         if let Some(s) = &scope {
             s.context().record_executor(Executor::Gpu, None);
         }
-        Ok(ImageBuf::from_data(img.width, img.height, f32_to_scalars(result)))
+        Ok(ImageBuf::from_data(
+            img.width,
+            img.height,
+            f32_to_scalars(result),
+        ))
     }
     fn cctf_encode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String> {
         let scope = if self.device.context.enabled() {
@@ -151,11 +173,17 @@ impl ComputeBackend for WgpuBackend {
             2,
             "cctf_encode_srgb",
         );
-        let result = result.ok_or_else(|| "cctf_encode_srgb: device resource limits prevent dispatch".to_owned())?;
+        let result = result.ok_or_else(|| {
+            "cctf_encode_srgb: device resource limits prevent dispatch".to_owned()
+        })?;
         if let Some(s) = &scope {
             s.context().record_executor(Executor::Gpu, None);
         }
-        Ok(ImageBuf::from_data(img.width, img.height, f32_to_scalars(result)))
+        Ok(ImageBuf::from_data(
+            img.width,
+            img.height,
+            f32_to_scalars(result),
+        ))
     }
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String> {
         let scope = if self.device.context.enabled() {
@@ -187,11 +215,17 @@ impl ComputeBackend for WgpuBackend {
             2,
             "cctf_decode_srgb",
         );
-        let result = result.ok_or_else(|| "cctf_decode_srgb: device resource limits prevent dispatch".to_owned())?;
+        let result = result.ok_or_else(|| {
+            "cctf_decode_srgb: device resource limits prevent dispatch".to_owned()
+        })?;
         if let Some(s) = &scope {
             s.context().record_executor(Executor::Gpu, None);
         }
-        Ok(ImageBuf::from_data(img.width, img.height, f32_to_scalars(result)))
+        Ok(ImageBuf::from_data(
+            img.width,
+            img.height,
+            f32_to_scalars(result),
+        ))
     }
     fn grain_v2(
         &self,
@@ -216,21 +250,41 @@ impl ComputeBackend for WgpuBackend {
         // bounded field footprint and coefficient limits can reject work.
         Some(WgpuBackend::dye_field(self, img, params))
     }
-    fn dye_field_with_response(&self, image: &ImageBuf, params: &spektrafilm_backend::dye_params::DyeGpuParams, response: &spektrafilm_backend::DyeResponseGpuParams<'_>) -> Option<Result<ImageBuf, String>> {
-        Some(WgpuBackend::dye_field_with_response(self, image, params, response))
+    fn dye_field_with_response(
+        &self,
+        image: &ImageBuf,
+        params: &spektrafilm_backend::dye_params::DyeGpuParams,
+        response: &spektrafilm_backend::DyeResponseGpuParams<'_>,
+    ) -> Option<Result<ImageBuf, String>> {
+        Some(WgpuBackend::dye_field_with_response(
+            self, image, params, response,
+        ))
     }
-    fn dye_aperture_collapse(&self, image: &ImageBuf, factor: u32) -> Option<Result<ImageBuf, String>> {
+    fn dye_aperture_collapse(
+        &self,
+        image: &ImageBuf,
+        factor: u32,
+    ) -> Option<Result<ImageBuf, String>> {
         Some(WgpuBackend::dye_aperture_collapse(self, image, factor))
     }
-    fn dye_log10(&self, image: &ImageBuf) -> Option<Result<ImageBuf, String>> { Some(WgpuBackend::dye_log10(self, image)) }
-    fn dye_crop(&self, image: &ImageBuf, rect: [u32; 4]) -> Option<Result<ImageBuf, String>> { Some(WgpuBackend::dye_crop(self, image, rect)) }
+    fn dye_log10(&self, image: &ImageBuf) -> Option<Result<ImageBuf, String>> {
+        Some(WgpuBackend::dye_log10(self, image))
+    }
+    fn dye_crop(&self, image: &ImageBuf, rect: [u32; 4]) -> Option<Result<ImageBuf, String>> {
+        Some(WgpuBackend::dye_crop(self, image, rect))
+    }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> Result<ImageBuf, String> {
         self.gaussian_blur_gpu(img, sigma)
     }
     fn gaussian_blur_multi(&self, img: &ImageBuf, sigmas: &[f32]) -> Result<Vec<ImageBuf>, String> {
         self.gaussian_blur_multi_gpu(img, sigmas)
     }
-    fn table_lookup(&self, img: &ImageBuf, table_x: &[f32], table_y: &[[f32; 3]]) -> Result<ImageBuf, String> {
+    fn table_lookup(
+        &self,
+        img: &ImageBuf,
+        table_x: &[f32],
+        table_y: &[[f32; 3]],
+    ) -> Result<ImageBuf, String> {
         let scope = if self.device.context.enabled() {
             Some(self.device.context.scope(
                 "table_lookup",
@@ -273,11 +327,16 @@ impl ComputeBackend for WgpuBackend {
             4,
             "table_lookup",
         );
-        let result = result.ok_or_else(|| "table_lookup: device resource limits prevent dispatch".to_owned())?;
+        let result = result
+            .ok_or_else(|| "table_lookup: device resource limits prevent dispatch".to_owned())?;
         if let Some(s) = &scope {
             s.context().record_executor(Executor::Gpu, None);
         }
-        Ok(ImageBuf::from_data(img.width, img.height, f32_to_scalars(result)))
+        Ok(ImageBuf::from_data(
+            img.width,
+            img.height,
+            f32_to_scalars(result),
+        ))
     }
     fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> Result<ImageBuf, String> {
         let scope = if self.device.context.enabled() {
@@ -379,7 +438,8 @@ impl ComputeBackend for WgpuBackend {
             8, // output buffer index
             "scan_spectral",
         );
-        let result = result.ok_or_else(|| "scan_spectral: device resource limits prevent dispatch".to_owned())?;
+        let result = result
+            .ok_or_else(|| "scan_spectral: device resource limits prevent dispatch".to_owned())?;
 
         Ok(ImageBuf::from_data(
             density_cmy.width,
@@ -426,7 +486,6 @@ impl ComputeBackend for WgpuBackend {
             _pad: f32,
         }
 
-
         // GPU shaders are f32-only — narrow f64 inputs at the shader boundary.
         // See `sanitize_spectral_inputs` for the NaN-handling story (Metal fast-math).
         let (cd_flat, mut bd) = sanitize_spectral_inputs(channel_density, base_density, n_wl);
@@ -458,11 +517,19 @@ impl ComputeBackend for WgpuBackend {
         backend.optical_diffusion_gpu(img, params).map(Some)
     }
 
-    fn enlarger_spectral_lut(&self, image: &ImageBuf, params: &spektrafilm_backend::EnlargerSpectralLutGpuParams<'_>) -> Result<Option<ImageBuf>, String> {
+    fn enlarger_spectral_lut(
+        &self,
+        image: &ImageBuf,
+        params: &spektrafilm_backend::EnlargerSpectralLutGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
         self.enlarger_resident(image, params).map(Some)
     }
 
-    fn scanner_spectral_lut(&self, image: &ImageBuf, params: &spektrafilm_backend::ScannerSpectralLutGpuParams<'_>) -> Result<Option<ImageBuf>, String> {
+    fn scanner_spectral_lut(
+        &self,
+        image: &ImageBuf,
+        params: &spektrafilm_backend::ScannerSpectralLutGpuParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
         let (backend, _batch) = self.observed_batch("scanner_spectral_lut");
         backend.scanner_resident(image, params).map(Some)
     }
@@ -539,9 +606,15 @@ impl ComputeBackend for WgpuBackend {
             3, // output buffer index
             "front_transform",
         );
-        let result = result.ok_or_else(|| "hanatos2025_rgb_to_raw: device resource limits prevent dispatch".to_owned())?;
+        let result = result.ok_or_else(|| {
+            "hanatos2025_rgb_to_raw: device resource limits prevent dispatch".to_owned()
+        })?;
 
-        Ok(ImageBuf::from_data(image.width, image.height, f32_to_scalars(result)))
+        Ok(ImageBuf::from_data(
+            image.width,
+            image.height,
+            f32_to_scalars(result),
+        ))
     }
 
     fn density_curve_interp(
@@ -597,9 +670,15 @@ impl ComputeBackend for WgpuBackend {
             4, // output buffer index
             "film_density",
         );
-        let result = result.ok_or_else(|| "density_curve_interp: device resource limits prevent dispatch".to_owned())?;
+        let result = result.ok_or_else(|| {
+            "density_curve_interp: device resource limits prevent dispatch".to_owned()
+        })?;
 
-        Ok(ImageBuf::from_data(log_raw.width, log_raw.height, f32_to_scalars(result)))
+        Ok(ImageBuf::from_data(
+            log_raw.width,
+            log_raw.height,
+            f32_to_scalars(result),
+        ))
     }
 
     fn mix_output(
@@ -654,7 +733,8 @@ impl ComputeBackend for WgpuBackend {
             1,
             "output_mix",
         );
-        let mixed = mixed.ok_or_else(|| "output_mix: device resource limits prevent dispatch".to_owned())?;
+        let mixed = mixed
+            .ok_or_else(|| "output_mix: device resource limits prevent dispatch".to_owned())?;
         if let Some(s) = &scope {
             s.context().record_executor(Executor::Gpu, None);
         }
@@ -745,7 +825,9 @@ impl ComputeBackend for WgpuBackend {
             1,
             "convert_colorspace",
         );
-        let converted = converted.ok_or_else(|| "convert_colorspace: device resource limits prevent dispatch".to_owned())?;
+        let converted = converted.ok_or_else(|| {
+            "convert_colorspace: device resource limits prevent dispatch".to_owned()
+        })?;
         if let Some(s) = &scope {
             s.context().record_executor(Executor::Gpu, None);
         }
@@ -829,33 +911,78 @@ impl ComputeBackend for WgpuBackend {
         sensor: &spektrafilm_backend::RawSensor,
         params: &spektrafilm_backend::RawGpuParams,
     ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
-        let scope = self.device.context.scope("raw_sensor", ObservationKind::Stage, self.device.context.purpose());
+        let scope = self.device.context.scope(
+            "raw_sensor",
+            ObservationKind::Stage,
+            self.device.context.purpose(),
+        );
         scope.context().record_executor(Executor::Gpu, None);
         Ok(Some(self.raw_process_sensor_retained_gpu(sensor, params)?))
     }
 
-    fn viewer_fit_retained(&self, i: &spektrafilm_backend::DeviceImage, w: u32, h: u32, d: Option<&spektrafilm_backend::DisplayTransformGpuParams>, c: Option<&spektrafilm_backend::ViewerIccGpuParams<'_>>) -> Result<spektrafilm_backend::DeviceImage, String> {
+    fn viewer_fit_retained(
+        &self,
+        i: &spektrafilm_backend::DeviceImage,
+        w: u32,
+        h: u32,
+        d: Option<&spektrafilm_backend::DisplayTransformGpuParams>,
+        c: Option<&spektrafilm_backend::ViewerIccGpuParams<'_>>,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
         self.viewer_fit_gpu(i, w, h, d, c)
     }
-    fn viewer_full_source_retained(&self, i: &spektrafilm_backend::DeviceImage, p: &spektrafilm_backend::ViewerFullSourceGpuParams<'_>) -> Result<spektrafilm_backend::DeviceImage, String> {
+    fn viewer_full_source_retained(
+        &self,
+        i: &spektrafilm_backend::DeviceImage,
+        p: &spektrafilm_backend::ViewerFullSourceGpuParams<'_>,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
         self.viewer_full_gpu(i, p)
     }
-    fn viewer_compose_retained(&self, i: &spektrafilm_backend::DeviceImage, paper: Option<&spektrafilm_backend::DeviceImage>, previous: Option<&spektrafilm_backend::DeviceImage>, split: Option<&spektrafilm_backend::DeviceImage>, p: &spektrafilm_backend::ViewerComposeGpuParams) -> Result<Vec<[u8; 4]>, String> {
+    fn viewer_compose_retained(
+        &self,
+        i: Option<&spektrafilm_backend::DeviceImage>,
+        paper: Option<&spektrafilm_backend::DeviceImage>,
+        previous: Option<&spektrafilm_backend::DeviceImage>,
+        split: Option<&spektrafilm_backend::DeviceImage>,
+        p: &spektrafilm_backend::ViewerComposeGpuParams,
+    ) -> Result<Vec<[u8; 4]>, String> {
         self.viewer_compose_gpu(i, paper, previous, split, p)
     }
-    fn viewer_paper_retained(&self, w: u32, h: u32, logo: &[f32], lw: u32, lh: u32) -> Result<spektrafilm_backend::DeviceImage, String> {
+    fn viewer_paper_retained(
+        &self,
+        w: u32,
+        h: u32,
+        logo: &[f32],
+        lw: u32,
+        lh: u32,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
         self.viewer_paper_gpu(w, h, logo, lw, lh)
     }
-    fn inspect_retained_pixel(&self, i: &spektrafilm_backend::DeviceImage, x: u32, y: u32) -> Result<[f32; 3], String> {
-        self.viewer_inspect_gpu(i,x,y)
+    fn inspect_retained_pixel(
+        &self,
+        i: &spektrafilm_backend::DeviceImage,
+        x: u32,
+        y: u32,
+    ) -> Result<[f32; 3], String> {
+        self.viewer_inspect_gpu(i, x, y)
     }
-    fn retained_histogram(&self, image: &spektrafilm_backend::DeviceImage) -> Result<[[f32; 64]; 3], String> {
+    fn retained_histogram(
+        &self,
+        image: &spektrafilm_backend::DeviceImage,
+    ) -> Result<[[f32; 64]; 3], String> {
         self.retained_histogram_gpu(image)
     }
-    fn viewer_icc_retained(&self, i: &spektrafilm_backend::DeviceImage, p: &spektrafilm_backend::ViewerIccGpuParams<'_>) -> Result<spektrafilm_backend::DeviceImage, String> {
-        self.viewer_icc_gpu(i,p)
+    fn viewer_icc_retained(
+        &self,
+        i: &spektrafilm_backend::DeviceImage,
+        p: &spektrafilm_backend::ViewerIccGpuParams<'_>,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.viewer_icc_gpu(i, p)
     }
-    fn viewer_polaroid_retained(&self, i: &spektrafilm_backend::DeviceImage, c: [f32; 9]) -> Result<spektrafilm_backend::DeviceImage, String> {
+    fn viewer_polaroid_retained(
+        &self,
+        i: &spektrafilm_backend::DeviceImage,
+        c: [f32; 9],
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
         self.viewer_polaroid_gpu(i, c)
     }
 
@@ -1154,11 +1281,15 @@ impl ComputeBackend for WgpuBackend {
         let required = required_chain_buffers(params);
         let binding_limit = super::bounded::storage_binding_limit(self)?;
         if required.static_bytes > binding_limit {
-            return Err(format!("chain minimum coefficient working set requires {} bytes per binding; limit is {binding_limit}",
-                required.static_bytes));
+            return Err(format!(
+                "chain minimum coefficient working set requires {} bytes per binding; limit is {binding_limit}",
+                required.static_bytes
+            ));
         }
         if !params.gpu_blurs_supported() {
-            return Err("selected GPU chain cannot represent the requested blur working set".to_owned());
+            return Err(
+                "selected GPU chain cannot represent the requested blur working set".to_owned(),
+            );
         }
         Ok(Some(self.run_film_chain_retained(input, params)?))
     }
@@ -1208,9 +1339,12 @@ impl ComputeBackend for WgpuBackend {
         destination: &'static spektrafilm_math::colorspace::RgbColorSpace,
         domain: spektrafilm_backend::SampleDomain,
     ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
-        Ok(Some(
-            self.convert_colorspace_image(image, params, destination, domain)?,
-        ))
+        Ok(Some(self.convert_colorspace_image(
+            image,
+            params,
+            destination,
+            domain,
+        )?))
     }
 
     fn cmyk_retained(
@@ -1307,13 +1441,17 @@ mod tests {
         let image = ImageBuf::new(4, 4);
         let base_context = ObservationContext::new(CollectionMode::Summary);
         let observed = base.with_observation_context(base_context).unwrap();
-        observed.colorspace_convert(&image, &matrix).expect("base device colorspace conversion");
+        observed
+            .colorspace_convert(&image, &matrix)
+            .expect("base device colorspace conversion");
 
         let derived_context = ObservationContext::new(CollectionMode::Summary);
         let observed = derived
             .with_observation_context(derived_context.clone())
             .unwrap();
-        observed.colorspace_convert(&image, &matrix).expect("derived device colorspace conversion");
+        observed
+            .colorspace_convert(&image, &matrix)
+            .expect("derived device colorspace conversion");
         assert_eq!(
             derived_context.snapshot().totals.pipeline_cache_hit_count,
             Some(1),

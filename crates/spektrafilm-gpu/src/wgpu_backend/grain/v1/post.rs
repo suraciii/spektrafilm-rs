@@ -1,6 +1,6 @@
-use super::blur::{build_grain_blur_paged, GrainBlurState};
-use super::super::raster::{RasterCommands, RasterStorage, paged_transport, transport, uniform};
 use super::super::super::WgpuBackend;
+use super::super::raster::{RasterCommands, RasterStorage, paged_transport, transport, uniform};
+use super::blur::{GrainBlurState, build_grain_blur_paged};
 use spektrafilm_backend::GrainV1GpuParams;
 
 const SHARPEN_SHADER: &str = concat!(
@@ -24,78 +24,186 @@ pub(in crate::wgpu_backend) fn build_grain_post(
     density: &(impl RasterStorage + ?Sized),
     params: &GrainV1GpuParams,
 ) -> Result<GrainPostState, String> {
-    build_grain_post_with_limit(backend, width, height, density, params,
-        super::super::super::bounded::storage_binding_limit(backend)?)
+    build_grain_post_with_limit(
+        backend,
+        width,
+        height,
+        density,
+        params,
+        super::super::super::bounded::storage_binding_limit(backend)?,
+    )
 }
 
 fn build_grain_post_with_limit(
-    backend: &WgpuBackend, width: u32, height: u32, density: &(impl RasterStorage + ?Sized),
-    params: &GrainV1GpuParams, limit: u64,
+    backend: &WgpuBackend,
+    width: u32,
+    height: u32,
+    density: &(impl RasterStorage + ?Sized),
+    params: &GrainV1GpuParams,
+    limit: u64,
 ) -> Result<GrainPostState, String> {
-    let n = width.checked_mul(height).filter(|&n| n > 0 && n <= u32::MAX / 3)
+    let n = width
+        .checked_mul(height)
+        .filter(|&n| n > 0 && n <= u32::MAX / 3)
         .ok_or("grain post dimensions are not representable")?;
     let bytes = u64::from(n) * 12;
     let chunk = (limit / 12).min(u64::from(n)) as u32;
-    if chunk == 0 { return Err("grain post minimum RGB binding needs 12 bytes".into()); }
+    if chunk == 0 {
+        return Err("grain post minimum RGB binding needs 12 bytes".into());
+    }
     let source_window = transport(backend, u64::from(chunk) * 12, "grain_post_source_window")?;
     let output_window = transport(backend, u64::from(chunk) * 12, "grain_post_output_window")?;
     let mut before = RasterCommands::default();
     let mut after = RasterCommands::default();
-    let floor_pipe = backend.cached_pipeline(include_str!("post_floor_copy.wgsl"), &[
-        wgpu::BufferBindingType::Uniform,
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ]);
+    let floor_pipe = backend.cached_pipeline(
+        include_str!("post_floor_copy.wgsl"),
+        &[
+            wgpu::BufferBindingType::Uniform,
+            wgpu::BufferBindingType::Storage { read_only: true },
+            wgpu::BufferBindingType::Storage { read_only: false },
+        ],
+    );
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct FloorParams { dimensions: [u32; 4], minimum: [f32; 4] }
-    let floor = |commands: &mut RasterCommands, source: &dyn RasterStorage, destination: &dyn RasterStorage| {
+    struct FloorParams {
+        dimensions: [u32; 4],
+        minimum: [f32; 4],
+    }
+    let floor = |commands: &mut RasterCommands,
+                 source: &dyn RasterStorage,
+                 destination: &dyn RasterStorage| {
         for first in (0..n).step_by(chunk as usize) {
             let count = chunk.min(n - first);
-            let p = uniform(backend, &FloorParams { dimensions: [count, 0, 0, 0], minimum: [params.density_min[0] as f32, params.density_min[1] as f32, params.density_min[2] as f32, 0.0] });
-            commands.copy(source, u64::from(first) * 12, &source_window, 0, u64::from(count) * 12);
-            commands.dispatch(&floor_pipe, &[&p, &source_window, &output_window], count, false, backend);
-            commands.copy(&output_window, 0, destination, u64::from(first) * 12, u64::from(count) * 12);
+            let p = uniform(
+                backend,
+                &FloorParams {
+                    dimensions: [count, 0, 0, 0],
+                    minimum: [
+                        params.density_min[0] as f32,
+                        params.density_min[1] as f32,
+                        params.density_min[2] as f32,
+                        0.0,
+                    ],
+                },
+            );
+            commands.copy(
+                source,
+                u64::from(first) * 12,
+                &source_window,
+                0,
+                u64::from(count) * 12,
+            );
+            commands.dispatch(
+                &floor_pipe,
+                &[&p, &source_window, &output_window],
+                count,
+                false,
+                backend,
+            );
+            commands.copy(
+                &output_window,
+                0,
+                destination,
+                u64::from(first) * 12,
+                u64::from(count) * 12,
+            );
         }
     };
     let layered = params.sublayers_active;
-    let blur_active = if layered { params.grain_blur > 0.0 } else { params.grain_blur > 0.4 };
+    let blur_active = if layered {
+        params.grain_blur > 0.0
+    } else {
+        params.grain_blur > 0.4
+    };
     let usm = layered && !(params.usm_sigma <= 0.0 || params.usm_amount <= 0.0);
     let mut grain_blur = None;
     let density = density.pages();
     let mut source = density.clone();
     if blur_active {
         let filtered = paged_transport(backend, bytes, "grain_post_filtered_transport")?;
-        if !layered { floor(&mut before, &density, &filtered); }
+        if !layered {
+            floor(&mut before, &density, &filtered);
+        }
         grain_blur = Some(if layered {
-            build_grain_blur_paged(backend, width, height, &density, &filtered, [f64::from(params.grain_blur); 3], 0, 0)?
+            build_grain_blur_paged(
+                backend,
+                width,
+                height,
+                &density,
+                &filtered,
+                [f64::from(params.grain_blur); 3],
+                0,
+                0,
+            )?
         } else {
-            build_grain_blur_paged(backend, width, height, &filtered, &density, [f64::from(params.grain_blur); 3], 0, 0)?
+            build_grain_blur_paged(
+                backend,
+                width,
+                height,
+                &filtered,
+                &density,
+                [f64::from(params.grain_blur); 3],
+                0,
+                0,
+            )?
         });
-        if layered { source = filtered; }
+        if layered {
+            source = filtered;
+        }
     }
     let mut usm_blur = None;
     if usm {
-        if !backend.device.features().contains(wgpu::Features::SHADER_F64) { return Err("grain multiplicative USM requires native shader f64".into()); }
-        if limit < 48 { return Err("grain USM minimum mass binding needs 48 bytes".into()); }
+        if !backend
+            .device
+            .features()
+            .contains(wgpu::Features::SHADER_F64)
+        {
+            return Err("grain multiplicative USM requires native shader f64".into());
+        }
+        if limit < 48 {
+            return Err("grain USM minimum mass binding needs 48 bytes".into());
+        }
         let blurred = paged_transport(backend, bytes, "grain_usm_blurred_transport")?;
-        usm_blur = Some(build_grain_blur_paged(backend, width, height, &source, &blurred, [f64::from(params.usm_sigma); 3], 0, 0)?);
+        usm_blur = Some(build_grain_blur_paged(
+            backend,
+            width,
+            height,
+            &source,
+            &blurred,
+            [f64::from(params.usm_sigma); 3],
+            0,
+            0,
+        )?);
         let sharpened = paged_transport(backend, bytes, "grain_usm_sharpened_transport")?;
         let blur_window = transport(backend, u64::from(chunk) * 12, "grain_usm_blur_window")?;
         let lane_capacity = (chunk / 32).max(1);
-        let pair = transport(backend, u64::from(lane_capacity) * 48, "grain_usm_lane_mass")?;
+        let pair = transport(
+            backend,
+            u64::from(lane_capacity) * 48,
+            "grain_usm_lane_mass",
+        )?;
         let first_items = n.div_ceil(8192) * 256;
-        let mut partials = paged_transport(backend, u64::from(first_items) * 48, "grain_usm_mass_transport")?;
-        let sharpen_pipe = backend.cached_pipeline(SHARPEN_SHADER, &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ]);
+        let mut partials = paged_transport(
+            backend,
+            u64::from(first_items) * 48,
+            "grain_usm_mass_transport",
+        )?;
+        let sharpen_pipe = backend.cached_pipeline(
+            SHARPEN_SHADER,
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: false },
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+        );
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct SharpenParams { dimensions: [u32; 4], controls: [f32; 4] }
+        struct SharpenParams {
+            dimensions: [u32; 4],
+            controls: [f32; 4],
+        }
         // Preserve the original 32-pixel lane sums and 256-lane reduction
         // tree. Only a window smaller than one lane needs carried state.
         let lane_batch = (chunk / 32).max(1);
@@ -104,32 +212,81 @@ fn build_grain_post_with_limit(
             let end = n.min(begin + lane_batch * 32);
             for first in (begin..end).step_by(chunk as usize) {
                 let count = chunk.min(end - first);
-                let p = uniform(backend, &SharpenParams { dimensions: [count, u32::from(first != begin), 0, 0], controls: [params.usm_amount, 0.0, 0.0, 0.0] });
-                after.copy(&source, u64::from(first) * 12, &source_window, 0, u64::from(count) * 12);
-                after.copy(&blurred, u64::from(first) * 12, &blur_window, 0, u64::from(count) * 12);
-                after.dispatch(&sharpen_pipe, &[&p, &source_window, &blur_window, &output_window, &pair], count.div_ceil(32) * 3, false, backend);
-                after.copy(&output_window, 0, &sharpened, u64::from(first) * 12, u64::from(count) * 12);
+                let p = uniform(
+                    backend,
+                    &SharpenParams {
+                        dimensions: [count, u32::from(first != begin), 0, 0],
+                        controls: [params.usm_amount, 0.0, 0.0, 0.0],
+                    },
+                );
+                after.copy(
+                    &source,
+                    u64::from(first) * 12,
+                    &source_window,
+                    0,
+                    u64::from(count) * 12,
+                );
+                after.copy(
+                    &blurred,
+                    u64::from(first) * 12,
+                    &blur_window,
+                    0,
+                    u64::from(count) * 12,
+                );
+                after.dispatch(
+                    &sharpen_pipe,
+                    &[&p, &source_window, &blur_window, &output_window, &pair],
+                    count.div_ceil(32) * 3,
+                    false,
+                    backend,
+                );
+                after.copy(
+                    &output_window,
+                    0,
+                    &sharpened,
+                    u64::from(first) * 12,
+                    u64::from(count) * 12,
+                );
             }
-            after.copy(&pair, 0, &partials, u64::from(lane) * 48, u64::from((end - begin).div_ceil(32)) * 48);
+            after.copy(
+                &pair,
+                0,
+                &partials,
+                u64::from(lane) * 48,
+                u64::from((end - begin).div_ceil(32)) * 48,
+            );
         }
-        let reduce_pipe = backend.cached_pipeline(include_str!("post_reduce.wgsl"), &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ]);
+        let reduce_pipe = backend.cached_pipeline(
+            include_str!("post_reduce.wgsl"),
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+        );
         let mass_items = (limit / 48).min(256) as u32;
         let mass_window = transport(backend, u64::from(mass_items) * 48, "grain_usm_mass_window")?;
         let mut items = first_items;
         while items > 1 {
             let groups = items.div_ceil(256);
-            let reduced = paged_transport(backend, u64::from(groups) * 48, "grain_usm_reduced_transport")?;
+            let reduced = paged_transport(
+                backend,
+                u64::from(groups) * 48,
+                "grain_usm_reduced_transport",
+            )?;
             for group in 0..groups {
                 let begin = group * 256;
                 let end = items.min(begin + 256);
                 for first in (begin..end).step_by(mass_items as usize) {
                     let count = mass_items.min(end - first);
                     let p = uniform(backend, &[count, u32::from(first != begin), 0u32, 0]);
-                    after.copy(&partials, u64::from(first) * 48, &mass_window, 0, u64::from(count) * 48);
+                    after.copy(
+                        &partials,
+                        u64::from(first) * 48,
+                        &mass_window,
+                        0,
+                        u64::from(count) * 48,
+                    );
                     after.dispatch(&reduce_pipe, &[&p, &mass_window, &pair], 3, false, backend);
                 }
                 after.copy(&pair, 0, &reduced, u64::from(group) * 48, 48);
@@ -137,32 +294,62 @@ fn build_grain_post_with_limit(
             partials = reduced;
             items = groups;
         }
-        let apply_pipe = backend.cached_pipeline(include_str!("post_apply.wgsl"), &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ]);
+        let apply_pipe = backend.cached_pipeline(
+            include_str!("post_apply.wgsl"),
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+        );
         for first in (0..n).step_by(chunk as usize) {
             let count = chunk.min(n - first);
             let p = uniform(backend, &[count, 0u32, 0, 0]);
-            after.copy(&sharpened, u64::from(first) * 12, &source_window, 0, u64::from(count) * 12);
+            after.copy(
+                &sharpened,
+                u64::from(first) * 12,
+                &source_window,
+                0,
+                u64::from(count) * 12,
+            );
             after.copy(&partials, 0, &pair, 0, 48);
-            after.dispatch(&apply_pipe, &[&p, &source_window, &pair, &output_window], count, false, backend);
-            after.copy(&output_window, 0, &density, u64::from(first) * 12, u64::from(count) * 12);
+            after.dispatch(
+                &apply_pipe,
+                &[&p, &source_window, &pair, &output_window],
+                count,
+                false,
+                backend,
+            );
+            after.copy(
+                &output_window,
+                0,
+                &density,
+                u64::from(first) * 12,
+                u64::from(count) * 12,
+            );
         }
         floor(&mut after, &density, &density);
     } else if layered || !blur_active {
         floor(&mut after, &source, &density);
     }
-    Ok(GrainPostState { before, grain_blur, usm_blur, after })
+    Ok(GrainPostState {
+        before,
+        grain_blur,
+        usm_blur,
+        after,
+    })
 }
 
 impl GrainPostState {
     pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
         self.before.submit(backend)?;
-        if let Some(blur) = &self.grain_blur { blur.submit(backend)?; }
-        if let Some(blur) = &self.usm_blur { blur.submit(backend)?; }
+        if let Some(blur) = &self.grain_blur {
+            blur.submit(backend)?;
+        }
+        if let Some(blur) = &self.usm_blur {
+            blur.submit(backend)?;
+        }
         self.after.submit(backend)
     }
 }
@@ -219,15 +406,23 @@ mod tests {
         }
     }
 
-    fn run(gpu: &WgpuBackend, width: u32, height: u32, input: &[f32], p: &GrainV1GpuParams) -> Vec<f32> {
+    fn run(
+        gpu: &WgpuBackend,
+        width: u32,
+        height: u32,
+        input: &[f32],
+        p: &GrainV1GpuParams,
+    ) -> Vec<f32> {
         let bytes = input.len() as u64 * 4;
-        let density = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain_post_input"),
-            contents: bytemuck::cast_slice(input),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-        });
+        let density = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("grain_post_input"),
+                contents: bytemuck::cast_slice(input),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            });
         let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("grain_post_readback"),
             size: bytes,
@@ -252,14 +447,31 @@ mod tests {
         p.usm_amount = 1.5;
         let expected = run(&gpu, width, height, &input, &p);
         let bytes = input.len() as u64 * 4;
-        let density = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("grain_usm_boundary_input"), contents: bytemuck::cast_slice(&input), usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST });
-        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor { label: Some("grain_usm_boundary_readback"), size: bytes, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let density = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("grain_usm_boundary_input"),
+                contents: bytemuck::cast_slice(&input),
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            });
+        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("grain_usm_boundary_readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let state = build_grain_post_with_limit(&gpu, width, height, &density, &p, 192).unwrap();
         state.submit(&gpu).unwrap();
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&density, 0, &readback, 0, bytes);
         gpu.queue.submit(Some(encoder.finish()));
-        assert_eq!(expected, gpu.read_mapped_f32(&readback, bytes), "window-local USM mass changed the image");
+        assert_eq!(
+            expected,
+            gpu.read_mapped_f32(&readback, bytes),
+            "window-local USM mass changed the image"
+        );
     }
 
     fn reference_unsharp(image: &ImageBuf, sigma: f32, amount: f32) -> ImageBuf {
@@ -296,11 +508,8 @@ mod tests {
     /// The layered reference tail after composition: optional `grain_blur`,
     /// then multiplicative USM, then the floor subtraction.
     fn reference_layered(input: &[f32], width: u32, height: u32, p: &GrainV1GpuParams) -> Vec<f32> {
-        let mut image = ImageBuf::from_data(
-            width,
-            height,
-            input.iter().map(|&v| from_f32(v)).collect(),
-        );
+        let mut image =
+            ImageBuf::from_data(width, height, input.iter().map(|&v| from_f32(v)).collect());
         if p.grain_blur > 0.0 {
             image = spektrafilm_math::gaussian::gaussian_blur(&image, f64::from(p.grain_blur));
         }
@@ -317,12 +526,14 @@ mod tests {
 
     /// The composite reference tail: floor subtraction first, then the final
     /// blur only above 0.4, and no multiplicative USM.
-    fn reference_composite(input: &[f32], width: u32, height: u32, p: &GrainV1GpuParams) -> Vec<f32> {
-        let mut image = ImageBuf::from_data(
-            width,
-            height,
-            input.iter().map(|&v| from_f32(v)).collect(),
-        );
+    fn reference_composite(
+        input: &[f32],
+        width: u32,
+        height: u32,
+        p: &GrainV1GpuParams,
+    ) -> Vec<f32> {
+        let mut image =
+            ImageBuf::from_data(width, height, input.iter().map(|&v| from_f32(v)).collect());
         for px in image.pixels_mut() {
             for (sample, &density_min) in px.iter_mut().zip(&p.density_min) {
                 *sample -= from_f64(density_min);
@@ -339,17 +550,34 @@ mod tests {
             .flat_map(|i| {
                 [0.25, 0.9, 1.7].map(|base| {
                     let v = base + (i % 17) as f32 * 0.07;
-                    if i % 29 == 0 { 0.0 } else if i % 31 == 0 { -0.2 } else { v }
+                    if i % 29 == 0 {
+                        0.0
+                    } else if i % 31 == 0 {
+                        -0.2
+                    } else {
+                        v
+                    }
                 })
             })
             .collect()
     }
 
-    fn check_parity(gpu: &WgpuBackend, width: u32, height: u32, input: &[f32], p: &GrainV1GpuParams, expected: &[f32], label: &str) {
+    fn check_parity(
+        gpu: &WgpuBackend,
+        width: u32,
+        height: u32,
+        input: &[f32],
+        p: &GrainV1GpuParams,
+        expected: &[f32],
+        label: &str,
+    ) {
         let actual = run(gpu, width, height, input, p);
         assert_eq!(actual.len(), expected.len());
         for (i, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
-            assert!(actual.is_finite(), "{label}: sample {i} is not finite ({actual})");
+            assert!(
+                actual.is_finite(),
+                "{label}: sample {i} is not finite ({actual})"
+            );
             let error = (f64::from(actual) - f64::from(expected)).abs();
             assert!(
                 error <= MAX_SAMPLE_ERROR,
@@ -357,7 +585,6 @@ mod tests {
             );
         }
     }
-
 
     #[test]
     fn layered_usm_matches_reference_and_conserves_mass() {
@@ -412,7 +639,15 @@ mod tests {
         p.usm_sigma = 2.0;
         p.usm_amount = 0.9;
         let expected = reference_layered(&input, width, height, &p);
-        check_parity(&gpu, width, height, &input, &p, &expected, "layered blur+usm");
+        check_parity(
+            &gpu,
+            width,
+            height,
+            &input,
+            &p,
+            &expected,
+            "layered blur+usm",
+        );
     }
 
     #[test]
@@ -427,7 +662,10 @@ mod tests {
             .enumerate()
             .map(|(i, &v)| v - p.density_min[i % 3] as f32)
             .collect();
-        assert_eq!(actual, expected, "disabled USM must still remove the density floor");
+        assert_eq!(
+            actual, expected,
+            "disabled USM must still remove the density floor"
+        );
     }
 
     #[test]
@@ -460,11 +698,27 @@ mod tests {
         p.usm_sigma = 1.1;
         p.usm_amount = 1.4;
         let expected = reference_composite(&input, width, height, &p);
-        check_parity(&gpu, width, height, &input, &p, &expected, "composite floor only");
+        check_parity(
+            &gpu,
+            width,
+            height,
+            &input,
+            &p,
+            &expected,
+            "composite floor only",
+        );
 
         // Above the gate the floor is removed before the final blur.
         p.grain_blur = 0.6;
         let expected = reference_composite(&input, width, height, &p);
-        check_parity(&gpu, width, height, &input, &p, &expected, "composite floor then blur");
+        check_parity(
+            &gpu,
+            width,
+            height,
+            &input,
+            &p,
+            &expected,
+            "composite floor then blur",
+        );
     }
 }

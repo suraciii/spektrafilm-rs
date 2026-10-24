@@ -82,21 +82,22 @@ impl Pipeline {
             if cell_spectral {
                 crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
             }
-            Self::validate_grain_v3_taps(
-                cell_spectral,
-                inject,
-                collect,
-                self.params.io.scan_film,
-            )?;
+            Self::validate_grain_v3_taps(cell_spectral, inject, collect, self.params.io.scan_film)?;
         }
         if backend.is_gpu() {
             // Diagnostic endpoints are not permission to enter the CPU
             // reference topology. The retained entry validates and executes
             // only the selected span, including full-source metering when
             // injection starts at rgb_in.
-            let retained = self.process_retained_with_taps(
-                &image, RetainedRender::FULL, backend, Some(inject), Some(collect),
-            )?.ok_or_else(|| "selected GPU declined the retained pipeline route".to_owned())?;
+            let retained = self
+                .process_retained_with_taps(
+                    &image,
+                    RetainedRender::FULL,
+                    backend,
+                    Some(inject),
+                    Some(collect),
+                )?
+                .ok_or_else(|| "selected GPU declined the retained pipeline route".to_owned())?;
             return backend.materialize_retained(&retained);
         }
         if let Some(context) = backend.observation_context()
@@ -298,7 +299,10 @@ impl Pipeline {
             context.set_working_dimensions(working.width, working.height);
         }
         if self.params.workflow.route_enum().is_convert_film() {
-            if backend.is_gpu() && let Some(output) = self.try_gpu_resident(&working, backend, pixel_size_um, 0.0)? {
+            if backend.is_gpu()
+                && let Some(output) =
+                    self.try_gpu_resident(&working, backend, pixel_size_um, 0.0)?
+            {
                 return Ok(output);
             }
             if backend.is_gpu() {
@@ -508,7 +512,11 @@ impl Pipeline {
         if backend.is_gpu() {
             let retained = self
                 .process_retained_with_taps(
-                    image, RetainedRender::FULL, backend, Some(inject), Some(collect),
+                    image,
+                    RetainedRender::FULL,
+                    backend,
+                    Some(inject),
+                    Some(collect),
                 )?
                 .ok_or_else(|| "selected GPU declined the retained pipeline route".to_owned())?;
             return backend.materialize_retained(&retained).map(Some);

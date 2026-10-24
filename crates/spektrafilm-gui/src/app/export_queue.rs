@@ -18,7 +18,7 @@ use crate::render::RenderSnapshot;
 
 use super::{App, Message};
 
-/// Accepted pixels (including RAW decode and rotation), not a live photograph link.
+/// Immutable decoded samples and accepted interpretation/rotation in the snapshot.
 #[derive(Clone)]
 pub(crate) struct QueueSubmission {
     pub(crate) source_name: String,
@@ -381,19 +381,21 @@ mod tests {
         app.params.film_render.grain.active = false;
         app.params.camera.auto_exposure = false;
         app.params.print_render.glare.active = false;
-        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::from_data(
-            24,
-            8,
-            (0..24 * 8 * 3)
-                .map(|index| {
-                    spektrafilm_math::precision::from_f64(if index / 3 % 24 < 5 {
-                        0.01
-                    } else {
-                        0.7
+        app.image = Some(crate::render::InputImage::Host(Arc::new(
+            ImageBuf::from_data(
+                24,
+                8,
+                (0..24 * 8 * 3)
+                    .map(|index| {
+                        spektrafilm_math::precision::from_f64(if index / 3 % 24 < 5 {
+                            0.01
+                        } else {
+                            0.7
+                        })
                     })
-                })
-                .collect(),
-        ))));
+                    .collect(),
+            ),
+        )));
         (app, directory, egui::Context::default())
     }
 
@@ -561,7 +563,9 @@ mod tests {
         app.enqueue_exports(&ctx, vec![item], false).unwrap();
         drain(&mut app, &ctx);
         assert_eq!(app.export_queue.entries[0].state, QueueState::Failed);
-        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::new(2, 2))));
+        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::new(
+            2, 2,
+        ))));
         app.params.camera.exposure_compensation_ev += 3.0;
         app.film_name = "unrelated-live-film".into();
         app.export_options.jpeg_quality = 23;

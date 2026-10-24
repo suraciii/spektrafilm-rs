@@ -228,23 +228,47 @@ mod tests {
     /// only the capability flags matter to the preflight.
     struct FakeExplicitGpu;
     impl ComputeBackend for FakeExplicitGpu {
-        fn colorspace_convert(&self,
-        image: &spektrafilm_math::image::ImageBuf,
-        matrix: &[[f32; 3]; 3],) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.colorspace_convert(image, matrix) }
-        fn cctf_encode_srgb(&self,
-        image: &spektrafilm_math::image::ImageBuf,) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.cctf_encode_srgb(image) }
-        fn cctf_decode_srgb(&self,
-        image: &spektrafilm_math::image::ImageBuf,) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.cctf_decode_srgb(image) }
-        fn gaussian_blur(&self,
-        image: &spektrafilm_math::image::ImageBuf,
-        sigma: f32,) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.gaussian_blur(image, sigma) }
-        fn table_lookup(&self,
-        image: &spektrafilm_math::image::ImageBuf,
-        table_x: &[f32],
-        table_y: &[[f32; 3]],) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.table_lookup(image, table_x, table_y) }
-        fn lut3d_interp(&self,
-        image: &spektrafilm_math::image::ImageBuf,
-        lut: &spektrafilm_backend::Lut3D,) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.lut3d_interp(image, lut) }
+        fn colorspace_convert(
+            &self,
+            image: &spektrafilm_math::image::ImageBuf,
+            matrix: &[[f32; 3]; 3],
+        ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+            spektrafilm_backend::cpu_backend::CpuBackend.colorspace_convert(image, matrix)
+        }
+        fn cctf_encode_srgb(
+            &self,
+            image: &spektrafilm_math::image::ImageBuf,
+        ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+            spektrafilm_backend::cpu_backend::CpuBackend.cctf_encode_srgb(image)
+        }
+        fn cctf_decode_srgb(
+            &self,
+            image: &spektrafilm_math::image::ImageBuf,
+        ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+            spektrafilm_backend::cpu_backend::CpuBackend.cctf_decode_srgb(image)
+        }
+        fn gaussian_blur(
+            &self,
+            image: &spektrafilm_math::image::ImageBuf,
+            sigma: f32,
+        ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+            spektrafilm_backend::cpu_backend::CpuBackend.gaussian_blur(image, sigma)
+        }
+        fn table_lookup(
+            &self,
+            image: &spektrafilm_math::image::ImageBuf,
+            table_x: &[f32],
+            table_y: &[[f32; 3]],
+        ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+            spektrafilm_backend::cpu_backend::CpuBackend.table_lookup(image, table_x, table_y)
+        }
+        fn lut3d_interp(
+            &self,
+            image: &spektrafilm_math::image::ImageBuf,
+            lut: &spektrafilm_backend::Lut3D,
+        ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+            spektrafilm_backend::cpu_backend::CpuBackend.lut3d_interp(image, lut)
+        }
         fn is_gpu(&self) -> bool {
             true
         }
@@ -557,23 +581,47 @@ mod tests {
         // has succeeded. Initial CPU selection remains a separate case.
         struct AutomaticGpu;
         impl ComputeBackend for AutomaticGpu {
-            fn colorspace_convert(&self,
-            image: &spektrafilm_math::image::ImageBuf,
-            matrix: &[[f32; 3]; 3],) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.colorspace_convert(image, matrix) }
-            fn cctf_encode_srgb(&self,
-            image: &spektrafilm_math::image::ImageBuf,) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.cctf_encode_srgb(image) }
-            fn cctf_decode_srgb(&self,
-            image: &spektrafilm_math::image::ImageBuf,) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.cctf_decode_srgb(image) }
-            fn gaussian_blur(&self,
-            image: &spektrafilm_math::image::ImageBuf,
-            sigma: f32,) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.gaussian_blur(image, sigma) }
-            fn table_lookup(&self,
-            image: &spektrafilm_math::image::ImageBuf,
-            table_x: &[f32],
-            table_y: &[[f32; 3]],) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.table_lookup(image, table_x, table_y) }
-            fn lut3d_interp(&self,
-            image: &spektrafilm_math::image::ImageBuf,
-            lut: &spektrafilm_backend::Lut3D,) -> Result<spektrafilm_math::image::ImageBuf, String> { spektrafilm_backend::cpu_backend::CpuBackend.lut3d_interp(image, lut) }
+            fn colorspace_convert(
+                &self,
+                image: &spektrafilm_math::image::ImageBuf,
+                matrix: &[[f32; 3]; 3],
+            ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+                spektrafilm_backend::cpu_backend::CpuBackend.colorspace_convert(image, matrix)
+            }
+            fn cctf_encode_srgb(
+                &self,
+                image: &spektrafilm_math::image::ImageBuf,
+            ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+                spektrafilm_backend::cpu_backend::CpuBackend.cctf_encode_srgb(image)
+            }
+            fn cctf_decode_srgb(
+                &self,
+                image: &spektrafilm_math::image::ImageBuf,
+            ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+                spektrafilm_backend::cpu_backend::CpuBackend.cctf_decode_srgb(image)
+            }
+            fn gaussian_blur(
+                &self,
+                image: &spektrafilm_math::image::ImageBuf,
+                sigma: f32,
+            ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+                spektrafilm_backend::cpu_backend::CpuBackend.gaussian_blur(image, sigma)
+            }
+            fn table_lookup(
+                &self,
+                image: &spektrafilm_math::image::ImageBuf,
+                table_x: &[f32],
+                table_y: &[[f32; 3]],
+            ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+                spektrafilm_backend::cpu_backend::CpuBackend.table_lookup(image, table_x, table_y)
+            }
+            fn lut3d_interp(
+                &self,
+                image: &spektrafilm_math::image::ImageBuf,
+                lut: &spektrafilm_backend::Lut3D,
+            ) -> Result<spektrafilm_math::image::ImageBuf, String> {
+                spektrafilm_backend::cpu_backend::CpuBackend.lut3d_interp(image, lut)
+            }
             fn is_gpu(&self) -> bool {
                 true
             }

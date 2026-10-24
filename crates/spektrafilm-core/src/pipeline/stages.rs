@@ -226,12 +226,7 @@ impl Pipeline {
         };
         let cell_spectral =
             forms_film && crate::stages::grain_v3::validate_cell_spectral(&self.params)?;
-        Self::validate_grain_v3_taps(
-            cell_spectral,
-            inject,
-            collect,
-            self.params.io.scan_film,
-        )?;
+        Self::validate_grain_v3_taps(cell_spectral, inject, collect, self.params.io.scan_film)?;
         if aperture_factor.is_some()
             && (collect != Tap::RgbOut
                 || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap())
@@ -331,7 +326,11 @@ impl Pipeline {
                     let sensitivity;
                     let prepared_scan;
                     let device_response = if self.params.io.scan_film {
-                        prepared_scan = crate::chain_prep::PreparedChain::for_scan(&self.film, &self.params, true);
+                        prepared_scan = crate::chain_prep::PreparedChain::for_scan(
+                            &self.film,
+                            &self.params,
+                            true,
+                        );
                         spektrafilm_backend::DyeResponseGpuParams::Scan {
                             channel_density: &channel_density,
                             base_density: &self.film.data.base_density,
@@ -402,7 +401,11 @@ impl Pipeline {
                         // topology at the terminal tap.
                         i = order.iter().position(|tap| *tap == Tap::RgbOut).unwrap();
                     } else {
-                        cur = crate::stages::grain_v3::finish_print_response_on_backend(cur, plan.aperture, backend)?;
+                        cur = crate::stages::grain_v3::finish_print_response_on_backend(
+                            cur,
+                            plan.aperture,
+                            backend,
+                        )?;
                         if plan.aperture.is_some() {
                             stage_space = CoordinateSpace::Output;
                         }
@@ -481,7 +484,9 @@ impl Pipeline {
                 && let Some(factor) = aperture_factor
             {
                 let t = Instant::now();
-                cur = crate::stages::grain_v3::collapse_log_exposure_on_backend(&cur, factor, backend)?;
+                cur = crate::stages::grain_v3::collapse_log_exposure_on_backend(
+                    &cur, factor, backend,
+                )?;
                 stage_space = CoordinateSpace::Output;
                 pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
                     "film grain Dye aperture: missing requested output pitch".to_owned()

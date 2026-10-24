@@ -192,7 +192,8 @@ impl GpuPipe {
 
     /// Rebind one operation's signal without changing shared device resources.
     pub(super) fn with_cancellation(
-        &self, cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        &self,
+        cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Self {
         let mut pipe = self.with_observed(self.device.clone(), self.queue.clone());
         pipe.cancellation = cancellation;
@@ -200,9 +201,15 @@ impl GpuPipe {
     }
 
     pub(super) fn check_cancelled(&self) -> Result<(), String> {
-        if self.cancellation.as_ref().is_some_and(|token| token.load(std::sync::atomic::Ordering::Relaxed)) {
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|token| token.load(std::sync::atomic::Ordering::Relaxed))
+        {
             Err("operation cancelled".to_owned())
-        } else { Ok(()) }
+        } else {
+            Ok(())
+        }
     }
 
     /// Inject a resource failure only in this backend and its observed derivatives.
@@ -233,7 +240,6 @@ impl GpuPipe {
     pub(super) fn test_on_readback(&self, hook: impl FnMut() + Send + 'static) {
         *self.test_readback_hook.lock() = Some(Box::new(hook));
     }
-
 
     /// The observed device, for a stage that encodes its own command buffer.
     pub(super) fn device(&self) -> &ObservedDevice {
@@ -601,7 +607,9 @@ impl GpuPipe {
     /// driver wait already entered. Always finish mapping and return the pooled
     /// buffer before discarding a cancelled readback.
     pub(super) fn readback_buffer_cancellable<T: bytemuck::Pod>(
-        &self, buffer: &wgpu::Buffer, bytes: u64,
+        &self,
+        buffer: &wgpu::Buffer,
+        bytes: u64,
     ) -> Result<Vec<T>, String> {
         self.check_cancelled()?;
         let readback = self.take_readback(bytes);
@@ -615,7 +623,9 @@ impl GpuPipe {
         let result = self.read_mapped::<T>(&readback, bytes);
         self.return_readback(readback, bytes);
         #[cfg(test)]
-        if let Some(hook) = self.test_readback_hook.lock().as_mut() { hook(); }
+        if let Some(hook) = self.test_readback_hook.lock().as_mut() {
+            hook();
+        }
         self.check_cancelled()?;
         Ok(result)
     }
@@ -657,26 +667,40 @@ mod tests {
 
     #[test]
     fn chain_cancellation_stops_the_next_stage_without_poisoning_shared_pipe() {
-        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
         let backend = crate::test_support::adapter();
         let token = Arc::new(AtomicBool::new(false));
         let pipe = backend.pipe.with_cancellation(Some(token.clone()));
         let observed = pipe.with_observed(pipe.device.clone(), pipe.queue.clone());
         let second_executed = AtomicBool::new(false);
         let result = observed.run_chain(vec![
-            ChainStage::Device { name: "cancel_operation", execute: Box::new(|| {
-                token.store(true, Ordering::Relaxed);
-                Ok(())
-            }) },
-            ChainStage::Device { name: "must_not_execute", execute: Box::new(|| {
-                second_executed.store(true, Ordering::Relaxed);
-                Ok(())
-            }) },
+            ChainStage::Device {
+                name: "cancel_operation",
+                execute: Box::new(|| {
+                    token.store(true, Ordering::Relaxed);
+                    Ok(())
+                }),
+            },
+            ChainStage::Device {
+                name: "must_not_execute",
+                execute: Box::new(|| {
+                    second_executed.store(true, Ordering::Relaxed);
+                    Ok(())
+                }),
+            },
         ]);
         assert_eq!(result.unwrap_err(), "operation cancelled");
         assert!(!second_executed.load(Ordering::Relaxed));
         assert!(backend.pipe.run_chain(Vec::new()).is_ok());
-        assert!(observed.with_cancellation(None).run_chain(Vec::new()).is_ok());
+        assert!(
+            observed
+                .with_cancellation(None)
+                .run_chain(Vec::new())
+                .is_ok()
+        );
     }
 
     // The adapter owns the device-serialization guard for its whole lifetime:

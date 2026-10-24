@@ -168,8 +168,10 @@ impl RawSensor {
             return Err("Fuji diagonal exceeds the active image".into());
         }
         let step = 0.5f64.sqrt();
-        Ok(((f64::from(diagonal) / step) as u32,
-            (f64::from(self.height - diagonal) / step) as u32))
+        Ok((
+            (f64::from(diagonal) / step) as u32,
+            (f64::from(self.height - diagonal) / step) as u32,
+        ))
     }
 
     /// LibRaw stretches after camera-to-output conversion and before flip.
@@ -192,7 +194,11 @@ impl RawSensor {
     /// Published bitmap dimensions, including the native flip bit layout.
     pub fn output_dimensions(&self) -> Result<(u32, u32), String> {
         let (width, height) = self.stretched_dimensions()?;
-        Ok(if self.flip & 4 != 0 { (height, width) } else { (width, height) })
+        Ok(if self.flip & 4 != 0 {
+            (height, width)
+        } else {
+            (width, height)
+        })
     }
 }
 

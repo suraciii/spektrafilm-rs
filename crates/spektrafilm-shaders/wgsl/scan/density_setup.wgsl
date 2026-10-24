@@ -87,7 +87,7 @@ fn main() {
             let dx = 0.75 * (p.setup.x - en) / p.setup.y;
             let cast_u = s.sum_u / count;
             let cast_v = s.sum_v / count;
-            let weight = max(1.0 - 40.0*(cast_u*cast_u + cast_v*cast_v), 0.2);
+            let weight = max(f64(1.0) - f64(40.0)*(cast_u*cast_u + cast_v*cast_v), f64(0.2));
             let u = -0.9*weight*cast_u/p.setup.y;
             let v = -0.9*weight*cast_v/p.setup.y;
             s.offset0 = dx + u/1.4142135623730951 + v/2.449489742783178;

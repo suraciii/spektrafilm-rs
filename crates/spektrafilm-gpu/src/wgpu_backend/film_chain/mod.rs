@@ -38,6 +38,4 @@ pub(super) mod device_image;
 mod input_geometry;
 mod output_samples;
 mod passes;
-pub(super) use passes::{
-    required_buffer_exceeds_limits, required_chain_buffers,
-};
+pub(super) use passes::{required_buffer_exceeds_limits, required_chain_buffers};

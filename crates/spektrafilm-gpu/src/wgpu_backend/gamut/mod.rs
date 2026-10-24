@@ -75,7 +75,9 @@ pub(super) fn build_gamut_state(
     });
     let limit = super::bounded::storage_binding_limit(backend)?;
     let cmax_buf = if let Some(prepared) = gp.prepared {
-        let table = prepared.values.as_any()
+        let table = prepared
+            .values
+            .as_any()
             .downcast_ref::<prepare::GamutPreparationTable>()
             .ok_or_else(|| "output gamut boundary payload is not a GPU gamut table".to_owned())?;
         if table.backend_id != backend.backend_id {
@@ -86,7 +88,9 @@ pub(super) fn build_gamut_state(
             return Err("output gamut boundary dimensions do not match its retained table".into());
         }
         if expected > limit {
-            return Err(format!("output gamut boundary minimum coefficient binding needs {expected} bytes; device binding limit is {limit}"));
+            return Err(format!(
+                "output gamut boundary minimum coefficient binding needs {expected} bytes; device binding limit is {limit}"
+            ));
         }
         table.buffer.clone()
     } else {
@@ -94,7 +98,9 @@ pub(super) fn build_gamut_state(
         // needs only a nonempty placeholder binding, never table samples.
         let bytes = (gp.cmax.len().max(1) as u64) * 4;
         if bytes > limit {
-            return Err(format!("output gamut boundary minimum coefficient binding needs {bytes} bytes; device binding limit is {limit}"));
+            return Err(format!(
+                "output gamut boundary minimum coefficient binding needs {bytes} bytes; device binding limit is {limit}"
+            ));
         }
         let cmax_f32: Vec<f32> = if gp.cmax.is_empty() {
             vec![0.0]
@@ -179,4 +185,3 @@ impl WgpuBackend {
         ))
     }
 }
-

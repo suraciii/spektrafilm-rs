@@ -214,7 +214,10 @@ impl OutputGamutCompress {
     }
 
     /// Validate destination and controls without generating a Cmax lattice.
-    pub fn validate(params: &OutputGamutCompressParams, output_color_space: &str) -> Result<(), String> {
+    pub fn validate(
+        params: &OutputGamutCompressParams,
+        output_color_space: &str,
+    ) -> Result<(), String> {
         Self::validate_detailed(params, output_color_space).map_err(|error| error.to_string())
     }
 
@@ -262,7 +265,10 @@ impl OutputGamutCompress {
     }
 
     /// Resolve and validate before building the CPU reference boundary.
-    pub fn build(params: &OutputGamutCompressParams, output_color_space: &str) -> Result<Self, String> {
+    pub fn build(
+        params: &OutputGamutCompressParams,
+        output_color_space: &str,
+    ) -> Result<Self, String> {
         let (destination, kind, knee) = Self::resolve_configuration(params, output_color_space)
             .map_err(|error| error.to_string())?;
         let cam = Cam16Viewing::new(destination.whitepoint_xyz());
@@ -318,22 +324,26 @@ impl OutputGamutCompress {
             };
             result.l_min = l_min;
             result.l_max = l_max;
-            result.prepared = Some(backend.prepare_gamut_table(
-                &spektrafilm_backend::GamutTableParams {
-                    mode,
-                    n_l: N_L as u32,
-                    n_h: N_H as u32,
-                    n_bisect: N_BISECT as u32,
-                    l_min,
-                    l_max,
-                    chroma_upper,
-                    xyz_to_rgb: destination.matrix_xyz_to_rgb,
-                    cam16: [cam.d_rgb[0], cam.d_rgb[1], cam.d_rgb[2], cam.a_w],
-                },
-            )?.ok_or_else(|| format!(
-                "{} cannot prepare the selected output gamut boundary on the device",
-                backend.name(),
-            ))?);
+            result.prepared = Some(
+                backend
+                    .prepare_gamut_table(&spektrafilm_backend::GamutTableParams {
+                        mode,
+                        n_l: N_L as u32,
+                        n_h: N_H as u32,
+                        n_bisect: N_BISECT as u32,
+                        l_min,
+                        l_max,
+                        chroma_upper,
+                        xyz_to_rgb: destination.matrix_xyz_to_rgb,
+                        cam16: [cam.d_rgb[0], cam.d_rgb[1], cam.d_rgb[2], cam.a_w],
+                    })?
+                    .ok_or_else(|| {
+                        format!(
+                            "{} cannot prepare the selected output gamut boundary on the device",
+                            backend.name(),
+                        )
+                    })?,
+            );
         }
         Ok(result)
     }
@@ -1001,10 +1011,7 @@ mod tests {
                 // The device path is destination-independent: every space
                 // serves every implemented mode, including jzazbz (mode 4,
                 // binary64 perceptual transform on the device).
-                assert_eq!(
-                    compressor.gpu_params().is_some(),
-                    algorithm != "off"
-                );
+                assert_eq!(compressor.gpu_params().is_some(), algorithm != "off");
                 if algorithm == "off" {
                     assert_eq!(compressor.compress([1.7, -0.2, 0.3]), [1.7, -0.2, 0.3]);
                 }
@@ -1079,14 +1086,15 @@ mod tests {
                 let gp = compressor.gpu_params().unwrap_or_else(|| {
                     panic!("{algorithm} / {destination} must have a device path")
                 });
-                let out = backend.gamut_compress_gpu(&image, &gp).unwrap_or_else(|error| {
-                    panic!("{algorithm} / {destination} device path failed: {error}")
-                });
+                let out = backend
+                    .gamut_compress_gpu(&image, &gp)
+                    .unwrap_or_else(|error| {
+                        panic!("{algorithm} / {destination} device path failed: {error}")
+                    });
                 for (index, rgb) in pixels.iter().enumerate() {
                     let reference = compressor.compress(rgb.map(|v| to_f64(from_f64(v))));
                     for (channel, &reference_value) in reference.iter().enumerate() {
-                        let diff =
-                            (reference_value - to_f64(out.data[index * 3 + channel])).abs();
+                        let diff = (reference_value - to_f64(out.data[index * 3 + channel])).abs();
                         if diff > worst {
                             worst = diff;
                             worst_case =
@@ -1286,5 +1294,3 @@ mod tests {
         );
     }
 }
-
-

@@ -2,17 +2,17 @@ use super::*;
 use buffers::ChainBuffers;
 
 use super::super::blur::SimpleBlurState;
+use super::super::chain_chunks::PointwisePass;
 use super::super::couplers::DirState;
 use super::super::gamut::GamutState;
 use super::super::glare::GlareState;
 use super::super::grain::{GrainV2State, SpektraGrainV1State};
 use super::super::halation::HalationState;
 use super::super::highlight::HighlightBoostState;
-use super::super::unsharp::UnsharpState;
-use super::super::scan::{ConvertInverseState, ScanDensityState};
-use spektrafilm_backend::Tap;
-use super::super::chain_chunks::PointwisePass;
 use super::super::paged::ImagePage;
+use super::super::scan::{ConvertInverseState, ScanDensityState};
+use super::super::unsharp::UnsharpState;
+use spektrafilm_backend::Tap;
 
 fn tap_index(tap: Tap) -> usize {
     match tap {
@@ -29,14 +29,22 @@ fn tap_index(tap: Tap) -> usize {
 fn validate_tap_span(p: &spektrafilm_backend::FilmChainParams<'_>) -> Result<(), String> {
     for tap in [p.inject, p.collect] {
         if p.scan_film && matches!(tap, Tap::LogEPrint | Tap::CmyPrint) {
-            return Err(format!("tap {tap:?} is not part of this topology (scan_film = true)"));
+            return Err(format!(
+                "tap {tap:?} is not part of this topology (scan_film = true)"
+            ));
         }
     }
     if tap_index(p.collect) < tap_index(p.inject) {
-        return Err(format!("no node path reaches tap {:?} from {:?}", p.collect, p.inject));
+        return Err(format!(
+            "no node path reaches tap {:?} from {:?}",
+            p.collect, p.inject
+        ));
     }
     if p.inject == Tap::RgbIn && p.inject != p.collect {
-        return Err("film chain rgb_in must pass through retained metering and geometry before dispatch".into());
+        return Err(
+            "film chain rgb_in must pass through retained metering and geometry before dispatch"
+                .into(),
+        );
     }
     Ok(())
 }
@@ -131,72 +139,134 @@ impl WgpuBackend {
         let n_pixels = image_width * image_height;
         let img_bytes = n_pixels as usize * 3 * 4;
 
-        let buf_a = self.allocate_image_pages(image_width,image_height,"chain_work_a")?;
+        let buf_a = self.allocate_image_pages(image_width, image_height, "chain_work_a")?;
         if let Ok(payload) = self.buffer_payload(input) {
             if payload.bytes != img_bytes as u64 {
-                return Err("film chain retained input footprint does not match geometry".to_owned());
+                return Err(
+                    "film chain retained input footprint does not match geometry".to_owned(),
+                );
             }
             // Borrowed retained input is immutable, including a singleton page.
             let mut encoder = self.device.create_command_encoder(&Default::default());
             for page in &buf_a {
-                self.copy_samples_to(&mut encoder,payload,u64::from(page.first_pixel)*3,
-                    u64::from(page.n_pixels)*3,&page.buffer,0)?;
+                self.copy_samples_to(
+                    &mut encoder,
+                    payload,
+                    u64::from(page.first_pixel) * 3,
+                    u64::from(page.n_pixels) * 3,
+                    &page.buffer,
+                    0,
+                )?;
             }
             self.queue.submit(Some(encoder.finish()));
         } else if let Some(image) = input.host_image() {
             for page in &buf_a {
-                let first=page.first_pixel as usize*3;
-                let values=scalars_to_f32(&image.data[first..first+page.n_pixels as usize*3]);
-                self.queue.write_buffer(&page.buffer,0,bytemuck::cast_slice(&values));
+                let first = page.first_pixel as usize * 3;
+                let values = scalars_to_f32(&image.data[first..first + page.n_pixels as usize * 3]);
+                self.queue
+                    .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&values));
             }
-        } else {return Err("film chain input is not available on this device".to_owned());}
-        let mut buf_b = self.allocate_image_pages(image_width,image_height,"chain_work_b")?;
+        } else {
+            return Err("film chain input is not available on this device".to_owned());
+        }
+        let mut buf_b = self.allocate_image_pages(image_width, image_height, "chain_work_b")?;
         let mut buf_a = buf_a;
         if matches!(p.inject, Tap::LogEFilm | Tap::LogEPrint) {
             // Bind the supplied retained exposure in the slot consumed by
             // the next node, without a transfer or a host round trip.
             std::mem::swap(&mut buf_a, &mut buf_b);
         }
-        let dye_state = p.grain_dye.as_ref().map(|dye| {
-            let source = super::device_image::BufferPayload::from_pages(
-                self.backend_id(), buf_a.clone(), image_width, image_height);
-            let response = if p.grain_dye_cell_spectral { Some(if p.scan_film {
-                spektrafilm_backend::DyeResponseGpuParams::Scan {
-                    channel_density: p.film_channel_density, base_density: p.film_base_density,
-                    illuminant: p.scan_illuminant, normalization: p.scan_normalization, xyz_to_rgb: p.scan_xyz_to_rgb,
-                }
-            } else {
-                spektrafilm_backend::DyeResponseGpuParams::Print {
-                    channel_density: p.film_channel_density, base_density: p.film_base_density,
-                    illuminant: p.print_illuminant, sensitivity: p.print_sensitivity,
-                    normalization_factor: p.print_normalization_factor, exposure_scale: p.print_exposure_scale, preflash: p.preflash,
-                }
-            }) } else { None };
-            self.prepare_dye_paged(image_width,image_height,&source,dye,response.as_ref())
-        }).transpose()?;
-        let fotufilm_state = p.grain_fotufilm.as_ref().map(|params| {
-            let source = super::device_image::BufferPayload::from_pages(self.backend_id(),buf_a.clone(),image_width,image_height);
-            self.prepare_fotufilm_paged(image_width,image_height,&source,params)
-        }).transpose()?;
-        let (print_width,print_height) = p.grain_dye.as_ref().map(|dye| (dye.grid.width,dye.grid.height))
-            .or_else(|| p.grain_fotufilm.as_ref().map(|grain| (grain.width,grain.height)))
-            .unwrap_or((image_width,image_height));
+        let dye_state = p
+            .grain_dye
+            .as_ref()
+            .map(|dye| {
+                let source = super::device_image::BufferPayload::from_pages(
+                    self.backend_id(),
+                    buf_a.clone(),
+                    image_width,
+                    image_height,
+                );
+                let response = if p.grain_dye_cell_spectral {
+                    Some(if p.scan_film {
+                        spektrafilm_backend::DyeResponseGpuParams::Scan {
+                            channel_density: p.film_channel_density,
+                            base_density: p.film_base_density,
+                            illuminant: p.scan_illuminant,
+                            normalization: p.scan_normalization,
+                            xyz_to_rgb: p.scan_xyz_to_rgb,
+                        }
+                    } else {
+                        spektrafilm_backend::DyeResponseGpuParams::Print {
+                            channel_density: p.film_channel_density,
+                            base_density: p.film_base_density,
+                            illuminant: p.print_illuminant,
+                            sensitivity: p.print_sensitivity,
+                            normalization_factor: p.print_normalization_factor,
+                            exposure_scale: p.print_exposure_scale,
+                            preflash: p.preflash,
+                        }
+                    })
+                } else {
+                    None
+                };
+                self.prepare_dye_paged(image_width, image_height, &source, dye, response.as_ref())
+            })
+            .transpose()?;
+        let fotufilm_state = p
+            .grain_fotufilm
+            .as_ref()
+            .map(|params| {
+                let source = super::device_image::BufferPayload::from_pages(
+                    self.backend_id(),
+                    buf_a.clone(),
+                    image_width,
+                    image_height,
+                );
+                self.prepare_fotufilm_paged(image_width, image_height, &source, params)
+            })
+            .transpose()?;
+        let (print_width, print_height) = p
+            .grain_dye
+            .as_ref()
+            .map(|dye| (dye.grid.width, dye.grid.height))
+            .or_else(|| {
+                p.grain_fotufilm
+                    .as_ref()
+                    .map(|grain| (grain.width, grain.height))
+            })
+            .unwrap_or((image_width, image_height));
         let print_input = if dye_state.is_some() || fotufilm_state.is_some() {
-            self.allocate_image_pages(print_width,print_height,"field_density")?
-        } else {buf_a.clone()};
+            self.allocate_image_pages(print_width, print_height, "field_density")?
+        } else {
+            buf_a.clone()
+        };
         let tail_width = print_width / p.grain_dye_aperture.unwrap_or(1);
         let tail_height = print_height / p.grain_dye_aperture.unwrap_or(1);
-        let tail_buf = |label:&str,width:u32,height:u32| self.allocate_image_pages(width,height,label);
+        let tail_buf =
+            |label: &str, width: u32, height: u32| self.allocate_image_pages(width, height, label);
         let changed = dye_state.is_some() || fotufilm_state.is_some();
-        let tail_a = if changed {tail_buf("field_tail_density",tail_width,tail_height)?} else {buf_a.clone()};
-        let tail_b = if changed {tail_buf("field_tail_rgb",tail_width,tail_height)?} else {buf_b.clone()};
+        let tail_a = if changed {
+            tail_buf("field_tail_density", tail_width, tail_height)?
+        } else {
+            buf_a.clone()
+        };
+        let tail_b = if changed {
+            tail_buf("field_tail_rgb", tail_width, tail_height)?
+        } else {
+            buf_b.clone()
+        };
         let print_output = if p.grain_dye_aperture.is_some() {
-            tail_buf("field_fine_exposure",print_width,print_height)?
-        } else { tail_b.clone() };
+            tail_buf("field_fine_exposure", print_width, print_height)?
+        } else {
+            tail_b.clone()
+        };
         let dye_print_log = p.grain_dye_cell_spectral && !p.scan_film;
         let collapse = p.grain_dye_aperture;
-        let print_density_input = if p.inject == Tap::LogEPrint { &buf_b } else { &tail_b };
-
+        let print_density_input = if p.inject == Tap::LogEPrint {
+            &buf_b
+        } else {
+            &tail_b
+        };
 
         // Static (LUT) buffers — configuration-invariant, so they are served
         // from the pipe's cross-frame cache: uploaded once per configuration
@@ -206,8 +276,11 @@ impl WgpuBackend {
                 .static_buffer(label, bytes, wgpu::BufferUsages::STORAGE)
         };
         let mk_uniform = |label: &str, bytes: &[u8]| {
-            self.pipe.static_buffer(label, bytes,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC)
+            self.pipe.static_buffer(
+                label,
+                bytes,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
+            )
         };
 
         let ChainBuffers {
@@ -240,10 +313,21 @@ impl WgpuBackend {
             &mk_uniform,
         );
         let print_params_buf = {
-            let bytes = [print_width, print_height, p.film_channel_density.len() as u32, (p.print_normalization_factor as f32).to_bits(),
-                (p.print_exposure_scale as f32).to_bits(), u32::from(p.enlarger_diffusion.is_some()),0,0,
-                (p.preflash[0] as f32).to_bits(), (p.preflash[1] as f32).to_bits(), (p.preflash[2] as f32).to_bits(), 0];
-            mk_uniform("dye_print_params",bytemuck::cast_slice(&bytes))
+            let bytes = [
+                print_width,
+                print_height,
+                p.film_channel_density.len() as u32,
+                (p.print_normalization_factor as f32).to_bits(),
+                (p.print_exposure_scale as f32).to_bits(),
+                u32::from(p.enlarger_diffusion.is_some()),
+                0,
+                0,
+                (p.preflash[0] as f32).to_bits(),
+                (p.preflash[1] as f32).to_bits(),
+                (p.preflash[2] as f32).to_bits(),
+                0,
+            ];
+            mk_uniform("dye_print_params", bytemuck::cast_slice(&bytes))
         };
 
         // ── Pre-compile pipelines (cached after first call) ──────────────
@@ -284,29 +368,52 @@ impl WgpuBackend {
                 if generated.values.backend_id() != self.backend_id() {
                     return Err("front spectral table belongs to another device; rebuild calibration with the selected backend".to_owned());
                 }
-                let tc_lut_buf = generated.values.as_any()
+                let tc_lut_buf = generated
+                    .values
+                    .as_any()
                     .downcast_ref::<super::super::preparation::PreparationTable>()
                     .ok_or_else(|| "front spectral table has an invalid device payload".to_owned())?
-                    .buffer.clone();
+                    .buffer
+                    .clone();
                 let pipe = self.cached_pipeline(
-                    include_str!("../../../../spektrafilm-shaders/wgsl/spectral/hanatos2025_rgb_to_raw.wgsl"),
-                    &[wgpu::BufferBindingType::Uniform,
+                    include_str!(
+                        "../../../../spektrafilm-shaders/wgsl/spectral/hanatos2025_rgb_to_raw.wgsl"
+                    ),
+                    &[
+                        wgpu::BufferBindingType::Uniform,
                         wgpu::BufferBindingType::Storage { read_only: true },
                         wgpu::BufferBindingType::Storage { read_only: true },
-                        wgpu::BufferBindingType::Storage { read_only: false }],
+                        wgpu::BufferBindingType::Storage { read_only: false },
+                    ],
                 );
-                Some(self.chain_pointwise(pipe, &[&front_params_buf, &buf_a, &tc_lut_buf, &buf_b],
-                    &[(1,false),(3,true)], n_pixels, true, "front_transform")?)
+                Some(self.chain_pointwise(
+                    pipe,
+                    &[&front_params_buf, &buf_a, &tc_lut_buf, &buf_b],
+                    &[(1, false), (3, true)],
+                    n_pixels,
+                    true,
+                    "front_transform",
+                )?)
             }
             spektrafilm_backend::FrontPass::Mallett2019 { .. } => {
                 let pipe = self.cached_pipeline(
-                    include_str!("../../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"),
-                    &[wgpu::BufferBindingType::Uniform,
+                    include_str!(
+                        "../../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"
+                    ),
+                    &[
+                        wgpu::BufferBindingType::Uniform,
                         wgpu::BufferBindingType::Storage { read_only: true },
-                        wgpu::BufferBindingType::Storage { read_only: false }],
+                        wgpu::BufferBindingType::Storage { read_only: false },
+                    ],
                 );
-                Some(self.chain_pointwise(pipe, &[&front_params_buf, &buf_a, &buf_b],
-                    &[(1,false),(2,true)], n_pixels, true, "front_transform")?)
+                Some(self.chain_pointwise(
+                    pipe,
+                    &[&front_params_buf, &buf_a, &buf_b],
+                    &[(1, false), (2, true)],
+                    n_pixels,
+                    true,
+                    "front_transform",
+                )?)
             }
             spektrafilm_backend::FrontPass::ScanInverse(_) => None,
         };
@@ -338,22 +445,63 @@ impl WgpuBackend {
                     _pad: [0; 7],
                 }),
             );
-            self.chain_pointwise(pipe, &[&log10_params_buf,&buf_b], &[(1,true)],
-                n_pixels, false, "log_exposure")?
+            self.chain_pointwise(
+                pipe,
+                &[&log10_params_buf, &buf_b],
+                &[(1, true)],
+                n_pixels,
+                false,
+                "log_exposure",
+            )?
         };
 
-        let bg_density_film = self.chain_pointwise(density_pipe.clone(),
-            &[&film_density_params_buf,&buf_b,&film_log_exp_buf,&film_curves_buf,&buf_a],
-            &[(1,false),(4,true)], n_pixels, true, "film_density")?;
-        let bg_print = self.chain_pointwise(print_pipe.clone(),
-            &[&print_params_buf,&print_input,&film_cd_buf,&film_bd_buf,&print_illu_buf,&print_sens_buf,&print_output],
-            &[(1,false),(6,true)], print_width*print_height, true, "print_spectral")?;
-        let bg_density_print = self.chain_pointwise(density_pipe.clone(),
-            &[&print_density_params_buf,print_density_input,&print_log_exp_buf,&print_curves_buf,&tail_a],
-            &[(1,false),(4,true)], tail_width*tail_height, true, "print_density")?;
+        let bg_density_film = self.chain_pointwise(
+            density_pipe.clone(),
+            &[
+                &film_density_params_buf,
+                &buf_b,
+                &film_log_exp_buf,
+                &film_curves_buf,
+                &buf_a,
+            ],
+            &[(1, false), (4, true)],
+            n_pixels,
+            true,
+            "film_density",
+        )?;
+        let bg_print = self.chain_pointwise(
+            print_pipe.clone(),
+            &[
+                &print_params_buf,
+                &print_input,
+                &film_cd_buf,
+                &film_bd_buf,
+                &print_illu_buf,
+                &print_sens_buf,
+                &print_output,
+            ],
+            &[(1, false), (6, true)],
+            print_width * print_height,
+            true,
+            "print_spectral",
+        )?;
+        let bg_density_print = self.chain_pointwise(
+            density_pipe.clone(),
+            &[
+                &print_density_params_buf,
+                print_density_input,
+                &print_log_exp_buf,
+                &print_curves_buf,
+                &tail_a,
+            ],
+            &[(1, false), (4, true)],
+            tail_width * tail_height,
+            true,
+            "print_density",
+        )?;
         let scan_input = if p.scan_film { &print_input } else { &tail_a };
-        let bg_scan = self.build_scan_direct_state(p,scan_input,&tail_b,tail_width,tail_height)?;
-
+        let bg_scan =
+            self.build_scan_direct_state(p, scan_input, &tail_b, tail_width, tail_height)?;
 
         // ── Halation auxiliary buffers + bind groups (only if active) ────
         // The device passes own their working buffers; the state is fallible
@@ -362,15 +510,7 @@ impl WgpuBackend {
         let halation_state = p
             .halation
             .as_ref()
-            .map(|hp| {
-                build_halation_state(
-                    hp,
-                    image_width,
-                    image_height,
-                    &buf_b,
-                    self,
-                )
-            })
+            .map(|hp| build_halation_state(hp, image_width, image_height, &buf_b, self))
             .transpose()?;
 
         // ── Highlight boost state ────────────────────────────────────────
@@ -378,12 +518,17 @@ impl WgpuBackend {
         let highlight_state = p
             .highlight_boost
             .as_ref()
-            .map(|hp| build_highlight_boost_state(&self.device, hp, n_pixels, &buf_b, self)).transpose()?;
+            .map(|hp| build_highlight_boost_state(&self.device, hp, n_pixels, &buf_b, self))
+            .transpose()?;
 
         // One shared filter scratch and one destination serve the camera and
         // scanner lens stages: they encode in different chain positions, and
         // each copies its result into buf_b before the next stage runs.
-        let lens_blur_scratch = self.allocate_image_pages(image_width.max(tail_width),image_height.max(tail_height),"lens_blur_scratch")?;
+        let lens_blur_scratch = self.allocate_image_pages(
+            image_width.max(tail_width),
+            image_height.max(tail_height),
+            "lens_blur_scratch",
+        )?;
         let camera_lens_blur_state = p
             .camera_lens_blur_px
             .filter(|&sigma| sigma > 0.0)
@@ -409,43 +554,35 @@ impl WgpuBackend {
         let unsharp_state = p
             .unsharp
             .as_ref()
-            .map(|up| {
-                build_unsharp_state(
+            .map(|up| build_unsharp_state(&self.device, up, tail_width, tail_height, &tail_b, self))
+            .transpose()?;
+        // Encode the destination space before Grain Procedural preparation; all
+        // resolution and grain passes stay in this resident command buffer.
+        let grain_v2_state = p
+            .grain_v2
+            .as_ref()
+            .map(|gp| {
+                build_grain_v2_state(
                     &self.device,
-                    up,
+                    gp,
                     tail_width,
                     tail_height,
                     &tail_b,
+                    Some(p.scan_output_space),
                     self,
                 )
             })
             .transpose()?;
-        // Encode the destination space before Grain Procedural preparation; all
-        // resolution and grain passes stay in this resident command buffer.
-        let grain_v2_state = p.grain_v2.as_ref().map(|gp| {
-            build_grain_v2_state(
-                &self.device,
-                gp,
-                tail_width,
-                tail_height,
-                &tail_b,
-                Some(p.scan_output_space),
-                self,
-            )
-        }).transpose()?;
 
         // Grain setup reports unsupported arithmetic and resource limits
         // before dispatch; absence must not silently omit an active field.
-        let grain_v1_state = p.grain_v1.as_ref().map(|gp| {
-            build_spektra_grain_state(
-                &self.device,
-                image_width,
-                image_height,
-                &buf_a,
-                gp,
-                self,
-            )
-        }).transpose()?;
+        let grain_v1_state = p
+            .grain_v1
+            .as_ref()
+            .map(|gp| {
+                build_spektra_grain_state(&self.device, image_width, image_height, &buf_a, gp, self)
+            })
+            .transpose()?;
 
         // ── Output gamut compression state ───────────────────────────────
         // Single per-pixel dispatch in place on buf_b, after glare and
@@ -456,7 +593,7 @@ impl WgpuBackend {
         let gamut_state = p
             .gamut
             .as_ref()
-            .map(|gp| build_gamut_state(&self.device, gp, &tail_b, tail_width*tail_height, self))
+            .map(|gp| build_gamut_state(&self.device, gp, &tail_b, tail_width * tail_height, self))
             .transpose()?;
 
         // ── Glare state ──────────────────────────────────────────────────
@@ -468,19 +605,10 @@ impl WgpuBackend {
         let glare_state = p
             .glare
             .as_ref()
-            .map(|gp| {
-                build_glare_state(
-                    &self.device,
-                    gp,
-                    tail_width,
-                    tail_height,
-                    &tail_b,
-                    self,
-                )
-            })
+            .map(|gp| build_glare_state(&self.device, gp, tail_width, tail_height, &tail_b, self))
             .transpose()?;
 
-        let tail_scratch = tail_buf("scanner_tail_scratch",tail_width,tail_height)?;
+        let tail_scratch = tail_buf("scanner_tail_scratch", tail_width, tail_height)?;
         let scanner_lens_blur_state = p
             .scanner_lens_blur_px
             .filter(|&sigma| sigma > 0.0)
@@ -529,16 +657,27 @@ impl WgpuBackend {
         let input_decode_state = p
             .input_decode
             .as_ref()
-            .map(|dp| build_input_decode_state(&self.device, dp, &buf_a, n_pixels, self)).transpose()?;
+            .map(|dp| build_input_decode_state(&self.device, dp, &buf_a, n_pixels, self))
+            .transpose()?;
         let convert_inverse_state = match &p.front {
-            spektrafilm_backend::FrontPass::ScanInverse(params) => Some(
-                self.build_convert_inverse_state(params, &buf_a, &buf_b, n_pixels)?
-            ),
+            spektrafilm_backend::FrontPass::ScanInverse(params) => {
+                Some(self.build_convert_inverse_state(params, &buf_a, &buf_b, n_pixels)?)
+            }
             _ => None,
         };
-        let scan_readout_state = p.scan_readout.map(|params| self.build_scan_density_state(
-            params, if p.scan_film { &print_input } else { &tail_a }, &tail_b, tail_width, tail_height,
-        )).transpose()?;
+        let scan_readout_state = p
+            .scan_readout
+            .map(|params| {
+                self.build_scan_density_state(
+                    params,
+                    if p.scan_film { &print_input } else { &tail_a },
+                    &tail_b,
+                    tail_width,
+                    tail_height,
+                    p.scan_preparation_key,
+                )
+            })
+            .transpose()?;
 
         let print_exposure_output = print_density_input.clone();
         Ok(ChainSetup {
@@ -590,6 +729,7 @@ impl WgpuBackend {
         p: &spektrafilm_backend::FilmChainParams<'_>,
         input: &spektrafilm_backend::DeviceImage,
     ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.check_cancelled()?;
         let t_start = std::time::Instant::now();
         validate_tap_span(p)?;
         if input.is_retained() {
@@ -598,7 +738,8 @@ impl WgpuBackend {
         if p.inject == p.collect {
             return Ok(input.clone());
         }
-        let includes = |tap| tap_index(p.inject) <= tap_index(tap) && tap_index(tap) < tap_index(p.collect);
+        let includes =
+            |tap| tap_index(p.inject) <= tap_index(tap) && tap_index(tap) < tap_index(p.collect);
         if (includes(Tap::LogEFilm) && p.density_cpu_stage.is_some())
             || (p.collect == Tap::RgbOut && p.scan_acquisition_cpu_stage.is_some())
         {
@@ -656,34 +797,48 @@ impl WgpuBackend {
         //    front transform assumes linear RGB.
         if let Some(ds) = input_decode_state.as_ref() {
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "input_decode", execute: Box::new(move || ds.submit(self)),
+                name: "input_decode",
+                execute: Box::new(move || ds.submit(self)),
             });
         }
         if let Some(inverse) = convert_inverse_state.as_ref() {
             let buf_a = buf_a.clone();
             let buf_b = buf_b.clone();
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "convert_inverse_solver", execute: Box::new(move || {
+                name: "convert_inverse_solver",
+                execute: Box::new(move || {
                     inverse.submit(self)?;
-                    let mut copy=super::super::grain::raster::RasterCommands::default();
-                    copy.copy(&buf_b,0,&buf_a,0,img_bytes as u64);copy.submit(self)
+                    let mut copy = super::super::grain::raster::RasterCommands::default();
+                    copy.copy(&buf_b, 0, &buf_a, 0, img_bytes as u64);
+                    copy.submit(self)
                 }),
             });
         } else if let Some(front) = front_pipe.as_ref() {
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "front_transform", execute: Box::new(move || front.submit(self)),
+                name: "front_transform",
+                execute: Box::new(move || front.submit(self)),
             });
             // 1a. Highlight boost on raw, before optical scatter.
             if let Some(hs) = highlight_state.as_ref() {
                 stages.push(super::super::pipe::ChainStage::Device {
-                    name: "highlight_boost", execute: Box::new(move || hs.submit(self)),
+                    name: "highlight_boost",
+                    execute: Box::new(move || hs.submit(self)),
                 });
             }
             if let Some(diffusion) = p.camera_diffusion.as_ref() {
                 let image = buf_b.clone();
                 stages.push(super::super::pipe::ChainStage::Device {
-                    name: "camera_diffusion", execute: Box::new(move ||
-                        self.diffusion_transport(image_width,image_height,&image,&image,diffusion,None)),
+                    name: "camera_diffusion",
+                    execute: Box::new(move || {
+                        self.diffusion_transport(
+                            image_width,
+                            image_height,
+                            &image,
+                            &image,
+                            diffusion,
+                            None,
+                        )
+                    }),
                 });
             }
             // 1a'. Camera optical diffusion runs on the device in this position —
@@ -695,34 +850,39 @@ impl WgpuBackend {
             if let Some(bs) = camera_lens_blur_state.as_ref() {
                 let buf_b = buf_b.clone();
                 stages.push(super::super::pipe::ChainStage::Device {
-                    name: "camera_lens_blur", execute: Box::new(move || bs.submit(self,&buf_b)),
+                    name: "camera_lens_blur",
+                    execute: Box::new(move || bs.submit(self, &buf_b)),
                 });
             }
             // 1c. Halation in-place on buf_b; its own working buffers hold
             //     the scatter results and the multi-bounce accumulator.
             if let Some(hs) = halation_state.as_ref() {
                 stages.push(super::super::pipe::ChainStage::Device {
-                    name: "halation", execute: Box::new(move || hs.submit(self)),
+                    name: "halation",
+                    execute: Box::new(move || hs.submit(self)),
                 });
             }
             // 2. log10 in-place on buf_b: raw → log_raw (3 channels per thread).
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "log_exposure", execute: Box::new(move || bg_log10.submit(self)),
+                name: "log_exposure",
+                execute: Box::new(move || bg_log10.submit(self)),
             });
         }
         boundaries[tap_index(Tap::LogEFilm)] = stages.len();
         if convert_inverse_state.is_none() {
-        // 3. Density curve (film, normalized): buf_b (log_raw) → buf_a (density_cmy)
-        stages.push(super::super::pipe::ChainStage::Device {
-            name: "film_density", execute: Box::new(move || bg_density_film.submit(self)),
-        });
-        // 3b. DIR couplers: corrects log_raw in buf_b and re-interpolates
-        //     the density curve back into buf_a.
-        if let Some(ds) = dir_state.as_ref() {
+            // 3. Density curve (film, normalized): buf_b (log_raw) → buf_a (density_cmy)
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "dir_couplers", execute: Box::new(move || ds.submit_passes(self)),
+                name: "film_density",
+                execute: Box::new(move || bg_density_film.submit(self)),
             });
-        }
+            // 3b. DIR couplers: corrects log_raw in buf_b and re-interpolates
+            //     the density curve back into buf_a.
+            if let Some(ds) = dir_state.as_ref() {
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "dir_couplers",
+                    execute: Box::new(move || ds.submit_passes(self)),
+                });
+            }
         }
         // 3c'. Spektra v1 grain: the device field on the developed density in
         //     buf_a, in the same density-fence position (after the film
@@ -733,7 +893,8 @@ impl WgpuBackend {
         //     fence above instead — never a different noise law.
         if let Some(gs) = grain_v1_state.as_ref() {
             stages.push(super::super::pipe::ChainStage::Device {
-                name: super::super::grain::GRAIN_V1_STAGE_NAME, execute: Box::new(move || gs.submit(self)),
+                name: super::super::grain::GRAIN_V1_STAGE_NAME,
+                execute: Box::new(move || gs.submit(self)),
             });
         }
         // 3d. Film-grain Dye: the device field on the developed density in
@@ -746,17 +907,22 @@ impl WgpuBackend {
         let dye_status = dye_state.as_ref().map(|state| state.status_buffer());
         if let Some(dye_state) = dye_state {
             let destination = film_density_output.clone();
-            let scan_destination = (p.grain_dye_cell_spectral && p.scan_film).then(|| tail_b.clone());
+            let scan_destination =
+                (p.grain_dye_cell_spectral && p.scan_film).then(|| tail_b.clone());
             stages.push(super::super::pipe::ChainStage::Device {
                 name: "grain_dye",
                 execute: Box::new(move || {
                     dye_state.submit(self)?;
-                    let payload = super::device_image::BufferPayload::from_pages(self.backend_id(),
-                        dye_state.output_pages(),dye_state.width,dye_state.height);
+                    let payload = super::device_image::BufferPayload::from_pages(
+                        self.backend_id(),
+                        dye_state.output_pages(),
+                        dye_state.width,
+                        dye_state.height,
+                    );
                     let mut copy = super::super::grain::raster::RasterCommands::default();
-                    copy.copy(&payload.pages,0,&destination,0,payload.bytes);
+                    copy.copy(&payload.pages, 0, &destination, 0, payload.bytes);
                     if let Some(scan) = scan_destination {
-                        copy.copy(&payload.pages,0,&scan,0,payload.bytes);
+                        copy.copy(&payload.pages, 0, &scan, 0, payload.bytes);
                     }
                     copy.submit(self)
                 }),
@@ -765,12 +931,18 @@ impl WgpuBackend {
         if let Some(state) = fotufilm_state {
             let destination = film_density_output.clone();
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "grain_fotufilm", execute: Box::new(move || {
+                name: "grain_fotufilm",
+                execute: Box::new(move || {
                     state.submit(self)?;
-                    let payload = super::device_image::BufferPayload::from_pages(self.backend_id(),
-                        state.output_pages(),state.width,state.height);
+                    let payload = super::device_image::BufferPayload::from_pages(
+                        self.backend_id(),
+                        state.output_pages(),
+                        state.width,
+                        state.height,
+                    );
                     let mut copy = super::super::grain::raster::RasterCommands::default();
-                    copy.copy(&payload.pages,0,&destination,0,payload.bytes);copy.submit(self)
+                    copy.copy(&payload.pages, 0, &destination, 0, payload.bytes);
+                    copy.submit(self)
                 }),
             });
         }
@@ -790,14 +962,26 @@ impl WgpuBackend {
             if *dye_print_log {
                 let source = film_density_output.clone();
                 let output = print_fine_output.clone();
-                let (width,height) = (film_density_width,film_density_height);
+                let (width, height) = (film_density_width, film_density_height);
                 stages.push(super::super::pipe::ChainStage::Device {
-                    name: "dye_print_response_log", execute: Box::new(move || {
-                        let source = super::device_image::BufferPayload::from_pages(self.backend_id(),source,width,height);
+                    name: "dye_print_response_log",
+                    execute: Box::new(move || {
+                        let source = super::device_image::BufferPayload::from_pages(
+                            self.backend_id(),
+                            source,
+                            width,
+                            height,
+                        );
                         let pages = self.dye_log10_pages(&source)?;
-                        let payload = super::device_image::BufferPayload::from_pages(self.backend_id(),pages,width,height);
+                        let payload = super::device_image::BufferPayload::from_pages(
+                            self.backend_id(),
+                            pages,
+                            width,
+                            height,
+                        );
                         let mut copy = super::super::grain::raster::RasterCommands::default();
-                        copy.copy(&payload.pages,0,&output,0,payload.bytes);copy.submit(self)
+                        copy.copy(&payload.pages, 0, &output, 0, payload.bytes);
+                        copy.submit(self)
                     }),
                 });
             } else {
@@ -807,72 +991,126 @@ impl WgpuBackend {
                     let count = film_density_width * film_density_height;
                     stages.push(super::super::pipe::ChainStage::Device {
                         name: "enlarger_lut",
-                        execute: Box::new(move || self.spectral_lut_transport(&source,&output,count,
-                            |source,output,n| self.execute_enlarger_lut_resident(source,output,n,lut))),
+                        execute: Box::new(move || {
+                            self.spectral_lut_transport(
+                                &source,
+                                &output,
+                                count,
+                                |source, output, n| {
+                                    self.execute_enlarger_lut_resident(source, output, n, lut)
+                                },
+                            )
+                        }),
                     });
                     if p.enlarger_diffusion.is_none() {
-                        let roundtrip = self.print_lut_roundtrip(print_fine_output,count,p.print_exposure_scale)?;
+                        let roundtrip = self.print_lut_roundtrip(
+                            print_fine_output,
+                            count,
+                            p.print_exposure_scale,
+                        )?;
                         stages.push(super::super::pipe::ChainStage::Device {
-                            name: "print_lut_roundtrip", execute: Box::new(move || roundtrip.submit(self)),
+                            name: "print_lut_roundtrip",
+                            execute: Box::new(move || roundtrip.submit(self)),
                         });
                     }
                 } else {
-                stages.push(super::super::pipe::ChainStage::Device {
-                    name: "print_spectral", execute: Box::new(move || bg_print.submit(self)),
-                });
+                    stages.push(super::super::pipe::ChainStage::Device {
+                        name: "print_spectral",
+                        execute: Box::new(move || bg_print.submit(self)),
+                    });
                 }
             }
             if let Some(diffusion) = p.enlarger_diffusion.as_ref() {
                 let image = print_fine_output.clone();
                 stages.push(super::super::pipe::ChainStage::Device {
-                    name: "enlarger_diffusion", execute: Box::new(move ||
-                        self.diffusion_transport(film_density_width,film_density_height,
-                            &image,&image,diffusion,Some(p.print_exposure_scale))),
+                    name: "enlarger_diffusion",
+                    execute: Box::new(move || {
+                        self.diffusion_transport(
+                            film_density_width,
+                            film_density_height,
+                            &image,
+                            &image,
+                            diffusion,
+                            Some(p.print_exposure_scale),
+                        )
+                    }),
                 });
             }
             if let Some(factor) = dye_collapse {
                 let source = print_fine_output.clone();
                 let output = buf_b.clone();
-                let (width,height) = (film_density_width,film_density_height);
+                let (width, height) = (film_density_width, film_density_height);
                 let factor = *factor;
                 stages.push(super::super::pipe::ChainStage::Device {
-                    name: "dye_aperture_collapse", execute: Box::new(move || {
-                        let source = super::device_image::BufferPayload::from_pages(self.backend_id(),source,width,height);
-                        let (pages,width,height) = self.dye_aperture_collapse_pages(&source,factor)?;
-                        let payload = super::device_image::BufferPayload::from_pages(self.backend_id(),pages,width,height);
+                    name: "dye_aperture_collapse",
+                    execute: Box::new(move || {
+                        let source = super::device_image::BufferPayload::from_pages(
+                            self.backend_id(),
+                            source,
+                            width,
+                            height,
+                        );
+                        let (pages, width, height) =
+                            self.dye_aperture_collapse_pages(&source, factor)?;
+                        let payload = super::device_image::BufferPayload::from_pages(
+                            self.backend_id(),
+                            pages,
+                            width,
+                            height,
+                        );
                         let mut copy = super::super::grain::raster::RasterCommands::default();
-                        copy.copy(&payload.pages,0,&output,0,payload.bytes);copy.submit(self)
+                        copy.copy(&payload.pages, 0, &output, 0, payload.bytes);
+                        copy.submit(self)
                     }),
                 });
             }
             boundaries[tap_index(Tap::LogEPrint)] = stages.len();
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "print_density", execute: Box::new(move || bg_density_print.submit(self)),
+                name: "print_density",
+                execute: Box::new(move || bg_density_print.submit(self)),
             });
         }
         boundaries[tap_index(Tap::CmyPrint)] = stages.len();
-        // 6. Scan acquisition: the PCHIP scanner LUT (the slide luminance
-        //     remap or `use_scanner_lut` forces it on the CPU route for
-        //     Python parity) runs as an assembled CPU fence that replaces
-        //     the direct spectral integration (pipe architecture,
-        //     capability class): buf_a (density) → fence → buf_b (RGB).
+        // 6. Resident scan acquisition replaces density with linear RGB:
+        // cell readout, calibrated negative reconstruction, scanner LUT, or
+        // direct spectral integration. Standard setup measures the complete
+        // post-optics frame only when its immutable reconstruction is absent.
         if p.grain_dye_cell_spectral && p.scan_film {
             // The cell response already is linear scanner RGB.
         } else if let Some(readout) = scan_readout_state.as_ref() {
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "scanner_density", execute: Box::new(move || readout.submit(self)),
+                name: "scanner_optics",
+                execute: Box::new(move || readout.submit_optics(self)),
+            });
+            if readout.has_setup() {
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "standard_setup",
+                    execute: Box::new(move || readout.submit_setup(self)),
+                });
+            }
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "scanner_density",
+                execute: Box::new(move || readout.submit_inverse(self)),
             });
         } else if let Some(lut) = p.scanner_lut.as_ref() {
-            let source = if p.scan_film { film_density_output.clone() } else { buf_a.clone() };
+            let source = if p.scan_film {
+                film_density_output.clone()
+            } else {
+                buf_a.clone()
+            };
             let output = buf_b.clone();
             stages.push(super::super::pipe::ChainStage::Device {
                 name: "scanner_lut",
-                execute: Box::new(move || self.spectral_lut_transport(&source,&output,n_pixels,
-                    |source,output,n| self.execute_scanner_lut_resident(source,output,n,lut))),
+                execute: Box::new(move || {
+                    self.spectral_lut_transport(&source, &output, n_pixels, |source, output, n| {
+                        self.execute_scanner_lut_resident(source, output, n, lut)
+                    })
+                }),
             });
         } else {
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "scan_spectral", execute: Box::new(move || bg_scan.submit(self)),
+                name: "scan_spectral",
+                execute: Box::new(move || bg_scan.submit(self)),
             });
         }
         // 6a. Scanner readout optics on the linear acquisition, before
@@ -880,43 +1118,50 @@ impl WgpuBackend {
         if let Some(bs) = scanner_lens_blur_state.as_ref() {
             let buf_b = buf_b.clone();
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "scanner_lens_blur", execute: Box::new(move || bs.submit(self,&buf_b)),
+                name: "scanner_lens_blur",
+                execute: Box::new(move || bs.submit(self, &buf_b)),
             });
         }
         // 6b. Glare (in place on buf_b).
         if let Some(gs) = glare_state.as_ref() {
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "glare", execute: Box::new(move || gs.submit(self)),
+                name: "glare",
+                execute: Box::new(move || gs.submit(self)),
             });
         }
         // 6c. Output gamut compression (in place on buf_b) — after glare,
         //     before unsharp, mirroring the CPU scanning order.
         if let Some(gs) = gamut_state.as_ref() {
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "output_gamut", execute: Box::new(move || gs.submit(self)),
+                name: "output_gamut",
+                execute: Box::new(move || gs.submit(self)),
             });
         }
         // 6d. Unsharp mask — writes the final image back to buf_b so the
         //     readback path below is unchanged.
         if let Some(us) = unsharp_state.as_ref() {
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "unsharp_mask", execute: Box::new(move || us.submit(self)),
+                name: "unsharp_mask",
+                execute: Box::new(move || us.submit(self)),
             });
         }
         // 6e. Encode native destination RGB, then apply Grain Procedural.
         if let Some(gs) = grain_v2_state.as_ref() {
             let buf_b = buf_b.clone();
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "grain_v2", execute: Box::new(move || gs.submit(self,&buf_b)),
+                name: "grain_v2",
+                execute: Box::new(move || gs.submit(self, &buf_b)),
             });
         }
         // 6f. Output transfer is split around the terminal appearance. Encode
         // before CMYK; decode is appended after CMYK for linear output.
         let output_transfer_stage = |tp: &spektrafilm_backend::OutputTransferGpuParams,
-                                     image: &Vec<ImagePage>| -> Result<super::super::pipe::ChainStage<'_>,String> {
-            let transfer = self.chain_output_transfer(image,n_pixels,tp)?;
+                                     image: &Vec<ImagePage>|
+         -> Result<super::super::pipe::ChainStage<'_>, String> {
+            let transfer = self.chain_output_transfer(image, n_pixels, tp)?;
             Ok(super::super::pipe::ChainStage::Device {
-                name: "output_transfer", execute: Box::new(move || transfer.submit(self)),
+                name: "output_transfer",
+                execute: Box::new(move || transfer.submit(self)),
             })
         };
         if let Some(tp) = p.output_transfer.as_ref().filter(|tp| !tp.decode) {
@@ -927,9 +1172,10 @@ impl WgpuBackend {
         //     transfer, so the buffer state is encoded exactly when the
         //     caller requested output encoding.
         if let Some(cp) = p.cmyk.as_ref() {
-            let cmyk = self.chain_cmyk(buf_b,n_pixels,cp)?;
+            let cmyk = self.chain_cmyk(buf_b, n_pixels, cp)?;
             stages.push(super::super::pipe::ChainStage::Device {
-                name: "cmyk", execute: Box::new(move || cmyk.submit(self)),
+                name: "cmyk",
+                execute: Box::new(move || cmyk.submit(self)),
             });
         }
         if let Some(tp) = p.output_transfer.as_ref().filter(|tp| tp.decode) {
@@ -942,27 +1188,41 @@ impl WgpuBackend {
         stages.drain(..start);
         let (selected, width, height) = match p.collect {
             Tap::LogEFilm => (setup.buf_b.clone(), p.image_width, p.image_height),
-            Tap::CmyFilm => (film_density_output.clone(), film_density_width, film_density_height),
+            Tap::CmyFilm => (
+                film_density_output.clone(),
+                film_density_width,
+                film_density_height,
+            ),
             Tap::LogEPrint => (print_exposure_output.clone(), image_width, image_height),
             Tap::CmyPrint => (buf_a.clone(), image_width, image_height),
             Tap::RgbOut => (buf_b.clone(), image_width, image_height),
             Tap::RgbIn | Tap::RgbPre => unreachable!("equal boundary returned before setup"),
         };
-        let final_output = (selected,width,height);
+        let final_output = (selected, width, height);
         // The chain ends on the device. The output buffer is returned as a
         // retained carrier, so the route's saving conversion and viewer read
         // it without a download and reupload; only the compatibility wrapper
         // materializes it.
         let cpu_setup_ms = t_start.elapsed().as_secs_f32() * 1000.0;
         self.pipe.run_chain(stages)?;
-        if p.collect == Tap::RgbOut && let Some(readout) = scan_readout_state.as_ref() {
-            readout.check(self)?;
+        if p.collect == Tap::RgbOut
+            && let Some(readout) = scan_readout_state.as_ref()
+        {
+            readout.check(
+                self,
+                p.scan_readout.ok_or("scanner density parameters missing")?,
+                p.scan_preparation_key,
+                width,
+                height,
+            )?;
         }
         // The Dye pass publishes only a bounded flag; it is checked after the
         // run and before the output is published (pipe architecture), so an
         // out-of-bounds field fails instead of escaping.
-        if start < boundaries[tap_index(Tap::CmyFilm)] && stop >= boundaries[tap_index(Tap::CmyFilm)]
-            && let Some(status) = dye_status.as_ref() {
+        if start < boundaries[tap_index(Tap::CmyFilm)]
+            && stop >= boundaries[tap_index(Tap::CmyFilm)]
+            && let Some(status) = dye_status.as_ref()
+        {
             self.check_dye_status(status)?;
         }
         tracing::debug!(
@@ -984,34 +1244,59 @@ impl WgpuBackend {
             Tap::RgbOut if encoded => spektrafilm_backend::SampleDomain::Encoded,
             _ => spektrafilm_backend::SampleDomain::Linear,
         };
-        let pixel_pitch_um = p.grain_dye.as_ref()
+        let pixel_pitch_um = p
+            .grain_dye
+            .as_ref()
             .filter(|_| tap_index(p.collect) >= tap_index(Tap::CmyFilm))
             .map_or(p.pixel_pitch_um, |dye| {
                 let axis = usize::from(p.image_height > p.image_width);
                 dye.grid.pitch_um[axis] * f64::from(p.grain_dye_aperture.unwrap_or(1))
             });
-        let pixel_pitch_um = p.grain_fotufilm.as_ref()
+        let pixel_pitch_um = p
+            .grain_fotufilm
+            .as_ref()
             .filter(|_| tap_index(p.collect) >= tap_index(Tap::CmyFilm))
             .map_or(pixel_pitch_um, |grain| {
                 let axis = usize::from(p.image_height > p.image_width);
-                grain.pitch_um[axis] * grain.size.clamp(0.5,4.0)
+                grain.pitch_um[axis] * grain.size.clamp(0.5, 4.0)
             });
-        let payload = super::device_image::BufferPayload::from_pages(self.backend_id(),
-            final_output.0,final_output.1,final_output.2);
-        let (pages,width,height) = if let Some(rect) = p.grain_dye_crop {
-            (self.dye_crop_pages(&payload,rect)?,rect[2],rect[3])
+        let payload = super::device_image::BufferPayload::from_pages(
+            self.backend_id(),
+            final_output.0,
+            final_output.1,
+            final_output.2,
+        );
+        let (pages, width, height) = if let Some(rect) = p.grain_dye_crop {
+            (self.dye_crop_pages(&payload, rect)?, rect[2], rect[3])
         } else {
-            let pages = self.allocate_image_pages(final_output.1,final_output.2,"chain_result")?;
+            let pages =
+                self.allocate_image_pages(final_output.1, final_output.2, "chain_result")?;
             let mut encoder = self.device.create_command_encoder(&Default::default());
             for page in &pages {
-                self.copy_samples_to(&mut encoder,&payload,u64::from(page.first_pixel)*3,
-                    u64::from(page.n_pixels)*3,&page.buffer,0)?;
+                self.copy_samples_to(
+                    &mut encoder,
+                    &payload,
+                    u64::from(page.first_pixel) * 3,
+                    u64::from(page.n_pixels) * 3,
+                    &page.buffer,
+                    0,
+                )?;
             }
             self.queue.submit(Some(encoder.finish()));
-            (pages,final_output.1,final_output.2)
+            (pages, final_output.1, final_output.2)
         };
-        Ok(self.retain_image_pages(pages,width,height,domain,
-            if p.collect == Tap::RgbOut {p.scan_output_space} else {input.space()},Some(pixel_pitch_um)))
+        Ok(self.retain_image_pages(
+            pages,
+            width,
+            height,
+            domain,
+            if p.collect == Tap::RgbOut {
+                p.scan_output_space
+            } else {
+                input.space()
+            },
+            Some(pixel_pitch_um),
+        ))
     }
 }
 
@@ -1043,7 +1328,6 @@ pub(in crate::wgpu_backend) struct RequiredChainBuffers {
     pub(in crate::wgpu_backend) static_bytes: u64,
 }
 
-
 /// Derives the required device buffer sizes from the chain parameters.
 /// Sizes mirror `run_film_chain_inner`: every lookup value is narrowed to
 /// one f32 on upload, so `n` f64 samples become `4n` bytes and an
@@ -1061,9 +1345,11 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         p.print_channel_density.len()
     };
     let tc_lut_bytes = match &p.front {
-        spektrafilm_backend::FrontPass::Hanatos2025 { tc_lut, .. } =>
-            (tc_lut.size as u64).saturating_mul(tc_lut.size as u64).saturating_mul(12),
-        spektrafilm_backend::FrontPass::Mallett2019 { .. } | spektrafilm_backend::FrontPass::ScanInverse(_) => 0,
+        spektrafilm_backend::FrontPass::Hanatos2025 { tc_lut, .. } => (tc_lut.size as u64)
+            .saturating_mul(tc_lut.size as u64)
+            .saturating_mul(12),
+        spektrafilm_backend::FrontPass::Mallett2019 { .. }
+        | spektrafilm_backend::FrontPass::ScanInverse(_) => 0,
     };
     let dir_log_bytes = p.dir_couplers.map_or(0, |dp| f32s(dp.log_exposure.len()));
     let dir_curves_bytes = p
@@ -1072,13 +1358,16 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
     let cmax_bytes = p.gamut.map_or(0, |gp| f32s(gp.cmax.len()));
     // Spektra v1's device pass uploads the composite curve x column
     // (`knots` × 3) and the layer curve tensor (`knots` × 9) as f64 storage.
-    let grain_v1_curve_bytes = p
-        .grain_v1
-        .as_ref()
-        .map_or(0, |gp| gp.curve_x.len() as u64 * 8 + gp.curve_layers.len() as u64 * 8);
-    let scan_axes_bytes = p.scan_readout.map_or(0, |p| (p.density.len().max(p.exposure.len()) as u64) * 8);
+    let grain_v1_curve_bytes = p.grain_v1.as_ref().map_or(0, |gp| {
+        gp.curve_x.len() as u64 * 8 + gp.curve_layers.len() as u64 * 8
+    });
+    let scan_axes_bytes = p
+        .scan_readout
+        .map_or(0, |p| (p.density.len().max(p.exposure.len()) as u64) * 8);
     let convert_table_bytes = match &p.front {
-        spektrafilm_backend::FrontPass::ScanInverse(p) => (p.dye.len().max(p.cmfs.len()) as u64) * 3 * 8,
+        spektrafilm_backend::FrontPass::ScanInverse(p) => {
+            (p.dye.len().max(p.cmfs.len()) as u64) * 3 * 8
+        }
         _ => 0,
     };
     let static_bytes = [
@@ -1106,9 +1395,7 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
     .into_iter()
     .max()
     .unwrap_or(0);
-    RequiredChainBuffers {
-        static_bytes,
-    }
+    RequiredChainBuffers { static_bytes }
 }
 
 /// Compares one required buffer size with the device limits. Every chain
@@ -1135,14 +1422,11 @@ pub(in crate::wgpu_backend) fn required_buffer_exceeds_limits(
     None
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use spektrafilm_backend::{FilmChainParams, FrontPass};
-    use spektrafilm_backend::{
-        Precision, RetainedImageMeta, SampleDomain,
-    };
+    use spektrafilm_backend::{Precision, RetainedImageMeta, SampleDomain};
     use spektrafilm_math::colorspace;
     use spektrafilm_math::image::ImageBuf;
 
@@ -1202,6 +1486,7 @@ mod tests {
             density_cpu_stage: None,
             scan_acquisition_cpu_stage: None,
             scan_readout: None,
+            scan_preparation_key: None,
             output_transfer: None,
             cmyk: None,
             input_decode: None,
@@ -1234,42 +1519,96 @@ mod tests {
         p.print_sensitivity = &spectral;
         p.collect = Tap::LogEFilm;
         let source = ImageBuf::from_data(1, 1, vec![0.1 as _, 1.0 as _, 10.0 as _]);
-        let input = backend.retain_image(&source, &RetainedImageMeta {
-            width: 1, height: 1, domain: SampleDomain::Linear,
-            precision: Precision::host(), space: &colorspace::SRGB,
-            pixel_pitch_um: Some(1.0),
-        }).unwrap();
-        let repeated = ImageBuf::from_data(3,1,source.data.repeat(3));
-        let split = (0..3).map(|i| {
-            let samples: Vec<f32> = repeated.data[i*3..i*3+3].iter().map(|&v| v as f32).collect();
-            super::super::super::paged::ImagePage {
-                first_pixel: i as u32, n_pixels: 1,
-                buffer: backend.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("split_source_pixel"), contents: bytemuck::cast_slice(&samples),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-                }),
-            }
-        }).collect();
-        let paged = backend.retain_image_pages(split,3,1,SampleDomain::Linear,&colorspace::SRGB,Some(1.0));
-        let contiguous = backend.retain_image(&repeated,&RetainedImageMeta {
-            width:3,height:1,domain:SampleDomain::Linear,precision:Precision::host(),
-            space:&colorspace::SRGB,pixel_pitch_um:Some(1.0),
-        }).unwrap();
+        let input = backend
+            .retain_image(
+                &source,
+                &RetainedImageMeta {
+                    width: 1,
+                    height: 1,
+                    domain: SampleDomain::Linear,
+                    precision: Precision::host(),
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: Some(1.0),
+                },
+            )
+            .unwrap();
+        let repeated = ImageBuf::from_data(3, 1, source.data.repeat(3));
+        let split = (0..3)
+            .map(|i| {
+                let samples: Vec<f32> = repeated.data[i * 3..i * 3 + 3]
+                    .iter()
+                    .map(|&v| v as f32)
+                    .collect();
+                super::super::super::paged::ImagePage {
+                    first_pixel: i as u32,
+                    n_pixels: 1,
+                    buffer: backend
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("split_source_pixel"),
+                            contents: bytemuck::cast_slice(&samples),
+                            usage: wgpu::BufferUsages::STORAGE
+                                | wgpu::BufferUsages::COPY_SRC
+                                | wgpu::BufferUsages::COPY_DST,
+                        }),
+                }
+            })
+            .collect();
+        let paged = backend.retain_image_pages(
+            split,
+            3,
+            1,
+            SampleDomain::Linear,
+            &colorspace::SRGB,
+            Some(1.0),
+        );
+        let contiguous = backend
+            .retain_image(
+                &repeated,
+                &RetainedImageMeta {
+                    width: 3,
+                    height: 1,
+                    domain: SampleDomain::Linear,
+                    precision: Precision::host(),
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: Some(1.0),
+                },
+            )
+            .unwrap();
         p.image_width = 3;
-        for carrier in [&contiguous,&paged] {
+        for carrier in [&contiguous, &paged] {
             p.collect = Tap::CmyFilm;
-            let first = backend.run_film_chain_retained(carrier,&p).unwrap();
-            let second = backend.run_film_chain_retained(carrier,&p).unwrap();
-            assert_eq!(first.to_host(backend.backend()).unwrap().data,
-                second.to_host(backend.backend()).unwrap().data);
-            assert_eq!(carrier.to_host(backend.backend()).unwrap().data,repeated.data);
-            let mixed = backend.mix_output_images(&first,carrier,&spektrafilm_backend::OutputMixGpuParams {
-                amount:0.0,encoded:false,cctf_kind:0,
-            }).unwrap();
-            assert_eq!(mixed.to_host(backend.backend()).unwrap().data,repeated.data);
+            let first = backend.run_film_chain_retained(carrier, &p).unwrap();
+            let second = backend.run_film_chain_retained(carrier, &p).unwrap();
+            assert_eq!(
+                first.to_host(backend.backend()).unwrap().data,
+                second.to_host(backend.backend()).unwrap().data
+            );
+            assert_eq!(
+                carrier.to_host(backend.backend()).unwrap().data,
+                repeated.data
+            );
+            let mixed = backend
+                .mix_output_images(
+                    &first,
+                    carrier,
+                    &spektrafilm_backend::OutputMixGpuParams {
+                        amount: 0.0,
+                        encoded: false,
+                        cctf_kind: 0,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                mixed.to_host(backend.backend()).unwrap().data,
+                repeated.data
+            );
             p.density_cpu_stage = Some(Box::new(|_| panic!("forbidden CPU image stage")));
-            assert!(backend.run_film_chain_retained(carrier,&p).is_err());
-            assert_eq!(carrier.to_host(backend.backend()).unwrap().data,repeated.data);
+            assert!(backend.run_film_chain_retained(carrier, &p).is_err());
+            assert_eq!(
+                carrier.to_host(backend.backend()).unwrap().data,
+                repeated.data
+            );
             p.density_cpu_stage = None;
         }
         p.image_width = 1;
@@ -1277,14 +1616,25 @@ mod tests {
         let mut identity_params = params(1, 1);
         identity_params.inject = Tap::CmyFilm;
         identity_params.collect = Tap::CmyFilm;
-        let identity = backend.run_film_chain_retained(&input, &identity_params).unwrap();
-        assert!(std::sync::Arc::ptr_eq(input.payload().unwrap(), identity.payload().unwrap()));
+        let identity = backend
+            .run_film_chain_retained(&input, &identity_params)
+            .unwrap();
+        assert!(std::sync::Arc::ptr_eq(
+            input.payload().unwrap(),
+            identity.payload().unwrap()
+        ));
         assert_eq!(identity.domain(), input.domain());
         assert_eq!(identity.pixel_pitch_um(), input.pixel_pitch_um());
         assert_eq!((identity.width(), identity.height()), (1, 1));
         let exposure = backend.run_film_chain_retained(&input, &p).unwrap();
         assert_eq!(exposure.domain(), SampleDomain::LogExposure);
-        for (actual, expected) in exposure.to_host(backend.backend()).unwrap().data.iter().zip([-1.0, 0.0, 1.0]) {
+        for (actual, expected) in exposure
+            .to_host(backend.backend())
+            .unwrap()
+            .data
+            .iter()
+            .zip([-1.0, 0.0, 1.0])
+        {
             assert!((*actual as f64 - expected).abs() < 2e-6);
         }
         p.inject = Tap::LogEFilm;
@@ -1293,21 +1643,75 @@ mod tests {
         // running the scanner tail would produce zeros with this scan matrix.
         let density = backend.run_film_chain_retained(&exposure, &p).unwrap();
         assert_eq!(density.domain(), SampleDomain::Density);
-        for (actual, expected) in density.to_host(backend.backend()).unwrap().data.iter().zip([0.0, 1.0, 2.0]) {
+        for (actual, expected) in density
+            .to_host(backend.backend())
+            .unwrap()
+            .data
+            .iter()
+            .zip([0.0, 1.0, 2.0])
+        {
             assert!((*actual as f64 - expected).abs() < 2e-6);
         }
         p.inject = Tap::LogEPrint;
         p.collect = Tap::CmyPrint;
         let paper = backend.run_film_chain_retained(&exposure, &p).unwrap();
         assert_eq!(paper.domain(), SampleDomain::Density);
-        for (actual, expected) in paper.to_host(backend.backend()).unwrap().data.iter().zip([0.0, 1.0, 2.0]) {
+        for (actual, expected) in paper
+            .to_host(backend.backend())
+            .unwrap()
+            .data
+            .iter()
+            .zip([0.0, 1.0, 2.0])
+        {
             assert!((*actual as f64 - expected).abs() < 2e-6);
         }
         p.inject = Tap::LogEFilm;
         p.collect = Tap::CmyFilm;
-        p.density_cpu_stage = Some(Box::new(|_| panic!("GPU diagnostics must not run CPU image arithmetic")));
+        p.density_cpu_stage = Some(Box::new(|_| {
+            panic!("GPU diagnostics must not run CPU image arithmetic")
+        }));
         let error = backend.run_film_chain_retained(&exposure, &p).unwrap_err();
         assert!(error.contains("CPU image-stage fence"), "{error}");
+    }
+
+    #[test]
+    fn cancelled_identity_tap_discards_carrier_without_poisoning_reuse() {
+        use spektrafilm_backend::ComputeBackend;
+        use std::sync::{Arc, atomic::AtomicBool};
+        let gpu = crate::test_support::explicit_adapter();
+        let image = ImageBuf::from_data(1, 1, f32_to_scalars(vec![0.125, 0.5, 0.75]));
+        let source = gpu
+            .retain_image(
+                &image,
+                &RetainedImageMeta {
+                    width: 1,
+                    height: 1,
+                    domain: SampleDomain::Linear,
+                    precision: Precision::F32,
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: None,
+                },
+            )
+            .unwrap();
+        let mut p = params(1, 1);
+        p.collect = p.inject;
+        let mut cancelled = gpu.derived_explicit();
+        cancelled.pipe = gpu
+            .pipe
+            .with_cancellation(Some(Arc::new(AtomicBool::new(true))));
+        assert_eq!(
+            cancelled.run_film_chain_retained(&source, &p).unwrap_err(),
+            "operation cancelled"
+        );
+        let healthy = gpu.run_film_chain_retained(&source, &p).unwrap();
+        assert!(Arc::ptr_eq(
+            source.payload().unwrap(),
+            healthy.payload().unwrap()
+        ));
+        assert_eq!(
+            scalars_to_f32(&healthy.to_host(gpu.backend()).unwrap().data).as_ref(),
+            &[0.125, 0.5, 0.75]
+        );
     }
 
     #[test]
@@ -1319,9 +1723,12 @@ mod tests {
         p.scan_film = true;
         p.inject = Tap::LogEPrint;
         p.collect = Tap::LogEPrint;
-        assert!(validate_tap_span(&p).unwrap_err().contains("not part of this topology"));
+        assert!(
+            validate_tap_span(&p)
+                .unwrap_err()
+                .contains("not part of this topology")
+        );
     }
-
 
     #[test]
     fn required_chain_buffers_mirror_the_chain_arithmetic() {

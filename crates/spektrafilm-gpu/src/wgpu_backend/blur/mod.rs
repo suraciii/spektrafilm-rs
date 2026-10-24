@@ -36,7 +36,15 @@ pub(super) fn make_blur_job(
     let destination = out.pages();
     let scratch = scratch.pages();
     let state = crate::wgpu_backend::grain::v1::blur::build_grain_blur_paged_with_scratch(
-        backend, width, height, &source, &destination, Some(&scratch), sigma, 0, 0,
+        backend,
+        width,
+        height,
+        &source,
+        &destination,
+        Some(&scratch),
+        sigma,
+        0,
+        0,
     )
     .map_err(|reason| format!("{label} Gaussian blur: {reason}"))?;
     Ok(BlurJob {

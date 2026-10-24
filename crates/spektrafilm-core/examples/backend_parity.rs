@@ -219,8 +219,10 @@ fn main() -> Result<(), String> {
         let mut p = base.clone();
         p.film_render.grain.active = true;
         p.film_render.grain.sublayers_active = layered;
-        let reference_pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), p.clone(), &dir)?;
-        let pipeline = Pipeline::new_with_spectral_backend(film.clone(), print.clone(), p, &dir, &gpu)?;
+        let reference_pipeline =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), p.clone(), &dir)?;
+        let pipeline =
+            Pipeline::new_with_spectral_backend(film.clone(), print.clone(), p, &dir, &gpu)?;
         // Spektra grain distribution runs as the assembled density fence, so
         // the route stays resident instead of falling back to the CPU
         // sampler route.

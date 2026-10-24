@@ -109,7 +109,7 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) gr
  let p=params.rect.xy+(vec2<f32>(f32(i%params.width),f32(i/params.width))+vec2<f32>(0.5))*(params.rect.zw-params.rect.xy)/vec2<f32>(f32(params.width),f32(params.height));
  var rgb=params.gray;if contains(params.border,p){rgb=vec3<f32>(1.0);}
  if params.pw>0u && contains(params.paper_rect,p) && !contains(params.image_rect,p){rgb=sample(1u,p,params.paper_rect,params.pw,params.ph,4u);}
- if contains(params.image_rect,p){
+ if params.sw>0u && contains(params.image_rect,p){
  if params.full!=0u {rgb=pixel(0u,i32(i%params.width),i32(i/params.width),params.sw,params.sh);}else{rgb=sample(0u,p,params.image_rect,params.sw,params.sh,params.mode);}
  if params.output_layer!=0u && params.lw>0u && p.x<params.image_rect.x+(params.image_rect.z-params.image_rect.x)*clamp(params.split,0.0,1.0){rgb=sample(3u,p,params.image_rect,params.lw,params.lh,params.mode);}
  if params.output_layer!=0u && params.ow>0u && params.lw==0u {let old=sample(2u,p,params.image_rect,params.ow,params.oh,params.mode);rgb=clamp(old,vec3<f32>(0.0),vec3<f32>(1.0))*(1.0-params.fade)+clamp(rgb,vec3<f32>(0.0),vec3<f32>(1.0))*params.fade;}

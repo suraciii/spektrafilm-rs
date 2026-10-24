@@ -19,9 +19,15 @@ pub(super) struct LensUniform {
 impl From<&RawLensParams> for LensUniform {
     fn from(p: &RawLensParams) -> Self {
         Self {
-            dimensions: p.dimensions, flags: p.flags, normalization: p.normalization,
-            center: p.center, distortion: p.distortion, tca: p.tca, tca_tail: p.tca_tail,
-            vignette: p.vignette, mapping: p.mapping,
+            dimensions: p.dimensions,
+            flags: p.flags,
+            normalization: p.normalization,
+            center: p.center,
+            distortion: p.distortion,
+            tca: p.tca,
+            tca_tail: p.tca_tail,
+            vignette: p.vignette,
+            mapping: p.mapping,
         }
     }
 }
@@ -30,22 +36,63 @@ impl WgpuBackend {
     /// adaptation/tint. Input and output must be distinct width*height*3 f32
     /// buffers at the prepared dimensions. Bound resources live with dispatches.
     pub(super) fn prepare_lens_passes(
-        &self, params: &RawLensParams, input: &RawBuffer, output: &RawBuffer,
+        &self,
+        params: &RawLensParams,
+        input: &RawBuffer,
+        output: &RawBuffer,
     ) -> Vec<RawDispatch> {
         let width = params.dimensions[0];
         let height = params.dimensions[1];
-        let uniform = RawBuffer::upload(&self.device, "raw_lens_params",
-            bytemuck::bytes_of(&LensUniform::from(params)), wgpu::BufferUsages::UNIFORM);
-        let axes = RawBuffer::zeros(&self.device, "raw_lens_axes", (u64::from(width) + u64::from(height)) * 4);
-        let vignette = RawBuffer::zeros(&self.device, "raw_lens_vignette", u64::from(width) * u64::from(height) * 12);
+        let uniform = RawBuffer::upload(
+            &self.device,
+            "raw_lens_params",
+            bytemuck::bytes_of(&LensUniform::from(params)),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        let axes = RawBuffer::zeros(
+            &self.device,
+            "raw_lens_axes",
+            (u64::from(width) + u64::from(height)) * 4,
+        );
+        let vignette = RawBuffer::zeros(
+            &self.device,
+            "raw_lens_vignette",
+            u64::from(width) * u64::from(height) * 12,
+        );
         let storage_in = wgpu::BufferBindingType::Storage { read_only: true };
         let storage_out = wgpu::BufferBindingType::Storage { read_only: false };
         vec![
-            self.raw_dispatch(AXES, &[&uniform, &axes], &[wgpu::BufferBindingType::Uniform, storage_out], 2, "raw_lens_axes"),
-            self.raw_dispatch(VIGNETTE, &[&uniform, &axes, input, &vignette],
-                &[wgpu::BufferBindingType::Uniform, storage_in, storage_in, storage_out], height, "raw_lens_vignette"),
-            self.raw_dispatch(RESAMPLE, &[&uniform, &axes, &vignette, output],
-                &[wgpu::BufferBindingType::Uniform, storage_in, storage_in, storage_out], width * height, "raw_lens_resample"),
+            self.raw_dispatch(
+                AXES,
+                &[&uniform, &axes],
+                &[wgpu::BufferBindingType::Uniform, storage_out],
+                2,
+                "raw_lens_axes",
+            ),
+            self.raw_dispatch(
+                VIGNETTE,
+                &[&uniform, &axes, input, &vignette],
+                &[
+                    wgpu::BufferBindingType::Uniform,
+                    storage_in,
+                    storage_in,
+                    storage_out,
+                ],
+                height,
+                "raw_lens_vignette",
+            ),
+            self.raw_dispatch(
+                RESAMPLE,
+                &[&uniform, &axes, &vignette, output],
+                &[
+                    wgpu::BufferBindingType::Uniform,
+                    storage_in,
+                    storage_in,
+                    storage_out,
+                ],
+                width * height,
+                "raw_lens_resample",
+            ),
         ]
     }
 }
@@ -69,32 +116,53 @@ mod tests {
 
     fn plan(width: u32, height: u32) -> RawLensParams {
         RawLensParams {
-            dimensions: [width, height, 0, 0], flags: [1, 0, 0, 0],
-            normalization: [1.0, 0.0, 1.0, 0.0], center: [0.0; 4],
-            distortion: [0.0; 4], tca: [1.0, 1.0, 0.0, 0.0], tca_tail: [0.0; 4],
-            vignette: [0.0; 4], mapping: [1.0, 1.0, 1.0, 1.0],
+            dimensions: [width, height, 0, 0],
+            flags: [1, 0, 0, 0],
+            normalization: [1.0, 0.0, 1.0, 0.0],
+            center: [0.0; 4],
+            distortion: [0.0; 4],
+            tca: [1.0, 1.0, 0.0, 0.0],
+            tca_tail: [0.0; 4],
+            vignette: [0.0; 4],
+            mapping: [1.0, 1.0, 1.0, 1.0],
         }
     }
     fn apply(params: &RawLensParams, source: &[f32]) -> Vec<f32> {
         let gpu = crate::test_support::adapter();
-        let input = RawBuffer::upload(&gpu.device, "lens_test_input", bytemuck::cast_slice(source), wgpu::BufferUsages::STORAGE);
+        let input = RawBuffer::upload(
+            &gpu.device,
+            "lens_test_input",
+            bytemuck::cast_slice(source),
+            wgpu::BufferUsages::STORAGE,
+        );
         let output = RawBuffer::zeros(&gpu.device, "lens_test_output", source.len() as u64 * 4);
         let passes = gpu.prepare_lens_passes(params, &input, &output);
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("lens_regression") });
-        for pass in &passes { pass.encode(&mut encoder, "lens_regression"); }
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("lens_regression"),
+            });
+        for pass in &passes {
+            pass.encode(&mut encoder, "lens_regression");
+        }
         gpu.queue.submit(Some(encoder.finish()));
-        gpu.pipe.readback_buffer_as::<f32>(&output.buffer, source.len() as u64 * 4)
+        gpu.pipe
+            .readback_buffer_as::<f32>(&output.buffer, source.len() as u64 * 4)
     }
     #[test]
     fn channel_tca_precedes_nearest_edge_bilinear_resampling() {
         let mut params = plan(3, 2);
         params.dimensions[3] = 1;
         params.tca = [0.5, 2.0, 0.0, 0.0];
-        let source = [0.0, 10.0, 20.0, 2.0, 12.0, 22.0, 4.0, 14.0, 24.0,
-                      6.0, 16.0, 26.0, 8.0, 18.0, 28.0, 10.0, 20.0, 30.0];
+        let source = [
+            0.0, 10.0, 20.0, 2.0, 12.0, 22.0, 4.0, 14.0, 24.0, 6.0, 16.0, 26.0, 8.0, 18.0, 28.0,
+            10.0, 20.0, 30.0,
+        ];
         let result = apply(&params, &source);
-        let expected = [0.0, 10.0, 20.0, 1.0, 12.0, 24.0, 2.0, 14.0, 24.0,
-                        3.0, 16.0, 26.0, 4.0, 18.0, 30.0, 5.0, 20.0, 30.0];
+        let expected = [
+            0.0, 10.0, 20.0, 1.0, 12.0, 24.0, 2.0, 14.0, 24.0, 3.0, 16.0, 26.0, 4.0, 18.0, 30.0,
+            5.0, 20.0, 30.0,
+        ];
         assert_eq!(result, expected);
     }
     #[test]
@@ -149,7 +217,10 @@ mod tests {
                     }
                 };
                 let expected = (x * polynomial * 8.0).clamp(0.0, 63.0);
-                assert!((result[i * 3] - expected).abs() < 2e-5, "model {model}, pixel {i}");
+                assert!(
+                    (result[i * 3] - expected).abs() < 2e-5,
+                    "model {model}, pixel {i}"
+                );
             }
         }
     }
@@ -166,9 +237,9 @@ mod tests {
                 params.dimensions[2] = model;
                 params.normalization = [0.25, 0.0, 4.0, 0.0];
                 params.distortion[if model == 1 { 0 } else { 1 }] = 0.125;
-                let source: Vec<f32> = (0..3).flat_map(|y| {
-                    (0..width).flat_map(move |x| [x as f32 + 10.0 * y as f32; 3])
-                }).collect();
+                let source: Vec<f32> = (0..3)
+                    .flat_map(|y| (0..width).flat_map(move |x| [x as f32 + 10.0 * y as f32; 3]))
+                    .collect();
                 let result = apply(&params, &source);
                 for row in 0..3u32 {
                     for col in 0..width {
@@ -186,8 +257,10 @@ mod tests {
                             let x = (col as f32 * scale(sx)).clamp(0.0, (width - 1) as f32);
                             let y = (row as f32 * scale(sy)).clamp(0.0, 2.0);
                             let index = ((row * width + col) * 3 + channel) as usize;
-                            assert!((result[index] - (x + 10.0 * y)).abs() < 2e-5,
-                                "width {width}, model {model}, ({col},{row}), channel {channel}");
+                            assert!(
+                                (result[index] - (x + 10.0 * y)).abs() < 2e-5,
+                                "width {width}, model {model}, ({col},{row}), channel {channel}"
+                            );
                         }
                     }
                 }
@@ -199,8 +272,9 @@ mod tests {
     fn every_lensfun_projection_has_the_rectilinear_inverse_mapping() {
         let width = 5;
         let height = 3;
-        let source: Vec<f32> = (0..height).flat_map(|y|
-            (0..width).flat_map(move |x| [x as f32, y as f32, (x + y) as f32])).collect();
+        let source: Vec<f32> = (0..height)
+            .flat_map(|y| (0..width).flat_map(move |x| [x as f32, y as f32, (x + y) as f32]))
+            .collect();
         for kind in 2..=8 {
             let mut params = plan(width, height);
             params.flags = [kind, 1, 0, 0];
@@ -214,11 +288,41 @@ mod tests {
                     let radius = px.hypot(py);
                     let theta = radius.atan();
                     let radial = match kind {
-                        2 => if radius == 0.0 { 1.0 } else { theta / radius },
-                        5 => if radius == 0.0 { 1.0 } else { theta.sin() / radius },
-                        6 => if radius == 0.0 { 1.0 } else { 2.0 * (theta / 2.0).tan() / radius },
-                        7 => if radius == 0.0 { 1.0 } else { 2.0 * (theta / 2.0).sin() / radius },
-                        8 => if radius == 0.0 { 1.47 * 0.713 } else { 1.47 * (theta * 0.713).sin() / radius },
+                        2 => {
+                            if radius == 0.0 {
+                                1.0
+                            } else {
+                                theta / radius
+                            }
+                        }
+                        5 => {
+                            if radius == 0.0 {
+                                1.0
+                            } else {
+                                theta.sin() / radius
+                            }
+                        }
+                        6 => {
+                            if radius == 0.0 {
+                                1.0
+                            } else {
+                                2.0 * (theta / 2.0).tan() / radius
+                            }
+                        }
+                        7 => {
+                            if radius == 0.0 {
+                                1.0
+                            } else {
+                                2.0 * (theta / 2.0).sin() / radius
+                            }
+                        }
+                        8 => {
+                            if radius == 0.0 {
+                                1.47 * 0.713
+                            } else {
+                                1.47 * (theta * 0.713).sin() / radius
+                            }
+                        }
                         _ => 1.0,
                     };
                     let (sx, sy) = match kind {
@@ -229,8 +333,14 @@ mod tests {
                     let expected_x = ((sx + 0.5) * 4.0).clamp(0.0, f64::from(width - 1));
                     let expected_y = ((sy + 0.25) * 4.0).clamp(0.0, f64::from(height - 1));
                     let index = ((y * width + x) * 3) as usize;
-                    assert!((f64::from(result[index]) - expected_x).abs() < 3e-5, "projection {kind} x");
-                    assert!((f64::from(result[index + 1]) - expected_y).abs() < 3e-5, "projection {kind} y");
+                    assert!(
+                        (f64::from(result[index]) - expected_x).abs() < 3e-5,
+                        "projection {kind} x"
+                    );
+                    assert!(
+                        (f64::from(result[index + 1]) - expected_y).abs() < 3e-5,
+                        "projection {kind} y"
+                    );
                 }
             }
         }

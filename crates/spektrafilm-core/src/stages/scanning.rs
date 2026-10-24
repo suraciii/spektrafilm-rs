@@ -68,9 +68,15 @@ pub(crate) fn density_reading_gpu_params(
     let (density, exposure, offsets, counts) = calibration.gpu_axes();
     let operator = PreparedOperator::new(&params.scanner.operator);
     let standard_setup = params.scanner.uses_standard();
-    let setup_aim_density = calibration.neutral_density(operator.pivot).iter().sum::<f64>() / 3.0;
+    let setup_aim_density = calibration
+        .neutral_density(operator.pivot)
+        .iter()
+        .sum::<f64>()
+        / 3.0;
     let setup_gamma = calibration.neutral_gamma(operator.pivot);
-    if standard_setup && (!setup_aim_density.is_finite() || !setup_gamma.is_finite() || setup_gamma <= 0.0) {
+    if standard_setup
+        && (!setup_aim_density.is_finite() || !setup_gamma.is_finite() || setup_gamma <= 0.0)
+    {
         return Err("standard setup requires a finite positive neutral-curve slope at 16%".into());
     }
     let output = colorspace::resolve(&params.io.output_color_space)?;
@@ -88,7 +94,11 @@ pub(crate) fn density_reading_gpu_params(
         dmax: tones.map(|tone| tone.dmax),
         brightness_ev: tones.map(|tone| tone.brightness_ev),
         denominator: tones.map(|tone| -(-std::f64::consts::LN_10 * tone.dmax).exp_m1()),
-        camera_ev: if standard_setup { 0.0 } else { interpretation::camera_ev(params) },
+        camera_ev: if standard_setup {
+            0.0
+        } else {
+            interpretation::camera_ev(params)
+        },
         lens_blur: params.scanner.lens_blur,
         standard_setup,
         setup_aim_density,
@@ -127,7 +137,9 @@ pub(crate) fn prepare_negative(
     backend: &dyn ComputeBackend,
 ) -> Result<PreparedNegative, String> {
     if backend.is_gpu() {
-        return Err("selected GPU negative reconstruction requires the retained scanner acquisition".into());
+        return Err(
+            "selected GPU negative reconstruction requires the retained scanner acquisition".into(),
+        );
     }
     let observation = super::StageObservation::cpu(
         backend,
@@ -430,14 +442,7 @@ fn scan_with_capture(
     if params.scanner.lens_blur > 0.0 && !negative_to_positive {
         rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur)?;
     }
-    finish_tail(
-        rgb,
-        params,
-        backend,
-        gamut,
-        scan_context,
-        output_space,
-    )
+    finish_tail(rgb, params, backend, gamut, scan_context, output_space)
 }
 
 /// The post-capture tail shared by the full scan and a pre-captured readout:
@@ -540,7 +545,9 @@ fn finish_tail(
             .gpu_params(params.random_seed, params.debug.deactivate_spatial_effects);
         rgb = match backend.grain_v2(&rgb, &gpu_params)? {
             Some(image) => image,
-            None if backend.is_gpu() => return Err("grain_v2: selected GPU has no device operation".into()),
+            None if backend.is_gpu() => {
+                return Err("grain_v2: selected GPU has no device operation".into());
+            }
             None => {
                 let _cpu = super::StageObservation::cpu(
                     backend,

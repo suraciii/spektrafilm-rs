@@ -63,8 +63,8 @@
 //! the layered path. This pass writes fields only; composition, clumping,
 //! blur, and unsharp passes own the density buffer.
 
-use super::raster::{RasterCommands, RasterStorage, paged_transport, transport, uniform};
 use super::super::*;
+use super::raster::{RasterCommands, RasterStorage, paged_transport, transport, uniform};
 use spektrafilm_backend::GrainV1GpuParams;
 
 /// Elements one plane draws per dispatch. Bounded so a dispatch has a
@@ -82,7 +82,9 @@ pub(in crate::wgpu_backend) struct SpektraMt19937State {
 
 impl SpektraMt19937State {
     pub(in crate::wgpu_backend) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
-        for step in &self.steps { step.submit(backend)?; }
+        for step in &self.steps {
+            step.submit(backend)?;
+        }
         backend.check_cancelled()
     }
 }
@@ -105,16 +107,30 @@ pub(in crate::wgpu_backend) fn build_spektra_mt19937_state(
     params: &GrainV1GpuParams,
     backend: &WgpuBackend,
 ) -> Result<SpektraMt19937State, String> {
-    build_spektra_mt19937_state_with_limit(device, width, height, density, layer_fields, params, backend,
-        super::super::bounded::storage_binding_limit(backend)?)
+    build_spektra_mt19937_state_with_limit(
+        device,
+        width,
+        height,
+        density,
+        layer_fields,
+        params,
+        backend,
+        super::super::bounded::storage_binding_limit(backend)?,
+    )
 }
 
 // The bounded builder keeps raster endpoints, sampling parameters, and the
 // explicit binding limit separate; bundling them would only wrap transport.
 #[allow(clippy::too_many_arguments)]
 fn build_spektra_mt19937_state_with_limit(
-    device: &ObservedDevice, width: u32, height: u32, density: &(impl RasterStorage + ?Sized),
-    layer_fields: &(impl RasterStorage + ?Sized), params: &GrainV1GpuParams, backend: &WgpuBackend, limit: u64,
+    device: &ObservedDevice,
+    width: u32,
+    height: u32,
+    density: &(impl RasterStorage + ?Sized),
+    layer_fields: &(impl RasterStorage + ?Sized),
+    params: &GrainV1GpuParams,
+    backend: &WgpuBackend,
+    limit: u64,
 ) -> Result<SpektraMt19937State, String> {
     // The reference conditions its count laws on f64, so a device without
     // native f64 cannot run them; the caller keeps the host fence rather
@@ -143,8 +159,12 @@ fn build_spektra_mt19937_state_with_limit(
     let planes = layers
         .checked_mul(3)
         .ok_or("Spektra grain plane count overflows")?;
-    if !params.sublayers_active && params.density_max_composite.iter()
-        .any(|v| v.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)) {
+    if !params.sublayers_active
+        && params
+            .density_max_composite
+            .iter()
+            .any(|v| v.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater))
+    {
         return Err("Spektra grain composite sampling needs a positive density maximum".into());
     }
     // 4-lane uniform rows: each 3-value triple and 9-value table is padded
@@ -207,22 +227,42 @@ fn build_spektra_mt19937_state_with_limit(
         ],
     );
     let chunk = (limit / 12).min(u64::from(CHUNK_ELEMENTS)).max(1) as u32;
-    if limit < 628 * 4 { return Err("Spektra MT19937 minimum generator binding needs 2512 bytes".into()); }
+    if limit < 628 * 4 {
+        return Err("Spektra MT19937 minimum generator binding needs 2512 bytes".into());
+    }
     let density_window = transport(backend, u64::from(chunk) * 12, "mt_density_window")?;
     let field_window = transport(backend, u64::from(chunk) * 12, "mt_field_window")?;
     let seed_window = transport(backend, u64::from(chunk) * 8, "mt_seed_window")?;
     let segments = n_pixels.div_ceil(chunk);
-    let mut steps: Vec<RasterCommands> = (0..segments * 2).map(|_| RasterCommands::default()).collect();
+    let mut steps: Vec<RasterCommands> = (0..segments * 2)
+        .map(|_| RasterCommands::default())
+        .collect();
     let make_params = |plane| Params {
-        width, height, knots: knots as u32, layers, n_pixels, chunk_elements: chunk,
+        width,
+        height,
+        knots: knots as u32,
+        layers,
+        n_pixels,
+        chunk_elements: chunk,
         pad_flags: [0; 2],
-        flags: [u32::from(!params.sublayers_active), u32::from(params.monochrome), u32::from(params.reference_f64), plane],
-        base_seed: params.base_seed, pixel_size_um: params.pixel_size_um,
-        lookup_sign: params.lookup_sign, pad0: 0, pad_vec: [0; 6],
-        particle_area: pad3(params.particle_area), density_min: pad3(params.density_min),
-        uniformity: pad3(params.uniformity), density_max_composite: pad3(params.density_max_composite),
+        flags: [
+            u32::from(!params.sublayers_active),
+            u32::from(params.monochrome),
+            u32::from(params.reference_f64),
+            plane,
+        ],
+        base_seed: params.base_seed,
+        pixel_size_um: params.pixel_size_um,
+        lookup_sign: params.lookup_sign,
+        pad0: 0,
+        pad_vec: [0; 6],
+        particle_area: pad3(params.particle_area),
+        density_min: pad3(params.density_min),
+        uniformity: pad3(params.uniformity),
+        density_max_composite: pad3(params.density_max_composite),
         n_particles_composite: pad3(params.n_particles_composite),
-        n_particles_layers: pad9(params.n_particles), density_max_adj: pad9(params.density_max_adj),
+        n_particles_layers: pad9(params.n_particles),
+        density_max_adj: pad9(params.density_max_adj),
         density_min_layers: pad9(params.density_min_layers),
     };
     let curve_x = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -244,14 +284,62 @@ fn build_spektra_mt19937_state_with_limit(
                 let first = segment * chunk;
                 let count = chunk.min(n_pixels - first);
                 let commands = &mut steps[(phase * segments + segment) as usize];
-                commands.copy(density, u64::from(first) * 12, &density_window, 0, u64::from(count) * 12);
-                if phase != 0 { commands.copy(layer_fields, (u64::from(plane / 3) * u64::from(n_pixels) + u64::from(first)) * 12, &field_window, 0, u64::from(count) * 12); }
-                if phase != 0 { commands.copy(&seeds, u64::from(first) * 8, &seed_window, 0, u64::from(count) * 8); }
-                commands.dispatch(&pipe, &[&params_buf, &density_window, &curve_x, &curve_layers, &field_window, &seed_window, &state], 1, true, backend);
+                commands.copy(
+                    density,
+                    u64::from(first) * 12,
+                    &density_window,
+                    0,
+                    u64::from(count) * 12,
+                );
+                if phase != 0 {
+                    commands.copy(
+                        layer_fields,
+                        (u64::from(plane / 3) * u64::from(n_pixels) + u64::from(first)) * 12,
+                        &field_window,
+                        0,
+                        u64::from(count) * 12,
+                    );
+                }
+                if phase != 0 {
+                    commands.copy(
+                        &seeds,
+                        u64::from(first) * 8,
+                        &seed_window,
+                        0,
+                        u64::from(count) * 8,
+                    );
+                }
+                commands.dispatch(
+                    &pipe,
+                    &[
+                        &params_buf,
+                        &density_window,
+                        &curve_x,
+                        &curve_layers,
+                        &field_window,
+                        &seed_window,
+                        &state,
+                    ],
+                    1,
+                    true,
+                    backend,
+                );
                 if phase == 0 {
-                    commands.copy(&seed_window, 0, &seeds, u64::from(first) * 8, u64::from(count) * 8);
+                    commands.copy(
+                        &seed_window,
+                        0,
+                        &seeds,
+                        u64::from(first) * 8,
+                        u64::from(count) * 8,
+                    );
                 } else {
-                    commands.copy(&field_window, 0, layer_fields, (u64::from(plane / 3) * u64::from(n_pixels) + u64::from(first)) * 12, u64::from(count) * 12);
+                    commands.copy(
+                        &field_window,
+                        0,
+                        layer_fields,
+                        (u64::from(plane / 3) * u64::from(n_pixels) + u64::from(first)) * 12,
+                        u64::from(count) * 12,
+                    );
                 }
             }
         }

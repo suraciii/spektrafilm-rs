@@ -466,6 +466,7 @@ extern "C" int sf_raw_unpack_sensor(const unsigned char *bytes, size_t length,
         if (count == 0) throw std::runtime_error("RAW sensor has no active image");
         auto *samples = static_cast<float *>(std::malloc(count * sizeof(float)));
         if (!samples) throw std::bad_alloc();
+        // The failure handlers own allocations before subsequent work can throw.
         result->samples = samples;
         std::memset(samples, 0, count * sizeof(float));
 

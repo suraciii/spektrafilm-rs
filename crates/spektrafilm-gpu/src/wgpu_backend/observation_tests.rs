@@ -122,6 +122,7 @@ fn fresh_backend(
                 context: ObservationContext::default(),
             },
             pipeline_cache: Arc::new(PipelineCache::default()),
+            scan_cache: Arc::new(super::scan_cache::ScanCache::default()),
             name: "telemetry_test".into(),
             explicit: false,
             adapter: description,
@@ -337,21 +338,28 @@ fn retained_upload_and_uniform_patch_preserve_transfer_categories() {
     };
     let (context, stage) = observed(&mut backend, CollectionMode::Summary);
     let image = spektrafilm_math::image::ImageBuf::new(2, 2);
-    let retained = backend.upload_retained(&image, &spektrafilm_backend::RetainedImageMeta {
-        width: 2,
-        height: 2,
-        domain: spektrafilm_backend::SampleDomain::Linear,
-        precision: spektrafilm_backend::Precision::host(),
-        space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
-        pixel_pitch_um: None,
-    }).unwrap();
+    let retained = backend
+        .upload_retained(
+            &image,
+            &spektrafilm_backend::RetainedImageMeta {
+                width: 2,
+                height: 2,
+                domain: spektrafilm_backend::SampleDomain::Linear,
+                precision: spektrafilm_backend::Precision::host(),
+                space: spektrafilm_math::colorspace::resolve("sRGB").unwrap(),
+                pixel_pitch_um: None,
+            },
+        )
+        .unwrap();
     let uniform = backend.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("chunk_params"),
         size: 8,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    backend.queue.write_buffer(&uniform, 0, bytemuck::cast_slice(&[4_u32, 1]));
+    backend
+        .queue
+        .write_buffer(&uniform, 0, bytemuck::cast_slice(&[4_u32, 1]));
     let work = context.snapshot().totals;
     assert_eq!(work.upload_count, Some(2));
     assert_eq!(work.upload_bytes, Some(48 + 8));
@@ -359,7 +367,11 @@ fn retained_upload_and_uniform_patch_preserve_transfer_categories() {
     assert_eq!(work.image_upload_bytes, Some(48));
     assert_eq!(work.uniform_upload_count, Some(1));
     assert_eq!(work.uniform_upload_bytes, Some(8));
-    assert_eq!(work.readback_count, Some(0), "upload must not invent a readback");
+    assert_eq!(
+        work.readback_count,
+        Some(0),
+        "upload must not invent a readback"
+    );
     assert_eq!(work.readback_bytes, Some(0));
     assert_eq!(retained.to_host(&backend).unwrap().data, image.data);
     drop(stage);
@@ -739,7 +751,11 @@ fn submitted_pass_pressure_preserves_late_cpu_stage_and_exact_counters() {
     drop(cpu);
     assert!(late.context().retained());
     drop(late);
-    let unknown = context.scope("unobserved_executor", ObservationKind::Stage, Purpose::Image);
+    let unknown = context.scope(
+        "unobserved_executor",
+        ObservationKind::Stage,
+        Purpose::Image,
+    );
     assert!(unknown.context().retained());
     drop(unknown);
     let snapshot = context.snapshot();
@@ -754,7 +770,11 @@ fn submitted_pass_pressure_preserves_late_cpu_stage_and_exact_counters() {
     );
     assert_eq!(snapshot.coverage.omitted_high_level_observations, Some(0));
     assert_eq!(snapshot.execution.adapter, expected_adapter);
-    let late = snapshot.observations.iter().find(|o| o.name == "colorspace_convert").unwrap();
+    let late = snapshot
+        .observations
+        .iter()
+        .find(|o| o.name == "colorspace_convert")
+        .unwrap();
     assert_eq!(late.executor, Some(Executor::Cpu));
     assert_eq!(
         late.cpu_reason,
@@ -774,7 +794,10 @@ fn submitted_pass_pressure_preserves_late_cpu_stage_and_exact_counters() {
     assert!(admitted_passes > 0 && admitted_passes < PASSES as u64);
     assert_eq!(counters.timed_pass_count, Some(admitted_passes));
     assert_eq!(counters.valid_pass_count, Some(admitted_passes));
-    assert_eq!(counters.omitted_pass_count, Some(PASSES as u64 - admitted_passes));
+    assert_eq!(
+        counters.omitted_pass_count,
+        Some(PASSES as u64 - admitted_passes)
+    );
     assert_eq!(counters.command_buffer_count, Some(1));
     assert_eq!(counters.submit_count, Some(1));
     assert_eq!(counters.host_wait_count, Some(1));

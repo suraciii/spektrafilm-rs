@@ -291,7 +291,8 @@ impl ObservationContext {
             if !self.retained {
                 0
             } else {
-                let slots = OBSERVATION_LIMIT as u64 - SUMMARY_LIMIT
+                let slots = OBSERVATION_LIMIT as u64
+                    - SUMMARY_LIMIT
                     - (c.snapshot.coverage.retained_observations - c.retained_summaries);
                 let bytes = (c.detail_byte_limit - c.detail_bytes)
                     .min(c.snapshot.coverage.byte_limit - c.snapshot.coverage.retained_bytes);
@@ -725,18 +726,25 @@ mod collector_edges {
         let root = ObservationContext::new(CollectionMode::Summary);
         let phase = root.scope("simulation", ObservationKind::Phase, Purpose::Image);
         for _ in 0..600 {
-            let batch = phase.context().scope("compute", ObservationKind::Batch, Purpose::Image);
+            let batch = phase
+                .context()
+                .scope("compute", ObservationKind::Batch, Purpose::Image);
             batch.context().record_batch(BatchMeasurements {
                 host_prepare: Measurement::available(0.0),
                 submit_to_map_ready: Measurement::available(0.0),
                 host_materialize: Measurement::available(0.0),
                 completion_boundary: "界".repeat(256),
                 compute_pass_sum: Measurement::unavailable(AvailabilityReason::NotCollected),
-                partial_compute_pass_sum: Measurement::unavailable(AvailabilityReason::NotCollected),
+                partial_compute_pass_sum: Measurement::unavailable(
+                    AvailabilityReason::NotCollected,
+                ),
             });
         }
-        let late = phase.context().scope("grain_v1", ObservationKind::Stage, Purpose::Image);
-        late.context().record_executor(Executor::Cpu, Some(CpuReason::GrainV1Sampler));
+        let late = phase
+            .context()
+            .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
+        late.context()
+            .record_executor(Executor::Cpu, Some(CpuReason::GrainV1Sampler));
         assert!(late.context().retained());
         drop(late);
         drop(phase);
@@ -745,7 +753,11 @@ mod collector_edges {
         assert!(snapshot.coverage.omitted_observations > 0);
         assert_eq!(snapshot.coverage.omitted_high_level_observations, Some(0));
         assert!(snapshot.coverage.retained_bytes <= snapshot.coverage.byte_limit);
-        let stage = snapshot.observations.iter().find(|o| o.name == "grain_v1").unwrap();
+        let stage = snapshot
+            .observations
+            .iter()
+            .find(|o| o.name == "grain_v1")
+            .unwrap();
         assert_eq!(stage.executor, Some(Executor::Cpu));
         assert_eq!(stage.cpu_reason, Some(CpuReason::GrainV1Sampler));
     }

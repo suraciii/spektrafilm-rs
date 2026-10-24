@@ -596,7 +596,6 @@ fn seed_repeats_stochastic_pixels_and_benchmark_attempts() {
     assert_ne!(buffers[0], buffers[2]);
 }
 
-
 /// Once automatic selection chooses WGPU, an impossible device working set
 /// must fail before writing output, both with and without diagnostics.
 #[cfg(not(feature = "precision-f64"))]
@@ -617,7 +616,12 @@ fn selected_automatic_gpu_resource_failure_never_publishes_or_replaces_output() 
             .arg(&output)
             .args(["--film", "kodak_portra_400", "--data-dir"])
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
-            .args(["--input-color-space", "sRGB", "--input-cctf-decoding", "false"])
+            .args([
+                "--input-color-space",
+                "sRGB",
+                "--input-cctf-decoding",
+                "false",
+            ])
             .env("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "1")
             .env("RUST_LOG", "off")
             .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
@@ -630,18 +634,38 @@ fn selected_automatic_gpu_resource_failure_never_publishes_or_replaces_output() 
         }
         let result = command.output().unwrap();
         let stderr = String::from_utf8_lossy(&result.stderr);
-        assert!(!result.status.success(), "selected device failure succeeded: {stderr}");
-        assert!(stderr.contains("binding") || stderr.contains("working set"), "not a device resource failure: {stderr}");
+        assert!(
+            !result.status.success(),
+            "selected device failure succeeded: {stderr}"
+        );
+        assert!(
+            stderr.contains("binding") || stderr.contains("working set"),
+            "not a device resource failure: {stderr}"
+        );
         if diagnostics {
-            assert_eq!(std::fs::read(&output).unwrap(), sentinel, "failed GPU render replaced prior output");
-            let report: Value = serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+            assert_eq!(
+                std::fs::read(&output).unwrap(),
+                sentinel,
+                "failed GPU render replaced prior output"
+            );
+            let report: Value =
+                serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
             assert_eq!(report["execution"]["backend_requested"], "auto");
-            assert_eq!(report["execution"]["backend_selected"], "wgpu", "this acceptance requires a usable WGPU adapter");
+            assert_eq!(
+                report["execution"]["backend_selected"], "wgpu",
+                "this acceptance requires a usable WGPU adapter"
+            );
             assert_eq!(report["operation"]["outcome"], "failed");
             assert!(report["configuration"]["published_dimensions"].is_null());
-            assert!(report["phases"].as_array().unwrap().iter().all(|phase| {
-                !matches!(phase["name"].as_str(), Some("saving_convert" | "file_write"))
-            }), "failed render entered output publication: {report}");
+            assert!(
+                report["phases"].as_array().unwrap().iter().all(|phase| {
+                    !matches!(
+                        phase["name"].as_str(),
+                        Some("saving_convert" | "file_write")
+                    )
+                }),
+                "failed render entered output publication: {report}"
+            );
         } else {
             assert!(!output.exists(), "failed GPU render published a new output");
         }
@@ -657,11 +681,19 @@ fn unavailable_adapter_keeps_initial_automatic_cpu_selection_valid() {
     let output = f.0.join("selection.tif");
     let run = |explicit: bool| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
-        command.arg("process").arg(f.0.join("input.png"))
-            .arg("--output").arg(&output)
+        command
+            .arg("process")
+            .arg(f.0.join("input.png"))
+            .arg("--output")
+            .arg(&output)
             .args(["--film", "kodak_portra_400", "--data-dir"])
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
-            .args(["--input-color-space", "sRGB", "--input-cctf-decoding", "false"])
+            .args([
+                "--input-color-space",
+                "sRGB",
+                "--input-cctf-decoding",
+                "false",
+            ])
             .env("VK_ICD_FILENAMES", "/dev/null")
             .env("VK_DRIVER_FILES", "/dev/null")
             .env("RUST_LOG", "off")
@@ -677,16 +709,25 @@ fn unavailable_adapter_keeps_initial_automatic_cpu_selection_valid() {
         command.output().unwrap()
     };
     let automatic = run(false);
-    assert!(automatic.status.success(), "{}", String::from_utf8_lossy(&automatic.stderr));
-    assert!(output.exists(), "initial automatic CPU selection did not publish");
+    assert!(
+        automatic.status.success(),
+        "{}",
+        String::from_utf8_lossy(&automatic.stderr)
+    );
+    assert!(
+        output.exists(),
+        "initial automatic CPU selection did not publish"
+    );
     let published = std::fs::read(&output).unwrap();
     let explicit = run(true);
     assert!(!explicit.status.success());
     assert!(String::from_utf8_lossy(&explicit.stderr).contains("no usable WGPU adapter"));
-    assert_eq!(std::fs::read(output).unwrap(), published, "unavailable explicit GPU replaced output");
+    assert_eq!(
+        std::fs::read(output).unwrap(),
+        published,
+        "unavailable explicit GPU replaced output"
+    );
 }
-
-
 
 /// `SPEKTRAFILM_BACKEND=wgpu` is the same explicit request as `--backend gpu`:
 /// when no adapter can serve it, the process fails with an actionable error

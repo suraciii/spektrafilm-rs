@@ -140,10 +140,17 @@ impl DisplayRaster {
         })
     }
     pub(crate) fn device(image: spektrafilm_backend::DeviceImage) -> Self {
-        Self { size: [image.width() as usize, image.height() as usize], rgb: Arc::from([]), retained: Some(image) }
+        Self {
+            size: [image.width() as usize, image.height() as usize],
+            rgb: Arc::from([]),
+            retained: Some(image),
+        }
     }
     pub fn sample(&self, x: f32, y: f32, mode: Interpolation) -> [f32; 3] {
-        assert!(self.retained.is_none(), "device viewer raster must be sampled on its backend");
+        assert!(
+            self.retained.is_none(),
+            "device viewer raster must be sampled on its backend"
+        );
         sample_f32(x, y, mode, |x, y| {
             self.rgb[y.clamp(0, self.size[1] as i32 - 1) as usize * self.size[0]
                 + x.clamp(0, self.size[0] as i32 - 1) as usize]
@@ -269,7 +276,12 @@ pub(super) fn capped_raster_with(
 
 /// The host reference reduction, kept as the fallback for a backend without a
 /// device resampler and as the comparison target for the device test.
-fn host_capped_raster_pixels(image: &ImageBuf, size: &[usize; 2], w: usize, h: usize) -> Vec<[f32; 3]> {
+fn host_capped_raster_pixels(
+    image: &ImageBuf,
+    size: &[usize; 2],
+    w: usize,
+    h: usize,
+) -> Vec<[f32; 3]> {
     let mut rgb = Vec::with_capacity(size[0] * size[1]);
     for y in 0..size[1] {
         let sy = ((y as f64 + 0.5) * h as f64 / size[1] as f64 - 0.5).clamp(0.0, (h - 1) as f64);
@@ -401,23 +413,14 @@ mod tests {
                     // Values above 1.0 exercise the display-side headroom the
                     // viewer can carry before its own clamp.
                     let encode = |v: f64| from_f64(1.4 * v - 0.2);
-                    [
-                        encode(x),
-                        encode(y * 0.8 + 0.1),
-                        encode(x * y + 0.05),
-                    ]
+                    [encode(x), encode(y * 0.8 + 0.1), encode(x * y + 0.05)]
                 })
                 .collect(),
         );
         let max_edge = 8usize;
         let device = capped_raster_with(backend.backend(), &image, max_edge)
             .expect("the device resampler provides the capped raster");
-        let host = host_capped_raster_pixels(
-            &image,
-            &device.size,
-            w as usize,
-            h as usize,
-        );
+        let host = host_capped_raster_pixels(&image, &device.size, w as usize, h as usize);
         assert_eq!(device.size, [8, 5]);
         let mut worst = 0.0f64;
         for (got, want) in device.rgb.iter().zip(host.iter()) {
@@ -438,11 +441,7 @@ mod tests {
                 let x = (i % w) as f64 / (w - 1) as f64;
                 let y = (i / w) as f64 / (h - 1) as f64;
                 let encode = |v: f64| from_f64(1.4 * v - 0.2);
-                [
-                    encode(x),
-                    encode(y * 0.8 + 0.1),
-                    encode(x * y + 0.05),
-                ]
+                [encode(x), encode(y * 0.8 + 0.1), encode(x * y + 0.05)]
             })
             .collect();
         assert_eq!(image.data, untouched);

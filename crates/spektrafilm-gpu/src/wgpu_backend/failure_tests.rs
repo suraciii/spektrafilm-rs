@@ -29,35 +29,64 @@ fn rejects_without_image<T>(
 
     for mode in [CollectionMode::Off, CollectionMode::Summary] {
         let context = ObservationContext::new(mode);
-        let stage = context.scope("injected_device_failure", ObservationKind::Stage, Purpose::Image);
+        let stage = context.scope(
+            "injected_device_failure",
+            ObservationKind::Stage,
+            Purpose::Image,
+        );
         let observed = backend
             .with_observation_context(stage.context().clone())
             .expect("WGPU must preserve its selected device when rebinding telemetry");
         assert!(observed.is_gpu());
         assert!(!observed.explicit_gpu_request());
-        assert_eq!(observed.observation_context().unwrap().enabled(), mode != CollectionMode::Off);
+        assert_eq!(
+            observed.observation_context().unwrap().enabled(),
+            mode != CollectionMode::Off
+        );
 
         backend.pipe.test_fail_operation(dispatch_name);
         let error = match operation(observed.as_ref(), &image) {
             Err(error) => error,
-            Ok(_) => panic!("{dispatch_name} returned an image or CPU-fallback permission after device failure ({mode:?})"),
+            Ok(_) => panic!(
+                "{dispatch_name} returned an image or CPU-fallback permission after device failure ({mode:?})"
+            ),
         };
-        assert!(error.contains(error_name), "{dispatch_name} lost its operation name: {error}");
+        assert!(
+            error.contains(error_name),
+            "{dispatch_name} lost its operation name: {error}"
+        );
         // This counter belongs to the pipe, not the telemetry collector. It
         // proves the Off route attempted the device operation instead of
         // simply declining the hook before reaching the injected failure.
-        assert_eq!(backend.pipe.test_failure_attempts(), 1, "{dispatch_name} did not attempt its device operation ({mode:?})");
+        assert_eq!(
+            backend.pipe.test_failure_attempts(),
+            1,
+            "{dispatch_name} did not attempt its device operation ({mode:?})"
+        );
         drop(observed);
         drop(stage);
 
         if mode != CollectionMode::Off {
             let snapshot = context.snapshot();
-            assert!(snapshot.observations.iter().any(|item| item.name == "injected_device_failure"));
-            assert!(snapshot.observations.iter().all(|item| {
-                !matches!(item.executor, Some(Executor::Cpu | Executor::Mixed))
-                    && item.cpu_reason.is_none()
-            }), "{dispatch_name} recorded CPU execution after device failure: {:?}", snapshot.observations);
-            assert_eq!(snapshot.totals.readback_count.unwrap_or(0), 0, "{dispatch_name} materialized output after failure");
+            assert!(
+                snapshot
+                    .observations
+                    .iter()
+                    .any(|item| item.name == "injected_device_failure")
+            );
+            assert!(
+                snapshot.observations.iter().all(|item| {
+                    !matches!(item.executor, Some(Executor::Cpu | Executor::Mixed))
+                        && item.cpu_reason.is_none()
+                }),
+                "{dispatch_name} recorded CPU execution after device failure: {:?}",
+                snapshot.observations
+            );
+            assert_eq!(
+                snapshot.totals.readback_count.unwrap_or(0),
+                0,
+                "{dispatch_name} materialized output after failure"
+            );
         }
     }
 }
@@ -67,9 +96,11 @@ fn selected_auto_gaussian_preparation_failure_returns_no_single_or_batch_image()
     rejects_without_image("gaussian_blur", "gaussian_blur", |backend, image| {
         backend.gaussian_blur(image, 1.25)
     });
-    rejects_without_image("gaussian_blur_multi", "gaussian_blur_multi", |backend, image| {
-        backend.gaussian_blur_multi(image, &[0.75, 3.5])
-    });
+    rejects_without_image(
+        "gaussian_blur_multi",
+        "gaussian_blur_multi",
+        |backend, image| backend.gaussian_blur_multi(image, &[0.75, 3.5]),
+    );
 }
 
 #[test]
@@ -80,10 +111,15 @@ fn telemetry_off_and_summary_attempt_diffusion_and_both_lut_implementations() {
         radius: 1,
         scatter_fraction: 0.4,
     };
-    rejects_without_image("optical_diffusion", "optical_diffusion", |backend, image| {
-        backend.optical_diffusion(image, &params)
-    });
-    let lut = Lut3D { size: 2, data: vec![0.5; 24] };
+    rejects_without_image(
+        "optical_diffusion",
+        "optical_diffusion",
+        |backend, image| backend.optical_diffusion(image, &params),
+    );
+    let lut = Lut3D {
+        size: 2,
+        data: vec![0.5; 24],
+    };
     rejects_without_image("lut3d_interp", "lut3d_interp", |backend, image| {
         backend.lut3d_interp(image, &lut)
     });
@@ -100,15 +136,22 @@ fn telemetry_off_and_summary_attempt_diffusion_and_both_lut_implementations() {
         data_min: [0.0; 3],
         data_scale: [1.0; 3],
     };
-    rejects_without_image("enlarger_lut_interp", "enlarger_lut_interp", |backend, image| {
-        backend.enlarger_lut_interp(image, &params)
-    });
+    rejects_without_image(
+        "enlarger_lut_interp",
+        "enlarger_lut_interp",
+        |backend, image| backend.enlarger_lut_interp(image, &params),
+    );
 }
 
 #[test]
 fn selected_auto_shared_dispatch_failure_returns_no_host_image() {
     rejects_without_image("film_density", "density_curve_interp", |backend, image| {
-        backend.density_curve_interp(image, &[-1.0, 0.0, 1.0], &[[0.0; 3], [0.5; 3], [1.0; 3]], 1.0)
+        backend.density_curve_interp(
+            image,
+            &[-1.0, 0.0, 1.0],
+            &[[0.0; 3], [0.5; 3], [1.0; 3]],
+            1.0,
+        )
     });
 }
 
@@ -147,13 +190,21 @@ fn optical_trait_hooks_produce_identical_device_pixels_with_telemetry_off_or_sum
     let mut off_pixels = None;
     for mode in [CollectionMode::Off, CollectionMode::Summary] {
         let context = ObservationContext::new(mode);
-        let stage = context.scope("optical_device_success", ObservationKind::Stage, Purpose::Image);
-        let observed = backend.with_observation_context(stage.context().clone()).unwrap();
+        let stage = context.scope(
+            "optical_device_success",
+            ObservationKind::Stage,
+            Purpose::Image,
+        );
+        let observed = backend
+            .with_observation_context(stage.context().clone())
+            .unwrap();
         let outputs = [
-            observed.optical_diffusion(&image, &diffusion)
+            observed
+                .optical_diffusion(&image, &diffusion)
                 .expect("valid device diffusion must execute")
                 .expect("telemetry must not disable the diffusion hook"),
-            observed.enlarger_lut_interp(&image, &lut)
+            observed
+                .enlarger_lut_interp(&image, &lut)
                 .expect("valid prepared device LUT must execute")
                 .expect("telemetry must not disable the enlarger LUT hook"),
         ];
@@ -169,14 +220,22 @@ fn optical_trait_hooks_produce_identical_device_pixels_with_telemetry_off_or_sum
             off_pixels = Some(outputs);
         } else {
             for (off, summary) in off_pixels.as_ref().unwrap().iter().zip(&outputs) {
-                assert_eq!(off.data, summary.data, "telemetry changed device output pixels");
+                assert_eq!(
+                    off.data, summary.data,
+                    "telemetry changed device output pixels"
+                );
             }
             let snapshot = context.snapshot();
             assert!(snapshot.observations.iter().all(|item| {
                 !matches!(item.executor, Some(Executor::Cpu | Executor::Mixed))
                     && item.cpu_reason.is_none()
             }));
-            assert!(snapshot.observations.iter().any(|item| item.executor == Some(Executor::Gpu)));
+            assert!(
+                snapshot
+                    .observations
+                    .iter()
+                    .any(|item| item.executor == Some(Executor::Gpu))
+            );
             assert_eq!(snapshot.totals.readback_count, Some(2));
             assert!(snapshot.totals.dispatch_count.unwrap_or(0) >= 2);
         }

@@ -88,6 +88,8 @@ pub struct WgpuBackend {
     device: ObservedDevice,
     queue: ObservedQueue,
     pipeline_cache: std::sync::Arc<PipelineCache>,
+    /// One immutable acquisition shared by observation/cancellation derivatives.
+    scan_cache: std::sync::Arc<scan_cache::ScanCache>,
     pipe: GpuPipe,
     name: String,
     adapter: AdapterDescription,
@@ -228,6 +230,7 @@ impl WgpuBackend {
             device,
             queue,
             pipeline_cache,
+            scan_cache: std::sync::Arc::new(scan_cache::ScanCache::default()),
             adapter: description,
             explicit: false,
             backend_id: film_chain::device_image::next_backend_id(),
@@ -266,6 +269,7 @@ impl WgpuBackend {
             device,
             queue,
             pipeline_cache: std::sync::Arc::clone(&self.pipeline_cache),
+            scan_cache: std::sync::Arc::clone(&self.scan_cache),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
             explicit: true,
@@ -380,6 +384,8 @@ mod compute_backend;
 #[cfg(test)]
 mod failure_tests;
 #[cfg(feature = "wgpu-backend")]
+mod histogram;
+#[cfg(feature = "wgpu-backend")]
 mod viewer;
 #[cfg(feature = "wgpu-backend")]
 mod viewer_icc;
@@ -387,27 +393,25 @@ mod viewer_icc;
 mod viewer_paper;
 #[cfg(feature = "wgpu-backend")]
 mod viewer_polaroid;
-#[cfg(feature = "wgpu-backend")]
-mod histogram;
 
 #[cfg(feature = "wgpu-backend")]
 mod bounded;
-#[cfg(feature = "wgpu-backend")]
-mod pointwise_pages;
 #[cfg(feature = "wgpu-backend")]
 mod chain_chunks;
 #[cfg(feature = "wgpu-backend")]
 mod chain_finish;
 #[cfg(feature = "wgpu-backend")]
+mod enlarger_resident;
+#[cfg(feature = "wgpu-backend")]
+mod input_gamut_prepare;
+#[cfg(feature = "wgpu-backend")]
 mod lut_chunks;
 #[cfg(feature = "wgpu-backend")]
 mod pchip_chunks;
 #[cfg(feature = "wgpu-backend")]
-mod enlarger_resident;
+mod pointwise_pages;
 #[cfg(feature = "wgpu-backend")]
 mod preparation;
-#[cfg(feature = "wgpu-backend")]
-mod input_gamut_prepare;
 
 #[cfg(feature = "wgpu-backend")]
 mod blur;
@@ -438,6 +442,8 @@ mod optics;
 mod raw;
 #[cfg(feature = "wgpu-backend")]
 mod scan;
+#[cfg(feature = "wgpu-backend")]
+mod scan_cache;
 #[cfg(feature = "wgpu-backend")]
 mod unsharp;
 #[cfg(feature = "wgpu-backend")]

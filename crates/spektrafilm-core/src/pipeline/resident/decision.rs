@@ -37,7 +37,8 @@ impl Pipeline {
         if !matches!(
             self.params.workflow.route.as_str(),
             "input > film > scan" | "input > film > print > scan"
-        ) && !self.params.workflow.route_enum().is_convert_film() {
+        ) && !self.params.workflow.route_enum().is_convert_film()
+        {
             reasons.push(ResidentFallbackReason::WorkflowRoute);
         }
         // Negative-to-positive interpretation no longer declines at all:
@@ -74,10 +75,10 @@ impl Pipeline {
         if self.output_gamut.is_active() && self.output_gamut.gpu_params().is_none() {
             reasons.push(ResidentFallbackReason::UnsupportedOutputGamut);
         }
-        if self.tc_lut.is_none() && self.mallett_core.is_none() && self.convert_converter.is_none() {
+        if self.tc_lut.is_none() && self.mallett_core.is_none() && self.convert_converter.is_none()
+        {
             reasons.push(ResidentFallbackReason::MissingResidentFrontPass);
         }
         ResidentDecision::reasons(reasons)
     }
-
 }

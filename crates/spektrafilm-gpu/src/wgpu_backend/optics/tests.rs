@@ -55,12 +55,7 @@ fn device_diffusion_matches_the_cpu_reference() {
     let backend = crate::test_support::adapter();
     let img = hotspot_image(48);
     // Every family with its full reference-resolved support.
-    for family in [
-        "glimmerglass",
-        "black_pro_mist",
-        "pro_mist",
-        "cinebloom",
-    ] {
+    for family in ["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"] {
         let filter = spektrafilm_model::diffusion::DiffusionFilter {
             family,
             strength: 0.5,
@@ -90,12 +85,9 @@ fn device_diffusion_matches_the_cpu_reference() {
         let got = backend
             .optical_diffusion_gpu(&img, &params)
             .expect("the device convolution covers this kernel");
-        let expect = spektrafilm_model::diffusion::apply_diffusion_filter_um(
-            &img,
-            &filter,
-            pixel_size_um,
-        )
-        .unwrap_or_else(|e| panic!("{family}: {e}"));
+        let expect =
+            spektrafilm_model::diffusion::apply_diffusion_filter_um(&img, &filter, pixel_size_um)
+                .unwrap_or_else(|e| panic!("{family}: {e}"));
         let expect_f64: Vec<f64> = expect.data.iter().map(|&v| v as f64).collect();
         let got_f64: Vec<f64> = got.data.iter().map(|&v| v as f64).collect();
         let (worst, at) = max_error(&got_f64, &expect_f64);
@@ -128,13 +120,9 @@ fn device_diffusion_is_energy_conserving_on_a_uniform_field() {
         bloom_intensity: 1.0,
         bloom_size: 1.0,
     };
-    let (psf, radius, scatter) = spektrafilm_model::diffusion::resolve_psf(
-        &filter,
-        10.0,
-        n as usize,
-        n as usize,
-    )
-    .expect("effective filter");
+    let (psf, radius, scatter) =
+        spektrafilm_model::diffusion::resolve_psf(&filter, 10.0, n as usize, n as usize)
+            .expect("effective filter");
     let params = spektrafilm_backend::OpticalDiffusionGpuParams {
         psf: &psf,
         radius: radius as u32,
@@ -212,7 +200,9 @@ fn device_enlarger_lut_matches_the_pchip_reference() {
     let mut data = Vec::with_capacity(coords.len() * 3);
     for c in &coords {
         for ch in 0..3 {
-            data.push(from_f64(data_min[ch] + (data_max[ch] - data_min[ch]) * c[ch]));
+            data.push(from_f64(
+                data_min[ch] + (data_max[ch] - data_min[ch]) * c[ch],
+            ));
         }
     }
     let img = ImageBuf::from_data(coords.len() as u32, 1, data);
@@ -267,76 +257,137 @@ fn device_enlarger_lut_matches_the_pchip_reference() {
 #[test]
 fn scanner_generated_lut_matches_log_xyz_reference_with_bounded_aliasing() {
     use spektrafilm_backend::{ComputeBackend, ScannerSpectralLutGpuParams};
-    use spektrafilm_math::{pchip3d::{prepare_pchip_3d,pchip_interp}, precision::from_f64};
+    use spektrafilm_math::{
+        pchip3d::{pchip_interp, prepare_pchip_3d},
+        precision::from_f64,
+    };
     let backend = crate::test_support::adapter();
     struct RestoreLimit(Option<std::ffi::OsString>);
     impl Drop for RestoreLimit {
         fn drop(&mut self) {
             // Device tests serialize through the adapter's process-wide lock.
-            unsafe { match &self.0 {
-                Some(value) => std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", value),
-                None => std::env::remove_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"),
-            }}
+            unsafe {
+                match &self.0 {
+                    Some(value) => std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", value),
+                    None => std::env::remove_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"),
+                }
+            }
         }
     }
     let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
-    unsafe { std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "6000"); }
+    unsafe {
+        std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "6000");
+    }
     let size = 7usize;
     let minimum = [-0.2, -0.1, 0.0];
     let maximum = [2.8, 2.2, 3.1];
-    let channel_density: Vec<[f64;3]> = (0..7).map(|i| {
-        let t=i as f64/6.0;
-        [0.1+1.4*t, 1.3-0.9*t, 0.2+0.8*t*t]
-    }).collect();
+    let channel_density: Vec<[f64; 3]> = (0..7)
+        .map(|i| {
+            let t = i as f64 / 6.0;
+            [0.1 + 1.4 * t, 1.3 - 0.9 * t, 0.2 + 0.8 * t * t]
+        })
+        .collect();
     // A short base is wholly ignored by scan_log_xyz_cpu, not partially used.
     let base_density = [0.6];
     let illuminant = [0.7, 1.3, 0.5, 1.7, 0.9, 0.3, 1.1];
-    let cat = [[1.1,0.07,-0.03],[-0.02,0.91,0.08],[0.04,-0.06,1.04]];
-    let rgb = [[1.3,-0.2,0.1],[0.2,0.8,-0.1],[-0.1,0.15,0.95]];
+    let cat = [[1.1, 0.07, -0.03], [-0.02, 0.91, 0.08], [0.04, -0.06, 1.04]];
+    let rgb = [[1.3, -0.2, 0.1], [0.2, 0.8, -0.1], [-0.1, 0.15, 0.95]];
     let params = ScannerSpectralLutGpuParams {
-        channel_density:&channel_density, base_density:&base_density,
-        illuminant:&illuminant, normalization:0.13, cat:&cat, xyz_to_rgb:&rgb,
-        minimum, maximum, size:size as u32,
+        channel_density: &channel_density,
+        base_density: &base_density,
+        illuminant: &illuminant,
+        normalization: 0.13,
+        cat: &cat,
+        xyz_to_rgb: &rgb,
+        minimum,
+        maximum,
+        size: size as u32,
     };
-    let mut grid = ImageBuf::new(size as u32,(size*size) as u32);
-    for x in 0..size {for y in 0..size {for z in 0..size {
-        for (c,q) in [x,y,z].into_iter().enumerate() {
-            grid.data[((x*size+y)*size+z)*3+c] = from_f64(minimum[c]+(maximum[c]-minimum[c])*q as f64/(size-1) as f64);
-        }
-    }}}
-    let prepared = prepare_pchip_3d(spektrafilm_backend::cpu_backend::scan_log_xyz_cpu(
-        &grid,&channel_density,&base_density,&illuminant,params.normalization,
-    ),size);
-    let probes = [[-0.7,-0.4,-0.3],minimum,maximum,[3.2,2.7,3.6],
-        [0.51,1.14,1.33],[1.4,0.7,2.1],[2.29,1.81,0.83],[0.3,0.2,0.4],[1.8,1.3,2.6]];
-    let image = ImageBuf::from_data(3,3,probes.into_iter().flatten().map(from_f64).collect());
-    let got = backend.scanner_spectral_lut(&image,&params).unwrap().unwrap();
-    assert_eq!((got.width,got.height),(3,3));
-    let input = super::super::scalars_to_f32(&image.data);
-    let retained = backend.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label:Some("scanner_lut_alias_regression"),contents:bytemuck::cast_slice(&input),
-        usage:wgpu::BufferUsages::STORAGE|wgpu::BufferUsages::COPY_SRC|wgpu::BufferUsages::COPY_DST,
-    });
-    backend.execute_scanner_lut_resident(&retained,&retained,9,&params).unwrap();
-    let alias = backend.pipe.readback_buffer(&retained,9*12);
-    for (pixel,source) in image.data.as_chunks::<3>().0.iter().enumerate() {
-        let q: [f64;3] = std::array::from_fn(|c| (source[c] as f64-minimum[c])*(size-1) as f64/(maximum[c]-minimum[c]));
-        let log_xyz = pchip_interp(&prepared,q[0],q[1],q[2]);
-        let xyz = log_xyz.map(|v| 10.0f64.powf(v));
-        let adapted: [f64;3] = std::array::from_fn(|c| cat[c][0]*xyz[0]+cat[c][1]*xyz[1]+cat[c][2]*xyz[2]);
-        for c in 0..3 {
-            let expected = rgb[c][0]*adapted[0]+rgb[c][1]*adapted[1]+rgb[c][2]*adapted[2];
-            let actual = got.data[pixel*3+c] as f64;
-            // Binary64 lattice, slopes, Hermite, and colour reconstruction
-            // cross only the device's f32 image input/output boundaries.
-            assert!((actual-expected).abs() <= 3e-5*expected.abs().max(1e-8),
-                "scanner LUT pixel {pixel} channel {c}: {actual} != {expected}");
-            assert_eq!(alias[pixel*3+c],actual as f32,"aliasing changed the retained result");
+    let mut grid = ImageBuf::new(size as u32, (size * size) as u32);
+    for x in 0..size {
+        for y in 0..size {
+            for z in 0..size {
+                for (c, q) in [x, y, z].into_iter().enumerate() {
+                    grid.data[((x * size + y) * size + z) * 3 + c] = from_f64(
+                        minimum[c] + (maximum[c] - minimum[c]) * q as f64 / (size - 1) as f64,
+                    );
+                }
+            }
         }
     }
-    unsafe { std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "5183"); }
-    let error = backend.scanner_spectral_lut(&image,&params).unwrap_err();
-    assert!(error.contains("minimum halo working set needs 5184 bytes"),"{error}");
+    let prepared = prepare_pchip_3d(
+        spektrafilm_backend::cpu_backend::scan_log_xyz_cpu(
+            &grid,
+            &channel_density,
+            &base_density,
+            &illuminant,
+            params.normalization,
+        ),
+        size,
+    );
+    let probes = [
+        [-0.7, -0.4, -0.3],
+        minimum,
+        maximum,
+        [3.2, 2.7, 3.6],
+        [0.51, 1.14, 1.33],
+        [1.4, 0.7, 2.1],
+        [2.29, 1.81, 0.83],
+        [0.3, 0.2, 0.4],
+        [1.8, 1.3, 2.6],
+    ];
+    let image = ImageBuf::from_data(3, 3, probes.into_iter().flatten().map(from_f64).collect());
+    let got = backend
+        .scanner_spectral_lut(&image, &params)
+        .unwrap()
+        .unwrap();
+    assert_eq!((got.width, got.height), (3, 3));
+    let input = super::super::scalars_to_f32(&image.data);
+    let retained = backend
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("scanner_lut_alias_regression"),
+            contents: bytemuck::cast_slice(&input),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+    backend
+        .execute_scanner_lut_resident(&retained, &retained, 9, &params)
+        .unwrap();
+    let alias = backend.pipe.readback_buffer(&retained, 9 * 12);
+    for (pixel, source) in image.data.as_chunks::<3>().0.iter().enumerate() {
+        let q: [f64; 3] = std::array::from_fn(|c| {
+            (source[c] as f64 - minimum[c]) * (size - 1) as f64 / (maximum[c] - minimum[c])
+        });
+        let log_xyz = pchip_interp(&prepared, q[0], q[1], q[2]);
+        let xyz = log_xyz.map(|v| 10.0f64.powf(v));
+        let adapted: [f64; 3] =
+            std::array::from_fn(|c| cat[c][0] * xyz[0] + cat[c][1] * xyz[1] + cat[c][2] * xyz[2]);
+        for c in 0..3 {
+            let expected = rgb[c][0] * adapted[0] + rgb[c][1] * adapted[1] + rgb[c][2] * adapted[2];
+            let actual = got.data[pixel * 3 + c] as f64;
+            // Binary64 lattice, slopes, Hermite, and colour reconstruction
+            // cross only the device's f32 image input/output boundaries.
+            assert!(
+                (actual - expected).abs() <= 3e-5 * expected.abs().max(1e-8),
+                "scanner LUT pixel {pixel} channel {c}: {actual} != {expected}"
+            );
+            assert_eq!(
+                alias[pixel * 3 + c],
+                actual as f32,
+                "aliasing changed the retained result"
+            );
+        }
+    }
+    unsafe {
+        std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "5183");
+    }
+    let error = backend.scanner_spectral_lut(&image, &params).unwrap_err();
+    assert!(
+        error.contains("minimum halo working set needs 5184 bytes"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -345,56 +396,102 @@ fn device_diffusion_preserves_global_support_across_tiny_bindings_and_print_doma
     struct RestoreLimit(Option<std::ffi::OsString>);
     impl Drop for RestoreLimit {
         fn drop(&mut self) {
-            unsafe { match &self.0 {
-                Some(value) => std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", value),
-                None => std::env::remove_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"),
-            } }
+            unsafe {
+                match &self.0 {
+                    Some(value) => std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", value),
+                    None => std::env::remove_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"),
+                }
+            }
         }
     }
     let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
     let radius = 5usize;
-    let k = 2*radius+1;
-    let psf: [Vec<f64>;3] = std::array::from_fn(|c| {
-        let mut taps: Vec<_> = (0..k*k).map(|i| {
-            let x = (i%k) as f64-radius as f64;
-            let y = (i/k) as f64-radius as f64;
-            (-(x*x+y*y)/(4.0+c as f64*2.0)).exp()
-        }).collect();
+    let k = 2 * radius + 1;
+    let psf: [Vec<f64>; 3] = std::array::from_fn(|c| {
+        let mut taps: Vec<_> = (0..k * k)
+            .map(|i| {
+                let x = (i % k) as f64 - radius as f64;
+                let y = (i / k) as f64 - radius as f64;
+                (-(x * x + y * y) / (4.0 + c as f64 * 2.0)).exp()
+            })
+            .collect();
         let total: f64 = taps.iter().sum();
-        for tap in &mut taps { *tap /= total; }
+        for tap in &mut taps {
+            *tap /= total;
+        }
         taps
     });
-    let params = spektrafilm_backend::OpticalDiffusionGpuParams { psf:&psf, radius:radius as u32, scatter_fraction:0.43 };
+    let params = spektrafilm_backend::OpticalDiffusionGpuParams {
+        psf: &psf,
+        radius: radius as u32,
+        scatter_fraction: 0.43,
+    };
     let image = hotspot_image(17);
-    let samples: Vec<f32> = image.data.iter().enumerate().map(|(i,&v)| {
-        if i%29==0 { -0.25 } else { v as f32 }
-    }).collect();
-    let input = backend.pipe.static_buffer("diffusion_test_source",bytemuck::cast_slice(&samples),
-        wgpu::BufferUsages::STORAGE|wgpu::BufferUsages::COPY_SRC);
-    let source = super::super::film_chain::device_image::BufferPayload::from_buffer(backend.backend_id(),input,17,17);
-    for scale in [None,Some(1.7)] {
-        let linear:Vec<f64> = samples.iter().map(|&v| match scale {
-            Some(scale) => (10.0f64.powf(f64::from(v))*scale) as f32 as f64,
-            None => f64::from(v),
-        }).collect();
-        let channels:[Vec<f64>;3] = std::array::from_fn(|c| linear.iter().skip(c).step_by(3).copied().collect());
-        let blurred:[Vec<f64>;3] = std::array::from_fn(|c|
-            spektrafilm_math::fft_conv::convolve2d_reflect(&channels[c],17,17,&psf[c],k));
-        let expected:Vec<f64> = (0..samples.len()).map(|i| {
-            let mixed = ((1.0-params.scatter_fraction)*linear[i]+params.scatter_fraction*blurred[i%3][i/3]) as f32;
-            if scale.is_some() { (f64::from(mixed).max(0.0)+1e-10).log10() as f32 as f64 }
-            else { f64::from(mixed) }
-        }).collect();
-        for limit in [12000,192] {
-            unsafe { std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES",limit.to_string()); }
-            let pages = backend.diffusion_pages(&source,&params,scale).unwrap();
-            if limit==192 { assert!(pages.len()>1); }
-            let retained = backend.retain_image_pages(pages,17,17,spektrafilm_backend::SampleDomain::Linear,
-                &spektrafilm_math::colorspace::SRGB,None);
+    let samples: Vec<f32> = image
+        .data
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| if i % 29 == 0 { -0.25 } else { v as f32 })
+        .collect();
+    let input = backend.pipe.static_buffer(
+        "diffusion_test_source",
+        bytemuck::cast_slice(&samples),
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    );
+    let source = super::super::film_chain::device_image::BufferPayload::from_buffer(
+        backend.backend_id(),
+        input,
+        17,
+        17,
+    );
+    for scale in [None, Some(1.7)] {
+        let linear: Vec<f64> = samples
+            .iter()
+            .map(|&v| match scale {
+                Some(scale) => (10.0f64.powf(f64::from(v)) * scale) as f32 as f64,
+                None => f64::from(v),
+            })
+            .collect();
+        let channels: [Vec<f64>; 3] =
+            std::array::from_fn(|c| linear.iter().skip(c).step_by(3).copied().collect());
+        let blurred: [Vec<f64>; 3] = std::array::from_fn(|c| {
+            spektrafilm_math::fft_conv::convolve2d_reflect(&channels[c], 17, 17, &psf[c], k)
+        });
+        let expected: Vec<f64> = (0..samples.len())
+            .map(|i| {
+                let mixed = ((1.0 - params.scatter_fraction) * linear[i]
+                    + params.scatter_fraction * blurred[i % 3][i / 3])
+                    as f32;
+                if scale.is_some() {
+                    (f64::from(mixed).max(0.0) + 1e-10).log10() as f32 as f64
+                } else {
+                    f64::from(mixed)
+                }
+            })
+            .collect();
+        for limit in [12000, 192] {
+            unsafe {
+                std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", limit.to_string());
+            }
+            let pages = backend.diffusion_pages(&source, &params, scale).unwrap();
+            if limit == 192 {
+                assert!(pages.len() > 1);
+            }
+            let retained = backend.retain_image_pages(
+                pages,
+                17,
+                17,
+                spektrafilm_backend::SampleDomain::Linear,
+                &spektrafilm_math::colorspace::SRGB,
+                None,
+            );
             let got = backend.materialize_buffer(&retained).unwrap();
-            let got:Vec<_> = got.data.iter().map(|&v| v as f64).collect();
-            let (worst,at) = max_error(&got,&expected);
-            assert!(worst<5e-5,"limit={limit}, print_scale={scale:?}: max error {worst} at {at}");
+            let got: Vec<_> = got.data.iter().map(|&v| v as f64).collect();
+            let (worst, at) = max_error(&got, &expected);
+            assert!(
+                worst < 5e-5,
+                "limit={limit}, print_scale={scale:?}: max error {worst} at {at}"
+            );
         }
     }
 }

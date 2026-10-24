@@ -362,8 +362,8 @@ impl InputGamutCompress {
 
     /// Build the CPU reference tables after bounded validation.
     pub fn build(params: &InputGamutCompressParams) -> Result<Self, String> {
-        let (active, algorithm, boundary, knee) = Self::resolve_configuration(params)
-            .map_err(|error| error.to_string())?;
+        let (active, algorithm, boundary, knee) =
+            Self::resolve_configuration(params).map_err(|error| error.to_string())?;
         let locus = spectral_locus_xy();
         let c_max = match (active, algorithm) {
             (true, Algorithm::Oklch) => OKLCH_CMAX.clone(),

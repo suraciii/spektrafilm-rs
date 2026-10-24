@@ -145,18 +145,35 @@ impl App {
                 lens_correction: raw["lens_correction"].as_bool().unwrap_or(false),
             };
             if self.backend.is_gpu() {
-                let loaded = spektrafilm_raw::load_retained_with_backend(path, &options, self.backend.as_ref())
-                    .map_err(anyhow::Error::msg)?;
-                (crate::render::InputImage::Device(loaded.image), image_io::read_metadata(path),
-                    Some(loaded.lens_info), loaded.lens_model_identity)
+                let loaded = spektrafilm_raw::load_retained_with_backend(
+                    path,
+                    &options,
+                    self.backend.as_ref(),
+                )
+                .map_err(anyhow::Error::msg)?;
+                (
+                    crate::render::InputImage::Device(loaded.image),
+                    image_io::read_metadata(path),
+                    Some(loaded.lens_info),
+                    loaded.lens_model_identity,
+                )
             } else {
                 let loaded = spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
-                (crate::render::InputImage::Host(Arc::new(loaded.image)), image_io::read_metadata(path),
-                    Some(loaded.lens_info), loaded.lens_model_identity)
+                (
+                    crate::render::InputImage::Host(Arc::new(loaded.image)),
+                    image_io::read_metadata(path),
+                    Some(loaded.lens_info),
+                    loaded.lens_model_identity,
+                )
             }
         } else {
             let loaded = image_io::load(path)?;
-            (crate::render::InputImage::Host(Arc::new(loaded.image)), loaded.metadata, None, None)
+            (
+                crate::render::InputImage::Host(Arc::new(loaded.image)),
+                loaded.metadata,
+                None,
+                None,
+            )
         };
         anyhow::ensure!(
             source_digest == Self::accepted_source_digest(path)?,

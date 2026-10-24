@@ -970,7 +970,8 @@ mod tests {
                             colored: params.colored,
                             clustered: params.clustered,
                         };
-                        let gpu_image = gpu.grain_v2_gpu(&image, &gpu_params)
+                        let gpu_image = gpu
+                            .grain_v2_gpu(&image, &gpu_params)
                             .expect("device Grain Procedural reference must execute");
                         assert!(
                             cpu.data.iter().all(|v| to_f32(*v).is_finite()),

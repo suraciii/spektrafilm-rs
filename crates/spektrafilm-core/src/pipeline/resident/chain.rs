@@ -29,7 +29,9 @@ impl Pipeline {
                 if backend.explicit_gpu_request() {
                     return Err(match backend.image_binding_limit_reason(image) {
                         Some(limit) => {
-                            format!("explicit GPU request exceeds the device resource limits: {limit}")
+                            format!(
+                                "explicit GPU request exceeds the device resource limits: {limit}"
+                            )
                         }
                         None => reason,
                     });
@@ -37,12 +39,7 @@ impl Pipeline {
                 return Ok(None);
             }
         };
-        match self.try_gpu_resident_retained(
-            &input,
-            backend,
-            pixel_size_um,
-            ae_ev,
-        )? {
+        match self.try_gpu_resident_retained(&input, backend, pixel_size_um, ae_ev)? {
             Some(retained) => Ok(Some(retained.to_host(backend)?)),
             None => Ok(None),
         }
@@ -87,8 +84,12 @@ impl Pipeline {
         ae_ev: f64,
     ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
         self.try_gpu_resident_retained_with_taps(
-            input, backend, pixel_size_um, ae_ev,
-            spektrafilm_backend::Tap::RgbPre, spektrafilm_backend::Tap::RgbOut,
+            input,
+            backend,
+            pixel_size_um,
+            ae_ev,
+            spektrafilm_backend::Tap::RgbPre,
+            spektrafilm_backend::Tap::RgbOut,
         )
     }
 
@@ -104,18 +105,35 @@ impl Pipeline {
     ) -> Result<Option<spektrafilm_backend::DeviceImage>, String> {
         use spektrafilm_backend::Tap;
         let order = self.tap_order();
-        let ip = order.iter().position(|tap| *tap == inject)
-            .ok_or_else(|| format!("tap {inject:?} is not part of this topology (scan_film = {})", self.params.io.scan_film))?;
-        let cp = order.iter().position(|tap| *tap == collect)
-            .ok_or_else(|| format!("tap {collect:?} is not part of this topology (scan_film = {})", self.params.io.scan_film))?;
+        let ip = order.iter().position(|tap| *tap == inject).ok_or_else(|| {
+            format!(
+                "tap {inject:?} is not part of this topology (scan_film = {})",
+                self.params.io.scan_film
+            )
+        })?;
+        let cp = order
+            .iter()
+            .position(|tap| *tap == collect)
+            .ok_or_else(|| {
+                format!(
+                    "tap {collect:?} is not part of this topology (scan_film = {})",
+                    self.params.io.scan_film
+                )
+            })?;
         if cp < ip {
-            return Err(format!("no node path reaches tap {collect:?} from {inject:?}"));
+            return Err(format!(
+                "no node path reaches tap {collect:?} from {inject:?}"
+            ));
         }
         if inject == collect {
             return Ok(Some(input.clone()));
         }
-        let includes = |tap| order.iter().position(|candidate| *candidate == tap)
-            .is_some_and(|position| ip <= position && position < cp);
+        let includes = |tap| {
+            order
+                .iter()
+                .position(|candidate| *candidate == tap)
+                .is_some_and(|position| ip <= position && position < cp)
+        };
         let expose = includes(Tap::RgbPre);
         let develop = includes(Tap::LogEFilm);
         let scan = collect == Tap::RgbOut;
@@ -130,8 +148,11 @@ impl Pipeline {
                     ResidentFallbackReason::UnsupportedOutputGamut => scan,
                     _ => true,
                 });
-                if reasons.is_empty() { ResidentDecision::UseResident }
-                else { ResidentDecision::PerStage { reasons } }
+                if reasons.is_empty() {
+                    ResidentDecision::UseResident
+                } else {
+                    ResidentDecision::PerStage { reasons }
+                }
             }
             decision => decision,
         };
@@ -208,26 +229,35 @@ impl Pipeline {
         let convert_route = self.params.workflow.route_enum().is_convert_film();
         let scan_film = if convert_route {
             self.params.workflow.route_enum() != crate::WorkflowRoute::ConvertFilmPrintScan
-        } else { self.params.io.scan_film };
-        let input_decode = (expose && self.params.io.input_cctf_decoding && !convert_route).then(|| {
-            let input_space =
-                spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)
-                    .expect("input color space must be validated before filming");
-            spektrafilm_backend::InputDecodeGpuParams {
-                cctf_kind: spektrafilm_backend::cctf_kind(input_space.cctf),
-            }
-        });
+        } else {
+            self.params.io.scan_film
+        };
+        let input_decode =
+            (expose && self.params.io.input_cctf_decoding && !convert_route).then(|| {
+                let input_space =
+                    spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)
+                        .expect("input color space must be validated before filming");
+                spektrafilm_backend::InputDecodeGpuParams {
+                    cctf_kind: spektrafilm_backend::cctf_kind(input_space.cctf),
+                }
+            });
         // Keep the inverse solver record on the stack for the entire backend
         // submission; the front pass borrows it without an allocation.
         let convert_params = if expose && convert_route {
-            self.convert_converter.as_ref().map(|converter| converter.gpu_params())
+            self.convert_converter
+                .as_ref()
+                .map(|converter| converter.gpu_params())
         } else {
             None
         };
         // A suffix injection has no front transform. The inactive matrix is
         // only a packed setup record; the typed span omits its dispatch.
-        let front = if expose { self.resident_front_pass(ae_ev, convert_params.as_ref()) } else {
-            Some(spektrafilm_backend::FrontPass::Mallett2019 { matrix: [[0.0; 3]; 3] })
+        let front = if expose {
+            self.resident_front_pass(ae_ev, convert_params.as_ref())
+        } else {
+            Some(spektrafilm_backend::FrontPass::Mallett2019 {
+                matrix: [[0.0; 3]; 3],
+            })
         };
         let Some(front) = front else {
             if backend.explicit_gpu_request() {
@@ -256,13 +286,11 @@ impl Pipeline {
         // viewing illuminant and dye-density wavelength count come from the
         // film, not the print (mirrors the CPU scanning stage, which is
         // handed `self.film` as its profile when scan_film).
-        let scan_profile = if scan_film {
-            &self.film
-        } else {
-            &self.print
-        };
-        let include_base = self.params.workflow.route_enum() != crate::WorkflowRoute::ConvertFilmScanMinusBase;
-        let prepared = crate::chain_prep::PreparedChain::for_scan(scan_profile, &self.params, include_base);
+        let scan_profile = if scan_film { &self.film } else { &self.print };
+        let include_base =
+            self.params.workflow.route_enum() != crate::WorkflowRoute::ConvertFilmScanMinusBase;
+        let prepared =
+            crate::chain_prep::PreparedChain::for_scan(scan_profile, &self.params, include_base);
         let scan_context = &prepared.scan;
         let scan_illu: &[f64] = &scan_context.illuminant;
         let scan_norm = scan_context.normalization;
@@ -299,8 +327,7 @@ impl Pipeline {
                     (h.halation_strength[c] * h.halation_amount) as f32
                 }),
                 halation_first_sigma_px: std::array::from_fn(|c| {
-                    (h.halation_first_sigma_um[c] * h.halation_spatial_scale
-                        / pix_um as f64) as f32
+                    (h.halation_first_sigma_um[c] * h.halation_spatial_scale / pix_um as f64) as f32
                 }),
                 halation_n_bounces: h.halation_n_bounces,
                 halation_bounce_decay: h.halation_bounce_decay as f32,
@@ -419,18 +446,25 @@ impl Pipeline {
         // `n2p` (the `captured_rgb.is_none()` conjunct in `stages::scanning`
         // is always true here).
         let density_reading = scan && self.params.scanner.scan_output == "negative_to_positive";
-        let scan_readout = density_reading.then(|| crate::stages::scanning::density_reading_gpu_params(
-            scan_profile, &self.conversion_tones, &self.params,
-        )).transpose()?;
+        let scan_readout = density_reading
+            .then(|| {
+                crate::stages::scanning::density_reading_gpu_params(
+                    scan_profile,
+                    &self.conversion_tones,
+                    &self.params,
+                )
+            })
+            .transpose()?;
 
         // The acquisition replacement blurs the transmitted light inside the
         // acquisition (density domain), so the post-acquisition scanner lens
         // blur must not run again.
-        let scanner_lens_blur_px = if scan && self.params.scanner.lens_blur > 0.0 && !density_reading {
-            Some(self.params.scanner.lens_blur)
-        } else {
-            None
-        };
+        let scanner_lens_blur_px =
+            if scan && self.params.scanner.lens_blur > 0.0 && !density_reading {
+                Some(self.params.scanner.lens_blur)
+            } else {
+                None
+            };
 
         let hboost = &self.params.film_render.halation;
         let highlight_boost = if expose && hboost.boost_ev != 0.0 {
@@ -442,7 +476,8 @@ impl Pipeline {
         } else {
             None
         };
-        let grain_v2 = if scan && self.params.film_render.grain.active
+        let grain_v2 = if scan
+            && self.params.film_render.grain.active
             && matches!(
                 self.params.film_render.grain.engine,
                 crate::params::grain::GrainEngine::Procedural
@@ -461,30 +496,68 @@ impl Pipeline {
         // experimental mass-law selector) keeps the host field as the
         // assembled density fence below, so an explicit GPU request fails by
         // name at assembly instead of silently running host arithmetic.
-        let dye_readout = if develop && crate::stages::grain_v3::active(&self.params) {
-            crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
-            let spatial_context = (scan && crate::stages::grain_v3::scanner_spatial_context(&self.params))
-                || (collect != Tap::CmyFilm && crate::stages::grain_v3::print_spatial_context(&self.params));
-            Some(crate::stages::grain_v3::readout_plan(
-                input.width(), input.height(), &self.params, pixel_size_um,
-                crate::stages::grain_v3::validate_aperture(&self.params)?, spatial_context,
-            )?)
-        } else { None };
-        let grain_dye = dye_readout.as_ref().map(|plan| {
-            crate::stages::grain_v3::resident_device_params_for_grid(
-                &self.film, &self.params, pixel_size_um, plan.grid,
-            )
-        }).transpose()?;
-        let fotufilm_readout = if develop && crate::stages::grain_fotufilm::active(&self.params) {
-            let spatial_context = (scan && crate::stages::grain_v3::scanner_spatial_context(&self.params))
-                || (collect != Tap::CmyFilm && crate::stages::grain_v3::print_spatial_context(&self.params));
-            Some(crate::stages::grain_v3::readout_plan(input.width(),input.height(),
-                &self.params,pixel_size_um,None,spatial_context)?)
-        } else { None };
-        let grain_fotufilm = fotufilm_readout.as_ref().map(|plan|
-            self.fotufilm_prepared.resident_device_params(input.width(),input.height(),
-                &self.film,&self.params,pixel_size_um,plan.grid,&|| self.check_cancelled())
-        ).transpose()?;
+        // Recovered convert-film CMY is already developed; neither optical
+        // engine may generate a new field or apply its readout geometry there.
+        let dye_readout =
+            if develop && !convert_route && crate::stages::grain_v3::active(&self.params) {
+                crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
+                let spatial_context = (scan
+                    && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                    || (collect != Tap::CmyFilm
+                        && crate::stages::grain_v3::print_spatial_context(&self.params));
+                Some(crate::stages::grain_v3::readout_plan(
+                    input.width(),
+                    input.height(),
+                    &self.params,
+                    pixel_size_um,
+                    crate::stages::grain_v3::validate_aperture(&self.params)?,
+                    spatial_context,
+                )?)
+            } else {
+                None
+            };
+        let grain_dye = dye_readout
+            .as_ref()
+            .map(|plan| {
+                crate::stages::grain_v3::resident_device_params_for_grid(
+                    &self.film,
+                    &self.params,
+                    pixel_size_um,
+                    plan.grid,
+                )
+            })
+            .transpose()?;
+        let fotufilm_readout =
+            if develop && !convert_route && crate::stages::grain_fotufilm::active(&self.params) {
+                let spatial_context = (scan
+                    && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                    || (collect != Tap::CmyFilm
+                        && crate::stages::grain_v3::print_spatial_context(&self.params));
+                Some(crate::stages::grain_v3::readout_plan(
+                    input.width(),
+                    input.height(),
+                    &self.params,
+                    pixel_size_um,
+                    None,
+                    spatial_context,
+                )?)
+            } else {
+                None
+            };
+        let grain_fotufilm = fotufilm_readout
+            .as_ref()
+            .map(|plan| {
+                self.fotufilm_prepared.resident_device_params(
+                    input.width(),
+                    input.height(),
+                    &self.film,
+                    &self.params,
+                    pixel_size_um,
+                    plan.grid,
+                    &|| self.check_cancelled(),
+                )
+            })
+            .transpose()?;
         // Spektra v1 grain runs on the device in both sampling regimes; the
         // pass takes the film density buffer in place in the density-fence
         // position. The layered `fast_stats` regime is a per-pixel mapping,
@@ -492,7 +565,9 @@ impl Pipeline {
         // layered path without `use_fast_stats`) is a sequential dispatch
         // reproducing the reference draw order — all Poisson first, then all
         // binomial — so the device never substitutes a different noise law.
-        let grain_v1 = if develop && !convert_route && self.params.film_render.grain.active
+        let grain_v1 = if develop
+            && !convert_route
+            && self.params.film_render.grain.active
             && matches!(
                 self.params.film_render.grain.engine,
                 crate::params::grain::GrainEngine::Spektra
@@ -514,13 +589,17 @@ impl Pipeline {
         // field from the normalized density; Dye reads the same buffer with
         // the identity readout geometry only when its field has no device
         // path (`stages::grain_v3::resident_device_params`).
-        let density_cpu_stage = if !develop || convert_route { None } else { self.density_cpu_stage(
-            film_curves_norm,
-            backend,
-            pixel_size_um,
-            grain_dye.is_some(),
-            grain_v1.is_some(),
-        ) };
+        let density_cpu_stage = if !develop || convert_route {
+            None
+        } else {
+            self.density_cpu_stage(
+                film_curves_norm,
+                backend,
+                pixel_size_um,
+                grain_dye.is_some(),
+                grain_v1.is_some(),
+            )
+        };
 
         let scan_output_space =
             spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
@@ -531,39 +610,61 @@ impl Pipeline {
             &print_channel_density
         };
         let scan_base_zero = vec![0.0; scan_profile.data.base_density.len()];
-        let scan_base_density: &[f64] = if !include_base { &scan_base_zero } else if scan_film {
+        let scan_base_density: &[f64] = if !include_base {
+            &scan_base_zero
+        } else if scan_film {
             film_base_density
         } else {
             print_base_density
         };
-        let scanner_lut = (scan && !density_reading && self.params.settings.use_scanner_lut).then(|| {
-            let (minimum, maximum) = crate::stages::scanning::scanner_lut_bounds(scan_profile, &self.params);
-            spektrafilm_backend::ScannerSpectralLutGpuParams {
-                channel_density: scan_channel_density, base_density: scan_base_density,
-                illuminant: scan_illu, normalization: scan_norm,
-                cat: &scan_context.adapt, xyz_to_rgb: &scan_context.base_xyz_to_rgb,
-                minimum, maximum, size: self.params.settings.lut_resolution as u32,
-            }
-        });
-        let enlarger_lut = (includes(Tap::CmyFilm) && !scan_film && self.params.settings.use_enlarger_lut).then(|| {
-            let (minimum, maximum) = crate::stages::printing::enlarger_lut_bounds(&self.film, &self.params);
-            spektrafilm_backend::EnlargerSpectralLutGpuParams {
-                channel_density: &film_channel_density, base_density: film_base_density,
-                illuminant: &self.print_illuminant, sensitivity: &print_sens,
-                normalization: print_norm_factor, preflash: self.preflash_raw,
-                minimum, maximum, size: self.params.settings.lut_resolution as u32,
-            }
-        });
+        let scanner_lut =
+            (scan && !density_reading && self.params.settings.use_scanner_lut).then(|| {
+                let (minimum, maximum) =
+                    crate::stages::scanning::scanner_lut_bounds(scan_profile, &self.params);
+                spektrafilm_backend::ScannerSpectralLutGpuParams {
+                    channel_density: scan_channel_density,
+                    base_density: scan_base_density,
+                    illuminant: scan_illu,
+                    normalization: scan_norm,
+                    cat: &scan_context.adapt,
+                    xyz_to_rgb: &scan_context.base_xyz_to_rgb,
+                    minimum,
+                    maximum,
+                    size: self.params.settings.lut_resolution as u32,
+                }
+            });
+        let enlarger_lut = (includes(Tap::CmyFilm)
+            && !scan_film
+            && self.params.settings.use_enlarger_lut)
+            .then(|| {
+                let (minimum, maximum) =
+                    crate::stages::printing::enlarger_lut_bounds(&self.film, &self.params);
+                spektrafilm_backend::EnlargerSpectralLutGpuParams {
+                    channel_density: &film_channel_density,
+                    base_density: film_base_density,
+                    illuminant: &self.print_illuminant,
+                    sensitivity: &print_sens,
+                    normalization: print_norm_factor,
+                    preflash: self.preflash_raw,
+                    minimum,
+                    maximum,
+                    size: self.params.settings.lut_resolution as u32,
+                }
+            });
         // Scanner LUT acquisition is a device operation, not a host fence.
-        let scan_acquisition_cpu_stage = if !scan || density_reading || scanner_lut.is_some() { None } else { self.scan_acquisition_cpu_stage(
-            false,
-            scan_context,
-            scan_profile,
-            &self.params,
-            scan_channel_density,
-            scan_base_density,
-            backend,
-        ) };
+        let scan_acquisition_cpu_stage = if !scan || density_reading || scanner_lut.is_some() {
+            None
+        } else {
+            self.scan_acquisition_cpu_stage(
+                false,
+                scan_context,
+                scan_profile,
+                &self.params,
+                scan_channel_density,
+                scan_base_density,
+                backend,
+            )
+        };
 
         // Camera optical diffusion and the enlarger print acquisition run on
         // the device: the chain's fused passes convolve the same discrete PSF
@@ -615,23 +716,60 @@ impl Pipeline {
             None
         };
 
-        let prepare_diffusion = |filter: &crate::params::diffusion::DiffusionFilterParams, enabled: bool,
-                                 width: u32, height: u32, pitch: f64| -> Result<_, String> {
-            if !enabled || !filter.active { return Ok(None); }
+        let prepare_diffusion = |filter: &crate::params::diffusion::DiffusionFilterParams,
+                                 enabled: bool,
+                                 width: u32,
+                                 height: u32,
+                                 pitch: f64|
+         -> Result<_, String> {
+            if !enabled || !filter.active {
+                return Ok(None);
+            }
             spektrafilm_model::diffusion::validate_family(&filter.filter_family)?;
-            Ok(spektrafilm_model::diffusion::resolve_psf(&filter.to_model(),pitch,width as usize,height as usize).ok())
+            Ok(spektrafilm_model::diffusion::resolve_psf(
+                &filter.to_model(),
+                pitch,
+                width as usize,
+                height as usize,
+            )
+            .ok())
         };
-        let camera_diffusion = prepare_diffusion(&self.params.camera.diffusion_filter,expose,
-            input.width(),input.height(),pixel_size_um)?;
-        let print_grid = dye_readout.as_ref().or(fotufilm_readout.as_ref()).map(|plan|plan.grid);
-        let (print_width,print_height,print_pitch) = print_grid.map_or(
-            (input.width(),input.height(),pixel_size_um),
-            |grid| (grid.width,grid.height,grid.pitch_um[usize::from(input.height()>input.width())]),
-        );
-        let enlarger_diffusion = prepare_diffusion(&self.params.enlarger.diffusion_filter,
-            includes(Tap::CmyFilm) && !scan_film,print_width,print_height,print_pitch)?;
+        let camera_diffusion = prepare_diffusion(
+            &self.params.camera.diffusion_filter,
+            expose,
+            input.width(),
+            input.height(),
+            pixel_size_um,
+        )?;
+        let print_grid = dye_readout
+            .as_ref()
+            .or(fotufilm_readout.as_ref())
+            .map(|plan| plan.grid);
+        let (print_width, print_height, print_pitch) =
+            print_grid.map_or((input.width(), input.height(), pixel_size_um), |grid| {
+                (
+                    grid.width,
+                    grid.height,
+                    grid.pitch_um[usize::from(input.height() > input.width())],
+                )
+            });
+        let enlarger_diffusion = prepare_diffusion(
+            &self.params.enlarger.diffusion_filter,
+            includes(Tap::CmyFilm) && !scan_film,
+            print_width,
+            print_height,
+            print_pitch,
+        )?;
 
         let params = spektrafilm_backend::FilmChainParams {
+            scan_preparation_key: if density_reading
+                && inject == Tap::CmyFilm
+                && collect == Tap::RgbOut
+            {
+                input.payload()
+            } else {
+                None
+            },
             inject,
             collect,
             image_width: input.width(),
@@ -642,7 +780,11 @@ impl Pipeline {
             film_density_curves_normalized: film_curves_norm,
             film_gamma: self.params.film_render.density_curve_gamma as f64,
             film_channel_density: &film_channel_density,
-            film_base_density: if include_base { film_base_density } else { &scan_base_zero },
+            film_base_density: if include_base {
+                film_base_density
+            } else {
+                &scan_base_zero
+            },
             print_illuminant: &self.print_illuminant,
             print_sensitivity: &print_sens,
             print_normalization_factor: print_norm_factor,
@@ -665,20 +807,35 @@ impl Pipeline {
             halation,
             dir_couplers,
             glare,
-            gamut: if scan { self.output_gamut.gpu_params() } else { None },
+            gamut: if scan {
+                self.output_gamut.gpu_params()
+            } else {
+                None
+            },
             unsharp,
             grain_v2,
             camera_lens_blur_px,
-            camera_diffusion: camera_diffusion.as_ref().map(|resolved| spektrafilm_backend::OpticalDiffusionGpuParams {
-                psf:&resolved.0,radius:resolved.1 as u32,scatter_fraction:resolved.2,
+            camera_diffusion: camera_diffusion.as_ref().map(|resolved| {
+                spektrafilm_backend::OpticalDiffusionGpuParams {
+                    psf: &resolved.0,
+                    radius: resolved.1 as u32,
+                    scatter_fraction: resolved.2,
+                }
             }),
-            enlarger_diffusion: enlarger_diffusion.as_ref().map(|resolved| spektrafilm_backend::OpticalDiffusionGpuParams {
-                psf:&resolved.0,radius:resolved.1 as u32,scatter_fraction:resolved.2,
+            enlarger_diffusion: enlarger_diffusion.as_ref().map(|resolved| {
+                spektrafilm_backend::OpticalDiffusionGpuParams {
+                    psf: &resolved.0,
+                    radius: resolved.1 as u32,
+                    scatter_fraction: resolved.2,
+                }
             }),
             grain_dye_cell_spectral: crate::stages::grain_v3::validate_cell_spectral(&self.params)?,
             grain_dye_aperture: dye_readout.as_ref().and_then(|plan| plan.aperture),
-            grain_dye_crop: dye_readout.as_ref().or(fotufilm_readout.as_ref())
-                .and_then(|plan| plan.deferred_crop).map(|r| [r.x as u32,r.y as u32,r.width as u32,r.height as u32]),
+            grain_dye_crop: dye_readout
+                .as_ref()
+                .or(fotufilm_readout.as_ref())
+                .and_then(|plan| plan.deferred_crop)
+                .map(|r| [r.x as u32, r.y as u32, r.width as u32, r.height as u32]),
             scanner_lens_blur_px,
             highlight_boost,
             grain_dye,
@@ -732,7 +889,10 @@ impl Pipeline {
             }
         }
         let resident = crate::stages::StageObservation::new(backend, "film_chain");
-        let result = match resident.backend(backend).try_run_film_chain_retained(input, &params) {
+        let result = match resident
+            .backend(backend)
+            .try_run_film_chain_retained(input, &params)
+        {
             Ok(result) => result,
             Err(error) => {
                 // A CPU fence could not calibrate its output, or the chain

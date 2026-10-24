@@ -26,15 +26,18 @@ use spektrafilm_backend::{RawDemosaic, RawGpuParams, RawSensor};
 use crate::wgpu_backend::film_chain::required_buffer_exceeds_limits;
 
 mod demosaic;
+mod float_normalization;
 mod geometry;
 mod lens;
 mod paged;
-mod tiled_sensor;
 mod tiled;
 mod tiled_demosaic;
 mod tiled_output;
-mod float_normalization;
-const CBRT_SHADER: &str = concat!(include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"), include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_cbrt.wgsl"));
+mod tiled_sensor;
+const CBRT_SHADER: &str = concat!(
+    include_str!("../../../../spektrafilm-shaders/wgsl/f64_math.wgsl"),
+    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_cbrt.wgsl")
+);
 
 /// LibRaw's `ACES_TO_XYZ` (ACES2065-1 → CIE XYZ): the constant
 /// `raw_convert_to_rgb.wgsl` reads to reach XYZ before adapting.
@@ -108,7 +111,6 @@ struct ColorPass {
     xyz_to_aces: [[f32; 4]; 3],
 }
 
-
 /// One prepared dispatch: a pipeline, its bind group, and the invocation
 /// count the kernel walks.
 pub(super) struct RawDispatch {
@@ -157,7 +159,9 @@ impl RawBuffer {
                 label: Some(label),
                 size,
                 mapped_at_creation: false,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
             }),
         }
     }
@@ -206,13 +210,20 @@ impl WgpuBackend {
         if sensor.colors == 0 || sensor.colors > 4 || sensor.cfa.iter().any(|&c| c > 3) {
             return Err("RAW sensor has invalid colour metadata".into());
         }
-        let sample_sites = if sensor.fuji_width != 0 { u64::from(sensor.copied_width) * u64::from(sensor.copied_height) } else { pixels };
+        let sample_sites = if sensor.fuji_width != 0 {
+            u64::from(sensor.copied_width) * u64::from(sensor.copied_height)
+        } else {
+            pixels
+        };
         if sensor.samples.len() as u64 != sample_sites * u64::from(sensor.layout.channels()) {
             return Err("RAW sensor sample plane disagrees with its layout and dimensions".into());
         }
         let (output_width, output_height) = sensor.output_dimensions()?;
-        for bytes in [sensor.samples.len() as u64 * 4, pixels * 16,
-            u64::from(output_width) * u64::from(output_height) * 12] {
+        for bytes in [
+            sensor.samples.len() as u64 * 4,
+            pixels * 16,
+            u64::from(output_width) * u64::from(output_height) * 12,
+        ] {
             if let Some(reason) = required_buffer_exceeds_limits(bytes, &self.device.limits()) {
                 return Err(format!("RAW image working buffer: {reason}"));
             }
@@ -232,14 +243,23 @@ impl WgpuBackend {
             has_black_map: u32::from(sensor.black_map_rows * sensor.black_map_columns > 0),
             merge_row: params.green_merge_row,
             merge_column: params.green_merge_column,
-            source_width: if sensor.fuji_width != 0 { sensor.copied_width } else { width },
-            source_height: if sensor.fuji_width != 0 { sensor.copied_height } else { height },
+            source_width: if sensor.fuji_width != 0 {
+                sensor.copied_width
+            } else {
+                width
+            },
+            source_height: if sensor.fuji_width != 0 {
+                sensor.copied_height
+            } else {
+                height
+            },
             channels: sensor.layout.channels(),
             fuji_width: sensor.fuji_width,
             fuji_layout: u32::from(sensor.fuji_layout),
             colors: sensor.colors,
             subtract_black_map: u32::from(sensor.layout.channels() > 1 || sensor.zero_is_bad),
-            mix_green: u32::from(sensor.mix_green && !params.green_merge) | (u32::from(sensor.signed_foveon) << 1),
+            mix_green: u32::from(sensor.mix_green && !params.green_merge)
+                | (u32::from(sensor.signed_foveon) << 1),
         };
         let frame_buf = RawBuffer::upload(
             device,
@@ -258,8 +278,17 @@ impl WgpuBackend {
         );
         let cfa: Vec<u32> = sensor.cfa.iter().map(|&c| u32::from(c)).collect();
         let cfa_buf = RawBuffer::upload(device, "raw_cfa", bytemuck::cast_slice(&cfa), storage);
-        let black_offsets = if sensor.zero_is_bad { [0; 4] } else { sensor.channel_black };
-        let channel_black = RawBuffer::upload(device, "raw_channel_black", bytemuck::cast_slice(&black_offsets), storage);
+        let black_offsets = if sensor.zero_is_bad {
+            [0; 4]
+        } else {
+            sensor.channel_black
+        };
+        let channel_black = RawBuffer::upload(
+            device,
+            "raw_channel_black",
+            bytemuck::cast_slice(&black_offsets),
+            storage,
+        );
         // A storage buffer cannot be bound empty, and the scale stage only
         // reads the map when `has_black_map` is set, so a sensor with no
         // repeating black map gets one never-addressed zero element.
@@ -284,8 +313,13 @@ impl WgpuBackend {
             storage,
         );
         let cbrt_buf = RawBuffer::zeros(device, "raw_cbrt", 65_536 * 4);
-        let cbrt_setup = self.raw_dispatch(CBRT_SHADER,
-            &[&cbrt_buf], &[wgpu::BufferBindingType::Storage { read_only: false }], 65_536, "raw_cbrt");
+        let cbrt_setup = self.raw_dispatch(
+            CBRT_SHADER,
+            &[&cbrt_buf],
+            &[wgpu::BufferBindingType::Storage { read_only: false }],
+            65_536,
+            "raw_cbrt",
+        );
 
         // The working planes: `image` is the reference's `ushort(*)[4]`, so
         // four u32 per site with one spare channel. The AHD candidate buffers
@@ -324,33 +358,127 @@ impl WgpuBackend {
         let zeroes = if sensor.zero_is_bad {
             #[repr(C)]
             #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-            struct ZeroParams { black: [u32; 4], filters: u32, count: u32, pad: [u32; 2] }
-            let uniform = RawBuffer::upload(device, "raw_zeroes_params", bytemuck::bytes_of(&ZeroParams {
-                black: sensor.channel_black, filters: sensor.filters, count: pixel_count, pad: [0; 2],
-            }), wgpu::BufferUsages::UNIFORM);
-            Some(self.raw_dispatch(concat!(include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"), include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_zeroes.wgsl")),
+            struct ZeroParams {
+                black: [u32; 4],
+                filters: u32,
+                count: u32,
+                pad: [u32; 2],
+            }
+            let uniform = RawBuffer::upload(
+                device,
+                "raw_zeroes_params",
+                bytemuck::bytes_of(&ZeroParams {
+                    black: sensor.channel_black,
+                    filters: sensor.filters,
+                    count: pixel_count,
+                    pad: [0; 2],
+                }),
+                wgpu::BufferUsages::UNIFORM,
+            );
+            Some(self.raw_dispatch(
+                concat!(
+                    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
+                    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_zeroes.wgsl")
+                ),
                 &[&frame_buf, &uniform, &image, &max_value, &black_map],
-                &[wgpu::BufferBindingType::Uniform, wgpu::BufferBindingType::Uniform, wgpu::BufferBindingType::Storage { read_only: false }, wgpu::BufferBindingType::Storage { read_only: false }, wgpu::BufferBindingType::Storage { read_only: true }], 1, "raw_zeroes"))
-        } else { None };
+                &[
+                    wgpu::BufferBindingType::Uniform,
+                    wgpu::BufferBindingType::Uniform,
+                    wgpu::BufferBindingType::Storage { read_only: false },
+                    wgpu::BufferBindingType::Storage { read_only: false },
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                ],
+                1,
+                "raw_zeroes",
+            ))
+        } else {
+            None
+        };
 
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-        struct ScaleParams { white: [f32; 4], maximum: u32, fixed_maximum: u32, threshold: f32, pad: u32 }
-        let scale_params = RawBuffer::upload(device, "raw_scale_params", bytemuck::bytes_of(&ScaleParams {
-            white: params.white_balance, maximum: params.maximum,
-            fixed_maximum: u32::from(sensor.fixed_maximum), threshold: params.adjust_maximum_threshold, pad: u32::from(params.auto_white_balance),
-        }), wgpu::BufferUsages::UNIFORM);
+        struct ScaleParams {
+            white: [f32; 4],
+            maximum: u32,
+            fixed_maximum: u32,
+            threshold: f32,
+            pad: u32,
+        }
+        let scale_params = RawBuffer::upload(
+            device,
+            "raw_scale_params",
+            bytemuck::bytes_of(&ScaleParams {
+                white: params.white_balance,
+                maximum: params.maximum,
+                fixed_maximum: u32::from(sensor.fixed_maximum),
+                threshold: params.adjust_maximum_threshold,
+                pad: u32::from(params.auto_white_balance),
+            }),
+            wgpu::BufferUsages::UNIFORM,
+        );
         let scale_buf = RawBuffer::zeros(device, "raw_scale_factors", 16);
         let blocks = width.div_ceil(8) * height.div_ceil(8);
-        let block_sums = RawBuffer::zeros(device, "raw_wb_blocks", if params.auto_white_balance { u64::from(blocks) * 32 } else { 4 });
+        let block_sums = RawBuffer::zeros(
+            device,
+            "raw_wb_blocks",
+            if params.auto_white_balance {
+                u64::from(blocks) * 32
+            } else {
+                4
+            },
+        );
         let auto_wb = if params.auto_white_balance {
-            Some(self.raw_dispatch(concat!(include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"), include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_scale_helpers.wgsl"), include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_auto_wb.wgsl")),
-                &[&frame_buf, &scale_params, &max_value, &image, &cfa_buf, &block_sums],
-                &[wgpu::BufferBindingType::Uniform, wgpu::BufferBindingType::Uniform, wgpu::BufferBindingType::Storage { read_only: true }, wgpu::BufferBindingType::Storage { read_only: true }, wgpu::BufferBindingType::Storage { read_only: true }, wgpu::BufferBindingType::Storage { read_only: false }], blocks, "raw_auto_wb"))
-        } else { None };
-        let scale_setup = self.raw_dispatch(concat!(include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"), include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_scale_helpers.wgsl"), include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_scale_setup.wgsl")),
-            &[&scale_params, &max_value, &scale_buf, &frame_buf, &block_sums],
-            &[wgpu::BufferBindingType::Uniform, wgpu::BufferBindingType::Storage { read_only: true }, wgpu::BufferBindingType::Storage { read_only: false }, wgpu::BufferBindingType::Uniform, wgpu::BufferBindingType::Storage { read_only: true }], 1, "raw_scale_setup");
+            Some(self.raw_dispatch(
+                concat!(
+                    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
+                    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_scale_helpers.wgsl"),
+                    include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_auto_wb.wgsl")
+                ),
+                &[
+                    &frame_buf,
+                    &scale_params,
+                    &max_value,
+                    &image,
+                    &cfa_buf,
+                    &block_sums,
+                ],
+                &[
+                    wgpu::BufferBindingType::Uniform,
+                    wgpu::BufferBindingType::Uniform,
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                    wgpu::BufferBindingType::Storage { read_only: false },
+                ],
+                blocks,
+                "raw_auto_wb",
+            ))
+        } else {
+            None
+        };
+        let scale_setup = self.raw_dispatch(
+            concat!(
+                include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_common.wgsl"),
+                include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_scale_helpers.wgsl"),
+                include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_scale_setup.wgsl")
+            ),
+            &[
+                &scale_params,
+                &max_value,
+                &scale_buf,
+                &frame_buf,
+                &block_sums,
+            ],
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: false },
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: true },
+            ],
+            1,
+            "raw_scale_setup",
+        );
 
         let scale_pass = self.raw_dispatch(
             SCALE_SHADER,
@@ -366,15 +494,50 @@ impl WgpuBackend {
             "raw_scale",
         );
         let (other_demosaic, demosaic_status) = if params.demosaic == RawDemosaic::BayerAhd {
-            (self.prepare_ahd(sensor.colors, &frame, &frame_buf, &image, &cfa_buf, &xyz_buf, &cbrt_buf)?, None)
+            (
+                self.prepare_ahd(
+                    sensor.colors,
+                    &frame,
+                    &frame_buf,
+                    &image,
+                    &cfa_buf,
+                    &xyz_buf,
+                    &cbrt_buf,
+                )?,
+                None,
+            )
         } else {
-            self.raw_demosaic_gpu(params.demosaic, sensor.colors, &frame, &frame_buf, &image, &cfa_buf, &xyz_buf, &cbrt_buf)?
+            self.raw_demosaic_gpu(
+                params.demosaic,
+                sensor.colors,
+                &frame,
+                &frame_buf,
+                &image,
+                &cfa_buf,
+                &xyz_buf,
+                &cbrt_buf,
+            )?
         };
         let mix_green = if sensor.mix_green && !params.green_merge {
-            let uniform = RawBuffer::upload(device, "raw_mix_green_params", bytemuck::bytes_of(&[pixel_count, 0, 0, 0]), wgpu::BufferUsages::UNIFORM);
-            Some(self.raw_dispatch(include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_mix_green.wgsl"), &[&uniform, &image],
-                &[wgpu::BufferBindingType::Uniform, wgpu::BufferBindingType::Storage { read_only: false }], pixel_count, "raw_mix_green"))
-        } else { None };
+            let uniform = RawBuffer::upload(
+                device,
+                "raw_mix_green_params",
+                bytemuck::bytes_of(&[pixel_count, 0, 0, 0]),
+                wgpu::BufferUsages::UNIFORM,
+            );
+            Some(self.raw_dispatch(
+                include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_mix_green.wgsl"),
+                &[&uniform, &image],
+                &[
+                    wgpu::BufferBindingType::Uniform,
+                    wgpu::BufferBindingType::Storage { read_only: false },
+                ],
+                pixel_count,
+                "raw_mix_green",
+            ))
+        } else {
+            None
+        };
         let rotated = self.raw_geometry_pass(sensor, &image, true)?;
         let camera_input = rotated.as_ref().map_or(&image, |(buffer, _)| buffer);
         let (camera_rgb, camera_pass) = self.raw_camera_conversion(sensor, params, camera_input)?;
@@ -419,7 +582,10 @@ impl WgpuBackend {
             out_width * out_height,
             "raw_convert_to_rgb",
         );
-        let lens_output = params.lens.as_ref().map(|_| RawBuffer::zeros(device, "raw_lens_output", output_bytes));
+        let lens_output = params
+            .lens
+            .as_ref()
+            .map(|_| RawBuffer::zeros(device, "raw_lens_output", output_bytes));
         let lens_passes = match (&params.lens, &lens_output) {
             (Some(lens), Some(target)) => self.prepare_lens_passes(lens, &output, target),
             _ => Vec::new(),
@@ -427,18 +593,44 @@ impl WgpuBackend {
         let final_output = lens_output.as_ref().unwrap_or(&output);
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Adaptation { matrix: [[f32; 4]; 3], count: u32, active: u32, tint: f32, pad: u32 }
-        let adaptation_uniform = RawBuffer::upload(device, "raw_adaptation_params", bytemuck::bytes_of(&Adaptation {
-            matrix: pack_rows(&params.adaptation), count: out_width * out_height,
-            active: u32::from(params.adaptation_active), tint: params.tint, pad: 0,
-        }), wgpu::BufferUsages::UNIFORM);
-        let adaptation_pass = self.raw_dispatch(include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_adaptation.wgsl"),
-            &[&adaptation_uniform, final_output], &[wgpu::BufferBindingType::Uniform, wgpu::BufferBindingType::Storage { read_only: false }], out_width * out_height, "raw_adaptation");
+        struct Adaptation {
+            matrix: [[f32; 4]; 3],
+            count: u32,
+            active: u32,
+            tint: f32,
+            pad: u32,
+        }
+        let adaptation_uniform = RawBuffer::upload(
+            device,
+            "raw_adaptation_params",
+            bytemuck::bytes_of(&Adaptation {
+                matrix: pack_rows(&params.adaptation),
+                count: out_width * out_height,
+                active: u32::from(params.adaptation_active),
+                tint: params.tint,
+                pad: 0,
+            }),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        let adaptation_pass = self.raw_dispatch(
+            include_str!("../../../../spektrafilm-shaders/wgsl/raw/raw_adaptation.wgsl"),
+            &[&adaptation_uniform, final_output],
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+            out_width * out_height,
+            "raw_adaptation",
+        );
 
         let mut encoder = self.device.create_command_encoder(&Default::default());
         deblack.encode(&mut encoder, "raw_deblack");
-        if let Some(pass) = &zeroes { pass.encode(&mut encoder, "raw_zeroes"); }
-        if let Some(pass) = &auto_wb { pass.encode(&mut encoder, "raw_auto_wb"); }
+        if let Some(pass) = &zeroes {
+            pass.encode(&mut encoder, "raw_zeroes");
+        }
+        if let Some(pass) = &auto_wb {
+            pass.encode(&mut encoder, "raw_auto_wb");
+        }
         scale_setup.encode(&mut encoder, "raw_scale_setup");
         scale_pass.encode(&mut encoder, "raw_scale");
         cbrt_setup.encode(&mut encoder, "raw_cbrt");
@@ -446,17 +638,27 @@ impl WgpuBackend {
             self.check_cancelled()?;
             dispatch.encode(&mut encoder, "raw_demosaic");
         }
-        if let Some(pass) = &mix_green { pass.encode(&mut encoder, "raw_mix_green"); }
-        if let Some((_, pass)) = &rotated { pass.encode(&mut encoder, "raw_fuji_rotate"); }
+        if let Some(pass) = &mix_green {
+            pass.encode(&mut encoder, "raw_mix_green");
+        }
+        if let Some((_, pass)) = &rotated {
+            pass.encode(&mut encoder, "raw_fuji_rotate");
+        }
         camera_pass.encode(&mut encoder, "raw_camera_rgb");
-        if let Some((_, pass)) = &stretched { pass.encode(&mut encoder, "raw_stretch"); }
+        if let Some((_, pass)) = &stretched {
+            pass.encode(&mut encoder, "raw_stretch");
+        }
         convert.encode(&mut encoder, "raw_convert_to_rgb");
-        for pass in &lens_passes { pass.encode(&mut encoder, "raw_lens"); }
+        for pass in &lens_passes {
+            pass.encode(&mut encoder, "raw_lens");
+        }
         adaptation_pass.encode(&mut encoder, "raw_adaptation");
         self.raw_submit(encoder)?;
 
         if let Some(status) = demosaic_status {
-            let metadata = self.pipe.readback_buffer_cancellable::<i32>(&status.buffer, 147 * 4)?;
+            let metadata = self
+                .pipe
+                .readback_buffer_cancellable::<i32>(&status.buffer, 147 * 4)?;
             if metadata.get(146).copied().unwrap_or(1) != 0 {
                 return Err("LibRaw X-Trans interpolation rejected the CFA pattern".into());
             }
@@ -466,24 +668,46 @@ impl WgpuBackend {
         Ok((output.buffer, out_width, out_height))
     }
 
-    pub(in crate::wgpu_backend) fn raw_process_sensor_gpu(&self, sensor: &RawSensor, params: &RawGpuParams) -> Result<ImageBuf, String> {
+    pub(in crate::wgpu_backend) fn raw_process_sensor_gpu(
+        &self,
+        sensor: &RawSensor,
+        params: &RawGpuParams,
+    ) -> Result<ImageBuf, String> {
         let retained = self.raw_process_sensor_retained_gpu(sensor, params)?;
         self.materialize_buffer(&retained)
     }
 
-    pub(in crate::wgpu_backend) fn raw_process_sensor_retained_gpu(&self, sensor: &RawSensor, params: &RawGpuParams) -> Result<spektrafilm_backend::DeviceImage, String> {
+    pub(in crate::wgpu_backend) fn raw_process_sensor_retained_gpu(
+        &self,
+        sensor: &RawSensor,
+        params: &RawGpuParams,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
         self.check_cancelled()?;
         let limit = super::bounded::storage_binding_limit(self)?;
         let (output_width, output_height) = sensor.output_dimensions()?;
         let large = u64::from(sensor.width) * u64::from(sensor.height) * 16 > limit
             || sensor.samples.len() as u64 * 4 > limit
             || u64::from(output_width) * u64::from(output_height) * 16 > limit
-            || matches!(sensor.layout, spektrafilm_backend::RawSensorLayout::FloatCfa | spektrafilm_backend::RawSensorLayout::Float3 | spektrafilm_backend::RawSensorLayout::Float4);
-        if large { return self.raw_process_paged(sensor, params); }
+            || matches!(
+                sensor.layout,
+                spektrafilm_backend::RawSensorLayout::FloatCfa
+                    | spektrafilm_backend::RawSensorLayout::Float3
+                    | spektrafilm_backend::RawSensorLayout::Float4
+            );
+        if large {
+            return self.raw_process_paged(sensor, params);
+        }
         let (buffer, width, height) = self.raw_process_sensor_buffer(sensor, params)?;
         self.check_cancelled()?;
-        Ok(self.retain_buffer(buffer, width, height, u64::from(width) * u64::from(height) * 12,
-            spektrafilm_backend::SampleDomain::Linear, &spektrafilm_math::colorspace::ACES2065_1, None))
+        Ok(self.retain_buffer(
+            buffer,
+            width,
+            height,
+            u64::from(width) * u64::from(height) * 12,
+            spektrafilm_backend::SampleDomain::Linear,
+            &spektrafilm_math::colorspace::ACES2065_1,
+            None,
+        ))
     }
 
     /// Keep each RAW submission tied to this derived backend's operation token.

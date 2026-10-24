@@ -121,6 +121,13 @@ boundaries such as decoder parity probes. Once a retained GPU route is selected,
 a missing implementation, invalid native CFA, or unrepresentable working set is
 an error, not permission to run host image arithmetic.
 
+RAW device work uses the selected operation's cancellation token at entry,
+before page allocation and numerical submissions, between bounded windows,
+around footprint/status readbacks, and before publishing retained output.
+Cancellation discards the operation's output without changing another
+operation's token or poisoning shared device/readback resources. A submission
+already queued may finish; cancellation does not interrupt a driver wait.
+
 Large RAW planes use bounded four-channel integer pages. Global maximum and
 automatic-WB reductions complete before any scaled demosaic window is committed.
 Bayer windows preserve their full dependency halo and global CFA phase;

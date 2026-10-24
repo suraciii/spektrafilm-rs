@@ -32,17 +32,29 @@ impl WgpuBackend {
         img: &ImageBuf,
         params: &spektrafilm_backend::OpticalDiffusionGpuParams<'_>,
     ) -> Result<ImageBuf, String> {
-        let pages = self.allocate_image_pages(img.width,img.height,"diffusion_input")?;
+        let pages = self.allocate_image_pages(img.width, img.height, "diffusion_input")?;
         for page in &pages {
-            let start = page.first_pixel as usize*3;
-            let end = start+page.n_pixels as usize*3;
+            let start = page.first_pixel as usize * 3;
+            let end = start + page.n_pixels as usize * 3;
             let samples = scalars_to_f32(&img.data[start..end]);
-            self.queue.write_buffer(&page.buffer,0,bytemuck::cast_slice(&samples));
+            self.queue
+                .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&samples));
         }
-        let source = super::film_chain::device_image::BufferPayload::from_pages(self.backend_id(),pages,img.width,img.height);
-        let output = self.diffusion_pages(&source,params,None)?;
-        let result = self.retain_image_pages(output,img.width,img.height,
-            spektrafilm_backend::SampleDomain::Linear,&spektrafilm_math::colorspace::SRGB,None);
+        let source = super::film_chain::device_image::BufferPayload::from_pages(
+            self.backend_id(),
+            pages,
+            img.width,
+            img.height,
+        );
+        let output = self.diffusion_pages(&source, params, None)?;
+        let result = self.retain_image_pages(
+            output,
+            img.width,
+            img.height,
+            spektrafilm_backend::SampleDomain::Linear,
+            &spektrafilm_math::colorspace::SRGB,
+            None,
+        );
         self.materialize_buffer(&result)
     }
 

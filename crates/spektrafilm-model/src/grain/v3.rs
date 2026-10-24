@@ -206,14 +206,18 @@ fn apply_impl(
     }
     let halo_extent = (2 * dr + 1) as u64;
     if halo_extent.saturating_mul(halo_extent) > max_band_cells {
-        return Err(format!("film grain Dye: one formed cell and its formation halo exceed the {max_band_cells} cell/source-pixel budget"));
+        return Err(format!(
+            "film grain Dye: one formed cell and its formation halo exceed the {max_band_cells} cell/source-pixel budget"
+        ));
     }
     // Axis stencils precede field partitioning. Bound their total entries,
     // not the size of an individual output footprint or output row.
-    let stencil_entries = [(out_width, col_w), (out_height, row_w)]
-        .into_iter().fold(0_u64, |sum, (extent, pitch)| {
+    let stencil_entries = [(out_width, col_w), (out_height, row_w)].into_iter().fold(
+        0_u64,
+        |sum, (extent, pitch)| {
             sum.saturating_add(u64::from(extent).saturating_mul((pitch / h).ceil() as u64 + 1))
-        });
+        },
+    );
     if stencil_entries > MAX_BAND_CELLS {
         return Err("film grain Dye: output-axis stencil entries exceed the allocation budget; reduce the requested film region or increase the field pitch".into());
     }
@@ -244,18 +248,32 @@ fn apply_impl(
     // Each tuple keeps output bounds, formed-cell bounds, and first/final
     // flags. Cell pieces of one footprint remain consecutive in this stack.
     let tile = |px0: usize, px1: usize, py0: usize, py1: usize| {
-        (px0, px1, py0, py1,
+        (
+            px0,
+            px1,
+            py0,
+            py1,
             x_read[px0].first().expect("non-empty stencil").0,
             x_read[px1 - 1].last().expect("non-empty stencil").0,
             y_read[py0].first().expect("non-empty stencil").0,
-            y_read[py1 - 1].last().expect("non-empty stencil").0, true, true)
+            y_read[py1 - 1].last().expect("non-empty stencil").0,
+            true,
+            true,
+        )
     };
     let mut pending = Vec::new();
     for py in (0..out_height as usize).step_by(BAND_OUTPUT_ROWS).rev() {
-        pending.push(tile(0, out_w, py, (py + BAND_OUTPUT_ROWS).min(out_height as usize)));
+        pending.push(tile(
+            0,
+            out_w,
+            py,
+            (py + BAND_OUTPUT_ROWS).min(out_height as usize),
+        ));
     }
     let mut partial_sum = [0.0_f64; 3];
-    while let Some((px0, px1, py, band_end, inner_i0, inner_i1, j_lo, j_hi, first, last)) = pending.pop() {
+    while let Some((px0, px1, py, band_end, inner_i0, inner_i1, j_lo, j_hi, first, last)) =
+        pending.pop()
+    {
         let ext_i0 = inner_i0 - d;
         let ext_j0 = j_lo - d;
         let ext_j1 = j_hi + d;
@@ -264,9 +282,15 @@ fn apply_impl(
         let ext_cols = cols + 2 * dr;
         let ext_rows = rows + 2 * dr;
         let sx_lo = edge((ext_i0 as f64 * h / pitch_um).floor() as i64, src_w);
-        let sx_hi = edge(((((inner_i1 + d + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1), src_w);
+        let sx_hi = edge(
+            ((((inner_i1 + d + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1),
+            src_w,
+        );
         let sy_lo = edge((ext_j0 as f64 * h / pitch_um).floor() as i64, src_h);
-        let sy_hi = edge(((((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1), src_h);
+        let sy_hi = edge(
+            ((((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1),
+            src_h,
+        );
         let px_rows = sy_hi - sy_lo + 1;
         let px_cols = sx_hi - sx_lo + 1;
         if (ext_cols as u64).saturating_mul(ext_rows as u64) > max_band_cells
@@ -282,18 +306,48 @@ fn apply_impl(
                 pending.push(tile(px0, mid, py, band_end));
             } else if cols >= rows && cols > 1 {
                 let mid = inner_i0 + (cols / 2) as i64;
-                pending.push((px0, px1, py, band_end, mid, inner_i1, j_lo, j_hi, false, last));
-                pending.push((px0, px1, py, band_end, inner_i0, mid - 1, j_lo, j_hi, first, false));
+                pending.push((
+                    px0, px1, py, band_end, mid, inner_i1, j_lo, j_hi, false, last,
+                ));
+                pending.push((
+                    px0,
+                    px1,
+                    py,
+                    band_end,
+                    inner_i0,
+                    mid - 1,
+                    j_lo,
+                    j_hi,
+                    first,
+                    false,
+                ));
             } else if rows > 1 {
                 let mid = j_lo + (rows / 2) as i64;
-                pending.push((px0, px1, py, band_end, inner_i0, inner_i1, mid, j_hi, false, last));
-                pending.push((px0, px1, py, band_end, inner_i0, inner_i1, j_lo, mid - 1, first, false));
+                pending.push((
+                    px0, px1, py, band_end, inner_i0, inner_i1, mid, j_hi, false, last,
+                ));
+                pending.push((
+                    px0,
+                    px1,
+                    py,
+                    band_end,
+                    inner_i0,
+                    inner_i1,
+                    j_lo,
+                    mid - 1,
+                    first,
+                    false,
+                ));
             } else {
-                return Err(format!("film grain Dye: one formed cell and its formation halo exceed the {max_band_cells} cell/source-pixel budget"));
+                return Err(format!(
+                    "film grain Dye: one formed cell and its formation halo exceed the {max_band_cells} cell/source-pixel budget"
+                ));
             }
             continue;
         }
-        if first { partial_sum = [0.0; 3]; }
+        if first {
+            partial_sum = [0.0; 3];
+        }
         let x_stencils: Vec<Vec<(usize, f64)>> = (ext_i0..=inner_i1 + d)
             .map(|i| axis_stencil(i as f64 * h, (i + 1) as f64 * h, pitch_um, src_w))
             .collect();
@@ -375,10 +429,14 @@ fn apply_impl(
                 for (px, xst) in x_read.iter().enumerate().take(px1).skip(px0) {
                     let mut acc = if first { 0.0 } else { partial_sum[c] };
                     for &(cj, wy) in yst {
-                        if cj < j_lo || cj > j_hi { continue; }
+                        if cj < j_lo || cj > j_hi {
+                            continue;
+                        }
                         let fr = (cj - j_lo) as usize * cols;
                         for &(ci, wx) in xst {
-                            if ci < inner_i0 || ci > inner_i1 { continue; }
+                            if ci < inner_i0 || ci > inner_i1 {
+                                continue;
+                            }
                             acc += wy * wx * fbuf[fr + (ci - inner_i0) as usize];
                         }
                     }
@@ -403,10 +461,15 @@ fn apply_impl(
                 for (px, xst) in x_read.iter().enumerate().take(px1).skip(px0) {
                     let mut sum = if first { [0.0; 3] } else { partial_sum };
                     for &(cj, wy) in yst {
-                        if cj < j_lo || cj > j_hi { continue; }
+                        if cj < j_lo || cj > j_hi {
+                            continue;
+                        }
                         for &(ci, wx) in xst {
-                            if ci < inner_i0 || ci > inner_i1 { continue; }
-                            let index = ((cj - j_lo) as usize * cols + (ci - inner_i0) as usize) * 3;
+                            if ci < inner_i0 || ci > inner_i1 {
+                                continue;
+                            }
+                            let index =
+                                ((cj - j_lo) as usize * cols + (ci - inner_i0) as usize) * 3;
                             for (c, value) in sum.iter_mut().enumerate() {
                                 *value += wy * wx * to_f64(linear.data[index + c]);
                             }

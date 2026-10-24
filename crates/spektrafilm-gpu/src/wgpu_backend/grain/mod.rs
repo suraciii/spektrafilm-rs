@@ -6,8 +6,8 @@ pub mod dye_layers;
 mod dye_spatial;
 pub(in crate::wgpu_backend) mod fotufilm;
 pub(in crate::wgpu_backend) mod mt19937;
-pub mod v1;
 pub(in crate::wgpu_backend) mod raster;
+pub mod v1;
 pub(in crate::wgpu_backend) use raster::RasterStorage;
 pub(in crate::wgpu_backend) use v1::{
     GRAIN_V1_STAGE_NAME, SpektraGrainV1State, build_spektra_grain_state,
@@ -81,7 +81,8 @@ impl WgpuBackend {
         for page in &original {
             let first = page.first_pixel as usize * 3;
             let end = first + page.n_pixels as usize * 3;
-            self.queue.write_buffer(&page.buffer, 0, bytemuck::cast_slice(&input[first..end]));
+            self.queue
+                .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&input[first..end]));
         }
         let state = build_grain_v2_state(
             &self.device,
@@ -96,9 +97,16 @@ impl WgpuBackend {
         state.submit(self, &output_pages)?;
         let mut output = Vec::with_capacity(input.len());
         for page in &output_pages {
-            output.extend(self.pipe.readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12));
+            output.extend(
+                self.pipe
+                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+            );
         }
-        Ok(ImageBuf::from_data(img.width, img.height, f32_to_scalars(output)))
+        Ok(ImageBuf::from_data(
+            img.width,
+            img.height,
+            f32_to_scalars(output),
+        ))
     }
 
     /// Run only the destination transfer encode pass over `image`.

@@ -44,7 +44,6 @@ pub(super) struct RenderJob {
     pub(super) request_id: u64,
     pub(super) kind: RenderKind,
     pub(super) animate: bool,
-    pub(super) backend_name: String,
     /// Counter-clockwise presentation orientation; the source stays immutable.
     pub(super) rotation_quarter_turns: u32,
     pub(super) collection_mode: CollectionMode,
@@ -180,6 +179,10 @@ impl RenderWorker {
                         );
                         // GPU geometry stays on device; the CPU full-frame scanner
                         // receives the oriented source before any preview resize.
+                        let image = request.image.interpreted(
+                            &runtime_params.io.input_color_space,
+                            runtime_params.io.input_cctf_decoding,
+                        ).map_err(|error| crate::app::Message::new("operations.simulation_error").arg("detail", error))?;
                         let host_input = (|| -> Result<Option<Arc<ImageBuf>>, String> {
                             if request.backend.is_gpu() {
                                 return Ok(None);
@@ -191,15 +194,15 @@ impl RenderWorker {
                             let backend = bound.as_deref().unwrap_or(request.backend.as_ref());
                             let _span = input_prepare.context().span().map(|span| span.enter());
                             let source = if rotation == 0 {
-                                match &request.image {
+                                match &image {
                                     super::render::InputImage::Host(image) => image.clone(),
-                                    super::render::InputImage::Device(_) => Arc::new(request.image.to_host(backend)?),
+                                    super::render::InputImage::Device(_) => Arc::new(image.to_host(backend)?),
                                 }
                             } else if let Some((epoch, turns, image)) = oriented_host.as_ref()
                                 && *epoch == job.input_epoch && *turns == rotation {
                                 image.clone()
                             } else {
-                                let image = Arc::new(request.image.to_host(backend)?.rotated_quarter_turns(rotation as i32));
+                                let image = Arc::new(image.to_host(backend)?.rotated_quarter_turns(rotation as i32));
                                 oriented_host = Some((job.input_epoch, rotation, image.clone()));
                                 image
                             };
@@ -232,7 +235,18 @@ impl RenderWorker {
                                     preview_max_size: runtime_params.settings.preview_mode
                                         .then_some(runtime_params.settings.preview_max_size),
                                 };
-                                match &request.image {
+                                if runtime_params.scanner.requires_full_frame() {
+                                    match &image {
+                                        super::render::InputImage::Device(image) => pipeline_template
+                                            .process_device_scan_cached_retained_observed(
+                                                image, &mut scan_cache, geometry, &request.backend, simulation.context(),
+                                            ).map(Some),
+                                        super::render::InputImage::Host(image) => pipeline_template
+                                            .process_host_scan_cached_retained_observed(
+                                                image, &mut scan_cache, geometry, &request.backend, simulation.context(),
+                                            ).map(Some),
+                                    }
+                                } else { match &image {
                                     super::render::InputImage::Device(image) => pipeline_template
                                         .process_device_retained(image, geometry, backend)
                                         .map(Some),
@@ -250,6 +264,7 @@ impl RenderWorker {
                                         rendered.and_then(|image| image.map(Some).ok_or_else(||
                                             "selected GPU cannot render this input on the retained route".to_owned()))
                                     }
+                                }
                                 }
                             } else {
                                 Ok(None)

@@ -210,7 +210,10 @@ fn fuji_source_rectangle_is_placed_on_native_diamond_coordinates() {
         let mut params = synthetic_params(&sensor);
         params.demosaic = RawDemosaic::FujiPpg;
         let output = gpu.raw_process_sensor_gpu(&sensor, &params).unwrap();
-        assert_eq!((output.width, output.height), sensor.output_dimensions().unwrap());
+        assert_eq!(
+            (output.width, output.height),
+            sensor.output_dimensions().unwrap()
+        );
         assert!(output.data.iter().any(|&v| to_f64(v) > 0.0));
         assert!(output.data.iter().all(|&v| to_f64(v).is_finite()));
     }
@@ -222,7 +225,9 @@ fn pixel_aspect_stretch_precedes_orientation() {
     let mut sensor = synthetic_sensor(16);
     sensor.pixel_aspect = 0.5;
     sensor.flip = 4;
-    let output = gpu.raw_process_sensor_gpu(&sensor, &synthetic_params(&sensor)).unwrap();
+    let output = gpu
+        .raw_process_sensor_gpu(&sensor, &synthetic_params(&sensor))
+        .unwrap();
     assert_eq!((output.width, output.height), (32, 16));
 }
 
@@ -236,10 +241,16 @@ fn bounded_raw_pipeline_preserves_full_source_scale_and_cfa_coordinates() {
     sensor.black_map = vec![0, 2, 3, 7, 11, 13];
     let mut params = synthetic_params(&sensor);
     params.auto_white_balance = true;
-    for mode in [RawDemosaic::BayerAhd, RawDemosaic::Vng, RawDemosaic::FujiPpg] {
+    for mode in [
+        RawDemosaic::BayerAhd,
+        RawDemosaic::Vng,
+        RawDemosaic::FujiPpg,
+    ] {
         params.demosaic = mode;
         let (full, width, height) = gpu.raw_process_sensor_buffer(&sensor, &params).unwrap();
-        let expected = gpu.pipe.readback_buffer_as::<f32>(&full, u64::from(width) * u64::from(height) * 12);
+        let expected = gpu
+            .pipe
+            .readback_buffer_as::<f32>(&full, u64::from(width) * u64::from(height) * 12);
         let actual = gpu.raw_process_paged(&sensor, &params).unwrap();
         let actual = gpu.materialize_buffer(&actual).unwrap();
         assert_eq!((actual.width, actual.height), (width, height));
@@ -250,13 +261,54 @@ fn bounded_raw_pipeline_preserves_full_source_scale_and_cfa_coordinates() {
 }
 
 #[test]
+fn raw_cancelled_before_start_rejects_contiguous_and_paged_without_poisoning_reuse() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let gpu = crate::test_support::adapter();
+    let sensor = synthetic_sensor(16);
+    let params = synthetic_params(&sensor);
+    let cancellation = Arc::new(AtomicBool::new(true));
+    let mut operation = gpu.derived_explicit();
+    operation.pipe = operation.pipe.with_cancellation(Some(cancellation.clone()));
+    operation.cancellation = Some(cancellation.clone());
+    assert_eq!(
+        operation
+            .raw_process_sensor_retained_gpu(&sensor, &params)
+            .err()
+            .unwrap(),
+        "operation cancelled"
+    );
+    assert_eq!(
+        operation.raw_process_paged(&sensor, &params).err().unwrap(),
+        "operation cancelled"
+    );
+    cancellation.store(false, Ordering::Relaxed);
+    let actual = operation.raw_process_sensor_gpu(&sensor, &params).unwrap();
+    let expected = gpu.raw_process_sensor_gpu(&sensor, &params).unwrap();
+    assert_eq!(actual.data, expected.data);
+}
+
+#[test]
 fn lab_table_preserves_native_float_rounding_at_ahd_threshold() {
-    let gpu=crate::test_support::adapter();
-    let table=RawBuffer::zeros(&gpu.device,"raw_native_lab_table",65536*4);
-    let pass=gpu.raw_dispatch(CBRT_SHADER,&[&table],&[wgpu::BufferBindingType::Storage{read_only:false}],65536,"raw_native_lab_table");
-    let mut encoder=gpu.device.create_command_encoder(&Default::default());pass.encode(&mut encoder,"raw_native_lab_table");gpu.queue.submit(Some(encoder.finish()));
-    let values=gpu.pipe.readback_buffer_as::<u32>(&table.buffer,65536*4);
+    let gpu = crate::test_support::adapter();
+    let table = RawBuffer::zeros(&gpu.device, "raw_native_lab_table", 65536 * 4);
+    let pass = gpu.raw_dispatch(
+        CBRT_SHADER,
+        &[&table],
+        &[wgpu::BufferBindingType::Storage { read_only: false }],
+        65536,
+        "raw_native_lab_table",
+    );
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    pass.encode(&mut encoder, "raw_native_lab_table");
+    gpu.queue.submit(Some(encoder.finish()));
+    let values = gpu.pipe.readback_buffer_as::<u32>(&table.buffer, 65536 * 4);
     // Measured linked LibRaw0.22.2 pow(float,float), at the five-pixel AHD
     // homogeneity population from natural.KDC. One ULP flips the selected RGB.
-    assert_eq!([values[19944],values[20008],values[19828]],[1059860948,1059873006,1059839026]);
+    assert_eq!(
+        [values[19944], values[20008], values[19828]],
+        [1059860948, 1059873006, 1059839026]
+    );
 }

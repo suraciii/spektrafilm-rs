@@ -1043,19 +1043,27 @@ fn cmd_process(
         IssueBoundary::InputLoad,
         &context,
         |load_context| {
-            let load_backend = spektrafilm_backend::bind_backend(
-                backend.as_ref(), load_context.clone(),
-            );
+            let load_backend =
+                spektrafilm_backend::bind_backend(backend.as_ref(), load_context.clone());
             let (image, metadata) = if input_is_raw {
                 if backend.is_gpu() {
                     let result = spektrafilm_raw::load_retained_with_backend(
-                        input, &raw_options, load_backend.as_ref(),
-                    ).map_err(anyhow::Error::msg)?;
-                    (InputSamples::Device(result.image), image_io::read_metadata(input))
+                        input,
+                        &raw_options,
+                        load_backend.as_ref(),
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                    (
+                        InputSamples::Device(result.image),
+                        image_io::read_metadata(input),
+                    )
                 } else {
-                    let result = spektrafilm_raw::load(input, &raw_options)
-                        .map_err(anyhow::Error::msg)?;
-                    (InputSamples::Host(result.image), image_io::read_metadata(input))
+                    let result =
+                        spektrafilm_raw::load(input, &raw_options).map_err(anyhow::Error::msg)?;
+                    (
+                        InputSamples::Host(result.image),
+                        image_io::read_metadata(input),
+                    )
                 }
             } else {
                 let loaded = image_io::load(input)
@@ -1066,7 +1074,9 @@ fn cmd_process(
         },
     )?;
     let (input_width, input_height) = image.dimensions();
-    invocation.operation.set_input_dimensions(input_width, input_height);
+    invocation
+        .operation
+        .set_input_dimensions(input_width, input_height);
     // Retained rendering owns preview geometry. Standard scanner setup keeps
     // the full working frame through the nonlinear scan and output tail.
     let (preview_max_size, image) = invocation.phase(
@@ -1112,7 +1122,15 @@ fn cmd_process(
         IssueBoundary::RuntimePrepare,
         &context,
         |prepare_context| {
-            Runtime::new_observed_with_backend(film, print, params, data_dir, backend.as_ref(), prepare_context).map_err(|e| {
+            Runtime::new_observed_with_backend(
+                film,
+                print,
+                params,
+                data_dir,
+                backend.as_ref(),
+                prepare_context,
+            )
+            .map_err(|e| {
                 anyhow::anyhow!(
                     "spectral pipeline construction failed: {e} — the simplified no-LUT fallback \
                      was removed; check that the profiles/data directory contains the spectral \
@@ -1134,27 +1152,38 @@ fn cmd_process(
     // per-iteration host resize that the reference measured once.
     let mut host_preview: Option<ImageBuf> = None;
     let mut run_once = |image: &InputSamples, index: u64| -> Result<PublishedOutput> {
-        let (attempt_id, result) =
-            telemetry::simulation_attempt(invocation, index, |simulation_context| {
-                let simulation_backend = spektrafilm_backend::bind_backend(
-                    backend.as_ref(), simulation_context.clone(),
-                );
+        let (attempt_id, result) = telemetry::simulation_attempt(
+            invocation,
+            index,
+            |simulation_context| {
+                let simulation_backend =
+                    spektrafilm_backend::bind_backend(backend.as_ref(), simulation_context.clone());
                 if let InputSamples::Device(source) = image {
                     if stage_capture.is_some() {
                         bail!("stage evidence requires the CPU reference backend");
                     }
                     let request = match preview_max_size {
-                        Some(max_size) => spektrafilm_core::pipeline::RetainedRender::preview(max_size),
+                        Some(max_size) => {
+                            spektrafilm_core::pipeline::RetainedRender::preview(max_size)
+                        }
                         None => spektrafilm_core::pipeline::RetainedRender::FULL,
                     };
-                    let result = runtime.process_device_retained_with_taps(
-                        source, request, simulation_backend.as_ref(), inject, collect,
-                    ).map_err(|error| anyhow::anyhow!("pipeline retained RAW: {error}"))?;
+                    let result = runtime
+                        .process_device_retained_with_taps(
+                            source,
+                            request,
+                            simulation_backend.as_ref(),
+                            inject,
+                            collect,
+                        )
+                        .map_err(|error| anyhow::anyhow!("pipeline retained RAW: {error}"))?;
                     return if collect.is_some_and(|tap| tap != Tap::RgbOut) {
                         // This is the explicitly requested diagnostic boundary,
                         // never an intermediate host stage or a RAW reupload.
-                        result.to_host(simulation_backend.as_ref())
-                            .map(PublishedOutput::Host).map_err(anyhow::Error::msg)
+                        result
+                            .to_host(simulation_backend.as_ref())
+                            .map(PublishedOutput::Host)
+                            .map_err(anyhow::Error::msg)
                     } else {
                         Ok(PublishedOutput::Retained(result))
                     };
@@ -1172,7 +1201,11 @@ fn cmd_process(
                         spektrafilm_core::pipeline::RetainedRender::preview,
                     );
                     let retained = runtime.process_retained_with_taps(
-                        image, request, simulation_backend.as_ref(), inject, collect,
+                        image,
+                        request,
+                        simulation_backend.as_ref(),
+                        inject,
+                        collect,
                     );
                     retained.map_err(|e| anyhow::anyhow!("pipeline retained: {e}"))?
                 } else {
@@ -1180,13 +1213,18 @@ fn cmd_process(
                 };
                 let out = match retained {
                     Some(retained) if collect.is_some_and(|tap| tap != Tap::RgbOut) => {
-                        PublishedOutput::Host(retained.to_host(simulation_backend.as_ref())
-                            .map_err(anyhow::Error::msg)?)
+                        PublishedOutput::Host(
+                            retained
+                                .to_host(simulation_backend.as_ref())
+                                .map_err(anyhow::Error::msg)?,
+                        )
                     }
                     Some(retained) => PublishedOutput::Retained(retained),
                     None => {
                         if backend.is_gpu() {
-                            bail!("selected GPU cannot execute the complete retained route; use --backend cpu");
+                            bail!(
+                                "selected GPU cannot execute the complete retained route; use --backend cpu"
+                            );
                         }
                         let image = match preview_max_size {
                             Some(max_size) if !runtime.params().scanner.requires_full_frame() => {
@@ -1239,7 +1277,8 @@ fn cmd_process(
                     }
                 };
                 Ok(out)
-            });
+            },
+        );
         if result.is_ok() {
             output_attempt.set(attempt_id);
         }
@@ -1297,9 +1336,8 @@ fn cmd_process(
         IssueBoundary::SavingConvert,
         &context,
         |saving_context| {
-            let saving_backend = spektrafilm_backend::bind_backend(
-                backend.as_ref(), saving_context.clone(),
-            );
+            let saving_backend =
+                spektrafilm_backend::bind_backend(backend.as_ref(), saving_context.clone());
             let kind = image_io::output_sample_kind(plan.format.image_format(), plan.depth)?;
             match (&retained, &result) {
                 (Some(image), _) => image_io::convert_retained_samples_with_backend(
@@ -1330,13 +1368,7 @@ fn cmd_process(
         &context,
         |write_context| {
             saving_image
-                .prepare_observed(
-                    output,
-                    options,
-                    metadata.as_ref(),
-                    false,
-                    write_context,
-                )
+                .prepare_observed(output, options, metadata.as_ref(), false, write_context)
                 .with_context(|| format!("saving image: {}", output.display()))
         },
     )?;

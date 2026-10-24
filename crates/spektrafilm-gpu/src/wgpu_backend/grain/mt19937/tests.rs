@@ -15,7 +15,11 @@ use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_math::precision::{from_f64, to_f64};
 
 /// Read a buffer back as f32 values.
-fn readback(gpu: &crate::test_support::DeviceBackend, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
+fn readback(
+    gpu: &crate::test_support::DeviceBackend,
+    buffer: &wgpu::Buffer,
+    bytes: u64,
+) -> Vec<f32> {
     let target = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("mt19937_readback"),
         size: bytes,
@@ -55,13 +59,14 @@ fn upload_density(
     image: &spektrafilm_math::image::ImageBuf,
 ) -> wgpu::Buffer {
     let input: Vec<f32> = image.data.iter().map(|&v| to_f64(v) as f32).collect();
-    gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mt19937_density"),
-        contents: bytemuck::cast_slice(&input),
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST,
-    })
+    gpu.device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mt19937_density"),
+            contents: bytemuck::cast_slice(&input),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        })
 }
 
 /// Run the sampler's whole two-phase walk and read the layer fields.
@@ -108,7 +113,11 @@ fn composed(
 }
 
 /// The composite-path control set used by the device cases.
-fn composite_params(base_seed: u64, monochrome: bool, n_sub_layers: u32) -> spektrafilm_backend::GrainV1GpuParams {
+fn composite_params(
+    base_seed: u64,
+    monochrome: bool,
+    n_sub_layers: u32,
+) -> spektrafilm_backend::GrainV1GpuParams {
     // A simple monotone composite curve with three knots per channel, and
     // layer curves that split it. The layered tables are still required by
     // the sampler's uniform layout even though the composite path does not
@@ -154,7 +163,11 @@ fn composite_params(base_seed: u64, monochrome: bool, n_sub_layers: u32) -> spek
         density_max_composite: [2.2; 3],
         n_particles_composite: std::array::from_fn(|_| {
             let count = pixel_area / (0.2 * 1.0);
-            if n_sub_layers > 1 { count / f64::from(n_sub_layers) } else { count }
+            if n_sub_layers > 1 {
+                count / f64::from(n_sub_layers)
+            } else {
+                count
+            }
         }),
     }
 }
@@ -352,7 +365,10 @@ fn composite_seed_changes_the_realization() {
     };
     let a = run(0);
     let b = run(1);
-    assert_ne!(a, b, "a different seed must produce a different realization");
+    assert_ne!(
+        a, b,
+        "a different seed must produce a different realization"
+    );
     let again = run(0);
     assert_eq!(a, again, "the same seed must repeat exactly");
 }
@@ -372,7 +388,8 @@ fn composite_layer_count_changes_the_realization() {
     let density = upload_density(&gpu, &image);
     let run = |n_sub_layers| {
         let params = composite_params(7, false, n_sub_layers);
-        let (layer_fields, layer_bytes) = layer_fields_buffer(&gpu, width, height, n_sub_layers * 3);
+        let (layer_fields, layer_bytes) =
+            layer_fields_buffer(&gpu, width, height, n_sub_layers * 3);
         let state = build_spektra_mt19937_state(
             &gpu.device,
             width,
@@ -394,7 +411,10 @@ fn composite_layer_count_changes_the_realization() {
     };
     let one = run(1);
     let three = run(3);
-    assert_ne!(one, three, "a different composite layer count must change the field");
+    assert_ne!(
+        one, three,
+        "a different composite layer count must change the field"
+    );
 }
 
 #[test]
@@ -561,15 +581,27 @@ fn segmented_dispatch_preserves_the_realization() {
     .expect("native f64 MT19937 sampling");
     let single = run_sampler(&gpu, &state, &layer_fields, layer_bytes);
 
-    let state = build_spektra_mt19937_state(&gpu.device, width, height, &density, &layer_fields, &params, &gpu)
-        .expect("fresh native f64 MT19937 sampling");
+    let state = build_spektra_mt19937_state(
+        &gpu.device,
+        width,
+        height,
+        &density,
+        &layer_fields,
+        &params,
+        &gpu,
+    )
+    .expect("fresh native f64 MT19937 sampling");
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    for step in &state.steps { step.encode(&mut encoder); }
+    for step in &state.steps {
+        step.encode(&mut encoder);
+    }
     gpu.queue.submit(Some(encoder.finish()));
     let split = readback(&gpu, &layer_fields, layer_bytes);
-    assert_eq!(single, split, "a submission boundary must not change the realization");
+    assert_eq!(
+        single, split,
+        "a submission boundary must not change the realization"
+    );
 }
-
 
 #[test]
 fn builder_rejects_without_native_f64() {
@@ -589,10 +621,10 @@ fn builder_rejects_without_native_f64() {
         mapped_at_creation: false,
     });
     let (layer_fields, _) = layer_fields_buffer(&gpu, 1, 1, 9);
-    let error = build_spektra_mt19937_state(
-        &gpu.device, 1, 1, &density, &layer_fields, &params, &gpu,
-    )
-    .err().expect("a device without native f64 must decline");
+    let error =
+        build_spektra_mt19937_state(&gpu.device, 1, 1, &density, &layer_fields, &params, &gpu)
+            .err()
+            .expect("a device without native f64 must decline");
     assert!(
         error.contains("native f64"),
         "the decline must name the limitation, got: {error}"
@@ -611,10 +643,10 @@ fn builder_rejects_inconsistent_curve_tables() {
         mapped_at_creation: false,
     });
     let (layer_fields, _) = layer_fields_buffer(&gpu, 1, 1, 9);
-    let error = build_spektra_mt19937_state(
-        &gpu.device, 1, 1, &density, &layer_fields, &params, &gpu,
-    )
-    .err().expect("a mismatched layer table must be rejected");
+    let error =
+        build_spektra_mt19937_state(&gpu.device, 1, 1, &density, &layer_fields, &params, &gpu)
+            .err()
+            .expect("a mismatched layer table must be rejected");
     assert!(error.contains("curve tables"), "got: {error}");
 }
 
@@ -630,10 +662,10 @@ fn builder_rejects_nonpositive_composite_density_maximum() {
         mapped_at_creation: false,
     });
     let (layer_fields, _) = layer_fields_buffer(&gpu, 1, 1, 9);
-    let error = build_spektra_mt19937_state(
-        &gpu.device, 1, 1, &density, &layer_fields, &params, &gpu,
-    )
-    .err().expect("a zero composite density maximum must be rejected");
+    let error =
+        build_spektra_mt19937_state(&gpu.device, 1, 1, &density, &layer_fields, &params, &gpu)
+            .err()
+            .expect("a zero composite density maximum must be rejected");
     assert!(error.contains("density maximum"), "got: {error}");
 }
 
@@ -648,10 +680,10 @@ fn builder_rejects_zero_pixel_count() {
         mapped_at_creation: false,
     });
     let (layer_fields, _) = layer_fields_buffer(&gpu, 1, 1, 9);
-    let error = build_spektra_mt19937_state(
-        &gpu.device, 0, 0, &density, &layer_fields, &params, &gpu,
-    )
-    .err().expect("an empty image must be rejected");
+    let error =
+        build_spektra_mt19937_state(&gpu.device, 0, 0, &density, &layer_fields, &params, &gpu)
+            .err()
+            .expect("an empty image must be rejected");
     assert!(error.contains("nonzero"), "got: {error}");
 }
 
@@ -659,18 +691,58 @@ fn builder_rejects_zero_pixel_count() {
 fn storage_windows_preserve_complete_poisson_phase_and_mt_carry() {
     let gpu = device();
     let (width, height) = (257, 3);
-    let image = spektrafilm_math::image::ImageBuf::from_data(width, height, (0..width * height).flat_map(|i| [0.1, 0.4, 0.8].map(|v| from_f64(v + f64::from(i % 17) * 0.025))).collect());
+    let image = spektrafilm_math::image::ImageBuf::from_data(
+        width,
+        height,
+        (0..width * height)
+            .flat_map(|i| [0.1, 0.4, 0.8].map(|v| from_f64(v + f64::from(i % 17) * 0.025)))
+            .collect(),
+    );
     let density = upload_density(&gpu, &image);
     for params in [composite_params(19, false, 4), layered_params(0, true)] {
-        let layers = if params.sublayers_active { 3 } else { params.n_sub_layers };
+        let layers = if params.sublayers_active {
+            3
+        } else {
+            params.n_sub_layers
+        };
         let (whole, bytes) = layer_fields_buffer(&gpu, width, height, layers);
-        let bounded: Vec<_> = (0..width * height * layers).step_by(37).map(|first| {
-            let count = 37.min(width * height * layers - first);
-            super::super::super::paged::ImagePage { first_pixel: first, n_pixels: count,
-                buffer: gpu.device.create_buffer(&wgpu::BufferDescriptor { label: Some("mt_physical_seam"), size: u64::from(count) * 12, usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }) }
-        }).collect();
-        let normal = build_spektra_mt19937_state(&gpu.device, width, height, &density, &whole, &params, &gpu).unwrap();
-        let split = build_spektra_mt19937_state_with_limit(&gpu.device, width, height, &density, &bounded, &params, &gpu, 4096).unwrap();
+        let bounded: Vec<_> = (0..width * height * layers)
+            .step_by(37)
+            .map(|first| {
+                let count = 37.min(width * height * layers - first);
+                super::super::super::paged::ImagePage {
+                    first_pixel: first,
+                    n_pixels: count,
+                    buffer: gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("mt_physical_seam"),
+                        size: u64::from(count) * 12,
+                        usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    }),
+                }
+            })
+            .collect();
+        let normal = build_spektra_mt19937_state(
+            &gpu.device,
+            width,
+            height,
+            &density,
+            &whole,
+            &params,
+            &gpu,
+        )
+        .unwrap();
+        let split = build_spektra_mt19937_state_with_limit(
+            &gpu.device,
+            width,
+            height,
+            &density,
+            &bounded,
+            &params,
+            &gpu,
+            4096,
+        )
+        .unwrap();
         assert!(split.steps.len() > normal.steps.len());
         let expected = run_sampler(&gpu, &normal, &whole, bytes);
         split.submit(&gpu).unwrap();

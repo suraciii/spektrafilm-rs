@@ -15,8 +15,8 @@
 
 use spektrafilm_backend::telemetry::CollectionMode;
 use spektrafilm_backend::{
-    ComputeBackend, DeviceImage, OutputSampleData, OutputSampleKind, OutputSampleValues,
-    Precision, RetainedImageMeta, SampleDomain, telemetry::ObservationContext,
+    ComputeBackend, DeviceImage, OutputSampleData, OutputSampleKind, OutputSampleValues, Precision,
+    RetainedImageMeta, SampleDomain, telemetry::ObservationContext,
 };
 use spektrafilm_core::image_io::{self, BitDepth, ImageFormat, SaveOptions};
 use spektrafilm_math::colorspace;
@@ -29,7 +29,10 @@ fn context() -> ObservationContext {
 }
 
 fn directory(name: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("spektrafilm-save-samples-{name}-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "spektrafilm-save-samples-{name}-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&path).unwrap();
     path
 }
@@ -40,7 +43,8 @@ fn options(format: ImageFormat, depth: BitDepth, encoded: bool) -> SaveOptions<'
         color_space: "sRGB",
         cctf_encoding: encoded,
         jpeg_quality: (format == ImageFormat::Jpeg).then_some(95),
-        jpeg_subsampling: (format == ImageFormat::Jpeg).then_some(image_io::JpegSubsampling::Yuv444),
+        jpeg_subsampling: (format == ImageFormat::Jpeg)
+            .then_some(image_io::JpegSubsampling::Yuv444),
         compression: matches!(format, ImageFormat::Tiff | ImageFormat::Exr)
             .then_some(image_io::Compression::Zip),
     }
@@ -61,7 +65,14 @@ fn publish(path: &Path, samples: &OutputSampleData, depth: BitDepth, encoded: bo
 }
 
 fn load_samples(path: &Path) -> Vec<f64> {
-    image_io::load(path).unwrap().image.data.iter().copied().map(to_f64).collect()
+    image_io::load(path)
+        .unwrap()
+        .image
+        .data
+        .iter()
+        .copied()
+        .map(to_f64)
+        .collect()
 }
 
 fn samples(data: &[f64], width: u32, height: u32) -> ImageBuf {
@@ -139,16 +150,15 @@ fn converted_samples_are_packed_without_a_second_conversion() {
         width: 2,
         height: 1,
         kind: OutputSampleKind::Half,
-        values: OutputSampleValues::Half(vec![
-            0x3800, 0x3c00, 0xb800, 0x3400, 0x0000, 0x3555,
-        ]),
+        values: OutputSampleValues::Half(vec![0x3800, 0x3c00, 0xb800, 0x3400, 0x0000, 0x3555]),
     };
     let exr = directory.join("half.exr");
     publish(&exr, &half_payload, BitDepth::Sixteen, false);
     let decoded = load_samples(&exr);
-    for (actual, expected) in decoded
-        .iter()
-        .zip([0.5, 1.0, -0.5, 0.25, 0.0, f64::from(half_value(0x3555))])
+    for (actual, expected) in
+        decoded
+            .iter()
+            .zip([0.5, 1.0, -0.5, 0.25, 0.0, f64::from(half_value(0x3555))])
     {
         assert_eq!(*actual, expected);
     }
@@ -220,10 +230,9 @@ fn device_saving_conversion_matches_the_reference_boundaries() {
         OutputSampleKind::U16,
         OutputSampleKind::F32,
     ] {
-        let host = image_io::convert_samples_with_backend(
-            &image, "sRGB", true, "sRGB", true, kind, &cpu,
-        )
-        .unwrap();
+        let host =
+            image_io::convert_samples_with_backend(&image, "sRGB", true, "sRGB", true, kind, &cpu)
+                .unwrap();
         let device = image_io::convert_samples_with_backend(
             &image, "sRGB", true, "sRGB", true, kind, backend,
         )
@@ -247,8 +256,8 @@ fn device_saving_conversion_matches_the_reference_boundaries() {
         0.25,
         -0.5,
         f64::from(f32::from_bits(0x3f80_2000)), // 1.0009765625
-        2f64.powi(-25),                        // half subnormal midpoint → +0
-        70000.0,                               // overflows to +inf
+        2f64.powi(-25),                         // half subnormal midpoint → +0
+        70000.0,                                // overflows to +inf
         f64::NAN,
         1.0,
         0.0,
@@ -335,21 +344,19 @@ fn retained_output_is_converted_on_the_device() {
         OutputSampleKind::Half,
         OutputSampleKind::F32,
     ] {
-        let converted = image_io::convert_retained_samples_with_backend(
-            &retained,
-            "sRGB",
-            true,
-            kind,
-            backend,
-        )
-        .unwrap();
+        let converted =
+            image_io::convert_retained_samples_with_backend(&retained, "sRGB", true, kind, backend)
+                .unwrap();
         let converted = match converted {
             image_io::SavingPixels::Converted(data) => data,
-            image_io::SavingPixels::Reference(_) => panic!("retained samples came back to the host"),
+            image_io::SavingPixels::Reference(_) => {
+                panic!("retained samples came back to the host")
+            }
         };
-        let host =
-            image_io::convert_samples_with_backend(&image, "sRGB", true, "sRGB", true, kind, backend)
-                .unwrap();
+        let host = image_io::convert_samples_with_backend(
+            &image, "sRGB", true, "sRGB", true, kind, backend,
+        )
+        .unwrap();
         let host = match host {
             image_io::SavingPixels::Converted(data) => data,
             image_io::SavingPixels::Reference(_) => panic!("host hook did not use the device"),
@@ -387,12 +394,37 @@ fn selected_gpu_without_a_sample_kernel_fails() {
     struct GpuWithoutSamples(spektrafilm_backend::cpu_backend::CpuBackend);
 
     impl ComputeBackend for GpuWithoutSamples {
-        fn colorspace_convert(&self, image: &ImageBuf, matrix: &[[f32; 3]; 3]) -> Result<ImageBuf, String> { self.0.colorspace_convert(image, matrix) }
-        fn cctf_encode_srgb(&self, image: &ImageBuf) -> Result<ImageBuf, String> { self.0.cctf_encode_srgb(image) }
-        fn cctf_decode_srgb(&self, image: &ImageBuf) -> Result<ImageBuf, String> { self.0.cctf_decode_srgb(image) }
-        fn gaussian_blur(&self, image: &ImageBuf, sigma: f32) -> Result<ImageBuf, String> { self.0.gaussian_blur(image, sigma) }
-        fn table_lookup(&self, image: &ImageBuf, x: &[f32], y: &[[f32; 3]]) -> Result<ImageBuf, String> { self.0.table_lookup(image, x, y) }
-        fn lut3d_interp(&self, image: &ImageBuf, lut: &spektrafilm_backend::Lut3D) -> Result<ImageBuf, String> { self.0.lut3d_interp(image, lut) }
+        fn colorspace_convert(
+            &self,
+            image: &ImageBuf,
+            matrix: &[[f32; 3]; 3],
+        ) -> Result<ImageBuf, String> {
+            self.0.colorspace_convert(image, matrix)
+        }
+        fn cctf_encode_srgb(&self, image: &ImageBuf) -> Result<ImageBuf, String> {
+            self.0.cctf_encode_srgb(image)
+        }
+        fn cctf_decode_srgb(&self, image: &ImageBuf) -> Result<ImageBuf, String> {
+            self.0.cctf_decode_srgb(image)
+        }
+        fn gaussian_blur(&self, image: &ImageBuf, sigma: f32) -> Result<ImageBuf, String> {
+            self.0.gaussian_blur(image, sigma)
+        }
+        fn table_lookup(
+            &self,
+            image: &ImageBuf,
+            x: &[f32],
+            y: &[[f32; 3]],
+        ) -> Result<ImageBuf, String> {
+            self.0.table_lookup(image, x, y)
+        }
+        fn lut3d_interp(
+            &self,
+            image: &ImageBuf,
+            lut: &spektrafilm_backend::Lut3D,
+        ) -> Result<ImageBuf, String> {
+            self.0.lut3d_interp(image, lut)
+        }
         fn is_gpu(&self) -> bool {
             true
         }
@@ -448,9 +480,9 @@ fn expected_packing(values: &[f64], kind: OutputSampleKind) -> OutputSampleValue
                 })
                 .collect(),
         ),
-        OutputSampleKind::F32 => OutputSampleValues::F32(
-            values.iter().map(|value| *value as f32).collect::<Vec<_>>(),
-        ),
+        OutputSampleKind::F32 => {
+            OutputSampleValues::F32(values.iter().map(|value| *value as f32).collect::<Vec<_>>())
+        }
         OutputSampleKind::Half => unreachable!("half packing is checked separately"),
     }
 }

@@ -11,7 +11,10 @@ use crate::profile::Profile;
 /// Scanner LUT bounds. When scan_film=true: `-grain.density_min` to
 /// `nanmax(film.density_curves)`. Else: `nanmin..nanmax` of
 /// `print.density_curves`.
-pub(crate) fn scanner_lut_bounds(profile: &Profile, params: &RuntimeParams) -> ([f64; 3], [f64; 3]) {
+pub(crate) fn scanner_lut_bounds(
+    profile: &Profile,
+    params: &RuntimeParams,
+) -> ([f64; 3], [f64; 3]) {
     let curves = profile.density_curves_f64();
     let mut dmin_curves = [f64::INFINITY; 3];
     let mut dmax_curves = [f64::NEG_INFINITY; 3];
@@ -99,14 +102,21 @@ fn scan_spectral_via_lut(
     steps: usize,
 ) -> Result<ImageBuf, String> {
     let device_params = spektrafilm_backend::ScannerSpectralLutGpuParams {
-        channel_density, base_density, illuminant: &color.illuminant,
-        normalization: color.normalization, cat: &color.adapt,
+        channel_density,
+        base_density,
+        illuminant: &color.illuminant,
+        normalization: color.normalization,
+        cat: &color.adapt,
         xyz_to_rgb: &color.base_xyz_to_rgb,
-        minimum: data_min, maximum: data_max, size: steps as u32,
+        minimum: data_min,
+        maximum: data_max,
+        size: steps as u32,
     };
     match backend.scanner_spectral_lut(density_cmy, &device_params)? {
         Some(image) => return Ok(image),
-        None if backend.is_gpu() => return Err("scanner_spectral_lut: selected GPU has no device implementation".into()),
+        None if backend.is_gpu() => {
+            return Err("scanner_spectral_lut: selected GPU has no device implementation".into());
+        }
         None => {}
     }
     let _lut = super::super::StageObservation::cpu(

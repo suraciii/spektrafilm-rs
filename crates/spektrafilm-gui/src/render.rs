@@ -70,6 +70,28 @@ impl InputImage {
         }
     }
 
+    /// Bind accepted controls to this consumer without converting or mutating
+    /// the stored samples. CPU processing interprets the same samples directly.
+    pub(crate) fn interpreted(
+        &self,
+        input_color_space: &str,
+        input_cctf_decoding: bool,
+    ) -> Result<Self, String> {
+        match self {
+            Self::Host(_) => Ok(self.clone()),
+            Self::Device(image) => {
+                let mut meta = image.meta();
+                meta.space = spektrafilm_math::colorspace::resolve(input_color_space)?;
+                meta.domain = if input_cctf_decoding {
+                    spektrafilm_backend::SampleDomain::Encoded
+                } else {
+                    spektrafilm_backend::SampleDomain::Linear
+                };
+                Ok(Self::Device(image.with_meta(meta)))
+            }
+        }
+    }
+
     pub(crate) fn rotated(
         &self,
         quarter_turns: i32,
@@ -77,12 +99,13 @@ impl InputImage {
         input_color_space: &str,
         input_cctf_decoding: bool,
     ) -> Result<Self, String> {
+        let interpreted = self.interpreted(input_color_space, input_cctf_decoding)?;
         let turns = quarter_turns.rem_euclid(4);
         if turns == 0 {
-            return Ok(self.clone());
+            return Ok(interpreted);
         }
         let retained;
-        let image = match self {
+        let image = match &interpreted {
             Self::Host(image) if backend.is_gpu() => {
                 retained = backend.retain_image(
                     image,
@@ -112,7 +135,8 @@ impl InputImage {
             resize: None,
             pixel_pitch_um: image.pixel_pitch_um().unwrap_or(1.0),
         };
-        let rotated = backend.input_geometry(image, &geometry)?
+        let rotated = backend
+            .input_geometry(image, &geometry)?
             .ok_or_else(|| "selected GPU does not support retained input orientation".to_owned())?;
         // Presentation rotation must preserve source colour/domain and
         // an unknown pitch rather than manufacture physical metadata.
@@ -254,11 +278,11 @@ impl RenderSnapshot {
                 }
             }
         }
-        Runtime::new_observed_with_backend(film, print, params, &self.data_dir, backend, context).map_err(|e| {
-            crate::app::Message::new("operations.runtime_build_error").arg("detail", e)
-        })
+        Runtime::new_observed_with_backend(film, print, params, &self.data_dir, backend, context)
+            .map_err(|e| {
+                crate::app::Message::new("operations.runtime_build_error").arg("detail", e)
+            })
     }
-
 }
 #[derive(Clone, PartialEq)]
 struct RuntimeCacheKey {
@@ -291,7 +315,12 @@ impl RuntimeCache {
         preview: bool,
         context: &ObservationContext,
     ) -> Result<&mut Runtime, crate::app::Message> {
-        self.prepare_observed_with_backend(snapshot, preview, context, &spektrafilm_backend::cpu_backend::CpuBackend)
+        self.prepare_observed_with_backend(
+            snapshot,
+            preview,
+            context,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
+        )
     }
 
     pub(super) fn prepare_observed_with_backend(
@@ -337,9 +366,13 @@ impl RuntimeCache {
                 preparation_device: backend.preparation_device_id(),
             };
             if cached.key == key {
-                cached.runtime = cached.runtime.with_params_with_backend(digested, backend).map_err(|error| {
-                    crate::app::Message::new("operations.runtime_update_error").arg("detail", error)
-                })?;
+                cached.runtime = cached
+                    .runtime
+                    .with_params_with_backend(digested, backend)
+                    .map_err(|error| {
+                        crate::app::Message::new("operations.runtime_update_error")
+                            .arg("detail", error)
+                    })?;
                 self.entry = Some(cached);
                 return Ok(&mut self.entry.as_mut().expect("runtime cache restored").runtime);
             }
@@ -371,7 +404,8 @@ impl RuntimeCache {
         } else {
             digest_print.clone()
         };
-        let runtime = snapshot.build_runtime(runtime_film, runtime_print, digested, context, backend)?;
+        let runtime =
+            snapshot.build_runtime(runtime_film, runtime_print, digested, context, backend)?;
         self.entry = Some(RuntimeCacheEntry {
             key: RuntimeCacheKey {
                 data_dir: snapshot.data_dir.clone(),
@@ -396,7 +430,12 @@ pub(super) fn build_runtime_observed(
     preview: bool,
     context: &ObservationContext,
 ) -> Result<Runtime, crate::app::Message> {
-    build_runtime_observed_with_backend(snapshot, preview, context, &spektrafilm_backend::cpu_backend::CpuBackend)
+    build_runtime_observed_with_backend(
+        snapshot,
+        preview,
+        context,
+        &spektrafilm_backend::cpu_backend::CpuBackend,
+    )
 }
 
 pub(super) fn build_runtime_observed_with_backend(
@@ -499,7 +538,6 @@ mod tests {
             .unwrap()
             .process(input.clone(), &backend)
             .unwrap();
-
 
         let missing = tempfile::tempdir().unwrap();
         let mut failed_profile = snapshot.clone();

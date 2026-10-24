@@ -44,8 +44,14 @@ pub(super) fn build_input_decode_state(
     });
     let pages = buf_a.pages();
     Ok(InputDecodeState {
-        dispatch: backend.chain_pointwise(pipe, &[&params_buf, &pages], &[(1,true)],
-            n_pixels, false, "input_decode")?,
+        dispatch: backend.chain_pointwise(
+            pipe,
+            &[&params_buf, &pages],
+            &[(1, true)],
+            n_pixels,
+            false,
+            "input_decode",
+        )?,
     })
 }
 

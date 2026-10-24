@@ -304,7 +304,10 @@ fn raw_record_reopens_saved_decode_and_interpretation_not_pending_raw_draft() {
     assert!(app.params.io.input_cctf_decoding);
     assert_eq!(app.raw_applied_settings.as_ref(), Some(&raw_accepted));
     assert_eq!(app.gui_state.sections["load_raw"], raw_accepted);
-    assert_eq!(app.image.as_ref().unwrap().host_image().unwrap().data, pixels.data);
+    assert_eq!(
+        app.image.as_ref().unwrap().host_image().unwrap().data,
+        pixels.data
+    );
     exposure(&mut app, &ctx, 0.75);
     let saved_bytes = std::fs::read(&record).unwrap();
     let baseline = app.photograph.baseline.clone();

@@ -102,7 +102,8 @@ mod tests {
                 0.55 + 0.45 * (1.0 - (t - 0.5).abs() * 2.0)
             })
             .collect();
-        let core = crate::mallett::compute_core_matrix(&crate::mallett::MALLETT2019_BASIS, &illuminant);
+        let core =
+            crate::mallett::compute_core_matrix(&crate::mallett::MALLETT2019_BASIS, &illuminant);
         let color_space = "sRGB";
         let m = crate::mallett::film_matrix(&core, color_space);
 

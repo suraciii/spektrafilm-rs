@@ -61,9 +61,9 @@ use export_job::ExportJob;
 use profiles::{
     ProfileEntry, dev_time_combo, pick_data_dir, profile_combo, profile_dev_times, scan_profiles,
 };
+use render::RenderSnapshot;
 #[cfg(test)]
 use render::RuntimeCache;
-use render::RenderSnapshot;
 #[cfg(test)]
 use render::build_runtime_observed;
 use render_worker::{RenderJob, RenderKind, RenderRequest, RenderWorker, observed_result};
@@ -211,15 +211,21 @@ mod telemetry_lifecycle_tests {
         app.params.camera.auto_exposure = false;
         app.params.print_render.glare.active = false;
         app.params.settings.preview_max_size = 4;
-        app.image = Some(crate::render::InputImage::Host(Arc::new(ImageBuf::from_data(
-            24,
-            8,
-            (0..24 * 8 * 3)
-                .map(|i| {
-                    spektrafilm_math::precision::from_f64(if i / 3 % 24 < 5 { 0.01 } else { 0.7 })
-                })
-                .collect(),
-        ))));
+        app.image = Some(crate::render::InputImage::Host(Arc::new(
+            ImageBuf::from_data(
+                24,
+                8,
+                (0..24 * 8 * 3)
+                    .map(|i| {
+                        spektrafilm_math::precision::from_f64(if i / 3 % 24 < 5 {
+                            0.01
+                        } else {
+                            0.7
+                        })
+                    })
+                    .collect(),
+            ),
+        )));
         app
     }
 
@@ -406,7 +412,6 @@ mod telemetry_lifecycle_tests {
             request_id,
             kind: RenderKind::Preview,
             animate: false,
-            backend_name: "CPU".into(),
             rotation_quarter_turns: 0,
             collection_mode: CollectionMode::Summary,
         }
