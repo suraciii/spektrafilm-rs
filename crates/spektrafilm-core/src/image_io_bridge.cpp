@@ -170,16 +170,51 @@ int sf_image_load(const char* path, unsigned* width, unsigned* height, double** 
     } catch (const AuthoredFailure& ex) { error(err, ex.what()); return 0; }
       catch (const std::exception& ex) { diagnostic_detail = ex.what(); error(err, ex.what()); return 0; }
 }
-int sf_image_save(const char* path, unsigned width, unsigned height, const double* samples,
-                  int depth, int format, int jpeg_quality, int jpeg_subsampling,
-                  int compression, const char* color_space, bool export_metadata,
-                  const unsigned char* icc, size_t icc_len, char** err) {
+// One pixel source for the shared writer: the native f64 samples the CPU
+// reference produces, or samples the compute device already converted to the
+// writer's sample type. A converted source must never be clipped, transfer
+// encoded, or quantized a second time.
+struct PixelSource {
+    // -1 for native f64 samples, otherwise one of the converted sample kinds.
+    int kind;
+    const void* data;
+};
+constexpr int SAMPLE_NATIVE_F64 = -1;
+constexpr int SAMPLE_U8 = 0;
+constexpr int SAMPLE_U16 = 1;
+constexpr int SAMPLE_HALF = 2;
+constexpr int SAMPLE_F32 = 3;
+
+OIIO::TypeDesc container_type(int depth, int format) {
+    if (format == 2) return depth == 8 ? OIIO::TypeDesc::UINT8 : depth == 16 ? OIIO::TypeDesc::UINT16 : OIIO::TypeDesc::FLOAT;
+    if (format == 3) return depth == 16 ? OIIO::TypeDesc::HALF : OIIO::TypeDesc::FLOAT;
+    return OIIO::TypeDesc::UINT8;
+}
+
+bool converted_type_matches(const OIIO::TypeDesc& type, int kind) {
+    switch (kind) {
+        case SAMPLE_U8: return type == OIIO::TypeDesc::UINT8;
+        case SAMPLE_U16: return type == OIIO::TypeDesc::UINT16;
+        case SAMPLE_HALF: return type == OIIO::TypeDesc::HALF;
+        case SAMPLE_F32: return type == OIIO::TypeDesc::FLOAT;
+        default: return false;
+    }
+}
+
+int save_image(const char* path, unsigned width, unsigned height, const PixelSource& source,
+               int depth, int format, int jpeg_quality, int jpeg_subsampling,
+               int compression, const char* color_space, bool export_metadata,
+               const unsigned char* icc, size_t icc_len, char** err) {
     reset_failure();
     try {
-        // format: JPEG=0, PNG=1, TIFF=2, EXR=3. Quantization truncates, like numpy astype.
-        OIIO::TypeDesc type = OIIO::TypeDesc::UINT8;
-        if (format == 2) type = depth == 8 ? OIIO::TypeDesc::UINT8 : depth == 16 ? OIIO::TypeDesc::UINT16 : OIIO::TypeDesc::FLOAT;
-        if (format == 3) type = depth == 16 ? OIIO::TypeDesc::HALF : OIIO::TypeDesc::FLOAT;
+        // format: JPEG=0, PNG=1, TIFF=2, EXR=3. The native source quantizes on
+        // truncation, like numpy astype; a converted source is already exact.
+        const OIIO::TypeDesc type = container_type(depth, format);
+        const bool typed = source.kind != SAMPLE_NATIVE_F64;
+        if (typed && !converted_type_matches(type, source.kind)) {
+            error(err, "Converted saving samples do not match the container sample type");
+            return 0;
+        }
         OIIO::ImageSpec spec(width, height, 3, type);
         if (format == 0) {
             if (jpeg_quality > 0) spec.attribute("CompressionQuality", jpeg_quality);
@@ -218,20 +253,41 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         }
         size_t count = size_t(width) * height * 3;
         bool ok;
-        if (type == OIIO::TypeDesc::UINT8) {
+        if (typed) {
+            // The device already applied saving conversion, clipping and
+            // quantization; the writer only packs these samples.
+            switch (source.kind) {
+                case SAMPLE_U8:
+                    ok = output->write_image(type, static_cast<const uint8_t*>(source.data));
+                    break;
+                case SAMPLE_U16:
+                    ok = output->write_image(type, static_cast<const uint16_t*>(source.data));
+                    break;
+                case SAMPLE_HALF:
+                    ok = output->write_image(type, static_cast<const half*>(source.data));
+                    break;
+                default:
+                    ok = output->write_image(type, static_cast<const float*>(source.data));
+                    break;
+            }
+        } else if (type == OIIO::TypeDesc::UINT8) {
+            const double* samples = static_cast<const double*>(source.data);
             std::vector<uint8_t> data(count);
             for (size_t i=0; i<count; ++i) data[i] = uint8_t(std::isnan(samples[i]) ? 0 : std::clamp(samples[i], 0.0, 1.0) * 255.0);
             ok = output->write_image(type, data.data());
         } else if (type == OIIO::TypeDesc::UINT16) {
+            const double* samples = static_cast<const double*>(source.data);
             std::vector<uint16_t> data(count);
             for (size_t i=0; i<count; ++i) data[i] = uint16_t(std::isnan(samples[i]) ? 0 : std::clamp(samples[i], 0.0, 1.0) * 65535.0);
             ok = output->write_image(type, data.data());
         } else if (type == OIIO::TypeDesc::HALF) {
+            const double* samples = static_cast<const double*>(source.data);
             std::vector<half> data(count);
             for (size_t i=0; i<count; ++i) data[i].setBits(double_to_half_bits(samples[i]));
             ok = output->write_image(type, data.data());
         } else {
             // Float32 exports retain the upstream explicit float32 conversion.
+            const double* samples = static_cast<const double*>(source.data);
             std::vector<float> data(samples, samples + count);
             ok = output->write_image(OIIO::TypeDesc::FLOAT, data.data());
         }
@@ -263,6 +319,23 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         return 1;
     } catch (const AuthoredFailure& ex) { error(err, ex.what()); return 0; }
       catch (const std::exception& ex) { diagnostic_detail = ex.what(); error(err, ex.what()); return 0; }
+}
+int sf_image_save(const char* path, unsigned width, unsigned height, const double* samples,
+                  int depth, int format, int jpeg_quality, int jpeg_subsampling,
+                  int compression, const char* color_space, bool export_metadata,
+                  const unsigned char* icc, size_t icc_len, char** err) {
+    return save_image(path, width, height, PixelSource{SAMPLE_NATIVE_F64, samples}, depth, format,
+                      jpeg_quality, jpeg_subsampling, compression, color_space, export_metadata,
+                      icc, icc_len, err);
+}
+int sf_image_save_samples(const char* path, unsigned width, unsigned height, const void* samples,
+                          int sample_kind, int depth, int format, int jpeg_quality,
+                          int jpeg_subsampling, int compression, const char* color_space,
+                          bool export_metadata, const unsigned char* icc, size_t icc_len,
+                          char** err) {
+    return save_image(path, width, height, PixelSource{sample_kind, samples}, depth, format,
+                      jpeg_quality, jpeg_subsampling, compression, color_space, export_metadata,
+                      icc, icc_len, err);
 }
 int sf_image_validate(const char* path, char** err) {
     reset_failure();

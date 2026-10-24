@@ -2,6 +2,7 @@
 #include <glib.h>
 #include <lensfun.h>
 
+#include <cstdint>
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -398,3 +399,205 @@ extern "C" int sf_raw_lens_model_identity(const char* path, char** identity,
     }
 }
 extern "C" void sf_raw_free_lens_identity(char* identity) { lf_free(identity); }
+// Fixed-size ABI: coefficients only, never coordinates or image samples.
+struct SfRawLensParams {
+    uint32_t dimensions[4], flags[4];
+    float normalization[4], center[4], distortion[4], tca[4], tca_tail[4];
+    float vignette[4], mapping[4];
+};
+static_assert(sizeof(SfRawLensParams) == 144);
+
+namespace {
+void split_double(double value, float* parts) {
+    parts[0] = static_cast<float>(value);
+    parts[1] = static_cast<float>(value - static_cast<double>(parts[0]));
+}
+
+uint32_t classify_coordinate_callback(lfDistortionModel model) {
+    // Fixed public-API capability probe, independent of the input image/profile.
+    // b*r² + (1-b) is exact at these four pairs, including in the PTLens SSE
+    // path (a=c=0 removes its approximate radius). Only the scalar/SSE semantic
+    // bit escapes; none of these coordinates are used to correct an image.
+    lfLens probe;
+    probe.Type = LF_RECTILINEAR;
+    probe.CropFactor = probe.AspectRatio = 1.0f;
+    probe.CenterX = probe.CenterY = 0.0f;
+    lfModifier modifier(&probe, 1.0f, 3, 3);
+    modifier.AddCoordCallback([](void*, float* coordinates, int count) {
+        for (int i = 0; i < count; ++i) {
+            coordinates[i * 2] = float(i + 1);
+            coordinates[i * 2 + 1] = 0.0f;
+        }
+    }, 0, nullptr, 0);
+    lfLensCalibDistortion calibration{};
+    calibration.Model = model;
+    calibration.Terms[model == LF_DIST_MODEL_POLY3 ? 0 : 1] = 0.125f;
+    if (!modifier.AddCoordCallbackDistortion(calibration, false))
+        throw std::runtime_error("Cannot classify Lensfun coordinate callback");
+    alignas(16) float coordinates[8]{};
+    if (!modifier.ApplyGeometryDistortion(0, 0, 4, 1, coordinates))
+        throw std::runtime_error("Cannot classify Lensfun coordinate callback");
+    const float scalar[8] = {2.0f, 1.0f, 3.75f, 1.0f, 7.0f, 1.0f, 12.5f, 1.0f};
+    const float interleaved[8] = {2.0f, 1.0f, 5.0f, 1.0f, 4.0f, 1.0f, 9.0f, 1.0f};
+    if (std::equal(coordinates, coordinates + 8, scalar)) return 0;
+    if (std::equal(coordinates, coordinates + 8, interleaved)) return 1;
+    throw std::runtime_error("Unsupported Lensfun coordinate callback semantics");
+}
+
+uint32_t coordinate_callback_semantics(lfDistortionModel model) {
+    if (model == LF_DIST_MODEL_POLY3) {
+        static const uint32_t semantics = classify_coordinate_callback(LF_DIST_MODEL_POLY3);
+        return semantics;
+    }
+    if (model == LF_DIST_MODEL_PTLENS) {
+        static const uint32_t semantics = classify_coordinate_callback(LF_DIST_MODEL_PTLENS);
+        return semantics;
+    }
+    return 0;
+}
+
+// Lensfun 0.3.4's own GetRealFocalLength still consumes legacy CalibFov when
+// no real-focal entry exists. InterpolateRealFocal is not equivalent for those
+// installed databases. Keep the one compatibility call until that native
+// fallback disappears; do not suppress deprecations for the rest of the bridge.
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4996)
+#endif
+bool interpolate_legacy_fov(const lfLens& lens, float focal, lfLensCalibFov& result) {
+    return lens.InterpolateFov(focal, result);
+}
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+
+void export_lens(const Metadata& metadata, const lfCamera& camera, const lfLens& lens,
+                 unsigned width, unsigned height, int flags, SfRawLensParams& result) {
+    // Lensfun 0.3.4 modifier.cpp constructor. Keep float intermediates where
+    // upstream has float, and double where its private normalization does.
+    const int w = width >= 2 ? width - 1 : 1;
+    const int h = height >= 2 ? height - 1 : 1;
+    const float size = std::min(w, h);
+    const float aspect = float(std::max(w, h)) / float(std::min(w, h));
+    const double aspect_correction = std::sqrt(lens.AspectRatio * lens.AspectRatio + 1);
+    const float correction = 1.0 / std::sqrt(aspect * aspect + 1) *
+                             lens.CropFactor / camera.CropFactor * aspect_correction;
+    const double ns = 2.0 / size * correction;
+    const double uns = size * 0.5 / correction;
+    const double cx = (w / size + lens.CenterX) * correction;
+    const double cy = (h / size + lens.CenterY) * correction;
+    const double millimeters = std::sqrt(36.0 * 36.0 + 24.0 * 24.0) / 2.0 /
+                               aspect_correction / lens.CropFactor;
+    result.dimensions[0] = width;
+    result.dimensions[1] = height;
+    split_double(ns, result.normalization);
+    split_double(uns, result.normalization + 2);
+    split_double(cx, result.center);
+    split_double(cy, result.center + 2);
+    result.flags[0] = lens.Type;
+    result.flags[1] = bool(flags & LF_MODIFY_GEOMETRY);
+    result.flags[2] = bool(flags & LF_MODIFY_VIGNETTING);
+    // Select the implementation actually registered by the linked library,
+    // rather than guessing from this translation unit's CPU target flags.
+    lfLensCalibDistortion distortion;
+    if ((flags & LF_MODIFY_DISTORTION) && lens.InterpolateDistortion(metadata.focal, distortion)) {
+        result.dimensions[2] = distortion.Model;
+        result.flags[3] = coordinate_callback_semantics(distortion.Model);
+        std::copy_n(distortion.Terms, 3, result.distortion);
+    }
+    lfLensCalibTCA tca;
+    if ((flags & LF_MODIFY_TCA) && lens.InterpolateTCA(metadata.focal, tca)) {
+        result.dimensions[3] = tca.Model;
+        std::copy_n(tca.Terms, 4, result.tca);
+        std::copy_n(tca.Terms + 4, 2, result.tca_tail);
+    }
+    lfLensCalibVignetting vignette;
+    if ((flags & LF_MODIFY_VIGNETTING) &&
+        lens.InterpolateVignetting(metadata.focal, metadata.aperture, 1000.0f, vignette)) {
+        std::copy_n(vignette.Terms, 3, result.vignette);
+    }
+    result.vignette[3] = ns / aspect_correction;
+    result.mapping[0] = 1.0 / aspect_correction;
+    // GetRealFocalLength, with Initialize's Hugin correction cancelled. Public
+    // interpolation APIs retain Lensfun's selection and interpolation rules.
+    float focal = metadata.focal;
+    lfLensCalibRealFocal real;
+    lfLensCalibFov fov;
+    const bool has_real_focal = lens.InterpolateRealFocal(metadata.focal, real);
+    if (has_real_focal) {
+        focal = real.RealFocal;
+    } else if (interpolate_legacy_fov(lens, metadata.focal, fov)) {
+        const float angle = fov.FieldOfView * 3.14159265358979323846 / 180.0;
+        const float half_width = millimeters * lens.AspectRatio;
+        switch (lens.Type) {
+        case LF_RECTILINEAR: focal = half_width / std::tan(angle / 2.0); break;
+        case LF_FISHEYE: case LF_PANORAMIC: case LF_EQUIRECTANGULAR:
+            focal = half_width / (angle / 2.0); break;
+        case LF_FISHEYE_ORTHOGRAPHIC: focal = half_width / std::sin(angle / 2.0); break;
+        case LF_FISHEYE_STEREOGRAPHIC: focal = half_width / (2 * std::tan(angle / 4.0)); break;
+        case LF_FISHEYE_EQUISOLID: focal = half_width / (2 * std::sin(angle / 4.0)); break;
+        case LF_FISHEYE_THOBY: focal = half_width / (1.47 * std::sin(0.713 * angle / 2.0)); break;
+        default: break;
+        }
+    }
+    // Match the two float roundings in GetRealFocalLength / Initialize.
+    float hugin = 1.0f;
+    if (lens.InterpolateDistortion(metadata.focal, distortion)) {
+        if (distortion.Model == LF_DIST_MODEL_POLY3) hugin = 1 - distortion.Terms[0];
+        if (distortion.Model == LF_DIST_MODEL_PTLENS)
+            hugin = 1 - distortion.Terms[0] - distortion.Terms[1] - distortion.Terms[2];
+    }
+    focal = (has_real_focal ? focal : static_cast<float>(focal * hugin)) / hugin;
+    result.mapping[1] = focal / millimeters;
+    result.mapping[2] = 1.0 / result.mapping[1];
+    lfModifier unscaled(&lens, camera.CropFactor, width, height);
+    unscaled.Initialize(&lens, LF_PF_F32, metadata.focal, metadata.aperture, 1000.0f,
+                        1.0f, LF_RECTILINEAR, LF_MODIFY_ALL, false);
+    result.mapping[3] = 1.0 / unscaled.GetAutoScale(false);
+}
+}
+
+extern "C" int sf_raw_prepare_lens(const char* path, unsigned width, unsigned height,
+                                    SfRawLensParams* result, int* found,
+                                    char* summary, size_t summary_len, char** identity,
+                                    char* error, size_t error_len) {
+    copy_message(summary, summary_len, "");
+    copy_message(error, error_len, "");
+    *identity = nullptr;
+    try {
+        if (!path || !result || !found || !width || !height ||
+            width > unsigned(std::numeric_limits<int>::max()) ||
+            height > unsigned(std::numeric_limits<int>::max()))
+            throw std::invalid_argument("Lens preparation requires a path and nonempty native dimensions");
+        *result = {};
+        *found = 0;
+        const Metadata metadata = read_metadata(path);
+        lfDatabase database;
+        const auto [camera, lens] = resolve_model(database, metadata);
+        std::unique_ptr<char, GlibFree> accepted_identity(model_identity(camera, lens));
+        if (lens) {
+            lfModifier modifier(lens, camera->CropFactor, static_cast<int>(width), static_cast<int>(height));
+            // The same initialization as CPU correction; only coefficients leave this route.
+            const int flags = modifier.Initialize(lens, LF_PF_F32, metadata.focal, metadata.aperture,
+                                                 1000.0f, 0.0f, LF_RECTILINEAR, LF_MODIFY_ALL, false);
+            export_lens(metadata, *camera, *lens, width, height, flags, *result);
+            const std::string label = lens->Model && *lens->Model ? lens->Model : metadata.lens_model;
+            const std::string information = label + " @ " + float_label(metadata.focal) +
+                                            "mm f/" + float_label(metadata.aperture);
+            copy_message(summary, summary_len, information.c_str());
+            *found = 1;
+        }
+        *identity = accepted_identity.release();
+        return 0;
+    } catch (const std::exception& exception) {
+        copy_message(error, error_len, exception.what());
+    } catch (...) {
+        copy_message(error, error_len, "Unknown native lens preparation failure");
+    }
+    return 1;
+}

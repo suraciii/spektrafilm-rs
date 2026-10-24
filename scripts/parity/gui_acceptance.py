@@ -10,6 +10,11 @@ For an isolated Linux desktop, create the session bus inside Xvfb:
     xvfb-run -a -s '-screen 0 1600x1100x24' dbus-run-session -- <acceptance command>
 Install/start the GTK file chooser portal on that same display. An inherited
 host session bus can leave synchronous rfd dialogs blocked for 120 seconds.
+
+Export controls are located from the rendered modal and confirmed by closed-row
+OCR after selection. Popup OCR is confined to the observed button's inner edges
+and adjacent changed pixels. A failed popup observation preserves closed/open
+frames, a difference mask, and candidate bounds in the evidence directory.
 """
 import hashlib
 import io
@@ -35,6 +40,7 @@ def viewer_canvas_bounds(image):
 def require(value, message):
     if not value:
         raise RuntimeError(message)
+
 
 
 
@@ -195,9 +201,17 @@ class X11:
         self.report_directory = Path(tempfile.mkdtemp(prefix='session-', dir=directory))
         self.records.append({'diagnostic_session': str(self.report_directory.relative_to(self.root))})
         env = dict(env)
+        # OCR scenarios use the production English presentation, independent of
+        # the runner's locale; language preferences remain outside GUI state.
+        env.update(LANG='C', LC_ALL='C', LANGUAGE='en')
+        self.backend_requested = env.get('SPEKTRAFILM_BACKEND', 'auto').lower()
+        if env.get('SPEKTRAFILM_CONFIG_DIR'):
+            preference = Path(env['SPEKTRAFILM_CONFIG_DIR']) / 'gui_preferences.json'
+            preference.write_text(json.dumps({'language': 'english'}) + '\n')
         env['SPEKTRAFILM_GUI_DIAGNOSTICS_DIR'] = str(self.report_directory)
         self.last_report_id = 0
         return env
+
 
 
     def resize_window(self, width, height):
@@ -222,12 +236,11 @@ class X11:
 
     def read(self):
         image, bbox = self.image()
-        # The sidebar occupies the right portion of the client, but its
-        # first control can move left with native font/theme metrics.
-        # Use a proportional boundary rather than a fixed pixel coordinate.
-        self.right_control_x = image.width * 0.65
+        # The current native control panel is fixed at 320px. Keep viewer and
+        # sidebar OCR separate so header and preset text cannot merge controls.
+        self.right_control_x = image.width - 320
         self.action_top = image.height - 100
-        self.action_left = image.width - 420
+        self.action_left = image.width - 320
         from PIL import ImageOps, ImageStat
         lines = []
         # Segment the sidebar from the viewer and normalize each region to
@@ -237,9 +250,9 @@ class X11:
             background = grayscale.crop((0, 0, grayscale.width, min(50, grayscale.height)))
             return ImageOps.invert(grayscale) if ImageStat.Stat(background).median[0] < 128 else grayscale
 
-        for offset, region in ((0, image.crop((0, 0, 260, image.height))),
-                               (260, image.crop((260, 0, image.width - 420, image.height))),
-                               (image.width - 420, image.crop((image.width - 420, 0, image.width, image.height)))):
+        for offset, region in ((0, image.crop((0, 0, 328, image.height))),
+                               (328, image.crop((328, 0, image.width - 320, image.height))),
+                               (image.width - 320, image.crop((image.width - 320, 0, image.width, image.height)))):
             prepared = normalize(region)
             # The sidebar is read in bands: a full-height pass loses the small
             # controls inside its collapsible sections.
@@ -257,8 +270,35 @@ class X11:
                         grouped.setdefault(key, []).append((text, offset + data['left'][i] / 3,
                             top + data['top'][i] / 3, data['width'][i] / 3, data['height'][i] / 3))
                 lines.extend(grouped.values())
+        # A second complete-row pass preserves short parameter labels near
+        # the scrolling viewport's bottom, which sparse OCR can omit.
+        left, top = image.width - 320, 215
+        region = image.crop((left, top, image.width, self.action_top))
+        data = self.ocr.image_to_data(normalize(region).resize((region.width * 3, region.height * 3)),
+                                      config='--psm 6', output_type=self.ocr.Output.DICT, timeout=15)
+        grouped = {}
+        for i, text in enumerate(data['text']):
+            if text.strip():
+                key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+                grouped.setdefault(key, []).append((text, left + data['left'][i] / 3,
+                    top + data['top'][i] / 3, data['width'][i] / 3, data['height'][i] / 3))
+        lines.extend(grouped.values())
+        # Preserve the independently recognized panel words in their physical
+        # header order too: a full-row OCR pass can misread a tiny filename.
+        header_words = [word for line in lines for word in line
+                        if word[2] + word[4] / 2 < 27]
+        lines.append(sorted(header_words, key=lambda word: word[1]))
+        # Operation status crosses the viewer/sidebar boundary in the header.
+        # Read that row whole so adapter details cannot split Exported from
+        # its destination filename (or hide RAW/cancellation acknowledgement).
+        region = image.crop((0, 0, image.width, 27))
+        data = self.ocr.image_to_data(normalize(region).resize((region.width * 4, region.height * 4)),
+                                      config='--psm 7', output_type=self.ocr.Output.DICT, timeout=15)
+        lines.append([(text, data['left'][i] / 4, data['top'][i] / 4,
+                       data['width'][i] / 4, data['height'][i] / 4)
+                      for i, text in enumerate(data['text']) if text.strip()])
         # Read the persistent sidebar action bar as complete rows so PREVIEW,
-        # SCAN and SAVE are distinguishable from the Scan for print checkbox.
+        # SCAN and SAVE are distinguishable from nearby control labels.
         action_top = self.action_top
         action_left = self.action_left
         region = image.crop((action_left, action_top, image.width, image.height))
@@ -287,7 +327,7 @@ class X11:
         lines.extend(grouped.values())
         left = viewer_canvas_bounds(image)[0]
         top = image.height - 80
-        region = image.crop((left, top, image.width - 420, image.height))
+        region = image.crop((left, top, image.width - 320, image.height))
         data = self.ocr.image_to_data(normalize(region).resize((region.width * 4, region.height * 4)),
                                       config='--psm 6', output_type=self.ocr.Output.DICT, timeout=15)
         words = [(text, left + data['left'][i] / 4, top + data['top'][i] / 4,
@@ -338,11 +378,7 @@ class X11:
                     # concatenated tokens cover the label.
                     if len(''.join(words)) >= len(joined_wanted):
                         break
-                # Toggled controls render their state inside the label, e.g.
-                # "Scan-for-print:ON"; accept that single-token suffix.
-                suffixed = (len(selected) == 1 and len(words) == len(wanted) + 1
-                            and words[:-1] == wanted and words[-1] == 'on')
-                equivalent = (words == wanted or suffixed
+                equivalent = (words == wanted
                               or ''.join(words) == joined_wanted
                               or (len(words) == len(wanted)
                                   and all(word == expected or word in aliases.get(expected, set())
@@ -376,12 +412,13 @@ class X11:
         self.records.append({'surface': label, 'screenshot': path.name, 'ocr': text})
         return text
 
+
     def scroll(self, bottom):
         image, _, _ = self.read()
         require(image.width >= 1460, 'Native GUI acceptance requires the pinned 1460px window width')
-        # The sidebar is a fixed 420px panel on the right. Move the wheel
-        # inside that measured panel instead of depending on OCR for a tab.
-        sidebar_x = image.width - 180
+        # Wheel over the sidebar's left gutter, not a numeric editor: editors
+        # consume wheel input as value changes instead of scrolling the panel.
+        sidebar_x = image.width - 310
         self.xd('mousemove', '--window', self.window, int(sidebar_x), int(image.height / 2))
         self.xd('click', '--repeat', 35, '--delay', 8, 5 if bottom else 4)
         time.sleep(.15)
@@ -459,12 +496,6 @@ class X11:
 
     def dialog(self, path, save=False):
         dialog_classes = ('zenity', 'yad', 'xdg-desktop-portal-gtk')
-        def visible_choosers():
-            windows = []
-            for dialog_class in dialog_classes:
-                found = self.xd('search', '--onlyvisible', '--class', dialog_class, check=False)
-                windows.extend(found.splitlines())
-            return windows
 
         def find():
             for dialog_class in dialog_classes:
@@ -476,7 +507,11 @@ class X11:
         dialog = wait_for(find, 'native file chooser (zenity/yad/portal)', 25)
 
         def visible():
-            return dialog in visible_choosers()
+            # Once discovered, query this window directly. Recursive class
+            # searches traverse unrelated GTK windows on every key press.
+            info = subprocess.run(['xwininfo', '-id', str(dialog)],
+                                  capture_output=True, text=True, timeout=10)
+            return info.returncode == 0 and 'Map State: IsViewable' in info.stdout
 
         def key(*keys):
             if not visible():
@@ -616,6 +651,7 @@ class X11:
         surface.save(self.root / 'native-chooser-timeout.png')
         raise RuntimeError(f'Native chooser did not accept {path}')
 
+
     def drain_reports(self):
         """Advance past reports already published.
 
@@ -632,7 +668,7 @@ class X11:
             highest = max(highest, operation['id'])
         self.last_report_id = highest
 
-    def wait_report(self, label, action=None):
+    def wait_report(self, label, action=None, outcome='succeeded'):
         """Wait for the report the GUI publishes for a completed operation.
 
         The report is the diagnostic source of truth: readiness, outcome and
@@ -658,10 +694,30 @@ class X11:
                     continue
                 if operation['outcome'] == 'superseded':
                     continue
-                require(operation['outcome'] == 'succeeded',
+                require(operation['outcome'] == outcome,
                         f"GUI {operation['kind']} {operation['outcome']} on {label}: "
                         f"{report.get('diagnostic_issues')}")
+                execution = report['execution']
+                adapter = execution.get('adapter')
+                requested = (getattr(self, 'export_backend_requested', None)
+                             if operation['kind'] == 'export'
+                             else getattr(self, 'backend_requested', None))
+                if (requested == 'wgpu'
+                        and operation['kind'] in ('preview', 'scan', 'export')
+                        and outcome == 'succeeded'):
+                    require(execution.get('backend_requested') == 'wgpu'
+                            and execution.get('backend_selected') == 'wgpu' and adapter,
+                            f'Explicit WGPU request was not honored on {label}: {execution}')
+                self.records.append({
+                    'operation_report': label, 'operation': operation,
+                    'execution': execution,
+                    'software_adapter': adapter.get('device_type') == 'cpu' if adapter else None,
+                    'stage_executors': [
+                        {key: stage.get(key) for key in ('name', 'executor', 'cpu_reason')}
+                        for stage in report.get('stages', [])],
+                })
                 self.last_report_id = operation['id']
+                self.last_completed_report = report
                 return report
         return wait_for(ready, label, 120)
 
@@ -688,8 +744,10 @@ class X11:
 
     def exported(self, path, label):
         # The operation status is in the persistent header.
-        status = self.wait_text(r'Exported[^\n]*' + re.escape(Path(path).name), label, 240)
+        status = self.wait_text(r'\bExported\b', label, 240)
         wait_for(Path(path).is_file, f'export output {path}', 30)
+        self.wait_report(label + '-report', 'Export')
+        self.last_export_report = self.last_completed_report
         self.records.append({'export_output': str(path), 'status': status,
                              'sha256': hashlib.sha256(Path(path).read_bytes()).hexdigest()})
         return status
@@ -699,6 +757,15 @@ class X11:
         if exporting:
             self.require_export_in_flight('close')
         self.xd('key', 'alt+F4')
+        try:
+            self.discard_photograph_changes()
+        except (RuntimeError, subprocess.CalledProcessError):
+            # The native window may disappear before the process finishes
+            # teardown. A clean exit still must pass the check below.
+            try:
+                self.proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                raise
         self.proc.wait(timeout=240 if exporting else 30)
         require(self.proc.returncode == 0, f'GUI closed with status {self.proc.returncode}')
         self.proc = None
@@ -1167,6 +1234,9 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                            'gui_sha256': hashlib.sha256(gui.read_bytes()).hexdigest(),
                            'reference_exporter': str(exporter.resolve()), 'platform': sys.platform,
                            'native_surface': 'continuous-inspector',
+                           'compute_backend_requested': env.get('SPEKTRAFILM_BACKEND', 'auto').lower(),
+                           'gui_renderer': env.get('SPEKTRAFILM_GUI_RENDERER'),
+                           'vulkan_icd': env.get('VK_ICD_FILENAMES'),
                            'retired_surface': 'MAIN/FILM/PRINT/ADVANCED/CONFIG pages'})
 
     def require_factory(actual):
@@ -1196,7 +1266,6 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.records.append({'parity_action': 'run_' + action.lower(),
                                'report': report})
         return report
-
     try:
         driver.start(gui, env)
         driver.wait_text(r'Load\s+an\s+image\s+to\s+start', 'startup-placeholder')
@@ -1211,6 +1280,8 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         state['display']['preview_max_size'] = 64
         state['camera']['auto_exposure'] = False
         state['simulation']['auto_preview'] = True
+        if driver.backend_requested == 'wgpu':
+            state.setdefault('rust', {})['export_backend'] = 'gpu'
         configured = root / 'configured.json'
         configured.write_text(json.dumps(state))
         driver.state_action('Load from file', configured)
@@ -1251,13 +1322,26 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.records.append({'preview_shape': list(preview.shape), 'scan_shape': list(scan.shape),
                                'source_shape': list(pixels.shape),
                                'preview_report': preview_report, 'scan_report': scan_report})
+        from gui_control_acceptance import scanner_readout
+        scanner_readout(driver, root)
 
         # Fotufilm is selected through the actual grain owner, not a loaded
         # runtime patch masquerading as control evidence.
         driver.reveal('film_render.grain.active', 'Film', 'Grain')
-        driver.click('Enable grain', right=True)
+        driver.toggle('Enable grain')
         driver.reveal('film_render.grain.engine', 'Film', 'Grain')
         driver.choose('Engine', 'Fotufilm Film')
+        for path, label in (
+                ('film_render.grain.fotufilm.amount', 'Amount'),
+                ('film_render.grain.fotufilm.size', 'Size'),
+                ('film_render.grain.fotufilm.softness', 'Softness'),
+                ('film_render.grain.fotufilm.color', 'Color'),
+                ('film_render.grain.fotufilm.layers', 'Layer amounts')):
+            driver.reveal(path, 'Film', 'Grain')
+            require(driver.locate(label, right=True), f'Fotufilm control missing: {label}')
+            observed = driver.snap('fotufilm-control-' + label.replace(' ', '-'))
+            require(not re.search(r'Dye\s+support', observed, re.I),
+                    'Dye-only control remained visible for Fotufilm')
         driver.reveal('viewer.layer.output', 'Viewer', 'Viewer')
         driver.click('Output', bottom=True)
         driver.reveal('film_render.grain.fotufilm.amount', 'Film', 'Grain')
@@ -1268,7 +1352,8 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.await_viewer(before_amount, label='fotufilm amount render update')
         fotufilm = driver.state_action('Save current to file', root / 'fotufilm-state.json', save=True)
         grain = fotufilm['rust']['runtime']['film_render']['grain']
-        require(grain['engine'] == 'fotufilm' and parameters_equal(grain['fotufilm']['amount'], 1.65),
+        require(grain['active'] is True and grain['engine'] == 'fotufilm'
+                and parameters_equal(grain['fotufilm']['amount'], 1.65),
                 f'Fotufilm control change not persisted: {grain}')
         driver.state_action('Load from file', root / 'fotufilm-state.json')
         loaded = driver.state_action('Save current to file', root / 'fotufilm-loaded.json', save=True)
@@ -1276,17 +1361,26 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                 'Fotufilm state did not round-trip')
         for action in ('Preview', 'Scan'):
             driver.click(action.upper(), bottom=True)
-            disclosure = driver.rendered('fotufilm-' + action.lower(), action)
-            require(re.search(r'grain\s+Fotufilm\s+on\s+CPU', disclosure, re.I),
-                    f'Fotufilm backend disclosure missing: {disclosure}')
-            require(not re.search(r'GPU\s+grain|grain\s+GPU', disclosure, re.I),
-                    f'Fotufilm disclosure claimed a GPU grain kernel: {disclosure}')
+            report = driver.wait_report('fotufilm-' + action.lower(), action)
+            require(report['configuration']['render']['grain']['active'] is True
+                    and report['configuration']['render']['grain']['engine'] == 'fotufilm',
+                    'Fotufilm render did not execute the active selected engine')
+            # The photo-first header reports action/dimensions only. Execution
+            # disclosure belongs to Settings/Diagnostics, not retired status prose.
+            driver.reveal('action.save_report', 'Settings', 'Diagnostics')
+            disclosure = driver.snap('fotufilm-' + action.lower() + '-diagnostics')
+            executor = report['execution']['backend_selected']
+            require(re.search(r'requested[^\n]*' + executor, disclosure, re.I)
+                    and re.search(r'selected[^\n]*' + executor, disclosure, re.I),
+                    f'Fotufilm diagnostics differs from executed backend: {disclosure}')
+            driver.close_settings()
+            driver.records.append({'parity_action': 'fotufilm_' + action.lower(),
+                                   'report': report, 'executor_disclosure': executor})
         float_export = root / 'fotufilm-float-export.exr'
         driver.click('Export', header=True)
         driver.export_options(float_export, float_export=True)
         driver.dialog(float_export, save=True)
         driver.exported(float_export, 'fotufilm-float-export')
-        driver.wait_report('fotufilm-export-report', 'Export')
         require(read_image(float_export).shape == pixels.shape, 'Fotufilm export dimensions differ')
 
         scan_seed = json.loads(json.dumps(state))
@@ -1330,6 +1424,9 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                 'Clockwise rotation did not render portrait')
         driver.click('Input')
         _hover_float(driver, np.rot90(pixels, -1), driver.records)
+        cw_bounds = driver.measure_viewer('clockwise-rotation')
+        require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
+                f'Clockwise rotation did not produce portrait Input pixels: {cw_bounds}')
         rotated_export = root / 'rotated-export.tif'
         export_image(driver, rotated_export)
         require(read_image(rotated_export).shape == (192, 96, 3), 'Rotated export dimensions differ')
@@ -1349,13 +1446,16 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         counterclockwise = driver.wait_report('counterclockwise-render-complete')
         require(counterclockwise['configuration']['working_dimensions'] == [192, 96],
                 'Counterclockwise rotation did not restore landscape')
+        driver.click('Input', bottom=True)
+        ccw_bounds = driver.measure_viewer('counterclockwise-rotation')
+        require(ccw_bounds[2] - ccw_bounds[0] > ccw_bounds[3] - ccw_bounds[1],
+                f'Counterclockwise rotation did not restore landscape Input pixels: {ccw_bounds}')
         driver.records.append({'rotated_metadata_preserved': True, 'orientation': 1,
                                'dimensions': [96, 192]})
-
         driver.state_action('Load from file', configured)
         driver.reveal('camera.auto_exposure', 'Input and capture', 'Camera')
         driver.drain_reports()
-        driver.click('Auto exposure', right=True)
+        driver.toggle('Auto exposure')
         driver.wait_report('changed-auto-exposure-preview', 'Preview')
         changed = driver.state_action('Save current to file', root / 'roundtrip.json', save=True)
         require(changed['camera']['auto_exposure'] is True, 'Auto exposure control was not saved')
@@ -1409,7 +1509,6 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.records.append({'parity_action': 'load_raw_image', 'scenario': 'raw_status',
                                'raw_input_space': 'ACES2065-1', 'lens_status': raw_status,
                                'saved_shape': list(raw_pixels.shape)})
-
         large = root / 'large.tif'
         large_pixels = np.tile(np.linspace(.05, .8, 4096, dtype=np.float32)[None, :, None], (3072, 1, 3))
         writer = oiio.ImageOutput.create(str(large))

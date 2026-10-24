@@ -300,8 +300,14 @@ fn active_v3_field_reports_its_device_stage() {
     params.io.output_gamut_compress.algorithm = "off".into();
     params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
     params.film_render.grain.v3_dye_support_um = 8.0;
-    let runtime =
-        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let runtime = Runtime::new_with_backend(
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),
+        params,
+        &data,
+        gpu.backend(),
+    )
+    .unwrap();
     let (width, height) = (32u32, 32u32);
     let image = ImageBuf::from_data(
         width,
@@ -350,6 +356,141 @@ fn active_v3_field_reports_its_device_stage() {
 }
 
 #[test]
+fn retained_input_route_reports_actual_colorspace_gpu_work() {
+    use spektrafilm_backend::telemetry::{BackendSelected, Executor};
+    use spektrafilm_core::telemetry::BackendRequested;
+
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input".into();
+    params.camera.auto_exposure = false;
+    params.film_render.grain.active = false;
+    params.cmyk.active = false;
+    params.io.crop = false;
+    params.io.upscale_factor = 1.0;
+    params.io.input_color_space = "Display P3".into();
+    params.io.output_color_space = "sRGB".into();
+    params.io.input_cctf_decoding = true;
+    params.io.output_cctf_encoding = true;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    let reference = Runtime::from_stocks(
+        "kodak_portra_400",
+        "kodak_portra_endura",
+        params.clone(),
+        &data,
+    )
+    .unwrap();
+    let runtime = Runtime::new_with_backend(
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),
+        params,
+        &data,
+        gpu.backend(),
+    )
+    .unwrap();
+    let (width, height) = (7, 5);
+    let image = ImageBuf::from_data(
+        width,
+        height,
+        (0..width * height * 3)
+            .map(|i| {
+                from_f64(match i {
+                    0 => -0.05,
+                    1 => 0.4,
+                    2 => 1.2,
+                    _ => 0.02 + 0.96 * ((i * 37) % 101) as f64 / 100.0,
+                })
+            })
+            .collect(),
+    );
+    let expected = reference.process(image.clone(), &CpuBackend).unwrap();
+    assert!(expected.data.iter().any(|sample| *sample < from_f64(0.0)));
+    assert!(expected.data.iter().any(|sample| *sample > from_f64(1.0)));
+    assert!(
+        expected
+            .data
+            .iter()
+            .zip(&image.data)
+            .any(|(converted, source)| (*converted as f64 - *source as f64).abs() > 1e-3),
+        "the fixture must exercise a nonidentity color conversion"
+    );
+    let unobserved = runtime.process(image.clone(), gpu.backend()).unwrap();
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    operation.set_backend_requested(BackendRequested::Wgpu);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    operation.set_input_dimensions(width, height);
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    let actual = runtime
+        .process_observed(image, gpu.backend(), simulation.context())
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    report.validate().unwrap();
+
+    assert_eq!((actual.width, actual.height), (width, height));
+    assert_eq!(
+        actual.data, unobserved.data,
+        "observation changed the device pixels"
+    );
+    assert_eq!(actual.data.len(), expected.data.len());
+    for (index, (actual, expected)) in actual.data.iter().zip(&expected.data).enumerate() {
+        assert!(
+            (*actual as f64 - *expected as f64).abs() < 2e-5,
+            "input conversion sample {index}: GPU {actual}, CPU {expected}"
+        );
+    }
+    assert_eq!(
+        report.execution.backend_selected,
+        Some(BackendSelected::Wgpu)
+    );
+    assert_eq!(
+        report.execution.adapter,
+        gpu.backend().adapter_description()
+    );
+    assert_eq!(report.execution.path, Some(ExecutionPath::GpuResident));
+    assert!(report.execution.resident_decline_reasons.is_empty());
+    let stages: Vec<_> = report
+        .stages
+        .iter()
+        .filter(|stage| stage.name == "colorspace_convert")
+        .collect();
+    assert_eq!(
+        stages.len(),
+        1,
+        "the retained conversion must own one canonical stage"
+    );
+    let stage = stages[0];
+    assert_eq!(stage.purpose, Purpose::Image);
+    assert_eq!(stage.executor, Some(Executor::Gpu));
+    assert!(stage.complete);
+    assert!(stage.cpu_reason.is_none());
+    assert_eq!(
+        stage.work.dispatch_count,
+        Some(3),
+        "decode, matrix, and encode must execute"
+    );
+    assert_eq!(stage.work.submit_count, Some(3));
+    assert_eq!(stage.work.image_upload_count.unwrap_or(0), 0);
+    assert_eq!(stage.work.readback_count.unwrap_or(0), 0);
+    assert!(
+        !report
+            .stages
+            .iter()
+            .any(|stage| stage.purpose == Purpose::Image
+                && matches!(stage.executor, Some(Executor::Cpu | Executor::Mixed))),
+        "the selected GPU input route must not bridge through CPU image arithmetic"
+    );
+    assert_eq!(report.measurements.work.image_upload_count, Some(1));
+    assert_eq!(report.measurements.work.readback_count, Some(1));
+    assert_eq!(report.coverage.omitted_high_level_observations, Some(0));
+}
+
+#[test]
 fn gpu_timing_collection_survives_a_host_fence() {
     // A host fence splits the resident chain into several submissions inside
     // one batch. The timestamp readback is mapped at the batch boundary, so
@@ -364,8 +505,14 @@ fn gpu_timing_collection_survives_a_host_fence() {
     params.io.scan_film = true;
     params.io.output_gamut_compress.algorithm = "off".into();
     // The default Spektra engine runs as the assembled density fence.
-    let runtime =
-        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let runtime = Runtime::new_with_backend(
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),
+        params,
+        &data,
+        gpu.backend(),
+    )
+    .unwrap();
     let (width, height) = (32u32, 32u32);
     let image = ImageBuf::from_data(
         width,
@@ -487,4 +634,240 @@ fn active_fotufilm_engine_reports_its_cpu_stage_reason() {
         "Fotufilm stage missing from the report: {:?}",
         report.summary().cpu_stage_reasons
     );
+}
+
+#[test]
+fn cpu_prepared_public_runtimes_reject_selected_gpu_before_any_upload() {
+    use spektrafilm_backend::telemetry::ObservationContext;
+    use spektrafilm_backend::{Precision, RetainedImageMeta, SampleDomain};
+    use spektrafilm_core::pipeline::RetainedRender;
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = false;
+    params.film_render.grain.active = false;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    let film = spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+    let print =
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+    let runtimes = [
+        Runtime::new(film, print, params.clone(), &data).unwrap(),
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap(),
+    ];
+    let image = ImageBuf::from_data(2, 2, vec![from_f64(0.18); 12]);
+    // Source upload is deliberately outside the measured failure operations.
+    let source = gpu
+        .backend()
+        .retain_image(
+            &image,
+            &RetainedImageMeta {
+                width: 2,
+                height: 2,
+                domain: SampleDomain::Encoded,
+                precision: Precision::host(),
+                space: &spektrafilm_math::colorspace::SRGB,
+                pixel_pitch_um: None,
+            },
+        )
+        .unwrap();
+    for runtime in runtimes {
+        let context = ObservationContext::new(CollectionMode::Summary);
+        let observed = spektrafilm_backend::bind_backend(gpu.backend(), context.clone());
+        let errors = [
+            runtime
+                .process(image.clone(), observed.as_ref())
+                .unwrap_err(),
+            runtime
+                .process_retained(&image, observed.as_ref())
+                .unwrap_err(),
+            runtime
+                .process_preview(image.clone(), 1, observed.as_ref())
+                .unwrap_err(),
+            runtime
+                .process_preview_retained(&image, 1, observed.as_ref())
+                .unwrap_err(),
+            runtime
+                .process_device_retained(&source, RetainedRender::FULL, observed.as_ref())
+                .unwrap_err(),
+            runtime
+                .process_with_taps(
+                    image.clone(),
+                    observed.as_ref(),
+                    Some(spektrafilm_core::params::Tap::RgbIn),
+                    Some(spektrafilm_core::params::Tap::RgbPre),
+                )
+                .unwrap_err(),
+        ];
+        for error in errors {
+            assert!(
+                error.contains("device-prepared spectral calibration"),
+                "{error}"
+            );
+            assert!(error.contains("Runtime::new_with_backend"), "{error}");
+        }
+        let totals = context.snapshot().totals;
+        assert_eq!(
+            totals.upload_count.unwrap_or(0),
+            0,
+            "CPU-prepared calibration was uploaded"
+        );
+        assert_eq!(
+            totals.dispatch_count.unwrap_or(0),
+            0,
+            "failure must precede numerical work"
+        );
+        assert_eq!(totals.readback_count.unwrap_or(0), 0);
+    }
+}
+
+#[test]
+fn device_prepared_runtime_rejects_another_device_before_upload() {
+    use spektrafilm_backend::telemetry::ObservationContext;
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = false;
+    params.film_render.grain.active = false;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    let runtime = {
+        let first = spektrafilm_gpu::test_support::explicit_adapter();
+        Runtime::new_with_backend(
+            spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
+            spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),
+            params,
+            &data,
+            first.backend(),
+        )
+        .unwrap()
+    };
+    let selected = spektrafilm_gpu::test_support::explicit_adapter();
+    let context = ObservationContext::new(CollectionMode::Summary);
+    let observed = spektrafilm_backend::bind_backend(selected.backend(), context.clone());
+    let image = ImageBuf::from_data(2, 2, vec![from_f64(0.18); 12]);
+    let error = runtime
+        .process_retained(&image, observed.as_ref())
+        .unwrap_err();
+    assert!(error.contains("belongs to another device"), "{error}");
+    assert!(error.contains("with_params_with_backend"), "{error}");
+    let totals = context.snapshot().totals;
+    assert_eq!(totals.upload_count.unwrap_or(0), 0);
+    assert_eq!(totals.dispatch_count.unwrap_or(0), 0);
+    // The consuming migration invalidates device-specific preparation rather
+    // than reusing the first device's table or uploading a host equivalent.
+    let params = runtime.params().clone();
+    let migrated = runtime
+        .with_params_with_backend(params, selected.backend())
+        .unwrap();
+    assert!(
+        migrated
+            .process_retained(&image, selected.backend())
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn standard_gpu_setup_report_persists_valid_hierarchy_and_actual_dispatches() {
+    use spektrafilm_backend::telemetry::{BackendSelected, Executor};
+    use spektrafilm_core::telemetry::{BackendRequested, Report};
+
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.scanner.scan_output = "negative_to_positive".into();
+    params.scanner.conversion_style = "standard".into();
+    params.scanner.operator.exposure_ev = 0.35;
+    params.scanner.operator.warmth_ev = -0.2;
+    params.scanner.operator.tint_ev = 0.1;
+    params.scanner.operator.contrast = 1.15;
+    params.io.output_color_space = "Display P3".into();
+    params.io.output_gamut_compress.algorithm = "off".into();
+    params.camera.auto_exposure = false;
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = true;
+    let runtime = Runtime::new_with_backend(
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap(),
+        spektrafilm_core::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap(),
+        params,
+        &data,
+        gpu.backend(),
+    )
+    .unwrap();
+    let (width, height) = (7, 6);
+    let image = ImageBuf::from_data(
+        width,
+        height,
+        (0..width * height * 3)
+            .map(|i| from_f64(0.03 + 0.8 * ((i * 37) % 101) as f64 / 100.0))
+            .collect(),
+    );
+    let unobserved = runtime.process(image.clone(), gpu.backend()).unwrap();
+
+    for mode in [CollectionMode::Summary, CollectionMode::GpuTiming] {
+        // Match the real diagnostics consumer hierarchy, not a standalone root
+        // context: operation -> attempt -> simulation -> stage -> batch -> pass.
+        let mut operation = Operation::new(OperationKind::Process, mode);
+        operation.set_backend_requested(BackendRequested::Wgpu);
+        operation.set_render_configuration(runtime.telemetry_configuration());
+        operation.set_input_dimensions(width, height);
+        let attempt = operation.attempt(1);
+        let simulation =
+            attempt
+                .context()
+                .scope("simulation", ObservationKind::Phase, Purpose::Image);
+        let actual = runtime
+            .process_observed(image.clone(), gpu.backend(), simulation.context())
+            .unwrap();
+        drop(simulation);
+        attempt.finish(Outcome::Succeeded);
+        let report = operation.finish(Outcome::Succeeded).unwrap();
+        report.validate().unwrap();
+        // Persistence validates the same tree again. This caught setup stages
+        // incorrectly parented beneath the outer film-chain Batch after pixels
+        // had already rendered successfully.
+        let decoded = Report::from_json(&report.to_json().unwrap()).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(
+            actual.data, unobserved.data,
+            "collection changed rendered pixels"
+        );
+        assert_eq!(
+            decoded.execution.backend_selected,
+            Some(BackendSelected::Wgpu)
+        );
+        assert_eq!(decoded.execution.path, Some(ExecutionPath::GpuResident));
+        let setup: Vec<_> = decoded
+            .stages
+            .iter()
+            .filter(|stage| stage.name == "standard_setup")
+            .collect();
+        assert_eq!(setup.len(), 1, "one complete-frame setup must be retained");
+        assert_eq!(setup[0].executor, Some(Executor::Gpu));
+        assert!(setup[0].complete);
+        assert!(
+            setup[0].work.dispatch_count.unwrap_or(0) > 0,
+            "setup must own real device dispatches"
+        );
+        assert!(setup[0].work.submit_count.unwrap_or(0) > 0);
+        assert_eq!(
+            setup[0].work.readback_count.unwrap_or(0),
+            0,
+            "setup statistics must stay on device"
+        );
+        let batch = decoded
+            .gpu_batches
+            .iter()
+            .find(|batch| batch.parent_id == setup[0].id)
+            .expect("actual setup dispatches have their own child batch");
+        assert!(batch.work.executed_pass_count.unwrap_or(0) > 0);
+        assert!(
+            !decoded
+                .stages
+                .iter()
+                .any(|stage| stage.purpose == Purpose::Image
+                    && matches!(stage.executor, Some(Executor::Cpu | Executor::Mixed))),
+            "selected standard scan must not perform CPU image arithmetic"
+        );
+    }
 }

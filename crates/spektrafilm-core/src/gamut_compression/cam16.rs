@@ -39,8 +39,8 @@ const UCS_C2: f64 = 0.0228;
 
 #[derive(Clone, Copy)]
 pub(super) struct Cam16Viewing {
-    d_rgb: [f64; 3],
-    a_w: f64,
+    pub(super) d_rgb: [f64; 3],
+    pub(super) a_w: f64,
 }
 
 impl Cam16Viewing {

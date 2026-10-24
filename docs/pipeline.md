@@ -44,6 +44,18 @@ Dedicated research workflows own those buffers through the core observer under t
 [instrument native-observation contract](../specs/instrument/native-observations.md),
 not the `.sfstage` contract.
 
+### Selected-GPU preparation
+
+Library callers must select the backend before spectral preparation: use `Runtime::new_with_backend` or `Pipeline::new_with_spectral_backend`. `Runtime::new`, `Runtime::from_stocks`, and `Pipeline::new_with_spectral` prepare the CPU reference. To move an existing instance to WGPU, call `with_params_with_backend` with the selected backend before rendering. Immutable processing entry points reject a CPU-prepared TC table or a table owned by another device, before uploading the source; they never upload host-generated TC values as a compatibility path. Changing devices requires rebuilding preparation on the new device through the same backend-aware API. CPU processing retains its reference preparation and algorithms.
+
+### Bounded GPU optical operations
+
+Highlight boost, halation, viewing glare, and unsharp masking partition individual device operations when an image exceeds the storage-buffer binding limit. They do not process independent image tiles: highlight boost first finds one maximum across the full source, glare retains each original pixel's noise index, and the reference Gaussian carries its full-image boundary conditions through every partition. Halation preserves per-channel widths and the scatter/source-response/bounce/renormalization order; unsharp combines only after the full-source blur completes.
+
+These optical stages keep full-source rasters physically paged on the GPU, so neither storage bindings nor copy transports require one allocation as large as the image. In addition to the caller's image, halation retains three RGB rasters (blur destination, accumulator, and a shared filter intermediate), plus one when source compression is active. Glare retains one RGB noise field, plus a blur destination and filter intermediate when blurred. Unsharp retains a blur destination and filter intermediate. Each raster's pages and the separate working buffers obey the effective storage limit; repeated halation blurs share the intermediate raster. `SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES` can lower that limit to exercise real device-copy partitions without changing the source extent. A limit too small for the operation's minimum working binding returns a named error rather than selecting CPU image processing.
+
+The selected GPU chain submits optical pointwise work in bounded chunks and checks cancellation before encoding and submitting each chunk. Gaussian stages use the same cancellation-aware paged submission path. Partitioning changes scheduling and storage ownership, not the optical source extent or global statistics.
+
 ## Spectral methods and illuminants
 
 The experimental spectral registry ships these methods:

@@ -410,6 +410,47 @@ fn diffusion_filter_psf(
     })
 }
 
+/// The resolved convolution for a diffusion filter: per-channel PSF taps,
+/// the kernel half-width, and the deflected-photon fraction.
+///
+/// This is the exact discrete kernel `apply_diffusion_filter_um` convolved,
+/// exposed so a device port evaluates the same taps rather than
+/// re-deriving (and possibly drifting from) the reference coefficients.
+/// `Err` for an unknown family or an effective no-op filter; the caller
+/// treats an effective no-op as "keep the input unchanged".
+pub fn resolve_psf(
+    df: &DiffusionFilter,
+    pixel_size_um: f64,
+    image_width: usize,
+    image_height: usize,
+) -> Result<([Vec<f64>; 3], usize, f64), String> {
+    if df.strength <= 0.0 || df.spatial_scale <= 0.0 {
+        return Err("diffusion filter is an effective no-op".to_owned());
+    }
+    validate_family(df.family)?;
+    let base = family_shape(df.family).expect("validated family");
+    let p_s = strength_to_scatter(df.strength, base.total_gain);
+    if p_s <= 0.0 {
+        return Err("diffusion filter is an effective no-op".to_owned());
+    }
+    let cfg = resolve_family_cfg(base, df);
+
+    // Kernel radius: 8·λ_max captures 99.95% of a 2D exponential's energy.
+    let bloom_max_px = bloom_max_lambda_um(&cfg) * df.spatial_scale / pixel_size_um;
+    let mut radius = (8.0 * bloom_max_px).max(5.0).ceil() as usize;
+    let cap = (image_height.min(image_width) / 2).saturating_sub(1).max(1);
+    radius = radius.min(cap);
+
+    let psf = diffusion_filter_psf(
+        2 * radius + 1,
+        &cfg,
+        df.spatial_scale,
+        pixel_size_um,
+        df.halo_warmth,
+    );
+    Ok((psf, radius, p_s))
+}
+
 /// Apply a lens diffusion-filter PSF to an RGB image. Port of Python's
 /// `apply_diffusion_filter_um`. Returns the input unchanged when the filter
 /// is effectively a no-op (strength/spatial_scale ≤ 0 or p_s ≤ 0); an
@@ -424,26 +465,22 @@ pub fn apply_diffusion_filter_um(
     if df.strength <= 0.0 || df.spatial_scale <= 0.0 {
         return Ok(image.clone());
     }
-    validate_family(df.family)?;
-    // `validate_family` only passes for the four known family keys.
-    let base = family_shape(df.family).expect("validated family");
-    let p_s = strength_to_scatter(df.strength, base.total_gain);
-    if p_s <= 0.0 {
-        return Ok(image.clone());
-    }
-    let cfg = resolve_family_cfg(base, df);
-
     let w = image.width as usize;
     let h = image.height as usize;
 
-    // Kernel radius: 8·λ_max captures 99.95% of a 2D exponential's energy.
-    let bloom_max_px = bloom_max_lambda_um(&cfg) * df.spatial_scale / pixel_size_um;
-    let mut radius = (8.0 * bloom_max_px).max(5.0).ceil() as usize;
-    let cap = (h.min(w) / 2).saturating_sub(1).max(1);
-    radius = radius.min(cap);
+    // One authoritative kernel resolution: the device port evaluates these
+    // same taps, so the two cannot drift. An effective no-op (an unknown
+    // family is an error; a zero deflected fraction is a pass-through)
+    // keeps the reference's no-op behavior.
+    let (psf, radius, p_s) = match resolve_psf(df, pixel_size_um, w, h) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            validate_family(df.family)?;
+            debug_assert!(!error.contains("family"), "unknown family must error");
+            return Ok(image.clone());
+        }
+    };
     let k = 2 * radius + 1;
-
-    let psf = diffusion_filter_psf(k, &cfg, df.spatial_scale, pixel_size_um, df.halo_warmth);
 
     let mut out = ImageBuf::new(image.width, image.height);
     for (c, channel_psf) in psf.iter().enumerate() {

@@ -144,6 +144,8 @@ fn main() -> Result<(), String> {
                 }
                 let pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), p, &dir)?;
                 let reference = pipeline.process_with_taps(input.clone(), &cpu, None, None)?;
+                let params = pipeline.params.clone();
+                let pipeline = pipeline.with_params_with_backend(params, &gpu)?;
                 // Split immediately before scanning to force stage dispatch while
                 // preserving full-input metering and physical pitch upstream.
                 let scan_input = if pipeline.params.io.scan_film {
@@ -217,14 +219,17 @@ fn main() -> Result<(), String> {
         let mut p = base.clone();
         p.film_render.grain.active = true;
         p.film_render.grain.sublayers_active = layered;
-        let pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), p, &dir)?;
+        let reference_pipeline =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), p.clone(), &dir)?;
+        let pipeline =
+            Pipeline::new_with_spectral_backend(film.clone(), print.clone(), p, &dir, &gpu)?;
         // Spektra grain distribution runs as the assembled density fence, so
         // the route stays resident instead of falling back to the CPU
         // sampler route.
         let resident = pipeline
             .process_resident_borrowed(&input, &gpu)?
             .ok_or("grain: expected the resident density fence")?;
-        let reference = pipeline.process_with_taps(input.clone(), &cpu, None, None)?;
+        let reference = reference_pipeline.process_with_taps(input.clone(), &cpu, None, None)?;
         let routed = pipeline.process(input.clone(), &gpu)?;
         let (max, mean) = difference(&reference, &routed)?;
         let (resident_max, resident_mean) = difference(&reference, &resident)?;

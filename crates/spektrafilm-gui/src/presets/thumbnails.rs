@@ -190,7 +190,8 @@ mod tests {
             .unwrap();
             let output = runtime.process(input.clone(), &CpuBackend).unwrap();
             let params = runtime.params();
-            let raster = crate::display::input_display_raster(
+            let raster = crate::display::input_display_raster_with(
+                &CpuBackend,
                 &output,
                 &params.io.output_color_space,
                 params.io.output_cctf_encoding,

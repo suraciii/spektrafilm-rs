@@ -1,8 +1,13 @@
 //! Fotufilm Film: a fitted crystal population and periodic light-integrating grain bank.
 //! Port of Fotufilm revision 59d43471 (Apache-2.0). Stock data is supplied by callers;
 //! this module does not borrow upstream stock identities or modify the developed tone.
+mod device;
 mod population;
 mod tiles;
+pub use device::{
+    BANK_LEVELS, BLOCK, CLOUD_TERMS, DeviceRecord, DeviceSublayer, FORMING_TAPS, SAMPLE_EDGE,
+    SHARING_LAGS, THRESHOLD_COUNT, TILE_EDGE, formation_seed,
+};
 pub use population::{Bin, RecordDiagnostics, Sublayer};
 use spektrafilm_math::image::ImageBuf;
 use std::sync::Arc;

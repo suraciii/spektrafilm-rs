@@ -28,7 +28,25 @@ fn print_spectral_via_lut(
     data_min: [f64; 3],
     data_max: [f64; 3],
     steps: usize,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
+    let device_params = spektrafilm_backend::EnlargerSpectralLutGpuParams {
+        channel_density,
+        base_density,
+        illuminant: print_illuminant,
+        sensitivity: print_sensitivity,
+        normalization: exposure_factor,
+        preflash,
+        minimum: data_min,
+        maximum: data_max,
+        size: steps as u32,
+    };
+    match backend.enlarger_spectral_lut(cmy_film, &device_params)? {
+        Some(image) => return Ok(image),
+        None if backend.is_gpu() => {
+            return Err("enlarger_spectral_lut: selected GPU has no device implementation".into());
+        }
+        None => {}
+    }
     let grid = build_lut_grid(steps, data_min, data_max);
     let calibration = backend
         .observation_context()
@@ -52,7 +70,7 @@ fn print_spectral_via_lut(
         print_sensitivity,
         exposure_factor,
         preflash,
-    );
+    )?;
     // Convert Scalar storage to f64 — no-op cast in precision-f64 mode,
     // a widening in f32 mode. The PCHIP slopes are computed in f64
     // regardless to match Python's f64 LUT type.
@@ -60,12 +78,40 @@ fn print_spectral_via_lut(
     let prepared = prepare_pchip_3d(lut_f64, steps);
     drop(calibrated_backend);
     drop(calibration);
-    let _interpolation = super::StageObservation::cpu(
-        backend,
-        "enlarger_lut_interpolate",
-        spektrafilm_backend::telemetry::CpuReason::SpectralLut,
-    );
-    apply_pchip_lut(cmy_film, &prepared, data_min, data_max)
+    // The device evaluates the same prepared lattice with the same
+    // normalization; a backend without it keeps the host interpolation.
+    let lut_params = spektrafilm_backend::EnlargerLutGpuParams {
+        lut: &prepared.lut,
+        slope_x: &prepared.slope_x,
+        slope_y: &prepared.slope_y,
+        slope_z: &prepared.slope_z,
+        cell_min: &prepared.cell_min,
+        cell_max: &prepared.cell_max,
+        size: prepared.size as u32,
+        data_min,
+        data_scale: [
+            (steps - 1) as f64 / (data_max[0] - data_min[0]),
+            (steps - 1) as f64 / (data_max[1] - data_min[1]),
+            (steps - 1) as f64 / (data_max[2] - data_min[2]),
+        ],
+    };
+    match backend.enlarger_lut_interp(cmy_film, &lut_params)? {
+        Some(interpolated) => {
+            let _device = super::StageObservation::new(backend, "enlarger_lut_interpolate");
+            Ok(interpolated)
+        }
+        None if backend.is_gpu() => {
+            Err("enlarger_lut_interp: selected GPU has no device implementation".into())
+        }
+        None => {
+            let _interpolation = super::StageObservation::cpu(
+                backend,
+                "enlarger_lut_interpolate",
+                spektrafilm_backend::telemetry::CpuReason::SpectralLut,
+            );
+            Ok(apply_pchip_lut(cmy_film, &prepared, data_min, data_max))
+        }
+    }
 }
 
 /// Apply a prepared PCHIP LUT to every pixel. Mirrors Python's
@@ -103,7 +149,7 @@ fn apply_pchip_lut(
 /// Bounds for the enlarger LUT: `data_min = -grain.density_min` and
 /// `data_max = nanmax(film.density_curves, axis=0)` per channel.
 /// Mirrors Python `PrintingStage.expose`.
-fn enlarger_lut_bounds(film: &Profile, params: &RuntimeParams) -> ([f64; 3], [f64; 3]) {
+pub(crate) fn enlarger_lut_bounds(film: &Profile, params: &RuntimeParams) -> ([f64; 3], [f64; 3]) {
     let gmin = params.film_render.grain.density_min;
     let data_min = [-gmin[0], -gmin[1], -gmin[2]];
     let mut data_max = [f64::NEG_INFINITY; 3];
@@ -152,7 +198,7 @@ pub fn expose_calibrated(
     exposure_factor: f64,
     preflash: [f64; 3],
     pixel_size_um: f64,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let channel_density = crate::chain_prep::channel_density(film);
     let base_density = &film.data.base_density;
     let print_sensitivity = print.sensitivity_f64();
@@ -179,7 +225,7 @@ pub fn expose_calibrated(
             data_min,
             data_max,
             params.settings.lut_resolution as usize,
-        )
+        )?
     } else {
         backend.print_spectral(
             cmy_film,
@@ -189,7 +235,7 @@ pub fn expose_calibrated(
             &print_sensitivity,
             exposure_factor,
             preflash,
-        )
+        )?
     };
 
     // Stage 2: 10^log_raw_print, scale by print_exposure, then
@@ -211,11 +257,6 @@ pub fn expose_calibrated(
     // otherwise the 10^x → ×exposure → log10 collapse into one pass.
     let edf = &params.enlarger.diffusion_filter;
     if edf.active {
-        let _diffusion = super::StageObservation::cpu(
-            backend,
-            "optical_diffusion",
-            spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion,
-        );
         let mut lin = log_raw_print;
         lin.data.par_chunks_mut(BLOCK).for_each(|chunk| {
             let mut tmp: Vec<f64> = chunk.iter().map(|&v| v as f64).collect();
@@ -227,26 +268,47 @@ pub fn expose_calibrated(
         // Python uses the ResizingService pitch (from the full input),
         // not one re-derived from the current buffer dimensions.
         let dm = edf.to_model();
-        // An invalid family is rejected by `RuntimeParams::validate` /
-        // `Pipeline::new_with_spectral` before any stage runs; reaching
-        // this point with an unknown family is a programming error.
-        lin = if backend.is_gpu() {
-            spektrafilm_model::diffusion::apply_diffusion_filter_blur(
-                &lin,
-                &dm,
-                pixel_size_um,
-                backend,
-            )
-            .expect("enlarger diffusion filter family validated at pipeline entry")
-        } else {
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&lin, &dm, pixel_size_um)
-                .expect("enlarger diffusion filter family validated at pipeline entry")
+        // A device convolution evaluates the same discrete PSF; the host
+        // resolves the taps from the filter family so both routes use one
+        // authoritative kernel. The family is validated at pipeline entry,
+        // so a zero scatter fraction (an effective no-op) is the only
+        // resolution failure left, and that is a pass-through on both routes.
+        let resolved = spektrafilm_model::diffusion::resolve_psf(
+            &dm,
+            pixel_size_um,
+            lin.width as usize,
+            lin.height as usize,
+        )
+        .ok();
+        lin = match resolved {
+            Some((psf, radius, scatter_fraction)) => {
+                let params = spektrafilm_backend::OpticalDiffusionGpuParams {
+                    psf: &psf,
+                    radius: radius as u32,
+                    scatter_fraction,
+                };
+                match backend.optical_diffusion(&lin, &params) {
+                    Ok(Some(diffused)) => {
+                        let _device = super::StageObservation::new(backend, "optical_diffusion");
+                        diffused
+                    }
+                    Ok(None) if backend.is_gpu() => {
+                        return Err(
+                            "optical_diffusion: selected GPU has no enlarger diffusion operation"
+                                .into(),
+                        );
+                    }
+                    Ok(None) => super::filming::host_diffusion(&lin, &dm, pixel_size_um, backend),
+                    Err(error) => return Err(error),
+                }
+            }
+            None => lin,
         };
         lin.data.par_iter_mut().for_each(|v| {
             let x = *v as f64;
             *v = spektrafilm_math::precision::from_f64((x.max(0.0) + 1e-10).log10());
         });
-        return lin;
+        return Ok(lin);
     }
 
     log_raw_print.data.par_chunks_mut(BLOCK).for_each(|chunk| {
@@ -257,7 +319,7 @@ pub fn expose_calibrated(
             *out = spektrafilm_math::precision::from_f64((v.max(0.0) + 1e-10).log10());
         }
     });
-    log_raw_print
+    Ok(log_raw_print)
 }
 
 /// Formed-cell response retains both historical exposure floors and preflash.
@@ -289,7 +351,7 @@ pub fn expose_linear_calibrated(
         exposure_factor,
         preflash,
         1.0,
-    );
+    )?;
     linear.data.par_iter_mut().for_each(|value| {
         *value = from_f64(10.0_f64.powf(spektrafilm_math::precision::to_f64(*value)));
     });
@@ -303,12 +365,12 @@ pub fn develop(
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
     let curves = crate::chain_prep::PrintCurves::prepare(print, params)?;
-    Ok(backend.density_curve_interp(
+    backend.density_curve_interp(
         log_raw_print,
         curves.log_exposure,
         &curves.density,
         curves.gamma,
-    ))
+    )
 }
 /// Full printing stage (simplified — computes illuminant internally).
 pub fn process(
@@ -357,7 +419,7 @@ pub fn process(
         normalization_factor,
         // The simplified path predates calibration and has no preflash plumbing.
         [0.0; 3],
-    );
+    )?;
     develop(&log_raw, print, params, backend)
 }
 

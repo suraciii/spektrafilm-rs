@@ -37,7 +37,7 @@ pub(crate) struct PhotoContext {
     pub(crate) source_digest: String,
     pub(crate) raw_draft: serde_json::Value,
     pub(crate) numeric_drafts: crate::numeric::NumericDrafts,
-    pub(crate) image: Arc<ImageBuf>,
+    pub(crate) image: crate::render::InputImage,
     pub(crate) metadata: Option<ImageMetadata>,
     pub(crate) lens_info: Option<String>,
     pub(crate) lens_model_identity: Option<String>,
@@ -144,26 +144,41 @@ impl App {
                 tint: raw["tint"].as_f64(),
                 lens_correction: raw["lens_correction"].as_bool().unwrap_or(false),
             };
-            let loaded = spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
-            (
-                loaded.image,
-                image_io::read_metadata(path),
-                Some(loaded.lens_info),
-                loaded.lens_model_identity,
-            )
+            if self.backend.is_gpu() {
+                let loaded = spektrafilm_raw::load_retained_with_backend(
+                    path,
+                    &options,
+                    self.backend.as_ref(),
+                )
+                .map_err(anyhow::Error::msg)?;
+                (
+                    crate::render::InputImage::Device(loaded.image),
+                    image_io::read_metadata(path),
+                    Some(loaded.lens_info),
+                    loaded.lens_model_identity,
+                )
+            } else {
+                let loaded = spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
+                (
+                    crate::render::InputImage::Host(Arc::new(loaded.image)),
+                    image_io::read_metadata(path),
+                    Some(loaded.lens_info),
+                    loaded.lens_model_identity,
+                )
+            }
         } else {
             let loaded = image_io::load(path)?;
-            (loaded.image, loaded.metadata, None, None)
+            (
+                crate::render::InputImage::Host(Arc::new(loaded.image)),
+                loaded.metadata,
+                None,
+                None,
+            )
         };
         anyhow::ensure!(
             source_digest == Self::accepted_source_digest(path)?,
             Message::new("photo.error.source_changed")
         );
-        let image = if settings.rotation.rem_euclid(4) == 0 {
-            image
-        } else {
-            image.rotated_quarter_turns(settings.rotation.rem_euclid(4))
-        };
         let history =
             crate::app::history::AdjustmentHistory::from_photograph(&settings, &film, &print);
         let baseline = Some(settings.clone());
@@ -171,7 +186,7 @@ impl App {
         Ok(PhotoContext {
             settings,
             path: path.to_path_buf(),
-            image: Arc::new(image),
+            image,
             metadata,
             lens_info,
             lens_model_identity,
@@ -305,6 +320,9 @@ impl App {
         self.render_worker.invalidate_runtime_cache();
         self.render_job = None;
         self.output_image = None;
+        self.output_retained = None;
+        self.output_histogram = None;
+        self.viewer.set_retained_output(None);
         self.output_metadata = None;
         self.source_render = None;
         self.retained_kind = None;

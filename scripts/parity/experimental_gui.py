@@ -107,6 +107,22 @@ class ExperimentalDesktop(X11):
                    (max(0, image.width - 520), 150, image.width, image.height, 6),
                    (0, 0, int(image.width * .65), image.height - 70, 6),
                    (int(image.width * .18), 150, int(image.width * .82), image.height - 70, 6)]
+        regions.append((max(0, image.width // 2 - 340), max(0, image.height // 2 - 70),
+                        min(image.width, image.width // 2 + 340),
+                        min(image.height, image.height // 2 + 70), 6))
+        regions.append((260, 96, max(261, image.width - 320), 130, 7))
+        # The amber Export button has a different contrast from adjacent
+        # header text. A whole-row OCR pass drops its label; overlapping local
+        # observations retain the actual rendered button and its coordinates.
+        regions.extend((left, 0, min(image.width, left + 240), 26, 7)
+                       for left in range(0, image.width, 160))
+        regions.extend((left, 0, min(image.width, left + 80), 26, 13)
+                       for left in range(0, min(image.width, 800), 60))
+        if self.settings_open:
+            # egui places Settings beside the preset panel, not necessarily at
+            # the screen center. Observe the whole modal separately from the
+            # photograph, whose pixels can otherwise disrupt block segmentation.
+            regions.append((260, 90, min(image.width, 840), min(image.height, 800), 6))
         for left, top, right, bottom, segmentation in regions:
             crop = ImageOps.grayscale(image.crop((left, top, right, bottom)))
             if ImageStat.Stat(crop).median[0] < 128:
@@ -121,6 +137,31 @@ class ExperimentalDesktop(X11):
                     grouped.setdefault(key, []).append((text, left + data['left'][index] / 3,
                         top + data['top'][index] / 3, data['width'][index] / 3, data['height'][index] / 3))
             lines.extend(grouped.values())
+            if self.settings_open:
+                if segmentation != 13:
+                    for row in grouped.values():
+                        if not any(word[0].lower().startswith('requested') for word in row):
+                            continue
+                        row_left = max(0, int(min(word[1] for word in row) - 3))
+                        row_top = max(0, int(min(word[2] for word in row) - 3))
+                        region = (row_left, row_top, min(image.width, row_left + 500),
+                                  min(image.height, int(max(word[2] + word[4] for word in row) + 4)), 13)
+                        if region not in regions:
+                            regions.append(region)
+                # The state toolbar follows the observed GUI parameters
+                # heading. Read it as one row; block OCR drops highlighted Save.
+                for row in grouped.values():
+                    labels = [word for word in row if words(word[0]) in (['gui'], ['parameters'])]
+                    if {tuple(words(word[0])) for word in labels} != {('gui',), ('parameters',)}:
+                        continue
+                    if min(word[1] for word in labels) >= image.width - 520:
+                        continue
+                    left = max(0, int(min(word[1] for word in labels) - 12))
+                    top = int(max(word[2] + word[4] for word in labels) + 4)
+                    region = (left, top, min(image.width, left + 560),
+                              min(image.height, top + 30), 7)
+                    if region not in regions:
+                        regions.append(region)
         return image, bbox, lines
 
     def locate(self, label, *, exact=False, bottom=False, right=False, header=False):
@@ -167,8 +208,46 @@ class ExperimentalDesktop(X11):
 
     def close_settings(self):
         if self.settings_open:
-            self.click('Close settings')
+            # Escape is the production Settings close action and restores its
+            # caller's focus. Observe closure instead of updating a shadow flag.
+            self.xd('key', 'Escape')
+            wait_for(lambda: self.locate('Close settings') is None,
+                     'Settings dialog closed', 20)
             self.settings_open = False
+
+    def toggle(self, label):
+        """Toggle the observed on/off editor, not its separate row label."""
+        self.xd('mousemove', '--window', self.window, 700, 100)
+        image, _, lines = self.read()
+        wanted = ''.join(words(label))
+        spans = []
+        for line in lines:
+            for start in range(len(line)):
+                for end in range(start + 1, len(line) + 1):
+                    span = line[start:end]
+                    if (span[0][1] >= image.width - 350
+                            and ''.join(words(' '.join(word[0] for word in span))) == wanted):
+                        spans.append(span)
+        require(spans, f'Boolean control label is not visible: {label}')
+        from PIL import ImageOps
+        for span in spans:
+            right = int(max(word[1] + word[3] for word in span))
+            y = sum(word[2] + word[4] / 2 for word in span) / len(span)
+            # Adjacent flat on/off button has 12px padding after its label;
+            # exclude its border and locator focus ring before recognizing it.
+            left, top = right + 11, int(y - 8)
+            crop = ImageOps.invert(ImageOps.grayscale(
+                image.crop((left, top, min(image.width, left + 40), int(y + 9)))))
+            data = self.ocr.image_to_data(crop.resize((crop.width * 8, crop.height * 8)),
+                                          config='--psm 7', output_type=self.ocr.Output.DICT)
+            values = [(text, left + data['left'][i] / 8, top + data['top'][i] / 8,
+                       data['width'][i] / 8, data['height'][i] / 8)
+                      for i, text in enumerate(data['text']) if words(text) in (['on'], ['off'])]
+            if values:
+                value = values[0]
+                self.point_click((value[1] + value[3] / 2, value[2] + value[4] / 2))
+                return
+        raise RuntimeError(f'Boolean on/off editor is not visible: {label}')
 
     def search(self, query):
         self.close_settings()
@@ -200,21 +279,62 @@ class ExperimentalDesktop(X11):
         self.close_settings()
         self.click('Open', header=True)
         self.dialog(path)
+        self.discard_photograph_changes()
         # Clear the pointer/hover tooltip from the source and header labels.
         self.xd('mousemove', '--window', self.window, 700, 100)
         return self.wait_text(r'Source:\s*' + re.escape(path.name), label)
+
+    def discard_photograph_changes(self):
+        # Complete-state transitions protect accepted photograph adjustments.
+        # Isolated scenarios explicitly discard through the actual modal.
+        try:
+            confirmation = self.locate('Save this photograph’s adjustments')
+        except RuntimeError:
+            if self.proc.poll() is None:
+                raise
+            return
+        if confirmation:
+            self.snap('unsaved-photograph-confirmation')
+            self.click('Discard changes')
+            self.records.append({'photograph_transition': 'discard_changes',
+                                 'confirmation_observed': True})
 
     def state_action(self, label, path, save=False):
         self.reveal('action.save_state' if save else 'action.load_state',
                     'Settings', 'GUI parameters')
         self.click(label)
+        if not save:
+            self.drain_reports()
         self.dialog(path, save)
+        if not save:
+            self.discard_photograph_changes()
         result = None
         if save:
             wait_for(path.is_file, 'native saved state', 20)
             result = json.loads(path.read_text())
         else:
-            self.wait_text(r'Loaded GUI state', 'state-loaded-' + path.stem)
+            # apply_state always requests one preview, even with auto-preview
+            # disabled. Its completion replaces the transient Loaded GUI state
+            # status before desktop OCR can capture it. Require that new report
+            # when an image is loaded; a pre-existing report cannot satisfy it.
+            has_source = bool(self.locate('Source:', header=True))
+            expected = json.loads(path.read_text())
+            if has_source and self.locate('No image loaded', header=True) is None:
+                report = self.wait_report('state-loaded-' + path.stem, 'Preview')
+                route = dict(zip(ROUTES, ('input', 'film_scan', 'film_print_scan',
+                             'convert_film_print_scan', 'convert_film_scan_minus_base',
+                             'convert_film_scan')))[expected['simulation']['route']]
+                require(report['configuration']['render']['workflow_route'] == route,
+                        'State-load preview did not use the selected workflow route')
+                rendered = report['configuration']['render']
+                for state_key, report_key in (('scan_output', 'scan_output'),
+                                              ('conversion_style', 'conversion_style'),
+                                              ('operator', 'scan_operator')):
+                    require(parameters_equal(expected['scanner'][state_key], rendered[report_key]),
+                            f'State-load preview did not use loaded scanner {state_key}')
+                self.snap('state-loaded-' + path.stem)
+            else:
+                self.wait_text(r'Loaded GUI state', 'state-loaded-' + path.stem)
         self.close_settings()
         return result
 
@@ -242,8 +362,10 @@ class ExperimentalDesktop(X11):
         rows = []
         expected = ''.join(words(label))
         for line in lines:
-            if (not line or words(line[0][0]) == ['locate']
-                    or any(words(word[0]) == ['reset'] for word in line)):
+            line_tokens = words(' '.join(word[0] for word in line))
+            if (not line or line_tokens[:1] == ['locate']
+                    or 'reset' in line_tokens or 'factory' in line_tokens
+                    or any(token.startswith('reset') for token in line_tokens)):
                 continue
             for start in range(len(line)):
                 text = ''
@@ -318,7 +440,7 @@ class ExperimentalDesktop(X11):
                 # Popup rows need their own text block: the retained viewer
                 # image and adjacent inspector headings otherwise merge them.
                 from PIL import ImageOps, ImageStat
-                left = max(0, int(min(x, min(word[1] for word in candidates))) - 12)
+                left = max(0, int(min(word[1] for word in candidates)))
                 top = max(0, int(y + 9))
                 crop = ImageOps.grayscale(frame.crop((left, top, frame.width,
                                                        min(frame.height, top + 430))))
@@ -338,7 +460,8 @@ class ExperimentalDesktop(X11):
                 if options:
                     line = options[0]
                     self.snap('choice-' + '-'.join(words(option)), frame, rows)
-                    self.point_click((line[0][1] + 8, line[0][2] + line[0][4] / 2))
+                    self.point_click(((min(word[1] for word in line) + max(word[1] + word[3] for word in line)) / 2,
+                                      (min(word[2] for word in line) + max(word[2] + word[4] for word in line)) / 2))
                     return
                 self.xd('mousemove', '--window', self.window,
                         int(selected[1] + selected[3] / 2), int(y + 70))
@@ -362,22 +485,455 @@ class ExperimentalDesktop(X11):
         require(self.locate('Save current to file'), 'Settings state controls missing')
         self.close_settings()
 
-    def export_options(self, path, float_export=False):
+    def export_options(self, path, float_export=False, saving_color_space=None,
+                       saving_cctf_encoding=None):
+        def modal_lines(image, box, scale=3, psm=6):
+            from PIL import ImageOps
+            crop = image.crop(box)
+            grouped = {}
+            # Keep each contrast pass's lines independent: their word boxes
+            # are alternative observations, not parts of one physical row.
+            for pass_index, prepare in enumerate((ImageOps.equalize, ImageOps.autocontrast)):
+                prepared = prepare(ImageOps.invert(ImageOps.grayscale(crop)))
+                data = self.ocr.image_to_data(prepared.resize((crop.width * scale, crop.height * scale)),
+                                              config=f'--psm {psm}', output_type=self.ocr.Output.DICT,
+                                              timeout=15)
+                for i, text in enumerate(data['text']):
+                    if text.strip():
+                        if text.casefold() == 'bitdepth':
+                            text = 'Bit depth'
+                        key = (pass_index, data['block_num'][i], data['par_num'][i],
+                               data['line_num'][i])
+                        grouped.setdefault(key, []).append((text, box[0] + data['left'][i] / scale,
+                            box[1] + data['top'][i] / scale, data['width'][i] / scale,
+                            data['height'][i] / scale))
+            return list(grouped.values())
+
+        def matched_span(line, label):
+            wanted = ''.join(re.findall(r'[a-z0-9]+', label.lower()))
+            for start in range(len(line)):
+                if not re.search(r'[a-z0-9]', line[start][0].lower()):
+                    continue
+                text = ''
+                for end in range(start, len(line)):
+                    text += ''.join(re.findall(r'[a-z0-9]+', line[end][0].lower()))
+                    if text == wanted:
+                        return line[start:end + 1]
+                    if len(text) >= len(wanted):
+                        break
+            return None
+
+        def center(span):
+            return ((min(word[1] for word in span) + max(word[1] + word[3] for word in span)) / 2,
+                    (min(word[2] for word in span) + max(word[2] + word[4] for word in span)) / 2)
+
+        def flat_bounds(image, span, button=False):
+            """Follow rendered fills; row OCR may include the button border."""
+            pixels = np.asarray(image)[:, :, :3].astype(np.int16)
+            if button:
+                cx, cy = center(span)
+                text_height = max(word[4] for word in span)
+                text_width = max(word[1] + word[3] for word in span) - min(word[1] for word in span)
+                candidates = []
+                tx = int(cx)
+                for ty in range(max(0, int(cy - text_height)),
+                                min(image.height, int(cy + text_height) + 1)):
+                    background = pixels[ty, tx]
+                    strip = np.max(np.abs(pixels[ty] - background), axis=1) <= 3
+                    left, right = tx, tx + 1
+                    while left > 0 and strip[left - 1]:
+                        left -= 1
+                    while right < image.width and strip[right]:
+                        right += 1
+                    if (right - left < text_width * .8
+                            or left > min(word[1] for word in span) + text_height * .25
+                            or right < max(word[1] + word[3] for word in span) - text_height * .25):
+                        continue
+                    edge_x = max(left, right - 3)
+                    top, bottom = ty, ty + 1
+                    while top > 0 and np.max(np.abs(pixels[top - 1, edge_x] - background)) <= 3:
+                        top -= 1
+                    while bottom < image.height and np.max(
+                            np.abs(pixels[bottom, edge_x] - background)) <= 3:
+                        bottom += 1
+                    if left <= cx < right and top <= cy < bottom and bottom - top >= text_height * .6:
+                        candidates.append((left, top, right, bottom))
+                return min(candidates, key=lambda box: (box[2] - box[0]) * (box[3] - box[1])) if candidates else None
+            tx = int(center(span)[0])
+            ty = max(0, int(min(word[2] for word in span)) - 2)
+            background = pixels[ty, tx]
+            strip = np.max(np.abs(pixels[ty] - background), axis=1) <= 3
+            left, right = tx, tx + 1
+            while left > 0 and strip[left - 1]:
+                left -= 1
+            while right < image.width and strip[right]:
+                right += 1
+            top = ty
+            while top > 0 and np.max(np.abs(pixels[top - 1, tx] - background)) <= 3:
+                top -= 1
+            # The inner right edge avoids the label and the combo arrow.
+            edge_x = max(left, right - 3)
+            bottom = ty + 1
+            while bottom < image.height and np.max(
+                    np.abs(pixels[bottom, edge_x] - background)) <= 3:
+                bottom += 1
+            if all(left <= word[1] and word[1] + word[3] <= right
+                   and top <= word[2] and word[2] + word[4] <= bottom for word in span):
+                return left, top, right, bottom
+            return None
+
+        title_band = None
+        title_point = None
+
+        def modal_read():
+            nonlocal title_band, title_point
+            image, _ = self.image()
+            whole = (0, 0, image.width, image.height)
+            discovery = modal_lines(image, title_band or whole, 2, 11)
+            titles = [span for line in discovery
+                      if (span := matched_span(line, 'Export options'))]
+            if not titles and title_band is not None:
+                discovery = modal_lines(image, whole, 2, 11)
+                titles = [span for line in discovery
+                          if (span := matched_span(line, 'Export options'))]
+            if not titles:
+                return None
+            pixels = np.asarray(image)[:, :, :3].astype(np.int16)
+            for title in sorted(titles, key=lambda span: span[0][2]):
+                header = flat_bounds(image, title)
+                if header is None:
+                    continue
+                left, top, right, header_bottom = header
+                edge_x = max(left, right - 4)
+                body_top = int(max(word[2] + word[4] for word in title)) + 1
+                background = pixels[max(0, int(min(word[2] for word in title)) - 2),
+                                    int(center(title)[0])]
+                while body_top < image.height and not np.all(
+                        pixels[body_top, edge_x] < background - 3):
+                    body_top += 1
+                if body_top == image.height:
+                    continue
+                body = pixels[body_top, edge_x]
+                bottom = body_top + 1
+                while bottom < image.height and np.max(
+                        np.abs(pixels[bottom, edge_x] - body)) <= 3:
+                    bottom += 1
+                if bottom <= body_top + 1:
+                    continue
+                box = (left, top, right, min(image.height, bottom + header_bottom - top))
+                lines = modal_lines(image, box)
+                cancels = [span for line in lines
+                           if (span := matched_span(line, 'Cancel'))
+                           and span[0][2] > header_bottom]
+                if not cancels:
+                    continue
+                # Only the title search is cached. Format/color changes may
+                # change both dialog dimensions; always remeasure the body.
+                title_band = (0, top, image.width, header_bottom)
+                # Park in the observed blank header gap, never on title text:
+                # the captured pointer can turn "options" into "pptions".
+                title_point = ((left + min(word[1] for word in title)) / 2,
+                               (top + header_bottom) / 2)
+                return image, box, lines
+            return None
+
+        def park():
+            self.xd('mousemove', '--window', self.window, *map(int, title_point))
+            time.sleep(.15)
+
+        def click(point):
+            self.xd('mousemove', '--window', self.window, *map(int, point))
+            self.xd('click', 1)
+            park()
+
+        wait_for(modal_read, 'visible export modal controls', 20)
+        park()
         formats = {'.jpg': 'JPEG', '.jpeg': 'JPEG', '.png': 'PNG',
                    '.tif': 'TIFF', '.tiff': 'TIFF', '.exr': 'EXR'}
-        requested = formats.get(path.suffix.lower())
+        requested = formats.get(Path(path).suffix.lower())
         require(requested, f'Unsupported acceptance export extension: {path}')
-        self.xd('mousemove', '--window', self.window, 700, 100)
-        time.sleep(.4)
-        self.snap('export-dialog-controls')
-        wait_for(lambda: self.locate('Backend'), 'Export dialog', 20)
-        image, _, lines = self.read()
-        cpu = next((word[0] for line in lines for word in line if word[0].startswith('CPU')), None)
-        require(cpu, 'Export did not open with a visible CPU backend')
-        self.choose('Format', requested)
-        if requested in ('TIFF', 'EXR'):
-            self.choose('Bit depth', '32 bit' if float_export else '16 bit')
-        self.click('Export file')
+        # Keep these orders aligned with ExportDialog::show in export.rs.
+        # CPU precision is build-dependent; only one CPU entry is rendered.
+        spaces = (('sRGB', 'ACES2065-1') if requested == 'EXR' else
+                  ('sRGB', 'DCI-P3', 'Display P3', 'Adobe RGB (1998)',
+                   'ITU-R BT.2020', 'ProPhoto RGB', 'ACES2065-1',
+                   'DaVinci Wide Gamut', 'V-Gamut'))
+        depths = (('16 bit', '32 bit') if requested == 'EXR' else
+                  ('8 bit', '16 bit', '32 bit') if requested == 'TIFF' else ('8 bit',))
+        choices = {
+            'Backend': ('CPU (f32)', 'CPU (f64)', 'GPU (WGPU f32)'),
+            'Format': ('JPEG', 'PNG', 'TIFF', 'EXR'),
+            'Bit depth': depths,
+            'Saving color space': spaces,
+        }
+        if saving_color_space is not None:
+            require(saving_color_space in spaces,
+                    f'{requested} does not offer saving color space {saving_color_space}')
+
+        def control(result, label):
+            image, box, lines = result
+            rows = []
+            anchors = [span for line in lines if (span := matched_span(line, label))]
+            for span in anchors:
+                label_left = min(word[1] for word in span)
+                label_right = max(word[1] + word[3] for word in span)
+                padding = max(word[4] for word in span) / 2
+                # A closed combo is a single row. Read only its value side so
+                # OCR cannot split it from the label or borrow summary prose.
+                value_box = (int(box[0] if label == 'Saving color space' else label_right + 1),
+                             max(box[1], int(min(word[2] for word in span) - padding)),
+                             int(label_left if label == 'Saving color space' else box[2]),
+                             min(box[3], int(max(word[2] + word[4] for word in span) + padding)))
+                if value_box[0] >= value_box[2] or value_box[1] >= value_box[3]:
+                    continue
+                # Border-inclusive OCR can mistake TIFF for TRF. Find the
+                # closed button's contrasting flat fill within this row,
+                # then read its interior instead of guessing text aliases.
+                pixels = np.asarray(image)[:, :, :3].astype(np.int16)
+                cy = center(span)[1]
+                text_height = max(word[4] for word in span)
+                buttons = set()
+                for y in range(value_box[1], min(value_box[3], int(min(word[2] for word in span)) + 1)):
+                    row = pixels[y]
+                    edges = np.nonzero(np.max(np.abs(row[1:] - row[:-1]), axis=1) > 3)[0] + 1
+                    for left, right in zip(edges[:-1], edges[1:]):
+                        if (left < value_box[0] or right > value_box[2]
+                                or right - left < text_height * 2
+                                or np.max(np.abs(row[left] - row[int(box[2]) - 4])) <= 8):
+                            continue
+                        background = row[left]
+                        edge_x = max(left, right - 3)
+                        top, bottom = y, y + 1
+                        while top > value_box[1] and np.max(np.abs(pixels[top - 1, edge_x] - background)) <= 3:
+                            top -= 1
+                        while bottom < value_box[3] and np.max(np.abs(pixels[bottom, edge_x] - background)) <= 3:
+                            bottom += 1
+                        if top <= cy < bottom and bottom - top >= text_height:
+                            buttons.add((int(left), int(top), int(right), int(bottom)))
+                if buttons:
+                    value_box = min(buttons, key=lambda bounds: (bounds[0], -(bounds[2] - bounds[0])))
+                value_lines = modal_lines(image, value_box, 4, 7)
+                for line in value_lines:
+                    for choice in choices[label]:
+                        aliases = (choice, 'GPU (WGPU 32)') if choice == 'GPU (WGPU f32)' else (choice,)
+                        selected = next((found for alias in aliases
+                                         if (found := matched_span(line, alias))), None)
+                        if selected:
+                            rows.append((choice, selected))
+                # Preserve the fresh row observations in the same-frame record.
+                lines.extend(value_lines)
+            if rows and len({choice for choice, _ in rows}) == 1:
+                return rows[0]
+            return None
+
+        def selected(label, expected=None):
+            result = modal_read()
+            if result is not None:
+                value = control(result, label)
+                if value is not None and (expected is None or value[0] == expected):
+                    return result, value
+            return None
+
+        popup_evidence = {}
+
+        def popup_read(before, button, options, target):
+            image, _ = self.image()
+            if image.size != before.size:
+                return None
+            # The pointer is parked on the same title in both frames. Opening
+            # a combo changes its button and its popup, not the modal layout.
+            # Exclude the button row and find the adjacent changed rectangle.
+            # This includes the popup's border/shadow even where its fill and
+            # the underlying dialog have the same color.
+            changed = np.max(np.abs(np.asarray(image).astype(np.int16)
+                                    - np.asarray(before).astype(np.int16)), axis=2) > 8
+            popup_evidence.update(image=image, changed=changed, candidates=[])
+            height = button[3] - button[1]
+            for top, bottom, below in ((button[3], image.height, True), (0, button[1], False)):
+                ys, xs = np.nonzero(changed[top:bottom])
+                if not xs.size:
+                    continue
+                # Color menus expand to fit their labels/help, unlike the
+                # compact format/depth buttons. Keep that observed width;
+                # inset the difference bounds only by the rendered shadow.
+                inset = max(1, height // 4)
+                box = (max(button[0], int(xs.min()) + inset), int(ys.min()) + top,
+                       int(xs.max()) + 1 - inset, int(ys.max()) + top + 1)
+                gap = box[1] - button[3] if below else button[1] - box[3]
+                candidate = {'box': box, 'button': button}
+                popup_evidence['candidates'].append(candidate)
+                if (gap > height or abs(box[0] - button[0]) > height
+                        or box[3] - box[1] > (len(options) + 2) * height * 2):
+                    candidate['rejected_geometry'] = True
+                    continue
+                lines = modal_lines(image, box, 4)
+                candidate['ocr'] = [' '.join(word[0] for word in line) for line in lines]
+                visible = []
+                for line in lines:
+                    # A popup's help paragraph mentions several color spaces.
+                    # Only a complete option row is a selectable observation.
+                    text = ''.join(re.findall(r'[a-z0-9]+', ''.join(w[0] for w in line).lower()))
+                    for index, option in enumerate(options):
+                        if text == ''.join(re.findall(r'[a-z0-9]+', option.lower())):
+                            visible.append((index, center(line)))
+                if visible:
+                    indices = [index for index, _ in visible]
+                    if target in indices or target < min(indices) or target > max(indices):
+                        return image, box, lines, visible
+            return None
+
+        def select(label, option):
+            result, (current, span) = wait_for(lambda: selected(label),
+                                             'recognized export control ' + label, 20)
+            image, _, lines = result
+            self.snap('modal-before-' + label.replace(' ', '-'), image, lines)
+            if current != option:
+                button = flat_bounds(image, span, button=True)
+                require(button is not None, f'Export combo bounds are not visible: {label}')
+                options = choices[label]
+                target = options.index(option)
+                click(center(span))
+                # One wheel event per observed menu frame. The source order
+                # determines direction, including a reused menu scrolled down.
+                for _ in range(2 * len(options) + 2):
+                    try:
+                        frame, _, menu_lines, visible = wait_for(
+                            lambda: popup_read(image, button, options, target),
+                            f'observed {label} popup for {option}', 20)
+                    except RuntimeError:
+                        stem = 'failed-popup-' + label.replace(' ', '-')
+                        image.save(self.root / (stem + '-closed.png'))
+                        if popup_evidence:
+                            popup_evidence['image'].save(self.root / (stem + '-open.png'))
+                            self.Image.fromarray(popup_evidence['changed']).save(
+                                self.root / (stem + '-mask.png'))
+                            self.records.append({'popup_failure': label,
+                                                 'button': button,
+                                                 'candidates': popup_evidence['candidates']})
+                        raise
+                    self.snap('export-popup-' + label.replace(' ', '-'), frame, menu_lines)
+                    targets = [point for index, point in visible if index == target]
+                    if targets:
+                        click(targets[0])
+                        break
+                    upwards = target < min(index for index, _ in visible)
+                    _, point = min(visible) if upwards else max(visible)
+                    self.xd('mousemove', '--window', self.window, *map(int, point))
+                    self.xd('click', 4 if upwards else 5)
+                    # Wheel smoothing is asynchronous. Do not read an
+                    # intermediate scroll position or leave an option hovered.
+                    time.sleep(.3)
+                    park()
+                else:
+                    stem = 'failed-popup-' + label.replace(' ', '-')
+                    image.save(self.root / (stem + '-closed.png'))
+                    popup_evidence['image'].save(self.root / (stem + '-open.png'))
+                    self.Image.fromarray(popup_evidence['changed']).save(self.root / (stem + '-mask.png'))
+                    self.records.append({'popup_failure': label, 'button': button,
+                                         'candidates': popup_evidence['candidates']})
+                    raise RuntimeError(f'Export popup did not reveal {label}: {option}')
+                try:
+                    result, _ = wait_for(lambda: selected(label, option),
+                                         f'closed export control {label} = {option}', 20)
+                except RuntimeError:
+                    stem = 'failed-selection-' + label.replace(' ', '-')
+                    image.save(self.root / (stem + '-before.png'))
+                    frame.save(self.root / (stem + '-open.png'))
+                    closed, _ = self.image()
+                    closed.save(self.root / (stem + '-after.png'))
+                    self.Image.fromarray(popup_evidence['changed']).save(self.root / (stem + '-mask.png'))
+                    raise
+            self.snap('modal-selected-' + label.replace(' ', '-'), result[0], result[2])
+
+        if getattr(self, 'backend_requested', None) == 'wgpu':
+            select('Backend', 'GPU (WGPU f32)')
+        select('Format', requested)
+        depth = ('32 bit' if float_export else '16 bit') if requested in ('TIFF', 'EXR') else '8 bit'
+        select('Bit depth', depth)
+        if saving_color_space is not None:
+            select('Saving color space', saving_color_space)
+
+        def transfer(result):
+            states = set()
+            for line in result[2]:
+                if matched_span(line, 'Summary'):
+                    words = {word.lower() for word in re.findall(
+                        r'[a-zA-Z]+', ' '.join(word[0] for word in line))}
+                    if 'linear' in words:
+                        states.add(False)
+                    if words & {'cctf', 'encoded'}:
+                        states.add(True)
+                # Fixed-transfer formats render a full-size explanatory row;
+                # the smaller summary can lose letters in "linear" to OCR.
+                # Require the actual visible transfer text, not the format alone.
+                if requested == 'EXR' and matched_span(line, 'EXR uses linear color and ZIP compression'):
+                    states.add(False)
+                if requested in ('JPEG', 'PNG') and matched_span(line, 'JPEG and PNG use encoded color'):
+                    states.add(True)
+            return next(iter(states)) if len(states) == 1 else None
+
+        expected_transfer = (False if requested == 'EXR' else
+                             True if requested in ('JPEG', 'PNG') else saving_cctf_encoding)
+        if saving_cctf_encoding is not None:
+            require(requested == 'TIFF', 'Only TIFF exposes a saving transfer toggle')
+            def transfer_control():
+                result = modal_read()
+                if result is not None and transfer(result) is not None:
+                    spans = [span for line in result[2]
+                             if (span := matched_span(line, 'Apply saving CCTF encoding'))]
+                    if spans:
+                        return result, spans[0]
+                return None
+            result, span = wait_for(transfer_control, 'TIFF saving transfer control and summary', 20)
+            if transfer(result) != saving_cctf_encoding:
+                click(center(span))
+
+        def submit():
+            result = modal_read()
+            if result is None:
+                return None
+            image, box, lines = result
+            expected = {'Format': requested, 'Bit depth': depth}
+            backend_value = control(result, 'Backend')
+            if backend_value is None:
+                return None
+            expected['Backend'] = backend_value[0]
+            if getattr(self, 'backend_requested', None) == 'wgpu':
+                expected['Backend'] = 'GPU (WGPU f32)'
+            if saving_color_space is not None:
+                expected['Saving color space'] = saving_color_space
+            for label, option in expected.items():
+                value = control(result, label)
+                if value is None or value[0] != option:
+                    return None
+            if expected_transfer is not None and transfer(result) != expected_transfer:
+                return None
+            cancels = [span for line in lines
+                       if (span := matched_span(line, 'Cancel'))
+                       and span[0][2] > title_band[3]]
+            if not cancels:
+                return None
+            cancel = min(cancels, key=lambda span: span[0][2])
+            cx, cy = center(cancel)
+            button = flat_bounds(image, cancel, button=True)
+            if button is None:
+                return None
+            padding = (button[3] - button[1]) / 2
+            footer_box = (box[0], button[1], box[2], button[3])
+            footer = modal_lines(image, footer_box, 4, 7)
+            for line in lines + footer:
+                span = matched_span(line, 'Export file')
+                if span and center(span)[0] < cx and abs(center(span)[1] - cy) < padding:
+                    self.snap('export-options-confirmed', image, lines + footer)
+                    self.records[-1]['export_controls'] = expected
+                    self.records[-1]['transfer_encoded'] = transfer(result)
+                    self.export_backend_requested = ('wgpu' if expected['Backend'].startswith('GPU') else 'cpu')
+                    return center(span)
+            return None
+        x, y = wait_for(submit, 'verified export controls and Export file button', 20)
+        self.drain_reports()
+        self.xd('mousemove', '--window', self.window, int(x), int(y))
+        self.xd('click', 1)
 
 
 def fixture(path):

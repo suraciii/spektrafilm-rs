@@ -3,6 +3,10 @@
 use spektrafilm_backend::telemetry::{
     IssueBoundary, IssueCategory, ObservationContext, ObservationKind, Purpose,
 };
+use spektrafilm_backend::{
+    ComputeBackend, DeviceImage, OutputSampleData, OutputSampleGpuParams, OutputSampleKind,
+    OutputSampleValues, SampleDomain,
+};
 use spektrafilm_math::{
     image::ImageBuf,
     precision::{from_f64, to_f64},
@@ -32,6 +36,15 @@ pub enum ImageIoError {
     InvalidImage,
     #[error("unknown RGB colour space {0:?}")]
     InvalidColorSpace(String),
+    #[error("Saving conversion failed: {0}")]
+    Convert(String),
+    #[error("Converted samples are {got:?}, but {format} {depth}-bit output requires {expected:?}")]
+    SampleKind {
+        format: &'static str,
+        depth: u8,
+        expected: OutputSampleKind,
+        got: OutputSampleKind,
+    },
     #[error("Image {operation} failed for {path}: {message}")]
     Native {
         operation: &'static str,
@@ -130,6 +143,7 @@ impl BridgeReason {
 }
 
 /// A complete unpublished image. Dropping it removes only its owned temporary file.
+#[derive(Debug)]
 pub struct PreparedImageOutput {
     temporary: tempfile::TempPath,
     destination: PathBuf,
@@ -503,6 +517,23 @@ unsafe extern "C" {
         error: *mut *mut c_char,
     ) -> i32;
     fn sf_image_validate(path: *const c_char, error: *mut *mut c_char) -> i32;
+    fn sf_image_save_samples(
+        path: *const c_char,
+        width: u32,
+        height: u32,
+        samples: *const c_void,
+        sample_kind: i32,
+        depth: i32,
+        format: i32,
+        jpeg_quality: i32,
+        jpeg_subsampling: i32,
+        compression: i32,
+        color_space: *const c_char,
+        export_metadata: bool,
+        icc: *const u8,
+        icc_len: usize,
+        error: *mut *mut c_char,
+    ) -> i32;
     fn sf_metadata_write(
         path: *const c_char,
         source: *const c_void,
@@ -592,7 +623,7 @@ pub fn save(
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
 ) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata, false, None)
+    save_inner(path, image, options, metadata, None)
 }
 
 /// Write pixels with metadata observations attributed to the caller's file-write phase.
@@ -608,36 +639,6 @@ pub fn save_observed(
         image,
         options,
         metadata,
-        false,
-        context.enabled().then_some(context),
-    )
-}
-
-/// Save an existing GUI output with the upstream extension and color semantics.
-/// Unlike the export contract, this preserves the selected transfer encoding for
-/// every format and leaves unspecified JPEG settings and EXR metadata to OIIO.
-pub fn save_rendered_output(
-    path: &Path,
-    image: &ImageBuf,
-    options: SaveOptions<'_>,
-    metadata: Option<&ImageMetadata>,
-) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata, true, None)
-}
-
-pub fn save_rendered_output_observed(
-    path: &Path,
-    image: &ImageBuf,
-    options: SaveOptions<'_>,
-    metadata: Option<&ImageMetadata>,
-    context: &ObservationContext,
-) -> Result<SaveReport, ImageIoError> {
-    save_inner(
-        path,
-        image,
-        options,
-        metadata,
-        true,
         context.enabled().then_some(context),
     )
 }
@@ -651,7 +652,7 @@ pub fn save_jpeg_quality(
     quality: u8,
 ) -> Result<SaveReport, ImageIoError> {
     options.jpeg_quality = Some(quality);
-    save_inner(path, image, options, metadata, false, None)
+    save_inner(path, image, options, metadata, None)
 }
 
 /// Prepare a complete export without publishing it, for cancellation or no-replace adapters.
@@ -677,10 +678,72 @@ fn save_inner(
     image: &ImageBuf,
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
-    rendered_output: bool,
     observation: Option<&ObservationContext>,
 ) -> Result<SaveReport, ImageIoError> {
-    prepare_inner(path, image, options, metadata, rendered_output, observation)?.publish(true)
+    prepare_inner(path, image, options, metadata, false, observation)?.publish(true)
+}
+
+/// Pixel payload one writer transaction packs. The reference payload is the
+/// host-converted floating image whose integer clipping and quantization the
+/// native writer owns; a converted payload already carries those operations
+/// and is only packed into the container.
+enum WriterPixels<'a> {
+    Reference(&'a ImageBuf),
+    Converted(&'a OutputSampleData),
+}
+
+impl WriterPixels<'_> {
+    fn dimensions(&self) -> (u32, u32) {
+        match self {
+            Self::Reference(image) => (image.width, image.height),
+            Self::Converted(samples) => (samples.width, samples.height),
+        }
+    }
+}
+
+/// Sample representation a container/depth pair requires at the writer
+/// boundary. The mapping lives once, so a caller cannot request an integer
+/// container from floating samples or half samples for an 8-bit TIFF.
+pub fn output_sample_kind(
+    format: ImageFormat,
+    depth: BitDepth,
+) -> Result<OutputSampleKind, ImageIoError> {
+    match (format, depth) {
+        (ImageFormat::Jpeg | ImageFormat::Png, _) => Ok(OutputSampleKind::U8),
+        (ImageFormat::Tiff, BitDepth::Eight) => Ok(OutputSampleKind::U8),
+        (ImageFormat::Tiff, BitDepth::Sixteen) => Ok(OutputSampleKind::U16),
+        (ImageFormat::Tiff, BitDepth::ThirtyTwo) => Ok(OutputSampleKind::F32),
+        (ImageFormat::Exr, BitDepth::Sixteen) => Ok(OutputSampleKind::Half),
+        (ImageFormat::Exr, BitDepth::ThirtyTwo) => Ok(OutputSampleKind::F32),
+        (ImageFormat::Exr, BitDepth::Eight) => Err(ImageIoError::ExrDepth(8)),
+    }
+}
+
+fn sample_kind_code(kind: OutputSampleKind) -> i32 {
+    match kind {
+        OutputSampleKind::U8 => 0,
+        OutputSampleKind::U16 => 1,
+        OutputSampleKind::Half => 2,
+        OutputSampleKind::F32 => 3,
+    }
+}
+
+fn sample_values_ptr(values: &OutputSampleValues) -> *const c_void {
+    match values {
+        OutputSampleValues::U8(values) => values.as_ptr().cast(),
+        OutputSampleValues::U16(values) | OutputSampleValues::Half(values) => {
+            values.as_ptr().cast()
+        }
+        OutputSampleValues::F32(values) => values.as_ptr().cast(),
+    }
+}
+
+fn sample_values_len(values: &OutputSampleValues) -> usize {
+    match values {
+        OutputSampleValues::U8(values) => values.len(),
+        OutputSampleValues::U16(values) | OutputSampleValues::Half(values) => values.len(),
+        OutputSampleValues::F32(values) => values.len(),
+    }
 }
 
 fn prepare_inner(
@@ -691,13 +754,68 @@ fn prepare_inner(
     rendered_output: bool,
     observation: Option<&ObservationContext>,
 ) -> Result<PreparedImageOutput, ImageIoError> {
+    prepare_pixels(
+        path,
+        WriterPixels::Reference(image),
+        options,
+        metadata,
+        rendered_output,
+        observation,
+    )
+}
+
+fn prepare_samples_inner(
+    path: &Path,
+    samples: &OutputSampleData,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+    rendered_output: bool,
+    observation: Option<&ObservationContext>,
+) -> Result<PreparedImageOutput, ImageIoError> {
+    prepare_pixels(
+        path,
+        WriterPixels::Converted(samples),
+        options,
+        metadata,
+        rendered_output,
+        observation,
+    )
+}
+
+fn prepare_pixels(
+    path: &Path,
+    pixels: WriterPixels<'_>,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+    rendered_output: bool,
+    observation: Option<&ObservationContext>,
+) -> Result<PreparedImageOutput, ImageIoError> {
     let format = ImageFormat::detect(path)?;
     validate_save_options(format, &options, rendered_output)?;
-    if image.width == 0
-        || image.height == 0
-        || image.data.len() != image.width as usize * image.height as usize * 3
-    {
+    let (width, height) = pixels.dimensions();
+    if width == 0 || height == 0 {
         return Err(ImageIoError::InvalidImage);
+    }
+    let count = width as usize * height as usize * 3;
+    match &pixels {
+        WriterPixels::Reference(image) if image.data.len() != count => {
+            return Err(ImageIoError::InvalidImage);
+        }
+        WriterPixels::Converted(samples) => {
+            let expected = output_sample_kind(format, options.depth)?;
+            if samples.kind != expected {
+                return Err(ImageIoError::SampleKind {
+                    format: format.name(),
+                    depth: options.depth.bits(),
+                    expected,
+                    got: samples.kind,
+                });
+            }
+            if sample_values_len(&samples.values) != count {
+                return Err(ImageIoError::InvalidImage);
+            }
+        }
+        WriterPixels::Reference(_) => {}
     }
     cpath(path)?;
     let parent = path
@@ -723,10 +841,6 @@ fn prepare_inner(
     let name = cpath(&temporary)?;
     let space = CString::new(options.color_space).map_err(|_| ImageIoError::InvalidPath)?;
     let icc = icc_profile(options.color_space, options.cctf_encoding).unwrap_or(&[]);
-    #[cfg(feature = "precision-f64")]
-    let data = image.data.as_slice();
-    #[cfg(not(feature = "precision-f64"))]
-    let data: Vec<f64> = image.data.iter().copied().map(to_f64).collect();
     let mut error = std::ptr::null_mut();
     let jpeg_subsampling = match options.jpeg_subsampling {
         Some(JpegSubsampling::Yuv444) => 444,
@@ -738,25 +852,50 @@ fn prepare_inner(
         Compression::Zip => 1,
         Compression::None => 0,
     };
-    if unsafe {
-        sf_image_save(
-            name.as_ptr(),
-            image.width,
-            image.height,
-            data.as_ptr(),
-            options.depth.bits().into(),
-            format as i32,
-            options.jpeg_quality.map_or(0, i32::from),
-            jpeg_subsampling,
-            compression,
-            space.as_ptr(),
-            !rendered_output,
-            icc.as_ptr(),
-            icc.len(),
-            &mut error,
-        )
-    } == 0
-    {
+    let written = unsafe {
+        match &pixels {
+            WriterPixels::Reference(image) => {
+                #[cfg(feature = "precision-f64")]
+                let data = image.data.as_slice();
+                #[cfg(not(feature = "precision-f64"))]
+                let data: Vec<f64> = image.data.iter().copied().map(to_f64).collect();
+                sf_image_save(
+                    name.as_ptr(),
+                    width,
+                    height,
+                    data.as_ptr(),
+                    options.depth.bits().into(),
+                    format as i32,
+                    options.jpeg_quality.map_or(0, i32::from),
+                    jpeg_subsampling,
+                    compression,
+                    space.as_ptr(),
+                    !rendered_output,
+                    icc.as_ptr(),
+                    icc.len(),
+                    &mut error,
+                )
+            }
+            WriterPixels::Converted(samples) => sf_image_save_samples(
+                name.as_ptr(),
+                width,
+                height,
+                sample_values_ptr(&samples.values),
+                sample_kind_code(samples.kind),
+                options.depth.bits().into(),
+                format as i32,
+                options.jpeg_quality.map_or(0, i32::from),
+                jpeg_subsampling,
+                compression,
+                space.as_ptr(),
+                !rendered_output,
+                icc.as_ptr(),
+                icc.len(),
+                &mut error,
+            ),
+        }
+    };
+    if written == 0 {
         return Err(ImageIoError::Native {
             operation: "save",
             path: path.display().to_string(),
@@ -772,8 +911,8 @@ fn prepare_inner(
             sf_metadata_write(
                 name.as_ptr(),
                 source,
-                image.width,
-                image.height,
+                width,
+                height,
                 space.as_ptr(),
                 options.cctf_encoding,
                 &mut error,
@@ -841,6 +980,237 @@ pub fn convert_image(
     });
     Ok(output)
 }
+
+/// What the writer packs: the host reference conversion (whose integer
+/// clipping and quantization the native writer owns), or samples the device
+/// already converted, clipped, and quantized.
+pub enum SavingPixels {
+    Reference(ImageBuf),
+    Converted(OutputSampleData),
+}
+
+impl SavingPixels {
+    pub fn width(&self) -> u32 {
+        match self {
+            Self::Reference(image) => image.width,
+            Self::Converted(samples) => samples.width,
+        }
+    }
+
+    pub fn height(&self) -> u32 {
+        match self {
+            Self::Reference(image) => image.height,
+            Self::Converted(samples) => samples.height,
+        }
+    }
+
+    /// Stage the pixels beside the destination and return the unpublished
+    /// transaction. Metadata, container attributes, and atomic publication
+    /// stay the writer's single implementation.
+    pub fn prepare_observed(
+        &self,
+        path: &Path,
+        options: SaveOptions<'_>,
+        metadata: Option<&ImageMetadata>,
+        rendered_output: bool,
+        context: &ObservationContext,
+    ) -> Result<PreparedImageOutput, ImageIoError> {
+        let observation = context.enabled().then_some(context);
+        match self {
+            Self::Reference(image) => {
+                prepare_inner(path, image, options, metadata, rendered_output, observation)
+            }
+            Self::Converted(samples) => prepare_samples_inner(
+                path,
+                samples,
+                options,
+                metadata,
+                rendered_output,
+                observation,
+            ),
+        }
+    }
+}
+
+/// One saving request shared by the host and retained conversion routes.
+fn saving_request(
+    source_space: &spektrafilm_math::colorspace::RgbColorSpace,
+    source_encoded: bool,
+    destination_space: &spektrafilm_math::colorspace::RgbColorSpace,
+    destination_encoded: bool,
+    kind: OutputSampleKind,
+) -> OutputSampleGpuParams {
+    use spektrafilm_math::colorspace::conversion_matrix;
+    // Pinned Python skips the transform entirely when the saving space and
+    // encoding already match the output layer (controller.py save guard).
+    // Sample conversion still runs: clipping and quantization are the
+    // writer's, not the colour transform's.
+    let same = source_space.name == destination_space.name && source_encoded == destination_encoded;
+    let matrix = if same {
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    } else {
+        conversion_matrix(source_space, destination_space)
+    };
+    OutputSampleGpuParams {
+        src_cctf: spektrafilm_backend::cctf_kind(source_space.cctf),
+        decode: source_encoded && !same,
+        dst_cctf: spektrafilm_backend::cctf_kind(destination_space.cctf),
+        encode: destination_encoded && !same,
+        matrix: std::array::from_fn(|i| std::array::from_fn(|j| matrix[i][j] as f32)),
+        kind,
+    }
+}
+
+fn checked_samples(
+    samples: OutputSampleData,
+    width: u32,
+    height: u32,
+    kind: OutputSampleKind,
+) -> Result<OutputSampleData, ImageIoError> {
+    let count = width as usize * height as usize * 3;
+    if samples.width != width
+        || samples.height != height
+        || samples.kind != kind
+        || sample_values_len(&samples.values) != count
+    {
+        return Err(ImageIoError::Convert(
+            "saving conversion returned samples that do not match the requested image".into(),
+        ));
+    }
+    Ok(samples)
+}
+
+/// Saving color and sample conversion for host output, executed on the
+/// backend when it provides the device path.
+///
+/// The reference pixels are used only by a backend that reports itself as CPU:
+/// once a GPU operation is selected, a missing device conversion or a device
+/// failure fails the save instead of silently demoting it.
+pub fn convert_samples_with_backend(
+    image: &ImageBuf,
+    source: &str,
+    source_encoded: bool,
+    destination: &str,
+    destination_encoded: bool,
+    kind: OutputSampleKind,
+    backend: &dyn ComputeBackend,
+) -> Result<SavingPixels, ImageIoError> {
+    use spektrafilm_math::colorspace::resolve;
+    let source_space = resolve(source).map_err(ImageIoError::InvalidColorSpace)?;
+    let destination_space = resolve(destination).map_err(ImageIoError::InvalidColorSpace)?;
+    let params = saving_request(
+        source_space,
+        source_encoded,
+        destination_space,
+        destination_encoded,
+        kind,
+    );
+    match backend.convert_image_samples(image, &params) {
+        Ok(Some(samples)) => Ok(SavingPixels::Converted(checked_samples(
+            samples,
+            image.width,
+            image.height,
+            kind,
+        )?)),
+        Ok(None) if backend.is_gpu() => Err(ImageIoError::Convert(
+            "the selected GPU backend has no saving sample conversion".into(),
+        )),
+        Ok(None) => Ok(SavingPixels::Reference(convert_image(
+            image,
+            source,
+            source_encoded,
+            destination,
+            destination_encoded,
+        )?)),
+        Err(error) => Err(ImageIoError::Convert(format!("saving conversion: {error}"))),
+    }
+}
+
+/// Saving color and sample conversion for a retained device output.
+///
+/// A retained carrier is converted in place on the device: the samples are
+/// never downloaded and re-uploaded to cross the saving boundary. A host
+/// carrier keeps the reference conversion above.
+pub fn convert_retained_samples_with_backend(
+    image: &DeviceImage,
+    destination: &str,
+    destination_encoded: bool,
+    kind: OutputSampleKind,
+    backend: &dyn ComputeBackend,
+) -> Result<SavingPixels, ImageIoError> {
+    use spektrafilm_math::colorspace::resolve;
+    let destination_space = resolve(destination).map_err(ImageIoError::InvalidColorSpace)?;
+    let source_space = image.space();
+    let source_encoded = match image.domain() {
+        SampleDomain::Encoded => true,
+        SampleDomain::Linear => false,
+        SampleDomain::Density | SampleDomain::LogExposure => {
+            return Err(ImageIoError::Convert(
+                "retained output is a diagnostic exposure/density domain, not RGB samples".into(),
+            ));
+        }
+    };
+    if !image.is_retained() {
+        let host = image.to_host(backend).map_err(ImageIoError::Convert)?;
+        return convert_samples_with_backend(
+            &host,
+            source_space.name,
+            source_encoded,
+            destination,
+            destination_encoded,
+            kind,
+            backend,
+        );
+    }
+    let params = saving_request(
+        source_space,
+        source_encoded,
+        destination_space,
+        destination_encoded,
+        kind,
+    );
+    match backend.convert_retained_samples(image, &params) {
+        Ok(Some(samples)) => Ok(SavingPixels::Converted(checked_samples(
+            samples,
+            image.width(),
+            image.height(),
+            kind,
+        )?)),
+        Ok(None) if backend.is_gpu() => Err(ImageIoError::Convert(
+            "the selected GPU backend has no saving sample conversion".into(),
+        )),
+        Ok(None) => {
+            let host = image.to_host(backend).map_err(ImageIoError::Convert)?;
+            Ok(SavingPixels::Reference(convert_image(
+                &host,
+                source_space.name,
+                source_encoded,
+                destination,
+                destination_encoded,
+            )?))
+        }
+        Err(error) => Err(ImageIoError::Convert(format!("saving conversion: {error}"))),
+    }
+}
+
+/// Prepare a save from already converted writer samples.
+pub fn prepare_save_samples_observed(
+    path: &Path,
+    samples: &OutputSampleData,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+    context: &ObservationContext,
+) -> Result<PreparedImageOutput, ImageIoError> {
+    prepare_samples_inner(
+        path,
+        samples,
+        options,
+        metadata,
+        false,
+        context.enabled().then_some(context),
+    )
+}
+
 /// The pinned upstream mapping intentionally has no linear P3 profile.
 pub fn icc_profile(space: &str, encoded: bool) -> Option<&'static [u8]> {
     macro_rules! profile {

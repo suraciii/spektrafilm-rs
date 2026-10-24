@@ -25,13 +25,23 @@ use crate::params::RuntimeParams;
 /// The whole chain — preview, Y matrix, meter, `/0.184`, `log2` EV —
 /// stays f64 like Python's float64 pipeline; only GPU boundaries round
 /// to f32.
+///
+/// Reference `small_preview` cap on the preview's long edge, in pixels.
+/// The device meter resolves the same preview geometry, so it reads this
+/// constant rather than re-deriving 256.
+pub const MAX_SIZE: usize = 256;
+
+/// Mean luminance the meter maps to mid-grey. The device meter divides its
+/// reduction result by this and takes `-log2`, exactly like the reference's
+/// final two lines, so the constant lives here rather than in the shader.
+pub const MID_GREY: f64 = 0.184;
+
 pub fn measure_autoexposure_ev(
     image: &ImageBuf,
     rgb_to_xyz: &[[f64; 3]; 3],
     cctf: Option<colorspace::Cctf>,
     method: &str,
 ) -> f64 {
-    const MAX_SIZE: usize = 256;
     let w = image.width as usize;
     let h = image.height as usize;
     let max_dim = w.max(h);
@@ -67,7 +77,7 @@ pub fn measure_autoexposure_ev(
         .collect();
 
     let metered = meter_luminance(&lum, sw, sh, method);
-    let exposure = metered / 0.184;
+    let exposure = metered / MID_GREY;
     // Upstream final lines: `ev = -np.log2(exposure)`; only an infinite
     // EV clamps to 0.0 (with a warning) — a negative exposure yields NaN
     // and propagates, exactly like `np.log2`.
@@ -250,7 +260,7 @@ fn meter_luminance(lum: &[f64], sw: usize, sh: usize, method: &str) -> f64 {
 
         // Python's `else` branch sets `exposure = 1.0` (already post-`/0.184`),
         // i.e. 0 EV. Returning the mid-grey target makes that division cancel.
-        _ => 0.184,
+        _ => MID_GREY,
     }
 }
 

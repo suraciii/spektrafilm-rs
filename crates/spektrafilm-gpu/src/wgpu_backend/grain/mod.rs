@@ -4,6 +4,14 @@ pub mod dye;
 pub mod dye_decisions;
 pub mod dye_layers;
 mod dye_spatial;
+pub(in crate::wgpu_backend) mod fotufilm;
+pub(in crate::wgpu_backend) mod mt19937;
+pub(in crate::wgpu_backend) mod raster;
+pub mod v1;
+pub(in crate::wgpu_backend) use raster::RasterStorage;
+pub(in crate::wgpu_backend) use v1::{
+    GRAIN_V1_STAGE_NAME, SpektraGrainV1State, build_spektra_grain_state,
+};
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -12,6 +20,7 @@ struct ShaderParams {
     controls: [f32; 4],
     geometry: [f32; 4],
     flags: [f32; 4],
+    window: [u32; 4],
 }
 
 fn shader_params(
@@ -42,6 +51,7 @@ fn shader_params(
             params.colored as u32 as f32,
             params.clustered as u32 as f32,
         ],
+        window: [0, width * height, 0, 0],
     }
 }
 
@@ -50,7 +60,7 @@ impl WgpuBackend {
         &self,
         img: &ImageBuf,
         params: &spektrafilm_backend::GrainV2GpuParams,
-    ) -> ImageBuf {
+    ) -> Result<ImageBuf, String> {
         if !self.device.context.enabled() || img.width == 0 || img.height == 0 {
             return self.grain_v2_gpu_inner(img, params);
         }
@@ -62,18 +72,18 @@ impl WgpuBackend {
         &self,
         img: &ImageBuf,
         params: &spektrafilm_backend::GrainV2GpuParams,
-    ) -> ImageBuf {
+    ) -> Result<ImageBuf, String> {
         if img.width == 0 || img.height == 0 {
-            return img.clone();
+            return Ok(img.clone());
         }
         let input = scalars_to_f32(&img.data);
-        let original = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("grain_encoded_input"),
-                contents: bytemuck::cast_slice(input.as_ref()),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+        let original = self.allocate_image_pages(img.width, img.height, "grain_encoded_input")?;
+        for page in &original {
+            let first = page.first_pixel as usize * 3;
+            let end = first + page.n_pixels as usize * 3;
+            self.queue
+                .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&input[first..end]));
+        }
         let state = build_grain_v2_state(
             &self.device,
             params,
@@ -82,202 +92,141 @@ impl WgpuBackend {
             &original,
             None,
             self,
-        );
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("grain_readback"),
-            size: state.n_bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        state.encode_pass(&mut encoder, img.pixel_count() as u32, &readback);
-        self.queue.submit(Some(encoder.finish()));
-        let output = self.read_mapped_f32(&readback, state.n_bytes);
-        ImageBuf::from_data(img.width, img.height, f32_to_scalars(output))
+        )?;
+        let output_pages = self.allocate_image_pages(img.width, img.height, "grain_output")?;
+        state.submit(self, &output_pages)?;
+        let mut output = Vec::with_capacity(input.len());
+        for page in &output_pages {
+            output.extend(
+                self.pipe
+                    .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12),
+            );
+        }
+        Ok(ImageBuf::from_data(
+            img.width,
+            img.height,
+            f32_to_scalars(output),
+        ))
     }
-}
 
-/// Shared standalone/resident preparation, optional Analogue resolution filter,
-/// and Grain Procedural execution. Noise remains a single-pass image-resolution path.
-pub(super) struct GrainV2State {
-    output: wgpu::Buffer,
-    _buffers: Vec<wgpu::Buffer>,
-    filter: CachedPipelineRef,
-    grain: CachedPipelineRef,
-    prepare_group: wgpu::BindGroup,
-    filter_groups: Option<[wgpu::BindGroup; 2]>,
-    grain_group: wgpu::BindGroup,
-    n_bytes: u64,
-}
-
-pub(super) fn build_grain_v2_state(
-    device: &ObservedDevice,
-    params: &spektrafilm_backend::GrainV2GpuParams,
-    width: u32,
-    height: u32,
-    input: &wgpu::Buffer,
-    output_space: Option<&spektrafilm_math::colorspace::RgbColorSpace>,
-    backend: &WgpuBackend,
-) -> GrainV2State {
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct FilterParams {
-        dimensions: [u32; 4],
-        taps: [u32; 4],
-        matrix: [[f32; 4]; 3],
-    }
-    let n_bytes = u64::from(width) * u64::from(height) * 3 * 4;
-    let create = |label| {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
+    /// Run only the destination transfer encode pass over `image`.
+    ///
+    /// The grain path encodes the native destination before composing, so the
+    /// transfer is the one place a signed-headroom mistake poisons the whole
+    /// composition. Exposing the single pass lets a test compare it against
+    /// the reference transfer directly instead of inferring it from a
+    /// stochastic grain result.
+    #[cfg(test)]
+    pub(crate) fn encode_in_space(
+        &self,
+        image: &ImageBuf,
+        cctf: spektrafilm_math::colorspace::Cctf,
+    ) -> ImageBuf {
+        let n_bytes = image.pixel_count() as u64 * 3 * 4;
+        let input = scalars_to_f32(&image.data);
+        let src = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("encode_space_src"),
+                contents: bytemuck::cast_slice(input.as_ref()),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        // The pass writes storage; a separate mappable buffer receives the
+        // copy so the readback uses the shared protocol.
+        let dst = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("encode_space_dst"),
             size: n_bytes,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        })
-    };
-    let prepared = create("grain_prepared_input");
-    let output = create("grain_output");
-    let a = params.amount.clamp(0., 1.);
-    let gsf = (5200. / width as f32).max(3100. / height as f32);
-    let base = (1. + (params.raw_scale - 1.) / 47.)
-        * (1. - params.resolution_factor.clamp(0., 100.) / 100.)
-        / gsf;
-    let resolution_scale = if params.resolution_type == 1 {
-        1.2
-    } else {
-        1.6
-    };
-    let radius = if params.mode != 0 {
-        0.
-    } else {
-        base * resolution_scale * (0.7 * a * a + 0.3 * a + 0.05)
-    };
-    let optical = params.resolution_type == 0;
-    let weights: Vec<[f32; 2]> = if optical {
-        spektrafilm_math::grain::optical_weights(radius)
-            .into_iter()
-            .map(|w| [w, 0.])
-            .collect()
-    } else {
-        spektrafilm_math::grain::fast_blur_weights(radius)
-    };
-    let weights_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grain_resolution_weights"),
-        contents: bytemuck::cast_slice(&weights),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let storage = wgpu::BufferBindingType::Storage { read_only: true };
-    let writable = wgpu::BufferBindingType::Storage { read_only: false };
-    let uniform = wgpu::BufferBindingType::Uniform;
-    let filter = backend.cached_pipeline(
-        include_str!("film_resolution.wgsl"),
-        &[uniform, storage, storage, writable],
-    );
-    let grain = backend.cached_pipeline(
-        include_str!("grain_v2.wgsl"),
-        &[uniform, storage, writable, storage],
-    );
-    let bind = |pipeline: &CachedPipelineRef, buffers: &[&wgpu::Buffer]| {
-        let entries: Vec<_> = buffers
-            .iter()
-            .enumerate()
-            .map(|(i, b)| wgpu::BindGroupEntry {
-                binding: i as u32,
-                resource: b.as_entire_binding(),
-            })
-            .collect();
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("grain_pass"),
-            layout: &pipeline.layout,
-            entries: &entries,
-        })
-    };
-    // `Cctf`'s discriminants are the codes `film_resolution.wgsl` switches
-    // on; `0` stays "already encoded" (the shader's `default` branch).
-    let curve = output_space.map_or(0, |space| space.cctf.code());
-    let matrix = output_space.map_or([[0.; 4]; 3], |space| {
-        space
-            .rgb_to_rgb_identity()
-            .map(|row| [row[0] as f32, row[1] as f32, row[2] as f32, 0.])
-    });
-    let filter_params = |axis| {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain_filter_params"),
-            contents: bytemuck::bytes_of(&FilterParams {
-                dimensions: [width, height, axis, optical as u32],
-                taps: [weights.len() as u32, curve, 0, 0],
-                matrix,
-            }),
-            usage: wgpu::BufferUsages::UNIFORM,
-        })
-    };
-    let prepare_params = filter_params(2);
-    let prepare_group = bind(&filter, &[&prepare_params, input, &weights_buf, &prepared]);
-    let mut buffers = vec![prepare_params, weights_buf];
-    let filtered = (radius > 0.).then(|| create("grain_filtered_input"));
-    let filter_groups = filtered.as_ref().map(|filtered| {
-        let horizontal = filter_params(0);
-        let vertical = filter_params(1);
-        let h = bind(&filter, &[&horizontal, &prepared, &buffers[1], &output]);
-        let v = bind(&filter, &[&vertical, &output, &buffers[1], filtered]);
-        buffers.extend([horizontal, vertical]);
-        [h, v]
-    });
-    let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grain_params"),
-        contents: bytemuck::bytes_of(&shader_params(width, height, params)),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let grain_group = bind(
-        &grain,
-        &[
-            &params_buf,
-            &prepared,
-            &output,
-            filtered.as_ref().unwrap_or(&prepared),
-        ],
-    );
-    buffers.extend([params_buf, prepared]);
-    buffers.extend(filtered);
-    GrainV2State {
-        output,
-        _buffers: buffers,
-        filter,
-        grain,
-        prepare_group,
-        filter_groups,
-        grain_group,
-        n_bytes,
+        });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("encode_space_readback"),
+            size: n_bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct EncodeParams {
+            dimensions: [u32; 4],
+            taps: [u32; 4],
+            matrix: [[f32; 4]; 3],
+            window: [u32; 4],
+        }
+        let params = EncodeParams {
+            dimensions: [image.width, image.height, 2, 0],
+            taps: [0, cctf.code(), 0, 0],
+            matrix: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            window: [0, image.width * image.height, 0, 0],
+        };
+        let params_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("encode_space_params"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let weights = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("encode_space_weights"),
+                contents: bytemuck::cast_slice(&[0.0f32, 0.0f32]),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let pipe = self.cached_pipeline(
+            include_str!("film_resolution.wgsl"),
+            &[
+                wgpu::BufferBindingType::Uniform,
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: true },
+                wgpu::BufferBindingType::Storage { read_only: false },
+            ],
+        );
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bg_encode_space"),
+            layout: &pipe.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: src.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: weights.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: dst.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("encode_space"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipe.pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            dispatch_linear(&mut pass, image.pixel_count() as u32);
+        }
+        encoder.copy_buffer_to_buffer(&dst, 0, &readback, 0, n_bytes);
+        self.queue.submit(Some(encoder.finish()));
+        let output = self.read_mapped_f32(&readback, n_bytes);
+        ImageBuf::from_data(image.width, image.height, f32_to_scalars(output))
     }
 }
 
-impl GrainV2State {
-    pub(super) fn encode_pass(
-        &self,
-        encoder: &mut ObservedEncoder,
-        n_pixels: u32,
-        output: &wgpu::Buffer,
-    ) {
-        let run = |encoder: &mut ObservedEncoder,
-                   pipeline: &CachedPipelineRef,
-                   group: &wgpu::BindGroup| {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("grain_pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&pipeline.pipeline);
-            pass.set_bind_group(0, group, &[]);
-            dispatch_linear(&mut pass, n_pixels);
-        };
-        run(encoder, &self.filter, &self.prepare_group);
-        if let Some([horizontal, vertical]) = &self.filter_groups {
-            run(encoder, &self.filter, horizontal);
-            run(encoder, &self.filter, vertical);
-        }
-        run(encoder, &self.grain, &self.grain_group);
-        encoder.copy_buffer_to_buffer(&self.output, 0, output, 0, self.n_bytes);
-    }
-}
+mod procedural;
+pub(super) use procedural::{GrainV2State, build_grain_v2_state};
 
 #[cfg(test)]
 mod tests {
@@ -307,6 +256,47 @@ mod tests {
                 SHADER.contains(&label),
                 "film_resolution.wgsl is missing `{label}` for {cctf:?}"
             );
+        }
+    }
+
+    /// The pure-power destination transfers must preserve signed headroom,
+    /// exactly like `spektrafilm_math::colorspace::cctf_encode` (which uses
+    /// `spow`). Returning NaN for a negative sample poisons the whole grain
+    /// composition for an Adobe RGB or DCI-P3 output, so this is pinned by
+    /// running the real kernel over signed samples rather than by matching
+    /// shader text.
+    #[test]
+    fn pure_power_destination_transfers_preserve_signed_headroom() {
+        use spektrafilm_math::colorspace::{Cctf, cctf_encode};
+        use spektrafilm_math::precision::{from_f64, to_f64};
+        let backend = crate::test_support::adapter();
+        let samples = [-1.5f64, -0.25, -1e-6, 0.0, 1e-6, 0.25, 0.5, 1.5];
+        for cctf in [Cctf::AdobeRgb1998, Cctf::Gamma2_6] {
+            let image = spektrafilm_math::image::ImageBuf::from_data(
+                1,
+                samples.len() as u32,
+                samples
+                    .iter()
+                    .flat_map(|&v| [from_f64(v), from_f64(v), from_f64(v)])
+                    .collect(),
+            );
+            let encoded = backend.encode_in_space(&image, cctf);
+            for (i, &v) in samples.iter().enumerate() {
+                let got = to_f64(encoded.data[i * 3]);
+                assert!(
+                    got.is_finite(),
+                    "{cctf:?} at {v}: the device transfer returned {got}"
+                );
+                // The pass rounds its encoded result to half precision before
+                // composing (`half_round`), exactly like the reference working
+                // domain, so the budget is that rounding and not f32.
+                let reference = cctf_encode(v, cctf);
+                let tolerance = reference.abs().max(1.0) * 1e-3;
+                assert!(
+                    (got - reference).abs() <= tolerance,
+                    "{cctf:?} at {v}: device {got} != reference {reference}"
+                );
+            }
         }
     }
 }

@@ -35,7 +35,11 @@ fn key(seed: u32, stream: u32, x: usize, y: usize) -> u32 {
 fn uniform(k: u32, i: u32) -> f32 {
     ((pcg(k ^ i.wrapping_mul(GOLDEN)) >> 8) as f32 + 0.5) * (1.0 / 16777216.0)
 }
-fn thresholds(mean: f64) -> [f32; 48] {
+/// The Poisson count thresholds of a coating cell, in the source's f32 law.
+///
+/// `light` draws one uniform per cell and counts the thresholds below it, so
+/// the device receives the same 48 values the host counts against.
+pub(super) fn thresholds(mean: f64) -> [f32; 48] {
     let mut term = (-mean).exp();
     let mut sum = term;
     std::array::from_fn(|k| {
@@ -45,6 +49,36 @@ fn thresholds(mean: f64) -> [f32; 48] {
         }
         sum.min(1.0) as f32
     })
+}
+/// The pinned formation seed, as `light` derives it.
+pub(super) fn formation_seed() -> u32 {
+    pcg(SEED as u32) ^ (SEED >> 32) as u32
+}
+/// The 17 covariance-window sharing weights of the sigma48 measurement.
+///
+/// The table is computed once on first use and read unchanged afterwards, so
+/// the device and the host anchor measurement share one law.
+pub(super) fn sharing_table() -> [f64; 17] {
+    static TABLE: LazyLock<[f64; 17]> = LazyLock::new(|| {
+        std::array::from_fn(|lag| {
+            let mut total = 0.0;
+            for i in 0..2048 {
+                let c = (i as f64 + 0.5) / 16.0;
+                let d = c + lag as f64;
+                let (mut s, mut a, mut b) = (0.0, 0.0, 0.0);
+                for block in -1..=3 {
+                    let wc = weight(c, block);
+                    let wd = weight(d, block);
+                    s += wc * wd;
+                    a += wc * wc;
+                    b += wd * wd;
+                }
+                total += s / (a * b).sqrt();
+            }
+            total / 2048.0
+        })
+    });
+    *TABLE
 }
 fn wrap(i: isize, n: usize) -> usize {
     i.rem_euclid(n as isize) as usize
@@ -375,26 +409,7 @@ fn weight(c: f64, b: i64) -> f64 {
     ((c - start + 16.0) / 32.0).clamp(0.0, 1.0) * ((start + 144.0 - c) / 32.0).clamp(0.0, 1.0)
 }
 fn sharing(lag: usize) -> f64 {
-    static TABLE: LazyLock<[f64; 17]> = LazyLock::new(|| {
-        std::array::from_fn(|lag| {
-            let mut total = 0.0;
-            for i in 0..2048 {
-                let c = (i as f64 + 0.5) / 16.0;
-                let d = c + lag as f64;
-                let (mut s, mut a, mut b) = (0.0, 0.0, 0.0);
-                for block in -1..=3 {
-                    let wc = weight(c, block);
-                    let wd = weight(d, block);
-                    s += wc * wd;
-                    a += wc * wc;
-                    b += wd * wd;
-                }
-                total += s / (a * b).sqrt();
-            }
-            total / 2048.0
-        })
-    });
-    TABLE[lag]
+    sharing_table()[lag]
 }
 // The source stores ln(10) rounded to ten digits (`FilmGrain.swift:715`);
 // keeping the same digits preserves the ported arithmetic.

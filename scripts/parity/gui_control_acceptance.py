@@ -85,6 +85,92 @@ def enter_number(driver, label, value):
     driver.snap('entered-' + label.replace(' ', '-') + '-' + str(value))
 
 
+
+def scanner_readout(driver, root):
+    """Observe current fixed-readout polarity, operator and optics through UI."""
+    from gui_acceptance import read_image
+    import numpy as np
+
+    baseline_path = root / 'scanner-baseline.json'
+    baseline = driver.state_action('Save current to file', baseline_path, save=True)
+    probe = json.loads(json.dumps(baseline))
+    probe['simulation'].update(route='input > film > scan', auto_preview=False)
+    probe['grain']['active'] = False
+    probe['scanner'].update(scan_output='direct_scan', conversion_style='standard',
+                            lens_blur=0, unsharp_mask=[0, 0],
+                            operator=dict(exposure_ev=0, warmth_ev=0, tint_ev=0, contrast=1))
+    probe_path = root / 'scanner-probe.json'
+    probe_path.write_text(json.dumps(probe))
+    driver.state_action('Load from file', probe_path)
+    reports = []
+
+    def scan_save(name):
+        driver.close_settings()
+        driver.click('SCAN', bottom=True)
+        reports.append(driver.wait_report(name, 'Scan'))
+        path = root / (name + '.exr')
+        driver.click('SAVE', bottom=True)
+        driver.dialog(path, save=True)
+        driver.wait_report(name + '-saved', 'Save')
+        wait_for(path.is_file, name + ' image', 30)
+        pixels = read_image(path)
+        require(pixels.shape == (96, 192, 3) and np.isfinite(pixels).all(),
+                f'Scanner Scan/Save lost full finite source dimensions: {pixels.shape}')
+        return pixels
+
+    direct = scan_save('scanner-preserve-polarity')
+    driver.reveal('scanner.scan_output', 'Scan', 'Scanner')
+    driver.choose('scan output', 'Negative to positive')
+    positive = scan_save('scanner-standard-positive')
+    require(not np.array_equal(direct, positive),
+            'Changing scan polarity did not change full-resolution pixels')
+    driver.reveal('scanner.operator.exposure_ev', 'Scan', 'Scanner')
+    enter_number(driver, 'Finished exposure', '.75')
+    corrected = scan_save('scanner-operator-corrected')
+    require(not np.array_equal(positive, corrected),
+            'Finished-positive operator correction did not change Scan pixels')
+    driver.reveal('scanner.lens_blur', 'Scan', 'Scanner')
+    enter_number(driver, 'Lens blur (readout optics)', '2')
+    blurred = scan_save('scanner-readout-optics')
+    require(not np.array_equal(corrected, blurred),
+            'Readout optics edit did not change full-resolution Scan pixels')
+    edited_path = root / 'scanner-edited.json'
+    edited = driver.state_action('Save current to file', edited_path, save=True)
+    require('lamp' not in edited['scanner'], 'Retired scanner lamp leaked into saved state')
+    require(edited['scanner']['conversion_style'] == 'standard',
+            'Current standard conversion was not retained')
+    require(edited['scanner']['scan_output'] == 'negative_to_positive',
+            'Scanner polarity selection was not accepted')
+    require(math.isclose(edited['scanner']['operator']['exposure_ev'], .75, abs_tol=1e-6),
+            'Finished exposure editor did not accept .75 EV')
+    require(math.isclose(edited['scanner']['lens_blur'], 2, abs_tol=1e-6),
+            'Readout optics editor did not accept sigma 2')
+    driver.reveal('action.operator_restore_automatic', 'Scan', 'Scanner')
+    driver.click('Restore automatic', right=True)
+    automatic = saved(driver, root, 'scanner-automatic-restored')
+    require(automatic['scanner']['operator'] == probe['scanner']['operator'],
+            'Restore automatic did not reset only the operator values')
+    require(automatic['scanner']['lens_blur'] == edited['scanner']['lens_blur'],
+            'Restore automatic changed readout optics')
+    driver.state_action('Load from file', edited_path)
+    restored = saved(driver, root, 'scanner-restored')
+    require(restored['scanner'] == edited['scanner'], 'Scanner state did not round-trip')
+    restored_pixels = scan_save('scanner-restored-optics')
+    require(np.array_equal(restored_pixels, blurred),
+            'Loading scanner state did not restore full-resolution pixels')
+    driver.records.append({
+        'scenario': 'scanner_readout',
+        'assertion': 'fixed-readout polarity, operator and optics change Scan pixels; state restores pixels',
+        'scanner_controls': edited['scanner'], 'reports': reports,
+        'retired_controls_absent': ['scanner.lamp'],
+        'polarity_max_abs_change': float(np.max(np.abs(direct - positive))),
+        'operator_max_abs_change': float(np.max(np.abs(positive - corrected))),
+        'optics_max_abs_change': float(np.max(np.abs(corrected - blurred))),
+        'restored_pixels_equal': True,
+    })
+    driver.state_action('Load from file', baseline_path)
+
+
 def require_tooltip_text(text, expected):
     require(' '.join(expected.casefold().split()) in ' '.join(text.casefold().split()),
             f'Native tooltip missing: {expected}')
@@ -196,11 +282,14 @@ def export_image(driver, path):
     driver.click('Export', header=True)
     driver.export_options(path)
     driver.dialog(path, save=True)
-    driver.exported(path, 'cpu-export-completed')
-    report = driver.wait_report('independent-cpu-export-report', 'Export')
-    state = saved(driver, driver.root, 'cpu-export-state')
-    require(state['rust']['export_backend'] == 'cpu', 'Independent export did not use CPU selection')
-    driver.records.append({'independent_cpu_export_operation': report['operation']})
+    driver.exported(path, 'independent-export-completed')
+    report = driver.last_export_report
+    state = saved(driver, driver.root, 'independent-export-state')
+    expected = 'gpu' if driver.export_backend_requested == 'wgpu' else 'cpu'
+    require(state['rust']['export_backend'] == expected,
+            f'Independent export did not retain its selected backend: {expected}')
+    driver.records.append({'independent_export_operation': report['operation'],
+                           'export_backend': expected})
 
 
 def profile_roundtrip(driver, root):
@@ -219,12 +308,20 @@ def cancel_export(driver, source, destination):
     # committed draft unchanged, so setup cannot outlive a short export.
     driver.click('Export file')
     driver.dialog(destination, save=True)
-    wait_for(lambda: driver.locate('Cancel export', header=True), 'header Cancel export action', 15)
-    driver.require_export_in_flight('Cancel export')
-    driver.click('Cancel export', header=True)
+    def cancel_point():
+        image, _, lines = driver.read()
+        rows = [line for line in lines if line and line[0][2] <= 65]
+        points = driver.match(rows, 'Cancel export')
+        if points:
+            driver.require_export_in_flight('Cancel export', (image, lines))
+            return points[0]
+    point = wait_for(cancel_point, 'in-flight header Cancel export action', 15)
+    driver.point_click(point)
     driver.wait_text(r'Cancelling export|Export cancel(?:ed|led)',
                      'cancel-request-accepted', timeout=15)
     driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=240)
+    report = driver.wait_report('cancelled-export-report', 'Export', outcome='cancelled')
+    driver.records.append({'cancelled_export_operation': report['operation']})
     require(not list(destination.parent.glob(destination.stem + '.*')),
             'Cancelled export published an output (including normalized format extension)')
     driver.records.append({'cancel_output_absent': True})

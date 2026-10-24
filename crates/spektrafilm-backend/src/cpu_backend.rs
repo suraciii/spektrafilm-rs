@@ -91,7 +91,11 @@ fn dgemm_blas(
 pub struct CpuBackend;
 
 impl ComputeBackend for CpuBackend {
-    fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> ImageBuf {
+    fn colorspace_convert(
+        &self,
+        img: &ImageBuf,
+        matrix: &[[f32; 3]; 3],
+    ) -> Result<ImageBuf, String> {
         let m: [[Scalar; 3]; 3] = [
             [
                 from_f32(matrix[0][0]),
@@ -118,33 +122,38 @@ impl ComputeBackend for CpuBackend {
             px[1] = m[1][0] * r + m[1][1] * g + m[1][2] * b;
             px[2] = m[2][0] * r + m[2][1] * g + m[2][2] * b;
         });
-        out
+        Ok(out)
     }
 
-    fn cctf_encode_srgb(&self, img: &ImageBuf) -> ImageBuf {
+    fn cctf_encode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String> {
         let mut out = img.clone();
         out.data
             .par_iter_mut()
             .for_each(|v| *v = spektrafilm_math::precision::srgb_encode(*v));
-        out
+        Ok(out)
     }
 
-    fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
+    fn cctf_decode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String> {
         let mut out = img.clone();
         out.data
             .par_iter_mut()
             .for_each(|v| *v = spektrafilm_math::precision::srgb_decode(*v));
-        out
+        Ok(out)
     }
 
-    fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
+    fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> Result<ImageBuf, String> {
         if sigma <= 0.0 {
-            return img.clone();
+            return Ok(img.clone());
         }
-        spektrafilm_math::gaussian::gaussian_blur(img, sigma)
+        Ok(spektrafilm_math::gaussian::gaussian_blur(img, sigma))
     }
 
-    fn table_lookup(&self, img: &ImageBuf, table_x: &[f32], table_y: &[[f32; 3]]) -> ImageBuf {
+    fn table_lookup(
+        &self,
+        img: &ImageBuf,
+        table_x: &[f32],
+        table_y: &[[f32; 3]],
+    ) -> Result<ImageBuf, String> {
         let mut out = img.clone();
         out.par_pixels_mut().for_each(|px| {
             for c in 0..3 {
@@ -156,10 +165,10 @@ impl ComputeBackend for CpuBackend {
                 ));
             }
         });
-        out
+        Ok(out)
     }
 
-    fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> ImageBuf {
+    fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> Result<ImageBuf, String> {
         let mut out = img.clone();
         let size = lut.size as usize;
         out.par_pixels_mut().for_each(|px| {
@@ -174,7 +183,7 @@ impl ComputeBackend for CpuBackend {
             px[1] = from_f32(rgb[1]);
             px[2] = from_f32(rgb[2]);
         });
-        out
+        Ok(out)
     }
 
     fn name(&self) -> &str {

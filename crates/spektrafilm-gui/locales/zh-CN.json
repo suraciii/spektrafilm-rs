@@ -1160,6 +1160,8 @@
   "operations.image.invalid_path": "图像路径包含空字节。请选择不含空字节的路径。",
   "operations.image.invalid_image": "RGB 缓冲区尺寸或采样数量无效",
   "operations.image.invalid_color_space": "图像色彩空间无效：%{detail}",
+  "operations.image.convert": "保存转换失败：%{detail}",
+  "operations.image.sample_kind": "转换后的采样类型为 %{got}，但 %{format} %{depth} 位输出需要 %{expected}",
   "operations.image.load": "无法加载图像 %{path}：%{detail}",
   "operations.image.save": "无法保存图像 %{path}：%{detail}",
   "operations.image.staging": "无法为图像 %{path} 准备暂存文件：%{detail}",

@@ -283,6 +283,9 @@ enum Algorithm {
     Oklch,
 }
 
+/// Validated activity, algorithm, boundary, and knee, before boundary preparation.
+type ResolvedInputGamut = (bool, Algorithm, Boundary, (f64, f64, f64));
+
 /// Configured input gamut compressor. `build` resolves and validates the
 /// upstream `InputGamutCompressSpec` fields (`active`, `algorithm`, `knee`);
 /// `is_active` reports whether a non-identity remap will be applied.
@@ -297,16 +300,20 @@ pub struct InputGamutCompress {
 }
 
 impl InputGamutCompress {
-    /// `active = false` disables compression (the remap passes the LUT through unchanged).
-    /// `"off"` is accepted only for an inactive spec; unknown algorithms and invalid
-    /// knees error before any artifact is produced.
-    pub fn build(params: &InputGamutCompressParams) -> Result<Self, String> {
-        Self::build_detailed(params).map_err(|error| error.to_string())
+    /// Validate configuration without generating a chroma boundary or remap grid.
+    pub fn validate(params: &InputGamutCompressParams) -> Result<(), String> {
+        Self::validate_detailed(params).map_err(|error| error.to_string())
     }
 
-    pub(crate) fn build_detailed(
+    pub(crate) fn validate_detailed(
         params: &InputGamutCompressParams,
-    ) -> Result<Self, crate::params::ValidationError> {
+    ) -> Result<(), crate::params::ValidationError> {
+        Self::resolve_configuration(params).map(|_| ())
+    }
+
+    fn resolve_configuration(
+        params: &InputGamutCompressParams,
+    ) -> Result<ResolvedInputGamut, crate::params::ValidationError> {
         use crate::params::{ValidationError as Error, ValidationReason as Reason};
         let inactive = params.algorithm == "off";
         let algorithm = match params.algorithm.as_str() {
@@ -350,8 +357,14 @@ impl InputGamutCompress {
             error.path = "io.input_gamut_compress.knee".into();
             error
         })?;
+        Ok((params.active && !inactive, algorithm, boundary, knee))
+    }
+
+    /// Build the CPU reference tables after bounded validation.
+    pub fn build(params: &InputGamutCompressParams) -> Result<Self, String> {
+        let (active, algorithm, boundary, knee) =
+            Self::resolve_configuration(params).map_err(|error| error.to_string())?;
         let locus = spectral_locus_xy();
-        let active = params.active && !inactive;
         let c_max = match (active, algorithm) {
             (true, Algorithm::Oklch) => OKLCH_CMAX.clone(),
             _ => Arc::new(Vec::new()),

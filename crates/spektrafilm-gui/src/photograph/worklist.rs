@@ -136,6 +136,7 @@ fn copied_settings(
     destination: &PhotographSettings,
     scope: CopyScope,
     data_dir: &Path,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> Result<PhotographSettings> {
     let current = accepted_params(destination);
     let captured = captured_scope(source, scope)?;
@@ -232,10 +233,11 @@ fn copied_settings(
     spektrafilm_core::validate_scan_output(&result.params, &film).map_err(anyhow::Error::msg)?;
     // Building the same snapshot boundary used by Export rejects missing styles,
     // profiles, and unsupported material combinations before any history mutation.
-    crate::render::build_runtime_observed(
+    crate::render::build_runtime_observed_with_backend(
         &snapshot(&result, data_dir),
         false,
         &Default::default(),
+        backend,
     )?;
     Ok(result)
 }
@@ -496,7 +498,13 @@ impl App {
             .as_ref()
             .or(self.photograph.work_list.entries[index].context.as_ref())
             .expect("prepared destination");
-        let settings = copied_settings(source, &context.settings, scope, &self.data_dir)?;
+        let settings = copied_settings(
+            source,
+            &context.settings,
+            scope,
+            &self.data_dir,
+            self.backend.as_ref(),
+        )?;
         let film = profile::load_profile_by_name(&self.data_dir, &settings.film)?;
         let print = profile::load_profile_by_name(&self.data_dir, &settings.print)?;
         if let Some(prepared) = prepared {
@@ -701,6 +709,7 @@ impl App {
                 Ok(QueueSubmission {
                     source_name: path.display().to_string(),
                     image,
+                    rotation_quarter_turns: settings.rotation.rem_euclid(4) as u32,
                     snapshot: snapshot(settings, &self.data_dir),
                     metadata,
                     options: options.clone(),
@@ -1134,7 +1143,7 @@ mod tests {
         assert_eq!(retained.baseline, baseline);
         assert_eq!(retained.record_path.as_ref(), Some(&second_record));
         assert_eq!(retained.raw_draft, draft);
-        assert!(std::sync::Arc::ptr_eq(&pixels, &retained.image));
+        assert!(pixels.same_source(&retained.image));
         app.perform_work_select(1).unwrap();
         assert_eq!(app.gui_state.sections["load_raw"], draft);
         assert_eq!(app.photograph.record_path.as_ref(), Some(&second_record));
@@ -1152,7 +1161,7 @@ mod tests {
         app.photograph.work_list.discard_outgoing = true;
         assert!(app.perform_work_select(1).is_err());
         assert_eq!(app.image_path, path);
-        assert!(std::sync::Arc::ptr_eq(&image, app.image.as_ref().unwrap()));
+        assert!(image.same_source(app.image.as_ref().unwrap()));
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.75);
         assert!(app.undo_adjustment());
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
@@ -1295,10 +1304,7 @@ mod tests {
         let active_image = app.image.clone().unwrap();
         app.discard_inactive_work(1).unwrap();
         assert_eq!(app.affected_unsaved_work(&PhotoAction::Close), None);
-        assert!(std::sync::Arc::ptr_eq(
-            &active_image,
-            app.image.as_ref().unwrap()
-        ));
+        assert!(active_image.same_source(app.image.as_ref().unwrap()));
         assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
         app.perform_work_select(1).unwrap();
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
@@ -1413,7 +1419,14 @@ mod tests {
         source.params.io.crop = !destination.params.io.crop;
         source.rotation = 1;
         for scope in [CopyScope::Look, CopyScope::Section(Section::Convert)] {
-            let copied = copied_settings(&source, &destination, scope, &app.data_dir).unwrap();
+            let copied = copied_settings(
+                &source,
+                &destination,
+                scope,
+                &app.data_dir,
+                app.backend.as_ref(),
+            )
+            .unwrap();
             assert_eq!(
                 copied.params.film_render.convert.scan_illuminant,
                 destination.params.film_render.convert.scan_illuminant
@@ -1438,7 +1451,14 @@ mod tests {
         source.params.scanner.operator.contrast = -1.0;
         let before = destination.clone();
         assert!(
-            copied_settings(&source, &destination, CopyScope::Operator, &app.data_dir).is_err()
+            copied_settings(
+                &source,
+                &destination,
+                CopyScope::Operator,
+                &app.data_dir,
+                app.backend.as_ref()
+            )
+            .is_err()
         );
         assert_eq!(destination, before);
     }
@@ -1466,7 +1486,14 @@ mod tests {
             FeatureProfileFamily::Halation,
         ] {
             let scope = CopyScope::Feature(family);
-            let copied = copied_settings(&source, &destination, scope, &app.data_dir).unwrap();
+            let copied = copied_settings(
+                &source,
+                &destination,
+                scope,
+                &app.data_dir,
+                app.backend.as_ref(),
+            )
+            .unwrap();
             assert_eq!(
                 feature_profiles::effective_values(family, &copied.params),
                 feature_profiles::effective_values(family, &source.params)
@@ -1567,8 +1594,8 @@ mod tests {
         app.submit_work_exports(&ctx, &output, false).unwrap();
         app.perform_work_remove(0).unwrap();
         app.params.camera.exposure_compensation_ev = 4.0;
-        app.image = Some(std::sync::Arc::new(spektrafilm_math::image::ImageBuf::new(
-            2, 2,
+        app.image = Some(crate::render::InputImage::Host(std::sync::Arc::new(
+            spektrafilm_math::image::ImageBuf::new(2, 2),
         )));
         app.film_name = "unrelated-live-material".into();
         drain(&mut app, &ctx);
@@ -1583,7 +1610,7 @@ mod tests {
                 .image
                 .data
         );
-        assert_eq!(app.image.as_ref().unwrap().width, 2);
+        assert_eq!(app.image.as_ref().unwrap().width(), 2);
         assert!(directory.path().join("first.png").is_file());
     }
 

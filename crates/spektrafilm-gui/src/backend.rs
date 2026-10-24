@@ -26,12 +26,16 @@ pub(super) fn gui_renderer() -> eframe::Renderer {
 }
 
 /// GUI Preview and Scan prefer WGPU even in a reference-precision build.
-/// An explicit CPU override and unavailable adapters use the native CPU backend.
-pub(super) fn gui_backend() -> Arc<dyn ComputeBackend> {
-    match std::env::var("SPEKTRAFILM_BACKEND").ok().as_deref() {
-        None => spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
-            .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
-            .unwrap_or_else(|| Arc::new(spektrafilm_backend::cpu_backend::CpuBackend)),
-        Some(_) => Arc::from(spektrafilm_gpu::select_backend()),
+/// An explicit CPU override uses the native CPU backend, and an explicit
+/// `SPEKTRAFILM_BACKEND=wgpu` request that cannot be served fails at launch
+/// with [`spektrafilm_gpu::SelectionError`] instead of silently previewing on
+/// CPU. Automatic selection keeps its faithful CPU fallback when no adapter
+/// is available.
+pub(super) fn gui_backend() -> Result<Arc<dyn ComputeBackend>, spektrafilm_gpu::SelectionError> {
+    if std::env::var("SPEKTRAFILM_BACKEND").is_ok() {
+        return Ok(Arc::from(spektrafilm_gpu::select_backend()?));
     }
+    Ok(spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
+        .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
+        .unwrap_or_else(|| Arc::new(spektrafilm_backend::cpu_backend::CpuBackend)))
 }

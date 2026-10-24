@@ -26,19 +26,21 @@ pub(crate) fn fence_cpu_backend(
 impl super::super::Pipeline {
     /// Host grain as an assembled fence on the film density buffer.
     ///
-    /// `dye_on_device` marks a Dye field the device pass realizes; the
-    /// fence then serves the host grain engine only, so a supported active
-    /// Dye keeps no host arithmetic at all.
+    /// `dye_on_device` marks a Dye field the device pass realizes and
+    /// `spektra_on_device` marks a Spektra request the device pass realizes;
+    /// the fence then serves the host grain engines only, so a supported
+    /// active engine keeps no host arithmetic at all.
     pub(crate) fn density_cpu_stage<'a>(
         &'a self,
         film_curves_norm: &'a [[f64; 3]],
         backend: &'a dyn ComputeBackend,
         pixel_size_um: f64,
         dye_on_device: bool,
+        spektra_on_device: bool,
     ) -> Option<CpuStageFn<'a>> {
         if self.params.film_render.grain.active {
             match self.params.film_render.grain.engine {
-                crate::params::grain::GrainEngine::Spektra => {
+                crate::params::grain::GrainEngine::Spektra if !spektra_on_device => {
                     let film = &self.film;
                     let grain = &self.params.film_render.grain;
                     let norm_curves = film_curves_norm;
@@ -49,7 +51,7 @@ impl super::super::Pipeline {
                         let observation =
                             crate::stages::StageObservation::new(seed_backend, "grain_v1");
                         let observed = observation.backend(seed_backend);
-                        Ok(crate::stages::filming::apply_spektra_grain(
+                        crate::stages::filming::apply_spektra_grain(
                             density.clone(),
                             film,
                             grain,
@@ -58,7 +60,7 @@ impl super::super::Pipeline {
                             random_seed,
                             pixel_size_um,
                             observed,
-                        ))
+                        )
                     });
                     Some(closure)
                 }
@@ -111,6 +113,12 @@ impl super::super::Pipeline {
     }
 
     /// Scanner acquisition replacement as an assembled CPU fence.
+    ///
+    /// The modeled receiver capture and the PCHIP scanner LUT now have
+    /// device paths (`stages::scanning::scan_spectral_rgb` calls them
+    /// first), so neither fences. Digital Reference and the density reading
+    /// replace the acquisition with host calibrations that have no device
+    /// equivalent, so they still fence.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn scan_acquisition_cpu_stage<'a>(
         &'a self,
@@ -144,7 +152,7 @@ impl super::super::Pipeline {
                         density, profile, &tones, params, backend,
                     )
                 } else {
-                    Ok(crate::stages::scanning::scan_spectral_rgb(
+                    crate::stages::scanning::scan_spectral_rgb(
                         density,
                         profile,
                         params,
@@ -152,83 +160,8 @@ impl super::super::Pipeline {
                         channel_density,
                         base_density,
                         scan_context,
-                    ))
-                }
-            });
-            Some(closure)
-        } else {
-            None
-        }
-    }
-
-    /// Camera optical diffusion as an assembled fence on the raw exposure buffer.
-    pub(crate) fn camera_diffusion_cpu_stage<'a>(
-        &'a self,
-        backend: &'a dyn ComputeBackend,
-        pixel_size_um: f64,
-    ) -> Option<CpuStageFn<'a>> {
-        if self.params.camera.diffusion_filter.active {
-            let dm = self.params.camera.diffusion_filter.to_model();
-            let seed_backend = backend;
-            let closure: CpuStageFn<'_> =
-                Box::new(move |raw: &ImageBuf| {
-                    // The filter runs on the host here, so it carries the
-                    // published `optical_diffusion` reason exactly like the
-                    // per-stage route's marker in `filming::expose`.
-                    let _diffusion = crate::stages::StageObservation::cpu(
-                        seed_backend,
-                        "optical_diffusion",
-                        spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion,
-                    );
-                    Ok(spektrafilm_model::diffusion::apply_diffusion_filter_um(
-                        raw,
-                        &dm,
-                        pixel_size_um,
                     )
-                    .expect("camera diffusion filter family validated at pipeline entry"))
-                });
-            Some(closure)
-        } else {
-            None
-        }
-    }
-
-    /// Print acquisition replacement as an assembled CPU fence.
-    pub(crate) fn print_acquisition_cpu_stage<'a>(
-        &'a self,
-        print_fence_requested: bool,
-        backend: &'a dyn ComputeBackend,
-        pixel_size_um: f64,
-    ) -> Option<CpuStageFn<'a>> {
-        if print_fence_requested && !self.params.io.scan_film {
-            let film = &self.film;
-            let print = &self.print;
-            let params = &self.params;
-            let illuminant = &self.print_illuminant;
-            let exposure_factor = self.print_exposure_factor;
-            let preflash = self.preflash_raw;
-            let fence_reason = if self.params.settings.use_enlarger_lut {
-                spektrafilm_backend::telemetry::CpuReason::SpectralLut
-            } else {
-                spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion
-            };
-            let observed = fence_cpu_backend(backend, fence_reason);
-            let closure: CpuStageFn<'_> = Box::new(move |density: &ImageBuf| {
-                static CPU_BACKEND: spektrafilm_backend::cpu_backend::CpuBackend =
-                    spektrafilm_backend::cpu_backend::CpuBackend;
-                let backend: &dyn spektrafilm_backend::ComputeBackend =
-                    observed.as_deref().unwrap_or(&CPU_BACKEND);
-                Ok(crate::stages::printing::expose_calibrated(
-                    density,
-                    film,
-                    print,
-                    params,
-                    backend,
-                    illuminant,
-                    exposure_factor,
-                    preflash,
-                    pixel_size_um,
-                ))
+                }
             });
             Some(closure)
         } else {

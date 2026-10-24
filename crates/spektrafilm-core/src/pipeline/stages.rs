@@ -6,7 +6,7 @@ impl Pipeline {
     /// Topological tap order of the active chain — the Rust spelling of
     /// upstream `_build_topology`. `io.scan_film` short-circuits the print
     /// stages exactly like the Python node list.
-    fn tap_order(&self) -> &'static [Tap] {
+    pub(super) fn tap_order(&self) -> &'static [Tap] {
         if self.params.io.scan_film {
             &[
                 Tap::RgbIn,
@@ -69,7 +69,7 @@ impl Pipeline {
                     &select_illuminant(&self.front_illuminant),
                     pixel_size_um,
                     ae_ev,
-                );
+                )?;
                 record_stage_timing(stage_timings, "filming_expose", t);
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_LOG_RAW", &out);
                 Ok(out)
@@ -82,7 +82,7 @@ impl Pipeline {
                     &self.params,
                     backend,
                     pixel_size_um,
-                );
+                )?;
                 print_stage_timing(print_timings, "filming_develop", t);
                 record_stage_timing(stage_timings, "filming_develop", t);
                 tracing::info!("pipeline: filming complete");
@@ -115,7 +115,7 @@ impl Pipeline {
                         self.print_exposure_factor,
                         self.preflash_raw,
                         pixel_size_um,
-                    );
+                    )?;
                     record_stage_timing(stage_timings, "printing", t);
                     dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &out);
                     Ok(out)
@@ -153,16 +153,12 @@ impl Pipeline {
 
     pub(super) fn validate_grain_v3_taps(
         cell_spectral: bool,
-        aperture_factor: Option<u32>,
         inject: Tap,
         collect: Tap,
         scan_film: bool,
     ) -> Result<(), String> {
         if !cell_spectral {
             return Ok(());
-        }
-        if aperture_factor.is_some() {
-            return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
         }
         let supported_collect = collect == Tap::RgbOut
             || (!scan_film && matches!(collect, Tap::LogEPrint | Tap::CmyPrint));
@@ -211,16 +207,14 @@ impl Pipeline {
                 collect, inject
             ));
         }
-        // An explicit GPU request must fail rather than silently run a
-        // stage on the CPU: reject an image the device cannot bind before
-        // any stage dispatch. The auto route declines such stages to their
-        // CPU implementations inside the backend.
+        // A selected GPU must fail rather than silently run a stage on the
+        // CPU: reject an image the device cannot bind before dispatch,
+        // whether the adapter was selected automatically or explicitly.
         if backend.is_gpu()
-            && backend.explicit_gpu_request()
             && let Some(reason) = backend.image_binding_limit_reason(&image)
         {
             return Err(format!(
-                "explicit GPU request exceeds the device resource limits ({reason}); retry with an \
+                "selected GPU exceeds the device resource limits ({reason}); retry with an \
                  explicit CPU request"
             ));
         }
@@ -232,13 +226,7 @@ impl Pipeline {
         };
         let cell_spectral =
             forms_film && crate::stages::grain_v3::validate_cell_spectral(&self.params)?;
-        Self::validate_grain_v3_taps(
-            cell_spectral,
-            aperture_factor,
-            inject,
-            collect,
-            self.params.io.scan_film,
-        )?;
+        Self::validate_grain_v3_taps(cell_spectral, inject, collect, self.params.io.scan_film)?;
         if aperture_factor.is_some()
             && (collect != Tap::RgbOut
                 || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap())
@@ -255,7 +243,7 @@ impl Pipeline {
         }
         let (mut cur, mut pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
             crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
-            let image = self.expose_full_input(image, backend, capture.as_deref_mut());
+            let image = self.expose_full_input(image, backend, capture.as_deref_mut())?;
             let (working, pitch) = self.rescale_working(&image, backend)?;
             let working = match working {
                 std::borrow::Cow::Owned(working) => working,
@@ -305,31 +293,28 @@ impl Pipeline {
             }
             if order[i] == Tap::LogEFilm && crate::stages::grain_v3::active(&self.params) {
                 let t = Instant::now();
-                let geometry =
-                    crate::stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
-                let glare = &self.params.print_render.glare;
-                let scan_spatial = (collect == Tap::RgbOut || material_geometry.is_some())
-                    && (self.params.scanner.lens_blur > 0.0
-                        || self.params.scanner.unsharp_mask.iter().all(|&v| v > 0.0)
-                        || (!self.params.io.scan_film && glare.active && glare.percent > 0.0));
-                let print_spatial = !self.params.io.scan_film
-                    && (collect != Tap::CmyFilm || material_geometry.is_some())
-                    && self.params.enlarger.diffusion_filter.active;
-                let (grid, readout_space) = if let Some(factor) = aperture_factor {
-                    (
-                        crate::stages::grain_v3::aperture_grid(&geometry, factor)?,
-                        CoordinateSpace::GrainAperture,
-                    )
-                } else if self.params.io.crop
-                    && (scan_spatial
-                        || print_spatial
-                        || (material_geometry.is_some() && collect == Tap::CmyFilm))
-                {
-                    let (grid, crop) = geometry.full_film_grid(&cur)?;
-                    output_crop = Some(crop);
-                    (grid, CoordinateSpace::FilmFrame)
+                let spatial_context = ((collect == Tap::RgbOut || material_geometry.is_some())
+                    && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                    || ((collect != Tap::CmyFilm || material_geometry.is_some())
+                        && crate::stages::grain_v3::print_spatial_context(&self.params))
+                    || (material_geometry.is_some() && collect == Tap::CmyFilm);
+                let plan = crate::stages::grain_v3::readout_plan(
+                    cur.width,
+                    cur.height,
+                    &self.params,
+                    pixel_size_um,
+                    aperture_factor,
+                    spatial_context,
+                )?;
+                output_crop = plan.deferred_crop;
+                let geometry = plan.geometry;
+                let grid = plan.grid;
+                let readout_space = if plan.aperture.is_some() {
+                    CoordinateSpace::GrainAperture
+                } else if plan.deferred_crop.is_some() {
+                    CoordinateSpace::FilmFrame
                 } else {
-                    (geometry.grid(), CoordinateSpace::Output)
+                    CoordinateSpace::Output
                 };
                 // The existing scalar optical controls use the actual pitch
                 // on the full source's long axis. Rounding may make the other
@@ -337,6 +322,34 @@ impl Pipeline {
                 let long_axis = usize::from(cur.height > cur.width);
                 let requested_pitch_um = geometry.output_pitch_um[long_axis];
                 if cell_spectral {
+                    let channel_density = crate::chain_prep::channel_density(&self.film);
+                    let sensitivity;
+                    let prepared_scan;
+                    let device_response = if self.params.io.scan_film {
+                        prepared_scan = crate::chain_prep::PreparedChain::for_scan(
+                            &self.film,
+                            &self.params,
+                            true,
+                        );
+                        spektrafilm_backend::DyeResponseGpuParams::Scan {
+                            channel_density: &channel_density,
+                            base_density: &self.film.data.base_density,
+                            illuminant: &prepared_scan.scan.illuminant,
+                            normalization: prepared_scan.scan.normalization,
+                            xyz_to_rgb: &prepared_scan.scan_xyz_to_rgb,
+                        }
+                    } else {
+                        sensitivity = self.print.sensitivity_f64();
+                        spektrafilm_backend::DyeResponseGpuParams::Print {
+                            channel_density: &channel_density,
+                            base_density: &self.film.data.base_density,
+                            illuminant: &self.print_illuminant,
+                            sensitivity: &sensitivity,
+                            normalization_factor: self.print_exposure_factor,
+                            exposure_scale: self.params.enlarger.print_exposure as f64,
+                            preflash: self.preflash_raw,
+                        }
+                    };
                     cur = crate::stages::grain_v3::readout_with_response(
                         &cur,
                         &self.film,
@@ -344,6 +357,7 @@ impl Pipeline {
                         pixel_size_um,
                         grid,
                         backend,
+                        &device_response,
                         |cells, backend| {
                             if self.params.io.scan_film {
                                 crate::stages::scanning::capture_linear(
@@ -387,9 +401,14 @@ impl Pipeline {
                         // topology at the terminal tap.
                         i = order.iter().position(|tap| *tap == Tap::RgbOut).unwrap();
                     } else {
-                        cur.data.par_iter_mut().for_each(|value| {
-                            *value = from_f64(to_f64(*value).log10());
-                        });
+                        cur = crate::stages::grain_v3::finish_print_response_on_backend(
+                            cur,
+                            plan.aperture,
+                            backend,
+                        )?;
+                        if plan.aperture.is_some() {
+                            stage_space = CoordinateSpace::Output;
+                        }
                         dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &cur);
                         if let Some(capture) = capture.as_deref_mut() {
                             capture.record_boundary(
@@ -425,26 +444,26 @@ impl Pipeline {
             }
             if order[i] == Tap::LogEFilm && crate::stages::grain_fotufilm::active(&self.params) {
                 let t = Instant::now();
-                let geometry =
-                    crate::stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
-                let glare = &self.params.print_render.glare;
-                let scan_spatial = (collect == Tap::RgbOut || material_geometry.is_some())
-                    && (self.params.scanner.lens_blur > 0.0
-                        || self.params.scanner.unsharp_mask.iter().all(|&v| v > 0.0)
-                        || (!self.params.io.scan_film && glare.active && glare.percent > 0.0));
-                let print_spatial = !self.params.io.scan_film
-                    && (collect != Tap::CmyFilm || material_geometry.is_some())
-                    && self.params.enlarger.diffusion_filter.active;
-                let (grid, readout_space) = if self.params.io.crop
-                    && (scan_spatial
-                        || print_spatial
-                        || (material_geometry.is_some() && collect == Tap::CmyFilm))
-                {
-                    let (grid, crop) = geometry.full_film_grid(&cur)?;
-                    output_crop = Some(crop);
-                    (grid, CoordinateSpace::FilmFrame)
+                let spatial_context = ((collect == Tap::RgbOut || material_geometry.is_some())
+                    && crate::stages::grain_v3::scanner_spatial_context(&self.params))
+                    || ((collect != Tap::CmyFilm || material_geometry.is_some())
+                        && crate::stages::grain_v3::print_spatial_context(&self.params))
+                    || (material_geometry.is_some() && collect == Tap::CmyFilm);
+                let plan = crate::stages::grain_v3::readout_plan(
+                    cur.width,
+                    cur.height,
+                    &self.params,
+                    pixel_size_um,
+                    None,
+                    spatial_context,
+                )?;
+                output_crop = plan.deferred_crop;
+                let geometry = plan.geometry;
+                let grid = plan.grid;
+                let readout_space = if plan.deferred_crop.is_some() {
+                    CoordinateSpace::FilmFrame
                 } else {
-                    (geometry.grid(), CoordinateSpace::Output)
+                    CoordinateSpace::Output
                 };
                 let long_axis = usize::from(cur.height > cur.width);
                 cur = self.fotufilm_prepared.readout(
@@ -465,7 +484,9 @@ impl Pipeline {
                 && let Some(factor) = aperture_factor
             {
                 let t = Instant::now();
-                cur = crate::stages::grain_v3::collapse_log_exposure(&cur, factor)?;
+                cur = crate::stages::grain_v3::collapse_log_exposure_on_backend(
+                    &cur, factor, backend,
+                )?;
                 stage_space = CoordinateSpace::Output;
                 pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
                     "film grain Dye aperture: missing requested output pitch".to_owned()
@@ -491,9 +512,25 @@ impl Pipeline {
             geometry.pending_crop = output_crop.map(|r| [r.x, r.y, r.width, r.height]);
             return Ok(cur);
         }
-        Ok(match output_crop {
-            Some(rect) => crate::stages::grain_v3::crop_output(cur, rect),
-            None => cur,
-        })
+        match output_crop {
+            Some(rect) => crate::stages::grain_v3::crop_output_on_backend(cur, rect, backend),
+            None => Ok(cur),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cell_spectral_tap_scope_allows_combined_aperture_output() {
+        // Aperture validity is checked independently; enabling it does not
+        // conflict with exact-cell response followed by linear-light collapse.
+        for inject in [Tap::RgbIn, Tap::RgbPre, Tap::LogEFilm] {
+            Pipeline::validate_grain_v3_taps(true, inject, Tap::RgbOut, false).unwrap();
+        }
+        assert!(Pipeline::validate_grain_v3_taps(true, Tap::RgbIn, Tap::CmyFilm, false).is_err());
+        assert!(Pipeline::validate_grain_v3_taps(true, Tap::CmyFilm, Tap::RgbOut, false).is_err());
     }
 }

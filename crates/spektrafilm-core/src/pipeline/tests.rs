@@ -163,28 +163,41 @@ fn fotufilm_zero_amount_bypasses_geometry_and_cancelled_render_fails() {
             .contains("cancelled")
     );
 }
-/// A GPU stub whose device cannot represent any route image buffer.
+/// A selected GPU whose minimum retained allocation exceeds its resources.
 struct OvertaxedGpu {
     explicit: bool,
 }
 
 impl spektrafilm_backend::ComputeBackend for OvertaxedGpu {
-    fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> ImageBuf {
+    fn colorspace_convert(
+        &self,
+        img: &ImageBuf,
+        matrix: &[[f32; 3]; 3],
+    ) -> Result<ImageBuf, String> {
         spektrafilm_backend::cpu_backend::CpuBackend.colorspace_convert(img, matrix)
     }
-    fn cctf_encode_srgb(&self, img: &ImageBuf) -> ImageBuf {
+    fn cctf_encode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String> {
         spektrafilm_backend::cpu_backend::CpuBackend.cctf_encode_srgb(img)
     }
-    fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
+    fn cctf_decode_srgb(&self, img: &ImageBuf) -> Result<ImageBuf, String> {
         spektrafilm_backend::cpu_backend::CpuBackend.cctf_decode_srgb(img)
     }
-    fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
+    fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> Result<ImageBuf, String> {
         spektrafilm_backend::cpu_backend::CpuBackend.gaussian_blur(img, sigma)
     }
-    fn table_lookup(&self, img: &ImageBuf, table_x: &[f32], table_y: &[[f32; 3]]) -> ImageBuf {
+    fn table_lookup(
+        &self,
+        img: &ImageBuf,
+        table_x: &[f32],
+        table_y: &[[f32; 3]],
+    ) -> Result<ImageBuf, String> {
         spektrafilm_backend::cpu_backend::CpuBackend.table_lookup(img, table_x, table_y)
     }
-    fn lut3d_interp(&self, img: &ImageBuf, lut: &spektrafilm_backend::Lut3D) -> ImageBuf {
+    fn lut3d_interp(
+        &self,
+        img: &ImageBuf,
+        lut: &spektrafilm_backend::Lut3D,
+    ) -> Result<ImageBuf, String> {
         spektrafilm_backend::cpu_backend::CpuBackend.lut3d_interp(img, lut)
     }
     fn is_gpu(&self) -> bool {
@@ -193,8 +206,19 @@ impl spektrafilm_backend::ComputeBackend for OvertaxedGpu {
     fn explicit_gpu_request(&self) -> bool {
         self.explicit
     }
-    fn image_binding_limit_reason(&self, _img: &ImageBuf) -> Option<String> {
-        Some("the required buffer binding exceeds the synthetic test limit".into())
+    fn retain_image(
+        &self,
+        _image: &ImageBuf,
+        _meta: &spektrafilm_backend::RetainedImageMeta,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        let selection = if self.explicit {
+            "explicit GPU request"
+        } else {
+            "selected GPU"
+        };
+        Err(format!(
+            "{selection} exceeds the device resource limits: minimum retained allocation exceeds the synthetic test limit"
+        ))
     }
     fn name(&self) -> &str {
         "overtaxed-test-gpu"
@@ -202,8 +226,9 @@ impl spektrafilm_backend::ComputeBackend for OvertaxedGpu {
 }
 
 #[test]
-fn explicit_gpu_request_fails_when_the_device_cannot_bind_the_route_image() {
-    let mut pipeline = build();
+fn selected_gpu_fails_when_the_device_cannot_allocate_retained_input() {
+    let base = build();
+    let mut pipeline = Pipeline::new(base.film, base.print, base.params);
     pipeline.params.film_render.grain.active = false;
     let err = pipeline
         .process(ImageBuf::new(8, 6), &OvertaxedGpu { explicit: true })
@@ -212,8 +237,7 @@ fn explicit_gpu_request_fails_when_the_device_cannot_bind_the_route_image() {
         err.contains("explicit GPU request exceeds the device resource limits"),
         "{err}"
     );
-    // The observation wrapper must not mask the binding limits from the
-    // preflight either: every production render binds the backend through it.
+    // Observation wrapping must preserve retained resource errors as well.
     let gpu = OvertaxedGpu { explicit: true };
     let bound = spektrafilm_backend::bind_backend(
         &gpu,
@@ -228,11 +252,244 @@ fn explicit_gpu_request_fails_when_the_device_cannot_bind_the_route_image() {
         err.contains("explicit GPU request exceeds the device resource limits"),
         "{err}"
     );
-    // The auto route completes instead: the same stages run their CPU work.
-    let out = pipeline
+    // Automatic intent must not demote a backend already selected as GPU.
+    let err = pipeline
         .process(ImageBuf::new(8, 6), &OvertaxedGpu { explicit: false })
-        .unwrap();
-    assert_eq!((out.width, out.height), (8, 6));
+        .unwrap_err();
+    assert!(
+        err.contains("selected GPU exceeds the device resource limits"),
+        "{err}"
+    );
+    let automatic = OvertaxedGpu { explicit: false };
+    let observed = spektrafilm_backend::bind_backend(
+        &automatic,
+        spektrafilm_backend::telemetry::ObservationContext::new(
+            spektrafilm_backend::telemetry::CollectionMode::Off,
+        ),
+    );
+    let err = pipeline
+        .process(ImageBuf::new(8, 6), observed.as_ref())
+        .unwrap_err();
+    assert!(
+        err.contains("selected GPU exceeds the device resource limits"),
+        "{err}"
+    );
+}
+
+/// An automatically selected device that declines optional image hooks.
+/// Required image methods count any accidental host delegation separately.
+#[derive(Default)]
+struct DecliningSelectedGpu {
+    host_calls: std::sync::atomic::AtomicUsize,
+    meter_calls: std::sync::atomic::AtomicUsize,
+    mix_calls: std::sync::atomic::AtomicUsize,
+    conversion_calls: std::sync::atomic::AtomicUsize,
+}
+
+impl ComputeBackend for DecliningSelectedGpu {
+    fn colorspace_convert(
+        &self,
+        image: &ImageBuf,
+        matrix: &[[f32; 3]; 3],
+    ) -> Result<ImageBuf, String> {
+        self.host_calls.fetch_add(1, Ordering::Relaxed);
+        spektrafilm_backend::cpu_backend::CpuBackend.colorspace_convert(image, matrix)
+    }
+    fn cctf_encode_srgb(&self, image: &ImageBuf) -> Result<ImageBuf, String> {
+        self.host_calls.fetch_add(1, Ordering::Relaxed);
+        spektrafilm_backend::cpu_backend::CpuBackend.cctf_encode_srgb(image)
+    }
+    fn cctf_decode_srgb(&self, image: &ImageBuf) -> Result<ImageBuf, String> {
+        self.host_calls.fetch_add(1, Ordering::Relaxed);
+        spektrafilm_backend::cpu_backend::CpuBackend.cctf_decode_srgb(image)
+    }
+    fn gaussian_blur(&self, image: &ImageBuf, sigma: f32) -> Result<ImageBuf, String> {
+        self.host_calls.fetch_add(1, Ordering::Relaxed);
+        spektrafilm_backend::cpu_backend::CpuBackend.gaussian_blur(image, sigma)
+    }
+    fn table_lookup(
+        &self,
+        image: &ImageBuf,
+        x: &[f32],
+        y: &[[f32; 3]],
+    ) -> Result<ImageBuf, String> {
+        self.host_calls.fetch_add(1, Ordering::Relaxed);
+        spektrafilm_backend::cpu_backend::CpuBackend.table_lookup(image, x, y)
+    }
+    fn lut3d_interp(
+        &self,
+        image: &ImageBuf,
+        lut: &spektrafilm_backend::Lut3D,
+    ) -> Result<ImageBuf, String> {
+        self.host_calls.fetch_add(1, Ordering::Relaxed);
+        spektrafilm_backend::cpu_backend::CpuBackend.lut3d_interp(image, lut)
+    }
+    fn meter_autoexposure(
+        &self,
+        _: &ImageBuf,
+        _: &spektrafilm_backend::MeterAutoexposureParams,
+    ) -> Result<Option<f64>, String> {
+        self.meter_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(None)
+    }
+    fn mix_output(
+        &self,
+        _: &ImageBuf,
+        _: &ImageBuf,
+        _: &spektrafilm_backend::OutputMixGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.mix_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(None)
+    }
+    fn convert_colorspace(
+        &self,
+        _: &ImageBuf,
+        _: &spektrafilm_backend::ConvertColorspaceGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.conversion_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(None)
+    }
+    fn is_gpu(&self) -> bool {
+        true
+    }
+    fn name(&self) -> &str {
+        "declining-automatically-selected-gpu"
+    }
+}
+
+#[test]
+fn selected_automatic_gpu_meter_decline_never_returns_host_measurement() {
+    let mut pipeline = build();
+    pipeline.params.camera.auto_exposure = true;
+    let backend = DecliningSelectedGpu::default();
+    assert!(!backend.explicit_gpu_request());
+    let error = pipeline
+        .meter_autoexposure(&ImageBuf::new(8, 6), &backend)
+        .unwrap_err();
+    assert!(
+        error.contains("full-source auto-exposure metering"),
+        "{error}"
+    );
+    assert_eq!(backend.meter_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(backend.host_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn selected_automatic_gpu_mix_decline_never_returns_host_composition() {
+    let mut pipeline = build();
+    let backend = DecliningSelectedGpu::default();
+    // The source endpoint and an interior blend both require the device hook.
+    for amount in [0.0, 0.5] {
+        pipeline.params.output_mix.amount = amount;
+        let error = pipeline
+            .compose_output_mix(
+                ImageBuf::new(8, 6),
+                Some(ImageBuf::new(8, 6)),
+                &backend,
+                None,
+            )
+            .unwrap_err();
+        assert!(error.contains("output_mix composition"), "{error}");
+    }
+    assert_eq!(backend.mix_calls.load(Ordering::Relaxed), 2);
+    assert_eq!(backend.host_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn selected_gpu_mix_source_rejects_host_preparation_before_color_resolution() {
+    let mut pipeline = build();
+    // A device-route rejection must precede any host source preparation.
+    pipeline.params.io.input_color_space = "unresolved-host-source".into();
+    let backend = DecliningSelectedGpu::default();
+    let error = pipeline
+        .prepare_output_mix_source(&ImageBuf::new(8, 6), &backend)
+        .unwrap_err();
+    assert!(
+        error.contains("output_mix source requires the retained device route"),
+        "{error}"
+    );
+    assert_eq!(backend.host_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn selected_automatic_gpu_conversion_decline_never_returns_host_pixels() {
+    let mut pipeline = build();
+    pipeline.params.workflow.route = "input".into();
+    pipeline.params.io.crop = false;
+    pipeline.params.io.upscale_factor = 1.0;
+    let backend = DecliningSelectedGpu::default();
+    // Exercise the optional per-stage hook independently of the retained
+    // production ingress, which rejects a missing retained implementation.
+    let error = pipeline
+        .process_full(ImageBuf::new(8, 6), &backend, None, None)
+        .unwrap_err();
+    assert!(error.contains("input route conversion"), "{error}");
+    assert_eq!(backend.conversion_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(backend.host_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn selected_automatic_gpu_retention_failure_does_not_enter_host_stages() {
+    let base = build();
+    let mut pipeline = Pipeline::new(base.film, base.print, base.params);
+    pipeline.params.workflow.route = "input".into();
+    pipeline.params.film_render.grain.active = false;
+    let backend = DecliningSelectedGpu::default();
+    let error = pipeline.process(ImageBuf::new(8, 6), &backend).unwrap_err();
+    assert!(error.contains("does not retain device images"), "{error}");
+    assert_eq!(backend.host_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(backend.conversion_calls.load(Ordering::Relaxed), 0);
+    let error = pipeline
+        .process_resident_borrowed(&ImageBuf::new(8, 6), &backend)
+        .unwrap_err();
+    assert!(error.contains("does not retain device images"), "{error}");
+    assert_eq!(backend.host_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn public_gpu_diagnostic_retention_errors_never_enter_host_tap_stages() {
+    let base = build();
+    let mut pipeline = Pipeline::new(base.film, base.print, base.params);
+    pipeline.params.film_render.grain.active = false;
+    pipeline.params.camera.auto_exposure = true;
+    let backend = DecliningSelectedGpu::default();
+    for (inject, collect) in [
+        (Tap::RgbIn, Tap::RgbPre),
+        (Tap::RgbPre, Tap::LogEFilm),
+        (Tap::LogEFilm, Tap::CmyFilm),
+        (Tap::CmyFilm, Tap::RgbOut),
+        (Tap::LogEPrint, Tap::CmyPrint),
+        (Tap::RgbOut, Tap::RgbOut),
+    ] {
+        let error = pipeline
+            .process_with_taps(
+                ImageBuf::from_data(2, 2, vec![from_f64(0.18); 12]),
+                &backend,
+                Some(inject),
+                Some(collect),
+            )
+            .unwrap_err();
+        assert!(
+            error.contains("does not retain device images"),
+            "{inject:?}->{collect:?}: {error}"
+        );
+        pipeline.params.taps.inject = Some(inject.name().into());
+        pipeline.params.taps.collect = Some(collect.name().into());
+        let error = pipeline
+            .process_resident_borrowed(
+                &ImageBuf::from_data(2, 2, vec![from_f64(0.18); 12]),
+                &backend,
+            )
+            .unwrap_err();
+        assert!(
+            error.contains("does not retain device images"),
+            "borrowed {inject:?}->{collect:?}: {error}"
+        );
+    }
+    assert_eq!(backend.host_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(backend.meter_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(backend.conversion_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(backend.mix_calls.load(Ordering::Relaxed), 0);
 }
 
 #[test]
@@ -1261,7 +1518,9 @@ fn output_mix_source_matches_deferred_field_crop_rounding() {
             pipeline.params.io.upscale_factor = scale;
             let geometry =
                 crate::stages::grain_v3::geometry(&source, &pipeline.params, 2.0).unwrap();
-            let prepared = pipeline.prepare_output_mix_source(&source).unwrap();
+            let prepared = pipeline
+                .prepare_output_mix_source(&source, &spektrafilm_backend::cpu_backend::CpuBackend)
+                .unwrap();
             assert_eq!(
                 (prepared.width, prepared.height),
                 (geometry.width, geometry.height)

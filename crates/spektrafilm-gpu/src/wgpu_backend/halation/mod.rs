@@ -1,173 +1,249 @@
-use super::blur::{self, BlurJob, DispatchJob};
-use super::params::AddScaledParams;
+use super::grain::raster::{RasterStorage, paged_transport};
+use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged_with_scratch};
+use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, pointwise_job};
+use super::paged::ImagePage;
 use super::*;
 
-/// Pre-built halation passes — owns the per-sigma kernel buffers, params
-/// buffers, and bind groups so they live long enough for the encoder.
+/// Device scatter and multi-bounce halation.
 ///
-/// The CPU equivalent is `spektrafilm_model::halation::apply_halation_um`.
-/// All passes operate on the resident image buffer (passed in as `buf_b`),
-/// using `buf_a` as blur intermediate and two newly-allocated buffers
-/// `buf_c` / `buf_d` for scatter outputs and the halation accumulator.
+/// CPU equivalent: `spektrafilm_model::halation::apply_halation_um`. Every
+/// width, tail weight, and amplitude keeps its independent RGB value: the
+/// scatter core, each of the three exponential-fit components, and every
+/// bounce blur run through the shared reference Gaussian with per-channel
+/// sigmas, so no channel average enters the optics.
+///
+/// All passes work on the resident image (`buf_b`) with `buf_c` as the blur
+/// destination, `buf_d` as the scatter and then halation accumulator, and an
+/// optional `buf_e` holding the compressed halation source. One filter
+/// scratch region is shared, because the passes encode sequentially.
 pub(super) struct HalationState {
-    // Owns all the auxiliary buffers + bind groups; only `encode_passes` is
-    // called from the hot path.
-    buf_c: wgpu::Buffer,
-    buf_d: wgpu::Buffer,
-    buf_e: Option<wgpu::Buffer>,
-    scatter_blurs: Vec<BlurJob>, // [core, tail]
-    scatter_mix: DispatchJob,
-    halation_source: Option<DispatchJob>,
-    halation_blurs: Vec<BlurJob>,          // one per bounce
-    halation_accumulate: Vec<DispatchJob>, // one add_scaled per bounce
-    halation_final_add: DispatchJob,
-    halation_renormalize: Option<DispatchJob>,
-    blur_pipe_h: CachedPipelineRef,
-    blur_pipe_v: CachedPipelineRef,
+    _buf_c: Vec<ImagePage>,
+    _buf_d: Vec<ImagePage>,
+    _buf_e: Option<Vec<ImagePage>>,
+    _blur_scratch: Vec<ImagePage>,
+    scatter: Option<ScatterPasses>,
+    halation_source: Option<PointwiseJob>,
+    halation: Option<HalationPasses>,
+}
+
+/// Scatter: `(1-sa)·x + sa·((1-wt)·G_σ(x) + wt·Σ_k amp_k·G_{ratio_k·λ}(x))`.
+struct ScatterPasses {
+    core: BlurJob,
+    /// `acc = (1-wt)·core`
+    init: PointwiseJob,
+    /// Per fitted component: tail blur, then its weighted accumulate.
+    tails: Vec<(BlurJob, PointwiseJob)>,
+    finish: PointwiseJob,
+}
+
+/// Halation: `x += a_tot·Σ_k w_k·G_{σ₁√(k+1)}(source)`, then renormalize.
+struct HalationPasses {
+    blurs: Vec<BlurJob>,
+    accumulate: Vec<PointwiseJob>,
+    final_add: PointwiseJob,
+    renormalize: Option<PointwiseJob>,
+}
+
+/// Per-channel `dst[c] = clear ? scale[c]·src[c] : dst[c] + scale[c]·src[c]`.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct ChannelScaleParams {
+    n_pixels: u32,
+    clear_first: u32,
+    _pad1: u32,
+    _pad2: u32,
+    scale: [f32; 4],
+}
+
+fn per_channel_job(
+    backend: &WgpuBackend,
+    n_pixels: u32,
+    src: &dyn RasterStorage,
+    dst: &dyn RasterStorage,
+    scale: [f32; 3],
+    clear_first: bool,
+    label: &str,
+) -> Result<PointwiseJob, String> {
+    pointwise_job(
+        backend,
+        u64::from(n_pixels),
+        12,
+        include_str!("add_scaled_per_channel.wgsl"),
+        &ChannelScaleParams {
+            n_pixels,
+            clear_first: u32::from(clear_first),
+            _pad1: 0,
+            _pad2: 0,
+            scale: [scale[0], scale[1], scale[2], 0.0],
+        },
+        &[
+            (src, PointwiseAccess::Read),
+            (
+                dst,
+                if clear_first {
+                    PointwiseAccess::Write
+                } else {
+                    PointwiseAccess::ReadWrite
+                },
+            ),
+        ],
+        None,
+        label,
+    )
 }
 
 pub(super) fn build_halation_state(
-    device: &ObservedDevice,
     hp: &spektrafilm_backend::HalationGpuParams,
     width: u32,
     height: u32,
-    buf_a: &wgpu::Buffer,
-    buf_b: &wgpu::Buffer,
+    buf_b: &(impl RasterStorage + ?Sized),
     backend: &WgpuBackend,
-) -> HalationState {
+) -> Result<HalationState, String> {
     let n_pixels = (width as usize) * (height as usize);
-    let img_bytes = (n_pixels * 3 * 4) as u64;
+    let img_bytes = image_transport_bytes(backend, width, height, "halation")?;
+    let source_pages = buf_b.pages();
+    let buf_b = &source_pages;
+    let buf_c = paged_transport(backend, img_bytes, "halation_c")?;
+    let buf_d = paged_transport(backend, img_bytes, "halation_d")?;
+    // All sequential core/tail/bounce jobs share this physically paged raster.
+    let blur_scratch = paged_transport(backend, img_bytes, "halation_blur_scratch")?;
+
+    // ── Scatter ────────────────────────────────────────────────────────
+    // The reference skips a channel only when its core and tail widths are
+    // both non-positive; such a channel keeps its input unchanged, which the
+    // zero blend weight reproduces exactly.
+    let scatter = if hp.scatter_amount > 0.0 {
+        let active: [bool; 3] =
+            std::array::from_fn(|c| hp.scatter_core_px[c] > 0.0 || hp.scatter_tail_px[c] > 0.0);
+        let core_sigma: [f64; 3] = std::array::from_fn(|c| {
+            if hp.scatter_core_px[c] > 0.0 {
+                f64::from(hp.scatter_core_px[c])
+            } else {
+                0.0
+            }
+        });
+        let tail_lambda: [f64; 3] = std::array::from_fn(|c| {
+            if hp.scatter_tail_px[c] > 0.0 {
+                f64::from(hp.scatter_tail_px[c])
+            } else {
+                0.0
+            }
+        });
+        let core = build_grain_blur_paged_with_scratch(
+            backend,
+            width,
+            height,
+            buf_b,
+            &buf_c,
+            Some(&blur_scratch),
+            core_sigma,
+            0,
+            0,
+        )
+        .map_err(|e| format!("halation scatter core Gaussian: {e}"))?;
+        // `acc = (1-wt)·core`
+        let init = per_channel_job(
+            backend,
+            n_pixels as u32,
+            &buf_c,
+            &buf_d,
+            std::array::from_fn(|c| {
+                if active[c] {
+                    1.0 - hp.scatter_tail_weight[c]
+                } else {
+                    0.0
+                }
+            }),
+            true,
+            "halation_scatter_init",
+        )?;
+        let mut tails = Vec::with_capacity(3);
+        for (amp, ratio) in spektrafilm_math::gaussian::EXPONENTIAL_GAUSSIAN_FITS {
+            let sigma: [f64; 3] = std::array::from_fn(|c| tail_lambda[c] * ratio);
+            let blur = build_grain_blur_paged_with_scratch(
+                backend,
+                width,
+                height,
+                buf_b,
+                &buf_c,
+                Some(&blur_scratch),
+                sigma,
+                0,
+                0,
+            )
+            .map_err(|e| format!("halation scatter tail Gaussian: {e}"))?;
+            let accumulate = per_channel_job(
+                backend,
+                n_pixels as u32,
+                &buf_c,
+                &buf_d,
+                std::array::from_fn(|c| {
+                    if active[c] {
+                        amp as f32 * hp.scatter_tail_weight[c]
+                    } else {
+                        0.0
+                    }
+                }),
+                false,
+                "halation_scatter_tail_acc",
+            )?;
+            tails.push((blur, accumulate));
+        }
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct ScatterFinishParams {
+            n_pixels: u32,
+            _pad0: u32,
+            _pad1: u32,
+            _pad2: u32,
+            amount: [f32; 4],
+        }
+        let finish = pointwise_job(
+            backend,
+            n_pixels as u64,
+            12,
+            include_str!("scatter_finish.wgsl"),
+            &ScatterFinishParams {
+                n_pixels: n_pixels as u32,
+                _pad0: 0,
+                _pad1: 0,
+                _pad2: 0,
+                amount: std::array::from_fn(|c| {
+                    // The shader binds `vec4<f32>`, so this is four wide; only
+                    // the first three channels have an entry in `active`.
+                    if c < 3 && active[c] {
+                        hp.scatter_amount
+                    } else {
+                        0.0
+                    }
+                }),
+            },
+            &[
+                (&buf_d, PointwiseAccess::Read),
+                (buf_b, PointwiseAccess::ReadWrite),
+            ],
+            None,
+            "halation_scatter_finish",
+        )?;
+        Some(ScatterPasses {
+            core,
+            init,
+            tails,
+            finish,
+        })
+    } else {
+        None
+    };
+
+    // ── Optional compressed halation source ───────────────────────────
+    // Computed once from the post-scatter image and shared by every bounce.
     let halation_source_active = hp.source_compression > 0.0
         && hp.halation_n_bounces > 0
         && hp.halation_a_tot.iter().any(|&value| value > 0.0);
-
-    let mk_buf = |label: &str| {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: img_bytes,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        })
-    };
-    let buf_c = mk_buf("halation_c"); // scatter core / blur output
-    let buf_d = mk_buf("halation_d"); // halation accumulator
-    let buf_e = halation_source_active.then(|| mk_buf("halation_e"));
-    let blur_pipe_h = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_h.wgsl"),
-        &blur::BLUR_LAYOUT,
-    );
-    let blur_pipe_v = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_v.wgsl"),
-        &blur::BLUR_LAYOUT,
-    );
-
-    // ── Scatter blurs (core → buf_c, tail → buf_d) ─────────────────────
-    let scatter_blurs = vec![
-        blur::make_blur_job(
-            backend,
-            hp.scatter_core_px,
-            width,
-            height,
-            buf_b,
-            buf_a,
-            &buf_c,
-            "halation_scatter_core",
-            &blur_pipe_h,
-            &blur_pipe_v,
-        ),
-        blur::make_blur_job(
-            backend,
-            hp.scatter_tail_px,
-            width,
-            height,
-            buf_b,
-            buf_a,
-            &buf_d,
-            "halation_scatter_tail",
-            &blur_pipe_h,
-            &blur_pipe_v,
-        ),
-    ];
-
-    // ── Scatter mix: result = (1-sa)*result + sa*((1-atw)*core + atw*tail)
-    let scatter_mix_pipe = backend.cached_pipeline(
-        include_str!("scatter_mix.wgsl"),
-        &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ],
-    );
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct ScatterMixParams {
-        n_pixels: u32,
-        scatter_amount: f32,
-        _pad0: u32,
-        _pad1: u32,
-        // vec4<f32>: per-channel tail weights, .w padding for 16-byte alignment
-        tail_weight: [f32; 4],
-    }
-    let scatter_mix_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("halation_scatter_mix_params"),
-        contents: bytemuck::bytes_of(&ScatterMixParams {
-            n_pixels: n_pixels as u32,
-            scatter_amount: hp.scatter_amount,
-            _pad0: 0,
-            _pad1: 0,
-            tail_weight: [
-                hp.scatter_tail_weight[0],
-                hp.scatter_tail_weight[1],
-                hp.scatter_tail_weight[2],
-                0.0,
-            ],
-        }),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let scatter_mix_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("halation_scatter_mix_bg"),
-        layout: &scatter_mix_pipe.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: scatter_mix_params.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buf_c.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: buf_d.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: buf_b.as_entire_binding(),
-            },
-        ],
-    });
-    let scatter_mix_job = DispatchJob {
-        _params_buf: scatter_mix_params,
-        pipeline: scatter_mix_pipe,
-        bg: scatter_mix_bg,
-    };
-
-    // ── Optional compressed source for halation bounces ───────────────
-    // Keep the source separate from the accumulator: every bounce must read
-    // the same prepared source, while the accumulator is overwritten by the
-    // first add and accumulated by later adds.
+    let buf_e = halation_source_active
+        .then(|| paged_transport(backend, img_bytes, "halation_e"))
+        .transpose()?;
     let halation_source = if halation_source_active {
-        let source_pipe = backend.cached_pipeline(
-            include_str!("source_response.wgsl"),
-            &[
-                wgpu::BufferBindingType::Uniform,
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: false },
-            ],
-        );
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
         struct SourceParams {
@@ -176,326 +252,182 @@ pub(super) fn build_halation_state(
             _pad0: u32,
             _pad1: u32,
         }
-        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("halation_source_response_params"),
-            contents: bytemuck::bytes_of(&SourceParams {
+        Some(pointwise_job(
+            backend,
+            n_pixels as u64,
+            12,
+            include_str!("source_response.wgsl"),
+            &SourceParams {
                 n_pixels: n_pixels as u32,
                 compression: hp.source_compression,
                 _pad0: 0,
                 _pad1: 0,
-            }),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("halation_source_response_bg"),
-            layout: &source_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_b.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: buf_e
-                        .as_ref()
-                        .expect("source buffer exists when source response is active")
-                        .as_entire_binding(),
-                },
-            ],
-        });
-        Some(DispatchJob {
-            _params_buf: params,
-            pipeline: source_pipe,
-            bg,
-        })
-    } else {
-        None
-    };
-    let halation_source_buf = buf_e.as_ref().map_or(buf_b, |buffer| buffer);
-
-    // ── Halation bounces ──────────────────────────────────────────────
-    let n = hp.halation_n_bounces as usize;
-    // Pre-compute normalized decay weights.
-    let mut decay = vec![0.0f32; n];
-    // The bounce index also determines the decay exponent.
-    #[allow(clippy::needless_range_loop)]
-    for k in 0..n {
-        decay[k] = hp.halation_bounce_decay.powi(k as i32);
-    }
-    let decay_sum: f32 = decay.iter().sum();
-    if decay_sum > 0.0 {
-        for d in &mut decay {
-            *d /= decay_sum;
-        }
-    }
-
-    // Each bounce blurs buf_b → buf_c at sigma_k, then accumulates into
-    // buf_d. First bounce sets `clear_first` so we don't need a separate
-    // zero pass.
-    let add_scaled_pipe = backend.cached_pipeline(
-        include_str!("add_scaled.wgsl"),
-        &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ],
-    );
-    let mut halation_blurs = Vec::with_capacity(n);
-    let mut halation_accumulate = Vec::with_capacity(n);
-    for (k, &wk) in decay.iter().enumerate() {
-        let sigma_k = hp.halation_first_sigma_px * ((k as f32) + 1.0).sqrt();
-        halation_blurs.push(blur::make_blur_job(
-            backend,
-            sigma_k,
-            width,
-            height,
-            halation_source_buf,
-            buf_a,
-            &buf_c,
-            &format!("halation_bounce_{k}"),
-            &blur_pipe_h,
-            &blur_pipe_v,
-        ));
-
-        let acc_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("halation_acc_params_{k}")),
-            contents: bytemuck::bytes_of(&AddScaledParams {
-                n_pixels: n_pixels as u32,
-                scale: wk,
-                clear_first: if k == 0 { 1 } else { 0 },
-                _pad: 0,
-            }),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let acc_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("halation_acc_bg_{k}")),
-            layout: &add_scaled_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: acc_params.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_c.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: buf_d.as_entire_binding(),
-                },
-            ],
-        });
-        halation_accumulate.push(DispatchJob {
-            _params_buf: acc_params,
-            pipeline: add_scaled_pipe.clone(),
-            bg: acc_bg,
-        });
-    }
-
-    // Final add: result[c] += a_tot[c] * accumulator[c]. Per-channel
-    // because halation_strength varies dramatically across channels
-    // (Portra zeros out blue entirely). Uses the per-channel variant
-    // of add_scaled.
-    let final_add_pipe = backend.cached_pipeline(
-        include_str!("add_scaled_per_channel.wgsl"),
-        &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ],
-    );
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct AddScaledPerChannelParams {
-        n_pixels: u32,
-        _pad0: u32,
-        _pad1: u32,
-        _pad2: u32,
-        scale: [f32; 4],
-    }
-    let final_add_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("halation_final_add_params"),
-        contents: bytemuck::bytes_of(&AddScaledPerChannelParams {
-            n_pixels: n_pixels as u32,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-            scale: [
-                hp.halation_a_tot[0],
-                hp.halation_a_tot[1],
-                hp.halation_a_tot[2],
-                0.0,
-            ],
-        }),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let final_add_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("halation_final_add_bg"),
-        layout: &final_add_pipe.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: final_add_params.as_entire_binding(),
             },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buf_d.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: buf_b.as_entire_binding(),
-            },
-        ],
-    });
-    let halation_final_add = DispatchJob {
-        _params_buf: final_add_params,
-        pipeline: final_add_pipe,
-        bg: final_add_bg,
-    };
-
-    // Per-channel renormalize: `result[c] /= 1 + a_tot[c]`. Uses the
-    // pre-computed inverse factor passed in `inv_factor.xyz`.
-    let halation_renormalize = if hp.halation_renormalize {
-        let renorm_pipe = backend.cached_pipeline(
-            include_str!("halation_renormalize.wgsl"),
             &[
-                wgpu::BufferBindingType::Uniform,
-                wgpu::BufferBindingType::Storage { read_only: false },
+                (buf_b, PointwiseAccess::Read),
+                (
+                    buf_e.as_ref().expect("active halation source"),
+                    PointwiseAccess::Write,
+                ),
             ],
-        );
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct RenormParams {
-            n_pixels: u32,
-            _pad: u32,
-            // f32x4: .xyz used, .w padding to align next vec4. Two u32
-            // header fields above push this to offset 16, matching the
-            // WGSL std140 layout.
-            _gap: [u32; 2],
-            inv_factor: [f32; 4],
+            None,
+            "halation_source_response",
+        )?)
+    } else {
+        None
+    };
+    let halation_src = buf_e.as_ref().unwrap_or(buf_b);
+
+    // ── Multi-bounce halation ─────────────────────────────────────────
+    // The reference runs the block when at least one channel amplitude is
+    // positive, then adds `a_tot[c]·hb` per channel and renormalizes by
+    // `1 + a_tot[c]`. A channel whose first sigma is non-positive is skipped
+    // for the add but still participates in renormalization; both effects
+    // are reproduced here.
+    let halation_runs =
+        hp.halation_n_bounces >= 1 && hp.halation_a_tot.iter().any(|&value| value > 0.0);
+    let a_eff: [f32; 3] = std::array::from_fn(|c| {
+        if hp.halation_first_sigma_px[c] > 0.0 {
+            hp.halation_a_tot[c]
+        } else {
+            0.0
         }
-        let inv = [
-            1.0 / (1.0 + hp.halation_a_tot[0]),
-            1.0 / (1.0 + hp.halation_a_tot[1]),
-            1.0 / (1.0 + hp.halation_a_tot[2]),
-            0.0,
-        ];
-        let renorm_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("halation_renorm_params"),
-            contents: bytemuck::bytes_of(&RenormParams {
-                n_pixels: n_pixels as u32,
-                _pad: 0,
-                _gap: [0, 0],
-                inv_factor: inv,
-            }),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let renorm_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("halation_renorm_bg"),
-            layout: &renorm_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: renorm_params.as_entire_binding(),
+    });
+    let halation = if halation_runs {
+        let n = hp.halation_n_bounces as usize;
+        // Decay weights in f64, normalized the way the reference does.
+        let mut decay = vec![0.0f64; n];
+        for (k, slot) in decay.iter_mut().enumerate() {
+            *slot = f64::from(hp.halation_bounce_decay).powi(k as i32);
+        }
+        let decay_sum: f64 = decay.iter().sum();
+        if decay_sum > 0.0 {
+            for d in &mut decay {
+                *d /= decay_sum;
+            }
+        }
+        let mut blurs = Vec::new();
+        let mut accumulate = Vec::new();
+        if a_eff.iter().any(|&value| value != 0.0) {
+            for (k, &wk) in decay.iter().enumerate() {
+                let sigma: [f64; 3] = std::array::from_fn(|c| {
+                    (f64::from(hp.halation_first_sigma_px[c]) * ((k as f64) + 1.0).sqrt()).max(1e-6)
+                });
+                blurs.push(
+                    build_grain_blur_paged_with_scratch(
+                        backend,
+                        width,
+                        height,
+                        halation_src,
+                        &buf_c,
+                        Some(&blur_scratch),
+                        sigma,
+                        0,
+                        0,
+                    )
+                    .map_err(|e| format!("halation bounce {k} Gaussian: {e}"))?,
+                );
+                accumulate.push(per_channel_job(
+                    backend,
+                    n_pixels as u32,
+                    &buf_c,
+                    &buf_d,
+                    // The bounce weight is scalar; the final add carries the
+                    // per-channel amplitude.
+                    [wk as f32; 3],
+                    k == 0,
+                    &format!("halation_bounce_acc_{k}"),
+                )?);
+            }
+        }
+        let final_add = per_channel_job(
+            backend,
+            n_pixels as u32,
+            &buf_d,
+            buf_b,
+            a_eff,
+            false,
+            "halation_final_add",
+        )?;
+        let renormalize = if hp.halation_renormalize {
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct RenormParams {
+                n_pixels: u32,
+                _pad: u32,
+                _gap: [u32; 2],
+                inv_factor: [f32; 4],
+            }
+            Some(pointwise_job(
+                backend,
+                n_pixels as u64,
+                12,
+                include_str!("halation_renormalize.wgsl"),
+                &RenormParams {
+                    n_pixels: n_pixels as u32,
+                    _pad: 0,
+                    _gap: [0, 0],
+                    inv_factor: [
+                        1.0 / (1.0 + hp.halation_a_tot[0]),
+                        1.0 / (1.0 + hp.halation_a_tot[1]),
+                        1.0 / (1.0 + hp.halation_a_tot[2]),
+                        0.0,
+                    ],
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_b.as_entire_binding(),
-                },
-            ],
-        });
-        Some(DispatchJob {
-            _params_buf: renorm_params,
-            pipeline: renorm_pipe,
-            bg: renorm_bg,
+                &[(buf_b, PointwiseAccess::ReadWrite)],
+                None,
+                "halation_renormalize",
+            )?)
+        } else {
+            None
+        };
+        Some(HalationPasses {
+            blurs,
+            accumulate,
+            final_add,
+            renormalize,
         })
     } else {
         None
     };
 
-    HalationState {
-        buf_c,
-        buf_d,
-        buf_e,
-        scatter_blurs,
-        scatter_mix: scatter_mix_job,
+    Ok(HalationState {
+        _buf_c: buf_c,
+        _buf_d: buf_d,
+        _buf_e: buf_e,
+        _blur_scratch: blur_scratch,
+        scatter,
         halation_source,
-        halation_blurs,
-        halation_accumulate,
-        halation_final_add,
-        halation_renormalize,
-        blur_pipe_h,
-        blur_pipe_v,
-    }
+        halation,
+    })
 }
 
 impl HalationState {
-    pub(super) fn encode_passes(
-        &self,
-        encoder: &mut ObservedEncoder,
-        n_pixels: u32,
-        wg_xy: (u32, u32),
-    ) {
-        let _ = (&self.buf_c, &self.buf_d, &self.buf_e); // owned, just keepalive
-        let dispatch_blur = |enc: &mut ObservedEncoder, job: &BlurJob| {
-            {
-                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("halation_blur_h"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.blur_pipe_h.pipeline);
-                pass.set_bind_group(0, &job.bg_h, &[]);
-                pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
+    pub(super) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
+        if let Some(scatter) = &self.scatter {
+            scatter.core.submit(backend)?;
+            scatter.init.execute(backend)?;
+            for (blur, accumulate) in &scatter.tails {
+                blur.submit(backend)?;
+                accumulate.execute(backend)?;
             }
-            {
-                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("halation_blur_v"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.blur_pipe_v.pipeline);
-                pass.set_bind_group(0, &job.bg_v, &[]);
-                pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
-            }
-        };
-        let dispatch_linear = |enc: &mut ObservedEncoder, job: &DispatchJob| {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("halation_linear"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&job.pipeline.pipeline);
-            pass.set_bind_group(0, &job.bg, &[]);
-            dispatch_linear(&mut pass, n_pixels);
-        };
-
-        // Scatter
-        if !self.scatter_blurs.is_empty() {
-            for j in &self.scatter_blurs {
-                dispatch_blur(encoder, j);
-            }
-            dispatch_linear(encoder, &self.scatter_mix);
+            scatter.finish.execute(backend)?;
         }
-
-        // Halation bounces
         if let Some(source) = &self.halation_source {
-            dispatch_linear(encoder, source);
+            source.execute(backend)?;
         }
-        for (blur_job, acc_job) in self
-            .halation_blurs
-            .iter()
-            .zip(self.halation_accumulate.iter())
-        {
-            dispatch_blur(encoder, blur_job);
-            dispatch_linear(encoder, acc_job);
-        }
-        if !self.halation_blurs.is_empty() {
-            dispatch_linear(encoder, &self.halation_final_add);
-            if let Some(rn) = &self.halation_renormalize {
-                dispatch_linear(encoder, rn);
+        if let Some(halation) = &self.halation {
+            for (blur, accumulate) in halation.blurs.iter().zip(&halation.accumulate) {
+                blur.submit(backend)?;
+                accumulate.execute(backend)?;
+            }
+            if !halation.blurs.is_empty() {
+                halation.final_add.execute(backend)?;
+            }
+            if let Some(renormalize) = &halation.renormalize {
+                renormalize.execute(backend)?;
             }
         }
+        Ok(())
     }
 }

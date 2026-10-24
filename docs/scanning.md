@@ -12,6 +12,8 @@ The white reference of a scan is the clear film base of the scanned medium. A cl
 
 The scanner controls include `scanner.scan_output`, `scanner.conversion_style`, `scanner.operator`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Lens blur models readout optics on linear transmitted light and runs before any density interpretation. Unsharp mask is digital sharpening and runs after interpretation and output gamut processing. Legacy white/black correction, white/black levels, film-scan black and white points, receiver profiles, negative conversion methods, automatic setup controls, scanner finish, and Digital Reference remain removed; their field names fail validation at the current schema version.
 
+`settings.use_scanner_lut` selects a PCHIP lattice of normalized `log_xyz`, not a direct spectral scan or an RGB lattice. After interpolation, the scanner applies `10^log_xyz`, chromatic adaptation, and XYZ-to-RGB in that order. On the GPU route, lattice generation, slope and cell-hull preparation, interpolation, and the color transforms remain on the device. Storage limits split the lattice into overlapping source halos without changing its domain or resolution. A limit below the minimum halo or spectral coefficient binding returns an error; it does not select a CPU implementation.
+
 ## Experimental workflow routes and output modes
 
 The GUI exposes passthrough, film-scan, film-print-scan, and the three convert-film routes. The CLI also accepts material-producing and continuation routes described in [stage artifacts](../specs/cli/stage-artifacts.md). Direct negative-film scans expose `scanner.scan_output=direct_scan|negative_to_positive`.
@@ -44,6 +46,10 @@ There is one negative conversion interpretation. It has no selectable method. Th
 Negative conversion applies to direct negative-film scans and the `input > convert-film > scan` route. Print-paper and scan-minus-base routes retain their existing route semantics. The displayed result interprets film density. It is not a measurement of the film or a match guarantee for a processed reference JPEG. Hold profile, exposure, white balance, and scan settings fixed when comparing results.
 
 For a real negative scanner capture on `input > convert-film > scan`, disable virtual camera metering with `camera.auto_exposure=false`. Supply input transfer and color interpretation. Convert-film estimates the record densities that the negative converter reads. Set `film_render.convert.scan_illuminant` to the acquisition light (default `D55`). This is an imported-capture declaration, not a readout-light knob; final material readout remains fixed at D50 or BB5800.
+
+The resident GPU route performs both density acquisition and convert-film inversion on the device. Negative-to-positive acquisition uses the profile-derived monotone axis of each record, including its finite endpoint extrapolation, and the resolved brightness, contrast, and maximum density of that channel's style. Scanner blur runs as density → transmission → reference Gaussian filter → density before interpretation; it is not applied a second time after interpretation.
+
+Convert-film uses a bounded eight-iteration inverse scan under `film_render.convert.scan_illuminant`, with the declared input transfer, calibration matrix, and exposure compensation. The `scan`, `scan-minus-base`, and `print > scan` routes retain their respective base inclusion and paper stages. Output gamut processing, sharpening, transfer encoding, and output mix remain downstream. These device paths require native shader binary64; a selected GPU that cannot provide the required arithmetic reports an error rather than running image acquisition or inversion on the CPU.
 
 ## Conversion styles
 
@@ -83,6 +89,8 @@ All four values must be finite, and contrast must be greater than zero. The GUI 
 Material-producing CLI routes may retain a valid pending negative-scan correction in their `.sfstage` baseline. They report it as inactive because no scanner ran. On `film > scan`, the correction becomes active and can be changed without developing the material again; automatic setup is measured from the retained complete material frame. See [material-stage continuation](../specs/cli/stage-artifacts.md).
 
 Standard negative-to-positive preview renders the complete crop/upscale working grid, including spatial effects, before reducing terminal RGB for preview. The GUI keeps full-grid output and reduces only the display raster. Pan, zoom, and preview size do not change the automatic baseline. Operator variants share core preparation when reusable; optical Dye/Fotufilm grain may require exact full-route recomputation. There is no separate approximate scan engine or hidden cross-frame setup lock. Full-grid preparation costs memory; it must not silently use reduced precision or sampled setup.
+
+The retained GPU scan cache owns one complete acquisition: binary64 reconstructed record exposures, full-frame setup, and device status. It keys the immutable developed-film owner, device, geometry, calibrated axes, scanner lens blur, and setup constants—not mutable working buffers. Operator and tone variants reuse that acquisition and rerun the output tail without measuring setup again. A different frame or acquisition setting replaces the entry; cancellation or a failed device status check cannot publish one. Observation and cancellation wrappers share the same device-owned entry. Ordinary uncached processing runs the same acquisition algorithm, and no frame's automatic offsets are carried into another frame.
 
 ### Output color and compatibility
 

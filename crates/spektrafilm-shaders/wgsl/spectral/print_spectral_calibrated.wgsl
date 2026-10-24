@@ -14,6 +14,7 @@ struct Params {
     normalization_factor: f32,
     // Post-inner-log linear multiplier: print exposure × BW correction.
     exposure_scale: f32,
+    inner_only: u32,
     // Spatially-constant preflash exposure (per channel), added before log10.
     preflash: vec3<f32>,
 }
@@ -68,6 +69,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
         log(max(raw.y, 0.0) + 1e-10) / log(10.0),
         log(max(raw.z, 0.0) + 1e-10) / log(10.0),
     );
+    if params.inner_only != 0u {
+        output[base] = inner.x;
+        output[base + 1u] = inner.y;
+        output[base + 2u] = inner.z;
+        return;
+    }
     let recovered = exp(inner * log(10.0)) * params.exposure_scale;
     output[base] = log(max(recovered.x, 0.0) + 1e-10) / log(10.0);
     output[base + 1u] = log(max(recovered.y, 0.0) + 1e-10) / log(10.0);

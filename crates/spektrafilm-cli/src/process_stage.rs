@@ -351,11 +351,16 @@ fn execute(
             spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit()
                 .ok_or_else(|| anyhow::anyhow!("GPU backend unavailable; use --backend cpu"))?,
         ),
-        None => spektrafilm_gpu::select_backend(),
+        None => spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?,
     };
     let context = invocation.operation.context();
     telemetry::observe_backend(backend.as_ref(), &context);
     eprintln!("Backend: {}", backend.name());
+    if backend.is_gpu() {
+        bail!(
+            "selected GPU cannot execute material stage export or continuation; use --backend cpu"
+        );
+    }
     let seed = params.random_seed;
     let output_space = params.io.output_color_space.clone();
     let output_encoded = params.io.output_cctf_encoding;
@@ -429,14 +434,14 @@ fn execute(
             metadata = loaded.metadata;
             loaded.image
         };
+        invocation
+            .operation
+            .set_input_dimensions(image.width, image.height);
         let image = if params.settings.preview_mode {
             resize_for_preview(&image, params.settings.preview_max_size)
         } else {
             image
         };
-        invocation
-            .operation
-            .set_input_dimensions(image.width, image.height);
         let runtime = if let Some(print) = print {
             Runtime::new(film, print, params, &data.path)
         } else {

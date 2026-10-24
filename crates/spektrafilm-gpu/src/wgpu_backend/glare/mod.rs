@@ -1,53 +1,32 @@
-use super::blur::{self, BlurJob, DispatchJob};
+use super::grain::raster::{RasterStorage, paged_transport};
+use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged};
+use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, pointwise_job};
 use super::*;
 
-/// Pre-built glare pass — owns the noise-gen dispatch, optional blur,
-/// and the additive RGB apply.
-///
-/// CPU equivalent:
-/// `spektrafilm_model::glare::{compute_random_glare_amount,
-/// add_glare_with_amount}`. Operates on buf_b (the RGB output of
-/// scan_spectral) in place; the lognormal noise is held in a fresh
-/// scratch buffer, blurred via the existing 3-channel separable
-/// Gaussian.
+/// Full-source glare: generation uses original pixel indices, then reference
+/// filtering spans the entire noise field before any additive apply. There is
+/// no image reduction or spatial normalization in the reference glare model.
+/// Live transports are one RGB field, plus blur output and the reference
+/// filter's intermediate when enabled. Pointwise scratch is bounded per binding.
 pub(super) struct GlareState {
-    _scratch: wgpu::Buffer,
-    gen_dispatch: DispatchJob,
+    gen_dispatch: PointwiseJob,
     blur: Option<BlurJob>,
-    apply_dispatch: DispatchJob,
-    blur_pipe_h: CachedPipelineRef,
-    blur_pipe_v: CachedPipelineRef,
+    apply_dispatch: PointwiseJob,
 }
 
 pub(super) fn build_glare_state(
-    device: &ObservedDevice,
+    _device: &ObservedDevice,
     gp: &spektrafilm_backend::GlareGpuParams,
     width: u32,
     height: u32,
-    buf_a: &wgpu::Buffer,
-    buf_b: &wgpu::Buffer,
+    buf_b: &(impl RasterStorage + ?Sized),
     backend: &WgpuBackend,
-) -> GlareState {
-    let n_pixels = (width as usize) * (height as usize);
-    let img_bytes = (n_pixels * 3 * 4) as u64;
-
-    let scratch = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("glare_scratch"),
-        size: img_bytes,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-
-    // ── Noise generation ──────────────────────────────────────────────
-    let gen_pipe = backend.cached_pipeline(
-        include_str!("glare_gen.wgsl"),
-        &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ],
-    );
+) -> Result<GlareState, String> {
+    let img_bytes = image_transport_bytes(backend, width, height, "glare")?;
+    let n_pixels = (u64::from(width) * u64::from(height)) as u32;
+    let source_pages = buf_b.pages();
+    let buf_b = &source_pages;
+    let scratch = paged_transport(backend, img_bytes, "glare_noise")?;
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
     struct GenParams {
@@ -55,171 +34,81 @@ pub(super) fn build_glare_state(
         base_seed: u32,
         mu: f32,
         sigma: f32,
+        first_pixel: u32,
+        _pad: [u32; 3],
     }
-    let gen_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("glare_gen_params"),
-        contents: bytemuck::bytes_of(&GenParams {
-            n_pixels: n_pixels as u32,
+    let gen_dispatch = pointwise_job(
+        backend,
+        u64::from(n_pixels),
+        12,
+        include_str!("glare_gen.wgsl"),
+        &GenParams {
+            n_pixels,
             base_seed: gp.base_seed,
             mu: gp.mu,
             sigma: gp.sigma,
-        }),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let gen_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("glare_gen_bg"),
-        layout: &gen_pipe.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: gen_params.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: scratch.as_entire_binding(),
-            },
-        ],
-    });
-    let gen_dispatch = DispatchJob {
-        _params_buf: gen_params,
-        pipeline: gen_pipe,
-        bg: gen_bg,
-    };
-
-    // ── Optional blur (separable, in place on scratch via buf_a mid) ──
-    let blur_pipe_h = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_h.wgsl"),
-        &blur::BLUR_LAYOUT,
-    );
-    let blur_pipe_v = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_v.wgsl"),
-        &blur::BLUR_LAYOUT,
-    );
-    let blur = (gp.blur_px > 0.0).then(|| {
-        blur::make_blur_job(
+            first_pixel: 0,
+            _pad: [0; 3],
+        },
+        &[(&scratch, PointwiseAccess::Write)],
+        Some(4),
+        "glare_gen",
+    )?;
+    let blur = if gp.blur_px > 0.0 {
+        let out = paged_transport(backend, img_bytes, "glare_blurred")?;
+        let job = build_grain_blur_paged(
             backend,
-            gp.blur_px.max(0.01),
             width,
             height,
             &scratch,
-            buf_a,
-            &scratch,
-            "glare",
-            &blur_pipe_h,
-            &blur_pipe_v,
+            &out,
+            [gp.blur_px.max(0.01) as f64; 3],
+            0,
+            0,
         )
-    });
-
-    // ── Apply: image[c] += glare_amount * rgb_offset[c] ───────────────
-    let apply_pipe = backend.cached_pipeline(
-        include_str!("glare_apply.wgsl"),
-        &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ],
-    );
+        .map_err(|e| format!("glare Gaussian: {e}"))?;
+        Some((job, out))
+    } else {
+        None
+    };
+    let glare_input = blur.as_ref().map_or(&scratch, |(_, out)| out);
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
     struct ApplyParams {
         n_pixels: u32,
-        _pad0: u32,
-        _pad1: u32,
-        _pad2: u32,
+        _pad: [u32; 3],
         offset: [f32; 4],
     }
-    let apply_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("glare_apply_params"),
-        contents: bytemuck::bytes_of(&ApplyParams {
-            n_pixels: n_pixels as u32,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
+    let apply_dispatch = pointwise_job(
+        backend,
+        u64::from(n_pixels),
+        12,
+        include_str!("glare_apply.wgsl"),
+        &ApplyParams {
+            n_pixels,
+            _pad: [0; 3],
             offset: [gp.rgb_offset[0], gp.rgb_offset[1], gp.rgb_offset[2], 0.0],
-        }),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let apply_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("glare_apply_bg"),
-        layout: &apply_pipe.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: apply_params.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: scratch.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: buf_b.as_entire_binding(),
-            },
+        },
+        &[
+            (glare_input, PointwiseAccess::Read),
+            (buf_b, PointwiseAccess::ReadWrite),
         ],
-    });
-    let apply_dispatch = DispatchJob {
-        _params_buf: apply_params,
-        pipeline: apply_pipe,
-        bg: apply_bg,
-    };
-
-    GlareState {
-        _scratch: scratch,
+        None,
+        "glare_apply",
+    )?;
+    Ok(GlareState {
         gen_dispatch,
-        blur,
+        blur: blur.map(|(job, _)| job),
         apply_dispatch,
-        blur_pipe_h,
-        blur_pipe_v,
-    }
+    })
 }
 
 impl GlareState {
-    pub(super) fn encode_passes(
-        &self,
-        encoder: &mut ObservedEncoder,
-        n_pixels: u32,
-        wg_xy: (u32, u32),
-    ) {
-        // 1. Noise generation.
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("glare_gen"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.gen_dispatch.pipeline.pipeline);
-            pass.set_bind_group(0, &self.gen_dispatch.bg, &[]);
-            dispatch_linear(&mut pass, n_pixels);
+    pub(super) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
+        self.gen_dispatch.execute(backend)?;
+        if let Some(blur) = &self.blur {
+            blur.submit(backend)?;
         }
-        // 2. Optional blur.
-        if let Some(b) = &self.blur {
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("glare_blur_h"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.blur_pipe_h.pipeline);
-                pass.set_bind_group(0, &b.bg_h, &[]);
-                pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
-            }
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("glare_blur_v"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.blur_pipe_v.pipeline);
-                pass.set_bind_group(0, &b.bg_v, &[]);
-                pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
-            }
-        }
-        // 3. Apply onto buf_b.
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("glare_apply"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.apply_dispatch.pipeline.pipeline);
-            pass.set_bind_group(0, &self.apply_dispatch.bg, &[]);
-            dispatch_linear(&mut pass, n_pixels);
-        }
+        self.apply_dispatch.execute(backend)
     }
 }

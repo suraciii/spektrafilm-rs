@@ -171,6 +171,9 @@ enum Kind {
     Perceptual(Space),
 }
 
+/// Validated destination, algorithm, and compression knee, before table preparation.
+type ResolvedOutputGamut = (&'static RgbColorSpace, Kind, (f64, f64, f64));
+
 /// Pre-computed output gamut compressor for a fixed output color space.
 #[derive(Clone)]
 pub struct OutputGamutCompress {
@@ -183,6 +186,8 @@ pub struct OutputGamutCompress {
     l_max: f64,
     /// Destination-specific `C_max(L, h)`, row-major `[N_L][N_H]`.
     cmax: Arc<Vec<f64>>,
+    /// Device-generated boundary; CPU-reference construction leaves this empty.
+    prepared: Option<spektrafilm_backend::PreparedTable>,
 }
 
 impl OutputGamutCompress {
@@ -200,6 +205,7 @@ impl OutputGamutCompress {
             l_min: 0.0,
             l_max: 1.0,
             cmax: Arc::new(Vec::new()),
+            prepared: None,
         }
     }
 
@@ -207,18 +213,25 @@ impl OutputGamutCompress {
         self.kind != Kind::Off
     }
 
-    /// Resolve and validate before building a destination-specific compressor.
-    pub fn build(
+    /// Validate destination and controls without generating a Cmax lattice.
+    pub fn validate(
         params: &OutputGamutCompressParams,
         output_color_space: &str,
-    ) -> Result<Self, String> {
-        Self::build_detailed(params, output_color_space).map_err(|error| error.to_string())
+    ) -> Result<(), String> {
+        Self::validate_detailed(params, output_color_space).map_err(|error| error.to_string())
     }
 
-    pub(crate) fn build_detailed(
+    pub(crate) fn validate_detailed(
         params: &OutputGamutCompressParams,
         output_color_space: &str,
-    ) -> Result<Self, crate::params::ValidationError> {
+    ) -> Result<(), crate::params::ValidationError> {
+        Self::resolve_configuration(params, output_color_space).map(|_| ())
+    }
+
+    fn resolve_configuration(
+        params: &OutputGamutCompressParams,
+        output_color_space: &str,
+    ) -> Result<ResolvedOutputGamut, crate::params::ValidationError> {
         use crate::params::{ValidationError as Error, ValidationReason as Reason};
         let destination = resolve(output_color_space).map_err(|error| {
             Error::new(Reason::ColorSpace, "io.output_color_space", error)
@@ -248,6 +261,16 @@ impl OutputGamutCompress {
             error.path = "io.output_gamut_compress.knee".into();
             error
         })?;
+        Ok((destination, kind, knee))
+    }
+
+    /// Resolve and validate before building the CPU reference boundary.
+    pub fn build(
+        params: &OutputGamutCompressParams,
+        output_color_space: &str,
+    ) -> Result<Self, String> {
+        let (destination, kind, knee) = Self::resolve_configuration(params, output_color_space)
+            .map_err(|error| error.to_string())?;
         let cam = Cam16Viewing::new(destination.whitepoint_xyz());
         let mut result = Self {
             kind,
@@ -257,6 +280,7 @@ impl OutputGamutCompress {
             l_min: 0.0,
             l_max: 1.0,
             cmax: Arc::new(Vec::new()),
+            prepared: None,
         };
         if let Kind::Perceptual(space) = kind {
             let (l_min, l_max, _) = space.table_geometry();
@@ -267,26 +291,105 @@ impl OutputGamutCompress {
         Ok(result)
     }
 
-    /// GPU inputs for sRGB's existing modes. An active compressor returning
-    /// `None` requires CPU execution, including bypassing fused GPU passes.
-    pub fn gpu_params(&self) -> Option<spektrafilm_backend::GamutGpuParams<'_>> {
-        if self.destination.name != "sRGB" {
-            return None;
+    /// Build the boundary on the selected backend, keeping generated GPU
+    /// samples resident instead of consulting the CPU table cache.
+    pub fn build_with_backend(
+        params: &OutputGamutCompressParams,
+        output_color_space: &str,
+        backend: &dyn spektrafilm_backend::ComputeBackend,
+    ) -> Result<Self, String> {
+        if !backend.is_gpu() {
+            return Self::build(params, output_color_space);
         }
+        let (destination, kind, knee) = Self::resolve_configuration(params, output_color_space)
+            .map_err(|error| error.to_string())?;
+        let cam = Cam16Viewing::new(destination.whitepoint_xyz());
+        let mut result = Self {
+            kind,
+            destination,
+            cam,
+            knee,
+            l_min: 0.0,
+            l_max: 1.0,
+            cmax: Arc::new(Vec::new()),
+            prepared: None,
+        };
+        if let Kind::Perceptual(space) = kind {
+            let (l_min, l_max, chroma_upper) = space.table_geometry();
+            let mode = match space {
+                Space::Oklch => 1,
+                Space::Oklrab => 2,
+                Space::Cam16ucs => 3,
+                Space::Jzazbz => 4,
+            };
+            result.l_min = l_min;
+            result.l_max = l_max;
+            result.prepared = Some(
+                backend
+                    .prepare_gamut_table(&spektrafilm_backend::GamutTableParams {
+                        mode,
+                        n_l: N_L as u32,
+                        n_h: N_H as u32,
+                        n_bisect: N_BISECT as u32,
+                        l_min,
+                        l_max,
+                        chroma_upper,
+                        xyz_to_rgb: destination.matrix_xyz_to_rgb,
+                        cam16: [cam.d_rgb[0], cam.d_rgb[1], cam.d_rgb[2], cam.a_w],
+                    })?
+                    .ok_or_else(|| {
+                        format!(
+                            "{} cannot prepare the selected output gamut boundary on the device",
+                            backend.name(),
+                        )
+                    })?,
+            );
+        }
+        Ok(result)
+    }
+
+    /// GPU inputs for the active mode. An active compressor returning `None`
+    /// requires CPU execution, including bypassing fused GPU passes.
+    ///
+    /// Every registered destination is served: the shader receives the
+    /// destination's own RGB↔XYZ matrices and CIECAM16 viewing conditions
+    /// rather than baked sRGB ones, so the mode set does not depend on the
+    /// space. `jzazbz` runs its forward/inverse perceptual transform in
+    /// binary64 on the device — its `b` row cancels ~105x, so the f32 hue
+    /// error crossed the C_max table cliff and cost ~1.6e-3 of output RGB
+    /// against a 1e-4 budget. f64 keeps the reference conditioning; the pass
+    /// fails by name on a device without native shader binary64.
+    pub fn gpu_params(&self) -> Option<spektrafilm_backend::GamutGpuParams<'_>> {
         let mode = match self.kind {
             Kind::Off => return None,
             Kind::AcesRgc => 0,
             Kind::Perceptual(Space::Oklch) => 1,
             Kind::Perceptual(Space::Oklrab) => 2,
             Kind::Perceptual(Space::Cam16ucs) => 3,
-            Kind::Perceptual(Space::Jzazbz) => return None,
+            Kind::Perceptual(Space::Jzazbz) => 4,
+        };
+        let to_f32_rows = |m: &[[f64; 3]; 3]| {
+            [
+                [m[0][0] as f32, m[0][1] as f32, m[0][2] as f32],
+                [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
+                [m[2][0] as f32, m[2][1] as f32, m[2][2] as f32],
+            ]
         };
         Some(spektrafilm_backend::GamutGpuParams {
             mode,
             knee: [self.knee.0 as f32, self.knee.1 as f32, self.knee.2 as f32],
             l_min: self.l_min as f32,
             l_max: self.l_max as f32,
+            rgb_to_xyz: to_f32_rows(&self.destination.matrix_rgb_to_xyz),
+            xyz_to_rgb: to_f32_rows(&self.destination.matrix_xyz_to_rgb),
+            cam16: [
+                self.cam.d_rgb[0] as f32,
+                self.cam.d_rgb[1] as f32,
+                self.cam.d_rgb[2] as f32,
+                self.cam.a_w as f32,
+            ],
             cmax: &self.cmax,
+            prepared: self.prepared.as_ref(),
             n_l: N_L as u32,
             n_h: N_H as u32,
         })
@@ -905,14 +1008,289 @@ mod tests {
                 };
                 let compressor = OutputGamutCompress::build(&params, destination).unwrap();
                 assert_eq!(compressor.is_active(), algorithm != "off");
-                assert_eq!(
-                    compressor.gpu_params().is_some(),
-                    destination == "sRGB" && algorithm != "off" && algorithm != "jzazbz"
-                );
+                // The device path is destination-independent: every space
+                // serves every implemented mode, including jzazbz (mode 4,
+                // binary64 perceptual transform on the device).
+                assert_eq!(compressor.gpu_params().is_some(), algorithm != "off");
                 if algorithm == "off" {
                     assert_eq!(compressor.compress([1.7, -0.2, 0.3]), [1.7, -0.2, 0.3]);
                 }
             }
         }
+    }
+
+    /// A chromatic wedge in the destination's own linear RGB: neutrals,
+    /// primaries and secondaries at and beyond the cube, signed headroom,
+    /// and hue sweeps at fixed lightness. Everything stays in the unclipped
+    /// domain `scan_spectral` produces, which is the compressor's input
+    /// contract — including the negative and above-one samples the C_max
+    /// bisection was built to pull back inside the cube.
+    fn wedge() -> Vec<[f64; 3]> {
+        let mut pixels: Vec<[f64; 3]> = Vec::new();
+        for v in [0.0, 0.05, 0.25, 0.5, 0.75, 1.0, 1.25, 2.0, 4.0] {
+            for channel in 0..3 {
+                let mut rgb = [v, v, v];
+                rgb[channel] = v * 1.5 + 0.2;
+                pixels.push(rgb);
+                pixels.push([-v * 0.5, v, -v]);
+            }
+        }
+        // Hue sweep at fixed lightness and a lightness sweep at fixed chroma:
+        // C_max(L, h) is indexed on both axes, so a wrong lookup geometry
+        // shows up here rather than on the axis probes.
+        for step in 0..24u32 {
+            let angle = std::f64::consts::TAU * f64::from(step) / 24.0;
+            let (s, c) = angle.sin_cos();
+            for lightness in [0.05, 0.2, 0.5, 0.85, 1.0] {
+                let chroma = 0.3;
+                pixels.push([lightness + chroma * c, lightness, lightness + chroma * s]);
+                pixels.push([lightness - chroma * s, lightness + chroma * c, lightness]);
+                pixels.push([lightness, lightness - chroma * c, lightness + chroma * s]);
+            }
+        }
+        pixels
+    }
+
+    /// The device compressor must agree with [`OutputGamutCompress::compress`]
+    /// for every destination it claims to serve. That is the point of the
+    /// pass, so comparing only sRGB would pass while a destination-specific
+    /// matrix or viewing condition was wrong: these three spaces have
+    /// different whitepoints (DCI, D50, ACES), different primaries, and
+    /// different stored inverses, so a baked sRGB matrix or a D65-only
+    /// CAM16 adaptation misses on all of them.
+    #[test]
+    fn device_compressor_matches_cpu_on_non_srgb_destinations() {
+        use spektrafilm_math::image::ImageBuf;
+        use spektrafilm_math::precision::{from_f64, to_f64};
+
+        let backend = spektrafilm_gpu::test_support::adapter();
+        let pixels = wedge();
+        let image = ImageBuf::from_data(
+            pixels.len() as u32,
+            1,
+            pixels.iter().flat_map(|rgb| rgb.map(from_f64)).collect(),
+        );
+        let mut worst = 0.0f64;
+        let mut worst_case = String::new();
+        // Every implemented mode, including aces_rgc (no C_max table) and
+        // each perceptual space. jzazbz (mode 4) runs its forward/inverse
+        // transform in binary64 on the device, so the same comparison holds
+        // for it.
+        for algorithm in ["aces_rgc", "oklch", "oklrab", "cam16ucs", "jzazbz"] {
+            for destination in ["DCI-P3", "ProPhoto RGB", "ACES2065-1"] {
+                let params = OutputGamutCompressParams {
+                    algorithm: algorithm.into(),
+                    knee: [0.0, 1.0, 6.0],
+                };
+                let compressor = OutputGamutCompress::build(&params, destination).unwrap();
+                let gp = compressor.gpu_params().unwrap_or_else(|| {
+                    panic!("{algorithm} / {destination} must have a device path")
+                });
+                let out = backend
+                    .gamut_compress_gpu(&image, &gp)
+                    .unwrap_or_else(|error| {
+                        panic!("{algorithm} / {destination} device path failed: {error}")
+                    });
+                for (index, rgb) in pixels.iter().enumerate() {
+                    let reference = compressor.compress(rgb.map(|v| to_f64(from_f64(v))));
+                    for (channel, &reference_value) in reference.iter().enumerate() {
+                        let diff = (reference_value - to_f64(out.data[index * 3 + channel])).abs();
+                        if diff > worst {
+                            worst = diff;
+                            worst_case =
+                                format!("{algorithm} / {destination} at {rgb:?} ch {channel}");
+                        }
+                    }
+                }
+            }
+        }
+        // The device is f32 and the reference f64: a matrix pair plus the
+        // perceptual round trip contributes ~1e-6 relative, and the C_max
+        // lookup adds the f32 narrowing of an f64-baked value. This budget
+        // is that f32 boundary, not an algorithm tolerance — a wrong matrix
+        // or viewing condition, or a different perceptual space, misses by
+        // two to four orders of magnitude on a destination as far from sRGB
+        // as ProPhoto RGB, so the margin is real.
+        assert!(
+            worst < 1e-4,
+            "max |gpu - cpu| {worst:.3e} at {worst_case} exceeds the f32 device budget"
+        );
+    }
+
+    /// The JzAzBz `b` row cancellation: `JZ_M2`'s third row is
+    /// [0.199076, 1.096799, -1.295875] over cone responses that make the three
+    /// terms cancel by ~105x, leaving `b` near 0.0075. One f32 rounding at the
+    /// input becomes ~3e-6 at the output, rotating the hue by ~1.5e-4 rad and
+    /// moving the C_max lookup across the table's ~0.015 single-step cliff —
+    /// a ~9% table error and ~1.6e-3 of output RGB, against a 1e-4 budget.
+    ///
+    /// The device now runs the transform in binary64, so this case must agree
+    /// with the CPU reference to the f32 boundary. A regression back to an
+    /// f32 transform shows up here first: the pixel below is the wedge's
+    /// worst-conditioned point (measured 2.06e-4 f32-vs-f64 over the wedge),
+    /// which is the only region where the cancellation is large enough to
+    /// cross the cliff.
+    #[test]
+    fn device_jzazbz_cancellation_case_matches_cpu() {
+        use spektrafilm_math::image::ImageBuf;
+        use spektrafilm_math::precision::{from_f64, to_f64};
+
+        let backend = spektrafilm_gpu::test_support::adapter();
+        // The wedge's worst-conditioned cancellation point plus the specific
+        // near-neutral hue-sweep pixel whose three `b` terms cancel ~3.2e5x.
+        let pixels: Vec<[f64; 3]> = vec![
+            [0.9223542864692438, 1.0, 0.7102222521132795],
+            [1.2897777478867205, 1.0, 1.0776457135307562],
+            [0.3, 0.3, 0.3],
+        ];
+        let image = ImageBuf::from_data(
+            pixels.len() as u32,
+            1,
+            pixels.iter().flat_map(|rgb| rgb.map(from_f64)).collect(),
+        );
+        let params = OutputGamutCompressParams {
+            algorithm: "jzazbz".into(),
+            knee: [0.0, 1.0, 6.0],
+        };
+        let compressor = OutputGamutCompress::build(&params, "sRGB").unwrap();
+        let gp = compressor.gpu_params().expect("jzazbz has a device path");
+        let out = backend
+            .gamut_compress_gpu(&image, &gp)
+            .expect("jzazbz device path must run");
+        let mut worst = 0.0f64;
+        for (index, rgb) in pixels.iter().enumerate() {
+            let reference = compressor.compress(rgb.map(|v| to_f64(from_f64(v))));
+            for (channel, &reference_value) in reference.iter().enumerate() {
+                let diff = (reference_value - to_f64(out.data[index * 3 + channel])).abs();
+                worst = worst.max(diff);
+            }
+        }
+        assert!(
+            worst < 1e-4,
+            "jzazbz cancellation case: max |gpu - cpu| {worst:.3e} exceeds the budget; \
+             the f32 transform crossed the C_max table cliff here"
+        );
+    }
+
+    /// JzAzBz endpoint coverage on the device: every destination space, plus
+    /// signed headroom, above-white highlights, and neutral endpoints. The
+    /// C_max lookup clamps L and wraps h, so these are the points where a
+    /// wrong lookup geometry or a missing sign path diverges from the CPU
+    /// reference.
+    #[test]
+    fn device_jzazbz_endpoints_match_cpu_all_destinations() {
+        use spektrafilm_math::image::ImageBuf;
+        use spektrafilm_math::precision::{from_f64, to_f64};
+
+        let backend = spektrafilm_gpu::test_support::adapter();
+        // Neutral (achromatic, h undefined → guarded), signed (negative
+        // channels carry scan headroom), above-white (knee active), and
+        // chroma-heavy (knee saturating) endpoints.
+        let pixels: Vec<[f64; 3]> = vec![
+            [0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.5],
+            [1.0, 1.0, 1.0],
+            [-0.5, 0.25, -0.75],
+            [1.25, -0.1, 0.4],
+            [4.0, 4.0, 4.0],
+            [2.0, 0.0, 0.0],
+            [0.0, 2.0, 2.0],
+        ];
+        let image = ImageBuf::from_data(
+            pixels.len() as u32,
+            1,
+            pixels.iter().flat_map(|rgb| rgb.map(from_f64)).collect(),
+        );
+        let params = OutputGamutCompressParams {
+            algorithm: "jzazbz".into(),
+            knee: [0.0, 1.0, 6.0],
+        };
+        let mut worst = 0.0f64;
+        let mut worst_case = String::new();
+        for destination in [
+            "sRGB",
+            "DCI-P3",
+            "Display P3",
+            "Adobe RGB (1998)",
+            "ITU-R BT.2020",
+            "ProPhoto RGB",
+            "ACES2065-1",
+        ] {
+            let compressor = OutputGamutCompress::build(&params, destination).unwrap();
+            let gp = compressor.gpu_params().expect("jzazbz has a device path");
+            let out = backend
+                .gamut_compress_gpu(&image, &gp)
+                .expect("jzazbz device path must run");
+            for (index, rgb) in pixels.iter().enumerate() {
+                let reference = compressor.compress(rgb.map(|v| to_f64(from_f64(v))));
+                let device: Vec<f64> = out.data[index * 3..index * 3 + 3]
+                    .iter()
+                    .map(|v| to_f64(*v))
+                    .collect();
+                for channel in 0..3 {
+                    let diff = (reference[channel] - device[channel]).abs();
+                    if diff > worst {
+                        worst = diff;
+                        worst_case = format!("{destination} at {rgb:?} ch {channel}");
+                    }
+                }
+            }
+        }
+        assert!(
+            worst < 1e-4,
+            "jzazbz endpoints: max |gpu - cpu| {worst:.3e} at {worst_case} exceeds the budget"
+        );
+    }
+
+    /// The JzAzBz transform's own conditioning, independent of the C_max
+    /// lookup: the forward/inverse round trip must recover the input to f64
+    /// precision on the device. This isolates the transform arithmetic (the
+    /// signed powers, the matrices) from the table lookup, so a regression in
+    /// either is attributable.
+    #[test]
+    fn device_jzazbz_roundtrip_recovers_input() {
+        use spektrafilm_math::image::ImageBuf;
+        use spektrafilm_math::precision::{from_f64, to_f64};
+
+        let backend = spektrafilm_gpu::test_support::adapter();
+        // `off` with the jzazbz transform is not expressible, so run the
+        // compressor with a knee that leaves in-gamut chroma untouched
+        // (threshold 0, limit 1, power 6 compresses nothing below C_max) and
+        // compare the device output against the CPU's own round trip.
+        let pixels: Vec<[f64; 3]> = vec![
+            [0.0, 0.0, 0.0],
+            [0.1, 0.2, 0.3],
+            [0.5, 0.5, 0.5],
+            [0.9, 0.8, 0.7],
+        ];
+        let image = ImageBuf::from_data(
+            pixels.len() as u32,
+            1,
+            pixels.iter().flat_map(|rgb| rgb.map(from_f64)).collect(),
+        );
+        let params = OutputGamutCompressParams {
+            algorithm: "jzazbz".into(),
+            knee: [0.0, 1.0, 6.0],
+        };
+        let compressor = OutputGamutCompress::build(&params, "sRGB").unwrap();
+        let gp = compressor.gpu_params().expect("jzazbz has a device path");
+        let out = backend
+            .gamut_compress_gpu(&image, &gp)
+            .expect("jzazbz device path must run");
+        let mut worst = 0.0f64;
+        for (index, rgb) in pixels.iter().enumerate() {
+            let reference = compressor.compress(rgb.map(|v| to_f64(from_f64(v))));
+            for (channel, &reference_value) in reference.iter().enumerate() {
+                let diff = (reference_value - to_f64(out.data[index * 3 + channel])).abs();
+                worst = worst.max(diff);
+            }
+        }
+        // In-gamut chroma below C_max passes through the knee unchanged, so
+        // this is effectively the transform round trip: f64 on both sides,
+        // differing only by the f32 upload of the input and the f32 readback.
+        assert!(
+            worst < 1e-6,
+            "jzazbz round trip: max |gpu - cpu| {worst:.3e} exceeds the f64 boundary"
+        );
     }
 }

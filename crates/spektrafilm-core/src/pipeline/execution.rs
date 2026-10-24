@@ -13,8 +13,8 @@ impl Pipeline {
     /// `cmy_film` returns film densities instead of final RGB. Invalid or
     /// unreachable pairs fail with the upstream error text.
     ///
-    /// Nondefault endpoints use per-stage boundaries. The normal end-to-end
-    /// pair retains the fused GPU-resident path and full-input preparation.
+    /// Every selected-GPU span uses retained boundaries; only the requested
+    /// result is materialized. CPU-selected spans use the reference stages.
     pub fn process_with_taps(
         &self,
         image: ImageBuf,
@@ -64,6 +64,7 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbOut),
         };
+
         // Negative-to-positive interpretation is part of the resident
         // decision: the density reading runs as the assembled scanner readout
         // fence and replaces the acquisition as the assembled acquisition
@@ -77,17 +78,27 @@ impl Pipeline {
         }
         if crate::stages::grain_v3::active(&self.params) {
             let cell_spectral = crate::stages::grain_v3::validate_cell_spectral(&self.params)?;
-            let aperture_factor = crate::stages::grain_v3::validate_aperture(&self.params)?;
+            crate::stages::grain_v3::validate_aperture(&self.params)?;
             if cell_spectral {
                 crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
             }
-            Self::validate_grain_v3_taps(
-                cell_spectral,
-                aperture_factor,
-                inject,
-                collect,
-                self.params.io.scan_film,
-            )?;
+            Self::validate_grain_v3_taps(cell_spectral, inject, collect, self.params.io.scan_film)?;
+        }
+        if backend.is_gpu() {
+            // Diagnostic endpoints are not permission to enter the CPU
+            // reference topology. The retained entry validates and executes
+            // only the selected span, including full-source metering when
+            // injection starts at rgb_in.
+            let retained = self
+                .process_retained_with_taps(
+                    &image,
+                    RetainedRender::FULL,
+                    backend,
+                    Some(inject),
+                    Some(collect),
+                )?
+                .ok_or_else(|| "selected GPU declined the retained pipeline route".to_owned())?;
+            return backend.materialize_retained(&retained);
         }
         if let Some(context) = backend.observation_context()
             && (inject != Tap::RgbIn || collect != Tap::RgbOut)
@@ -95,11 +106,7 @@ impl Pipeline {
             context.decline_resident(
                 spektrafilm_backend::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
             );
-            context.set_path(if backend.is_gpu() {
-                spektrafilm_backend::telemetry::ExecutionPath::PerStage
-            } else {
-                spektrafilm_backend::telemetry::ExecutionPath::Cpu
-            });
+            context.set_path(spektrafilm_backend::telemetry::ExecutionPath::Cpu);
         }
         if let Some(capture) = capture.as_deref_mut() {
             capture.begin(
@@ -111,18 +118,20 @@ impl Pipeline {
             );
         }
         if inject == Tap::RgbIn && collect == Tap::RgbOut {
-            let source = if self.params.output_mix.amount < 1.0 {
-                Some(self.prepare_output_mix_source(&image)?)
-            } else {
-                None
+            let result = {
+                let source = if self.params.output_mix.amount < 1.0 {
+                    Some(self.prepare_output_mix_source(&image, backend)?)
+                } else {
+                    None
+                };
+                let result = self.process_full(
+                    image,
+                    backend,
+                    timings.as_deref_mut(),
+                    capture.as_deref_mut(),
+                )?;
+                self.compose_output_mix(result, source, backend, timings)?
             };
-            let result = self.process_full(
-                image,
-                backend,
-                timings.as_deref_mut(),
-                capture.as_deref_mut(),
-            )?;
-            let result = self.compose_output_mix(result, source, backend, timings)?;
             if let Some(capture) = capture.as_deref_mut() {
                 capture.record_boundary(
                     crate::stage_evidence::StageId::RgbOut,
@@ -177,7 +186,7 @@ impl Pipeline {
         self.process_with_taps(image, backend, None, None)
     }
 
-    fn process_full(
+    pub(super) fn process_full(
         &self,
         image: ImageBuf,
         backend: &dyn ComputeBackend,
@@ -190,14 +199,6 @@ impl Pipeline {
         crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
-        if self.params.workflow.route_enum() == WorkflowRoute::Input
-            && backend.explicit_gpu_request()
-        {
-            return Err(
-                "explicit GPU request cannot run the complete input route on WGPU; retry with an explicit CPU request"
-                    .into(),
-            );
-        }
         if self.params.workflow.route_enum() == WorkflowRoute::Input {
             if let Some(capture) = capture.as_deref_mut() {
                 use crate::stage_evidence::StageId;
@@ -215,37 +216,64 @@ impl Pipeline {
                 std::borrow::Cow::Owned(working) => working,
                 std::borrow::Cow::Borrowed(_) => image,
             };
-            let _observation = crate::stages::StageObservation::cpu(
-                backend,
-                "post_scan",
-                spektrafilm_backend::telemetry::CpuReason::BackendDefault,
-            );
-            if let Some(context) = backend.observation_context() {
-                context.set_path(spektrafilm_backend::telemetry::ExecutionPath::Cpu);
-                context.set_working_dimensions(image.width, image.height);
-                context.decline_resident(
-                    spektrafilm_backend::telemetry::ResidentDeclineReason::WorkflowRoute,
-                );
-            }
             use spektrafilm_math::colorspace::{conversion_matrix, convert_rgb, resolve};
             let source = resolve(&self.params.io.input_color_space)?;
             let destination = resolve(&self.params.io.output_color_space)?;
             let matrix = conversion_matrix(source, destination);
-            let mut output = image;
-            output.data.par_chunks_exact_mut(3).for_each(|pixel| {
-                let rgb = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
-                let rgb = convert_rgb(
-                    rgb,
-                    source,
-                    self.params.io.input_cctf_decoding,
-                    destination,
-                    self.params.io.output_cctf_encoding,
-                    &matrix,
-                );
-                for channel in 0..3 {
-                    pixel[channel] = from_f64(rgb[channel]);
+            // This conversion is the whole numerical content of the input
+            // route, so a device that can convert does so; the host path stays
+            // the reference for a backend without a device conversion.
+            let device = backend
+                .convert_colorspace(
+                    &image,
+                    &spektrafilm_backend::ConvertColorspaceGpuParams {
+                        src_cctf: spektrafilm_backend::cctf_kind(source.cctf),
+                        dst_cctf: spektrafilm_backend::cctf_kind(destination.cctf),
+                        decode: self.params.io.input_cctf_decoding,
+                        encode: self.params.io.output_cctf_encoding,
+                        matrix: std::array::from_fn(|i| {
+                            std::array::from_fn(|j| matrix[i][j] as f32)
+                        }),
+                    },
+                )
+                .map_err(|error| format!("input route conversion: {error}"))?;
+            let mut output = match device {
+                Some(converted) => converted,
+                None if backend.is_gpu() => {
+                    return Err("selected GPU cannot execute input route conversion".into());
                 }
-            });
+                None => {
+                    let _observation = crate::stages::StageObservation::cpu(
+                        backend,
+                        "post_scan",
+                        spektrafilm_backend::telemetry::CpuReason::BackendDefault,
+                    );
+                    let mut output = image;
+                    output.data.par_chunks_exact_mut(3).for_each(|pixel| {
+                        let rgb = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
+                        let rgb = convert_rgb(
+                            rgb,
+                            source,
+                            self.params.io.input_cctf_decoding,
+                            destination,
+                            self.params.io.output_cctf_encoding,
+                            &matrix,
+                        );
+                        for channel in 0..3 {
+                            pixel[channel] = from_f64(rgb[channel]);
+                        }
+                    });
+                    output
+                }
+            };
+            if let Some(context) = backend.observation_context() {
+                context.set_path(if backend.is_gpu() {
+                    spektrafilm_backend::telemetry::ExecutionPath::GpuResident
+                } else {
+                    spektrafilm_backend::telemetry::ExecutionPath::Cpu
+                });
+                context.set_working_dimensions(output.width, output.height);
+            }
             // The input route applies the shared terminal RGB CMYK ink style
             // appearance after output color management and before publication.
             // The appearance is terminal RGB finishing, not a spectral stage:
@@ -258,7 +286,7 @@ impl Pipeline {
             );
             return Ok(output);
         }
-        let image = self.expose_full_input(image, backend, capture.as_deref_mut());
+        let image = self.expose_full_input(image, backend, capture.as_deref_mut())?;
         let t = Instant::now();
         let (working, pixel_size_um) = self.rescale_working(&image, backend)?;
         print_stage_timing(stage_timings_enabled(), "resize", t);
@@ -270,12 +298,16 @@ impl Pipeline {
         if let Some(context) = backend.observation_context() {
             context.set_working_dimensions(working.width, working.height);
         }
-        if self
-            .params
-            .workflow
-            .route
-            .starts_with("input > convert-film")
-        {
+        if self.params.workflow.route_enum().is_convert_film() {
+            if backend.is_gpu()
+                && let Some(output) =
+                    self.try_gpu_resident(&working, backend, pixel_size_um, 0.0)?
+            {
+                return Ok(output);
+            }
+            if backend.is_gpu() {
+                return Err("selected GPU cannot run the convert-film inverse scan on this device; retry with an explicit CPU request".into());
+            }
             return self.process_convert(working, pixel_size_um, backend, capture);
         }
         self.run(working, pixel_size_um, 0.0, backend, timings, capture)
@@ -288,12 +320,6 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
-        if backend.explicit_gpu_request() {
-            return Err(
-                "explicit GPU request cannot run the complete conversion route on WGPU; retry with an explicit CPU request"
-                    .into(),
-            );
-        }
         use crate::stage_evidence::{CoordinateSpace, StageId};
         if let Some(capture) = capture.as_deref_mut() {
             // Conversion maps the receiver capture back to film density: the
@@ -338,7 +364,7 @@ impl Pipeline {
                 self.print_exposure_factor,
                 self.preflash_raw,
                 pixel_size_um,
-            );
+            )?;
             let developed = crate::stages::printing::develop(
                 &print_density,
                 &self.print,
@@ -453,9 +479,9 @@ impl Pipeline {
     /// zero-copy. Auto-exposure is metered on the full input exactly as
     /// [`Self::process`] does.
     ///
-    /// `Ok(None)` means the backend cannot run the resident chain and the
-    /// caller should fall back to [`Self::process`]; `Err` carries an
-    /// invalid-geometry error that must fail the render.
+    /// `Ok(None)` means the initially selected CPU backend cannot run a
+    /// resident chain. Every selected GPU span, including diagnostic taps,
+    /// returns its requested materialization or an error, never host fallback.
     pub fn process_resident_borrowed(
         &self,
         image: &ImageBuf,
@@ -483,6 +509,18 @@ impl Pipeline {
                     .into(),
             );
         }
+        if backend.is_gpu() {
+            let retained = self
+                .process_retained_with_taps(
+                    image,
+                    RetainedRender::FULL,
+                    backend,
+                    Some(inject),
+                    Some(collect),
+                )?
+                .ok_or_else(|| "selected GPU declined the retained pipeline route".to_owned())?;
+            return backend.materialize_retained(&retained).map(Some);
+        }
         if inject != Tap::RgbIn || collect != Tap::RgbOut {
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
@@ -503,17 +541,18 @@ impl Pipeline {
             backend = backend.name(),
             "pipeline: borrowed resident start"
         );
+        // Selected GPU processing uses retained preparation and composition;
+        // only an initially selected CPU can reach the host reference below.
+        self.ensure_gpu_coverage(backend)?;
         let source = if self.params.output_mix.amount < 1.0 {
-            Some(self.prepare_output_mix_source(image)?)
+            Some(self.prepare_output_mix_source(image, backend)?)
         } else {
             None
         };
-        let metering = crate::stages::StageObservation::cpu(
-            backend,
-            "metering",
-            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
-        );
-        let ae_ev = self.meter_autoexposure(image);
+        // The device meter records its own GPU executor observation, so this
+        // scope only exists to bound the host reference meter's stage.
+        let metering = crate::stages::StageObservation::new(backend, "metering");
+        let ae_ev = self.meter_autoexposure(image, backend)?;
         // Clone only when the exposure multiply actually needs owned pixels;
         // a full-resolution preview must not deep-clone a no-op exposure.
         let exposed;

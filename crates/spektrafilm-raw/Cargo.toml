@@ -6,16 +6,21 @@ license.workspace = true
 build = "build.rs"
 
 [features]
-precision-f64 = ["spektrafilm-math/precision-f64"]
+precision-f64 = ["spektrafilm-math/precision-f64", "spektrafilm-backend/precision-f64", "spektrafilm-gpu/precision-f64"]
 
 [dependencies]
+spektrafilm-backend.workspace = true
 spektrafilm-math.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [build-dependencies]
 cc = "1"
 pkg-config = "0.3"
+
+[dev-dependencies]
+spektrafilm-gpu = { workspace = true, features = ["wgpu-backend"] }
 
 [lints]
 workspace = true

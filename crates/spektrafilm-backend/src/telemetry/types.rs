@@ -114,7 +114,6 @@ vocabulary!(ResidentDeclineReason {
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
     MissingResidentFrontPass,
-    MallettExecutionParity,
     BackendNoResidentSupport,
     DeviceResourceLimits,
     DiagnosticTapRoute,
@@ -315,6 +314,9 @@ pub struct PhaseTotal {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Coverage {
     pub detail_limit: u64,
+    /// None means historical coverage did not distinguish summaries from details.
+    #[serde(default)]
+    pub omitted_high_level_observations: Option<u64>,
     pub byte_limit: u64,
     pub retained_observations: u64,
     pub omitted_observations: u64,
@@ -329,6 +331,7 @@ impl Default for Coverage {
     fn default() -> Self {
         Self {
             detail_limit: 1024,
+            omitted_high_level_observations: Some(0),
             byte_limit: 1048576,
             retained_observations: 0,
             omitted_observations: 0,

@@ -17,6 +17,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let idx = gid.x + gid.y * grid.x * 256u;
     if idx >= params.n_pixels { return; }
     let base = idx * 3u;
+    let source = vec3<f32>(input[base], input[base + 1u], input[base + 2u]);
     let peak = max(0.0, max(source.x, max(source.y, source.z)));
     // Keep sources at or above the fixed anchor unchanged. Compression only
     // lifts weaker sources toward the brightest source response.

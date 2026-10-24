@@ -41,6 +41,10 @@ fn observed_render(
     image: ImageBuf,
     backend: &dyn spektrafilm_backend::ComputeBackend,
 ) -> spektrafilm_backend::telemetry::ObservationSnapshot {
+    let pipeline = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), backend)
+        .expect("prepare calibration on the observed device");
     let context = spektrafilm_backend::telemetry::ObservationContext::new(
         spektrafilm_backend::telemetry::CollectionMode::Summary,
     );
@@ -112,7 +116,12 @@ fn resident_positive_slide_matches_cpu_per_stage() {
         ResidentDecision::UseResident
     ));
     let image = comparison_image(16);
-    let gpu_out = pipeline.process(image.clone(), gpu.backend()).unwrap();
+    let gpu_out = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(image.clone(), gpu.backend())
+        .unwrap();
     let cpu_out = pipeline
         .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -135,6 +144,13 @@ fn scanner_lut_acquisition_fence_matches_cpu() {
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    assert!(
+        film.data
+            .channel_density
+            .iter()
+            .any(|row| row.iter().any(|v| v.is_nan())),
+        "scanner LUT regression requires the shipped missing spectral rows"
+    );
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();
     params.io.scan_film = true;
@@ -155,7 +171,12 @@ fn scanner_lut_acquisition_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -179,6 +200,7 @@ fn scanner_lut_acquisition_fence_matches_cpu() {
 /// enlarger LUT runs as the assembled print acquisition fence that
 /// replaces the fused GPU spectral pass, matching the CPU reference
 /// under the standard fence budget.
+
 #[test]
 fn enlarger_lut_print_fence_matches_cpu() {
     use spektrafilm_math::precision::from_f64;
@@ -187,6 +209,13 @@ fn enlarger_lut_print_fence_matches_cpu() {
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    assert!(
+        film.data
+            .channel_density
+            .iter()
+            .any(|row| row.iter().any(|v| v.is_nan())),
+        "enlarger LUT regression requires the shipped missing spectral rows"
+    );
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > print > scan".into();
     params.io.scan_film = false;
@@ -207,7 +236,12 @@ fn enlarger_lut_print_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -262,7 +296,12 @@ fn enlarger_diffusion_print_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -314,7 +353,12 @@ fn spektra_grain_resident_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -391,7 +435,12 @@ fn dye_grain_field_runs_on_the_resident_device_chain() {
             .collect::<Vec<_>>()
     );
 
-    let out_gpu = pipeline.process(image.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(image.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -453,7 +502,12 @@ fn spatial_deactivation_bypasses_the_dye_density_fence() {
         ResidentDecision::UseResident
     ));
     let image = comparison_image(16);
-    let out_gpu = pipeline.process(image.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(image.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -510,7 +564,12 @@ fn input_transfer_decoding_resident_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -554,7 +613,12 @@ fn langmuir_dir_non_default_donor_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -571,33 +635,56 @@ fn langmuir_dir_non_default_donor_matches_cpu() {
     assert!(max_diff < 5e-1, "langmuir DIR max divergence: {max_diff}");
 }
 
-/// The density reading replaces the acquisition, so the resident chain
-/// runs it as the assembled acquisition fence (including the
-/// transmission-domain blur inside the acquisition).
+/// The device acquisition includes transmission-domain blur before density
+/// interpretation, rather than blurring the interpreted positive image.
 #[test]
-fn n2p_density_reading_fence_matches_cpu() {
+fn n2p_device_density_reading_matches_cpu() {
     let gpu = spektrafilm_gpu::test_support::adapter();
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-    let pipeline =
+    let mut pipeline =
         Pipeline::new_with_spectral(film.clone(), print.clone(), n2p_fence_params(), &dir).unwrap();
+    pipeline.conversion_tones = [
+        crate::stages::scanning::ChannelTone {
+            brightness_ev: -0.3,
+            contrast: 0.55,
+            dmax: 1.1,
+        },
+        crate::stages::scanning::ChannelTone {
+            brightness_ev: 0.8,
+            contrast: 0.85,
+            dmax: 1.7,
+        },
+        crate::stages::scanning::ChannelTone {
+            brightness_ev: 1.2,
+            contrast: 1.1,
+            dmax: 2.1,
+        },
+    ];
     assert!(matches!(
         pipeline.resident_decision(),
         ResidentDecision::UseResident
     ));
     let image = n2p_comparison_image(16);
-    let out_gpu = pipeline.process(image.clone(), gpu.backend()).unwrap();
+    let mut device_pipeline = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap();
+    device_pipeline.conversion_tones = pipeline.conversion_tones;
+    let out_gpu = device_pipeline
+        .process(image.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
     let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
     eprintln!("standard setup CPU/resident output parity mean={mean:.9} max={max_diff:.9}");
     assert!(
-        mean < 5e-2 && max_diff < 5e-1,
-        "density reading fence: mean={mean:.6} max={max_diff:.6}"
+        mean < 5e-3 && max_diff < 5e-2,
+        "device density reading: mean={mean:.6} max={max_diff:.6}"
     );
-    let snapshot = observed_render(&pipeline, image.clone(), gpu.backend());
+    let snapshot = observed_render(&device_pipeline, image.clone(), gpu.backend());
     assert_eq!(
         snapshot.execution.path,
         Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident)
@@ -635,12 +722,14 @@ fn n2p_density_reading_fence_matches_cpu() {
 #[test]
 fn second_resident_render_reuses_static_buffers() {
     use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
+    let fresh = spektrafilm_gpu::test_support::adapter();
     let dir = data_dir();
-    let pipeline = Pipeline::new_with_spectral(
+    let pipeline = Pipeline::new_with_spectral_backend(
         crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap(),
         crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
         resident_parity_params(32),
         &dir,
+        fresh.backend(),
     )
     .unwrap();
     assert!(matches!(
@@ -668,7 +757,6 @@ fn second_resident_render_reuses_static_buffers() {
     };
     // A fresh backend starts with empty caches: this render is the
     // per-frame baseline every render paid before the static cache existed.
-    let fresh = spektrafilm_gpu::test_support::adapter();
     let (first_out, cold_count, cold_bytes, cold_uploads, cold_readbacks, cold_ms) =
         render(&fresh, image.clone());
     let (second_out, warm_count, warm_bytes, warm_uploads, warm_readbacks, warm_ms) =
@@ -713,11 +801,12 @@ fn static_cache_does_not_serve_stale_data_after_a_configuration_change() {
     let gpu = spektrafilm_gpu::test_support::adapter();
     let dir = data_dir();
     let build = |film: &str| {
-        let pipeline = Pipeline::new_with_spectral(
+        let pipeline = Pipeline::new_with_spectral_backend(
             crate::profile::load_profile_by_name(&dir, film).unwrap(),
             crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
             resident_parity_params(32),
             &dir,
+            gpu.backend(),
         )
         .unwrap();
         assert!(matches!(
@@ -750,144 +839,181 @@ fn static_cache_does_not_serve_stale_data_after_a_configuration_change() {
     );
 }
 
-/// The negative-to-positive density reading replaces the acquisition, so
-/// it is a fence: an explicit GPU request must fail at assembly instead
-/// of running the replacement on the host silently.
+/// Device acquisition retains its entire numerical body, including optics.
 #[test]
-fn explicit_gpu_request_fails_on_the_n2p_acquisition_fences() {
+fn explicit_gpu_request_runs_n2p_density_acquisition() {
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let dir = data_dir();
+    let pipeline = Pipeline::new_with_spectral(
+        crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap(),
+        crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
+        n2p_fence_params(),
+        &dir,
+    )
+    .unwrap();
+    let image = n2p_comparison_image(8);
+    let output = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(image.clone(), gpu.backend())
+        .unwrap();
+    let reference = pipeline
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    let (mean, max) = parity_metrics(&output, &reference);
+    assert!(mean < 5e-3 && max < 5e-2, "n2p mean={mean} max={max}");
+    let snapshot = observed_render(&pipeline, image, gpu.backend());
+    assert_eq!(
+        snapshot.execution.path,
+        Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident)
+    );
+    assert!(
+        !snapshot
+            .observations
+            .iter()
+            .any(|stage| stage.executor == Some(spektrafilm_backend::telemetry::Executor::Cpu)),
+        "selected GPU density acquisition executed host image arithmetic: {:?}",
+        snapshot.observations
+    );
+}
+
+/// Conversion must enter the inverse-density head, not expose/develop again.
+#[test]
+fn explicit_gpu_convert_routes_match_cpu() {
     let gpu = spektrafilm_gpu::test_support::explicit_adapter();
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-    let image = n2p_comparison_image(8);
-    let pipeline = Pipeline::new_with_spectral(film, print, n2p_fence_params(), &dir).unwrap();
-    assert!(matches!(
-        pipeline.resident_decision(),
-        ResidentDecision::UseResident
-    ));
-    let err = pipeline
-        .process(image, gpu.backend())
-        .expect_err("explicit GPU request must fail on the acquisition fence");
     assert!(
-        err.contains("explicit GPU request") && err.contains("scanner acquisition"),
-        "unexpected error: {err}"
+        film.data
+            .channel_density
+            .iter()
+            .any(|row| row.iter().any(|v| v.is_nan())),
+        "the shipped film must retain missing spectral rows for inverse-scan regression"
+    );
+    let image = comparison_image(8);
+    let mut outputs = Vec::new();
+    for route in [
+        "input > convert-film > scan",
+        "input > convert-film > scan-minus-base",
+        "input > convert-film > print > scan",
+    ] {
+        let mut params = n2p_fence_params();
+        params.workflow.route = route.into();
+        params.io.scan_film = false;
+        params.scanner.scan_output = "direct_scan".into();
+        let reference_pipeline = Pipeline::new_with_spectral_backend(
+            film.clone(),
+            print.clone(),
+            params.clone(),
+            &dir,
+            &spektrafilm_backend::cpu_backend::CpuBackend,
+        )
+        .unwrap();
+        let pipeline = Pipeline::new_with_spectral_backend(
+            film.clone(),
+            print.clone(),
+            params,
+            &dir,
+            gpu.backend(),
+        )
+        .unwrap();
+        let output = pipeline
+            .clone()
+            .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+            .unwrap()
+            .process(image.clone(), gpu.backend())
+            .unwrap();
+        let reference = reference_pipeline
+            .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
+            .unwrap();
+        let density_reference = crate::stages::converting::process(
+            &image,
+            &reference_pipeline.film,
+            &reference_pipeline.params,
+        )
+        .unwrap();
+        let density = pipeline
+            .process_with_taps(
+                image.clone(),
+                gpu.backend(),
+                Some(crate::params::Tap::RgbPre),
+                Some(crate::params::Tap::CmyFilm),
+            )
+            .unwrap();
+        let (density_mean, density_max) = parity_metrics(&density, &density_reference);
+        assert!(
+            density_mean < 5e-3 && density_max < 5e-2,
+            "{route} inverse density: mean={density_mean} max={density_max}"
+        );
+        assert!(
+            density_reference.data.iter().any(|&value| value > 0.1),
+            "missing spectral rows must not collapse the inverse density to zero"
+        );
+        let (mean, max) = parity_metrics(&output, &reference);
+        assert!(mean < 5e-3 && max < 5e-2, "{route}: mean={mean} max={max}");
+        if route == "input > convert-film > scan" {
+            let mut physical_density = density_reference.clone();
+            for value in &mut physical_density.data {
+                *value = (*value as f32) as _;
+            }
+            let mut scanner_reference = reference_pipeline.clone();
+            scanner_reference.params.io.scan_film = true;
+            scanner_reference.params.workflow.route = "input > film > scan".into();
+            scanner_reference.params.io.output_cctf_encoding = false;
+            let mut scanner_device = pipeline.clone();
+            scanner_device.params.io.output_cctf_encoding = false;
+            let physical_reference = scanner_reference
+                .process_with_taps(
+                    physical_density.clone(),
+                    &spektrafilm_backend::cpu_backend::CpuBackend,
+                    Some(crate::params::Tap::CmyFilm),
+                    Some(crate::params::Tap::RgbOut),
+                )
+                .unwrap();
+            let acquired = scanner_device
+                .process_with_taps(
+                    physical_density,
+                    gpu.backend(),
+                    Some(crate::params::Tap::CmyFilm),
+                    Some(crate::params::Tap::RgbOut),
+                )
+                .unwrap();
+            let (_, acquisition_max) = parity_metrics(&acquired, &physical_reference);
+            assert!(
+                acquisition_max < 1e-5,
+                "identical physical-f32 scanner acquisition max absolute linear destination RGB error={acquisition_max}"
+            );
+        }
+        let snapshot = observed_render(&pipeline, image.clone(), gpu.backend());
+        assert_eq!(
+            snapshot.execution.path,
+            Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident)
+        );
+        assert!(
+            !snapshot
+                .observations
+                .iter()
+                .any(|stage| stage.executor == Some(spektrafilm_backend::telemetry::Executor::Cpu)),
+            "{route} executed host image arithmetic: {:?}",
+            snapshot.observations
+        );
+        outputs.push(output);
+    }
+    assert!(
+        parity_metrics(&outputs[0], &outputs[1]).1 > 1e-5,
+        "base toggle must affect acquisition"
+    );
+    assert!(
+        parity_metrics(&outputs[0], &outputs[2]).1 > 1e-3,
+        "printing must affect conversion"
     );
 }
 
-/// S3 acceptance, one case per migrated fence: an explicit GPU request
-/// must fail at assembly for every capability-missing stage the fences
-/// absorbed (pipe architecture "Policy ... demonstrated by test for each
-/// S3 migration"), while the automatic route runs them — the per-fence
-/// `*_fence_matches_cpu` tests hold that side. The Dye field is not a
-/// case here: a supported request is a device pass
-/// (`explicit_gpu_request_runs_the_dye_field_on_the_device`), and its
-/// host-only form is covered by `experimental_mass_law_keeps_the_host_field`.
+/// The enclosing Dye readout retains scanner context, then crops on device.
 #[test]
-fn explicit_gpu_request_fails_for_every_fenced_stage() {
-    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
-    let dir = data_dir();
-    let portra = || crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-    let cases: Vec<(&str, &str, crate::profile::Profile, RuntimeParams)> = vec![
-        (
-            "input transfer decoding",
-            "input transfer decoding",
-            portra(),
-            {
-                let mut params = RuntimeParams::default();
-                params.camera.auto_exposure = false;
-                params.io.input_cctf_decoding = true;
-                params.io.input_color_space = "sRGB".into();
-                params.io.output_gamut_compress.algorithm = "off".into();
-                params
-            },
-        ),
-        (
-            "spektra grain distribution",
-            "film grain distribution",
-            portra(),
-            {
-                let mut params = resident_parity_params(8);
-                params.film_render.grain.active = true;
-                params
-            },
-        ),
-        (
-            "camera optical diffusion",
-            "camera optical diffusion",
-            portra(),
-            {
-                let mut params = resident_parity_params(8);
-                params.camera.diffusion_filter.active = true;
-                params.camera.diffusion_filter.strength = 0.5;
-                params.camera.diffusion_filter.spatial_scale = 4.0;
-                params
-            },
-        ),
-        ("enlarger LUT acquisition", "print acquisition", portra(), {
-            let mut params = dye_fence_params();
-            params.film_render.grain.active = false;
-            params.settings.use_enlarger_lut = true;
-            params
-        }),
-        (
-            "enlarger diffusion acquisition",
-            "print acquisition",
-            portra(),
-            {
-                let mut params = dye_fence_params();
-                params.film_render.grain.active = false;
-                params.enlarger.diffusion_filter.active = true;
-                params.enlarger.diffusion_filter.strength = 0.5;
-                params
-            },
-        ),
-        (
-            "scanner LUT acquisition",
-            "scanner acquisition",
-            portra(),
-            {
-                let mut params = resident_parity_params(8);
-                params.settings.use_scanner_lut = true;
-                params
-            },
-        ),
-        (
-            "negative-to-positive density reading",
-            "scanner acquisition",
-            portra(),
-            n2p_fence_params(),
-        ),
-    ];
-    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-    let image = comparison_image(8);
-    for (name, expected, film, params) in cases {
-        let pipeline = Pipeline::new_with_spectral(film, print.clone(), params, &dir).unwrap();
-        assert!(
-            matches!(pipeline.resident_decision(), ResidentDecision::UseResident),
-            "{name}: the case must keep the resident route, not decline"
-        );
-        let err = pipeline
-            .process(image.clone(), gpu.backend())
-            .expect_err("explicit GPU request must fail on the host fence");
-        assert!(
-            err.contains("explicit GPU request") && err.contains(expected),
-            "{name}: unexpected error: {err}"
-        );
-    }
-}
-
-/// A cropped Dye request leaves the resident raster for the per-stage
-/// readout, but that is a routing choice, not a capability gap: the device
-/// field serves any readout region, so an explicit GPU request is accepted
-/// (the fence policy itself is covered by
-/// `explicit_gpu_request_fails_for_every_fenced_stage`, and the host field
-/// reason by `experimental_mass_law_keeps_the_host_field`). What refuses
-/// this request is the field's own band budget: a four-pixel source gives a
-/// film pitch so large that one output row exceeds the cell limit, so the
-/// run must fail with that named budget instead of silently demoting to
-/// the host field.
-#[test]
-fn explicit_gpu_request_fails_on_the_field_band_budget() {
+fn explicit_gpu_deferred_crop_dye_route_matches_cpu() {
     let gpu = spektrafilm_gpu::test_support::explicit_adapter();
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
@@ -899,28 +1025,38 @@ fn explicit_gpu_request_fails_on_the_field_band_budget() {
     params.io.output_gamut_compress.algorithm = "off".into();
     params.io.crop = true;
     params.io.crop_size = [0.5, 0.5];
+    params.scanner.unsharp_mask = [0.7, 0.7];
     params.film_render.grain.active = true;
     params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
+    // Field realization and the geometry-aware tail both stay on device.
     assert_eq!(
         crate::stages::grain_v3::effective_field_backend(&params, true),
         "gpu"
     );
     let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
     assert!(
-        matches!(
-            pipeline.resident_decision(),
-            ResidentDecision::PerStage { .. }
-        ),
-        "a cropped Dye request reads out per stage: {:?}",
+        matches!(pipeline.resident_decision(), ResidentDecision::UseResident),
+        "a deferred-crop Dye request keeps the resident route: {:?}",
         pipeline.resident_decision()
     );
     let img = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5; 48]);
-    let err = pipeline
-        .process(img, gpu.backend())
-        .expect_err("an output row above the band budget must fail by name");
+    let output = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
+    let reference = pipeline
+        .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    assert_eq!(
+        (output.width, output.height),
+        (reference.width, reference.height)
+    );
+    let (mean, max) = parity_metrics(&output, &reference);
     assert!(
-        err.contains("film grain Dye") && err.contains("field cells") && err.contains("limit"),
-        "unexpected error: {err}"
+        mean < 5e-3 && max < 5e-2,
+        "deferred crop: mean={mean} max={max}"
     );
 }
 
@@ -966,59 +1102,108 @@ fn explicit_gpu_request_runs_the_dye_field_on_the_device() {
     );
 }
 
-/// A cropped Dye request keeps the device field. The resident raster
-/// cannot express the readout geometry, so the chain takes the per-stage
-/// route — a routing choice, not a capability gap — and an explicit GPU
-/// request must render instead of failing before publication. The field
-/// stage is recorded without a CPU reason, which is how the host field is
-/// labelled (`cpu_field` sets `CpuReason::GrainV3FieldCpu`).
+/// The scipy MT19937 regime is Spektra's default (`use_fast_stats` off) and
+/// the composite path never leaves it, so the resident chain must run grain
+/// on the device rather than fall back to the assembled host fence. The
+/// device sampler reproduces the reference draw order (all Poisson first,
+/// then all binomial) for both the layered and composite regimes, so the
+/// whole stage resolves on the device and agrees with the CPU reference.
 #[test]
-fn explicit_gpu_request_runs_a_cropped_dye_field_on_the_device() {
-    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+fn spektra_mt19937_grain_runs_on_the_device() {
+    use spektrafilm_math::precision::from_f64;
+
+    for sublayers_active in [true, false] {
+        let gpu = spektrafilm_gpu::test_support::adapter();
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.io.output_color_space = "sRGB".into();
+        params.io.output_cctf_encoding = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.camera.auto_exposure = false;
+        params.settings.use_fast_stats = false;
+        params.film_render.grain.active = true;
+        params.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
+        params.film_render.grain.sublayers_active = sublayers_active;
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data.clone());
+
+        let snapshot = observed_render(&pipeline, img.clone(), gpu.backend());
+        assert!(
+            !snapshot
+                .observations
+                .iter()
+                .any(|stage| stage.name == "grain_v1"),
+            "the MT19937 regime fell back to the host fence (sublayers_active={sublayers_active}): {:?}",
+            snapshot
+                .observations
+                .iter()
+                .map(|stage| stage.name.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let out_gpu = pipeline
+            .clone()
+            .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+            .unwrap()
+            .process(img.clone(), gpu.backend())
+            .unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
+            .unwrap();
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(
+            mean < 5e-2,
+            "MT19937 grain mean divergence (sublayers_active={sublayers_active}): {mean}"
+        );
+        assert!(
+            max_diff < 5e-1,
+            "MT19937 grain max divergence (sublayers_active={sublayers_active}): {max_diff}"
+        );
+    }
+}
+
+/// Deferred crop and downstream scanner optics are resident device stages.
+#[test]
+fn deferred_crop_dye_with_downstream_optics_keeps_the_resident_route() {
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
     let mut params = dye_fence_params();
     params.io.crop = true;
     params.io.crop_size = [0.5, 0.5];
+    params.scanner.unsharp_mask = [0.7, 0.7];
     assert_eq!(
         crate::stages::grain_v3::effective_field_backend(&params, true),
         "gpu"
     );
     let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
     assert!(
-        matches!(
-            pipeline.resident_decision(),
-            ResidentDecision::PerStage { .. }
-        ),
-        "a cropped Dye request reads out per stage: {:?}",
+        matches!(pipeline.resident_decision(), ResidentDecision::UseResident),
+        "a deferred-crop Dye request keeps the resident route: {:?}",
         pipeline.resident_decision()
-    );
-    let snapshot = observed_render(&pipeline, comparison_image(16), gpu.backend());
-    assert_eq!(
-        snapshot.execution.path,
-        Some(spektrafilm_backend::telemetry::ExecutionPath::PerStage),
-        "backend {} did not take the per-stage route",
-        gpu.name()
-    );
-    let field = snapshot
-        .observations
-        .iter()
-        .find(|stage| stage.name == "grain_v3_field")
-        .expect("the cropped Dye field must record its stage");
-    assert_eq!(
-        field.cpu_reason, None,
-        "the cropped field resolved on the host: {:?}",
-        field
     );
 }
 
-/// The experimental mass-law selector has no device count law, so its
-/// field stays the assembled host fence: the automatic route renders
-/// with the published host reason, and an explicit GPU request fails by
-/// name instead of silently running host arithmetic. The selector is
-/// process-global, so the case runs in a child process (the presets
-/// mutation pattern).
+/// The experimental mass-law selector has no device count law. Both explicit
+/// and automatically selected GPU requests reject it before host arithmetic;
+/// CPU remains the supported executor. The selector is process-global, so
+/// this case runs in a child process.
 #[test]
 fn experimental_mass_law_keeps_the_host_field() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -1032,8 +1217,9 @@ fn experimental_mass_law_keeps_the_host_field() {
         .expect("run the mass-law child case");
     assert!(
         output.status.success(),
-        "mass-law child case failed:\n{}",
-        String::from_utf8_lossy(&output.stdout)
+        "mass-law child case failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -1070,31 +1256,26 @@ fn experimental_mass_law_child() {
         // devices in this test cannot be alive at the same time.
         let gpu = spektrafilm_gpu::test_support::explicit_adapter();
         let err = pipeline
+            .clone()
+            .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+            .unwrap()
             .process(image.clone(), gpu.backend())
             .expect_err("explicit GPU must name the host field");
         assert!(
-            err.contains("explicit GPU request") && err.contains("film grain distribution"),
+            err.contains("selected GPU") && err.contains("film grain distribution"),
             "{err}"
         );
     }
-    // The automatic route keeps the host fence with its published reason.
+    // Selection policy is independent of the unsupported count law: an
+    // automatically selected GPU must also fail instead of entering a fence.
     let auto = spektrafilm_gpu::test_support::adapter();
-    let snapshot = observed_render(&pipeline, image, auto.backend());
-    assert_eq!(
-        snapshot.execution.path,
-        Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident),
-        "backend {} did not keep the resident route",
-        auto.name()
-    );
-    assert!(
-        snapshot.observations.iter().any(|stage| {
-            stage.name == "grain_v3_field"
-                && stage.cpu_reason
-                    == Some(spektrafilm_backend::telemetry::CpuReason::GrainV3FieldCpu)
-        }),
-        "the host field must keep its published reason: {:?}",
-        snapshot.observations
-    );
+    let err = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), auto.backend())
+        .unwrap()
+        .process(image, auto.backend())
+        .expect_err("automatically selected GPU must name the host field");
+    assert!(err.contains("film grain distribution"), "{err}");
 }
 
 /// Camera optical diffusion runs on the resident chain as an assembled
@@ -1131,7 +1312,12 @@ fn camera_diffusion_fence_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1182,7 +1368,12 @@ fn output_transfer_encode_pipe_tail_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1230,7 +1421,12 @@ fn output_transfer_decode_pipe_tail_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1280,7 +1476,12 @@ fn cmyk_pipe_tail_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1336,7 +1537,12 @@ fn procedural_grain_linear_export_with_cmyk_matches_cpu() {
         .collect();
     let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
 
-    let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+    let out_gpu = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(img.clone(), gpu.backend())
+        .unwrap();
     let out_cpu = pipeline
         .process(img.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1371,7 +1577,12 @@ fn resident_negative_matches_cpu_per_stage() {
         ResidentDecision::UseResident
     ));
     let image = comparison_image(16);
-    let gpu_out = pipeline.process(image.clone(), gpu.backend()).unwrap();
+    let gpu_out = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(image.clone(), gpu.backend())
+        .unwrap();
     let cpu_out = pipeline
         .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
         .unwrap();
@@ -1399,58 +1610,603 @@ fn grain_engine_controls_resident_fallback() {
         pipeline.resident_decision(),
         ResidentDecision::UseResident
     ));
+    // Mallett no longer declines: its front pass is a device matmul like
+    // hanatos2025's, and the display-domain grain and optics stages that
+    // follow it are the same device nodes on either upsampler. The CPU
+    // per-stage route applies the same Procedural grain, so the two agree.
     pipeline.params.settings.rgb_to_raw_method = "mallett2019".into();
-    let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-        panic!("Mallett must remain on the per-stage path");
-    };
     assert!(
-        reasons
-            .iter()
-            .any(|reason| { matches!(reason, ResidentFallbackReason::MallettExecutionParity) })
+        matches!(pipeline.resident_decision(), ResidentDecision::UseResident),
+        "Mallett2019 must not decline the resident route"
     );
     pipeline.params.settings.rgb_to_raw_method = "hanatos2025".into();
 
     pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
-    // Spektra no longer declines: it runs on the resident chain as an
-    // assembled CPU fence on the film density buffer (pipe
-    // architecture, capability class).
+    // Spektra formation is a resident device stage.
     assert!(matches!(
         pipeline.resident_decision(),
         ResidentDecision::UseResident
     ));
 
-    // Dye resolves its field from the full developed density: the
-    // delivered raster runs inside the resident chain (device pass, or
-    // host fence for a device-unrepresentable request); a cropped
-    // request keeps the whole-route fallback.
+    // Dye keeps the resident route across crop/upscale geometry and retains
+    // enclosing film context until downstream optics complete on device.
     pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
     assert!(matches!(
         pipeline.resident_decision(),
         ResidentDecision::UseResident
     ));
+    // Print glare is a spatial stage after the field, so a crop that keeps
+    // film context around it defers the crop past the optics. With no such
+    // stage, the field reads the full source and returns the requested crop
+    // grid on its readout carrier. The default unsharp mask is active, so
+    // this step clears it: the crop must not keep the whole-route fallback
+    // on its own.
+    pipeline.params.print_render.glare.active = false;
+    pipeline.params.scanner.unsharp_mask = [0.0; 2];
     pipeline.params.io.crop = true;
-    let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-        panic!("a cropped Dye request must remain on the per-stage path");
-    };
-    assert!(
-        reasons
-            .iter()
-            .any(|reason| matches!(reason, ResidentFallbackReason::FilmGrainV3FieldCpu))
-    );
+    assert!(matches!(
+        pipeline.resident_decision(),
+        ResidentDecision::UseResident
+    ));
+    // Scanner optics retain the enclosing field context and crop afterward.
+    pipeline.params.scanner.unsharp_mask = [0.7, 0.7];
+    assert!(matches!(
+        pipeline.resident_decision(),
+        ResidentDecision::UseResident
+    ));
+    pipeline.params.scanner.unsharp_mask = [0.0; 2];
     pipeline.params.io.crop = false;
     pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
     pipeline.params.film_render.grain.fotufilm.amount = 1.0;
-    let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-        panic!("Fotufilm grain must remain on the per-stage path");
-    };
-    assert!(
-        reasons
-            .iter()
-            .any(|reason| matches!(reason, ResidentFallbackReason::FilmGrainFotufilmCpu))
-    );
+    assert!(matches!(
+        pipeline.resident_decision(),
+        ResidentDecision::UseResident
+    ));
     pipeline.params.film_render.grain.fotufilm.amount = 0.0;
     assert!(matches!(
         pipeline.resident_decision(),
         ResidentDecision::UseResident
     ));
+}
+
+/// Params for the Mallett2019 resident parity check: the reference print
+/// route with the Mallett front pass, the default display-domain Procedural
+/// grain, and every device-heavy optional stage at its default.
+fn mallett_parity_params() -> RuntimeParams {
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > print > scan".into();
+    params.settings.rgb_to_raw_method = "mallett2019".into();
+    params.camera.auto_exposure = false;
+    params.film_render.grain.active = true;
+    params.film_render.grain.engine = crate::params::grain::GrainEngine::Procedural;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    params
+}
+
+/// An explicit GPU request with the Mallett2019 upsampler runs end to end on
+/// the device: the front pass is a device matmul, and the display-domain
+/// Procedural grain, halation, DIR, and viewing glare that follow it are the
+/// same resident device nodes the hanatos2025 route uses.
+///
+/// This pins the route decision that the old `MallettExecutionParity`
+/// decline blocked. That decline rested on an unmeasured claim that the
+/// Mallett shader had "no numerically equivalent route through CPU
+/// display-domain grain and optics": the CPU per-stage route had silently
+/// dropped Procedural grain for Mallett (`stages/scanning.rs`'s
+/// `grain_v2_active` carried a `rgb_to_raw_method != "mallett2019"`
+/// conjunct from a merge resolution with no spec citation), so a resident
+/// render would have applied grain the CPU reference did not. Removing the
+/// CPU drop makes the two routes one algorithm, and the parity below is the
+/// measured evidence.
+#[test]
+fn explicit_gpu_request_runs_mallett_on_the_resident_device_chain() {
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let pipeline = Pipeline::new_with_spectral(film, print, mallett_parity_params(), &dir).unwrap();
+    assert!(
+        matches!(pipeline.resident_decision(), ResidentDecision::UseResident),
+        "mallett2019 must not decline the resident route"
+    );
+    // The Procedural grain must actually be active on both routes, so the
+    // parity below is not a grain-free comparison that passes vacuously.
+    let grain = crate::telemetry::RenderConfiguration::from_runtime(
+        &pipeline.params,
+        &pipeline.film,
+        &pipeline.print,
+    )
+    .grain;
+    assert!(
+        grain.active,
+        "the Mallett render's Procedural grain must be active for the parity to mean anything"
+    );
+
+    let image = comparison_image(16);
+    let snapshot = observed_render(&pipeline, image, gpu.backend());
+    assert_eq!(
+        snapshot.execution.path,
+        Some(spektrafilm_backend::telemetry::ExecutionPath::GpuResident),
+        "backend {} did not keep the resident route for mallett2019",
+        gpu.name()
+    );
+    assert!(
+        !snapshot
+            .observations
+            .iter()
+            .any(|stage| stage.name == "grain_v2"),
+        "the explicit GPU Mallett render recorded a host grain stage: {:?}",
+        snapshot
+            .observations
+            .iter()
+            .map(|stage| stage.name.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Mallett2019 resident parity with the default display-domain Procedural
+/// grain active: the device render must agree with the CPU reference under
+/// the standard device budget, exactly as the hanatos2025 route does.
+#[test]
+fn mallett_resident_matches_cpu_per_stage() {
+    let gpu = spektrafilm_gpu::test_support::adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let pipeline = Pipeline::new_with_spectral(film, print, mallett_parity_params(), &dir).unwrap();
+    let image = comparison_image(16);
+    let gpu_out = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(image.clone(), gpu.backend())
+        .unwrap();
+    let cpu_out = pipeline
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
+    assert!(
+        mean < 5e-3 && max_diff < 5e-2,
+        "mallett resident parity: mean={mean:.6} max={max_diff:.6}"
+    );
+}
+
+/// The JzAzBz output gamut compression runs inside the resident chain on
+/// the device, not as a per-stage host hook. The pass executes the
+/// perceptual transform in binary64, so the same render must agree with
+/// the CPU reference under the standard device budget — and the request
+/// must be resident, not demoted to the per-stage route by a missing
+/// device path.
+#[test]
+fn jzazbz_output_gamut_resident_matches_cpu() {
+    let gpu = spektrafilm_gpu::test_support::adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let mut params = resident_parity_params(16);
+    params.io.output_gamut_compress.algorithm = "jzazbz".into();
+    let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+    // jzazbz has a device path, so the request stays resident.
+    assert!(
+        matches!(pipeline.resident_decision(), ResidentDecision::UseResident),
+        "jzazbz has a device path and must not demote the resident route"
+    );
+    // The algorithm must be observable: with it off, the same image
+    // compresses differently, so the parity below is not vacuous.
+    let mut base_params = resident_parity_params(16);
+    base_params.io.output_gamut_compress.algorithm = "off".into();
+    let baseline = Pipeline::new_with_spectral(
+        crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap(),
+        crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
+        base_params,
+        &dir,
+    )
+    .unwrap();
+    let image = comparison_image(16);
+    let gpu_out = pipeline
+        .clone()
+        .with_params_with_backend(pipeline.params.clone(), gpu.backend())
+        .unwrap()
+        .process(image.clone(), gpu.backend())
+        .unwrap();
+    let cpu_out = pipeline
+        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    let cpu_base = baseline
+        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
+        .unwrap();
+    let (effect, _) = parity_metrics(&cpu_out, &cpu_base);
+    assert!(
+        effect > 1e-3,
+        "jzazbz compression had no effect: {effect:.6}"
+    );
+    let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
+    assert!(
+        mean < 5e-2 && max_diff < 5e-1,
+        "jzazbz resident parity: mean={mean:.6} max={max_diff:.6}"
+    );
+}
+
+/// The passthrough still has a processed branch (CMYK), and must use the
+/// same final linear-light mix as film routes, in either output transport.
+#[test]
+fn retained_input_output_mix_matches_cpu_with_cmyk() {
+    use spektrafilm_backend::cpu_backend::CpuBackend;
+    use spektrafilm_math::colorspace::{cctf_decode, cctf_encode, resolve};
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let image = comparison_image(8);
+    for encoded in [false, true] {
+        let mut params = resident_parity_params(8);
+        params.random_seed = 37;
+        params.workflow.route = "input".into();
+        params.io.input_color_space = "Display P3".into();
+        params.io.input_cctf_decoding = true;
+        params.io.output_color_space = "sRGB".into();
+        params.io.output_cctf_encoding = encoded;
+        params.io.crop = true;
+        params.io.crop_size = [0.5, 0.75];
+        params.io.upscale_factor = 1.5;
+        params.cmyk.active = true;
+        params.cmyk.strength = 1.0;
+        let cpu =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir).unwrap();
+        let device = cpu
+            .clone()
+            .with_params_with_backend(params, gpu.backend())
+            .unwrap();
+        let full_cpu = cpu.process(image.clone(), &CpuBackend).unwrap();
+        let source_cpu = cpu.prepare_output_mix_source(&image, &CpuBackend).unwrap();
+        let space = resolve("sRGB").unwrap();
+        let linear = |v: f64| {
+            if encoded {
+                cctf_decode(v, space.cctf)
+            } else {
+                v
+            }
+        };
+        assert!(
+            full_cpu
+                .data
+                .iter()
+                .zip(&source_cpu.data)
+                .any(|(a, b)| (linear(*a as f64) - *b as f64).abs() > 1e-3),
+            "CMYK must distinguish the processed branch from the source"
+        );
+        for amount in [0.0, 0.35, 1.0] {
+            let mut cpu = cpu.clone();
+            cpu.params.output_mix.amount = amount;
+            let mut device = device.clone();
+            device.params.output_mix.amount = amount;
+            let expected = cpu.process(image.clone(), &CpuBackend).unwrap();
+            let actual = device
+                .process_retained(&image, crate::pipeline::RetainedRender::FULL, gpu.backend())
+                .unwrap()
+                .unwrap()
+                .to_host(gpu.backend())
+                .unwrap();
+            assert_eq!((actual.width, actual.height), (6, 9));
+            assert_eq!(actual.data.len(), expected.data.len());
+            for (index, ((actual, expected), (source, full))) in actual
+                .data
+                .iter()
+                .zip(&expected.data)
+                .zip(source_cpu.data.iter().zip(&full_cpu.data))
+                .enumerate()
+            {
+                let mixed = (1.0 - amount) * *source as f64 + amount * linear(*full as f64);
+                let mixed = if encoded {
+                    cctf_encode(mixed, space.cctf)
+                } else {
+                    mixed
+                };
+                assert!(
+                    (*expected as f64 - mixed).abs() < 3e-6,
+                    "CPU mix sample {index}"
+                );
+                // Existing retained input color-conversion sample budget.
+                assert!(
+                    (*actual as f64 - *expected as f64).abs() < 2e-5,
+                    "encoded={encoded} amount={amount} sample={index}: GPU {actual}, CPU {expected}"
+                );
+            }
+        }
+    }
+}
+
+/// The optical readout changes the result lattice, not the conditioning
+/// source. Its mix source must independently replay all delivered geometry.
+#[test]
+fn retained_optical_grain_output_mix_replays_complete_geometry() {
+    use crate::params::GrainEngine;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
+    use spektrafilm_math::precision::from_f64;
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let image = ImageBuf::from_data(
+        16,
+        12,
+        (0..16 * 12 * 3)
+            .map(|i| from_f64(0.05 + 0.8 * ((i * 37) % 101) as f64 / 100.0))
+            .collect(),
+    );
+    for engine in [GrainEngine::Dye, GrainEngine::Fotufilm] {
+        let mut params = dye_fence_params();
+        params.random_seed = 37;
+        params.film_render.grain.engine = engine;
+        params.camera.film_format_mm = 0.16;
+        params.film_render.grain.fotufilm.amount = 1.0;
+        params.io.input_cctf_decoding = true;
+        params.io.crop = true;
+        params.io.crop_center = [0.6, 0.4];
+        params.io.crop_size = [0.5, 0.5];
+        params.io.upscale_factor = 1.5;
+        // Isolate optical grain readout and its enclosing scanner field from
+        // unrelated full-source camera diffusion and viewing glare.
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.print_render.glare.active = false;
+        params.scanner.lens_blur = 0.6;
+        params.scanner.unsharp_mask = [0.0, 0.0];
+        params.enlarger.diffusion_filter.active = false;
+        let cpu =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir).unwrap();
+        let device = cpu
+            .clone()
+            .with_params_with_backend(params, gpu.backend())
+            .unwrap();
+        // Clones retain the same immutable fitted population and bank for
+        // full and preview geometry; raster size is not population identity.
+        for preview in [None, Some(12)] {
+            let oriented = image.rotated_quarter_turns(1);
+            let working = preview.map_or_else(
+                || oriented.clone(),
+                |max| crate::params_builder::resize_for_preview(&oriented, max),
+            );
+            let source = cpu
+                .prepare_output_mix_source(&working, &CpuBackend)
+                .unwrap();
+            let full_cpu = cpu.process(working.clone(), &CpuBackend).unwrap();
+            let request = crate::pipeline::RetainedRender {
+                rotation_quarter_turns: 1,
+                preview_max_size: preview,
+            };
+            let full_gpu = device
+                .process_retained(&image, request, gpu.backend())
+                .unwrap()
+                .unwrap()
+                .to_host(gpu.backend())
+                .unwrap();
+            assert_eq!(
+                (full_gpu.width, full_gpu.height),
+                (source.width, source.height)
+            );
+            for amount in [0.0, 0.35] {
+                let mut cpu = cpu.clone();
+                cpu.params.output_mix.amount = amount;
+                let mut device = device.clone();
+                device.params.output_mix.amount = amount;
+                let expected = cpu.process(working.clone(), &CpuBackend).unwrap();
+                let actual = device
+                    .process_retained(&image, request, gpu.backend())
+                    .unwrap()
+                    .unwrap()
+                    .to_host(gpu.backend())
+                    .unwrap();
+                assert_eq!(
+                    (actual.width, actual.height),
+                    (expected.width, expected.height)
+                );
+                assert_eq!(actual.data.len(), source.data.len());
+                for (index, ((actual, source), (gpu_full, cpu_full))) in actual
+                    .data
+                    .iter()
+                    .zip(&source.data)
+                    .zip(full_gpu.data.iter().zip(&full_cpu.data))
+                    .enumerate()
+                {
+                    let mixed = (1.0 - amount) * *source as f64 + amount * *gpu_full as f64;
+                    assert!(
+                        (*actual as f64 - mixed).abs() < 2e-5,
+                        "{engine:?} preview={preview:?} amount={amount} sample={index}: geometry/mix {actual} != {mixed}"
+                    );
+                    let cpu_mixed = (1.0 - amount) * *source as f64 + amount * *cpu_full as f64;
+                    assert!((expected.data[index] as f64 - cpu_mixed).abs() < 3e-6);
+                }
+                let (mean, max) = parity_metrics(&actual, &expected);
+                if engine == GrainEngine::Dye && amount != 0.0 {
+                    // CPU FastStatsRng uses SplitMix64/53-bit uniforms;
+                    // production dye_count.wgsl uses coordinate-mixed 32-bit
+                    // words/24-bit uniforms. Equal seeds do not pair draws.
+                    // specs/gpu-execution/design.md §Stochastic alignment
+                    // explicitly permits Dye's independent random words;
+                    // its law/formation certification remains separate.
+                    // This is a measurement, not numerical Dye acceptance.
+                    eprintln!(
+                        "unpaired Dye realization measurement preview={preview:?} amount={amount}: mean={mean}, max={max}; not an acceptance gate"
+                    );
+                } else {
+                    assert!(
+                        mean < 5e-3 && max < 5e-2,
+                        "{engine:?} preview={preview:?} amount={amount}: mean={mean}, max={max}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Inverse scan already recovers developed CMY. Fotufilm selection is inert
+/// there; active Dye rejects these routes before rendering on both executors.
+#[test]
+fn retained_convert_film_never_generates_dye_or_fotufilm_grain() {
+    use crate::params::GrainEngine;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let image = n2p_comparison_image(8);
+    for route in [
+        "input > convert-film > scan",
+        "input > convert-film > scan-minus-base",
+        "input > convert-film > print > scan",
+    ] {
+        for engine in [GrainEngine::Dye, GrainEngine::Fotufilm] {
+            let mut params = resident_parity_params(8);
+            params.random_seed = 37;
+            params.workflow.route = route.into();
+            params.film_render.grain.engine = engine;
+            params.film_render.grain.active = false;
+            params.film_render.grain.fotufilm.amount = 1.0;
+            params.film_render.grain.v3_dye_support_um = 8.0;
+            params.scanner.scan_output = "direct_scan".into();
+            params.scanner.lens_blur = 0.0;
+            params.scanner.unsharp_mask = [0.0, 0.0];
+            params.enlarger.diffusion_filter.active = false;
+            params.io.crop = true;
+            params.io.crop_center = [0.65, 0.35];
+            params.io.crop_size = [0.5, 0.75];
+            params.io.upscale_factor = 1.5;
+            let cpu =
+                Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir)
+                    .unwrap();
+            let device = cpu
+                .clone()
+                .with_params_with_backend(params.clone(), gpu.backend())
+                .unwrap();
+            let cpu_off = cpu.process(image.clone(), &CpuBackend).unwrap();
+            let gpu_off = device
+                .process_retained(&image, crate::pipeline::RetainedRender::FULL, gpu.backend())
+                .unwrap()
+                .unwrap()
+                .to_host(gpu.backend())
+                .unwrap();
+            assert_eq!((cpu_off.width, cpu_off.height), (6, 9));
+            assert_eq!((gpu_off.width, gpu_off.height), (6, 9));
+            assert_eq!(gpu_off.data.len(), cpu_off.data.len());
+            let (mean, max) = parity_metrics(&gpu_off, &cpu_off);
+            assert!(
+                mean < 5e-3 && max < 5e-2,
+                "inactive {route} {engine:?}: mean={mean}, max={max}"
+            );
+            params.film_render.grain.active = true;
+            let cpu = cpu.with_params(params.clone()).unwrap();
+            let device = device
+                .with_params_with_backend(params, gpu.backend())
+                .unwrap();
+            if engine == GrainEngine::Dye {
+                let expected = crate::stages::grain_v3::validate_supported(&cpu.film, &cpu.params)
+                    .unwrap_err();
+                assert!(
+                    expected.contains("film grain Dye: unsupported condition"),
+                    "{expected}"
+                );
+                assert_eq!(
+                    cpu.process(image.clone(), &CpuBackend).unwrap_err(),
+                    expected
+                );
+                let context = spektrafilm_backend::telemetry::ObservationContext::new(
+                    spektrafilm_backend::telemetry::CollectionMode::Summary,
+                );
+                let observed = spektrafilm_backend::bind_backend(gpu.backend(), context.clone());
+                assert_eq!(
+                    device
+                        .process_retained(
+                            &image,
+                            crate::pipeline::RetainedRender::FULL,
+                            observed.as_ref()
+                        )
+                        .unwrap_err(),
+                    expected
+                );
+                assert!(
+                    context.snapshot().observations.is_empty(),
+                    "unsupported Dye must fail before device work or host fallback"
+                );
+                continue;
+            }
+            let cpu_on = cpu.process(image.clone(), &CpuBackend).unwrap();
+            let gpu_on = device
+                .process_retained(&image, crate::pipeline::RetainedRender::FULL, gpu.backend())
+                .unwrap()
+                .unwrap()
+                .to_host(gpu.backend())
+                .unwrap();
+            assert_eq!((cpu_on.width, cpu_on.height), (6, 9));
+            assert_eq!((gpu_on.width, gpu_on.height), (6, 9));
+            assert_eq!(
+                cpu_on.data, cpu_off.data,
+                "CPU {route} {engine:?} redeveloped density"
+            );
+            assert_eq!((gpu_on.width, gpu_on.height), (cpu_on.width, cpu_on.height));
+            assert_eq!(
+                gpu_on.data, gpu_off.data,
+                "GPU {route} {engine:?} redeveloped density"
+            );
+            assert_eq!(gpu_on.data.len(), cpu_on.data.len());
+            let (mean, max) = parity_metrics(&gpu_on, &cpu_on);
+            assert!(
+                mean < 5e-3 && max < 5e-2,
+                "{route} {engine:?}: mean={mean}, max={max}"
+            );
+        }
+    }
+}
+
+#[test]
+fn retained_inactive_optical_grain_keeps_ordinary_crop_and_rescale() {
+    use crate::params::GrainEngine;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
+    let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+    let dir = data_dir();
+    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+    let image = comparison_image(16);
+    for engine in [GrainEngine::Dye, GrainEngine::Fotufilm] {
+        for scale in [0.5, 1.5] {
+            let mut params = resident_parity_params(16);
+            params.random_seed = 37;
+            params.camera.auto_exposure = false;
+            params.film_render.grain.engine = engine;
+            params.film_render.grain.active = true;
+            params.debug.deactivate_spatial_effects = engine == GrainEngine::Dye;
+            params.film_render.grain.fotufilm.amount = 0.0;
+            params.io.crop = true;
+            params.io.crop_size = [0.5, 0.25];
+            params.io.upscale_factor = scale;
+            let cpu =
+                Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir)
+                    .unwrap();
+            let device = cpu
+                .clone()
+                .with_params_with_backend(params, gpu.backend())
+                .unwrap();
+            let expected = cpu.process(image.clone(), &CpuBackend).unwrap();
+            let actual = device
+                .process_retained(&image, crate::pipeline::RetainedRender::FULL, gpu.backend())
+                .unwrap()
+                .unwrap()
+                .to_host(gpu.backend())
+                .unwrap();
+            assert_eq!(
+                (actual.width, actual.height),
+                ((8.0 * scale) as u32, (4.0 * scale) as u32)
+            );
+            assert_eq!(
+                (actual.width, actual.height),
+                (expected.width, expected.height)
+            );
+            assert_eq!(actual.data.len(), expected.data.len());
+            let (mean, max) = parity_metrics(&actual, &expected);
+            assert!(
+                mean < 5e-3 && max < 5e-2,
+                "{engine:?} scale={scale}: mean={mean}, max={max}"
+            );
+        }
+    }
 }

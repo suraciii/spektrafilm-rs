@@ -33,7 +33,7 @@ impl App {
             self.status = crate::app::Message::new("operations.calibration_wait");
             return;
         }
-        let Some(image) = self.image.as_ref().map(|image| (**image).clone()) else {
+        let Some(image) = self.image.clone() else {
             self.status = crate::app::Message::new("operations.calibration_load");
             return;
         };
@@ -77,34 +77,44 @@ impl App {
         let handle = std::thread::Builder::new()
             .name("spektrafilm-calibration".into())
             .spawn(move || {
-                params.workflow.route = "input > convert-film > scan".into();
-                let result = match action {
-                    controls::CalibrationAction::DetectBase => {
-                        spektrafilm_core::stages::converting::detect_base(&image, &film, &params)
-                            .map(|(params, exposure_ev)| CalibrationResult::Base {
-                                params,
-                                exposure_ev,
+                let result = (|| {
+                    params.workflow.route = "input > convert-film > scan".into();
+                    match action {
+                        controls::CalibrationAction::DetectBase => {
+                            // Explicit source-analysis action, not a stage in
+                            // the selected GPU numerical render.
+                            let image = image.to_host(backend.as_ref())?;
+                            spektrafilm_core::stages::converting::detect_base(
+                                &image, &film, &params,
+                            )
+                            .map(|(params, exposure_ev)| {
+                                CalibrationResult::Base {
+                                    params,
+                                    exposure_ev,
+                                }
                             })
+                        }
+                        controls::CalibrationAction::BlindCalibration => {
+                            let image = image.to_host(backend.as_ref())?;
+                            spektrafilm_core::stages::converting::blind_calibration(
+                                &image, &film, &params,
+                            )
+                            .map(CalibrationResult::BlindCalibration)
+                        }
+                        controls::CalibrationAction::NeutralizeFilters => {
+                            spektrafilm_core::stages::converting::neutralize_filters(
+                                &film,
+                                &print,
+                                &params,
+                                &data_dir,
+                                backend.as_ref(),
+                            )
+                            .map(|(m_shift, y_shift)| {
+                                CalibrationResult::NeutralizeFilters { m_shift, y_shift }
+                            })
+                        }
                     }
-                    controls::CalibrationAction::BlindCalibration => {
-                        spektrafilm_core::stages::converting::blind_calibration(
-                            &image, &film, &params,
-                        )
-                        .map(CalibrationResult::BlindCalibration)
-                    }
-                    controls::CalibrationAction::NeutralizeFilters => {
-                        spektrafilm_core::stages::converting::neutralize_filters(
-                            &film,
-                            &print,
-                            &params,
-                            &data_dir,
-                            backend.as_ref(),
-                        )
-                        .map(|(m_shift, y_shift)| {
-                            CalibrationResult::NeutralizeFilters { m_shift, y_shift }
-                        })
-                    }
-                };
+                })();
                 let _ = tx.send(result);
             })
             .map_err(|error| error.to_string());

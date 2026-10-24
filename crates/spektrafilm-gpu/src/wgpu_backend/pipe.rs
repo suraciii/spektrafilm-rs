@@ -14,7 +14,7 @@
 //! transfer contract and are exercised by this module's own tests.
 
 use super::cache::PipelineCache;
-use super::observation::{ObservedDevice, ObservedEncoder, ObservedQueue};
+use super::observation::{ObservedDevice, ObservedQueue};
 use super::{GpuBuffer, dispatch_linear};
 use parking_lot::Mutex;
 use spektrafilm_backend::telemetry::*;
@@ -120,6 +120,16 @@ impl StaticBufferCache {
     }
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct TestFailure {
+    operation: Option<&'static str>,
+    attempts: usize,
+}
+
+#[cfg(test)]
+type ReadbackHook = Box<dyn FnMut() + Send>;
+
 pub(super) struct GpuPipe {
     device: ObservedDevice,
     queue: ObservedQueue,
@@ -127,6 +137,13 @@ pub(super) struct GpuPipe {
     pool: std::sync::Arc<Mutex<ReadbackPool>>,
     static_cache: std::sync::Arc<StaticBufferCache>,
     pub(super) dye_certification: std::sync::Arc<std::sync::OnceLock<Result<(), String>>>,
+    /// Device-generated exact histogram transitions, shared by backend derivatives.
+    pub(super) histogram_boundaries: std::sync::Arc<std::sync::OnceLock<wgpu::Buffer>>,
+    cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    #[cfg(test)]
+    test_failure: std::sync::Arc<Mutex<TestFailure>>,
+    #[cfg(test)]
+    test_readback_hook: std::sync::Arc<Mutex<Option<ReadbackHook>>>,
 }
 
 impl GpuPipe {
@@ -142,6 +159,12 @@ impl GpuPipe {
             pool: std::sync::Arc::new(Mutex::new(ReadbackPool::default())),
             static_cache: std::sync::Arc::new(StaticBufferCache::default()),
             dye_certification: std::sync::Arc::new(std::sync::OnceLock::new()),
+            histogram_boundaries: std::sync::Arc::new(std::sync::OnceLock::new()),
+            cancellation: None,
+            #[cfg(test)]
+            test_failure: std::sync::Arc::new(Mutex::new(TestFailure::default())),
+            #[cfg(test)]
+            test_readback_hook: std::sync::Arc::new(Mutex::new(None)),
         }
     }
 
@@ -158,7 +181,74 @@ impl GpuPipe {
             pool: std::sync::Arc::clone(&self.pool),
             static_cache: std::sync::Arc::clone(&self.static_cache),
             dye_certification: std::sync::Arc::clone(&self.dye_certification),
+            histogram_boundaries: std::sync::Arc::clone(&self.histogram_boundaries),
+            cancellation: self.cancellation.clone(),
+            #[cfg(test)]
+            test_failure: std::sync::Arc::clone(&self.test_failure),
+            #[cfg(test)]
+            test_readback_hook: self.test_readback_hook.clone(),
         }
+    }
+
+    /// Rebind one operation's signal without changing shared device resources.
+    pub(super) fn with_cancellation(
+        &self,
+        cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Self {
+        let mut pipe = self.with_observed(self.device.clone(), self.queue.clone());
+        pipe.cancellation = cancellation;
+        pipe
+    }
+
+    pub(super) fn check_cancelled(&self) -> Result<(), String> {
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|token| token.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            Err("operation cancelled".to_owned())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Inject a resource failure only in this backend and its observed derivatives.
+    #[cfg(test)]
+    pub(super) fn test_fail_operation(&self, operation: &'static str) {
+        *self.test_failure.lock() = TestFailure {
+            operation: Some(operation),
+            attempts: 0,
+        };
+    }
+
+    /// Count attempts independently of telemetry, including CollectionMode::Off.
+    #[cfg(test)]
+    pub(super) fn test_failure_attempts(&self) -> usize {
+        self.test_failure.lock().attempts
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_operation(&self, operation: &'static str) -> Result<(), String> {
+        let mut failure = self.test_failure.lock();
+        if failure.operation == Some(operation) {
+            failure.attempts += 1;
+            return Err(format!("{operation}: injected device resource failure"));
+        }
+        Ok(())
+    }
+    #[cfg(test)]
+    pub(super) fn test_on_readback(&self, hook: impl FnMut() + Send + 'static) {
+        *self.test_readback_hook.lock() = Some(Box::new(hook));
+    }
+
+    /// The observed device, for a stage that encodes its own command buffer.
+    pub(super) fn device(&self) -> &ObservedDevice {
+        &self.device
+    }
+
+    /// The observed queue, for a stage that submits its own command buffer.
+    pub(super) fn queue(&self) -> &ObservedQueue {
+        &self.queue
     }
 
     /// A device buffer holding configuration-invariant contents, reused across
@@ -186,14 +276,17 @@ impl GpuPipe {
         output_idx: usize,
         name: &'static str,
     ) -> Option<Vec<f32>> {
-        // Device-limit preflight: a binding the device cannot represent
-        // declines to the caller's CPU implementation instead of reaching
-        // wgpu's validation error, which is fatal by default.
+        #[cfg(test)]
+        if self.test_operation(name).is_err() {
+            return None;
+        }
+        // Reject unrepresentable bindings before wgpu's fatal validation.
+        // The selected-device caller converts this decline to an operation error.
         if let Some(reason) = bindings_exceed_device_limits(bindings, &self.device.limits()) {
             tracing::info!(
-                execution = "cpu",
+                execution = "gpu_rejected",
                 %reason,
-                "using the CPU stage because a buffer exceeds the device resource limits"
+                "device dispatch rejected because a buffer exceeds resource limits"
             );
             return None;
         }
@@ -464,65 +557,82 @@ impl GpuPipe {
     }
 }
 
-type CpuFenceFn<'a> = Box<dyn FnOnce(&GpuPipe) -> Result<(), String> + 'a>;
-/// One node of an assembled compute chain (`specs/gpu-execution/design.md`, pipe assembly and fence semantics).
-/// A `Gpu` node submits its passes without host transfer. Separate submissions
-/// prevent neighboring nodes from accumulating into one watchdog-sized job.
-/// A `Cpu` node materializes a device image, runs its host stage, and writes
-/// the result back before subsequent nodes are submitted.
+/// One ordered device-only chain node. Device operations own bounded
+/// submissions and can stop between chunks without publishing partial output.
 pub(super) enum ChainStage<'a> {
-    Gpu {
-        /// Diagnostic stage identity for the assembled stage list. The
-        /// chain reports one batch instead of per-stage host durations, so
-        /// nothing reads the name yet (telemetry metrics: a fused chain
-        /// reports its batch).
+    /// A device operation that owns bounded submissions and can fail before
+    /// publication. It never materializes an image or runs host numerics.
+    Device {
         #[allow(dead_code)]
         name: &'static str,
-        encode: Box<dyn FnOnce(&mut ObservedEncoder) + 'a>,
-    },
-    Cpu {
-        /// Diagnostic stage identity, unread for the same reason as the
-        /// `Gpu` arm.
-        #[allow(dead_code)]
-        name: &'static str,
-        fence: CpuFenceFn<'a>,
+        execute: Box<dyn FnOnce() -> Result<(), String> + 'a>,
     },
 }
 
 impl GpuPipe {
-    /// Execute ordered device submissions and host fences. Buffers stay resident;
-    /// queue ordering provides dependencies without host waits or image readbacks.
+    /// Execute ordered device submissions. Buffers stay resident;
+    /// queue ordering provides dependencies without host image readbacks.
     /// Banded workloads expose each band as a separate node.
     pub(super) fn run_chain(&self, stages: Vec<ChainStage<'_>>) -> Result<(), String> {
         for stage in stages {
+            self.check_cancelled()?;
             match stage {
-                ChainStage::Gpu { encode, .. } => {
-                    let mut encoder = self.device.create_command_encoder(&Default::default());
-                    encode(&mut encoder);
-                    self.queue.submit(Some(encoder.finish()));
-                }
-                ChainStage::Cpu { fence, .. } => fence(self)?,
+                ChainStage::Device { execute, .. } => execute()?,
             }
         }
+        self.check_cancelled()?;
         Ok(())
     }
 
     /// Materialize a device image buffer through the pooled readback path.
     /// Records one readback of `bytes`.
-    pub(super) fn readback_buffer(&self, buf: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
+    /// Copy `buf` into the pooled readback buffer and map the result as `T`.
+    /// This is the readback protocol: the source buffer stays a plain storage
+    /// buffer, and the pooled copy target alone carries `MAP_READ | COPY_DST`.
+    pub(super) fn readback_buffer_as<T: bytemuck::Pod>(
+        &self,
+        buf: &wgpu::Buffer,
+        bytes: u64,
+    ) -> Vec<T> {
         let readback = self.take_readback(bytes);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(buf, 0, &readback, 0, bytes);
         self.queue.submit(Some(encoder.finish()));
-        let out = self.read_mapped_f32(&readback, bytes);
+        let out = self.read_mapped::<T>(&readback, bytes);
         self.return_readback(readback, bytes);
         out
     }
 
-    /// Overwrite a device image buffer with host samples. Records one
-    /// image upload of the written bytes.
-    pub(super) fn write_image_buffer(&self, buf: &wgpu::Buffer, data: &[f32]) {
-        self.queue.write_buffer(buf, 0, bytemuck::cast_slice(data));
+    /// Cancellation can prevent the copy submission, but cannot interrupt a
+    /// driver wait already entered. Always finish mapping and return the pooled
+    /// buffer before discarding a cancelled readback.
+    pub(super) fn readback_buffer_cancellable<T: bytemuck::Pod>(
+        &self,
+        buffer: &wgpu::Buffer,
+        bytes: u64,
+    ) -> Result<Vec<T>, String> {
+        self.check_cancelled()?;
+        let readback = self.take_readback(bytes);
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
+        if let Err(error) = self.check_cancelled() {
+            self.return_readback(readback, bytes);
+            return Err(error);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        let result = self.read_mapped::<T>(&readback, bytes);
+        self.return_readback(readback, bytes);
+        #[cfg(test)]
+        if let Some(hook) = self.test_readback_hook.lock().as_mut() {
+            hook();
+        }
+        self.check_cancelled()?;
+        Ok(result)
+    }
+
+    /// The f32 specialization every image-sized readback uses.
+    pub(super) fn readback_buffer(&self, buf: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
+        self.readback_buffer_as(buf, bytes)
     }
 }
 
@@ -554,6 +664,44 @@ fn bindings_exceed_device_limits(bindings: &[GpuBuffer], limits: &wgpu::Limits) 
 #[cfg(all(test, feature = "wgpu-backend"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chain_cancellation_stops_the_next_stage_without_poisoning_shared_pipe() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let backend = crate::test_support::adapter();
+        let token = Arc::new(AtomicBool::new(false));
+        let pipe = backend.pipe.with_cancellation(Some(token.clone()));
+        let observed = pipe.with_observed(pipe.device.clone(), pipe.queue.clone());
+        let second_executed = AtomicBool::new(false);
+        let result = observed.run_chain(vec![
+            ChainStage::Device {
+                name: "cancel_operation",
+                execute: Box::new(|| {
+                    token.store(true, Ordering::Relaxed);
+                    Ok(())
+                }),
+            },
+            ChainStage::Device {
+                name: "must_not_execute",
+                execute: Box::new(|| {
+                    second_executed.store(true, Ordering::Relaxed);
+                    Ok(())
+                }),
+            },
+        ]);
+        assert_eq!(result.unwrap_err(), "operation cancelled");
+        assert!(!second_executed.load(Ordering::Relaxed));
+        assert!(backend.pipe.run_chain(Vec::new()).is_ok());
+        assert!(
+            observed
+                .with_cancellation(None)
+                .run_chain(Vec::new())
+                .is_ok()
+        );
+    }
 
     // The adapter owns the device-serialization guard for its whole lifetime:
     // the software Vulkan driver (llvmpipe) is not safe under concurrent device

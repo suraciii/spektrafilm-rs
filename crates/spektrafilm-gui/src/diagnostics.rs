@@ -304,6 +304,7 @@ fn mode_label(ctx: &egui::Context, mode: CollectionMode) -> std::borrow::Cow<'st
         },
     )
 }
+
 fn words(value: &impl serde::Serialize) -> String {
     serde_json::to_value(value)
         .map(|value| {

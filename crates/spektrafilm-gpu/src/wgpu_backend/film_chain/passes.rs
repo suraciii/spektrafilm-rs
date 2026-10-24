@@ -1,58 +1,114 @@
-use super::super::pack_matrix_columns;
 use super::*;
 use buffers::ChainBuffers;
 
 use super::super::blur::SimpleBlurState;
-use super::super::cache::CachedPipelineRef;
+use super::super::chain_chunks::PointwisePass;
 use super::super::couplers::DirState;
 use super::super::gamut::GamutState;
 use super::super::glare::GlareState;
-use super::super::grain::GrainV2State;
+use super::super::grain::{GrainV2State, SpektraGrainV1State};
 use super::super::halation::HalationState;
 use super::super::highlight::HighlightBoostState;
+use super::super::paged::ImagePage;
+use super::super::scan::{ConvertInverseState, ScanDensityState};
 use super::super::unsharp::UnsharpState;
+use spektrafilm_backend::Tap;
+
+fn tap_index(tap: Tap) -> usize {
+    match tap {
+        Tap::RgbIn => 0,
+        Tap::RgbPre => 1,
+        Tap::LogEFilm => 2,
+        Tap::CmyFilm => 3,
+        Tap::LogEPrint => 4,
+        Tap::CmyPrint => 5,
+        Tap::RgbOut => 6,
+    }
+}
+
+fn validate_tap_span(p: &spektrafilm_backend::FilmChainParams<'_>) -> Result<(), String> {
+    for tap in [p.inject, p.collect] {
+        if p.scan_film && matches!(tap, Tap::LogEPrint | Tap::CmyPrint) {
+            return Err(format!(
+                "tap {tap:?} is not part of this topology (scan_film = true)"
+            ));
+        }
+    }
+    if tap_index(p.collect) < tap_index(p.inject) {
+        return Err(format!(
+            "no node path reaches tap {:?} from {:?}",
+            p.collect, p.inject
+        ));
+    }
+    if p.inject == Tap::RgbIn && p.inject != p.collect {
+        return Err(
+            "film chain rgb_in must pass through retained metering and geometry before dispatch"
+                .into(),
+        );
+    }
+    Ok(())
+}
 
 /// Owns all intermediate state produced by the film-chain setup phase.
-struct ChainSetup<'a> {
-    image: &'a ImageBuf,
-    n_pixels: u32,
+struct ChainSetup {
+    image_width: u32,
+    image_height: u32,
     img_bytes: usize,
-    buf_a: wgpu::Buffer,
-    buf_b: wgpu::Buffer,
-    #[allow(dead_code)]
-    mappable: bool,
-    #[allow(dead_code)]
-    chain_buffers: ChainBuffers,
-    front_pipe: (CachedPipelineRef, wgpu::BindGroup, Option<wgpu::Buffer>),
-    bg_log10: (CachedPipelineRef, wgpu::BindGroup, wgpu::Buffer),
-    bg_density_film: wgpu::BindGroup,
-    bg_print: wgpu::BindGroup,
-    bg_density_print: wgpu::BindGroup,
-    bg_scan: wgpu::BindGroup,
-    readback: Option<wgpu::Buffer>,
+    buf_a: Vec<ImagePage>,
+    buf_b: Vec<ImagePage>,
+    /// The rgb→raw front pass (hanatos or mallett). `None` for the
+    /// inverse-scan chain head, which has no rgb→raw transform at all.
+    front_pipe: Option<PointwisePass>,
+    /// Chain-head input transfer decoding on `buf_a`, before the front
+    /// transform. `None` when the caller supplied linear samples already.
+    input_decode_state: Option<InputDecodeState>,
+    convert_inverse_state: Option<ConvertInverseState>,
+    scan_readout_state: Option<ScanDensityState>,
+    dye_state: Option<super::super::grain::dye::DyePagedState>,
+    fotufilm_state: Option<super::super::grain::fotufilm::FotufilmPagedState>,
+    dye_print_log: bool,
+    dye_collapse: Option<u32>,
+    tail_a: Vec<ImagePage>,
+    tail_b: Vec<ImagePage>,
+    film_density_output: Vec<ImagePage>,
+    film_density_width: u32,
+    film_density_height: u32,
+    print_exposure_output: Vec<ImagePage>,
+    print_fine_output: Vec<ImagePage>,
+    tail_width: u32,
+    tail_height: u32,
+    bg_log10: PointwisePass,
+    bg_density_film: PointwisePass,
+    bg_print: PointwisePass,
+    bg_density_print: PointwisePass,
+    bg_scan: PointwisePass,
     halation_state: Option<HalationState>,
     highlight_state: Option<HighlightBoostState>,
     camera_lens_blur_state: Option<SimpleBlurState>,
     unsharp_state: Option<UnsharpState>,
     grain_v2_state: Option<GrainV2State>,
+    /// Device Spektra v1 grain on the film density, in the density-fence
+    /// slot. `None` when the request samples the scipy regime (no per-pixel
+    /// mapping) or the device lacks native f64, so the host fence runs.
+    grain_v1_state: Option<SpektraGrainV1State>,
     gamut_state: Option<GamutState>,
     glare_state: Option<GlareState>,
     scanner_lens_blur_state: Option<SimpleBlurState>,
     dir_state: Option<DirState>,
-    density_pipe: CachedPipelineRef,
-    print_pipe: CachedPipelineRef,
-    scan_pipe: CachedPipelineRef,
 }
 
 impl WgpuBackend {
     /// Phase 1: validate dye resources, allocate buffers, pre-compile
     /// pipelines, build bind groups, and construct per-stage state.
-    fn setup_chain<'a>(
+    fn setup_chain(
         &self,
-        p: &'a spektrafilm_backend::FilmChainParams<'a>,
-    ) -> Result<ChainSetup<'a>, String> {
-        // doesn't need a rewrite — only the param sources change.
-        let image = p.image;
+        p: &spektrafilm_backend::FilmChainParams<'_>,
+        input: &spektrafilm_backend::DeviceImage,
+    ) -> Result<ChainSetup, String> {
+        // The working raster geometry is the carrier's, not a host image's:
+        // after retained input geometry the chain never sees host samples.
+        let image_width = p.image_width;
+        let image_height = p.image_height;
         let film_log_exposure = p.film_log_exposure;
         let film_density_curves_normalized = p.film_density_curves_normalized;
         let film_gamma = p.film_gamma;
@@ -63,88 +119,153 @@ impl WgpuBackend {
         let print_log_exposure = p.print_log_exposure;
         let print_density_curves = p.print_density_curves;
         let print_gamma = p.print_gamma;
-        let preflash = p.preflash;
-        let print_channel_density = p.print_channel_density;
-        let print_base_density = p.print_base_density;
-        let scan_illuminant = p.scan_illuminant;
-        let scan_normalization = p.scan_normalization;
-        let scan_xyz_to_rgb = p.scan_xyz_to_rgb;
 
         // Bounded Dye resources are validated before the chain allocates
         // anything (pipe architecture: resource validation precedes chain
         // allocations), so a request the device cannot hold is a named
         // failure instead of an allocation trap.
+        if input.width() != image_width || input.height() != image_height {
+            return Err(format!(
+                "film chain input carrier is {}x{} but the resolved working geometry is \
+                 {image_width}x{image_height}",
+                input.width(),
+                input.height()
+            ));
+        }
         if let Some(dye) = p.grain_dye.as_ref() {
-            self.validate_dye_resources(image.width, image.height, dye)?;
+            self.validate_dye_resources(image_width, image_height, dye)?;
         }
 
-        let n_pixels = image.pixel_count() as u32;
+        let n_pixels = image_width * image_height;
         let img_bytes = n_pixels as usize * 3 * 4;
 
-        // Ping-pong image buffers (each holds H*W*3 f32 values).
-        let make_img_buf = |label: &str| {
-            self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: img_bytes as u64,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            })
-        };
-        let mappable = self
-            .device
-            .features()
-            .contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
-
-        // buf_a is the input/ping-pong buffer. The dominant per-frame cost was
-        // the input upload: `queue.write_buffer` stages CPU→GPU through a slow
-        // (~0.5 GB/s) blit on this unified-memory GPU. With
-        // MAPPABLE_PRIMARY_BUFFERS we create buf_a already mapped (MAP_WRITE)
-        // and memcpy the input straight into its (shared) memory — no staging.
-        let input_f32 = scalars_to_f32(&image.data);
-        let buf_a = if mappable {
-            let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("img_a"),
-                size: img_bytes as u64,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::MAP_WRITE,
-                mapped_at_creation: true,
-            });
-            buf.slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&input_f32));
-            buf.unmap();
-            self.device.upload(
-                img_bytes as u64,
-                spektrafilm_backend::telemetry::UploadCategory::Image,
-            );
-            buf
-        } else {
-            let buf = make_img_buf("img_a");
-            self.queue
-                .write_buffer(&buf, 0, bytemuck::cast_slice(&input_f32));
-            buf
-        };
-
-        // buf_b holds the final RGB. With MAPPABLE_PRIMARY_BUFFERS we add
-        // MAP_READ so it can be mapped directly for a zero-copy readback,
-        // skipping the slow Private→Shared blit on unified memory.
-        let buf_b = {
-            let mut usage = wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC;
-            if mappable {
-                usage |= wgpu::BufferUsages::MAP_READ;
+        let buf_a = self.allocate_image_pages(image_width, image_height, "chain_work_a")?;
+        if let Ok(payload) = self.buffer_payload(input) {
+            if payload.bytes != img_bytes as u64 {
+                return Err(
+                    "film chain retained input footprint does not match geometry".to_owned(),
+                );
             }
-            self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("img_b"),
-                size: img_bytes as u64,
-                usage,
-                mapped_at_creation: false,
+            // Borrowed retained input is immutable, including a singleton page.
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            for page in &buf_a {
+                self.copy_samples_to(
+                    &mut encoder,
+                    payload,
+                    u64::from(page.first_pixel) * 3,
+                    u64::from(page.n_pixels) * 3,
+                    &page.buffer,
+                    0,
+                )?;
+            }
+            self.queue.submit(Some(encoder.finish()));
+        } else if let Some(image) = input.host_image() {
+            for page in &buf_a {
+                let first = page.first_pixel as usize * 3;
+                let values = scalars_to_f32(&image.data[first..first + page.n_pixels as usize * 3]);
+                self.queue
+                    .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&values));
+            }
+        } else {
+            return Err("film chain input is not available on this device".to_owned());
+        }
+        let mut buf_b = self.allocate_image_pages(image_width, image_height, "chain_work_b")?;
+        let mut buf_a = buf_a;
+        if matches!(p.inject, Tap::LogEFilm | Tap::LogEPrint) {
+            // Bind the supplied retained exposure in the slot consumed by
+            // the next node, without a transfer or a host round trip.
+            std::mem::swap(&mut buf_a, &mut buf_b);
+        }
+        let dye_state = p
+            .grain_dye
+            .as_ref()
+            .map(|dye| {
+                let source = super::device_image::BufferPayload::from_pages(
+                    self.backend_id(),
+                    buf_a.clone(),
+                    image_width,
+                    image_height,
+                );
+                let response = if p.grain_dye_cell_spectral {
+                    Some(if p.scan_film {
+                        spektrafilm_backend::DyeResponseGpuParams::Scan {
+                            channel_density: p.film_channel_density,
+                            base_density: p.film_base_density,
+                            illuminant: p.scan_illuminant,
+                            normalization: p.scan_normalization,
+                            xyz_to_rgb: p.scan_xyz_to_rgb,
+                        }
+                    } else {
+                        spektrafilm_backend::DyeResponseGpuParams::Print {
+                            channel_density: p.film_channel_density,
+                            base_density: p.film_base_density,
+                            illuminant: p.print_illuminant,
+                            sensitivity: p.print_sensitivity,
+                            normalization_factor: p.print_normalization_factor,
+                            exposure_scale: p.print_exposure_scale,
+                            preflash: p.preflash,
+                        }
+                    })
+                } else {
+                    None
+                };
+                self.prepare_dye_paged(image_width, image_height, &source, dye, response.as_ref())
             })
+            .transpose()?;
+        let fotufilm_state = p
+            .grain_fotufilm
+            .as_ref()
+            .map(|params| {
+                let source = super::device_image::BufferPayload::from_pages(
+                    self.backend_id(),
+                    buf_a.clone(),
+                    image_width,
+                    image_height,
+                );
+                self.prepare_fotufilm_paged(image_width, image_height, &source, params)
+            })
+            .transpose()?;
+        let (print_width, print_height) = p
+            .grain_dye
+            .as_ref()
+            .map(|dye| (dye.grid.width, dye.grid.height))
+            .or_else(|| {
+                p.grain_fotufilm
+                    .as_ref()
+                    .map(|grain| (grain.width, grain.height))
+            })
+            .unwrap_or((image_width, image_height));
+        let print_input = if dye_state.is_some() || fotufilm_state.is_some() {
+            self.allocate_image_pages(print_width, print_height, "field_density")?
+        } else {
+            buf_a.clone()
+        };
+        let tail_width = print_width / p.grain_dye_aperture.unwrap_or(1);
+        let tail_height = print_height / p.grain_dye_aperture.unwrap_or(1);
+        let tail_buf =
+            |label: &str, width: u32, height: u32| self.allocate_image_pages(width, height, label);
+        let changed = dye_state.is_some() || fotufilm_state.is_some();
+        let tail_a = if changed {
+            tail_buf("field_tail_density", tail_width, tail_height)?
+        } else {
+            buf_a.clone()
+        };
+        let tail_b = if changed {
+            tail_buf("field_tail_rgb", tail_width, tail_height)?
+        } else {
+            buf_b.clone()
+        };
+        let print_output = if p.grain_dye_aperture.is_some() {
+            tail_buf("field_fine_exposure", print_width, print_height)?
+        } else {
+            tail_b.clone()
+        };
+        let dye_print_log = p.grain_dye_cell_spectral && !p.scan_film;
+        let collapse = p.grain_dye_aperture;
+        let print_density_input = if p.inject == Tap::LogEPrint {
+            &buf_b
+        } else {
+            &tail_b
         };
 
         // Static (LUT) buffers — configuration-invariant, so they are served
@@ -155,8 +276,11 @@ impl WgpuBackend {
                 .static_buffer(label, bytes, wgpu::BufferUsages::STORAGE)
         };
         let mk_uniform = |label: &str, bytes: &[u8]| {
-            self.pipe
-                .static_buffer(label, bytes, wgpu::BufferUsages::UNIFORM)
+            self.pipe.static_buffer(
+                label,
+                bytes,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
+            )
         };
 
         let ChainBuffers {
@@ -168,20 +292,12 @@ impl WgpuBackend {
             print_sens_buf,
             print_log_exp_buf,
             print_curves_buf,
-            scan_cd_buf,
-            scan_bd_buf,
-            view_illu_buf,
-            cmf_x_buf,
-            cmf_y_buf,
-            cmf_z_buf,
             front_params_buf,
             film_density_params_buf,
-            print_params_buf,
             print_density_params_buf,
-
-            scan_params_buf,
         } = buffers::upload(
-            image,
+            tail_width,
+            tail_height,
             film_log_exposure,
             film_density_curves_normalized,
             film_gamma,
@@ -192,16 +308,27 @@ impl WgpuBackend {
             print_log_exposure,
             print_density_curves,
             print_gamma,
-            preflash,
-            print_channel_density,
-            print_base_density,
-            scan_illuminant,
-            scan_normalization,
-            scan_xyz_to_rgb,
             p,
             &mk_storage,
             &mk_uniform,
         );
+        let print_params_buf = {
+            let bytes = [
+                print_width,
+                print_height,
+                p.film_channel_density.len() as u32,
+                (p.print_normalization_factor as f32).to_bits(),
+                (p.print_exposure_scale as f32).to_bits(),
+                u32::from(p.enlarger_diffusion.is_some()),
+                0,
+                0,
+                (p.preflash[0] as f32).to_bits(),
+                (p.preflash[1] as f32).to_bits(),
+                (p.preflash[2] as f32).to_bits(),
+                0,
+            ];
+            mk_uniform("dye_print_params", bytemuck::cast_slice(&bytes))
+        };
 
         // ── Pre-compile pipelines (cached after first call) ──────────────
         // Each shader's bindings layout is fixed and known here.
@@ -229,29 +356,25 @@ impl WgpuBackend {
                 wgpu::BufferBindingType::Storage { read_only: false },
             ],
         );
-        let scan_pipe = self.cached_pipeline(
-            include_str!("../../../../spektrafilm-shaders/wgsl/spectral/scan_spectral.wgsl"),
-            &[
-                wgpu::BufferBindingType::Uniform,
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: true },
-                wgpu::BufferBindingType::Storage { read_only: false },
-            ],
-        );
 
         // ── Build bind groups (per dispatch, but no buffer creation) ─────
         // Front pass: hanatos (params + rgb_in + tc_lut + raw_out) or mallett
         // (params + rgb_in + raw_out). The tc_lut buffer rides along in the
         // tuple to outlive the encoder on the hanatos arm.
-        let (front_pipe, bg_front, _front_tc_lut) = match &p.front {
-            spektrafilm_backend::FrontPass::Hanatos2025 { tc_lut, .. } => {
-                let tc_lut_f32: Vec<f32> = tc_lut.data.iter().map(|&v| v as f32).collect();
-                let tc_lut_buf = mk_storage("tc_lut", bytemuck::cast_slice(&tc_lut_f32));
+        let front_pipe = match &p.front {
+            spektrafilm_backend::FrontPass::Hanatos2025 { generated, .. } => {
+                let generated = generated.ok_or_else(||
+                    "selected GPU requires a device-prepared front spectral table; prepare calibration with the selected backend".to_owned())?;
+                if generated.values.backend_id() != self.backend_id() {
+                    return Err("front spectral table belongs to another device; rebuild calibration with the selected backend".to_owned());
+                }
+                let tc_lut_buf = generated
+                    .values
+                    .as_any()
+                    .downcast_ref::<super::super::preparation::PreparationTable>()
+                    .ok_or_else(|| "front spectral table has an invalid device payload".to_owned())?
+                    .buffer
+                    .clone();
                 let pipe = self.cached_pipeline(
                     include_str!(
                         "../../../../spektrafilm-shaders/wgsl/spectral/hanatos2025_rgb_to_raw.wgsl"
@@ -263,29 +386,14 @@ impl WgpuBackend {
                         wgpu::BufferBindingType::Storage { read_only: false },
                     ],
                 );
-                let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("bg_hanatos"),
-                    layout: &pipe.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: front_params_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: buf_a.as_entire_binding(),
-                        }, // rgb_in
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: tc_lut_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: buf_b.as_entire_binding(),
-                        }, // raw_out
-                    ],
-                });
-                (pipe, bg, Some(tc_lut_buf))
+                Some(self.chain_pointwise(
+                    pipe,
+                    &[&front_params_buf, &buf_a, &tc_lut_buf, &buf_b],
+                    &[(1, false), (3, true)],
+                    n_pixels,
+                    true,
+                    "front_transform",
+                )?)
             }
             spektrafilm_backend::FrontPass::Mallett2019 { .. } => {
                 let pipe = self.cached_pipeline(
@@ -298,26 +406,16 @@ impl WgpuBackend {
                         wgpu::BufferBindingType::Storage { read_only: false },
                     ],
                 );
-                let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("bg_mallett"),
-                    layout: &pipe.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: front_params_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: buf_a.as_entire_binding(),
-                        }, // rgb_in
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: buf_b.as_entire_binding(),
-                        }, // raw_out
-                    ],
-                });
-                (pipe, bg, None)
+                Some(self.chain_pointwise(
+                    pipe,
+                    &[&front_params_buf, &buf_a, &buf_b],
+                    &[(1, false), (2, true)],
+                    n_pixels,
+                    true,
+                    "front_transform",
+                )?)
             }
+            spektrafilm_backend::FrontPass::ScanInverse(_) => None,
         };
         // After the front pass: log10 + density curve interp into normalized
         // film curves. The front pass outputs raw (not log_raw), so a small
@@ -347,242 +445,156 @@ impl WgpuBackend {
                     _pad: [0; 7],
                 }),
             );
-            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("bg_log10"),
-                layout: &pipe.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: log10_params_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: buf_b.as_entire_binding(),
-                    },
-                ],
-            });
-            // Return both the buffer (to keep it alive) and the bind group.
-            (pipe, bg, log10_params_buf)
+            self.chain_pointwise(
+                pipe,
+                &[&log10_params_buf, &buf_b],
+                &[(1, true)],
+                n_pixels,
+                false,
+                "log_exposure",
+            )?
         };
 
-        let bg_density_film = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg_density_film"),
-            layout: &density_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: film_density_params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_b.as_entire_binding(),
-                }, // log_raw
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: film_log_exp_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: film_curves_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: buf_a.as_entire_binding(),
-                }, // density_cmy
+        let bg_density_film = self.chain_pointwise(
+            density_pipe.clone(),
+            &[
+                &film_density_params_buf,
+                &buf_b,
+                &film_log_exp_buf,
+                &film_curves_buf,
+                &buf_a,
             ],
-        });
-        let bg_print = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg_print"),
-            layout: &print_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: print_params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_a.as_entire_binding(),
-                }, // density_cmy
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: film_cd_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: film_bd_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: print_illu_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: print_sens_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: buf_b.as_entire_binding(),
-                }, // log_raw_print
+            &[(1, false), (4, true)],
+            n_pixels,
+            true,
+            "film_density",
+        )?;
+        let bg_print = self.chain_pointwise(
+            print_pipe.clone(),
+            &[
+                &print_params_buf,
+                &print_input,
+                &film_cd_buf,
+                &film_bd_buf,
+                &print_illu_buf,
+                &print_sens_buf,
+                &print_output,
             ],
-        });
-        let bg_density_print = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg_density_print"),
-            layout: &density_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: print_density_params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_b.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: print_log_exp_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: print_curves_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: buf_a.as_entire_binding(),
-                },
+            &[(1, false), (6, true)],
+            print_width * print_height,
+            true,
+            "print_spectral",
+        )?;
+        let bg_density_print = self.chain_pointwise(
+            density_pipe.clone(),
+            &[
+                &print_density_params_buf,
+                print_density_input,
+                &print_log_exp_buf,
+                &print_curves_buf,
+                &tail_a,
             ],
-        });
-        let bg_scan = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg_scan"),
-            layout: &scan_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: scan_params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_a.as_entire_binding(),
-                }, // density_print
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: scan_cd_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: scan_bd_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: view_illu_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: cmf_x_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: cmf_y_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: cmf_z_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: buf_b.as_entire_binding(),
-                }, // final rgb
-            ],
-        });
-
-        // Readback buffer (for the final image only) — only needed when we
-        // can't map buf_b directly. Skipping it on the mappable path also
-        // avoids allocating a second full-image buffer per frame.
-        let readback = (!mappable).then(|| {
-            self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("readback"),
-                size: img_bytes as u64,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        });
+            &[(1, false), (4, true)],
+            tail_width * tail_height,
+            true,
+            "print_density",
+        )?;
+        let scan_input = if p.scan_film { &print_input } else { &tail_a };
+        let bg_scan =
+            self.build_scan_direct_state(p, scan_input, &tail_b, tail_width, tail_height)?;
 
         // ── Halation auxiliary buffers + bind groups (only if active) ────
-        // Allocated up-front so they live for the encoder. The two ping-pong
-        // buffers `buf_a` / `buf_b` are reused as blur input/mid; the new
-        // `buf_c` and `buf_d` hold the scatter outputs and the halation
-        // accumulator. None of this is touched when `p.halation` is `None`.
-        let halation_state = p.halation.as_ref().map(|hp| {
-            build_halation_state(
-                &self.device,
-                hp,
-                image.width,
-                image.height,
-                &buf_a,
-                &buf_b,
-                self,
-            )
-        });
+        // The device passes own their working buffers; the state is fallible
+        // because a device resource limit must fail the operation rather than
+        // silently omit the optical stage.
+        let halation_state = p
+            .halation
+            .as_ref()
+            .map(|hp| build_halation_state(hp, image_width, image_height, &buf_b, self))
+            .transpose()?;
 
         // ── Highlight boost state ────────────────────────────────────────
         // Runs on raw film exposure immediately after the front pass.
         let highlight_state = p
             .highlight_boost
             .as_ref()
-            .map(|hp| build_highlight_boost_state(&self.device, hp, n_pixels, &buf_b, self));
+            .map(|hp| build_highlight_boost_state(&self.device, hp, n_pixels, &buf_b, self))
+            .transpose()?;
 
-        let camera_lens_blur_state = p.camera_lens_blur_px.and_then(|sigma| {
-            (sigma > 0.0).then(|| {
+        // One shared filter scratch and one destination serve the camera and
+        // scanner lens stages: they encode in different chain positions, and
+        // each copies its result into buf_b before the next stage runs.
+        let lens_blur_scratch = self.allocate_image_pages(
+            image_width.max(tail_width),
+            image_height.max(tail_height),
+            "lens_blur_scratch",
+        )?;
+        let camera_lens_blur_state = p
+            .camera_lens_blur_px
+            .filter(|&sigma| sigma > 0.0)
+            .map(|sigma| {
                 build_simple_blur_state(
-                    &self.device,
+                    self,
                     sigma,
-                    image.width,
-                    image.height,
+                    image_width,
+                    image_height,
                     &buf_b,
                     &buf_a,
+                    &lens_blur_scratch,
                     "camera_lens",
-                    self,
                 )
             })
-        });
+            .transpose()?;
 
         // ── Unsharp mask state ───────────────────────────────────────────
         // Last pass before readback. Blurs buf_b → buf_c (via buf_a mid),
         // then combines: buf_b_out = (1+amount)*buf_b - amount*buf_c.
         // Since the combine writes back to buf_b in-place we need to
         // route via a temporary buffer to satisfy wgpu aliasing rules.
-        let unsharp_state = p.unsharp.as_ref().map(|up| {
-            build_unsharp_state(
-                &self.device,
-                up,
-                image.width,
-                image.height,
-                &buf_a,
-                &buf_b,
-                self,
-            )
-        });
+        let unsharp_state = p
+            .unsharp
+            .as_ref()
+            .map(|up| build_unsharp_state(&self.device, up, tail_width, tail_height, &tail_b, self))
+            .transpose()?;
         // Encode the destination space before Grain Procedural preparation; all
         // resolution and grain passes stay in this resident command buffer.
-        let grain_v2_state = p.grain_v2.as_ref().map(|gp| {
-            build_grain_v2_state(
-                &self.device,
-                gp,
-                image.width,
-                image.height,
-                &buf_b,
-                Some(p.scan_output_space),
-                self,
-            )
-        });
+        let grain_v2_state = p
+            .grain_v2
+            .as_ref()
+            .map(|gp| {
+                build_grain_v2_state(
+                    &self.device,
+                    gp,
+                    tail_width,
+                    tail_height,
+                    &tail_b,
+                    Some(p.scan_output_space),
+                    self,
+                )
+            })
+            .transpose()?;
+
+        // Grain setup reports unsupported arithmetic and resource limits
+        // before dispatch; absence must not silently omit an active field.
+        let grain_v1_state = p
+            .grain_v1
+            .as_ref()
+            .map(|gp| {
+                build_spektra_grain_state(&self.device, image_width, image_height, &buf_a, gp, self)
+            })
+            .transpose()?;
 
         // ── Output gamut compression state ───────────────────────────────
         // Single per-pixel dispatch in place on buf_b, after glare and
         // before unsharp (the CPU scanning order). The C_max table is
         // baked once at pipeline construction; only the upload happens here.
+        // The JzAzBz mode needs native shader binary64; a device without it
+        // is a named failure at assembly, not a host fallback.
         let gamut_state = p
             .gamut
             .as_ref()
-            .map(|gp| build_gamut_state(&self.device, gp, &buf_b, n_pixels, self));
+            .map(|gp| build_gamut_state(&self.device, gp, &tail_b, tail_width * tail_height, self))
+            .transpose()?;
 
         // ── Glare state ──────────────────────────────────────────────────
         // Applied in place on buf_b (the scan_spectral output) just before
@@ -590,611 +602,709 @@ impl WgpuBackend {
         // buffer, optionally blurs it, then adds `g * rgb_offset[c]` to
         // the image. Uses buf_a (free after scan_spectral consumed
         // density_cmy) and one fresh scratch buffer.
-        let glare_state = p.glare.as_ref().map(|gp| {
-            build_glare_state(
-                &self.device,
-                gp,
-                image.width,
-                image.height,
-                &buf_a,
-                &buf_b,
-                self,
-            )
-        });
+        let glare_state = p
+            .glare
+            .as_ref()
+            .map(|gp| build_glare_state(&self.device, gp, tail_width, tail_height, &tail_b, self))
+            .transpose()?;
 
-        let scanner_lens_blur_state = p.scanner_lens_blur_px.and_then(|sigma| {
-            (sigma > 0.0).then(|| {
+        let tail_scratch = tail_buf("scanner_tail_scratch", tail_width, tail_height)?;
+        let scanner_lens_blur_state = p
+            .scanner_lens_blur_px
+            .filter(|&sigma| sigma > 0.0)
+            .map(|sigma| {
                 build_simple_blur_state(
-                    &self.device,
-                    sigma,
-                    image.width,
-                    image.height,
-                    &buf_b,
-                    &buf_a,
-                    "scanner_lens",
                     self,
+                    sigma,
+                    tail_width,
+                    tail_height,
+                    &tail_b,
+                    &tail_a,
+                    &tail_scratch,
+                    "scanner_lens",
                 )
             })
-        });
+            .transpose()?;
 
         // ── DIR couplers state ────────────────────────────────────────────
         // Allocated lazily when the DIR stage is active. Reads buf_a
         // (density_cmy from film density curve) and buf_b (log_raw),
         // produces a corrected buf_a via re-interpolation of
-        // `density_curves_0` against `log_raw - correction`. Uses three
-        // owned scratch buffers (correction, mid, accumulator). buf_a is
-        // reused as blur mid since density_cmy is no longer needed once
-        // the matmul has consumed it (the final density_curve_interp
-        // overwrites buf_a anyway).
-        let dir_state = p.dir_couplers.as_ref().map(|dp| {
-            build_dir_state(
-                &self.device,
-                dp,
-                image.width,
-                image.height,
-                &buf_a,
-                &buf_b,
-                self,
-            )
-        });
+        // `density_curves_0` against `log_raw - correction`. Owns three
+        // working buffers (correction, blur target, accumulator) and one
+        // shared filter scratch; the final density_curve_interp overwrites
+        // buf_a, so buf_a is only a staging input.
+        let dir_state = p
+            .dir_couplers
+            .as_ref()
+            .map(|dp| {
+                build_dir_state(
+                    &self.device,
+                    dp,
+                    image_width,
+                    image_height,
+                    &buf_a,
+                    &buf_b,
+                    self,
+                )
+            })
+            .transpose()?;
 
+        // ── Input transfer decoding state ────────────────────────────────
+        // Chain-head pass in place on buf_a (the uploaded input), before the
+        // front transform. Keeping it here is what lets the caller upload the
+        // input exactly as read and do no host image arithmetic to prepare it.
+        let input_decode_state = p
+            .input_decode
+            .as_ref()
+            .map(|dp| build_input_decode_state(&self.device, dp, &buf_a, n_pixels, self))
+            .transpose()?;
+        let convert_inverse_state = match &p.front {
+            spektrafilm_backend::FrontPass::ScanInverse(params) => {
+                Some(self.build_convert_inverse_state(params, &buf_a, &buf_b, n_pixels)?)
+            }
+            _ => None,
+        };
+        let scan_readout_state = p
+            .scan_readout
+            .map(|params| {
+                self.build_scan_density_state(
+                    params,
+                    if p.scan_film { &print_input } else { &tail_a },
+                    &tail_b,
+                    tail_width,
+                    tail_height,
+                    p.scan_preparation_key,
+                )
+            })
+            .transpose()?;
+
+        let print_exposure_output = print_density_input.clone();
         Ok(ChainSetup {
-            image,
-            n_pixels,
+            image_width,
+            image_height,
             img_bytes,
+            dye_state,
+            fotufilm_state,
+            dye_print_log,
+            dye_collapse: collapse,
+            tail_a,
+            tail_b,
+            tail_width,
+            tail_height,
+            film_density_output: print_input,
+            film_density_width: print_width,
+            film_density_height: print_height,
+            print_exposure_output,
+            print_fine_output: print_output,
             buf_a,
             buf_b,
-            mappable,
-            chain_buffers: ChainBuffers {
-                film_log_exp_buf,
-                film_curves_buf,
-                film_cd_buf,
-                film_bd_buf,
-                print_illu_buf,
-                print_sens_buf,
-                print_log_exp_buf,
-                print_curves_buf,
-                scan_cd_buf,
-                scan_bd_buf,
-                view_illu_buf,
-                cmf_x_buf,
-                cmf_y_buf,
-                cmf_z_buf,
-                front_params_buf,
-                film_density_params_buf,
-                print_params_buf,
-                print_density_params_buf,
-                scan_params_buf,
-            },
-            front_pipe: (front_pipe, bg_front, _front_tc_lut),
+            front_pipe,
+            convert_inverse_state,
+            scan_readout_state,
+            input_decode_state,
             bg_log10,
             bg_density_film,
             bg_print,
             bg_density_print,
             bg_scan,
-            readback,
             halation_state,
             highlight_state,
             camera_lens_blur_state,
             unsharp_state,
             grain_v2_state,
+            grain_v1_state,
             gamut_state,
             glare_state,
             scanner_lens_blur_state,
             dir_state,
-            density_pipe,
-            print_pipe,
-            scan_pipe,
         })
     }
 
-    /// GPU-resident pipeline: runs the front pass (hanatos LUT lookup or
-    /// mallett matmul), highlight boost, camera lens blur, halation,
-    /// density curves, DIR, print spectral, scan spectral, glare,
-    /// gamut compression, scanner lens blur,
-    /// and unsharp as one assembled stage list over ping-pong image
-    /// storage. Consecutive device passes share a command buffer; an
-    /// assembled CPU fence (grain distribution, acquisition replacement,
-    /// readout interpretation, optical diffusion, output transfer,
-    /// CMYK ink style) flushes the submission, runs the host stage, and the
-    /// remaining passes continue on the device.
+    /// Execute a typed topology span over retained device buffers. Diagnostic
+    /// boundaries select the already-computed buffer, never a CPU fence or a
+    /// second rendering. Only the caller may materialize the chosen artifact.
     pub(super) fn run_film_chain_inner(
         &self,
         p: &spektrafilm_backend::FilmChainParams<'_>,
-    ) -> Result<ImageBuf, String> {
+        input: &spektrafilm_backend::DeviceImage,
+        setup_context: &spektrafilm_backend::telemetry::ObservationContext,
+    ) -> Result<spektrafilm_backend::DeviceImage, String> {
+        self.check_cancelled()?;
         let t_start = std::time::Instant::now();
-        let setup = self.setup_chain(p)?;
+        validate_tap_span(p)?;
+        if input.is_retained() {
+            self.buffer_payload(input)?;
+        }
+        if p.inject == p.collect {
+            return Ok(input.clone());
+        }
+        let includes =
+            |tap| tap_index(p.inject) <= tap_index(tap) && tap_index(tap) < tap_index(p.collect);
+        if (includes(Tap::LogEFilm) && p.density_cpu_stage.is_some())
+            || (p.collect == Tap::RgbOut && p.scan_acquisition_cpu_stage.is_some())
+        {
+            return Err("selected GPU film chain cannot execute a CPU image-stage fence; retry with an explicit CPU request".into());
+        }
+        let setup = self.setup_chain(p, input)?;
         let ChainSetup {
-            image,
-            n_pixels,
+            image_width,
+            image_height,
             img_bytes,
             ref buf_a,
             ref buf_b,
             ref front_pipe,
+            ref input_decode_state,
+            ref convert_inverse_state,
+            ref scan_readout_state,
+            dye_state,
+            fotufilm_state,
+            ref dye_print_log,
+            ref dye_collapse,
+            ref tail_a,
+            ref tail_b,
+            tail_width,
+            tail_height,
+            ref film_density_output,
+            film_density_width,
+            film_density_height,
+            ref print_exposure_output,
+            ref print_fine_output,
             ref bg_log10,
             ref bg_density_film,
             ref bg_print,
             ref bg_density_print,
             ref bg_scan,
-            ref readback,
             ref halation_state,
             ref highlight_state,
             ref camera_lens_blur_state,
             ref unsharp_state,
             ref grain_v2_state,
+            ref grain_v1_state,
             ref gamut_state,
             ref glare_state,
             ref scanner_lens_blur_state,
             ref dir_state,
-            ref density_pipe,
-            ref print_pipe,
-            ref scan_pipe,
             ..
         } = setup;
-        let (front_pipe, bg_front, _front_tc_lut) = front_pipe.clone();
         // ── Assemble the stage list, then run it on the pipe ────────────
         // GPU nodes use ordered submissions while sharing resident buffers.
         // Keeping node workloads separate avoids a whole-frame watchdog job.
         // Each closure owns its bind groups and state; buffers use cheap handles.
-        let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
         let mut stages: Vec<super::super::pipe::ChainStage<'_>> = Vec::new();
-        let pass = |name: &'static str,
-                    pipeline: wgpu::ComputePipeline,
-                    bg: wgpu::BindGroup,
-                    n: u32|
-         -> super::super::pipe::ChainStage<'static> {
-            super::super::pipe::ChainStage::Gpu {
-                name,
-                encode: Box::new(move |encoder| {
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some(name),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(&pipeline);
-                    pass.set_bind_group(0, &bg, &[]);
-                    dispatch_linear(&mut pass, n);
-                }),
-            }
-        };
+        let mut boundaries = [0usize; 7];
 
-        // 1. Front pass (hanatos or mallett): buf_a (rgb in) → buf_b (raw)
-        stages.push(pass(
-            "front_transform",
-            front_pipe.pipeline.clone(),
-            bg_front,
-            n_pixels,
-        ));
-        // 1a. Highlight boost on raw, before optical scatter.
-        if let Some(hs) = highlight_state.as_ref() {
-            stages.push(super::super::pipe::ChainStage::Gpu {
-                name: "highlight_boost",
-                encode: Box::new(move |encoder| hs.encode_passes(encoder)),
+        // 0. Input transfer decoding on the uploaded samples, before the
+        //    front transform assumes linear RGB.
+        if let Some(ds) = input_decode_state.as_ref() {
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "input_decode",
+                execute: Box::new(move || ds.submit(self)),
             });
         }
-        // 1a'. Capability fence (pipe architecture, S3): the camera
-        //     diffusion filter's discrete PSF convolution runs on the host
-        //     over the linear raw — after highlight reconstruction, before
-        //     the camera lens blur (the CPU filming order).
-        if let Some(cpu) = p.camera_diffusion_cpu_stage.as_ref() {
-            let buf_b = buf_b.clone();
-            let (w, h) = (image.width, image.height);
-            let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::super::pipe::ChainStage::Cpu {
-                name: "camera_diffusion_cpu_stage",
-                fence: Box::new(move |pipe| {
-                    let host = pipe.readback_buffer(&buf_b, img_bytes_u64);
-                    let diffused = cpu(&ImageBuf::from_data(
-                        w,
-                        h,
-                        crate::gpu_helpers::f32_to_scalars(host),
-                    ))?;
-                    let out_f32 = crate::gpu_helpers::scalars_to_f32(&diffused.data);
-                    pipe.write_image_buffer(&buf_b, &out_f32);
-                    Ok(())
-                }),
-            });
-        }
-        // 1b. Camera lens blur on raw before halation.
-        if let Some(bs) = camera_lens_blur_state.as_ref() {
-            let buf_b = buf_b.clone();
-            stages.push(super::super::pipe::ChainStage::Gpu {
-                name: "camera_lens_blur",
-                encode: Box::new(move |encoder| bs.encode_passes(encoder, wg_xy, &buf_b)),
-            });
-        }
-        // 1c. Halation in-place on buf_b (blur scratch in buf_a, scatter
-        //     outputs and accumulator in buf_c / buf_d).
-        if let Some(hs) = halation_state.as_ref() {
-            stages.push(super::super::pipe::ChainStage::Gpu {
-                name: "halation",
-                encode: Box::new(move |encoder| hs.encode_passes(encoder, n_pixels, wg_xy)),
-            });
-        }
-        // 2. log10 in-place on buf_b: raw → log_raw (3 channels per thread).
-        {
-            let (log10_pipe, log10_bg, _keepalive) = bg_log10.clone();
-            stages.push(pass(
-                "log_exposure",
-                log10_pipe.pipeline,
-                log10_bg,
-                n_pixels,
-            ));
-        }
-        // 3. Density curve (film, normalized): buf_b (log_raw) → buf_a (density_cmy)
-        stages.push(pass(
-            "film_density",
-            density_pipe.pipeline.clone(),
-            bg_density_film.clone(),
-            n_pixels,
-        ));
-        // 3b. DIR couplers: corrects log_raw in buf_b and re-interpolates
-        //     the density curve back into buf_a.
-        if let Some(ds) = dir_state.as_ref() {
-            stages.push(super::super::pipe::ChainStage::Gpu {
-                name: "dir_couplers",
-                encode: Box::new(move |encoder| ds.encode_passes(encoder, n_pixels, wg_xy)),
-            });
-        }
-        // 3a. Capability fence (pipe architecture, S3): an unported grain
-        //     engine runs on the host over the developed film density —
-        //     after DIR, matching the CPU develop order — and the result
-        //     is written back in place so the pre-bound print bind groups
-        //     keep addressing the same buffer.
-        if let Some(cpu) = p.density_cpu_stage.as_ref() {
+        if let Some(inverse) = convert_inverse_state.as_ref() {
             let buf_a = buf_a.clone();
-            let (w, h) = (image.width, image.height);
-            let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::super::pipe::ChainStage::Cpu {
-                name: "density_cpu_stage",
-                fence: Box::new(move |pipe| {
-                    let host = pipe.readback_buffer(&buf_a, img_bytes_u64);
-                    let grained = cpu(&ImageBuf::from_data(
-                        w,
-                        h,
-                        crate::gpu_helpers::f32_to_scalars(host),
-                    ))?;
-                    let out_f32 = crate::gpu_helpers::scalars_to_f32(&grained.data);
-                    pipe.write_image_buffer(&buf_a, &out_f32);
-                    Ok(())
+            let buf_b = buf_b.clone();
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "convert_inverse_solver",
+                execute: Box::new(move || {
+                    inverse.submit(self)?;
+                    let mut copy = super::super::grain::raster::RasterCommands::default();
+                    copy.copy(&buf_b, 0, &buf_a, 0, img_bytes as u64);
+                    copy.submit(self)
                 }),
             });
+        } else if let Some(front) = front_pipe.as_ref() {
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "front_transform",
+                execute: Box::new(move || front.submit(self)),
+            });
+            // 1a. Highlight boost on raw, before optical scatter.
+            if let Some(hs) = highlight_state.as_ref() {
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "highlight_boost",
+                    execute: Box::new(move || hs.submit(self)),
+                });
+            }
+            if let Some(diffusion) = p.camera_diffusion.as_ref() {
+                let image = buf_b.clone();
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "camera_diffusion",
+                    execute: Box::new(move || {
+                        self.diffusion_transport(
+                            image_width,
+                            image_height,
+                            &image,
+                            &image,
+                            diffusion,
+                            None,
+                        )
+                    }),
+                });
+            }
+            // 1a'. Camera optical diffusion runs on the device in this position —
+            //     after highlight reconstruction, before the camera lens blur
+            //     (the CPU filming order) — so there is no host fence here. The
+            //     per-stage route reaches the same device convolution through
+            //     `stages::filming::expose`.
+            // 1b. Camera lens blur on raw before halation.
+            if let Some(bs) = camera_lens_blur_state.as_ref() {
+                let buf_b = buf_b.clone();
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "camera_lens_blur",
+                    execute: Box::new(move || bs.submit(self, &buf_b)),
+                });
+            }
+            // 1c. Halation in-place on buf_b; its own working buffers hold
+            //     the scatter results and the multi-bounce accumulator.
+            if let Some(hs) = halation_state.as_ref() {
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "halation",
+                    execute: Box::new(move || hs.submit(self)),
+                });
+            }
+            // 2. log10 in-place on buf_b: raw → log_raw (3 channels per thread).
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "log_exposure",
+                execute: Box::new(move || bg_log10.submit(self)),
+            });
         }
-        // 3c. Film-grain Dye: the device field on the developed density in
+        boundaries[tap_index(Tap::LogEFilm)] = stages.len();
+        if convert_inverse_state.is_none() {
+            // 3. Density curve (film, normalized): buf_b (log_raw) → buf_a (density_cmy)
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "film_density",
+                execute: Box::new(move || bg_density_film.submit(self)),
+            });
+            // 3b. DIR couplers: corrects log_raw in buf_b and re-interpolates
+            //     the density curve back into buf_a.
+            if let Some(ds) = dir_state.as_ref() {
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "dir_couplers",
+                    execute: Box::new(move || ds.submit_passes(self)),
+                });
+            }
+        }
+        // 3c'. Spektra v1 grain: the device field on the developed density in
+        //     buf_a, in the same density-fence position (after the film
+        //     density curve and DIR, before printing). The pass runs in place
+        //     on the pre-bound buffer and reuses the shared FIR kernels for
+        //     the final blur, so the print bind groups keep addressing it.
+        //     A request the device cannot realize faithfully keeps the host
+        //     fence above instead — never a different noise law.
+        if let Some(gs) = grain_v1_state.as_ref() {
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: super::super::grain::GRAIN_V1_STAGE_NAME,
+                execute: Box::new(move || gs.submit(self)),
+            });
+        }
+        // 3d. Film-grain Dye: the device field on the developed density in
         //     buf_a, in the density-fence position (after the film density
         //     curve and DIR, before printing). The pass resolves the
         //     conditional field and writes its readout back into the same
         //     buffer, so the pre-bound print bind groups keep addressing it.
         //     Its bounded status is checked after the run and before the
         //     output is published below.
-        let mut dye_status = None;
-        if let Some(dye) = p.grain_dye.as_ref() {
-            let dye_state = self.prepare_dye(image.width, image.height, buf_a, dye)?;
-            dye_status = Some(dye_state.status_buffer());
-            dye_state.append_stages(&mut stages, buf_a);
+        let dye_status = dye_state.as_ref().map(|state| state.status_buffer());
+        if let Some(dye_state) = dye_state {
+            let destination = film_density_output.clone();
+            let scan_destination =
+                (p.grain_dye_cell_spectral && p.scan_film).then(|| tail_b.clone());
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "grain_dye",
+                execute: Box::new(move || {
+                    dye_state.submit(self)?;
+                    let payload = super::device_image::BufferPayload::from_pages(
+                        self.backend_id(),
+                        dye_state.output_pages(),
+                        dye_state.width,
+                        dye_state.height,
+                    );
+                    let mut copy = super::super::grain::raster::RasterCommands::default();
+                    copy.copy(&payload.pages, 0, &destination, 0, payload.bytes);
+                    if let Some(scan) = scan_destination {
+                        copy.copy(&payload.pages, 0, &scan, 0, payload.bytes);
+                    }
+                    copy.submit(self)
+                }),
+            });
         }
+        if let Some(state) = fotufilm_state {
+            let destination = film_density_output.clone();
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "grain_fotufilm",
+                execute: Box::new(move || {
+                    state.submit(self)?;
+                    let payload = super::device_image::BufferPayload::from_pages(
+                        self.backend_id(),
+                        state.output_pages(),
+                        state.width,
+                        state.height,
+                    );
+                    let mut copy = super::super::grain::raster::RasterCommands::default();
+                    copy.copy(&payload.pages, 0, &destination, 0, payload.bytes);
+                    copy.submit(self)
+                }),
+            });
+        }
+        boundaries[tap_index(Tap::CmyFilm)] = stages.len();
+        let (image_width, image_height) = (tail_width, tail_height);
+        let n_pixels = image_width * image_height;
+        let buf_a = tail_a;
+        let buf_b = tail_b;
         // 4 + 5. Printing: print_spectral (buf_a → buf_b) then the print
         //     density curve (buf_b → buf_a). Skipped for scan_film — the
         //     scan pass consumes the film density already in buf_a. The
-        //     PCHIP enlarger LUT and the enlarger diffusion filter run as
-        //     an assembled CPU fence that replaces the fused spectral pass
-        //     (pipe architecture, capability class); the print density
-        //     curve pass consumes the fence output unchanged.
+        //     enlarger LUT and the enlarger diffusion filter run on the
+        //     device through the same dispatches the per-stage route uses,
+        //     so the fused spectral pass stays the chain's only print
+        //     acquisition.
         if !p.scan_film {
-            if let Some(cpu) = p.print_acquisition_cpu_stage.as_ref() {
-                let buf_a = buf_a.clone();
-                let buf_b = buf_b.clone();
-                let (w, h) = (image.width, image.height);
-                let img_bytes_u64 = img_bytes as u64;
-                stages.push(super::super::pipe::ChainStage::Cpu {
-                    name: "print_acquisition_cpu_stage",
-                    fence: Box::new(move |pipe| {
-                        let density = pipe.readback_buffer(&buf_a, img_bytes_u64);
-                        let log_raw = cpu(&ImageBuf::from_data(
-                            w,
-                            h,
-                            crate::gpu_helpers::f32_to_scalars(density),
-                        ))?;
-                        let out_f32 = crate::gpu_helpers::scalars_to_f32(&log_raw.data);
-                        pipe.write_image_buffer(&buf_b, &out_f32);
-                        Ok(())
+            if *dye_print_log {
+                let source = film_density_output.clone();
+                let output = print_fine_output.clone();
+                let (width, height) = (film_density_width, film_density_height);
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "dye_print_response_log",
+                    execute: Box::new(move || {
+                        let source = super::device_image::BufferPayload::from_pages(
+                            self.backend_id(),
+                            source,
+                            width,
+                            height,
+                        );
+                        let pages = self.dye_log10_pages(&source)?;
+                        let payload = super::device_image::BufferPayload::from_pages(
+                            self.backend_id(),
+                            pages,
+                            width,
+                            height,
+                        );
+                        let mut copy = super::super::grain::raster::RasterCommands::default();
+                        copy.copy(&payload.pages, 0, &output, 0, payload.bytes);
+                        copy.submit(self)
                     }),
                 });
             } else {
-                stages.push(pass(
-                    "print_spectral",
-                    print_pipe.pipeline.clone(),
-                    bg_print.clone(),
-                    n_pixels,
-                ));
+                if let Some(lut) = p.enlarger_lut.as_ref() {
+                    let source = film_density_output.clone();
+                    let output = print_fine_output.clone();
+                    let count = film_density_width * film_density_height;
+                    stages.push(super::super::pipe::ChainStage::Device {
+                        name: "enlarger_lut",
+                        execute: Box::new(move || {
+                            self.spectral_lut_transport(
+                                &source,
+                                &output,
+                                count,
+                                |source, output, n| {
+                                    self.execute_enlarger_lut_resident(source, output, n, lut)
+                                },
+                            )
+                        }),
+                    });
+                    if p.enlarger_diffusion.is_none() {
+                        let roundtrip = self.print_lut_roundtrip(
+                            print_fine_output,
+                            count,
+                            p.print_exposure_scale,
+                        )?;
+                        stages.push(super::super::pipe::ChainStage::Device {
+                            name: "print_lut_roundtrip",
+                            execute: Box::new(move || roundtrip.submit(self)),
+                        });
+                    }
+                } else {
+                    stages.push(super::super::pipe::ChainStage::Device {
+                        name: "print_spectral",
+                        execute: Box::new(move || bg_print.submit(self)),
+                    });
+                }
             }
-            stages.push(pass(
-                "print_density",
-                density_pipe.pipeline.clone(),
-                bg_density_print.clone(),
-                n_pixels,
-            ));
+            if let Some(diffusion) = p.enlarger_diffusion.as_ref() {
+                let image = print_fine_output.clone();
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "enlarger_diffusion",
+                    execute: Box::new(move || {
+                        self.diffusion_transport(
+                            film_density_width,
+                            film_density_height,
+                            &image,
+                            &image,
+                            diffusion,
+                            Some(p.print_exposure_scale),
+                        )
+                    }),
+                });
+            }
+            if let Some(factor) = dye_collapse {
+                let source = print_fine_output.clone();
+                let output = buf_b.clone();
+                let (width, height) = (film_density_width, film_density_height);
+                let factor = *factor;
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "dye_aperture_collapse",
+                    execute: Box::new(move || {
+                        let source = super::device_image::BufferPayload::from_pages(
+                            self.backend_id(),
+                            source,
+                            width,
+                            height,
+                        );
+                        let (pages, width, height) =
+                            self.dye_aperture_collapse_pages(&source, factor)?;
+                        let payload = super::device_image::BufferPayload::from_pages(
+                            self.backend_id(),
+                            pages,
+                            width,
+                            height,
+                        );
+                        let mut copy = super::super::grain::raster::RasterCommands::default();
+                        copy.copy(&payload.pages, 0, &output, 0, payload.bytes);
+                        copy.submit(self)
+                    }),
+                });
+            }
+            boundaries[tap_index(Tap::LogEPrint)] = stages.len();
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "print_density",
+                execute: Box::new(move || bg_density_print.submit(self)),
+            });
         }
-        // 6. Scan acquisition: the PCHIP scanner LUT (the slide luminance
-        //     remap or `use_scanner_lut` forces it on the CPU route for
-        //     Python parity) runs as an assembled CPU fence that replaces
-        //     the direct spectral integration (pipe architecture,
-        //     capability class): buf_a (density) → fence → buf_b (RGB).
-        if let Some(cpu) = p.scan_acquisition_cpu_stage.as_ref() {
-            let buf_a = buf_a.clone();
-            let buf_b = buf_b.clone();
-            let (w, h) = (image.width, image.height);
-            let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::super::pipe::ChainStage::Cpu {
-                name: "scan_acquisition_cpu_stage",
-                fence: Box::new(move |pipe| {
-                    let density = pipe.readback_buffer(&buf_a, img_bytes_u64);
-                    let captured = cpu(&ImageBuf::from_data(
-                        w,
-                        h,
-                        crate::gpu_helpers::f32_to_scalars(density),
-                    ))?;
-                    let out_f32 = crate::gpu_helpers::scalars_to_f32(&captured.data);
-                    pipe.write_image_buffer(&buf_b, &out_f32);
-                    Ok(())
+        boundaries[tap_index(Tap::CmyPrint)] = stages.len();
+        // 6. Resident scan acquisition replaces density with linear RGB:
+        // cell readout, calibrated negative reconstruction, scanner LUT, or
+        // direct spectral integration. Standard setup measures the complete
+        // post-optics frame only when its immutable reconstruction is absent.
+        if p.grain_dye_cell_spectral && p.scan_film {
+            // The cell response already is linear scanner RGB.
+        } else if let Some(readout) = scan_readout_state.as_ref() {
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "scanner_optics",
+                execute: Box::new(move || readout.submit_optics(self)),
+            });
+            if readout.has_setup() {
+                stages.push(super::super::pipe::ChainStage::Device {
+                    name: "standard_setup",
+                    execute: Box::new(move || readout.submit_setup_observed(self, setup_context)),
+                });
+            }
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "scanner_density",
+                execute: Box::new(move || readout.submit_inverse(self)),
+            });
+        } else if let Some(lut) = p.scanner_lut.as_ref() {
+            let source = if p.scan_film {
+                film_density_output.clone()
+            } else {
+                buf_a.clone()
+            };
+            let output = buf_b.clone();
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "scanner_lut",
+                execute: Box::new(move || {
+                    self.spectral_lut_transport(&source, &output, n_pixels, |source, output, n| {
+                        self.execute_scanner_lut_resident(source, output, n, lut)
+                    })
                 }),
             });
         } else {
-            stages.push(pass(
-                "scan_spectral",
-                scan_pipe.pipeline.clone(),
-                bg_scan.clone(),
-                n_pixels,
-            ));
+            stages.push(super::super::pipe::ChainStage::Device {
+                name: "scan_spectral",
+                execute: Box::new(move || bg_scan.submit(self)),
+            });
         }
         // 6a. Scanner readout optics on the linear acquisition, before
         //     glare, gamut correction, and unsharp mask.
         if let Some(bs) = scanner_lens_blur_state.as_ref() {
             let buf_b = buf_b.clone();
-            stages.push(super::super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Device {
                 name: "scanner_lens_blur",
-                encode: Box::new(move |encoder| bs.encode_passes(encoder, wg_xy, &buf_b)),
+                execute: Box::new(move || bs.submit(self, &buf_b)),
             });
         }
         // 6b. Glare (in place on buf_b).
         if let Some(gs) = glare_state.as_ref() {
-            stages.push(super::super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Device {
                 name: "glare",
-                encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels, wg_xy)),
+                execute: Box::new(move || gs.submit(self)),
             });
         }
         // 6c. Output gamut compression (in place on buf_b) — after glare,
         //     before unsharp, mirroring the CPU scanning order.
         if let Some(gs) = gamut_state.as_ref() {
-            stages.push(super::super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Device {
                 name: "output_gamut",
-                encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels)),
+                execute: Box::new(move || gs.submit(self)),
             });
         }
         // 6d. Unsharp mask — writes the final image back to buf_b so the
         //     readback path below is unchanged.
         if let Some(us) = unsharp_state.as_ref() {
-            let buf_b = buf_b.clone();
-            let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Device {
                 name: "unsharp_mask",
-                encode: Box::new(move |encoder| {
-                    us.encode_passes(encoder, n_pixels, wg_xy, &buf_b, img_bytes_u64)
-                }),
+                execute: Box::new(move || us.submit(self)),
             });
         }
         // 6e. Encode native destination RGB, then apply Grain Procedural.
         if let Some(gs) = grain_v2_state.as_ref() {
             let buf_b = buf_b.clone();
-            stages.push(super::super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Device {
                 name: "grain_v2",
-                encode: Box::new(move |encoder| gs.encode_pass(encoder, n_pixels, &buf_b)),
+                execute: Box::new(move || gs.submit(self, &buf_b)),
             });
         }
         // 6f. Output transfer is split around the terminal appearance. Encode
         // before CMYK; decode is appended after CMYK for linear output.
         let output_transfer_stage = |tp: &spektrafilm_backend::OutputTransferGpuParams,
-                                     buf_b: &wgpu::Buffer| {
-            #[repr(C)]
-            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-            struct TransferParams {
-                n_pixels: u32,
-                mode: u32,
-                cctf_kind: u32,
-                _pad: u32,
-                col0: [f32; 4],
-                col1: [f32; 4],
-                col2: [f32; 4],
-            }
-            let transfer_params = TransferParams {
-                n_pixels,
-                mode: if tp.decode { 1 } else { 0 },
-                cctf_kind: tp.cctf_kind,
-                _pad: 0,
-                col0: pack_matrix_columns(&tp.matrix)[0],
-                col1: pack_matrix_columns(&tp.matrix)[1],
-                col2: pack_matrix_columns(&tp.matrix)[2],
-            };
-            let params_buf = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("cctf_transfer_params"),
-                    contents: bytemuck::bytes_of(&transfer_params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-            let pipe = self.cached_pipeline(
-                concat!(
-                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
-                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_transfer.wgsl")
-                ),
-                &[
-                    wgpu::BufferBindingType::Uniform,
-                    wgpu::BufferBindingType::Storage { read_only: false },
-                ],
-            );
-            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("bg_cctf_transfer"),
-                layout: &pipe.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: params_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: buf_b.as_entire_binding(),
-                    },
-                ],
-            });
-            super::super::pipe::ChainStage::Gpu {
+                                     image: &Vec<ImagePage>|
+         -> Result<super::super::pipe::ChainStage<'_>, String> {
+            let transfer = self.chain_output_transfer(image, n_pixels, tp)?;
+            Ok(super::super::pipe::ChainStage::Device {
                 name: "output_transfer",
-                encode: Box::new(move |encoder| {
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("output_transfer"),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(&pipe.pipeline);
-                    pass.set_bind_group(0, &bg, &[]);
-                    dispatch_linear(&mut pass, n_pixels);
-                }),
-            }
+                execute: Box::new(move || transfer.submit(self)),
+            })
         };
         if let Some(tp) = p.output_transfer.as_ref().filter(|tp| !tp.decode) {
-            stages.push(output_transfer_stage(tp, buf_b));
+            stages.push(output_transfer_stage(tp, buf_b)?);
         }
         // 6g. CMYK ink style (pipe architecture, S4): the last host
         //     finishing moves onto the device. Runs after the output
         //     transfer, so the buffer state is encoded exactly when the
         //     caller requested output encoding.
         if let Some(cp) = p.cmyk.as_ref() {
-            let buf_b = buf_b.clone();
-            #[repr(C)]
-            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-            struct CmykParams {
-                n_pixels: u32,
-                cctf_kind: u32,
-                encoded: u32,
-                _pad0: u32,
-                strength_pad: [f32; 4],
-                to_col0: [f32; 4],
-                to_col1: [f32; 4],
-                to_col2: [f32; 4],
-                from_col0: [f32; 4],
-                from_col1: [f32; 4],
-                from_col2: [f32; 4],
-            }
-            let cmyk_params = CmykParams {
-                n_pixels,
-                cctf_kind: cp.cctf_kind,
-                encoded: u32::from(cp.encoded),
-                _pad0: 0,
-                strength_pad: [cp.strength, 0.0, 0.0, 0.0],
-                to_col0: pack_matrix_columns(&cp.to_lab)[0],
-                to_col1: pack_matrix_columns(&cp.to_lab)[1],
-                to_col2: pack_matrix_columns(&cp.to_lab)[2],
-                from_col0: pack_matrix_columns(&cp.from_lab)[0],
-                from_col1: pack_matrix_columns(&cp.from_lab)[1],
-                from_col2: pack_matrix_columns(&cp.from_lab)[2],
-            };
-            let params_buf = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("cmyk_params"),
-                    contents: bytemuck::bytes_of(&cmyk_params),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-            let pipe = self.cached_pipeline(
-                concat!(
-                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
-                    include_str!("../../../../spektrafilm-shaders/wgsl/cmyk_ink.wgsl")
-                ),
-                &[
-                    wgpu::BufferBindingType::Uniform,
-                    wgpu::BufferBindingType::Storage { read_only: false },
-                ],
-            );
-            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("bg_cmyk"),
-                layout: &pipe.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: params_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: buf_b.as_entire_binding(),
-                    },
-                ],
-            });
-            stages.push(super::super::pipe::ChainStage::Gpu {
+            let cmyk = self.chain_cmyk(buf_b, n_pixels, cp)?;
+            stages.push(super::super::pipe::ChainStage::Device {
                 name: "cmyk",
-                encode: Box::new(move |encoder| {
-                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("cmyk"),
-                        timestamp_writes: None,
-                    });
-                    pass.set_pipeline(&pipe.pipeline);
-                    pass.set_bind_group(0, &bg, &[]);
-                    dispatch_linear(&mut pass, n_pixels);
-                }),
+                execute: Box::new(move || cmyk.submit(self)),
             });
         }
         if let Some(tp) = p.output_transfer.as_ref().filter(|tp| tp.decode) {
-            stages.push(output_transfer_stage(tp, buf_b));
+            stages.push(output_transfer_stage(tp, buf_b)?);
         }
-        // Zero-copy path: when buf_b is mappable, skip the blit and map it
-        // directly below. Otherwise stage it into the MAP_READ readback
-        // buffer in the last ordered device submission.
-        if let Some(rb) = readback.as_ref() {
-            let rb = rb.clone();
-            let buf_b = buf_b.clone();
-            let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::super::pipe::ChainStage::Gpu {
-                name: "readback_copy",
-                encode: Box::new(move |encoder| {
-                    encoder.copy_buffer_to_buffer(&buf_b, 0, &rb, 0, img_bytes_u64)
-                }),
-            });
-        }
-        // Everything since function entry: CPU-side param prep, buffer
-        // creation/uploads, and stage assembly.
+        boundaries[tap_index(Tap::RgbOut)] = stages.len();
+        let start = boundaries[tap_index(p.inject)];
+        let stop = boundaries[tap_index(p.collect)];
+        stages.truncate(stop);
+        stages.drain(..start);
+        let (selected, width, height) = match p.collect {
+            Tap::LogEFilm => (setup.buf_b.clone(), p.image_width, p.image_height),
+            Tap::CmyFilm => (
+                film_density_output.clone(),
+                film_density_width,
+                film_density_height,
+            ),
+            Tap::LogEPrint => (print_exposure_output.clone(), image_width, image_height),
+            Tap::CmyPrint => (buf_a.clone(), image_width, image_height),
+            Tap::RgbOut => (buf_b.clone(), image_width, image_height),
+            Tap::RgbIn | Tap::RgbPre => unreachable!("equal boundary returned before setup"),
+        };
+        let final_output = (selected, width, height);
+        // The chain ends on the device. The output buffer is returned as a
+        // retained carrier, so the route's saving conversion and viewer read
+        // it without a download and reupload; only the compatibility wrapper
+        // materializes it.
         let cpu_setup_ms = t_start.elapsed().as_secs_f32() * 1000.0;
         self.pipe.run_chain(stages)?;
+        if p.collect == Tap::RgbOut
+            && let Some(readout) = scan_readout_state.as_ref()
+        {
+            readout.check(
+                self,
+                p.scan_readout.ok_or("scanner density parameters missing")?,
+                p.scan_preparation_key,
+                width,
+                height,
+            )?;
+        }
         // The Dye pass publishes only a bounded flag; it is checked after the
-        // run and before the output is read back and published (pipe
-        // architecture), so an out-of-bounds field fails instead of escaping.
-        if let Some(status) = dye_status.as_ref() {
+        // run and before the output is published (pipe architecture), so an
+        // out-of-bounds field fails instead of escaping.
+        if start < boundaries[tap_index(Tap::CmyFilm)]
+            && stop >= boundaries[tap_index(Tap::CmyFilm)]
+            && let Some(status) = dye_status.as_ref()
+        {
             self.check_dye_status(status)?;
         }
-
-        // Single sync point at the end. Map buf_b directly on the zero-copy
-        // path, or the staging buffer otherwise.
-        let map_target = readback.as_ref().unwrap_or(buf_b);
-        let out_f32 = self.read_mapped_f32(map_target, img_bytes as u64);
-        let gpu_wait_ms = t_start.elapsed().as_secs_f32() * 1000.0 - cpu_setup_ms;
-
-        let out = ImageBuf::from_data(image.width, image.height, f32_to_scalars(out_f32));
         tracing::debug!(
             target: "spektrafilm_gpu::wgpu_backend",
             cpu_setup_ms = format!("{cpu_setup_ms:.1}"),
-            gpu_wait_ms = format!("{gpu_wait_ms:.1}"),
-            readback_ms = format!(
-                "{:.1}",
-                t_start.elapsed().as_secs_f32() * 1000.0 - cpu_setup_ms - gpu_wait_ms
-            ),
             "film chain timings"
         );
-        Ok(out)
+        // The buffer carries the output transfer exactly when the assembled
+        // pipe tail left encoded samples: the encode pass sets it, the decode
+        // pass clears it, and without either the Procedural-grain pass decided
+        // it before grain.
+        let encoded = match p.output_transfer.as_ref() {
+            Some(transfer) => !transfer.decode,
+            None => p.grain_v2.is_some(),
+        };
+        let domain = match p.collect {
+            Tap::LogEFilm | Tap::LogEPrint => spektrafilm_backend::SampleDomain::LogExposure,
+            Tap::CmyFilm | Tap::CmyPrint => spektrafilm_backend::SampleDomain::Density,
+            Tap::RgbOut if encoded => spektrafilm_backend::SampleDomain::Encoded,
+            _ => spektrafilm_backend::SampleDomain::Linear,
+        };
+        let pixel_pitch_um = p
+            .grain_dye
+            .as_ref()
+            .filter(|_| tap_index(p.collect) >= tap_index(Tap::CmyFilm))
+            .map_or(p.pixel_pitch_um, |dye| {
+                let axis = usize::from(p.image_height > p.image_width);
+                dye.grid.pitch_um[axis] * f64::from(p.grain_dye_aperture.unwrap_or(1))
+            });
+        let pixel_pitch_um = p
+            .grain_fotufilm
+            .as_ref()
+            .filter(|_| tap_index(p.collect) >= tap_index(Tap::CmyFilm))
+            .map_or(pixel_pitch_um, |grain| {
+                let axis = usize::from(p.image_height > p.image_width);
+                grain.pitch_um[axis] * grain.size.clamp(0.5, 4.0)
+            });
+        let payload = super::device_image::BufferPayload::from_pages(
+            self.backend_id(),
+            final_output.0,
+            final_output.1,
+            final_output.2,
+        );
+        let (pages, width, height) = if let Some(rect) = p.grain_dye_crop {
+            (self.dye_crop_pages(&payload, rect)?, rect[2], rect[3])
+        } else {
+            let pages =
+                self.allocate_image_pages(final_output.1, final_output.2, "chain_result")?;
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            for page in &pages {
+                self.copy_samples_to(
+                    &mut encoder,
+                    &payload,
+                    u64::from(page.first_pixel) * 3,
+                    u64::from(page.n_pixels) * 3,
+                    &page.buffer,
+                    0,
+                )?;
+            }
+            self.queue.submit(Some(encoder.finish()));
+            (pages, final_output.1, final_output.2)
+        };
+        Ok(self.retain_image_pages(
+            pages,
+            width,
+            height,
+            domain,
+            if p.collect == Tap::RgbOut {
+                p.scan_output_space
+            } else {
+                input.space()
+            },
+            Some(pixel_pitch_um),
+        ))
     }
 }
 
 // ── Bounded-execution preflight (pure, device-free) ──────────────────────────
 //
-// The chain allocates the image buffers straight from `n_pixels` and binds
-// every buffer with `as_entire_binding()`, so an oversized request would
-// otherwise surface as an uncaptured wgpu-core validation error. These
-// helpers derive the required byte sizes arithmetically so the resident
-// chain entry can compare them with the device limits before any allocation.
+// Complete rasters are copy transports. Individual numerical passes bind
+// bounded windows; immutable coefficients retain their own binding minimum.
 
 /// Conservative bound for the small fixed-size buffers the chain creates
 /// besides the image and lookup buffers: the std140 param uniforms
@@ -1213,24 +1323,10 @@ const MAX_FIXED_AUX_BYTES: u64 = 4 * 1024;
 /// Device buffer sizes the resident chain will allocate, derived from the
 /// parameters without touching a device.
 pub(in crate::wgpu_backend) struct RequiredChainBuffers {
-    /// One image-sized buffer: the `img_a`/`img_b` ping-pong pair, the
-    /// readback buffer, and every stage scratch buffer (blur, halation,
-    /// DIR, glare, unsharp, grain) is created at this size or smaller. The
-    /// Dye field's bounded band scratch is not derived here: it is planned
-    /// against the device limits by `validate_dye_resources`, which runs
-    /// before the chain allocates anything.
-    pub(super) image_bytes: u64,
     /// Largest static buffer: the f32-narrowed lookup tables (spectral
     /// densities, density curves, front-pass LUT, gamut `C_max`) plus the
     /// fixed-size param uniforms and kernels.
-    pub(super) static_bytes: u64,
-}
-
-impl RequiredChainBuffers {
-    /// The largest single buffer the chain will create.
-    pub(in crate::wgpu_backend) fn largest(&self) -> u64 {
-        self.image_bytes.max(self.static_bytes)
-    }
+    pub(in crate::wgpu_backend) static_bytes: u64,
 }
 
 /// Derives the required device buffer sizes from the chain parameters.
@@ -1242,7 +1338,6 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
 ) -> RequiredChainBuffers {
     let f32s = |count: usize| (count as u64).saturating_mul(4);
     let table = |rows: usize| f32s(rows).saturating_mul(3);
-    let image_bytes = (u64::from(p.image.width) * u64::from(p.image.height)).saturating_mul(3 * 4);
     // `scan_cd`/`scan_bd` feed from the film or the print spectral data,
     // matching the `scan_film` selection in `run_film_chain_inner`.
     let scan_wavelengths = if p.scan_film {
@@ -1251,14 +1346,31 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         p.print_channel_density.len()
     };
     let tc_lut_bytes = match &p.front {
-        spektrafilm_backend::FrontPass::Hanatos2025 { tc_lut, .. } => f32s(tc_lut.data.len()),
-        spektrafilm_backend::FrontPass::Mallett2019 { .. } => 0,
+        spektrafilm_backend::FrontPass::Hanatos2025 { tc_lut, .. } => (tc_lut.size as u64)
+            .saturating_mul(tc_lut.size as u64)
+            .saturating_mul(12),
+        spektrafilm_backend::FrontPass::Mallett2019 { .. }
+        | spektrafilm_backend::FrontPass::ScanInverse(_) => 0,
     };
     let dir_log_bytes = p.dir_couplers.map_or(0, |dp| f32s(dp.log_exposure.len()));
     let dir_curves_bytes = p
         .dir_couplers
         .map_or(0, |dp| table(dp.density_curves_0.len()));
     let cmax_bytes = p.gamut.map_or(0, |gp| f32s(gp.cmax.len()));
+    // Spektra v1's device pass uploads the composite curve x column
+    // (`knots` × 3) and the layer curve tensor (`knots` × 9) as f64 storage.
+    let grain_v1_curve_bytes = p.grain_v1.as_ref().map_or(0, |gp| {
+        gp.curve_x.len() as u64 * 8 + gp.curve_layers.len() as u64 * 8
+    });
+    let scan_axes_bytes = p
+        .scan_readout
+        .map_or(0, |p| (p.density.len().max(p.exposure.len()) as u64) * 8);
+    let convert_table_bytes = match &p.front {
+        spektrafilm_backend::FrontPass::ScanInverse(p) => {
+            (p.dye.len().max(p.cmfs.len()) as u64) * 3 * 8
+        }
+        _ => 0,
+    };
     let static_bytes = [
         f32s(p.film_log_exposure.len()),
         table(p.film_density_curves_normalized.len()),
@@ -1276,15 +1388,15 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         dir_log_bytes,
         dir_curves_bytes,
         cmax_bytes,
+        grain_v1_curve_bytes,
+        scan_axes_bytes,
+        convert_table_bytes,
         MAX_FIXED_AUX_BYTES,
     ]
     .into_iter()
     .max()
     .unwrap_or(0);
-    RequiredChainBuffers {
-        image_bytes,
-        static_bytes,
-    }
+    RequiredChainBuffers { static_bytes }
 }
 
 /// Compares one required buffer size with the device limits. Every chain
@@ -1311,28 +1423,27 @@ pub(in crate::wgpu_backend) fn required_buffer_exceeds_limits(
     None
 }
 
-/// The failure an explicit GPU request gets when the chain exceeds the
-/// device resource limits: identified, with the CPU route named.
-pub(in crate::wgpu_backend) fn explicit_resource_error(reason: &str) -> String {
-    format!(
-        "explicit GPU request exceeds the device resource limits ({reason}); retry with an \
-         explicit CPU request"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use spektrafilm_backend::{FilmChainParams, FrontPass};
+    use spektrafilm_backend::{Precision, RetainedImageMeta, SampleDomain};
+    use spektrafilm_math::colorspace;
     use spektrafilm_math::image::ImageBuf;
 
     const MAT3: [[f64; 3]; 3] = [[0.0; 3]; 3];
 
     /// Minimal chain params: empty lookup tables, no optional stages. The
-    /// image is borrowed so oversized geometries cost no allocation.
-    fn params(image: &ImageBuf) -> FilmChainParams<'_> {
+    /// geometry is declared directly so oversized sizes cost no allocation.
+    fn params<'a>(width: u32, height: u32) -> FilmChainParams<'a> {
         FilmChainParams {
-            image,
+            inject: Tap::RgbPre,
+            collect: Tap::RgbOut,
+            enlarger_lut: None,
+            scanner_lut: None,
+            image_width: width,
+            image_height: height,
+            pixel_pitch_um: 1.0,
             front: FrontPass::Mallett2019 { matrix: MAT3 },
             film_log_exposure: &[],
             film_density_curves_normalized: &[],
@@ -1345,6 +1456,7 @@ mod tests {
             print_exposure_scale: 1.0,
             print_log_exposure: &[],
             print_density_curves: &[],
+            grain_fotufilm: None,
             print_gamma: 1.0,
             print_channel_density: &[],
             print_base_density: &[],
@@ -1352,6 +1464,8 @@ mod tests {
             scan_illuminant: &[],
             scan_normalization: 1.0,
             scan_xyz_to_rgb: &MAT3,
+            scan_cat: &MAT3,
+            scan_base_xyz_to_rgb: &MAT3,
             scan_film: false,
             halation: None,
             dir_couplers: None,
@@ -1359,159 +1473,297 @@ mod tests {
             gamut: None,
             unsharp: None,
             grain_v2: None,
+            grain_v1: None,
             scan_output_space: &spektrafilm_math::colorspace::SRGB,
             camera_lens_blur_px: None,
+            camera_diffusion: None,
+            enlarger_diffusion: None,
             scanner_lens_blur_px: None,
             highlight_boost: None,
             grain_dye: None,
+            grain_dye_cell_spectral: false,
+            grain_dye_aperture: None,
+            grain_dye_crop: None,
             density_cpu_stage: None,
             scan_acquisition_cpu_stage: None,
-            print_acquisition_cpu_stage: None,
-            camera_diffusion_cpu_stage: None,
+            scan_readout: None,
+            scan_preparation_key: None,
             output_transfer: None,
             cmyk: None,
+            input_decode: None,
         }
     }
 
-    fn synthetic_limits(
-        max_buffer_size: u64,
-        max_storage_buffer_binding_size: u32,
-    ) -> wgpu::Limits {
-        wgpu::Limits {
-            max_buffer_size,
-            max_storage_buffer_binding_size,
-            ..wgpu::Limits::default()
-        }
-    }
     #[test]
-    fn required_buffer_exceeds_limits_rejects_an_oversized_image() {
-        // 20000×20000 → 4.8 GB of image buffers; a synthetic tiny
-        // `max_buffer_size` must reject that before any allocation.
-        let image = ImageBuf {
-            width: 20_000,
-            height: 20_000,
-            data: vec![],
-        };
-        let required = required_chain_buffers(&params(&image));
-        assert_eq!(required.image_bytes, 20_000u64 * 20_000 * 12);
-        assert_eq!(required.largest(), required.image_bytes);
-        let limits = synthetic_limits(1 << 20, u32::MAX);
-        let reason =
-            required_buffer_exceeds_limits(required.largest(), &limits).expect("oversized image");
-        assert!(reason.contains("max_buffer_size"));
-        assert!(reason.contains(&required.largest().to_string()));
-    }
-
-    #[test]
-    fn required_buffer_exceeds_limits_rejects_a_tighter_binding_limit() {
-        // 512×512 → 3 MiB of image buffers: fine for the buffer limit but
-        // over a 1 MiB storage binding limit.
-        let image = ImageBuf {
-            width: 512,
-            height: 512,
-            data: vec![],
-        };
-        let required = required_chain_buffers(&params(&image));
-        assert!(required.largest() > (1 << 20));
-        let limits = synthetic_limits(u64::MAX, 1 << 20);
-        let reason = required_buffer_exceeds_limits(required.largest(), &limits)
-            .expect("tight binding limit");
-        assert!(reason.contains("max_storage_buffer_binding_size"));
-    }
-
-    #[test]
-    fn explicit_resource_error_carries_the_required_wording() {
-        let image = ImageBuf {
-            width: 20_000,
-            height: 20_000,
-            data: vec![],
-        };
-        let required = required_chain_buffers(&params(&image));
-        let limits = synthetic_limits(1 << 20, u32::MAX);
-        let reason = required_buffer_exceeds_limits(required.largest(), &limits).unwrap();
-        let message = explicit_resource_error(&reason);
-        assert!(message.contains("explicit GPU request"));
-        assert!(message.contains("resource"));
-        assert!(message.contains("retry with an explicit CPU request"));
-        // The offending quantity rides along in the reason.
-        assert!(message.contains(&required.largest().to_string()));
-    }
-
-    /// The resident entry must decline before any allocation when a required
-    /// buffer exceeds the device limits: the automatic route falls back to the
-    /// per-stage path, and an explicit request fails with the resource reason
-    /// instead of an uncaptured wgpu-core validation error.
-    #[test]
-    fn oversized_geometry_declines_the_automatic_route_and_fails_an_explicit_request() {
+    fn retained_tap_segments_preserve_exposure_and_development_boundaries() {
         use spektrafilm_backend::ComputeBackend;
-        // 20k x 20k x 12 B = 4.8 GB declared: beyond any device limit and never
-        // allocated, because the preflight runs before the first allocation.
-        let image = ImageBuf {
-            width: 20_000,
-            height: 20_000,
-            data: vec![],
+        let backend = crate::test_support::adapter();
+        let knots = [-1.0, 0.0, 1.0];
+        let curves = [[0.0; 3], [1.0; 3], [2.0; 3]];
+        let spectral = [[0.0; 3]; 81];
+        let base = [0.0; 81];
+        let light = [1.0; 81];
+        let mut p = params(1, 1);
+        p.front = FrontPass::Mallett2019 {
+            matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         };
-        let params = params(&image);
-        // Each adapter owns the device lock for its lifetime, so the two
-        // requests run in sequence rather than holding two devices at once.
-        {
-            let automatic = crate::test_support::adapter();
-            assert!(
-                automatic
-                    .try_run_film_chain(&params)
-                    .expect("the automatic route declines, it does not error")
-                    .is_none(),
-                "the automatic route must decline instead of allocating 4.8 GB"
+        p.film_log_exposure = &knots;
+        p.film_density_curves_normalized = &curves;
+        p.print_log_exposure = &knots;
+        p.print_density_curves = &curves;
+        p.film_channel_density = &spectral;
+        p.print_channel_density = &spectral;
+        p.film_base_density = &base;
+        p.print_base_density = &base;
+        p.print_illuminant = &light;
+        p.scan_illuminant = &light;
+        p.print_sensitivity = &spectral;
+        p.collect = Tap::LogEFilm;
+        let source = ImageBuf::from_data(1, 1, vec![0.1 as _, 1.0 as _, 10.0 as _]);
+        let input = backend
+            .retain_image(
+                &source,
+                &RetainedImageMeta {
+                    width: 1,
+                    height: 1,
+                    domain: SampleDomain::Linear,
+                    precision: Precision::host(),
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: Some(1.0),
+                },
+            )
+            .unwrap();
+        let repeated = ImageBuf::from_data(3, 1, source.data.repeat(3));
+        let split = (0..3)
+            .map(|i| {
+                let samples: Vec<f32> = repeated.data[i * 3..i * 3 + 3]
+                    .iter()
+                    .map(|&v| v as f32)
+                    .collect();
+                super::super::super::paged::ImagePage {
+                    first_pixel: i as u32,
+                    n_pixels: 1,
+                    buffer: backend
+                        .device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("split_source_pixel"),
+                            contents: bytemuck::cast_slice(&samples),
+                            usage: wgpu::BufferUsages::STORAGE
+                                | wgpu::BufferUsages::COPY_SRC
+                                | wgpu::BufferUsages::COPY_DST,
+                        }),
+                }
+            })
+            .collect();
+        let paged = backend.retain_image_pages(
+            split,
+            3,
+            1,
+            SampleDomain::Linear,
+            &colorspace::SRGB,
+            Some(1.0),
+        );
+        let contiguous = backend
+            .retain_image(
+                &repeated,
+                &RetainedImageMeta {
+                    width: 3,
+                    height: 1,
+                    domain: SampleDomain::Linear,
+                    precision: Precision::host(),
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: Some(1.0),
+                },
+            )
+            .unwrap();
+        p.image_width = 3;
+        for carrier in [&contiguous, &paged] {
+            p.collect = Tap::CmyFilm;
+            let first = backend.run_film_chain_retained(carrier, &p).unwrap();
+            let second = backend.run_film_chain_retained(carrier, &p).unwrap();
+            assert_eq!(
+                first.to_host(backend.backend()).unwrap().data,
+                second.to_host(backend.backend()).unwrap().data
             );
+            assert_eq!(
+                carrier.to_host(backend.backend()).unwrap().data,
+                repeated.data
+            );
+            let mixed = backend
+                .mix_output_images(
+                    &first,
+                    carrier,
+                    &spektrafilm_backend::OutputMixGpuParams {
+                        amount: 0.0,
+                        encoded: false,
+                        cctf_kind: 0,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                mixed.to_host(backend.backend()).unwrap().data,
+                repeated.data
+            );
+            p.density_cpu_stage = Some(Box::new(|_| panic!("forbidden CPU image stage")));
+            assert!(backend.run_film_chain_retained(carrier, &p).is_err());
+            assert_eq!(
+                carrier.to_host(backend.backend()).unwrap().data,
+                repeated.data
+            );
+            p.density_cpu_stage = None;
         }
-        let explicit = crate::test_support::explicit_adapter();
-        let error = explicit
-            .try_run_film_chain(&params)
-            .expect_err("an explicit request must fail");
-        assert!(error.contains("explicit GPU request"), "{error}");
-        assert!(error.contains("resource"), "{error}");
+        p.image_width = 1;
+        p.collect = Tap::LogEFilm;
+        let mut identity_params = params(1, 1);
+        identity_params.inject = Tap::CmyFilm;
+        identity_params.collect = Tap::CmyFilm;
+        let identity = backend
+            .run_film_chain_retained(&input, &identity_params)
+            .unwrap();
+        assert!(std::sync::Arc::ptr_eq(
+            input.payload().unwrap(),
+            identity.payload().unwrap()
+        ));
+        assert_eq!(identity.domain(), input.domain());
+        assert_eq!(identity.pixel_pitch_um(), input.pixel_pitch_um());
+        assert_eq!((identity.width(), identity.height()), (1, 1));
+        let exposure = backend.run_film_chain_retained(&input, &p).unwrap();
+        assert_eq!(exposure.domain(), SampleDomain::LogExposure);
+        for (actual, expected) in exposure
+            .to_host(backend.backend())
+            .unwrap()
+            .data
+            .iter()
+            .zip([-1.0, 0.0, 1.0])
+        {
+            assert!((*actual as f64 - expected).abs() < 2e-6);
+        }
+        p.inject = Tap::LogEFilm;
+        p.collect = Tap::CmyFilm;
+        // Re-running the front/log passes would produce the wrong density;
+        // running the scanner tail would produce zeros with this scan matrix.
+        let density = backend.run_film_chain_retained(&exposure, &p).unwrap();
+        assert_eq!(density.domain(), SampleDomain::Density);
+        for (actual, expected) in density
+            .to_host(backend.backend())
+            .unwrap()
+            .data
+            .iter()
+            .zip([0.0, 1.0, 2.0])
+        {
+            assert!((*actual as f64 - expected).abs() < 2e-6);
+        }
+        p.inject = Tap::LogEPrint;
+        p.collect = Tap::CmyPrint;
+        let paper = backend.run_film_chain_retained(&exposure, &p).unwrap();
+        assert_eq!(paper.domain(), SampleDomain::Density);
+        for (actual, expected) in paper
+            .to_host(backend.backend())
+            .unwrap()
+            .data
+            .iter()
+            .zip([0.0, 1.0, 2.0])
+        {
+            assert!((*actual as f64 - expected).abs() < 2e-6);
+        }
+        p.inject = Tap::LogEFilm;
+        p.collect = Tap::CmyFilm;
+        p.density_cpu_stage = Some(Box::new(|_| {
+            panic!("GPU diagnostics must not run CPU image arithmetic")
+        }));
+        let error = backend.run_film_chain_retained(&exposure, &p).unwrap_err();
+        assert!(error.contains("CPU image-stage fence"), "{error}");
+    }
+
+    #[test]
+    fn cancelled_identity_tap_discards_carrier_without_poisoning_reuse() {
+        use spektrafilm_backend::ComputeBackend;
+        use std::sync::{Arc, atomic::AtomicBool};
+        let gpu = crate::test_support::explicit_adapter();
+        let image = ImageBuf::from_data(1, 1, f32_to_scalars(vec![0.125, 0.5, 0.75]));
+        let source = gpu
+            .retain_image(
+                &image,
+                &RetainedImageMeta {
+                    width: 1,
+                    height: 1,
+                    domain: SampleDomain::Linear,
+                    precision: Precision::F32,
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: None,
+                },
+            )
+            .unwrap();
+        let mut p = params(1, 1);
+        p.collect = p.inject;
+        let mut cancelled = gpu.derived_explicit();
+        cancelled.pipe = gpu
+            .pipe
+            .with_cancellation(Some(Arc::new(AtomicBool::new(true))));
+        assert_eq!(
+            cancelled.run_film_chain_retained(&source, &p).unwrap_err(),
+            "operation cancelled"
+        );
+        let healthy = gpu.run_film_chain_retained(&source, &p).unwrap();
+        assert!(Arc::ptr_eq(
+            source.payload().unwrap(),
+            healthy.payload().unwrap()
+        ));
+        assert_eq!(
+            scalars_to_f32(&healthy.to_host(gpu.backend()).unwrap().data).as_ref(),
+            &[0.125, 0.5, 0.75]
+        );
+    }
+
+    #[test]
+    fn diagnostic_taps_reject_absent_or_reversed_topology_boundaries() {
+        let mut p = params(1, 1);
+        p.inject = Tap::CmyFilm;
+        p.collect = Tap::LogEFilm;
+        assert!(validate_tap_span(&p).unwrap_err().contains("no node path"));
+        p.scan_film = true;
+        p.inject = Tap::LogEPrint;
+        p.collect = Tap::LogEPrint;
         assert!(
-            error.contains("retry with an explicit CPU request"),
-            "{error}"
+            validate_tap_span(&p)
+                .unwrap_err()
+                .contains("not part of this topology")
         );
     }
 
     #[test]
     fn required_chain_buffers_mirror_the_chain_arithmetic() {
-        let image = ImageBuf {
-            width: 8,
-            height: 4,
-            data: vec![],
-        };
+        const W: u32 = 8;
+        const H: u32 = 4;
         let log_exp = [0.0f64; 5];
         let tc_lut = spektrafilm_math::spectral::TcLut {
             size: 16,
             channels: 3,
-            data: vec![0.0; 2048],
+            data: vec![0.0; 16 * 16 * 3],
         };
         let p = FilmChainParams {
             front: FrontPass::Hanatos2025 {
                 tc_lut: &tc_lut,
+                generated: None,
                 rgb_to_adapted_xyz: MAT3,
             },
             film_log_exposure: &log_exp,
-            ..params(&image)
+            ..params(W, H)
         };
         let required = required_chain_buffers(&p);
-        assert_eq!(required.image_bytes, 8u64 * 4 * 12);
         // A non-empty `[[f64; 3]]` table narrows to 12 bytes per row and
         // outgrows the fixed-aux bound, so the table path itself is pinned.
         let density_rows = [[0.0f64; 3]; 400];
         let table_params = FilmChainParams {
             film_channel_density: &density_rows,
-            ..params(&image)
+            ..params(W, H)
         };
         assert_eq!(
             required_chain_buffers(&table_params).static_bytes,
             400u64 * 12
         );
-        // The 2048-entry f64 LUT narrows to 2048 f32 = 8 KiB, beating both
-        // the 5-point log exposure (20 bytes) and the fixed aux bound.
-        assert_eq!(required.static_bytes, 2048u64 * 4);
+        // Resource planning follows declared lattice geometry even when a
+        // generated retained table has no host sample vector.
+        assert_eq!(required.static_bytes, MAX_FIXED_AUX_BYTES);
     }
 }

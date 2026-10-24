@@ -1,4 +1,7 @@
 use egui::{Pos2, Rect};
+use spektrafilm_backend::ComputeBackend;
+#[cfg(test)]
+use spektrafilm_backend::cpu_backend::CpuBackend;
 use spektrafilm_math::image::ImageBuf;
 use std::sync::Arc;
 
@@ -36,7 +39,23 @@ impl Interpolation {
             Self::Blackman => "blackman",
         }
     }
-    pub(super) fn radius(self) -> i32 {
+    /// The device discriminant for this mode. The viewer's device kernels
+    /// select the kernel weights and the radius from this value, so the
+    /// numbering is part of the device ABI: it follows `INTERPOLATIONS` order,
+    /// and a device kernel that reordered them would change what the viewer
+    /// shows.
+    pub fn discriminant(self) -> u32 {
+        match self {
+            Self::Nearest => 0,
+            Self::Linear => 1,
+            Self::Cubic => 2,
+            Self::Spline16 => 3,
+            Self::Spline36 => 4,
+            Self::Lanczos => 5,
+            Self::Blackman => 6,
+        }
+    }
+    pub(crate) fn radius(self) -> i32 {
         match self {
             Self::Nearest | Self::Linear => 1,
             Self::Cubic | Self::Spline16 => 2,
@@ -105,6 +124,9 @@ impl Interpolation {
 pub struct DisplayRaster {
     pub size: [usize; 2],
     pub rgb: Arc<[[f32; 3]]>,
+    /// Device-only disposable pixels. `rgb` is empty for this variant; only
+    /// the native presentation boundary may materialize its packed bytes.
+    pub(crate) retained: Option<spektrafilm_backend::DeviceImage>,
 }
 impl DisplayRaster {
     pub fn new(size: [usize; 2], rgb: Vec<[f32; 3]>) -> Result<Self, String> {
@@ -114,9 +136,21 @@ impl DisplayRaster {
         Ok(Self {
             size,
             rgb: rgb.into(),
+            retained: None,
         })
     }
+    pub(crate) fn device(image: spektrafilm_backend::DeviceImage) -> Self {
+        Self {
+            size: [image.width() as usize, image.height() as usize],
+            rgb: Arc::from([]),
+            retained: Some(image),
+        }
+    }
     pub fn sample(&self, x: f32, y: f32, mode: Interpolation) -> [f32; 3] {
+        assert!(
+            self.retained.is_none(),
+            "device viewer raster must be sampled on its backend"
+        );
         sample_f32(x, y, mode, |x, y| {
             self.rgb[y.clamp(0, self.size[1] as i32 - 1) as usize * self.size[0]
                 + x.clamp(0, self.size[0] as i32 - 1) as usize]
@@ -196,7 +230,21 @@ pub(super) fn sample_image_with(
     })
 }
 
+#[cfg(test)]
 pub(super) fn capped_raster(image: &ImageBuf, max_edge: usize) -> Result<DisplayRaster, String> {
+    capped_raster_with(&CpuBackend, image, max_edge)
+}
+
+/// The viewer's capped raster with a device route: the destination size is
+/// resolved here in f64 so the viewer owns the geometry, and the bilinear
+/// reduction itself runs on the compute device when the backend provides a
+/// device resampler. The source image is read-only, so this never changes a
+/// retained or saved sample.
+pub(super) fn capped_raster_with(
+    backend: &dyn ComputeBackend,
+    image: &ImageBuf,
+    max_edge: usize,
+) -> Result<DisplayRaster, String> {
     if image.width == 0 || image.height == 0 {
         return Err("Cannot view an empty image".into());
     }
@@ -208,6 +256,32 @@ pub(super) fn capped_raster(image: &ImageBuf, max_edge: usize) -> Result<Display
         ((w as f64 * factor).round() as usize).max(1),
         ((h as f64 * factor).round() as usize).max(1),
     ];
+    let device = backend
+        .viewer_resample(
+            image,
+            &spektrafilm_backend::ViewerResampleGpuParams {
+                width: image.width,
+                height: image.height,
+                out_width: size[0] as u32,
+                out_height: size[1] as u32,
+            },
+        )
+        .map_err(|error| format!("viewer resample: {error}"))?;
+    let rgb = match device {
+        Some(rgb) => rgb,
+        None => host_capped_raster_pixels(image, &size, w, h),
+    };
+    DisplayRaster::new(size, rgb)
+}
+
+/// The host reference reduction, kept as the fallback for a backend without a
+/// device resampler and as the comparison target for the device test.
+fn host_capped_raster_pixels(
+    image: &ImageBuf,
+    size: &[usize; 2],
+    w: usize,
+    h: usize,
+) -> Vec<[f32; 3]> {
     let mut rgb = Vec::with_capacity(size[0] * size[1]);
     for y in 0..size[1] {
         let sy = ((y as f64 + 0.5) * h as f64 / size[1] as f64 - 0.5).clamp(0.0, (h - 1) as f64);
@@ -229,7 +303,7 @@ pub(super) fn capped_raster(image: &ImageBuf, max_edge: usize) -> Result<Display
             }));
         }
     }
-    DisplayRaster::new(size, rgb)
+    rgb
 }
 
 #[cfg(test)]
@@ -311,5 +385,75 @@ mod tests {
             |p| p.map(|v| v * v),
         );
         assert_eq!(out, [0.3125; 3]);
+    }
+
+    /// The device resample must reproduce the host `capped_raster` the viewer
+    /// already shows. The device evaluates the source coordinates and the tap
+    /// weights in f32 while the host uses f64, so the agreement budget is the
+    /// f32 evaluation of the same formula, not exact equality: measured worst
+    /// absolute difference over the chromatic 37×23 → 8×8 case below.
+    #[test]
+    fn device_resample_matches_the_host_reference_within_f32() {
+        use spektrafilm_math::precision::from_f64;
+
+        // The software Vulkan driver is not safe under concurrent device use
+        // in one process; the returned guard serializes every device test in
+        // this binary and must outlive the backend.
+        let backend = spektrafilm_gpu::test_support::adapter();
+        let (w, h) = (37u32, 23u32);
+        // A chromatic, out-of-range wedge: a smooth ramp would hide a wrong tap
+        // or a wrong clamp behind the bilinear average.
+        let image = ImageBuf::from_data(
+            w,
+            h,
+            (0..w * h)
+                .flat_map(|i| {
+                    let x = (i % w) as f64 / (w - 1) as f64;
+                    let y = (i / w) as f64 / (h - 1) as f64;
+                    // Values above 1.0 exercise the display-side headroom the
+                    // viewer can carry before its own clamp.
+                    let encode = |v: f64| from_f64(1.4 * v - 0.2);
+                    [encode(x), encode(y * 0.8 + 0.1), encode(x * y + 0.05)]
+                })
+                .collect(),
+        );
+        let max_edge = 8usize;
+        let device = capped_raster_with(backend.backend(), &image, max_edge)
+            .expect("the device resampler provides the capped raster");
+        let host = host_capped_raster_pixels(&image, &device.size, w as usize, h as usize);
+        assert_eq!(device.size, [8, 5]);
+        let mut worst = 0.0f64;
+        for (got, want) in device.rgb.iter().zip(host.iter()) {
+            for c in 0..3 {
+                worst = worst.max((f64::from(got[c]) - f64::from(want[c])).abs());
+            }
+        }
+        // f32 evaluation of the host formula, plus the matrix-free resample:
+        // 4 source taps, 3 mix terms, 1 rounding. Measured 1.2e-7.
+        assert!(
+            worst < 1e-6,
+            "the device resample differs from the host reference by {worst:.3e}"
+        );
+        // The source image is read-only: the resample never rewrites a sample
+        // the pipeline retained or saved.
+        let untouched: Vec<_> = (0..w * h)
+            .flat_map(|i| {
+                let x = (i % w) as f64 / (w - 1) as f64;
+                let y = (i / w) as f64 / (h - 1) as f64;
+                let encode = |v: f64| from_f64(1.4 * v - 0.2);
+                [encode(x), encode(y * 0.8 + 0.1), encode(x * y + 0.05)]
+            })
+            .collect();
+        assert_eq!(image.data, untouched);
+
+        // A CPU backend reports no device path and keeps the host reference,
+        // which is the fallback a device-less selection must exercise.
+        let fallback = capped_raster_with(
+            &spektrafilm_backend::cpu_backend::CpuBackend,
+            &image,
+            max_edge,
+        )
+        .unwrap();
+        assert_eq!(&*fallback.rgb, &host[..]);
     }
 }

@@ -57,6 +57,10 @@ The viewer also accepts a dropped image file through the same import path. An un
 
 Choose the base route in **Input and capture → Workflow → workflow**, the film in **Film → Film material → film profile**, and the paper in **Print → Print material → print profile**. Selecting a film keeps the current paper; selecting a paper keeps the current film. Film selection applies its workflow default and scanner normalization, reported in the header. A look preset selects the material pair and its owned controls atomically. Development-time choices follow the selected material's actual family; a material without a selectable family shows its effective development time instead.
 
+RGB imports retain their original host samples; GPU RAW imports retain the decoded device image and its color metadata. Preview, Scan, independent GPU Export, and input viewing consume that source without rewriting it. With a selected GPU, viewing a rotated RGB import uploads the original samples and turns them on the device; both RGB and RAW rotation produce a separate retained presentation image. Import and rotation prepare the replacement view before publishing the new source or orientation; failure preserves the previous accepted source and output. An explicit CPU reference export or source-analysis operation materializes device samples only at that requested host boundary.
+
+Input color-space and CCTF controls reinterpret the accepted samples; they do not convert or rewrite the stored RAW carrier. Preview, Scan, input viewing, and Export use that accepted declaration, and queued exports keep the declaration captured at submission even if the active photograph changes.
+
 ### Film Format
 
 **Input and capture → Camera → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
@@ -131,6 +135,8 @@ Header **Undo** and **Redo** apply to accepted adjustments for the current sourc
 
 Undo restores accepted controls, materials, route, explicit edit ownership, and the associated applied-preset state. Redo restores the recorded successor without rereading a possibly changed preset file. Both invalidate obsolete work and follow auto preview; delayed worker results cannot overwrite a newer restored adjustment. The viewer retains its last completed frame while work runs and the header marks it **Retained frame is not current · controls changed** until a current result is accepted.
 
+Rotation Undo/Redo refreshes input presentation without discarding the completed output: with auto preview off, Output remains viewable and Save continues to write the same retained samples until another render is accepted.
+
 Use Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z outside text editors and the Settings/Export dialogs. When a text editor has focus, its own text-editing shortcuts do not undo photograph adjustments.
 
 Accepting another source, completing RAW reprocessing, or loading a complete GUI state begins a new history. Failed imports, reprocessing, and state loads preserve the preceding context and history. The undo stack is not saved in GUI state. Viewer presentation, application settings, unsubmitted Export drafts, preset-library changes, startup-default files, diagnostic reports, and completed Save/Export files are outside adjustment history. Undo does not delete or rewrite those files, and it does not change an in-flight Export's captured configuration.
@@ -143,7 +149,7 @@ New edits replace queued work. Stale results cannot replace the latest output. T
 
 The retained-result label identifies **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
 
-**SCAN** renders the full-resolution input with spatial and stochastic effects. It prefers GPU execution with CPU fallback. The resulting full-resolution output is retained for Save and inspection in the viewport.
+**SCAN** renders the full-resolution input with spatial and stochastic effects. Automatic backend selection chooses CPU only when a usable GPU is unavailable. A selected GPU computation failure fails the operation without substituting host arithmetic. The resulting full-resolution output is retained for Save and inspection in the viewport.
 
 **Scan → Scanner → scan for print** disables print viewing glare for the print scan. Toggle it again to restore the previous value. Loading state or changing profiles clears the transient snapshot.
 
@@ -153,9 +159,9 @@ See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the acti
 
 ## Viewer
 
-**Input and capture → Source rotation** contains **ccw rotate** and **cw rotate**. These are source adjustments, not viewer transforms: they physically rotate the in-memory input used by Preview, Scan, and Export, clear the retained output, and schedule a new preview. Save writes the retained output of the latest completed render without rerendering, so it cannot render a rotation that has not been previewed or scanned.
+**Input and capture → Source rotation** contains **ccw rotate** and **cw rotate**. These actions record quarter-turn orientation for Preview, Scan, and Export without changing the imported source samples. A successful rotation prepares the oriented input view, clears the retained output, and schedules a new preview. Save writes the retained output of the latest completed render without rerendering, so it cannot render a rotation that has not been previewed or scanned.
 
-`100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. `fit` returns to the fitted zoom and keeps the pan; `reset view` also recentres it. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
+`100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. The viewer samples at device-pixel centers and treats image bounds as half-open, so fractional viewport origins and pans do not add or drop edge pixels. `fit` returns to the fitted zoom and keeps the pan; `reset view` also recentres it. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
 
 The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at the pointer. A primary-button drag pans. A Shift or secondary-button drag selects a rectangle and its release zooms so the selection fills the viewer. One click zooms one step at the pointer; a double click fits the view. Gestures change the retained view only and never saved or exported pixels.
 
@@ -170,6 +176,8 @@ The collapsible tonal-distribution readout sits above inspector search and stage
 The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel.
 
 The window header shows the current source, film profile, print profile, and exact workflow route as read-only text; hover the route for its physical description. The operation status appears only in this header. While Preview or Scan runs, it names the operation and the stage that executes now, for example `Scan · Film development`. With no work running it describes the last accepted operation; Export reports its status with elapsed time and cancellation state there too. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
+
+With a selected GPU, the accepted render owns device samples through viewing and Save. Fitted resampling, display conversion, ICC evaluation, full-source interpolation, comparison/crossfade, development animation, and virtual-paper numerical synthesis use disposable device buffers; none rewrites the accepted render. The native egui frontend receives only packed presentation pixels. Histogram data and hovered source pixels are bounded readouts, not a full-image download followed by re-upload. A failed viewer computation keeps the last accepted texture and reports the display error.
 
 ### Display transform and ICC
 

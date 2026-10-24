@@ -124,6 +124,19 @@ impl DensityCalibration {
             axes: prepare_axes(profile)?,
         })
     }
+    pub(super) fn gpu_axes(&self) -> (Vec<f64>, Vec<f64>, [u32; 3], [u32; 3]) {
+        let mut density = Vec::new();
+        let mut exposure = Vec::new();
+        let mut offsets = [0; 3];
+        let mut counts = [0; 3];
+        for (channel, axis) in self.axes.iter().enumerate() {
+            offsets[channel] = density.len() as u32;
+            counts[channel] = axis.density.len() as u32;
+            density.extend_from_slice(&axis.density);
+            exposure.extend_from_slice(&axis.exposure);
+        }
+        (density, exposure, offsets, counts)
+    }
 
     pub(super) fn neutral_density(&self, exposure: f64) -> [f64; 3] {
         self.axes.each_ref().map(|axis| axis.density_at(exposure).0)

@@ -11,7 +11,10 @@ use crate::profile::Profile;
 /// Scanner LUT bounds. When scan_film=true: `-grain.density_min` to
 /// `nanmax(film.density_curves)`. Else: `nanmin..nanmax` of
 /// `print.density_curves`.
-fn scanner_lut_bounds(profile: &Profile, params: &RuntimeParams) -> ([f64; 3], [f64; 3]) {
+pub(crate) fn scanner_lut_bounds(
+    profile: &Profile,
+    params: &RuntimeParams,
+) -> ([f64; 3], [f64; 3]) {
     let curves = profile.density_curves_f64();
     let mut dmin_curves = [f64::INFINITY; 3];
     let mut dmax_curves = [f64::NEG_INFINITY; 3];
@@ -97,7 +100,25 @@ fn scan_spectral_via_lut(
     data_min: [f64; 3],
     data_max: [f64; 3],
     steps: usize,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
+    let device_params = spektrafilm_backend::ScannerSpectralLutGpuParams {
+        channel_density,
+        base_density,
+        illuminant: &color.illuminant,
+        normalization: color.normalization,
+        cat: &color.adapt,
+        xyz_to_rgb: &color.base_xyz_to_rgb,
+        minimum: data_min,
+        maximum: data_max,
+        size: steps as u32,
+    };
+    match backend.scanner_spectral_lut(density_cmy, &device_params)? {
+        Some(image) => return Ok(image),
+        None if backend.is_gpu() => {
+            return Err("scanner_spectral_lut: selected GPU has no device implementation".into());
+        }
+        None => {}
+    }
     let _lut = super::super::StageObservation::cpu(
         backend,
         "scanner_lut",
@@ -137,7 +158,7 @@ fn scan_spectral_via_lut(
             dst[2] =
                 from_f64(xyz_to_rgb[2][0] * xa + xyz_to_rgb[2][1] * ya + xyz_to_rgb[2][2] * za);
         });
-    out
+    Ok(out)
 }
 
 /// Spectral integration of one density image under the scan colour context:
@@ -152,7 +173,7 @@ pub(crate) fn scan_spectral_rgb(
     channel_density: &[[f64; 3]],
     base_density: &[f64],
     color: &crate::chain_prep::ScanColorContext,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     if params.settings.use_scanner_lut {
         let (data_min, data_max) = scanner_lut_bounds(profile, params);
         scan_spectral_via_lut(

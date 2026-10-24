@@ -61,6 +61,50 @@ fn report_round_trip_preserves_u64_above_json_float_precision() {
 }
 
 #[test]
+fn canonical_colorspace_stage_passes_privacy_validation_without_opening_stage_names() {
+    use spektrafilm_core::telemetry::ValidationError;
+
+    let mut report = collected_report();
+    report.stages[0].name = "colorspace_convert".into();
+    report.validate().unwrap();
+    let decoded = Report::from_json(&report.to_json().unwrap()).unwrap();
+    assert_eq!(decoded.stages[0].name, "colorspace_convert");
+    decoded.validate().unwrap();
+
+    report.stages[0].name = "private_colorspace_convert".into();
+    assert_eq!(report.validate(), Err(ValidationError::PrivacyField));
+}
+
+#[test]
+fn high_level_omissions_distinguish_complete_unknown_and_invalid_coverage() {
+    let mut report = collected_report();
+    assert_eq!(report.coverage.omitted_high_level_observations, Some(0));
+    // A byte-limited measurement can be truncated without omitting its scope.
+    report.coverage.truncated = true;
+    report.validate().unwrap();
+    report.coverage.omitted_observations = 3;
+    report.coverage.omitted_high_level_observations = Some(1);
+    let decoded = Report::from_json(&report.to_json().unwrap()).unwrap();
+    assert_eq!(decoded.coverage.omitted_high_level_observations, Some(1));
+
+    report.coverage.omitted_high_level_observations = Some(4);
+    assert_eq!(
+        report.validate(),
+        Err(spektrafilm_core::telemetry::ValidationError::InvalidCoverage)
+    );
+
+    let mut historical = serde_json::to_value(collected_report()).unwrap();
+    historical["coverage"]
+        .as_object_mut()
+        .unwrap()
+        .remove("omitted_high_level_observations");
+    let historical = Report::from_json(&historical.to_string()).unwrap();
+    assert_eq!(historical.coverage.omitted_high_level_observations, None);
+    let round_trip = Report::from_json(&historical.to_json().unwrap()).unwrap();
+    assert_eq!(round_trip.coverage.omitted_high_level_observations, None);
+}
+
+#[test]
 fn validator_rejects_nonfinite_and_missing_parent() {
     let mut report = collected_report();
     report.operation.duration = Some(f64::NAN);
@@ -178,8 +222,15 @@ fn detail_truncation_keeps_exact_totals_and_valid_ancestry() {
     }
     let report = operation.finish(Outcome::Succeeded).unwrap();
     report.validate().unwrap();
-    assert_eq!(report.coverage.retained_observations, 1024);
-    assert_eq!(report.coverage.omitted_observations, 76);
+    assert!(report.coverage.retained_observations <= report.coverage.detail_limit);
+    assert_eq!(
+        report.coverage.retained_observations + report.coverage.omitted_observations,
+        1100
+    );
+    assert_eq!(
+        report.coverage.omitted_high_level_observations,
+        Some(report.coverage.omitted_observations)
+    );
     assert!(report.coverage.truncated);
     assert_eq!(report.measurements.work.dispatch_count, Some(1100));
     let simulation_total = report
@@ -216,7 +267,15 @@ fn truncated_saved_attempt_has_explicit_availability_reason() {
         field.field == "saved_attempt"
             && field.reason == spektrafilm_core::telemetry::AvailabilityReason::DetailLimit
     }));
-    assert_eq!(report.coverage.omitted_observations, 1);
+    assert!(report.coverage.omitted_observations > 0);
+    assert_eq!(
+        report.coverage.retained_observations + report.coverage.omitted_observations,
+        1025
+    );
+    assert_eq!(
+        report.coverage.omitted_high_level_observations,
+        Some(report.coverage.omitted_observations)
+    );
 }
 
 #[test]
@@ -805,7 +864,10 @@ fn grain_configuration_describes_effective_sampler_branches() {
     params.film_render.grain.engine = params::GrainEngine::Procedural;
     params.settings.rgb_to_raw_method = "mallett2019".to_owned();
     let grain = RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
-    assert!(!grain.active);
+    // The upsampler selects the front pass, not the grain engine: an active
+    // Procedural grain stays active under mallett2019 exactly as under
+    // hanatos2025.
+    assert!(grain.active);
     assert!(!grain.spektra_fast_statistics_sampler);
     params.film_render.grain.engine = params::GrainEngine::Spektra;
     params.film_render.grain.active = false;

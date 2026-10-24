@@ -247,6 +247,29 @@ struct OutputPlan {
     saving_encoded: bool,
 }
 
+/// The published render: host samples, or the carrier the device retained.
+/// Both keep the same stage sequence; only ownership differs.
+enum PublishedOutput {
+    Host(ImageBuf),
+    Retained(spektrafilm_backend::DeviceImage),
+}
+
+/// Loaded input samples stay in the domain that produced them. In particular,
+/// a selected GPU's RAW result is not materialized just to enter simulation.
+enum InputSamples {
+    Host(ImageBuf),
+    Device(spektrafilm_backend::DeviceImage),
+}
+
+impl InputSamples {
+    fn dimensions(&self) -> (u32, u32) {
+        match self {
+            Self::Host(image) => (image.width, image.height),
+            Self::Device(image) => (image.width(), image.height()),
+        }
+    }
+}
+
 impl OutputPlan {
     /// Resolve the container from the flag/extension pair and reject codec
     /// options the selected container does not carry.
@@ -991,7 +1014,7 @@ fn cmd_process(
                         || anyhow::anyhow!("GPU backend unavailable; use --backend cpu"),
                     )?,
                 ),
-                None => spektrafilm_gpu::select_backend(),
+                None => spektrafilm_gpu::select_backend().map_err(|e| anyhow::anyhow!("{e}"))?,
             };
             telemetry::observe_backend(backend.as_ref(), backend_context);
             Ok(backend)
@@ -1019,56 +1042,75 @@ fn cmd_process(
         IssueCategory::Input,
         IssueBoundary::InputLoad,
         &context,
-        |_| {
+        |load_context| {
+            let load_backend =
+                spektrafilm_backend::bind_backend(backend.as_ref(), load_context.clone());
             let (image, metadata) = if input_is_raw {
-                let options = &raw_options;
-                (
-                    spektrafilm_raw::load(input, options)
-                        .map_err(anyhow::Error::msg)?
-                        .image,
-                    image_io::read_metadata(input),
-                )
+                if backend.is_gpu() {
+                    let result = spektrafilm_raw::load_retained_with_backend(
+                        input,
+                        &raw_options,
+                        load_backend.as_ref(),
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                    (
+                        InputSamples::Device(result.image),
+                        image_io::read_metadata(input),
+                    )
+                } else {
+                    let result =
+                        spektrafilm_raw::load(input, &raw_options).map_err(anyhow::Error::msg)?;
+                    (
+                        InputSamples::Host(result.image),
+                        image_io::read_metadata(input),
+                    )
+                }
             } else {
                 let loaded = image_io::load(input)
                     .with_context(|| format!("loading image: {}", input.display()))?;
-                (loaded.image, loaded.metadata)
+                (InputSamples::Host(loaded.image), loaded.metadata)
             };
             Ok((image, metadata))
         },
     )?;
+    let (input_width, input_height) = image.dimensions();
     invocation
         .operation
-        .set_input_dimensions(image.width, image.height);
-    // Standard setup measures the full working frame. Its preview reduction
-    // runs only after the nonlinear scan and output tail.
-    let image = invocation.phase(
+        .set_input_dimensions(input_width, input_height);
+    // Retained rendering owns preview geometry. Standard scanner setup keeps
+    // the full working frame through the nonlinear scan and output tail.
+    let (preview_max_size, image) = invocation.phase(
         "input_prepare",
         IssueCategory::Input,
         IssueBoundary::InputPrepare,
         &context,
         |_| {
-            let image = if params.settings.preview_mode && !params.scanner.requires_full_frame() {
-                let resized = resize_for_preview(&image, params.settings.preview_max_size);
-                eprintln!(
-                    "Preview: {}x{} → {}x{} (max edge {})",
-                    image.width,
-                    image.height,
-                    resized.width,
-                    resized.height,
-                    params.settings.preview_max_size
-                );
-                resized
-            } else {
-                image
-            };
-            Ok(image)
+            if !params.settings.preview_mode {
+                return Ok((None, image));
+            }
+            let (width, height) = spektrafilm_core::resizing::preview_dimensions(
+                input_width,
+                input_height,
+                params.settings.preview_max_size,
+            );
+            eprintln!(
+                "Preview: {}x{} → {}x{} (max edge {})",
+                input_width, input_height, width, height, params.settings.preview_max_size
+            );
+            Ok((Some(params.settings.preview_max_size), image))
         },
     )?;
+    let (working_width, working_height) = match preview_max_size {
+        Some(max_size) if !params.scanner.requires_full_frame() => {
+            spektrafilm_core::resizing::preview_dimensions(input_width, input_height, max_size)
+        }
+        _ => (input_width, input_height),
+    };
     eprintln!(
         "Image loaded: {}x{} ({} MP), {} ms",
-        image.width,
-        image.height,
-        (image.pixel_count() as f64 / 1e6 * 10.0).round() / 10.0,
+        working_width,
+        working_height,
+        (working_width as f64 * working_height as f64 / 1e6 * 10.0).round() / 10.0,
         t.elapsed().as_millis()
     );
 
@@ -1080,7 +1122,15 @@ fn cmd_process(
         IssueBoundary::RuntimePrepare,
         &context,
         |prepare_context| {
-            Runtime::new_observed(film, print, params, data_dir, prepare_context).map_err(|e| {
+            Runtime::new_observed_with_backend(
+                film,
+                print,
+                params,
+                data_dir,
+                backend.as_ref(),
+                prepare_context,
+            )
+            .map_err(|e| {
                 anyhow::anyhow!(
                     "spectral pipeline construction failed: {e} — the simplified no-LUT fallback \
                      was removed; check that the profiles/data directory contains the spectral \
@@ -1097,67 +1147,153 @@ fn cmd_process(
     }
     let output_attempt = std::cell::Cell::new(0);
     let mut stage_capture = stage_evidence.map(spektrafilm_core::stage_evidence::StageCapture::new);
-    let mut run_once = |image: ImageBuf, index: u64| -> Result<ImageBuf> {
-        let (attempt_id, result) =
-            telemetry::simulation_attempt(invocation, index, |simulation_context| {
-                let out = if let Some(capture) =
-                    stage_capture.as_mut().filter(|_| index == iters as u64)
-                {
-                    // Stage evidence observes the published run only: with
-                    // --iters the warm-cache iterations are not the captured
-                    // execution.
-                    runtime
-                        .process_captured(
-                            image,
-                            backend.as_ref(),
+    // The host preview raster is built on demand and reused across iterations:
+    // a retained run never needs one, and `--iters` timings must not include a
+    // per-iteration host resize that the reference measured once.
+    let mut host_preview: Option<ImageBuf> = None;
+    let mut run_once = |image: &InputSamples, index: u64| -> Result<PublishedOutput> {
+        let (attempt_id, result) = telemetry::simulation_attempt(
+            invocation,
+            index,
+            |simulation_context| {
+                let simulation_backend =
+                    spektrafilm_backend::bind_backend(backend.as_ref(), simulation_context.clone());
+                if let InputSamples::Device(source) = image {
+                    if stage_capture.is_some() {
+                        bail!("stage evidence requires the CPU reference backend");
+                    }
+                    let request = match preview_max_size {
+                        Some(max_size) => {
+                            spektrafilm_core::pipeline::RetainedRender::preview(max_size)
+                        }
+                        None => spektrafilm_core::pipeline::RetainedRender::FULL,
+                    };
+                    let result = runtime
+                        .process_device_retained_with_taps(
+                            source,
+                            request,
+                            simulation_backend.as_ref(),
                             inject,
                             collect,
-                            simulation_context,
-                            capture,
                         )
-                        .map_err(|e| anyhow::anyhow!("pipeline stage evidence: {e}"))?
-                } else if inject.is_none() && collect.is_none() {
-                    runtime
-                        .process_observed(image, backend.as_ref(), simulation_context)
-                        .map_err(anyhow::Error::msg)?
-                } else {
-                    runtime
-                        .process_with_taps_observed(
-                            image,
-                            backend.as_ref(),
-                            inject,
-                            collect,
-                            simulation_context,
-                        )
-                        .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
-                };
-                if runtime.params().settings.preview_mode
-                    && runtime.params().scanner.requires_full_frame()
-                    && collect.is_none_or(|tap| tap == Tap::RgbOut)
-                {
-                    Ok(resize_for_preview(
-                        &out,
-                        runtime.params().settings.preview_max_size,
-                    ))
-                } else {
-                    Ok(out)
+                        .map_err(|error| anyhow::anyhow!("pipeline retained RAW: {error}"))?;
+                    return if collect.is_some_and(|tap| tap != Tap::RgbOut) {
+                        // This is the explicitly requested diagnostic boundary,
+                        // never an intermediate host stage or a RAW reupload.
+                        result
+                            .to_host(simulation_backend.as_ref())
+                            .map(PublishedOutput::Host)
+                            .map_err(anyhow::Error::msg)
+                    } else {
+                        Ok(PublishedOutput::Retained(result))
+                    };
                 }
-            });
+                let InputSamples::Host(image) = image else {
+                    unreachable!("device inputs render through the retained route");
+                };
+                // The published run keeps its output on the device when the
+                // selected backend owns the complete route; metering, geometry,
+                // film/scan work, and output composition then never return to
+                // the host before the writer's sample conversion.
+                let retained = if stage_capture.is_none() {
+                    let request = preview_max_size.map_or(
+                        spektrafilm_core::pipeline::RetainedRender::FULL,
+                        spektrafilm_core::pipeline::RetainedRender::preview,
+                    );
+                    let retained = runtime.process_retained_with_taps(
+                        image,
+                        request,
+                        simulation_backend.as_ref(),
+                        inject,
+                        collect,
+                    );
+                    retained.map_err(|e| anyhow::anyhow!("pipeline retained: {e}"))?
+                } else {
+                    None
+                };
+                let out = match retained {
+                    Some(retained) if collect.is_some_and(|tap| tap != Tap::RgbOut) => {
+                        PublishedOutput::Host(
+                            retained
+                                .to_host(simulation_backend.as_ref())
+                                .map_err(anyhow::Error::msg)?,
+                        )
+                    }
+                    Some(retained) => PublishedOutput::Retained(retained),
+                    None => {
+                        if backend.is_gpu() {
+                            bail!(
+                                "selected GPU cannot execute the complete retained route; use --backend cpu"
+                            );
+                        }
+                        let image = match preview_max_size {
+                            Some(max_size) if !runtime.params().scanner.requires_full_frame() => {
+                                host_preview
+                                    .get_or_insert_with(|| resize_for_preview(image, max_size))
+                                    .clone()
+                            }
+                            _ => image.clone(),
+                        };
+                        let host = if let Some(capture) =
+                            stage_capture.as_mut().filter(|_| index == iters as u64)
+                        {
+                            // Stage evidence observes the published run only:
+                            // with --iters the warm-cache iterations are not
+                            // the captured execution.
+                            runtime
+                                .process_captured(
+                                    image,
+                                    backend.as_ref(),
+                                    inject,
+                                    collect,
+                                    simulation_context,
+                                    capture,
+                                )
+                                .map_err(|e| anyhow::anyhow!("pipeline stage evidence: {e}"))?
+                        } else if inject.is_none() && collect.is_none() {
+                            runtime
+                                .process_observed(image, backend.as_ref(), simulation_context)
+                                .map_err(anyhow::Error::msg)?
+                        } else {
+                            runtime
+                                .process_with_taps_observed(
+                                    image,
+                                    backend.as_ref(),
+                                    inject,
+                                    collect,
+                                    simulation_context,
+                                )
+                                .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
+                        };
+                        let host = if runtime.params().scanner.requires_full_frame()
+                            && collect.is_none_or(|tap| tap == Tap::RgbOut)
+                            && let Some(max_size) = preview_max_size
+                        {
+                            resize_for_preview(&host, max_size)
+                        } else {
+                            host
+                        };
+                        PublishedOutput::Host(host)
+                    }
+                };
+                Ok(out)
+            },
+        );
         if result.is_ok() {
             output_attempt.set(attempt_id);
         }
         result
     };
-    let result = if iters > 1 {
+    let published = if iters > 1 {
         // Warm-cache bench: process the image `iters` times in the same backend
         // instance. The first iteration pays shader-compile cost; subsequent ones
         // hit the cache and reflect "GUI live preview" performance.
-        let mut last = run_once(image.clone(), 1)?;
+        let mut last = run_once(&image, 1)?;
         let iter1_ms = t.elapsed().as_millis();
         eprintln!("Pipeline (iter 1): {} ms (cold)", iter1_ms);
         for i in 2..=iters {
             let ti = Instant::now();
-            last = run_once(image.clone(), i as u64)?;
+            last = run_once(&image, i as u64)?;
             eprintln!(
                 "Pipeline (iter {}): {} ms (warm)",
                 i,
@@ -1166,12 +1302,23 @@ fn cmd_process(
         }
         last
     } else {
-        let r = run_once(image, 1)?;
+        let r = run_once(&image, 1)?;
         eprintln!("Pipeline: {} ms", t.elapsed().as_millis());
         r
     };
     let plan = plan.context("internal error: missing output plan for rendering")?;
     let output = output.context("internal error: missing output path for rendering")?;
+    // `result` is the host materialization when the render produced one;
+    // `retained` owns the device samples. Exactly one is present.
+    let (result, retained) = match published {
+        PublishedOutput::Host(image) => (Some(image), None),
+        PublishedOutput::Retained(image) => (None, Some(image)),
+    };
+    let (output_width, output_height) = match (&result, &retained) {
+        (Some(image), _) => (image.width, image.height),
+        (None, Some(image)) => (image.width(), image.height()),
+        (None, None) => unreachable!("the published render always has samples"),
+    };
 
     // Save output
     let t = Instant::now();
@@ -1188,14 +1335,29 @@ fn cmd_process(
         IssueCategory::Writing,
         IssueBoundary::SavingConvert,
         &context,
-        |_| {
-            image_io::convert_image(
-                &result,
-                &output_color_space,
-                output_cctf_encoding,
-                &plan.saving_space,
-                plan.saving_encoded,
-            )
+        |saving_context| {
+            let saving_backend =
+                spektrafilm_backend::bind_backend(backend.as_ref(), saving_context.clone());
+            let kind = image_io::output_sample_kind(plan.format.image_format(), plan.depth)?;
+            match (&retained, &result) {
+                (Some(image), _) => image_io::convert_retained_samples_with_backend(
+                    image,
+                    &plan.saving_space,
+                    plan.saving_encoded,
+                    kind,
+                    saving_backend.as_ref(),
+                ),
+                (None, Some(image)) => image_io::convert_samples_with_backend(
+                    image,
+                    &output_color_space,
+                    output_cctf_encoding,
+                    &plan.saving_space,
+                    plan.saving_encoded,
+                    kind,
+                    saving_backend.as_ref(),
+                ),
+                (None, None) => unreachable!("the published render always has samples"),
+            }
             .map_err(anyhow::Error::from)
         },
     )?;
@@ -1205,14 +1367,9 @@ fn cmd_process(
         IssueBoundary::FileWrite,
         &context,
         |write_context| {
-            image_io::prepare_save_observed(
-                output,
-                &saving_image,
-                options,
-                metadata.as_ref(),
-                write_context,
-            )
-            .with_context(|| format!("saving image: {}", output.display()))
+            saving_image
+                .prepare_observed(output, options, metadata.as_ref(), false, write_context)
+                .with_context(|| format!("saving image: {}", output.display()))
         },
     )?;
     let report = prepared_image
@@ -1223,17 +1380,28 @@ fn cmd_process(
     }
     invocation
         .operation
-        .set_published_dimensions(result.width as u32, result.height as u32);
+        .set_published_dimensions(output_width, output_height);
     eprintln!(
         "Saved: {} ({}x{}), {} ms",
         output.display(),
-        result.width,
-        result.height,
+        output_width,
+        output_height,
         t.elapsed().as_millis()
     );
 
-    // Optional raw f64 dump for bit-exact parity comparison.
+    // Optional raw f64 dump for bit-exact parity comparison. A retained
+    // published render materializes here only because the diagnostic asked
+    // for it: this is the explicit tap, not an internal stage boundary.
     if let Some(p) = raw_out {
+        let diagnostic = match (&result, &retained) {
+            (Some(image), _) => std::borrow::Cow::Borrowed(image),
+            (None, Some(image)) => std::borrow::Cow::Owned(
+                backend
+                    .materialize_retained(image)
+                    .map_err(|e| anyhow::anyhow!("raw_out: {e}"))?,
+            ),
+            (None, None) => unreachable!("the published render always has samples"),
+        };
         invocation.phase(
             "file_write",
             IssueCategory::Writing,
@@ -1241,7 +1409,7 @@ fn cmd_process(
             &context,
             |_| {
                 use std::io::Write;
-                let buf: Vec<f64> = result.data.iter().map(|&v| v as f64).collect();
+                let buf: Vec<f64> = diagnostic.data.iter().map(|&v| v as f64).collect();
                 let bytes = bytemuck_cast_f64_to_bytes(&buf);
                 let mut f = std::fs::File::create(p)
                     .with_context(|| format!("creating raw_out file: {}", p.display()))?;

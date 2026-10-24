@@ -28,23 +28,27 @@ The executed f64 LUT-reduction runs use a **1e-5** maximum absolute-error budget
 
 ## Backend selection
 
-WGPU/WGSL is the only GPU backend. Select it explicitly with `SPEKTRAFILM_BACKEND=wgpu`. CPU is the fallback when no usable adapter is available.
+WGPU/WGSL is the only GPU backend. Select it explicitly with `SPEKTRAFILM_BACKEND=wgpu`. Automatic selection may initially choose CPU when no usable hardware GPU is available.
 
-GUI Preview and Scan prefer GPU execution with faithful CPU stages for unsupported effects. GUI CPU execution uses the build's native precision. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Linux GPU acceptance requires the Mesa software Vulkan adapter (`mesa-vulkan-drivers`).
+GUI Preview and Scan prefer GPU execution. A selected GPU operation must fail before publication when an effect cannot run on the device; it must not insert faithful CPU stages. GUI CPU execution uses the build's native precision. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Mesa software Vulkan (`mesa-vulkan-drivers`) supports portability checks, not hardware-GPU acceptance.
 
 Backend selection in a `precision-f64` binary defaults to genuine CPU f64 arithmetic. `SPEKTRAFILM_BACKEND=wgpu` explicitly requests f32 WGPU preview arithmetic. Backend initialization reports `precision=f32` and `reference=false`.
 
-An unavailable WGPU adapter reports its unavailability and uses CPU. That fallback is not evidence of a GPU pass.
+An explicit `SPEKTRAFILM_BACKEND=wgpu` request that cannot be served — an unavailable adapter, or a build compiled without the `wgpu-backend` feature — must fail before output publication. Automatic selection without usable hardware may initially choose CPU and must report its reason. After GPU selection, either mode must fail on unsupported work or device failure without a CPU restart. An automatic CPU path is not evidence of a GPU pass.
 
-## Faithful fallback
+## Selected-executor fidelity
 
-Input transfer decoding, Grain Spektra, active unsupported gamut algorithms/spaces, and camera/enlarger optical diffusion use an explicitly reported faithful CPU per-stage path. Optical diffusion uses the finite sampled, normalized PSF with reflected-boundary FFT convolution on CPU to preserve the requested effect.
+Input transfer decoding, grain, gamut processing, optical diffusion, and selected enlarger/scanner PCHIP spectral LUTs must retain their reference algorithms on the selected executor. Missing GPU support must fail a GPU-selected operation, not select a faithful CPU per-stage path. Historical mixed-path measurements remain evidence only for the work they actually exercised.
 
-Requests for enlarger/scanner PCHIP spectral LUTs also select the per-stage path. This preserves the requested sampling and interpolation.
+Gaussian blur must retain its requested support and boundary behavior. Neither a small sigma nor support beyond the historical 256-pixel FIR half-width permits CPU fallback after GPU selection. Device execution must preserve the reference kernel or fail explicitly; it must not truncate the kernel to fit a device limit.
 
-Gaussian requests exceeding the GPU's 256-pixel FIR half-width explicitly fall back to CPU blur. This includes resident halation bounce radii, DIR, glare, scanner, and camera blur. The requested radius is preserved instead of silently truncated.
+Optical diffusion resolves the reference per-channel sampled PSF on the host, then evaluates all taps on the device using binary64 accumulation. Bounded windows gather reflected global image coordinates; when the PSF itself exceeds one storage binding, tap blocks retain full support and accumulation order. Camera diffusion operates on linear exposure after highlight boost and before lens blur. Enlarger diffusion recovers and scales inner-log irradiance before convolution, then emits the outer log used by paper development. Unsupported device arithmetic fails instead of falling back to CPU. These implementation contracts are not measured parity evidence.
 
-Grain Procedural uses its resident GPU shader when the rest of the resident-chain requirements are met.
+Generated scanner/enlarger PCHIP lattices, slopes, cell hulls, and interpolation retain binary64 precision. Scanner interpolation applies the power-of-ten reconstruction and separate CAT/RGB matrices before its f32 image output boundary, avoiding a prematurely rounded log-XYZ image. Inverse conversion excludes coefficient rows that the reference rejects as missing before device upload, retaining the original normalization, seed, and wavelength order.
+
+Resident direct spectral scanning likewise retains binary64 wavelength coefficients, transmittance evaluation, and spectral reduction, including the reference normalized log/power-of-ten roundtrip and separate CAT/RGB transforms. Only the retained image ingress and final image output use f32 storage.
+
+Isolated scanner-acquisition acceptance reports absolute **linear destination RGB** error against CPU acquisition from identical physical input samples; its maximum-error limit is **1e-5**. Reports distinguish retained-f32 input quantization from the CPU-f64 source and retain encoded-output differences separately. Encoded final-route measurements keep the owning end-to-end budgets; an output-transfer slope does not change the isolated acquisition units.
 
 ## See also
 

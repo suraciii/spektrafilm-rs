@@ -10,6 +10,15 @@ On Debian/Ubuntu, install `libopenimageio-dev libimath-dev libexiv2-dev libopenb
 
 RAW decoding requires native **LibRaw ≥ 0.22.0**, **Lensfun**, **Exiv2**, and **GLib** development packages plus a C++17 compiler and `pkg-config`. On Debian/Ubuntu, install `libraw-dev liblensfun-dev libexiv2-dev libglib2.0-dev pkg-config`. If the distribution supplies LibRaw 0.21, build the official 0.22.0 release into a local prefix. Prepend its `lib/pkgconfig` to `PKG_CONFIG_PATH` and its `lib` to the runtime library search path. On macOS, use `brew install libraw lensfun exiv2 glib pkg-config`. Windows builds need a matching native toolchain and these libraries built for it, for example through MSYS2 UCRT64. Set `PKG_CONFIG_PATH` to their `.pc` directories. Cross compilation requires target-specific pkg-config paths and libraries. Missing dependencies or older LibRaw fail the build explicitly.
 
+For an OpenMP-enabled LibRaw, its selected `libraw.pc` must advertise the
+OpenMP runtime so the per-call ordered X-Trans guard controls the same runtime
+as the decoder. Explicit `-lgomp`, `-lomp`, `-liomp5`, `-lvcomp`, or a named
+`-fopenmp=lib...` runtime is preferred. Bare `-fopenmp` uses the GNU/libgomp
+package convention only with a GNU bridge compiler; a non-GNU compiler with
+that ambiguous metadata fails with an actionable build error instead of
+silently linking a different runtime. A LibRaw built without OpenMP needs no
+OpenMP metadata or runtime.
+
 Image IO additionally requires OpenImageIO and Imath development headers. OIIO installations that forward to external fmt headers also need the fmt development package and `fmt.pc` on `PKG_CONFIG_PATH`. Homebrew supplies this dependency. Windows builds LibRaw 0.22.0 with `scripts/build_windows_libraw.sh`. Packages include the DLLs and licenses alongside system native dependencies.
 
 ## Build commands
@@ -23,7 +32,7 @@ cargo build --release -p spektrafilm-gui
 # f32 CLI — fast batch processor, defaults to WGPU
 cargo build --release -p spektrafilm-cli
 
-# f64 CLI — reference precision (CPU only; WGSL has no f64)
+# f64 reference CLI — GPU image storage and execution precision are reported separately
 cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-f64
 
 # instrument CLI — the research command surface at f64 reference precision
@@ -40,7 +49,7 @@ This produces:
 
 - `target/release/spektrafilm-gui` — desktop GUI.
 - `target/release/spektrafilm` — fast f32 CLI.
-- `target/release/spektrafilm-f64` — CPU reference exporter.
+- `target/release/spektrafilm-f64` — f64 reference exporter; explicit GPU selection retains the device execution contract.
 - `target/release/spektrafilm-lab` — the instrument command surface (f64 reference precision; shipped in packages).
 - `target/release/decode_raw_gui` — standalone RAW decoding helper.
 - `target/release/spektrafilm-bench` — benchmark-owned offline visual reports, for example `report photos`.

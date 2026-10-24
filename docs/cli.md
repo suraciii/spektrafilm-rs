@@ -5,10 +5,9 @@ This page covers CLI image processing, runtime controls, source interpretation, 
 ## Process images
 
 ```bash
-# Explicit GPU export: WGPU f32 shaders. It fails before publication when the
-# configuration still needs a host-executed stage, so with the default grain
-# distribution this command exits 1 and writes no output. Omit --backend for
-# automatic selection, which absorbs those stages as CPU fences.
+# Explicit GPU export: requires the complete computation scope on WGPU.
+# A missing stage or device failure must fail before publication, including
+# when automatic selection chooses GPU. Use --backend cpu for a CPU export.
 ./target/release/spektrafilm-f64 process input.ORF -o out.png \
     --backend gpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
@@ -67,8 +66,23 @@ Film-only output retains an explicit future print selection by name without load
 
 `--dry-run` resolves the artifact header without decoding large numeric payloads or creating outputs. Its report distinguishes inherited and planned operations, seed origin, and unchecked payload integrity. It is not proof of integrity or compute-device availability. See the [stage artifact contract](../specs/cli/stage-artifacts.md) for the persistence and precision rules.
 
+Material output and continuation currently require `--backend cpu`. A selected GPU, including automatic GPU selection, fails before numerical processing or output publication for these routes. This limitation does not apply to retained GPU image-output workflows.
+
 `--debug` is a Boolean stderr-only diagnostic flag. It accepts no directory or value and creates no files. It does not change parameters, results, stdout, dry-run reports, artifact contents, or GPU timing collection. Redirect stderr with the shell to save text. `--diagnostics report.json` remains an independent structured-report request. The retired public `--stage-evidence` option has no alias; dedicated instrument native observations remain research data, not resumable material artifacts.
 
+The selected backend also owns RAW numerical processing. With a selected GPU,
+the CLI keeps the normalized, oriented linear ACES2065-1 result on that device
+through runtime metering, preview geometry, and simulation; it does not download
+the RAW image and upload it again to start the pipeline. `--iters` reuses that
+same retained source for every iteration. Initial CPU selection keeps the
+LibRaw reference loader. A selected-device RAW failure aborts before output
+publication, including when backend selection was automatic. Source metadata
+and the requested white balance, temperature, tint, and lens-correction choices
+keep their existing interpretation.
+Explicit intermediate taps preserve the existing topology and grain bypass
+rules. Their requested result may be downloaded for a diagnostic artifact;
+normal RAW ingestion and simulation never use that exception to cross an
+internal runtime or stage boundary.
 
 ## Backend and precision
 
@@ -80,6 +94,8 @@ Output bit depth is independent of computation precision.
 GPU selection does not disable grain, optical effects, or requested spectral LUTs to force acceleration.
 Software Vulkan adapters can also execute the WGPU path.
 Speed depends on the adapter and active effects.
+
+An explicit GPU request — `--backend gpu`, `SPEKTRAFILM_BACKEND=wgpu`, or the GUI Export "GPU" selection — requires the complete computation scope on WGPU or failure before publication. Automatic selection may initially choose CPU when no usable hardware GPU is available and must report that selection and its reason. After GPU selection, unsupported work or device failure must fail the operation without CPU fences or a CPU restart. `SPEKTRAFILM_BACKEND=cpu` stays an explicit CPU request.
 
 ## Runtime edits and dry runs
 
@@ -139,9 +155,11 @@ The resulting exposure scales source samples before geometry and filming decode,
 Cropping preserves the source film pixel pitch.
 Resizing divides it by the requested factor.
 Lens blur, halation, and DIR consume that retained pitch on CPU and supported resident GPU paths.
-Spektra grain and faithful optical diffusion remain on the CPU per-stage path.
+Spektra grain and optical diffusion must preserve their algorithms on the selected executor. A missing GPU implementation must fail a GPU-selected operation rather than select CPU stages.
 Resize uses cubic B-spline interpolation with half-pixel coordinates, mirror boundaries, Gaussian antialiasing for downscale, ties-to-even dimensions, and source-range clipping.
 Interpolation computes in f64 before the configured image precision boundary.
+GPU geometry retains paged source and output samples. Crop and quarter-turn rotation copy exact pixels across pages; preview triangle taps keep global coordinates and physical edges. Spline resize measures the range over the complete cropped source, carries its whole-line mirror-endpoint recursion through bounded windows, and accumulates Gaussian and final spline taps in reference order. The minimum storage binding is 12 bytes for crop/rotation/triangle and 24 bytes for spline. Spline additionally requires native device f64. Its two binary64 image intermediates and Gaussian coefficients use sample-aligned COPY-only pages rather than full-image buffers; every page and storage window fits the configured binding limit and the device's physical `max_buffer_size`. `SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES` bounds geometry allocations without imposing a full-image storage-binding or physical-buffer-size cap. Aggregate device memory and the retained carrier's u32 pixel indexing remain limits.
+Geometry checks the operation cancellation token before bounded page/window/line work and immediately before and after each bounded queue submission. A cancelled operation returns an error without publishing its partially computed carrier or modifying its retained source.
 
 ## Color management
 
@@ -229,9 +247,9 @@ Report paths must not alias input, output, or configuration files.
     --diagnostics report.json --gpu-timings --data-dir data
 ```
 
-`--gpu-timings` follows the selected backend. The example omits `--backend` so automatic
-selection can absorb the default grain distribution as a CPU fence; `--backend gpu` would
-fail this configuration before publication.
+`--gpu-timings` follows the selected backend. Automatic selection does not permit CPU
+fences after GPU selection. A CPU-selected operation reports zero GPU work and
+unavailable GPU timestamps; GPU-selected execution must complete on GPU or fail.
 
 See [the telemetry contract](../specs/telemetry/spec.md) and [report metrics](../specs/telemetry/metrics/spec.md) for report semantics, bounded detail, and measurement limits.
 

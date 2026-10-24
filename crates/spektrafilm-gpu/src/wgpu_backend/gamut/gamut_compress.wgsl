@@ -9,8 +9,29 @@
 //   1 = oklch      (OkLab chroma reduction)
 //   2 = oklrab     (OkLab coords, table indexed by Ottosson Lr lightness)
 //   3 = cam16ucs   (full CIECAM16 + Luo 2006 UCS)
+//   4 = jzazbz     (Safdar 2017, binary64 forward/inverse transform)
 //
-// f32 throughout — preview-only path; exports run the CPU f64 compressor.
+// JzAzBz runs its forward/inverse transform in binary64 (see the
+// `jzazbz.wgsl` section below). Its `b` row is [0.199076, 1.096799,
+// -1.295875] over cone responses near 0.3, so the three terms cancel by
+// ~105x to leave a value near 0.0075. An f32 rounding at the input becomes
+// ~3e-6 at the output, which rotates the hue by ~1.5e-4 rad and moves the
+// C_max lookup by ~0.012 of a row. The JzAzBz C_max table has a hard
+// discontinuity between hue bins 692 and 693 (0.0234 versus 0.0), so that
+// shift is a ~9% table error and ~1.6e-3 of output RGB, against a 1e-4
+// budget — measured, not estimated. f64 keeps that mode on the device,
+// matching the CPU reference: both the transform and the lookup index.
+//
+// Every destination-specific constant arrives as a uniform: the CPU resolves
+// the RGB↔XYZ matrices from `RgbColorSpace::matrix_rgb_to_xyz` /
+// `matrix_xyz_to_rgb` and the CIECAM16 viewing conditions from
+// `Cam16Viewing::new(destination.whitepoint_xyz())`. Nothing about the
+// destination may be baked here — sRGB's D65 matrices and viewing conditions
+// were once hardcoded and confined the pass to that one space.
+//
+// f32 throughout, except the JzAzBz transform (mode 4), which is binary64.
+// The pass runs on the device for every mode; exports run the same kernel
+// through the resident chain.
 
 struct Params {
     n_pixels: u32,
@@ -21,6 +42,14 @@ struct Params {
     knee: vec4<f32>,
     // x=l_min, y=l_max (table L-axis bounds).
     lspace: vec4<f32>,
+    // Destination linear RGB → XYZ, at the destination whitepoint. Columns of
+    // the CPU's row-major matrix, so `m * rgb` is the matrix-vector product.
+    rgb_to_xyz: mat3x3<f32>,
+    // Destination XYZ → linear RGB (the stored inverse, not a recomputed one).
+    xyz_to_rgb: mat3x3<f32>,
+    // CIECAM16 viewing conditions for the destination white:
+    // xyz = degree-of-adaptation diagonal, w = achromatic response A_w.
+    cam16: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -28,14 +57,6 @@ struct Params {
 @group(0) @binding(2) var<storage, read_write> img: array<f32>;  // [H*W*3]
 
 const PI: f32 = 3.141592653589793;
-
-// sRGB linear RGB ↔ XYZ (colour-science's rounded sRGB matrices, D65).
-const RGB2XYZ_R0 = vec3<f32>(0.4124, 0.3576, 0.1805);
-const RGB2XYZ_R1 = vec3<f32>(0.2126, 0.7152, 0.0722);
-const RGB2XYZ_R2 = vec3<f32>(0.0193, 0.1192, 0.9505);
-const XYZ2RGB_R0 = vec3<f32>(3.2406, -1.5372, -0.4986);
-const XYZ2RGB_R1 = vec3<f32>(-0.9689, 1.8758, 0.0415);
-const XYZ2RGB_R2 = vec3<f32>(0.0557, -0.204, 1.057);
 
 // OkLab (Ottosson) matrices.
 const M1_R0 = vec3<f32>(0.8189330101, 0.3618667424, -0.1288597137);
@@ -52,17 +73,17 @@ const M2I_R1 = vec3<f32>(1.0, -0.1055613423, -0.0638541748);
 const M2I_R2 = vec3<f32>(1.0, -0.0894841821, -1.2914855379);
 
 // CAM16 viewing-condition constants (L_A = 64 cd/m², Y_b = 20, Average).
+// M16 and its inverse are whitepoint-independent; D_rgb and A_w are not, so
+// those two arrive per destination in `params.cam16`.
 const CAM16_M16_R0 = vec3<f32>(0.401288, 0.650173, -0.051461);
 const CAM16_M16_R1 = vec3<f32>(-0.250268, 1.204414, 0.045854);
 const CAM16_M16_R2 = vec3<f32>(-0.002079, 0.048952, 0.953127);
 const CAM16_M16I_R0 = vec3<f32>(1.8620678551, -1.0112546305, 0.1491867754);
 const CAM16_M16I_R1 = vec3<f32>(0.3875265432, 0.6214474419, -0.0089739852);
 const CAM16_M16I_R2 = vec3<f32>(-0.0158414988, -0.0341229380, 1.0499644369);
-const CAM16_D_RGB = vec3<f32>(1.0228770275, 0.9852074783, 0.9285450587);
 const CAM16_F_L: f32 = 0.6839903846;
 const CAM16_N_BB: f32 = 1.0003040046;
 const CAM16_CZ: f32 = 0.69 * 1.9272135955; // c * z
-const CAM16_A_W: f32 = 37.1690753022;
 // (50000/13) * N_c * N_cb with N_c = 1, N_cb = N_BB.
 const CAM16_ECC: f32 = 3846.1538461538 * 1.0003040046;
 // (1.64 - 0.29^n)^0.73 and F_L^0.25 — const-folded at shader compile.
@@ -92,6 +113,22 @@ fn reinhard_knee(d: f32, threshold: f32, limit: f32, power: f32) -> f32 {
     let scale = limit - threshold;
     let x = (d - threshold) / scale;
     let y = x / pow(1.0 + pow(x, power), 1.0 / power);
+    return threshold + scale * y;
+}
+
+// The same knee in binary64, for the JzAzBz path. The native `pow` above is
+// not used here: the software Vulkan adapter returns zero for ordinary
+// arguments such as pow(0.97, 2), and this knee is the only place the
+// above-white pixels (where the knee engages) depend on a power. Composing
+// the validated `sf64_exp`/`sf64_log` keeps those pixels on the device
+// reference instead of collapsing them toward zero.
+fn reinhard_knee_f64(d: f64, threshold: f64, limit: f64, power: f64) -> f64 {
+    if d <= threshold {
+        return d;
+    }
+    let scale = limit - threshold;
+    let x = (d - threshold) / scale;
+    let y = x / sf64_pow(1.0 + sf64_pow(x, power), 1.0 / power);
     return threshold + scale * y;
 }
 
@@ -138,14 +175,16 @@ fn cam16_padc_inverse(rgb: vec3<f32>) -> vec3<f32> {
 
 // XYZ (Y=1) → CAM16-UCS (Jp, ap, bp).
 fn xyz_to_cam16ucs(xyz: vec3<f32>) -> vec3<f32> {
+    let d_rgb = params.cam16.xyz;
+    let a_w = params.cam16.w;
     let rgb = mv(CAM16_M16_R0, CAM16_M16_R1, CAM16_M16_R2, xyz * 100.0);
-    let p = cam16_padc_forward(rgb * CAM16_D_RGB);
+    let p = cam16_padc_forward(rgb * d_rgb);
     let a = p.x - 12.0 * p.y / 11.0 + p.z / 11.0;
     let b = (p.x + p.y - 2.0 * p.z) / 9.0;
     let h = atan2_deg(b, a);
     let e_t = 0.25 * (cos(2.0 + radians(h)) + 3.8);
     let a_resp = (2.0 * p.x + p.y + p.z / 20.0 - 0.305) * CAM16_N_BB;
-    let jj = 100.0 * pow(a_resp / CAM16_A_W, CAM16_CZ);
+    let jj = 100.0 * pow(a_resp / a_w, CAM16_CZ);
     let denom = p.x + p.y + 21.0 * p.z / 20.0;
     var t = 0.0;
     if denom != 0.0 {
@@ -161,6 +200,8 @@ fn xyz_to_cam16ucs(xyz: vec3<f32>) -> vec3<f32> {
 
 // CAM16-UCS (Jp, ap, bp) → XYZ (Y=1).
 fn cam16ucs_to_xyz(jab: vec3<f32>) -> vec3<f32> {
+    let d_rgb = params.cam16.xyz;
+    let a_w = params.cam16.w;
     let jp = jab.x;
     let mp = length(jab.yz);
     let h = atan2_deg(jab.z, jab.y);
@@ -170,7 +211,7 @@ fn cam16ucs_to_xyz(jab: vec3<f32>) -> vec3<f32> {
     let j_prime = max(jj, 1.1920929e-7);
     let t = pow(cc / (sqrt(j_prime / 100.0) * CAM16_CC_F), 1.0 / 0.9);
     let e_t = 0.25 * (cos(2.0 + radians(h)) + 3.8);
-    let a_resp = CAM16_A_W * pow(jj / 100.0, 1.0 / CAM16_CZ);
+    let a_resp = a_w * pow(jj / 100.0, 1.0 / CAM16_CZ);
     var p1 = 0.0;
     if t != 0.0 {
         p1 = CAM16_ECC * e_t / t;
@@ -210,7 +251,7 @@ fn cam16ucs_to_xyz(jab: vec3<f32>) -> vec3<f32> {
     let ra = (460.0 * p2 + 451.0 * a + 288.0 * b) / 1403.0;
     let ga = (460.0 * p2 - 891.0 * a - 261.0 * b) / 1403.0;
     let ba = (460.0 * p2 - 220.0 * a - 6300.0 * b) / 1403.0;
-    let rgb = cam16_padc_inverse(vec3<f32>(ra, ga, ba)) / CAM16_D_RGB;
+    let rgb = cam16_padc_inverse(vec3<f32>(ra, ga, ba)) / d_rgb;
     return mv(CAM16_M16I_R0, CAM16_M16I_R1, CAM16_M16I_R2, rgb) / 100.0;
 }
 
@@ -244,6 +285,50 @@ fn c_max_lookup(l_in: f32, h: f32) -> f32 {
         + v11 * l_frac * h_frac;
 }
 
+// Bilinear C_max(L, h) lookup in binary64 — the JzAzBz variant.
+//
+// The JzAzBz C_max table has a hard discontinuity: bins 692 and 693 hold
+// 0.0234 and 0.0. The hue index spans 0..720, where one f32 ulp is ~8.6e-5
+// rows, so carrying `h_idx` in f32 reintroduces a cliff-straddle risk of the
+// same magnitude as the ~1.5e-4 rad hue error the f64 transform removed.
+// Resolving the index in f64 keeps the lookup bin identical to the CPU
+// reference; the four table entries are still f32 storage values, widened to
+// f64 for the interpolation. Narrowing the interpolated result back to f32
+// costs ~1e-9 absolute on a ~0.027 entry, and the knee then divides by it —
+// enough to move the compressed RGB by ~1e-4, the exact budget this mode
+// exists to protect.
+fn c_max_lookup_f64(l_in: f64, h: f64) -> f64 {
+    let l_min = f64(params.lspace.x);
+    let l_max = f64(params.lspace.y);
+    let n_l = i32(params.n_l);
+    let n_h = i32(params.n_h);
+    let l = clamp(l_in, l_min, l_max);
+
+    let h_step = 6.283185307179586476925286766559lf / f64(n_h);
+    // `h_grid(0) = -PI`: the hue axis starts at -PI, so the bin index is
+    // `(h + PI) / h_step`. Using PI/2 here shifts every hue by 180 bins and
+    // returns the wrong `C_max` outright.
+    let h_idx = (h + 3.14159265358979323846lf) / h_step;
+    let h_floor = floor(h_idx);
+    let h_lo = ((i32(h_floor) % n_h) + n_h) % n_h;
+    let h_hi = (h_lo + 1) % n_h;
+    let h_frac = h_idx - h_floor;
+
+    let l_idx = (l - l_min) / (l_max - l_min) * f64(n_l - 1);
+    let l_lo = clamp(i32(floor(l_idx)), 0, n_l - 2);
+    let l_hi = l_lo + 1;
+    let l_frac = l_idx - f64(l_lo);
+
+    let v00 = f64(cmax[l_lo * n_h + h_lo]);
+    let v01 = f64(cmax[l_lo * n_h + h_hi]);
+    let v10 = f64(cmax[l_hi * n_h + h_lo]);
+    let v11 = f64(cmax[l_hi * n_h + h_hi]);
+    return v00 * (1.0 - l_frac) * (1.0 - h_frac)
+        + v01 * (1.0 - l_frac) * h_frac
+        + v10 * l_frac * (1.0 - h_frac)
+        + v11 * l_frac * h_frac;
+}
+
 // ACES RGC v1.3: per-channel Reinhard knee on achromatic distance.
 fn compress_aces_rgc(rgb: vec3<f32>) -> vec3<f32> {
     let ach = max(rgb.x, max(rgb.y, rgb.z));
@@ -260,7 +345,10 @@ fn compress_aces_rgc(rgb: vec3<f32>) -> vec3<f32> {
 }
 
 fn compress_perceptual(rgb: vec3<f32>) -> vec3<f32> {
-    let xyz = mv(RGB2XYZ_R0, RGB2XYZ_R1, RGB2XYZ_R2, rgb);
+    if params.mode == 4u {
+        return compress_jzazbz(rgb);
+    }
+    let xyz = params.rgb_to_xyz * rgb;
     var lab: vec3<f32>;
     if params.mode == 3u {
         lab = xyz_to_cam16ucs(xyz);
@@ -290,7 +378,58 @@ fn compress_perceptual(rgb: vec3<f32>) -> vec3<f32> {
     } else {
         xyz_new = oklab_to_xyz(lab_new);
     }
-    return mv(XYZ2RGB_R0, XYZ2RGB_R1, XYZ2RGB_R2, xyz_new);
+    return params.xyz_to_rgb * xyz_new;
+}
+
+// JzAzBz (Safdar 2017) chroma reduction. The perceptual transform runs in
+// binary64 because its `b` row cancels ~105x (see the file header), so the
+// chroma/hue split — and with it the C_max lookup — is only f32-safe in
+// binary64. The knee, the C_max lookup, and the inverse are shared with the
+// other perceptual modes: only the forward/inverse transform is f64.
+//
+// The C_max table stays an f32 storage buffer. It is bisected on the host in
+// f64 and uploaded at f32 width, so its entries are f32 values; the lookup
+// is a bilinear interpolation of f32 table entries either way, and widening
+// the table to f64 storage would not change any entry's value.
+fn compress_jzazbz(rgb: vec3<f32>) -> vec3<f32> {
+    // The uniform stores each matrix as three vec4 *columns*
+    // (`pack_matrix_columns` in `wgpu_backend/mod.rs`), so `params.rgb_to_xyz
+    // * rgb` is the CPU's row-major `mat_vec` with no transposition — the
+    // same expression the f32 modes use. Read `params.rgb_to_xyz[0]` as row 0
+    // instead, and the destination matrix is silently transposed, which is a
+    // large error on every destination. Compute the product, then widen the
+    // XYZ to f64, so the ~105x `b`-row cancellation never sees an f32
+    // rounding.
+    let xyz = params.rgb_to_xyz * rgb;
+    let jab = xyz_to_jzazbz(vec3<f64>(f64(xyz.x), f64(xyz.y), f64(xyz.z)));
+    let l = jab.x;
+    let a = jab.y;
+    let b = jab.z;
+    let c = sqrt(a * a + b * b);
+    // Guard h at c == 0: atan2(0, 0) is indeterminate in WGSL and would
+    // propagate NaN through cos/sin (Rust's f64 atan2(0,0) returns 0).
+    // `var h: f64 = 0.0` — the explicit annotation is required, since a bare
+    // `var h = 0.0` infers f32 and `jz_atan2` returns f64.
+    var h: f64 = 0.0;
+    if c > 0.0 {
+        h = jz_atan2(b, a);
+    }
+    // The lookup index resolves in f64: the hue index spans 0..720, where
+    // one f32 ulp is ~8.6e-5 rows, the same order as the ~1.5e-4 rad hue
+    // error the f64 transform removes — and the table has a hard cliff
+    // between hue bins 692 and 693.
+    let safe = max(c_max_lookup_f64(l, h), 1e-9lf);
+    // The whole conditioning chain stays in f64: the ratio, the knee, and the
+    // restored chroma. Narrowing `safe` or `d_comp` to f32 before the product
+    // reintroduces the rounding this mode exists to avoid.
+    let d_comp = reinhard_knee_f64(c / safe, f64(params.knee.x), f64(params.knee.y), f64(params.knee.z));
+    let c_new = d_comp * safe;
+    let jab_new = vec3<f64>(l, c_new * jz_cos(h), c_new * jz_sin(h));
+    let xyz_new = jzazbz_to_xyz(jab_new);
+    // Narrow once at the very end: the inverse transform runs in f64 so the
+    // reconstruction of the original RGB keeps its precision, and only the
+    // stored result is f32.
+    return params.xyz_to_rgb * vec3<f32>(f32(xyz_new.x), f32(xyz_new.y), f32(xyz_new.z));
 }
 
 @compute @workgroup_size(256)

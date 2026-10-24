@@ -11,8 +11,8 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         seed: u64,
     ) -> Result<MaterialState, String> {
-        if backend.explicit_gpu_request() {
-            return Err("explicit GPU request cannot execute the complete material-boundary per-stage computation on WGPU; use an explicit CPU request".into());
+        if backend.is_gpu() {
+            return Err("selected GPU cannot execute the complete material-boundary computation; use an explicit CPU request".into());
         }
         let kind = self
             .params
@@ -25,7 +25,7 @@ impl Pipeline {
         }
         crate::stage_execution::validate_stage_model(&self.params, kind)?;
         let source = if self.params.output_mix.amount < 1.0 {
-            Some(self.prepare_output_mix_source(&image)?)
+            Some(self.prepare_output_mix_source(&image, backend)?)
         } else {
             None
         };
@@ -58,7 +58,7 @@ impl Pipeline {
             "metering",
             spektrafilm_backend::telemetry::CpuReason::BackendDefault,
         );
-        let metered_ev = pipeline.meter_autoexposure(&image);
+        let metered_ev = pipeline.meter_autoexposure(&image, backend)?;
         let image = pipeline.apply_autoexposure(image, metered_ev);
         drop(metering);
         let (working, pitch) = pipeline.rescale_working(&image, backend)?;
@@ -137,8 +137,8 @@ impl Pipeline {
         seed: u64,
     ) -> Result<crate::stage_execution::StageResult, String> {
         use crate::stage_execution::{StageResult, validate_continuation};
-        if backend.explicit_gpu_request() {
-            return Err("explicit GPU request cannot execute the complete material continuation per-stage computation on WGPU; use an explicit CPU request".into());
+        if backend.is_gpu() {
+            return Err("selected GPU cannot execute the complete material continuation computation; use an explicit CPU request".into());
         }
         validate_continuation(&state.header, &params)?;
         params.random_seed = seed;
@@ -227,7 +227,9 @@ impl Pipeline {
             print,
             params,
             tc_lut: None,
+            prepared_tc_lut: None,
             mallett_core: None,
+            convert_converter: None,
             print_exposure_factor: factor,
             print_illuminant: illuminant,
             preflash_raw: preflash,

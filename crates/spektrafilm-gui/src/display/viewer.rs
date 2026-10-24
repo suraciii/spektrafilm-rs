@@ -2,6 +2,7 @@
 //! Immutable pipeline floats are shared; viewing pixels stay disposable.
 use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, Vec2};
 use serde_json::Value;
+use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,6 +22,30 @@ pub fn normalized_world_size(size: [usize; 2]) -> Vec2 {
 pub fn fitted_world_size(size: [usize; 2], bounds: Vec2) -> Vec2 {
     let p = Vec2::new(size[0].max(1) as f32, size[1].max(1) as f32);
     p * (bounds.x / p.x).min(bounds.y / p.y)
+}
+/// Places presentation samples at device-pixel centers inside the viewport.
+/// The returned rectangle maps those centers to bounded texture texels.
+fn presentation_grid(rect: Rect, dpi: f32, max_side: usize) -> (Rect, [usize; 2]) {
+    let axis = |min: f32, max: f32| {
+        // Pixel indices k satisfy min*dpi <= k+0.5 < max*dpi.
+        let start = (f64::from(min) * f64::from(dpi) - 0.5).ceil();
+        let end = (f64::from(max) * f64::from(dpi) - 0.5).ceil();
+        (start, (end - start).max(1.0))
+    };
+    let (x, width) = axis(rect.min.x, rect.max.x);
+    let (y, height) = axis(rect.min.y, rect.max.y);
+    let size = [
+        width.min(max_side as f64) as usize,
+        height.min(max_side as f64) as usize,
+    ];
+    let grid = Rect::from_min_max(
+        Pos2::new((x / f64::from(dpi)) as f32, (y / f64::from(dpi)) as f32),
+        Pos2::new(
+            ((x + width) / f64::from(dpi)) as f32,
+            ((y + height) / f64::from(dpi)) as f32,
+        ),
+    );
+    (grid, size)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -63,6 +88,8 @@ pub struct Viewer {
     output_source_profile: Option<PathBuf>,
     prepared_input: Option<PreparedDisplay>,
     prepared_output: Option<PreparedDisplay>,
+    retained_output: Option<spektrafilm_backend::DeviceImage>,
+    retained_input: Option<spektrafilm_backend::DeviceImage>,
     /// Before/after split fraction (0..=1) of image width; `None` disables.
     compare_split: Option<f32>,
     /// Active marquee selection in view coordinates `(start, current)`; a
@@ -70,6 +97,10 @@ pub struct Viewer {
     marquee: Option<(Pos2, Pos2)>,
     revision: u64,
     worker: DisplayWorker,
+    /// Compute backend for the viewer's resample and display transform.
+    /// `None` keeps the host reference implementation, which is the same
+    /// fallback a backend reports when it has no device path.
+    backend: Option<Arc<dyn ComputeBackend>>,
     #[cfg(test)]
     observed_geometry: Option<(Rect, Rect, Interpolation, Option<PixelInspection>)>,
     #[cfg(test)]
@@ -124,11 +155,24 @@ impl Viewer {
             self.revision = self.revision.wrapping_add(1);
         }
     }
+    #[cfg(test)]
     pub fn new() -> Self {
         Self {
             zoom: 1.0,
             zoom_percent: None,
             display_max_size: 1024,
+            ..Self::default()
+        }
+    }
+    /// Give the viewer a compute backend so its resample and display
+    /// transform run on the device when the backend has a device path. The
+    /// application binds its backend here once at construction.
+    pub fn with_backend(backend: Arc<dyn ComputeBackend>) -> Self {
+        Self {
+            zoom: 1.0,
+            zoom_percent: None,
+            display_max_size: 1024,
+            backend: Some(backend),
             ..Self::default()
         }
     }
@@ -147,11 +191,22 @@ impl Viewer {
         self.output = None;
         self.prepared_input = None;
         self.prepared_output = None;
+        self.retained_input = None;
+        self.retained_output = None;
         self.output_size = None;
         self.transition = None;
         self.settings.layer = ViewLayer::PaperBack;
         self.reset_view();
         self.revision += 1;
+    }
+    /// Refresh this source's presentation without discarding its accepted
+    /// output. Adjustment history can leave that output intentionally stale.
+    pub(crate) fn refresh_input(&mut self, raster: DisplayRaster, original_size: [usize; 2]) {
+        self.input_size = Some(original_size);
+        self.input = Some(raster);
+        self.prepared_input = None;
+        self.retained_input = None;
+        self.revision = self.revision.wrapping_add(1);
     }
     /// Call only after accepting the latest asynchronous job. Retains the old
     /// display frame for a ten-step fade when `animate` is true; it never
@@ -187,6 +242,7 @@ impl Viewer {
         };
         self.output = Some(raster);
         self.prepared_output = None;
+        self.retained_output = None;
         self.output_size = Some(original_size);
         self.settings.layer = ViewLayer::Output;
         self.revision += 1;
@@ -216,7 +272,17 @@ impl Viewer {
         self.prepared_output = None;
         self.revision = self.revision.wrapping_add(1);
     }
+    pub(crate) fn seed_prepared_device_input(
+        &mut self,
+        source: spektrafilm_backend::DeviceImage,
+        _max_size: u32,
+    ) {
+        self.retained_input = Some(source);
+        self.prepared_input = None;
+        self.revision = self.revision.wrapping_add(1);
+    }
     pub fn seed_prepared_input(&mut self, source: Arc<ImageBuf>, max_size: u32) {
+        self.retained_input = None;
         let Some(raster) = self.input.clone() else {
             return;
         };
@@ -264,6 +330,9 @@ impl Viewer {
             raster,
         });
         self.revision = self.revision.wrapping_add(1);
+    }
+    pub(crate) fn set_retained_output(&mut self, image: Option<spektrafilm_backend::DeviceImage>) {
+        self.retained_output = image;
     }
     pub fn reset_view(&mut self) {
         self.zoom = 1.0;
@@ -452,9 +521,10 @@ impl Viewer {
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
-        input_float: Option<&Arc<ImageBuf>>,
+        input_source: Option<&crate::render::InputImage>,
         output_float: Option<&Arc<ImageBuf>>,
     ) -> Option<PixelInspection> {
+        let input_float = input_source.and_then(|source| source.host_image());
         let response = ui.allocate_response(
             ui.available_size().max(Vec2::splat(1.0)),
             egui::Sense::click_and_drag(),
@@ -595,11 +665,8 @@ impl Viewer {
                 frame = 0;
             }
         }
-        let max_texture_side = ui.input(|i| i.max_texture_side).max(1) as f32;
-        let texture_size = [
-            (rect.width() * dpi).ceil().clamp(1.0, max_texture_side) as usize,
-            (rect.height() * dpi).ceil().clamp(1.0, max_texture_side) as usize,
-        ];
+        let max_texture_side = ui.input(|i| i.max_texture_side).max(1) as usize;
+        let (sampling_rect, texture_size) = presentation_grid(rect, dpi, max_texture_side);
         let key = vec![
             self.revision,
             layer as u64,
@@ -610,17 +677,32 @@ impl Viewer {
             self.zoom_percent.map(f32::to_bits).unwrap_or(0) as u64,
             self.pan.x.to_bits() as u64,
             self.pan.y.to_bits() as u64,
+            dpi.to_bits() as u64,
+            rect.min.x.to_bits() as u64,
+            rect.min.y.to_bits() as u64,
             rect.width().to_bits() as u64,
             rect.height().to_bits() as u64,
             texture_size[0] as u64,
             texture_size[1] as u64,
             frame as u64,
             self.transition.is_some() as u64,
-            input_float
-                .map(|source| Arc::as_ptr(source) as usize as u64)
+            input_source
+                .map(|source| match source {
+                    crate::render::InputImage::Host(image) => Arc::as_ptr(image) as usize as u64,
+                    crate::render::InputImage::Device(image) => image
+                        .payload()
+                        .map(|p| Arc::as_ptr(p) as *const () as usize as u64)
+                        .unwrap_or(0),
+                })
                 .unwrap_or(0),
             output_float
                 .map(|source| Arc::as_ptr(source) as usize as u64)
+                .or_else(|| {
+                    self.retained_output
+                        .as_ref()
+                        .and_then(|i| i.payload())
+                        .map(|p| Arc::as_ptr(p) as *const () as usize as u64)
+                })
                 .unwrap_or(0),
             self.compare_split.map(f32::to_bits).unwrap_or(0) as u64,
         ];
@@ -641,7 +723,7 @@ impl Viewer {
             };
             self.worker.submit(DisplayRequest {
                 key: key.clone(),
-                rect,
+                rect: sampling_rect,
                 border,
                 paper_rect,
                 image_rect,
@@ -659,14 +741,19 @@ impl Viewer {
                 previous: self.transition.as_ref().and_then(|t| t.previous.clone()),
                 split: if layer == ViewLayer::Output {
                     self.compare_split.and_then(|fraction| {
-                        self.prepared_input
-                            .as_ref()
-                            .map(|p| (fraction, p.raster.clone()))
+                        self.input.as_ref().map(|raster| (fraction, raster.clone()))
                     })
                 } else {
                     None
                 },
                 source: source.cloned(),
+                retained_source: if layer == ViewLayer::Output {
+                    self.retained_output.clone()
+                } else if layer == ViewLayer::Input {
+                    self.retained_input.clone()
+                } else {
+                    None
+                },
                 prepared: match layer {
                     ViewLayer::Input => self.prepared_input.clone(),
                     ViewLayer::Output => self.prepared_output.clone(),
@@ -679,6 +766,10 @@ impl Viewer {
                 polaroid: layer == ViewLayer::Output
                     && self.transition.as_ref().is_some_and(|t| t.polaroid),
                 frame,
+                backend: self
+                    .backend
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(spektrafilm_backend::cpu_backend::CpuBackend)),
                 ctx: ui.ctx().clone(),
             });
             self.cache_key = Some(key.clone());
@@ -686,45 +777,50 @@ impl Viewer {
         if let Some(response) = self.worker.take_response()
             && response.matches(self.generation, &key)
         {
-            self.accepted_generation = response.generation;
-            if let Some(t) = self.transition.as_mut() {
-                t.start = now;
-                ui.ctx().request_repaint_after(Duration::from_millis(32));
-            }
-            if let Some(prepared) = response.prepared {
-                match layer {
-                    ViewLayer::Input => {
-                        self.input = Some(prepared.raster.clone());
-                        self.prepared_input = Some(prepared);
-                    }
-                    ViewLayer::Output => {
-                        self.output = Some(prepared.raster.clone());
-                        self.prepared_output = Some(prepared);
-                    }
-                    ViewLayer::PaperBack => {}
-                }
-            }
-            if let Some(status) = response.status {
-                self.transform_status = status;
-            }
-            #[cfg(test)]
-            {
-                self.observed_image = Some(response.image.clone());
-            }
-            if let Some(texture) = self.texture.as_mut() {
-                texture.set(response.image, TextureOptions::NEAREST);
+            if let Some(error) = response.error.as_ref() {
+                self.transform_status =
+                    crate::app::Message::new("surfaces.display.error").arg("error", error);
             } else {
-                self.texture = Some(ui.ctx().load_texture(
-                    "viewer-presentation",
-                    response.image,
-                    TextureOptions::NEAREST,
-                ));
+                self.accepted_generation = response.generation;
+                if let Some(t) = self.transition.as_mut() {
+                    t.start = now;
+                    ui.ctx().request_repaint_after(Duration::from_millis(32));
+                }
+                if let Some(prepared) = response.prepared {
+                    match layer {
+                        ViewLayer::Input => {
+                            self.input = Some(prepared.raster.clone());
+                            self.prepared_input = Some(prepared);
+                        }
+                        ViewLayer::Output => {
+                            self.output = Some(prepared.raster.clone());
+                            self.prepared_output = Some(prepared);
+                        }
+                        ViewLayer::PaperBack => {}
+                    }
+                }
+                if let Some(status) = response.status {
+                    self.transform_status = status;
+                }
+                #[cfg(test)]
+                {
+                    self.observed_image = Some(response.image.clone());
+                }
+                if let Some(texture) = self.texture.as_mut() {
+                    texture.set(response.image, TextureOptions::NEAREST);
+                } else {
+                    self.texture = Some(ui.ctx().load_texture(
+                        "viewer-presentation",
+                        response.image,
+                        TextureOptions::NEAREST,
+                    ));
+                }
             }
         }
         if let Some(texture) = self.texture.as_ref() {
             ui.painter_at(rect).image(
                 texture.id(),
-                rect,
+                sampling_rect,
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 Color32::WHITE,
             );
@@ -740,7 +836,7 @@ impl Viewer {
                 egui::StrokeKind::Inside,
             );
         }
-        if input_float.is_none() {
+        if input_source.is_none() {
             let painter = ui.painter_at(rect);
             let message = crate::i18n::text(ui.ctx(), "surfaces.viewer.empty");
             let galley = painter.layout(
@@ -759,21 +855,42 @@ impl Viewer {
         };
         let inspection = response
             .hover_pos()
-            .filter(|p| image_rect.contains(*p))
+            .filter(|p| super::worker::contains_half_open(image_rect, *p))
             .and_then(|p| {
-                source.map(|source| {
+                if let Some(source) = source {
                     let uv = (p - image_rect.min) / image_rect.size();
-                    let x = (uv.x * source.width as f32).floor().max(0.0) as u32;
-                    let y = (uv.y * source.height as f32).floor().max(0.0) as u32;
-                    let x = x.min(source.width.saturating_sub(1));
-                    let y = y.min(source.height.saturating_sub(1));
-                    PixelInspection {
+                    let x = ((uv.x * source.width as f32).floor().max(0.0) as u32)
+                        .min(source.width.saturating_sub(1));
+                    let y = ((uv.y * source.height as f32).floor().max(0.0) as u32)
+                        .min(source.height.saturating_sub(1));
+                    Some(PixelInspection {
                         layer,
                         x,
                         y,
                         rgb: source.get(x, y).map(|v| v as f64),
-                    }
-                })
+                    })
+                } else {
+                    let image = match layer {
+                        ViewLayer::Input => self.retained_input.as_ref(),
+                        ViewLayer::Output => self.retained_output.as_ref(),
+                        ViewLayer::PaperBack => None,
+                    }?;
+                    let backend = self.backend.as_ref()?;
+                    let uv = (p - image_rect.min) / image_rect.size();
+                    let x = ((uv.x * image.width() as f32).floor().max(0.0) as u32)
+                        .min(image.width().saturating_sub(1));
+                    let y = ((uv.y * image.height() as f32).floor().max(0.0) as u32)
+                        .min(image.height().saturating_sub(1));
+                    backend
+                        .inspect_retained_pixel(image, x, y)
+                        .ok()
+                        .map(|rgb| PixelInspection {
+                            layer,
+                            x,
+                            y,
+                            rgb: rgb.map(f64::from),
+                        })
+                }
             });
         #[cfg(test)]
         {
@@ -831,9 +948,10 @@ impl Viewer {
 
 #[cfg(test)]
 mod tests {
-    use super::super::colortransform::output_display_raster;
+    use super::super::colortransform::output_display_raster_with;
     use super::super::raster::capped_raster;
     use super::*;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
     #[cfg(not(windows))]
     #[test]
     fn transform_change_updates_the_next_crossfade_at_exact_zoom() {
@@ -843,7 +961,8 @@ mod tests {
             vec![0.75 as _, 0.20 as _, 0.10 as _],
         ));
         let (transformed, _) =
-            output_display_raster(&source, "Display P3", true, true, None, 1).unwrap();
+            output_display_raster_with(&CpuBackend, &source, "Display P3", true, true, None, 1)
+                .unwrap();
         let raw = capped_raster(&source, 1).unwrap();
         assert_ne!(transformed.rgb[0], raw.rgb[0]);
         let mut viewer = Viewer::new();
@@ -891,6 +1010,92 @@ mod tests {
                 .rgb[0],
             raw.rgb[0]
         );
+    }
+
+    #[test]
+    fn capped_viewport_paints_the_sample_grid_on_cpu_and_gpu() {
+        let device = spektrafilm_gpu::test_support::explicit_adapter();
+        let gpu: Arc<dyn ComputeBackend> = Arc::new(device.derived_explicit());
+        for backend in [Arc::new(CpuBackend) as Arc<dyn ComputeBackend>, gpu] {
+            let source = Arc::new(ImageBuf::from_data(
+                4,
+                1,
+                [1.0 as _, 0.0 as _, 0.0 as _].repeat(4),
+            ));
+            let raster =
+                output_display_raster_with(backend.as_ref(), &source, "sRGB", true, false, None, 4)
+                    .unwrap()
+                    .0;
+            let mut viewer = Viewer::with_backend(backend);
+            viewer.set_output(raster, [4, 1], 0.0, false);
+            viewer.set_output_display_source("sRGB", true, false, None);
+            viewer.set_zoom_percent(100.0);
+            viewer.pan = Vec2::new(1.25, 0.25);
+            let viewport = Rect::from_min_max(Pos2::new(0.25, 0.25), Pos2::new(4097.25, 8.25));
+            let at = Pos2::new(2048.5, 4.5);
+            let ctx = egui::Context::default();
+            let (tx, rx) = std::sync::mpsc::channel();
+            ctx.set_request_repaint_callback(move |_| {
+                let _ = tx.send(());
+            });
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let output = loop {
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(4100.0, 10.0))),
+                        max_texture_side: Some(4096),
+                        events: vec![egui::Event::PointerMoved(at)],
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::NONE)
+                            .show(ctx, |ui| {
+                                let mut child =
+                                    ui.new_child(egui::UiBuilder::new().max_rect(viewport));
+                                child.set_clip_rect(viewport);
+                                viewer.show(&mut child, None, Some(&source));
+                            });
+                    },
+                );
+                if viewer.generation != 0 && viewer.generation == viewer.accepted_generation {
+                    break output;
+                }
+                rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                    .expect("capped viewer repaint");
+            };
+            let observation = viewer.observation();
+            assert_eq!(observation.viewport, viewport);
+            assert_eq!(observation.image_rect.min, Pos2::new(2048.0, 4.0));
+            assert!(
+                observation.inspection.is_some(),
+                "hover lies inside the image"
+            );
+            let texture = viewer.texture.as_ref().unwrap();
+            let shape = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::Shape::Mesh(mesh) = &shape.shape {
+                        (mesh.texture_id == texture.id()).then_some((shape.clip_rect, mesh))
+                    } else {
+                        None
+                    }
+                })
+                .expect("viewer presentation mesh");
+            assert_eq!(shape.0, viewport);
+            let painted = shape.1.calc_bounds();
+            let pixels = observation.pixels.unwrap();
+            assert_eq!(pixels.size, [4096, 8]);
+            let uv = (at - painted.min) / painted.size();
+            let x = (uv.x * pixels.size[0] as f32).floor() as usize;
+            let y = (uv.y * pixels.size[1] as f32).floor() as usize;
+            assert_eq!(
+                pixels.pixels[y * pixels.size[0] + x],
+                Color32::RED,
+                "the pixel under an inside-image hover must not show the canvas"
+            );
+        }
     }
 
     #[test]
@@ -949,7 +1154,8 @@ mod tests {
                 Interpolation::Nearest,
             )
             .unwrap();
-        let (expected, _) = output_display_raster(&source, "sRGB", false, true, None, 1).unwrap();
+        let (expected, _) =
+            output_display_raster_with(&CpuBackend, &source, "sRGB", false, true, None, 1).unwrap();
         assert_eq!(view.rgb[0], expected.rgb[0]);
         viewer.set_output_display_source("sRGB", false, false, None);
         let (view, _) = viewer

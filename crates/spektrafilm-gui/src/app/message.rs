@@ -94,6 +94,17 @@ impl Message {
             E::InvalidColorSpace(value) => {
                 Self::new("operations.image.invalid_color_space").arg("detail", value)
             }
+            E::Convert(detail) => Self::new("operations.image.convert").arg("detail", detail),
+            E::SampleKind {
+                format,
+                depth,
+                expected,
+                got,
+            } => Self::new("operations.image.sample_kind")
+                .arg("format", format)
+                .arg("depth", depth)
+                .arg("expected", format!("{expected:?}"))
+                .arg("got", format!("{got:?}")),
             E::Native {
                 operation,
                 path,

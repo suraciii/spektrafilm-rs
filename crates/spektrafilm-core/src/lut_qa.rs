@@ -178,8 +178,8 @@ pub fn run(
         if lut.resolution < 3 {
             return Err("QA Jacobian and characteristic metrics require resolution >= 3".into());
         }
-        let pipeline = make_pipeline(bundle, print, input, output, data_dir, false)?;
-        let unbounded = make_pipeline(bundle, print, input, output, data_dir, true)?;
+        let pipeline = make_pipeline(bundle, print, input, output, data_dir, false, backend)?;
+        let unbounded = make_pipeline(bundle, print, input, output, data_dir, true, backend)?;
         let folder = format!(
             "{}_{}",
             crate::lut_baker::normalize_stock(&bundle.spec.film_profile),
@@ -318,6 +318,7 @@ fn make_pipeline(
     output: &ColorSpaceEntry,
     data: &Path,
     unbounded: bool,
+    backend: &dyn ComputeBackend,
 ) -> Result<Runtime, String> {
     let (film, paper) = crate::lut_baker::resolve_profiles(&bundle.spec.film_profile, print, data)?;
     let mut params = if let Some(params) = bundle.baked_params.get(print) {
@@ -360,7 +361,7 @@ fn make_pipeline(
         params.io.output_gamut_compress.algorithm = "off".into();
     }
     params.validate()?;
-    Runtime::new(film, paper, params, data)
+    Runtime::new_with_backend(film, paper, params, data, backend)
 }
 fn process_linear(
     pipe: &Runtime,

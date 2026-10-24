@@ -7,7 +7,7 @@ impl App {
     /// Save retained pixels, asking before choosing a destination if they no
     /// longer match accepted adjustments. This never rerenders.
     pub(crate) fn save_dialog(&mut self) {
-        if self.output_image.is_none() {
+        if self.output_image.is_none() && self.output_retained.is_none() {
             self.status = crate::app::Message::new("operations.nothing_to_save");
             return;
         }
@@ -24,7 +24,16 @@ impl App {
         if !self.stale_save_confirmation {
             return;
         }
-        let Some(output) = self.output_image.as_ref() else {
+        let dimensions = self
+            .output_retained
+            .as_ref()
+            .map(|image| [image.width(), image.height()])
+            .or_else(|| {
+                self.output_image
+                    .as_ref()
+                    .map(|image| [image.width, image.height])
+            });
+        let Some([width, height]) = dimensions else {
             self.stale_save_confirmation = false;
             return;
         };
@@ -36,8 +45,8 @@ impl App {
             ui.label(crate::tr!(
                 ui.ctx(),
                 "result.save.stale_warning",
-                width = output.width,
-                height = output.height
+                width = width,
+                height = height
             ));
             ui.label(crate::i18n::text(ui.ctx(), "result.save.export_guidance"));
             ui.horizontal_wrapped(|ui| {
@@ -85,7 +94,7 @@ impl App {
     /// Save retained output directly. Consumers own any UI confirmation; this
     /// raw pixel-writing boundary deliberately does not ask or rerender.
     pub(crate) fn save_to_path(&mut self, path: &Path) {
-        if self.output_image.is_none() {
+        if self.output_image.is_none() && self.output_retained.is_none() {
             self.status = crate::app::Message::new("operations.nothing_to_save");
             return;
         }
@@ -107,10 +116,6 @@ impl App {
                 return;
             }
         };
-        let out = self
-            .output_image
-            .as_ref()
-            .expect("output checked before dialog");
         let t = Instant::now();
         let destination = self.gui_state.saving_color_space();
         let encoded = self.gui_state.saving_cctf_encoding();
@@ -135,13 +140,38 @@ impl App {
         }
         let saving_convert =
             operation.scope("saving_convert", ObservationKind::Phase, Purpose::Image);
-        let converted = match image_io::convert_image(
-            out,
-            &self.output_color_space,
-            self.output_cctf_encoding,
-            destination,
-            encoded,
-        ) {
+        let kind = match image_io::output_sample_kind(actual_format, save_options.depth) {
+            Ok(kind) => kind,
+            Err(error) => {
+                self.status = crate::app::Message::new("operations.save_error")
+                    .message_arg("detail", crate::app::Message::image_io(&error));
+                saving_convert
+                    .context()
+                    .issue(IssueCategory::Writing, IssueBoundary::SavingConvert);
+                saving_convert.finish(Outcome::Failed);
+                self.diagnostics.finish(operation, Outcome::Failed);
+                return;
+            }
+        };
+        let pixels = match if let Some(retained) = self.output_retained.as_ref() {
+            image_io::convert_retained_samples_with_backend(
+                retained,
+                destination,
+                encoded,
+                kind,
+                self.backend.as_ref(),
+            )
+        } else {
+            image_io::convert_samples_with_backend(
+                self.output_image.as_ref().expect("accepted CPU output"),
+                &self.output_color_space,
+                self.output_cctf_encoding,
+                destination,
+                encoded,
+                kind,
+                self.backend.as_ref(),
+            )
+        } {
             Ok(image) => image,
             Err(error) => {
                 self.status = crate::app::Message::new("operations.save_error")
@@ -156,13 +186,15 @@ impl App {
         };
         drop(saving_convert);
         let file_write = operation.scope("file_write", ObservationKind::Phase, Purpose::Image);
-        let result = image_io::save_rendered_output_observed(
-            path,
-            &converted,
-            save_options,
-            self.output_metadata.as_ref(),
-            file_write.context(),
-        );
+        let result = pixels
+            .prepare_observed(
+                path,
+                save_options,
+                self.output_metadata.as_ref(),
+                true,
+                file_write.context(),
+            )
+            .and_then(|staged| staged.publish(true));
         let result = observed_result(
             file_write,
             result,
@@ -189,7 +221,7 @@ impl App {
                 } else {
                     saved
                 };
-                operation.set_published_dimensions(converted.width, converted.height);
+                operation.set_published_dimensions(pixels.width(), pixels.height());
                 self.diagnostics.finish(operation, Outcome::Succeeded);
             }
             Err(e) => {

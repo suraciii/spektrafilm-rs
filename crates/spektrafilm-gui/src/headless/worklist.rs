@@ -107,7 +107,7 @@ fn inactive_copy_removal_cancel_and_save_chooser_cancel_preserve_work_then_save_
     );
     assert!(h.state().work_entry_path(1).is_none());
     assert_eq!(h.state().image_path.as_ref(), Some(&first));
-    assert!(Arc::ptr_eq(&pixels, h.state().image.as_ref().unwrap()));
+    assert!(h.state().image.as_ref().unwrap().same_source(&pixels));
     let record = crate::photograph::record::PhotographRecord::load(&destination).unwrap();
     assert_eq!(record.settings.params.camera.exposure_compensation_ev, 1.25);
     assert_eq!(record.source.path, second.canonicalize().unwrap());
@@ -242,7 +242,7 @@ fn pending_raw_drafts_return_per_entry_without_becoming_accepted_record_settings
         .unwrap();
     let record = crate::photograph::record::PhotographRecord::load(&record_path).unwrap();
     assert_eq!(record.settings.raw, accepted.raw);
-    assert!(Arc::ptr_eq(&pixels, h.state().image.as_ref().unwrap()));
+    assert!(h.state().image.as_ref().unwrap().same_source(&pixels));
     h.state_mut()
         .request_photo_action(crate::photograph::PhotoAction::SelectEntry(2));
     h.run_steps(2);
@@ -264,7 +264,7 @@ fn pending_raw_drafts_return_per_entry_without_becoming_accepted_record_settings
         h.state().capture_photograph_settings().unwrap().raw,
         accepted.raw
     );
-    assert!(Arc::ptr_eq(&pixels, h.state().image.as_ref().unwrap()));
+    assert!(h.state().image.as_ref().unwrap().same_source(&pixels));
     h.state_mut()
         .request_photo_action(crate::photograph::PhotoAction::SelectEntry(2));
     h.run_steps(2);
