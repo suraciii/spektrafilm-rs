@@ -100,16 +100,75 @@ struct SplineSampleParams {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct TriangleParams {
-    src_extent: u32,
-    dst_extent: u32,
-    position: u32,
+    src_width: u32,
+    src_height: u32,
+    dst_width: u32,
+    dst_height: u32,
+    source_first: u32,
+    source_count: u32,
+    output_first: u32,
+    output_count: u32,
     vertical: u32,
-    count: u32,
-    first_tap: u32,
-    taps: u32,
-    left: u32,
-    right: u32,
-    _pad: u32,
+    flags: u32,
+    _pad: [u32; 2],
+}
+
+// Coordinate planning uses the same f32 support as the reference. Weights
+// and ordered sample accumulation remain entirely on the device.
+fn triangle_support(position: u32, extent: u32, output_extent: u32) -> (u32, u32) {
+    let ratio = extent as f32 / output_extent as f32;
+    let support = ratio.max(1.0);
+    let centre = (position as f32 + 0.5) * ratio;
+    let left = ((centre - support).floor() as i64).clamp(0, i64::from(extent) - 1) as u32;
+    let right =
+        ((centre + support).ceil() as i64).clamp(i64::from(left) + 1, i64::from(extent)) as u32;
+    (left, right)
+}
+
+fn triangle_source_rect(
+    page: &ImagePage,
+    source: &BufferPayload,
+    width: u32,
+    height: u32,
+    vertical: bool,
+) -> [u32; 4] {
+    let first = page.first_pixel;
+    let last = first + page.n_pixels - 1;
+    let (y0, y1) = (first / width, last / width);
+    let (x0, x1) = (first % width, last % width);
+    if vertical {
+        let top = triangle_support(y0, source.height, height).0;
+        let bottom = triangle_support(y1, source.height, height).1;
+        let (left, right) = if y0 == y1 { (x0, x1 + 1) } else { (0, width) };
+        [left, top, right, bottom]
+    } else {
+        let (left, right) = if y0 == y1 {
+            (
+                triangle_support(x0, source.width, width).0,
+                triangle_support(x1, source.width, width).1,
+            )
+        } else {
+            (0, source.width)
+        };
+        [left, y0, right, y1 + 1]
+    }
+}
+
+fn page_intersects_rect(page: &ImagePage, width: u32, rect: [u32; 4]) -> bool {
+    let [left, top, right, bottom] = rect;
+    let first_row = page.first_pixel / width;
+    let mut row = top.max(first_row);
+    let mut column = left;
+    if row == first_row {
+        column = column.max(page.first_pixel % width);
+    }
+    if column >= right {
+        row += 1;
+        column = left;
+    }
+    row < bottom
+        && u64::from(row) * u64::from(width) + u64::from(column)
+            < u64::from(page.first_pixel) + u64::from(page.n_pixels)
 }
 
 fn mirror(index: i64, len: u32) -> u32 {
@@ -345,6 +404,7 @@ impl WgpuBackend {
                 cropped.pages.clone()
             }
             Some(resize) if resize.method == InputResizeMethod::PreviewTriangle => {
+                let mut pending_dispatches = 0;
                 let rows = self.geometry_triangle_axis(
                     &mut encoder,
                     &cropped,
@@ -352,6 +412,7 @@ impl WgpuBackend {
                     out_height,
                     true,
                     limit,
+                    &mut pending_dispatches,
                 )?;
                 let rows =
                     BufferPayload::from_pages(self.backend_id(), rows, cropped_width, out_height);
@@ -362,6 +423,7 @@ impl WgpuBackend {
                     out_height,
                     false,
                     limit,
+                    &mut pending_dispatches,
                 )?
             }
             Some(_) => {
@@ -388,103 +450,86 @@ impl WgpuBackend {
         height: u32,
         vertical: bool,
         limit: u64,
+        pending_dispatches: &mut u32,
     ) -> Result<Vec<ImagePage>, String> {
-        let pages = self.allocate_image_pages(width, height, "geometry_preview")?;
-        let extent = if vertical {
-            source.height
-        } else {
-            source.width
-        };
-        let output_extent = if vertical { height } else { width };
-        let others = if vertical { width } else { height };
-        let capacity = (limit / 12).min(u64::from(u32::MAX)) as u32;
-        for position in 0..output_extent {
-            self.check_cancelled()?;
-            let ratio = extent as f32 / output_extent as f32;
-            let support = ratio.max(1.0);
-            let centre = (position as f32 + 0.5) * ratio;
-            let left = ((centre - support).floor() as i64).clamp(0, i64::from(extent) - 1) as u32;
-            let right = ((centre + support).ceil() as i64)
-                .clamp(i64::from(left) + 1, i64::from(extent)) as u32;
-            let mut other = 0;
-            while other < others {
+        // A retained input can predate a lowered diagnostic binding cap.
+        // Repage it with contiguous copies, never per sample, if necessary.
+        let repaged;
+        let source = if source.pages.iter().any(|p| p.buffer.size() > limit) {
+            let pages =
+                self.allocate_image_pages(source.width, source.height, "triangle_source")?;
+            for page in &pages {
                 self.check_cancelled()?;
-                let count = (capacity / (right - left)).max(1).min(others - other);
-                let acc = stage_output_buffer(
-                    &self.device,
-                    u64::from(count) * 12,
-                    "geometry_triangle_acc",
+                self.copy_samples_to(
+                    encoder,
+                    source,
+                    u64::from(page.first_pixel) * 3,
+                    u64::from(page.n_pixels) * 3,
+                    &page.buffer,
+                    0,
+                )?;
+            }
+            repaged =
+                BufferPayload::from_pages(self.backend_id(), pages, source.width, source.height);
+            &repaged
+        } else {
+            source
+        };
+        let pages = self.allocate_image_pages(width, height, "geometry_preview")?;
+        for output in &pages {
+            self.check_cancelled()?;
+            let rect = triangle_source_rect(output, source, width, height, vertical);
+            let first = u64::from(rect[1]) * u64::from(source.width) + u64::from(rect[0]);
+            let end = u64::from(rect[3] - 1) * u64::from(source.width) + u64::from(rect[2]);
+            let begin = source
+                .pages
+                .partition_point(|p| u64::from(p.first_pixel) + u64::from(p.n_pixels) <= first);
+            let finish = source
+                .pages
+                .partition_point(|p| u64::from(p.first_pixel) < end);
+            let mut inputs = source.pages[begin..finish]
+                .iter()
+                .filter(|p| page_intersects_rect(p, source.width, rect))
+                .peekable();
+            if inputs.peek().is_none() {
+                return Err("triangle preview has no source page for its output support".into());
+            }
+            let mut first_page = true;
+            while let Some(input) = inputs.next() {
+                self.check_cancelled()?;
+                let last_page = inputs.peek().is_none();
+                let uniform = self.geometry_uniform(
+                    "geometry_triangle_params",
+                    &TriangleParams {
+                        src_width: source.width,
+                        src_height: source.height,
+                        dst_width: width,
+                        dst_height: height,
+                        source_first: input.first_pixel,
+                        source_count: input.n_pixels,
+                        output_first: output.first_pixel,
+                        output_count: output.n_pixels,
+                        vertical: u32::from(vertical),
+                        flags: u32::from(first_page) | (u32::from(last_page) << 1),
+                        _pad: [0; 2],
+                    },
                 );
-                let taps_per_chunk = (capacity / count).max(1);
-                let input = stage_output_buffer(
-                    &self.device,
-                    u64::from(count) * u64::from(taps_per_chunk.min(right - left)) * 12,
-                    "geometry_triangle_window",
+                self.geometry_pass_linear(
+                    encoder,
+                    TRIANGLE_SHADER,
+                    &[UNIFORM, READ, WRITE],
+                    &[&uniform, &input.buffer, &output.buffer],
+                    output.n_pixels,
+                    "geometry_triangle",
                 );
-                let mut tap = left;
-                while tap < right {
-                    self.check_cancelled()?;
-                    let taps = taps_per_chunk.min(right - tap);
-                    for t in 0..taps {
-                        for l in 0..count {
-                            let (x, y) = if vertical {
-                                (other + l, tap + t)
-                            } else {
-                                (tap + t, other + l)
-                            };
-                            self.copy_samples_to(
-                                encoder,
-                                source,
-                                (u64::from(y) * u64::from(source.width) + u64::from(x)) * 3,
-                                3,
-                                &input,
-                                u64::from(t * count + l) * 3,
-                            )?;
-                        }
-                    }
-                    let uniform = self.geometry_uniform(
-                        "geometry_triangle_params",
-                        &TriangleParams {
-                            src_extent: extent,
-                            dst_extent: output_extent,
-                            position,
-                            vertical: u32::from(vertical),
-                            count,
-                            first_tap: tap,
-                            taps,
-                            left,
-                            right,
-                            _pad: 0,
-                        },
-                    );
-                    self.geometry_pass_linear(
-                        encoder,
-                        TRIANGLE_SHADER,
-                        &[UNIFORM, READ, WRITE],
-                        &[&uniform, &input, &acc],
-                        count,
-                        "geometry_triangle",
-                    );
+                first_page = false;
+                *pending_dispatches += 1;
+                // Bound cancellation latency and command-buffer growth without
+                // submitting once per output row, column, or individual tap.
+                if *pending_dispatches == 32 {
                     self.geometry_submit_pending(encoder)?;
-                    tap += taps;
+                    *pending_dispatches = 0;
                 }
-                for l in 0..count {
-                    let pixel = if vertical {
-                        position * width + other + l
-                    } else {
-                        (other + l) * width + position
-                    };
-                    self.copy_samples_from(
-                        encoder,
-                        &acc,
-                        u64::from(l) * 3,
-                        &pages,
-                        u64::from(pixel) * 3,
-                        3,
-                    )?;
-                }
-                self.geometry_submit_pending(encoder)?;
-                other += count;
             }
         }
         Ok(pages)
@@ -1058,6 +1103,10 @@ impl WgpuBackend {
 }
 
 #[cfg(test)]
+#[path = "input_geometry/triangle_tests.rs"]
+mod triangle_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use spektrafilm_backend::ComputeBackend;
@@ -1067,11 +1116,11 @@ mod tests {
     use spektrafilm_math::precision::{from_f32, from_f64, to_f64};
     use spektrafilm_math::resize::rescale_spline3;
 
-    fn space() -> &'static spektrafilm_math::colorspace::RgbColorSpace {
+    pub(super) fn space() -> &'static spektrafilm_math::colorspace::RgbColorSpace {
         spektrafilm_math::colorspace::resolve("sRGB").unwrap()
     }
 
-    fn upload(gpu: &WgpuBackend, image: &ImageBuf) -> DeviceImage {
+    pub(super) fn upload(gpu: &WgpuBackend, image: &ImageBuf) -> DeviceImage {
         gpu.upload_retained(
             image,
             &RetainedImageMeta {
@@ -1086,7 +1135,11 @@ mod tests {
         .unwrap()
     }
 
-    fn run(gpu: &WgpuBackend, image: &ImageBuf, params: &InputGeometryGpuParams) -> ImageBuf {
+    pub(super) fn run(
+        gpu: &WgpuBackend,
+        image: &ImageBuf,
+        params: &InputGeometryGpuParams,
+    ) -> ImageBuf {
         let carrier = upload(gpu, image);
         let out = gpu
             .encode_input_geometry(&carrier, params)
@@ -1097,7 +1150,7 @@ mod tests {
 
     // Device tests already own DEVICE_LOCK through `adapter`, so the process
     // cap cannot race another GPU test. Restore it even when an assertion fails.
-    fn run_bounded(
+    pub(super) fn run_bounded(
         gpu: &WgpuBackend,
         image: &ImageBuf,
         params: &InputGeometryGpuParams,
@@ -1142,7 +1195,7 @@ mod tests {
         }
     }
 
-    fn triangle_preview(width: u32, height: u32) -> InputResizeGpuParams {
+    pub(super) fn triangle_preview(width: u32, height: u32) -> InputResizeGpuParams {
         InputResizeGpuParams {
             width,
             height,
@@ -1153,7 +1206,7 @@ mod tests {
     /// Signed quarter-step samples in `[-1, 1.5]` so every value is exactly
     /// representable in f32: the comparison isolates the kernel arithmetic
     /// rather than the storage precision of the reference build.
-    fn patterned(width: u32, height: u32) -> ImageBuf {
+    pub(super) fn patterned(width: u32, height: u32) -> ImageBuf {
         let mut data = Vec::with_capacity((width * height * 3) as usize);
         for y in 0..height {
             for x in 0..width {
@@ -1170,11 +1223,15 @@ mod tests {
             .data
             .iter()
             .zip(&expected.data)
-            .map(|(a, b)| (to_f64(*a) - to_f64(*b)).abs())
+            .map(|(a, b)| {
+                let difference = (to_f64(*a) - to_f64(*b)).abs();
+                assert!(difference.is_finite(), "non-finite geometry parity sample");
+                difference
+            })
             .fold(0.0, f64::max)
     }
 
-    fn assert_within(actual: &ImageBuf, expected: &ImageBuf, budget: f64, what: &str) {
+    pub(super) fn assert_within(actual: &ImageBuf, expected: &ImageBuf, budget: f64, what: &str) {
         assert_eq!(
             (actual.width, actual.height),
             (expected.width, expected.height),
@@ -1209,7 +1266,7 @@ mod tests {
         (((w * scale) as u32).max(1), ((h * scale) as u32).max(1))
     }
 
-    fn reference_preview(source: &ImageBuf, width: u32, height: u32) -> ImageBuf {
+    pub(super) fn reference_preview(source: &ImageBuf, width: u32, height: u32) -> ImageBuf {
         use image::{ImageBuffer, Rgb};
         let samples: Vec<f32> = source.data.iter().map(|&v| to_f64(v) as f32).collect();
         let image =
