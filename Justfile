@@ -132,15 +132,22 @@ check-device-lock-guard:
 check-device-lock-tests:
     python3 scripts/test_check_device_lock.py
 
+# Reject broken documentation links, heading defects, and presentation violations.
+check-specs: check-specs-tests
+    python3 scripts/check_specs.py --strict
+
+check-specs-tests:
+    python3 scripts/test_check_specs.py
+
 # Pure math regressions need no native libraries, GPU, or renderer.
 test-pr:
     cargo test --locked -p spektrafilm-math --lib
     cargo test --locked -p spektrafilm-math --lib --features precision-f64
 # Required PR gate; workspace compilation and native suites run after merge.
-ci-pr: check-python-cache check-python check-device-lock fmt test-pr
+ci-pr: check-python-cache check-python check-device-lock check-specs fmt test-pr
 
 # Full local and main-branch gate, including slow rendering and GPU tests.
-ci: check-python-cache check-python check-device-lock fmt check check-f64 clippy clippy-f64 test test-fast benchmark-test parity-backend
+ci: check-python-cache check-python check-device-lock check-specs fmt check check-f64 clippy clippy-f64 test test-fast benchmark-test parity-backend
 
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:

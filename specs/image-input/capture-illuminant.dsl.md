@@ -2,7 +2,9 @@
 
 A reviewable example of the **existing** parameter language for the capture illuminant leaf `camera.capture_illuminant`.
 
-This document is not a schema, a parser, a new carrier, or a second configuration surface. It is a worked example of the [CLI parameter language](../cli/spec.md) — the unified `--set` option with its inline assignment, sparse TOML, and sparse JSON sources — applied to one optional runtime leaf. Every assignment below must parse, merge, and validate under the rules that contract already defines. Where a rule here appears to disagree with that contract, that contract wins and this document is the defect.
+This document is not a schema, a parser, a new carrier, or a second configuration surface. It is a worked example of the [CLI parameter language](../cli/spec.md) — the unified `--set` option with its inline assignment, sparse TOML, and sparse JSON sources — applied to one optional runtime leaf.
+
+Every assignment below MUST parse, merge, and validate under the rules that contract already defines. Where a rule here appears to disagree with that contract, that contract wins and this document is the defect.
 
 The leaf's semantics — optional value, profile inheritance, explicit override, validation, inactive routes, and report fields — are owned by [Image input: Capture illuminant](spec.md#capture-illuminant). This document demonstrates them; it does not redefine them.
 
@@ -18,7 +20,9 @@ The leaf's semantics — optional value, profile inheritance, explicit override,
 | Dedicated `process` flag | none — `--set` is the canonical surface |
 | Editing surface parity | Input and capture → Camera in the GUI, per [Stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership) |
 
-The accepted names come from the shared illuminant vocabulary that `describe --field` already reports for `enlarger.illuminant`: the catalog sources in `data/illuminants/catalog.json`, the bundled `T`, `TH-KG3`, `TH-KG3-L`, and `K75P` selections, and the analytic `BB<kelvin>` token. `BB` must be followed by a temperature the spectral service accepts; a name it does not accept fails with the permitted values and never falls back to the profile reference.
+The accepted names come from the shared illuminant vocabulary that `describe --field` already reports for `enlarger.illuminant`: the catalog sources in `data/illuminants/catalog.json`, the bundled `T`, `TH-KG3`, `TH-KG3-L`, and `K75P` selections, and the analytic `BB<kelvin>` token.
+
+`BB` MUST be followed by a temperature the spectral service accepts; a name it does not accept fails with the permitted values and never falls back to the profile reference.
 
 Nothing in this language selects the capture illuminant from EXIF or RAW metadata, from RAW white balance, or from image content. Those are out of scope for version 1.
 
@@ -101,7 +105,7 @@ spektrafilm-f64 process input.png --output output.tif \
   --dry-run
 ```
 
-The two sources apply in appearance order. The first sets `T`; the second clears it back to unset, which again inherits the profile reference. JSON `null` sets an optional leaf to its unset value; it does not delete the field, and it must not reach a non-optional leaf.
+The two sources apply in appearance order. The first sets `T`; the second clears it back to unset, which again inherits the profile reference. JSON `null` sets an optional leaf to its unset value; it does not delete the field, and it MUST NOT reach a non-optional leaf.
 
 ### 5. Invalid value — expected rejection
 
@@ -113,7 +117,7 @@ spektrafilm-f64 process input.png --output output.tif \
   --dry-run
 ```
 
-`BB900` is below the accepted blackbody range, so the command must fail before output publication. The diagnostic must name `camera.capture_illuminant`, state the supplied value, and identify the accepted vocabulary or range. It must not fall back to the profile reference, and it must not retry with a different value.
+`BB900` is below the accepted blackbody range, so the command MUST fail before output publication. The diagnostic MUST name `camera.capture_illuminant`, state the supplied value, and identify the accepted vocabulary or range. It MUST NOT fall back to the profile reference, and it MUST NOT retry with a different value.
 
 An unsupported catalog name fails the same way:
 

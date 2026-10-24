@@ -2,15 +2,21 @@
 
 ## Purpose and evaluation principles
 
-The benchmark must support two users of the same evidence: an agent that detects and locates changes, and a person who inspects the rendered appearance.
+The benchmark MUST support two users of the same evidence: an agent that detects and locates changes, and a person who inspects the rendered appearance.
 
-The benchmark must distinguish change magnitude, closeness to a named reference, and human preference. It must not combine these questions into a universal film-quality score. A difference from a baseline must not imply a loss of quality. A smaller distance to one lab scan must not imply a more accurate film material model.
+The benchmark MUST distinguish change magnitude, closeness to a named reference, and human preference. It MUST NOT combine these questions into a universal film-quality score. A difference from a baseline MUST NOT imply a loss of quality.
 
-The benchmark must expose measurements and their evidence before an interpretation. An agent must be able to locate a reported change without reading logs or opening every image. A person must be able to inspect the same change in the full image and at native detail resolution.
+A smaller distance to one lab scan MUST NOT imply a more accurate film material model.
 
-This capability owns appearance comparison, evaluation decisions, and benchmark review artifacts. Prepared-image visual review is a benchmark-only input path and is not part of the instrument or lab document registry. [CLI parameters](../cli/spec.md) owns rendering parameter resolution. [Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations. The benchmark must not redefine these contracts.
+The benchmark MUST expose measurements and their evidence before an interpretation. An agent MUST be able to locate a reported change without reading logs or opening every image. A person MUST be able to inspect the same change in the full image and at native detail resolution.
 
-The delivered benchmark must run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery/spec.md) defines distribution, workspace boundaries, and numerical implementation. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
+This capability owns appearance comparison, evaluation decisions, and benchmark review artifacts. Prepared-image visual review is a benchmark-only input path and is not part of the instrument or lab document registry. [CLI parameters](../cli/spec.md) owns rendering parameter resolution.
+
+[Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations.
+
+The benchmark MUST NOT redefine these contracts.
+
+The delivered benchmark MUST run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery/spec.md) defines distribution, workspace boundaries, and numerical implementation. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
 
 ## Terms
 
@@ -44,126 +50,166 @@ A **review report** presents an existing comparison without changing its measure
 
 ### Local input and simulation
 
-The benchmark must accept a user-selected local raster or RAW file without a built-in chart identity or fixture layout. An optional local reference must remain independent of the simulation input. Large input, prepared-image, run, and report assets must remain outside the source repository.
+The benchmark MUST accept a user-selected local raster or RAW file without a built-in chart identity or fixture layout. An optional local reference MUST remain independent of the simulation input. Large input, prepared-image, run, and report assets MUST remain outside the source repository.
 
-Single-image execution must produce the same case and run contracts as suite execution. A source-to-simulation comparison must report processing changes. A reference-to-simulation comparison must report distance to the selected reference. Neither comparison must imply acceptance without an applicable policy.
+Single-image execution MUST produce the same case and run contracts as suite execution. A source-to-simulation comparison MUST report processing changes. A reference-to-simulation comparison MUST report distance to the selected reference.
 
-The benchmark must accept externally prepared images as new inputs. It must not infer the original framing, exposure, or film scale of such an image. Optional preparation provenance must identify the original dependency and operations without executing them.
+Neither comparison MUST imply acceptance without an applicable policy.
 
-Simulation crop and resize must use the renderer's case-owned parameters and preserve its metering and spatial-scale semantics. The benchmark must not implement another simulation crop or transform engine. Measurement and review regions must be extracted from completed results. A cropped simulation must remain identified separately from a detail crop.
+The benchmark MUST accept externally prepared images as new inputs. It MUST NOT infer the original framing, exposure, or film scale of such an image. Optional preparation provenance MUST identify the original dependency and operations without executing them.
 
-A single-run comparison must support input-to-simulation, reference-to-simulation, or both pairs. Raster and RAW input comparisons must use an observed floating source result from the renderer's input route with the same decoding and geometry. An input-route result must remain labeled as decoded input, not an alternative film simulation.
+Simulation crop and resize MUST use the renderer's case-owned parameters and preserve its metering and spatial-scale semantics. The benchmark MUST NOT implement another simulation crop or transform engine. Measurement and review regions MUST be extracted from completed results.
 
-Reference correspondence must use the existing reference scopes. Equal image dimensions must not establish correspondence. Visual references must remain viewable without pixelwise scores. Region correspondence and frozen geometric transforms must not alter simulation input. Warped reference copies must remain separate from native grain and sharpness evidence.
+A cropped simulation MUST remain identified separately from a detail crop.
+
+A single-run comparison MUST support input-to-simulation, reference-to-simulation, or both pairs. Raster and RAW input comparisons MUST use an observed floating source result from the renderer's input route with the same decoding and geometry. An input-route result MUST remain labeled as decoded input, not an alternative film simulation.
+
+Reference correspondence MUST use the existing reference scopes. Equal image dimensions MUST NOT establish correspondence. Visual references MUST remain viewable without pixelwise scores.
+
+Region correspondence and frozen geometric transforms MUST NOT alter simulation input. Warped reference copies MUST remain separate from native grain and sharpness evidence.
 
 ### Version regression
 
-Version regression must compare results derived from the same source samples. It must preserve the suite's source interpretation, geometry, and seed protocol.
+Version regression MUST compare results derived from the same source samples. It MUST preserve the suite's source interpretation, geometry, and seed protocol.
 
-The comparison must expose differences in effective parameters, profiles, data, backend, and precision. An intentional difference must be declared by the selected targets. An undeclared condition difference must prevent an unqualified regression pass. A declared condition difference must remain visible in the result.
+The comparison MUST expose differences in effective parameters, profiles, data, backend, and precision. An intentional difference MUST be declared by the selected targets. An undeclared condition difference MUST prevent an unqualified regression pass.
 
-The benchmark must support executable changes, parameter changes, profile changes, and data changes. It must not assume that a source revision alone identifies rendered behavior.
+A declared condition difference MUST remain visible in the result.
 
-Version regression must report the size, direction, and location of applicable appearance changes. It must not register, grade, histogram-match, or normalize the candidate to reduce the measured difference.
+The benchmark MUST support executable changes, parameter changes, profile changes, and data changes. It MUST NOT assume that a source revision alone identifies rendered behavior.
+
+Version regression MUST report the size, direction, and location of applicable appearance changes. It MUST NOT register, grade, histogram-match, or normalize the candidate to reduce the measured difference.
 
 ### Reference alignment
 
-Reference alignment must compare a rendered result with named external evidence. It must identify the scope of the reference: material measurement, paired scene appearance, regional appearance statistics, or visual reference only.
+Reference alignment MUST compare a rendered result with named external evidence. It MUST identify the scope of the reference: material measurement, paired scene appearance, regional appearance statistics, or visual reference only.
 
-A material measurement must identify its exposure, illuminant, processing, instrument, and measurement units. A finished scan must remain identified as the combined result of film, development, optics, digitization, inversion, and rendering where these stages apply.
+A material measurement MUST identify its exposure, illuminant, processing, instrument, and measurement units. A finished scan MUST remain identified as the combined result of film, development, optics, digitization, inversion, and rendering where these stages apply.
 
-Pixelwise measurements must require a verified geometric correspondence and a valid common-area mask. A feature-match count or a successful transform alone must not establish correspondence quality. Uncertain motion, occlusion, parallax, and invalid borders must be excluded.
+Pixelwise measurements MUST require a verified geometric correspondence and a valid common-area mask. A feature-match count or a successful transform alone MUST NOT establish correspondence quality. Uncertain motion, occlusion, parallax, and invalid borders MUST be excluded.
 
-A scene pair without reliable pixel correspondence must use separately identified corresponding regions, distribution measurements, or human review. An unrelated scan must not receive a full-reference image score.
+A scene pair without reliable pixel correspondence MUST use separately identified corresponding regions, distribution measurements, or human review. An unrelated scan MUST NOT receive a full-reference image score.
 
-A reference with brightness or histogram matching must not qualify as an unmodified tone target. An unknown processing history must remain unknown. A transformed reference may qualify only for a specifically declared diagnostic scope.
+A reference with brightness or histogram matching MUST NOT qualify as an unmodified tone target. An unknown processing history MUST remain unknown. A transformed reference MAY qualify only for a specifically declared diagnostic scope.
 
-The report must distinguish distance to a selected reference from a claim about physical accuracy. Fitting cases and held-out evaluation cases must remain distinguishable. A held-out result must not use parameters fitted to that case. Cases from the same capture sequence or roll must share a split group.
+The report MUST distinguish distance to a selected reference from a claim about physical accuracy. Fitting cases and held-out evaluation cases MUST remain distinguishable. A held-out result MUST NOT use parameters fitted to that case.
+
+Cases from the same capture sequence or roll MUST share a split group.
 
 ## Suite coverage
 
-The benchmark must support controlled probes, natural scenes, and external references as distinct case kinds.
+The benchmark MUST support controlled probes, natural scenes, and external references as distinct case kinds.
 
-Controlled probes must cover exposure and gray response, color patches and gradients, flat fields at multiple levels, bright points or edges, and edge or fine-line response. The suite must identify the active effects and the property each probe isolates. An RGB chart must not be represented as a measured spectral reference.
+Controlled probes MUST cover exposure and gray response, color patches and gradients, flat fields at multiple levels, bright points or edges, and edge or fine-line response. The suite MUST identify the active effects and the property each probe isolates. An RGB chart MUST NOT be represented as a measured spectral reference.
 
-Natural-scene coverage must identify skin, neutral surfaces, foliage, sky, saturated objects, shadows, highlights, mixed illumination, and fine texture where present. Each case must state its semantic regions and applicable measurements.
+Natural-scene coverage MUST identify skin, neutral surfaces, foliage, sky, saturated objects, shadows, highlights, mixed illumination, and fine texture where present. Each case MUST state its semantic regions and applicable measurements.
 
-A quick suite must contain fixed controlled probes and a named subset of scenes. A complete review suite must retain the declared spatial resolution and effects. Substituting a reduced preview for a full-resolution spatial case must not count as completion of that case.
+A quick suite MUST contain fixed controlled probes and a named subset of scenes. A complete review suite MUST retain the declared spatial resolution and effects. Substituting a reduced preview for a full-resolution spatial case MUST NOT count as completion of that case.
 
-Missing assets and unsupported cases must remain visible. The report must state selected, completed, failed, and unavailable case counts. Empty selection must fail. A subset must remain identified as a subset and must not receive the complete suite's qualification.
+Missing assets and unsupported cases MUST remain visible. The report MUST state selected, completed, failed, and unavailable case counts. Empty selection MUST fail.
+
+A subset MUST remain identified as a subset and MUST NOT receive the complete suite's qualification.
 
 ## Standard configuration entry point
 
-[Standard benchmark configurations](standard-configurations/spec.md) define reusable isolated color-and-tone and full-appearance setups. They extend fixture generation and support the existing local-image and suite workflows. They must not introduce a film profile, preset kind, implicit baseline, or universal quality score.
+[Standard benchmark configurations](standard-configurations/spec.md) define reusable isolated color-and-tone and full-appearance setups. They extend fixture generation and support the existing local-image and suite workflows. They MUST NOT introduce a film profile, preset kind, implicit baseline, or universal quality score.
 
 
 ## Reproducible rendering
 
-Raster cases must provide the [source declaration](../cli/spec.md#input-declaration). Embedded ICC data must remain recorded as provenance and must not silently override the renderer's explicit declaration. An external reference's color interpretation must be resolved separately before comparison.
+Raster cases MUST provide the [source declaration](../cli/spec.md#input-declaration). Embedded ICC data MUST remain recorded as provenance and MUST NOT silently override the renderer's explicit declaration. An external reference's color interpretation MUST be resolved separately before comparison.
 
-The run must retain the source configuration, resolved settings, selected seed, actual dimensions, renderer identity, dependency identities, and observed execution conditions. Dry run must not be presented as proof of decoding, device availability, or completed rendering.
+The run MUST retain the source configuration, resolved settings, selected seed, actual dimensions, renderer identity, dependency identities, and observed execution conditions. Dry run MUST NOT be presented as proof of decoding, device availability, or completed rendering.
 
-Color and tone probes must support a declared deterministic configuration with stochastic effects disabled. Final-appearance cases must retain their selected effects. Disabling effects must create a different case configuration, not an undocumented evaluator correction.
+Color and tone probes MUST support a declared deterministic configuration with stochastic effects disabled. Final-appearance cases MUST retain their selected effects. Disabling effects MUST create a different case configuration, not an undocumented evaluator correction.
 
-Stochastic cases must support a fixed-seed comparison and a specified multi-seed statistical protocol. A changed random realization must not alone establish a grain regression. CPU, GPU, and precision differences must not imply bit identity.
+Stochastic cases MUST support a fixed-seed comparison and a specified multi-seed statistical protocol. A changed random realization MUST NOT alone establish a grain regression. CPU, GPU, and precision differences MUST NOT imply bit identity.
 
-The benchmark must preserve floating output for numerical analysis. Lossy previews must not be measurement sources. Numeric health measurements must preserve out-of-range samples before display clipping.
+The benchmark MUST preserve floating output for numerical analysis. Lossy previews MUST NOT be measurement sources. Numeric health measurements MUST preserve out-of-range samples before display clipping.
 
-A detail region must be extracted from the completed full-image render. Rendering an input crop separately must not substitute for that region unless the case explicitly evaluates crop behavior.
+A detail region MUST be extracted from the completed full-image render. Rendering an input crop separately MUST NOT substitute for that region unless the case explicitly evaluates crop behavior.
 
-The benchmark must support explicitly requested native CPU stage evidence from the real renderer. This evidence must identify observed source exposure, prepared print normalization, each captured numerical boundary, and its geometry. A successful dry run must not imply those values were observed. A source-only decoded image and an exposed simulation input must remain distinct roles. Application metering must not be described as measured physical capture exposure.
+The benchmark MUST support explicitly requested native CPU stage evidence from the real renderer. This evidence MUST identify observed source exposure, prepared print normalization, each captured numerical boundary, and its geometry. A successful dry run MUST NOT imply those values were observed.
+
+A source-only decoded image and an exposed simulation input MUST remain distinct roles. Application metering MUST NOT be described as measured physical capture exposure.
 
 ## Measurements and decisions
 
 The [measurement protocol](metrics/spec.md) owns domains, algorithms, aggregation, and availability rules. The [machine interface](../instrument/spec.md) owns serialized inputs, results, and command status.
 
-Every finding must identify its measurement population and applicable region. Signed color and tone changes must use candidate minus baseline. A reference-distance improvement must use candidate distance minus baseline distance and must identify that a negative value means closer.
+Every finding MUST identify its measurement population and applicable region. Signed color and tone changes MUST use candidate minus baseline. A reference-distance improvement MUST use candidate distance minus baseline distance and MUST identify that a negative value means closer.
 
-The comparison must preserve per-case results, critical regions, and worst cases. An improvement in one case must not cancel a protected failure in another case. Full-image averages must not replace region and tail measurements.
+The comparison MUST preserve per-case results, critical regions, and worst cases. An improvement in one case MUST NOT cancel a protected failure in another case. Full-image averages MUST NOT replace region and tail measurements.
 
-A comparison without a policy must describe changes without claiming acceptance. A policy must distinguish expected changes from protected properties. Declaring an expected change must not disable a protected constraint.
+A comparison without a policy MUST describe changes without claiming acceptance. A policy MUST distinguish expected changes from protected properties. Declaring an expected change MUST NOT disable a protected constraint.
 
-A required measurement that is unavailable must prevent a qualified pass. Missing measurements must not become zero. A valid comparison may conclude that evidence is insufficient. Human preference must remain separate from numerical acceptance.
+A required measurement that is unavailable MUST prevent a qualified pass. Missing measurements MUST NOT become zero. A valid comparison MAY conclude that evidence is insufficient.
 
-A budget must identify its calibration population and protocol. A universal color-difference, pixel-error, or perceptual threshold must not be assumed. Budgets must be calibrated with repeat runs, stochastic variation where applicable, controlled perturbations, and independently reviewed cases. Calibration must distinguish visibility, acceptability, and reference suitability.
+Human preference MUST remain separate from numerical acceptance.
 
-The benchmark must not change policy budgets, source declarations, targets, or baselines to make a candidate pass. The agent may select an existing policy and explain evidence. Updating a baseline or budget must remain a separate explicit action with recorded approval and identity.
+A budget MUST identify its calibration population and protocol. A universal color-difference, pixel-error, or perceptual threshold MUST NOT be assumed. Budgets MUST be calibrated with repeat runs, stochastic variation where applicable, controlled perturbations, and independently reviewed cases.
+
+Calibration MUST distinguish visibility, acceptability, and reference suitability.
+
+The benchmark MUST NOT change policy budgets, source declarations, targets, or baselines to make a candidate pass. The agent MAY select an existing policy and explain evidence. Updating a baseline or budget MUST remain a separate explicit action with recorded approval and identity.
 
 ## Prepared image review
 
-The benchmark may accept a collection of prepared images, grouped into sets, for visual review without a renderer, run, or comparison record. This review page is separate from the instrument's measured comparison report. It must not simulate film, decode camera RAW, find chart corners, fit geometry, normalize exposure, match color, recompute metrics, or claim acceptance.
+The benchmark MAY accept a collection of prepared images, grouped into sets, for visual review without a renderer, run, or comparison record. This review page is separate from the instrument's measured comparison report. It MUST NOT simulate film, decode camera RAW, find chart corners, fit geometry, normalize exposure, match color, recompute metrics, or claim acceptance.
 
-The prepared-image viewer may retain its own manifest format for image inventory, set membership, captions, default pair, and per-image visual geometry. That manifest is owned by the benchmark viewer. It is not an instrument document kind, is not accepted by `spektrafilm-lab`, and must not be passed to `sample`, `compare`, `inspect`, or `report comparison`. Geometry used for measurement must be authored or generated as a standalone `regions` document.
+The prepared-image viewer MAY retain its own manifest format for image inventory, set membership, captions, default pair, and per-image visual geometry. That manifest is owned by the benchmark viewer. It is not an instrument document kind, is not accepted by `spektrafilm-lab`, and MUST NOT be passed to `sample`, `compare`, `inspect`, or `report comparison`.
 
-The viewer's image declarations, grid arithmetic, explicit-region rules, display conversion, offline packaging, and browser interaction remain benchmark concerns. They must not be duplicated in the lab command grammar. A benchmark command may preserve the legacy prepared-image manifest during migration, but it must use its own validator and report builder and must not rely on lab schema discovery or lab `regions grid`.
-The simpler flat-photo input and explicit-pair report is defined by the [Photo Report specification](photo-report/spec.md). It is a benchmark-owned visual report and does not replace this prepared-image viewer contract.
+Geometry used for measurement MUST be authored or generated as a standalone `regions` document.
+
+The viewer's image declarations, grid arithmetic, explicit-region rules, display conversion, offline packaging, and browser interaction remain benchmark concerns. They MUST NOT be duplicated in the lab command grammar.
+
+A benchmark command MAY preserve the legacy prepared-image manifest during migration, but it MUST use its own validator and report builder and MUST NOT rely on lab schema discovery or lab `regions grid`. The simpler flat-photo input and explicit-pair report is defined by the [Photo Report specification](photo-report/spec.md).
+
+It is a benchmark-owned visual report and does not replace this prepared-image viewer contract.
 
 ## Human review
 
-A review report must work offline with relative local artifact links. Report generation must not render images or recompute comparison measurements.
+A review report MUST work offline with relative local artifact links. Report generation MUST NOT render images or recompute comparison measurements.
 
-The report must show source input, baseline, candidate, and a reference when applicable. It must label each role, rendering configuration, geometry, and reference limitation. Different scene captures must not be presented as exact A/B correspondence.
+The report MUST show source input, baseline, candidate, and a reference when applicable. It MUST label each role, rendering configuration, geometry, and reference limitation. Different scene captures MUST NOT be presented as exact A/B correspondence.
 
-The report must provide synchronized pan and zoom for pixel-aligned A/B images. It must support manual A/B alternation and default to a split view with a directly draggable divider. The divider must also support a range control and keyboard movement. An unaligned reference must use labeled side-by-side views instead of an exact-match slider and identify each crop's left and right dimensions independently. A full-screen control must be available for the selected image view and remain keyboard operable. Narrow layouts must not introduce horizontal page overflow.
+The report MUST provide synchronized pan and zoom for pixel-aligned A/B images. It MUST support manual A/B alternation and default to a split view with a directly draggable divider. The divider MUST also support a range control and keyboard movement.
 
-Detail sections must include fixed semantic regions and automatically selected difference regions. User-selected crops and automatically selected difference crops must appear as directly clickable thumbnails below the main view. Activating a crop must update the large image and expose that region's full-image locator, exact coordinates, selection method, matching A/B crops, applicable findings, and individual image links. When no crop is available, the report must show an explicit empty state rather than a broken control.
+An unaligned reference MUST use labeled side-by-side views instead of an exact-match slider and identify each crop's left and right dimensions independently. A full-screen control MUST be available for the selected image view and remain keyboard operable. Narrow layouts MUST NOT introduce horizontal page overflow.
 
-Native detail must map one source image pixel to one device pixel at 100%. The viewer must account for device pixel ratio. The report must also offer 200% and 400% nearest-neighbor views. A fit-to-container view must not be labeled 100%.
-A generated human review report must open with the selected case and seed's image-first main view in request order, followed by accessible navigation for every other case and seed, including failures. A single-run report must open input/simulation when no reference pair is selected and reference/simulation when that pair is selected. Reports with multiple pairs must provide a pair selector. Version reports must open baseline/candidate. Labels, measurements, difference maps, and detail crops must belong to the selected pair. The initial view must show the selected imagery before supporting evidence. It SHOULD include a short retained-condition summary and at most four rounded full-image metrics with their units, domains, and direction. Supporting evidence SHOULD remain folded.
+Detail sections MUST include fixed semantic regions and automatically selected difference regions. User-selected crops and automatically selected difference crops MUST appear as directly clickable thumbnails below the main view. Activating a crop MUST update the large image and expose that region's full-image locator, exact coordinates, selection method, matching A/B crops, applicable findings, and individual image links.
 
-Inspecting a region must not remove other regions, failed cases, or worst regressions. Unknown reference processing must keep numerical reference distances unavailable; region inspection must not reinterpret that reference as a qualified appearance target.
+When no crop is available, the report MUST show an explicit empty state rather than a broken control.
 
-Detail crops must use lossless files. Reduced full-image previews may use lossy files if their role is explicit. Previews must not replace the numerical masters or lossless detail evidence.
+Native detail MUST map one source image pixel to one device pixel at 100%. The viewer MUST account for device pixel ratio. The report MUST also offer 200% and 400% nearest-neighbor views.
 
-Display copies must use 16-bit RGB sRGB PNG without quantization dither. Fit previews must be derived from floating display samples with Lanczos resampling in encoded sRGB to a maximum edge of 1600 pixels before 16-bit quantization. The report must retain lossless full-size images and detail crops. Artifacts must record bit depth, source dimensions, resampling, quantization, encoding, and display role. Native zoom must use the lossless full-size image; lossless detail crops must preserve its 16-bit channel values. Browser and display precision must not be presented as guaranteed 16-bit output. Measurements must continue to use floating masters.
+A fit-to-container view MUST NOT be labeled 100%. A generated human review report MUST open with the selected case and seed's image-first main view in request order, followed by accessible navigation for every other case and seed, including failures. A single-run report MUST open input/simulation when no reference pair is selected and reference/simulation when that pair is selected.
 
-Comparisons with different source resolutions must separate a declared common observation scale from native-pixel inspection. Every resampling operation must be identified. Registered color-comparison copies must remain separate from unwarped grain and sharpness inspection copies.
+Reports with multiple pairs MUST provide a pair selector. Version reports MUST open baseline/candidate. Labels, measurements, difference maps, and detail crops MUST belong to the selected pair.
 
-Difference maps must show their units, scale, clipping, and amplification factor, and provide a distinct difference-map mode alongside normal images. Comparable panels must use the same scale. A per-image automatically stretched map must not be presented as a comparable magnitude scale. Normal images must remain available beside difference maps.
+The initial view MUST show the selected imagery before supporting evidence. It SHOULD include a short retained-condition summary and at most four rounded full-image metrics with their units, domains, and direction. Supporting evidence SHOULD remain folded.
 
-Automatic regions must identify their ranking measurement and merge overlapping detections. They must not displace fixed critical regions. Ties and region ordering must be deterministic. The report must retain rejected or unavailable comparisons rather than hiding them behind attractive examples.
+Inspecting a region MUST NOT remove other regions, failed cases, or worst regressions. Unknown reference processing MUST keep numerical reference distances unavailable; region inspection MUST NOT reinterpret that reference as a qualified appearance target.
 
-Source attribution and redistribution restrictions must accompany external reference artifacts. Local research access must not imply permission to publish originals or derivatives.
+Detail crops MUST use lossless files. Reduced full-image previews MAY use lossy files if their role is explicit. Previews MUST NOT replace the numerical masters or lossless detail evidence.
+
+Display copies MUST use 16-bit RGB sRGB PNG without quantization dither. Fit previews MUST be derived from floating display samples with Lanczos resampling in encoded sRGB to a maximum edge of 1600 pixels before 16-bit quantization. The report MUST retain lossless full-size images and detail crops.
+
+Artifacts MUST record bit depth, source dimensions, resampling, quantization, encoding, and display role. Native zoom MUST use the lossless full-size image; lossless detail crops MUST preserve its 16-bit channel values. Browser and display precision MUST NOT be presented as guaranteed 16-bit output.
+
+Measurements MUST continue to use floating masters.
+
+Comparisons with different source resolutions MUST separate a declared common observation scale from native-pixel inspection. Every resampling operation MUST be identified. Registered color-comparison copies MUST remain separate from unwarped grain and sharpness inspection copies.
+
+Difference maps MUST show their units, scale, clipping, and amplification factor, and provide a distinct difference-map mode alongside normal images. Comparable panels MUST use the same scale. A per-image automatically stretched map MUST NOT be presented as a comparable magnitude scale.
+
+Normal images MUST remain available beside difference maps.
+
+Automatic regions MUST identify their ranking measurement and merge overlapping detections. They MUST NOT displace fixed critical regions. Ties and region ordering MUST be deterministic.
+
+The report MUST retain rejected or unavailable comparisons rather than hiding them behind attractive examples.
+
+Source attribution and redistribution restrictions MUST accompany external reference artifacts. Local research access MUST NOT imply permission to publish originals or derivatives.
 
 ## Acceptance scenarios
 
@@ -174,20 +220,23 @@ Source attribution and redistribution restrictions must accompany external refer
 5. Change halation around a small bright source. Retain a regional finding when the full-image mean is small.
 6. Supply an unaligned scene reference and a tone-matched reference. Enforce each reference's allowed measurement scope.
 7. Request GPU rendering and observe CPU execution. Retain the actual route and prevent an unqualified GPU result.
-8. Fail a required case or measurement. Preserve its evidence and prevent a qualified gate pass. Reject an empty suite.
-9. Generate a comparison report with the renderer unavailable. Open retained imagery, detail, findings, and unavailable states without recalculating measurements.
-10. Reuse a run and then change a renderer or data dependency. Reject stale cached evidence and refuse replacement of an existing completed result.
-11. Evaluate a protected skin region and an expected highlight change. Keep the skin failure visible despite the expected change.
-12. Validate machine documents and execute CLI examples through the implemented interface. Reject unknown fields, invalid bounds, nonfinite values, unsafe artifact paths, and missing evidence references.
-13. Run an arbitrary local raster and RAW input without a suite document. Compare decoded input with simulation and inspect observed matching geometry and lossless detail.
-14. Supply a local reference and select input, reference, and both comparison pairs. Preserve pair-specific roles, measurements, maps, and crops. A visual-only or regional reference must not gain pixelwise correspondence from equal dimensions.
-15. Run an externally prepared crop and a renderer crop as distinct cases. Preserve their input identities and renderer-resolved geometry; keep full-render detail crops separate.
-16. Build and inspect a multi-pair offline comparison report with original input files and the renderer unavailable. Preserve request order and switch pairs on desktop and narrow layouts.
-17. Preflight a valid suite and an invalid renderer parameter across multiple seeds. Preserve resolved configurations and grouped failures without decoding, rendering, or publishing a completed run.
-18. Inspect a retained version or single-run comparison after original runs are unavailable. Filter exact case, region, and metric identities; preserve unavailable reasons and separate per-seed observations from seed aggregates.
-19. Generate and validate a pinned target independently of fixtures. Reject an existing output and a changed executable identity.
-20. Open a report location for a case, seed, pair, and region offline. Reload and use browser history on desktop and narrow layouts; activate detail controls by keyboard and expose invalid locations clearly.
-21. Run a multi-seed suite and compare it while capturing stderr. Identify every started and completed case-seed item and end with completed and failed counts and total elapsed time.
-22. Generate a prepared review page through the benchmark viewer's own command with Chinese captions, a declared default pair, multiple images per set, and distinct grid and explicit-region sets. This viewer contract is independent of `spektrafilm-lab`.
-23. Run `regions grid` with a finite declaration and validate the resulting standalone regions document. Reuse it as sampling geometry without a review manifest. Reject a sample that does not fit, a coordinate-space mismatch, and an unsafe destination.
-24. Render an offline report from a retained comparison through `spektrafilm-lab report comparison`. The lab report must not accept a prepared-image manifest or record a manifest source kind.
+8. Fail a required case or measurement. Preserve its evidence and prevent a qualified gate pass.
+9. Reject an empty suite.
+10. Generate a comparison report with the renderer unavailable. Open retained imagery, detail, findings, and unavailable states without recalculating measurements.
+11. Reuse a run and then change a renderer or data dependency. Reject stale cached evidence and refuse replacement of an existing completed result.
+12. Evaluate a protected skin region and an expected highlight change. Keep the skin failure visible despite the expected change.
+13. Validate machine documents and execute CLI examples through the implemented interface. Reject unknown fields, invalid bounds, nonfinite values, unsafe artifact paths, and missing evidence references.
+14. Run an arbitrary local raster and RAW input without a suite document. Compare decoded input with simulation and inspect observed matching geometry and lossless detail.
+15. Supply a local reference and select input, reference, and both comparison pairs. Preserve pair-specific roles, measurements, maps, and crops.
+16. A visual-only or regional reference MUST NOT gain pixelwise correspondence from equal dimensions.
+17. Run an externally prepared crop and a renderer crop as distinct cases. Preserve their input identities and renderer-resolved geometry; keep full-render detail crops separate.
+18. Build and inspect a multi-pair offline comparison report with original input files and the renderer unavailable. Preserve request order and switch pairs on desktop and narrow layouts.
+19. Preflight a valid suite and an invalid renderer parameter across multiple seeds. Preserve resolved configurations and grouped failures without decoding, rendering, or publishing a completed run.
+20. Inspect a retained version or single-run comparison after original runs are unavailable. Filter exact case, region, and metric identities; preserve unavailable reasons and separate per-seed observations from seed aggregates.
+21. Generate and validate a pinned target independently of fixtures. Reject an existing output and a changed executable identity.
+22. Open a report location for a case, seed, pair, and region offline. Reload and use browser history on desktop and narrow layouts; activate detail controls by keyboard and expose invalid locations clearly.
+23. Run a multi-seed suite and compare it while capturing stderr. Identify every started and completed case-seed item and end with completed and failed counts and total elapsed time.
+24. Generate a prepared review page through the benchmark viewer's own command with Chinese captions, a declared default pair, multiple images per set, and distinct grid and explicit-region sets. This viewer contract is independent of `spektrafilm-lab`.
+25. Run `regions grid` with a finite declaration and validate the resulting standalone regions document. Reuse it as sampling geometry without a review manifest.
+26. Reject a sample that does not fit, a coordinate-space mismatch, and an unsafe destination.
+27. Render an offline report from a retained comparison through `spektrafilm-lab report comparison`. The lab report MUST NOT accept a prepared-image manifest or record a manifest source kind.

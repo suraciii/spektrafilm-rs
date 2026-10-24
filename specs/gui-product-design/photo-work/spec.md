@@ -8,13 +8,13 @@ This target extends [GUI product design](../spec.md). It owns Original/Modified 
 
 ## Original / Modified
 
-**Original** (原图) is the retained input under its accepted input interpretation and orientation. **Modified** (修改图) is the retained output of the latest accepted Preview or Scan. These are viewer selections, not captured adjustment versions or the scanner's automatic baseline.
+The viewer labels **Original** (原图) and **Modified** (修改图) select the [shared domain terms](../../../CONTEXT.md#language). They are viewer selections, not captured adjustment versions or the scanner's automatic baseline.
 
-Modified must remain disabled until output exists. The first accepted Preview or Scan must select Modified. Switching must share zoom and pan without rendering, editing adjustments, or adding history.
+Modified MUST remain disabled until output exists. The first accepted Preview or Scan MUST select Modified. Switching MUST share zoom and pan without rendering, editing adjustments, or adding history.
 
-Save must continue to write the retained output, even while Original is selected. Export must render the current accepted adjustments independently. A stale retained Modified image must keep its ordinary stale-result indication.
+Save MUST continue to write the retained output, even while Original is selected. Export MUST render the current accepted adjustments independently. A stale retained Modified image MUST keep its ordinary stale-result indication.
 
-Paper back may remain a separate presentation. The scanner's held automatic-baseline comparison must remain independent of Original/Modified selection.
+Paper back MAY remain a separate presentation. The scanner's held automatic-baseline comparison MUST remain independent of Original/Modified selection.
 
 ## Photograph adjustment records
 
@@ -28,13 +28,15 @@ flowchart LR
     C -->|No| K[Explain; keep current photograph]
 ```
 
-The GUI must offer explicit save and reopen actions. It must disclose excluded pending drafts. Records must exclude application preferences, undo stacks, jobs, and Export drafts.
+The GUI MUST offer explicit save and reopen actions. It MUST disclose excluded pending drafts. Records MUST exclude application preferences, undo stacks, jobs, and Export drafts.
 
-Reopening must reject missing or changed dependencies before replacing the active context. Relocating a source must require explicit selection and identity validation. It must not silently substitute defaults or a same-named different file. Accepted reopening follows the complete-state history boundary in [GUI workflow](../../gui-workflow/spec.md#edit-history).
+Reopening MUST reject missing or changed dependencies before replacing the active context. Relocating a source MUST require explicit selection and identity validation. It MUST NOT silently substitute defaults or a same-named different file.
 
-A failed record write must preserve the previous valid record. Record saving must not modify the source or preset. Closing or replacing unsaved accepted work must offer Save record, Discard, and Cancel; failed saving must stop the transition.
+Accepted reopening follows the complete-state history boundary in [GUI workflow](../../gui-workflow/spec.md#edit-history).
 
-Records must disclose external dependencies. Embedded project packages, cloud synchronization, and crash recovery are outside this target.
+A failed record write MUST preserve the previous valid record. Record saving MUST NOT modify the source or preset. Closing or replacing unsaved accepted work MUST offer Save record, Discard, and Cancel; failed saving MUST stop the transition.
+
+Records MUST disclose external dependencies. Embedded project packages, cloud synchronization, and crash recovery are outside this target.
 
 ## Work list
 
@@ -50,15 +52,19 @@ flowchart LR
     Q --> X[Export queue]
 ```
 
-The GUI must support adding, removing, and moving between entries. Each entry must retain its own adjustments and record-save state. Switching must respect the unsaved-work boundary above. Failed loading must preserve the active photograph. A delayed result from another entry must not replace its output.
+The GUI MUST support adding, removing, and moving between entries. Each entry MUST retain its own adjustments and record-save state. Switching MUST respect the unsaved-work boundary above.
 
-Removing an entry must not delete its source, record, or exported files. Single-photograph editing must not require a work list.
+Failed loading MUST preserve the active photograph. A delayed result from another entry MUST NOT replace its output.
+
+Removing an entry MUST NOT delete its source, record, or exported files. Single-photograph editing MUST NOT require a work list.
 
 ### Copy adjustments
 
-Copy must require explicit scope and destination selection. It must disclose the controls replaced. Existing look, section, feature-profile, and operator-correction scopes remain authoritative.
+Copy MUST require explicit scope and destination selection. It MUST disclose the controls replaced. Existing look, section, feature-profile, and operator-correction scopes remain authoritative.
 
-Copy must preserve destination source interpretation, RAW settings, geometry, source calibration, and delivery settings. Automatic frame setup must use each destination, not copied prepared values. Each destination must commit atomically or remain unchanged, with an individual outcome. Successful application must be reversible in that destination's current history.
+Copy MUST preserve destination source interpretation, RAW settings, geometry, source calibration, and delivery settings. Automatic frame setup MUST use each destination, not copied prepared values. Each destination MUST commit atomically or remain unchanged, with an individual outcome.
+
+Successful application MUST be reversible in that destination's current history.
 
 ### Export queue
 
@@ -72,11 +78,13 @@ stateDiagram-v2
     Running --> Canceled: Cancellation takes effect
 ```
 
-Submission must capture each entry independently of later edits or removal. Pending RAW changes must remain distinct from the accepted decode being exported. Duplicate destinations must be resolved before submission; replacement of existing files must require an explicit choice.
+Submission MUST capture each entry independently of later edits or removal. Pending RAW changes MUST remain distinct from the accepted decode being exported. Duplicate destinations MUST be resolved before submission; replacement of existing files MUST require an explicit choice.
 
-The queue must expose per-entry outcomes and cancellation. Live export operation status stays in the [header](../../gui-workflow/spec.md#labels-and-surfaces), separate from viewer rendering. A failed entry must not stop unrelated work. Canceling remaining work must preserve completed files. [Photo export](../../photo-export/spec.md#publication) owns individual publication guarantees; the batch is not one atomic transaction.
+The queue MUST expose per-entry outcomes and cancellation. Live export operation status stays in the [header](../../gui-workflow/spec.md#labels-and-surfaces), separate from viewer rendering. A failed entry MUST NOT stop unrelated work.
 
-Retry must distinguish repeating the failed submission from submitting current adjustments. Sequential execution is sufficient. Restart recovery and parallel rendering are outside this target.
+Canceling remaining work MUST preserve completed files. [Photo export](../../photo-export/spec.md#publication) owns individual publication guarantees; the batch is not one atomic transaction.
+
+Retry MUST distinguish repeating the failed submission from submitting current adjustments. Sequential execution is sufficient. Restart recovery and parallel rendering are outside this target.
 
 ## Excluded scope
 

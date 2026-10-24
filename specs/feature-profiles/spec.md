@@ -8,17 +8,17 @@ This document owns the feature profile concept, built-in catalog, profile scopes
 
 A **feature profile** is a named, built-in parameter set for one film-chain feature. It resolves only the leaves in its declared scope. It does not select a film profile, print profile, workflow, route, input, scan sensor, calibration state, GUI state, or complete look.
 
-A **feature profile family** has one feature identifier, one profile scope, one validation rule, and one set of named entries. A family may expose `custom` as the state in which the user controls the scoped leaves directly. `custom` is not a built-in parameter set.
+A **feature profile family** has one feature identifier, one profile scope, one validation rule, and one set of named entries. A family MAY expose `custom` as the state in which the user controls the scoped leaves directly. `custom` is not a built-in parameter set.
 
-The application must resolve a feature profile before rendering. It must validate the family, name, scope values, and active parameter combination before changing controls. An invalid selection must leave controls, transient state, and render revision unchanged except for the error status.
+The application MUST resolve a feature profile before rendering. It MUST validate the family, name, scope values, and active parameter combination before changing controls. An invalid selection MUST leave controls, transient state, and render revision unchanged except for the error status.
 
-Applying a feature profile must replace exactly the leaves in its profile scope. It must preserve every other control, including `active`, engine selection, film and print references, workflow, route, seed, and controls outside the profile scope. A profile must not enable or disable its feature as a side effect.
+Applying a feature profile MUST replace exactly the leaves in its profile scope. It MUST preserve every other control, including `active`, engine selection, film and print references, workflow, route, seed, and controls outside the profile scope. A profile MUST NOT enable or disable its feature as a side effect.
 
-A profile selection is an edit to active controls. It must not rewrite a built-in look or section document. A later direct edit may produce a `custom` effective profile; it must not cause the application to reapply the previous named profile silently.
+A profile selection is an edit to active controls. It MUST NOT rewrite a built-in look or section document. A later direct edit MAY produce a `custom` effective profile; it MUST NOT cause the application to reapply the previous named profile silently.
 
-Feature profiles are built-in catalog entries. They are not a second user profile library. A user who wants a reusable custom combination must save the relevant controls as an existing section preset.
+Feature profiles are built-in catalog entries. They are not a second user profile library. A user who wants a reusable custom combination MUST save the relevant controls as an existing section preset.
 
-The GUI and CLI must resolve the same family identifiers, names, scope, validation, and values. A profile selected in either surface must produce the same resolved feature controls at the same precision boundary.
+The GUI and CLI MUST resolve the same family identifiers, names, scope, validation, and values. A profile selected in either surface MUST produce the same resolved feature controls at the same precision boundary.
 
 ## Built-in families
 
@@ -52,9 +52,9 @@ The family retains the existing `v2_profile` identifiers and default. Names are 
 | `65mm250` | 2 | 15 | 30 | 55 | 65 | 65 | 90 |
 | `65mm500` | 3 | 25 | 25 | 55 | 65 | 80 | 100 |
 
-Applying a named Procedural profile must set `v2_profile` to that name and clear optional profile overrides. It must preserve `v2_mode`, `v2_film_type`, `v2_resolution_type`, `v2_timer`, `active`, and `engine`.
+Applying a named Procedural profile MUST set `v2_profile` to that name and clear optional profile overrides. It MUST preserve `v2_mode`, `v2_film_type`, `v2_resolution_type`, `v2_timer`, `active`, and `engine`.
 
-Selecting `custom` preserves current resolved Procedural values and exposes them as explicit custom controls. It must not select an engine or change mode, film type, resolution implementation, or timer.
+Selecting `custom` preserves current resolved Procedural values and exposes them as explicit custom controls. It MUST NOT select an engine or change mode, film type, resolution implementation, or timer.
 
 The catalog values are SpektraFilm values. They do not claim pixel parity with an external product. The algorithm and post-scan boundary remain those defined by [Procedural grain](../film-grain/v2/spec.md).
 
@@ -71,7 +71,7 @@ The Halation family exposes existing stock-class baseline pairs as named feature
 | `cine_weak` | Cine / weak antihalation | `[50, 50, 50]` | `[0.08, 0.02, 0]` |
 | `cine_no` | Cine / no antihalation | `[50, 50, 50]` | `[0.30, 0.10, 0.015]` |
 
-Applying a named Halation profile must replace only the two arrays in the table. It must preserve `active`, scatter controls, source compression, boost and protection controls, bounce controls, and renormalization. A user-selected profile takes precedence over later stock-default reapplication for its explicit leaves.
+Applying a named Halation profile MUST replace only the two arrays in the table. It MUST preserve `active`, scatter controls, source compression, boost and protection controls, bounce controls, and renormalization. A user-selected profile takes precedence over later stock-default reapplication for its explicit leaves.
 
 The catalog exposes existing Halation parameter arrays without claiming a separate measured-width or channel-strength model. The film-chain contract owns source response semantics, and the catalog does not claim measured point-spread functions.
 
@@ -81,31 +81,33 @@ The catalog exposes existing Halation parameter arrays without claiming a separa
 
 ### GUI
 
-Each applicable feature section must provide one profile selector. The selector must list built-in entries in stable order and `custom`. It must not repeat numeric controls owned by the same section.
+Each applicable feature section MUST provide one profile selector. The selector MUST list built-in entries in stable order and `custom`. It MUST NOT repeat numeric controls owned by the same section.
 
-The selector must show `custom` when current scoped values do not equal a built-in entry. It must not store a second persisted identity for Halation. Procedural retains its existing `v2_profile` wire field.
+The selector MUST show `custom` when current scoped values do not equal a built-in entry. It MUST NOT store a second persisted identity for Halation. Procedural retains its existing `v2_profile` wire field.
 
-Selecting an entry must update only its profile scope and mark the feature section as edited. The selector must explain inactive route or engine conditions without clearing stored values.
+Selecting an entry MUST update only its profile scope and mark the feature section as edited. The selector MUST explain inactive route or engine conditions without clearing stored values.
 
 ### CLI
 
-`process` and `process --dry-run` must accept the repeatable option:
+`process` and `process --dry-run` MUST accept the repeatable option:
 
 ```text
 --feature-profile FAMILY=NAME
 ```
 
-`FAMILY` must be `grain.procedural` or `halation`. `NAME` must be a built-in name from this document or `custom`. Malformed assignments, unknown families, and unknown names must fail. The option must not fall back to a parameter path or look preset name.
+`FAMILY` MUST be `grain.procedural` or `halation`. `NAME` MUST be a built-in name from this document or `custom`. Malformed assignments, unknown families, and unknown names MUST fail.
 
-Feature profile options apply in command-line order before `--set` sources. A later selection for the same family replaces the earlier selection. `--set` sources then apply in their existing order and may override the profile's scoped values.
+The option MUST NOT fall back to a parameter path or look preset name.
 
-The dry-run report must include each requested profile with family, name, source, scope, and effective status. CLI and GUI must use the same identifiers and names.
+Feature profile options apply in command-line order before `--set` sources. A later selection for the same family replaces the earlier selection. `--set` sources then apply in their existing order and MAY override the profile's scoped values.
 
-Feature profile selection must not be accepted inside a preset document, sparse parameter file, or `parameters` wrapper. Those carriers contain resolved runtime leaves only.
+The dry-run report MUST include each requested profile with family, name, source, scope, and effective status. CLI and GUI MUST use the same identifiers and names.
+
+Feature profile selection MUST NOT be accepted inside a preset document, sparse parameter file, or `parameters` wrapper. Those carriers contain resolved runtime leaves only.
 
 ## Composition and persistence
 
-Resolution must use this order:
+Resolution MUST use this order:
 
 1. Resolve film and print references and any look or section preset sources.
 2. Apply feature profile selections in their appearance order.
@@ -113,21 +115,21 @@ Resolution must use this order:
 4. Apply explicit workflow, scan-output, and input choices.
 5. Validate composed runtime controls and apply ordinary preview and backend constraints.
 
-A GUI feature-profile action has the same position as step 2 relative to an already applied look and later direct edits. Applying a look after a feature profile may replace look-owned values.
+A GUI feature-profile action has the same position as step 2 relative to an already applied look and later direct edits. Applying a look after a feature profile MAY replace look-owned values.
 
-Feature-profile selection is not serialized as a new top-level or nested field. A saved look or section contains resolved runtime leaves under its existing schema. A document must not require a catalog entry because it stores leaves rather than profile names.
+Feature-profile selection is not serialized as a new top-level or nested field. A saved look or section contains resolved runtime leaves under its existing schema. A document MUST NOT require a catalog entry because it stores leaves rather than profile names.
 
 ## Acceptance
 
 1. Every built-in family and name in this document resolves to the exact scope values in its table. Dye is not part of this catalog.
 2. An unknown family or name fails before render publication and leaves active controls unchanged.
-3. Applying a profile changes only its declared scope. Tests must retain sentinels in out-of-scope controls, including `active`, route, workflow, engine, and seed.
+3. Applying a profile changes only its declared scope. Tests MUST retain sentinels in out-of-scope controls, including `active`, route, workflow, engine, and seed.
 4. A direct Halation scope edit reports `custom` and preserves existing Procedural profile behavior.
 5. CLI and GUI selection resolve identical values. A profile run and equivalent direct-leaf `--set` run produce identical output for the same executable, backend, seed, and input.
 6. Profile selection does not create a second preset library or add profile references or external-product fields to carriers.
 7. Existing look presets, section presets, sparse parameter files, GUI state, Procedural profile values, Halation stock defaults, CPU execution, GPU execution, and inactive-value behavior remain compatible when no feature profile is selected.
-8. Catalog changes require an explicit product revision and must not silently reinterpret stored resolved values.
+8. Catalog changes require an explicit product revision and MUST NOT silently reinterpret stored resolved values.
 
 ## Reference basis
 
-The Procedural profile relationships are informed by public research notes. SpektraFilm must keep its own parameter names, execution contracts, attribution, and acceptance evidence. Research observations do not authorize copying proprietary assets or claiming parity.
+The Procedural profile relationships are informed by public research notes. SpektraFilm MUST keep its own parameter names, execution contracts, attribution, and acceptance evidence. Research observations do not authorize copying proprietary assets or claiming parity.

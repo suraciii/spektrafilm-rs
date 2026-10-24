@@ -6,7 +6,7 @@ Profile fitting lives in `spektrafilm-core::fit` and is gated on the `precision-
 
 The module owns: the chart layout and patch tables, chart image assembly and patch sampling, the objective, the optimizer, the metrics, the report, and the forward evaluation over the calibrated pipeline.
 
-The module reuses, and must not duplicate:
+The module reuses, and MUST NOT duplicate:
 
 - `runtime::Runtime` and the calibrated `pipeline` for the forward evaluation.
 - `presets` for preset resolution into `RuntimeParams`.
@@ -15,7 +15,7 @@ The module reuses, and must not duplicate:
 
 ## Ownership
 
-The fitted surface belongs to the film profile; the fitted tone belongs to the look. The command writes a profile copy and a sparse parameter overlay. It must not write into a preset document, because a preset library edit is a user action with its own rules.
+The fitted surface belongs to the film profile; the fitted tone belongs to the look. The command writes a profile copy and a sparse parameter overlay. It MUST NOT write into a preset document, because a preset library edit is a user action with its own rules.
 
 ## Forward evaluation
 
@@ -25,7 +25,7 @@ One evaluation renders the assembled chart image through a calibrated runtime an
 - A runtime is constructed per candidate parameter vector, because a surface change invalidates the spectral calibration. The runtime is built in memory from the resolved film and print profiles; no temporary data directory is written.
 - The evaluation runs on the CPU backend at the crate scalar precision, which is f64 in this feature.
 - The evaluation renders the linear domain: it clears `io.output_cctf_encoding`, because the reference patch table is linear sRGB. The negative-conversion stage would otherwise apply the destination transfer curve inside the same buffer.
-- Sampling reads a centered box per patch and must not include gap pixels.
+- Sampling reads a centered box per patch and MUST NOT include gap pixels.
 
 ## Optimizer
 
@@ -33,8 +33,8 @@ The optimizer is a bounded least-squares solver over the residual vector of the 
 
 - Finite-difference Jacobian, forward differences, step `0.05` for surface coefficients.
 - Trust-region behavior over a bounded parameter box: surface coefficients in `[-40, 40]`.
-- At most 15 accepted parameter vectors; the iteration count is the number of accepted vectors. The command must report the iteration and evaluation counts.
-- Finite differences are independent and may run in parallel on the rayon pool. Parallelism must not change the result.
+- At most 15 accepted parameter vectors; the iteration count is the number of accepted vectors. The command MUST report the iteration and evaluation counts.
+- Finite differences are independent and MAY run in parallel on the rayon pool. Parallelism MUST NOT change the result.
 
 ## Cross validation
 
@@ -48,7 +48,7 @@ The report records per fold the training median, the held-out median, and the he
 
 ## Determinism
 
-The chain must be deterministic for a fixed candidate vector: halation and grain are off, all other stages are deterministic, and the CPU backend is used. The optimizer state is a pure function of the objective. Therefore identical inputs produce identical fitted values, and the report may record exact values.
+The chain MUST be deterministic for a fixed candidate vector: halation and grain are off, all other stages are deterministic, and the CPU backend is used. The optimizer state is a pure function of the objective. Therefore identical inputs produce identical fitted values, and the report MAY record exact values.
 
 ## Failure handling
 

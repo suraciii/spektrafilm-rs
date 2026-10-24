@@ -29,7 +29,7 @@ there is no optional process capture flag. Existing image and real-negative
 
 A film source has already completed source interpretation, metering, geometry, film
 exposure, film development, and film-domain effects. A print source has also completed
-print exposure and development. A continuation MUST NOT repeat those operations or
+print exposure and development. A continuation must not repeat those operations or
 their stochastic effects. Conflicting overrides of completed controls fail; downstream
 controls remain editable, and an omitted seed inherits the source seed. It loads only
 the material dependencies consumed by its remaining operations: a film scan needs no

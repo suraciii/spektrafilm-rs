@@ -10,13 +10,13 @@ The implementation target is a benchmark-owned command with this form:
 spektrafilm-bench report photos --manifest FILE --out DIRECTORY
 ```
 
-The command name is a product boundary. It must not be registered as a `spektrafilm-lab` endpoint. The benchmark may provide the executable entry point in the implementation work that follows.
+The command name is a product boundary. It MUST NOT be registered as a `spektrafilm-lab` endpoint. The benchmark MAY provide the executable entry point in the implementation work that follows.
 
 ## Purpose
 
 Photo Report turns one authored photo manifest into one offline report page. It helps a user or an agent inspect photos and explicitly declared regions of interest (ROIs). It does not measure, score, rank, or select a preferred photo.
 
-The report must work when the original photo files and the renderer are unavailable after generation. It must retain source identity and the declarations needed to understand each displayed copy.
+The report MUST work when the original photo files and the renderer are unavailable after generation. It MUST retain source identity and the declarations needed to understand each displayed copy.
 
 ## Terms
 
@@ -32,7 +32,7 @@ A **photo report** is the generated offline page and its local artifacts. It is 
 
 ## Input document
 
-The photo manifest must be UTF-8 JSON with `schema_version: 1` and this shape:
+The photo manifest MUST be UTF-8 JSON with `schema_version: 1` and this shape:
 
 ```json
 {
@@ -75,22 +75,28 @@ The photo manifest must be UTF-8 JSON with `schema_version: 1` and this shape:
 }
 ```
 
-The manifest must contain:
+The manifest MUST contain:
 
 - `schema_version`, equal to `1`;
 - a nonempty `title`;
 - `photos`, containing at least one photo;
 - for every photo, a unique `id`, a relative `path`, and a nonempty `label`.
 
-`description` and `note` are optional plain-text fields. They must not be interpreted as HTML, CSS, JavaScript, Markdown, or a path.
+`description` and `note` are optional plain-text fields. They MUST NOT be interpreted as HTML, CSS, JavaScript, Markdown, or a path.
 
-A photo `path` must be relative to the manifest file. It must not be absolute and must not escape the manifest directory through `..` components. It must identify a regular supported raster file. The manifest must not use a file extension to infer color interpretation. `color_space` and `cctf_decoding` are optional explicit declarations. If omitted, they select the fixed display default `sRGB` with `cctf_decoding: true`; the generated report must show that default. A non-sRGB or linear source must declare its interpretation explicitly.
+A photo `path` MUST be relative to the manifest file. It MUST NOT be absolute and MUST NOT escape the manifest directory through `..` components. It MUST identify a regular supported raster file.
 
-The supported explicit `color_space` values are `sRGB`, `Display P3`, `DCI-P3`, `Adobe RGB (1998)`, `ProPhoto RGB`, `ITU-R BT.2020`, `ACEScg`, and `ACES2065-1`. `cctf_decoding` must be a boolean. The generator must pass only the manifest declaration to image decoding and must not consume a neighboring sidecar.
+The manifest MUST NOT use a file extension to infer color interpretation. `color_space` and `cctf_decoding` are optional explicit declarations. If omitted, they select the fixed display default `sRGB` with `cctf_decoding: true`; the generated report MUST show that default.
 
-A photo ROI is optional. Each ROI must contain a unique `id`, a nonempty `label`, and `rect` with four nonnegative integers in `[x, y, width, height]` form. Width and height must be positive. An ROI must lie fully within the decoded photo. ROI IDs are scoped to their photo.
+A non-sRGB or linear source MUST declare its interpretation explicitly.
 
-The manifest must reject unknown authored fields, duplicate JSON keys, duplicate photo IDs, duplicate ROI IDs, unsafe paths, unsupported color declarations, and invalid ROI bounds.
+The supported explicit `color_space` values are `sRGB`, `Display P3`, `DCI-P3`, `Adobe RGB (1998)`, `ProPhoto RGB`, `ITU-R BT.2020`, `ACEScg`, and `ACES2065-1`. `cctf_decoding` MUST be a boolean. The generator MUST pass only the manifest declaration to image decoding and MUST NOT consume a neighboring sidecar.
+
+A photo ROI is optional. Each ROI MUST contain a unique `id`, a nonempty `label`, and `rect` with four nonnegative integers in `[x, y, width, height]` form. Width and height MUST be positive.
+
+An ROI MUST lie fully within the decoded photo. ROI IDs are scoped to their photo.
+
+The manifest MUST reject unknown authored fields, duplicate JSON keys, duplicate photo IDs, duplicate ROI IDs, unsafe paths, unsupported color declarations, and invalid ROI bounds.
 
 
 ## Selecting comparison pairs
@@ -103,7 +109,7 @@ The number of photos selects the report mode:
 | two photos | Generate one comparison pair in manifest order. Do not require a `comparisons` field. |
 | three or more photos | Require a nonempty `comparisons` array and generate only the declared pairs. |
 
-For three or more photos, each comparison entry must contain two different photo IDs:
+For three or more photos, each comparison entry MUST contain two different photo IDs:
 
 ```json
 {
@@ -114,39 +120,39 @@ For three or more photos, each comparison entry must contain two different photo
 }
 ```
 
-A comparison entry may contain an optional unique `id`, `label`, and plain-text `note`. If `id` is omitted, the generator must derive a stable ID from the ordered pair without changing the pair's order. The generator must reject duplicate comparison identities, unknown photo IDs, and self-comparisons.
+A comparison entry MAY contain an optional unique `id`, `label`, and plain-text `note`. If `id` is omitted, the generator MUST derive a stable ID from the ordered pair without changing the pair's order. The generator MUST reject duplicate comparison identities, unknown photo IDs, and self-comparisons.
 
-The generator must not create undeclared pairs. It must not generate every combination for three or more photos. A report with ten photos must contain only the pairs in `comparisons`, not forty-five inferred pairs.
+The generator MUST NOT create undeclared pairs. It MUST NOT generate every combination for three or more photos. A report with ten photos MUST contain only the pairs in `comparisons`, not forty-five inferred pairs.
 
-A manifest with one or two photos must not provide `comparisons`. This keeps the small input form unambiguous. A later contract revision may add explicit pair labels, but it must not change the pair-selection rule without changing the schema version.
+A manifest with one or two photos MUST NOT provide `comparisons`. This keeps the small input form unambiguous. A later contract revision MAY add explicit pair labels, but it MUST NOT change the pair-selection rule without changing the schema version.
 
-The order of `photos` and `comparisons` is meaningful and must be preserved in the report. The first pair is the initial pair for a multi-photo report.
+The order of `photos` and `comparisons` is meaningful and MUST be preserved in the report. The first pair is the initial pair for a multi-photo report.
 
 ## ROI behavior
 
-A single-photo report must show the full photo. If the photo declares ROIs, it must also show a selectable ROI list and the selected ROI crop. A ROI is a detail view, not a comparison.
+A single-photo report MUST show the full photo. If the photo declares ROIs, it MUST also show a selectable ROI list and the selected ROI crop. A ROI is a detail view, not a comparison.
 
-A two-photo or multi-pair report must show the full-image comparison for the selected pair. For that pair, the report must resolve the union of the two photos' ROI IDs in deterministic input order:
+A two-photo or multi-pair report MUST show the full-image comparison for the selected pair. For that pair, the report MUST resolve the union of the two photos' ROI IDs in deterministic input order:
 
-- an ID present on both photos is a shared ROI and must have a two-sided ROI view;
+- an ID present on both photos is a shared ROI and MUST have a two-sided ROI view;
 - an ID present on only one photo is a one-sided ROI view with an explicit `unavailable` state for the other side;
 - an ID present on neither photo cannot appear.
 
-The report must not match ROIs by label, rectangle, size, position, filename, or visual similarity. Same-named ROI IDs are an explicit author declaration of correspondence for that pair only.
+The report MUST NOT match ROIs by label, rectangle, size, position, filename, or visual similarity. Same-named ROI IDs are an explicit author declaration of correspondence for that pair only.
 
-A shared ROI may use different rectangles and dimensions on the two photos. The report must show each rectangle, its native dimensions, and its photo identity. It must not resize, crop, pad, translate, warp, register, exposure-match, or color-match either photo to make the rectangles coincide.
+A shared ROI MAY use different rectangles and dimensions on the two photos. The report MUST show each rectangle, its native dimensions, and its photo identity. It MUST NOT resize, crop, pad, translate, warp, register, exposure-match, or color-match either photo to make the rectangles coincide.
 
-If the two rectangles cannot support a justified overlay, the report must use side-by-side or A/B alternation. It must not show a split or aligned overlay by default. The first implementation must not provide automatic registration.
+If the two rectangles cannot support a justified overlay, the report MUST use side-by-side or A/B alternation. It MUST NOT show a split or aligned overlay by default. The first implementation MUST NOT provide automatic registration.
 
-The report must keep the full-image view available when a ROI is selected. Selecting one ROI must not hide other photos, pairs, or ROIs.
+The report MUST keep the full-image view available when a ROI is selected. Selecting one ROI MUST NOT hide other photos, pairs, or ROIs.
 
 ## Report page behavior
 
-The generated page must adapt its controls to the selected mode.
+The generated page MUST adapt its controls to the selected mode.
 
 ### Single-photo mode
 
-The page must show:
+The page MUST show:
 
 - the title and overall description;
 - the one photo's label and note;
@@ -156,11 +162,11 @@ The page must show:
 - the selected ROI crop and its full-photo location;
 - source path, SHA-256, decoded dimensions, color declaration, and display declaration.
 
-The page must not show left/right selectors, swap controls, comparison controls, or A/B language in this mode.
+The page MUST NOT show left/right selectors, swap controls, comparison controls, or A/B language in this mode.
 
 ### Two-photo mode
 
-The page must show:
+The page MUST show:
 
 - the title and overall description;
 - the two photo labels and notes;
@@ -171,11 +177,11 @@ The page must show:
 - the selected ROI view when a ROI exists;
 - source and display provenance for both photos.
 
-The page must keep the two-photo pair fixed. It may provide a swap control, but it must not provide selectors that can create another pair. The labels must not call either side `baseline`, `candidate`, or `reference` unless those words are part of the author's plain-text label.
+The page MUST keep the two-photo pair fixed. It MAY provide a swap control, but it MUST NOT provide selectors that can create another pair. The labels MUST NOT call either side `baseline`, `candidate`, or `reference` unless those words are part of the author's plain-text label.
 
 ### Multi-photo mode
 
-The page must show:
+The page MUST show:
 
 - a selector for the declared comparison pairs;
 - the selected pair's two photos and notes;
@@ -183,13 +189,13 @@ The page must show:
 - the selected pair's shared and one-sided ROIs;
 - source and display provenance for all photos reachable from the manifest.
 
-Changing the pair must replace the complete pair view, including labels, ROI choices, coordinates, notes, and unavailable states. The page must not retain stale ROI data from the previous pair.
+Changing the pair MUST replace the complete pair view, including labels, ROI choices, coordinates, notes, and unavailable states. The page MUST NOT retain stale ROI data from the previous pair.
 
-The page must not create a new pair in the browser. It must not select an undeclared pair by URL, filename, array position, or UI fallback.
+The page MUST NOT create a new pair in the browser. It MUST NOT select an undeclared pair by URL, filename, array position, or UI fallback.
 
 ## Visual evidence boundary
 
-Photo Report is visual-only. It must not calculate or display:
+Photo Report is visual-only. It MUST NOT calculate or display:
 
 - `delta_e00`, RMSE, FLIP, MTF, grain, halation, or any other metric;
 - a quality score, acceptance status, ranking, or recommendation;
@@ -198,11 +204,11 @@ Photo Report is visual-only. It must not calculate or display:
 - image registration or inferred coordinate mapping;
 - face detection, chart detection, tracking, or automatic ROI discovery.
 
-The report may display authored notes and source declarations. It must label display copies separately from source photos. A displayed image is evidence for visual inspection, not a measured master.
+The report MAY display authored notes and source declarations. It MUST label display copies separately from source photos. A displayed image is evidence for visual inspection, not a measured master.
 
 ## Output
 
-Successful generation must create a new output directory containing at least:
+Successful generation MUST create a new output directory containing at least:
 
 ```text
 REPORT/
@@ -215,13 +221,15 @@ REPORT/
     └── ...
 ```
 
-The user opens `REPORT/index.html`. The complete output directory is the shareable artifact. The page must work when opened directly from the local filesystem and when served as static files. It must not make network requests or require the original source directory.
+The user opens `REPORT/index.html`. The complete output directory is the shareable artifact. The page MUST work when opened directly from the local filesystem and when served as static files.
 
-The generator must create one display image per input photo, not one image per comparison pair. ROI views must use the retained display image and declared rectangle metadata; the generator must not duplicate a photo for each pair.
+It MUST NOT make network requests or require the original source directory.
 
-Display copies must use the existing display conversion boundary and a lossless 16-bit RGB sRGB PNG encoding. The report must retain source path, source SHA-256, decoded dimensions, explicit color declaration, and display conversion metadata. Display resizing for fit-to-container is a browser view operation and must not change the source or ROI coordinates.
+The generator MUST create one display image per input photo, not one image per comparison pair. ROI views MUST use the retained display image and declared rectangle metadata; the generator MUST NOT duplicate a photo for each pair.
 
-`report.json` must be a terminal machine-readable manifest. It must identify:
+Display copies MUST use the existing display conversion boundary and a lossless 16-bit RGB sRGB PNG encoding. The report MUST retain source path, source SHA-256, decoded dimensions, explicit color declaration, and display conversion metadata. Display resizing for fit-to-container is a browser view operation and MUST NOT change the source or ROI coordinates.
+
+`report.json` MUST be a terminal machine-readable manifest. It MUST identify:
 
 - `schema_version`;
 - `command` and `source`;
@@ -233,19 +241,19 @@ Display copies must use the existing display conversion boundary and a lossless 
 - output artifacts and their SHA-256 values;
 - display and source provenance.
 
-An unavailable one-sided ROI must remain an object with a reason. It must not be omitted or serialized as an empty rectangle.
+An unavailable one-sided ROI MUST remain an object with a reason. It MUST NOT be omitted or serialized as an empty rectangle.
 
 ## Offline navigation and accessibility
 
-The page must keep its current photo, pair, and ROI in a URL fragment using stable authored identities. It must restore that state after reload without a network request. An unknown or malformed location must show an accessible error and a recovery action; it must not silently display an unrelated photo or pair.
+The page MUST keep its current photo, pair, and ROI in a URL fragment using stable authored identities. It MUST restore that state after reload without a network request. An unknown or malformed location MUST show an accessible error and a recovery action; it MUST NOT silently display an unrelated photo or pair.
 
-The page must expose all photo, pair, and ROI selectors to keyboard users. All image controls must have accessible labels. Narrow layouts must not require horizontal page scrolling to access a photo or ROI.
+The page MUST expose all photo, pair, and ROI selectors to keyboard users. All image controls MUST have accessible labels. Narrow layouts MUST NOT require horizontal page scrolling to access a photo or ROI.
 
 ## Machine output and status
 
-The command must emit one JSON result on stdout after successful parsing. Progress, diagnostics, and human-readable errors must use stderr. It must return status `2` for argument syntax errors, status `1` for validation, decoding, conversion, publication, or source-integrity failures, and status `0` for successful publication.
+The command MUST emit one JSON result on stdout after successful parsing. Progress, diagnostics, and human-readable errors MUST use stderr. It MUST return status `2` for argument syntax errors, status `1` for validation, decoding, conversion, publication, or source-integrity failures, and status `0` for successful publication.
 
-A successful result must identify `schema_version`, `command`, `source`, `mode`, `execution_status`, `artifact`, and `manifest`. A failure must identify a stable error code and the failed input or publication boundary. An existing output directory must be rejected without modifying it.
+A successful result MUST identify `schema_version`, `command`, `source`, `mode`, `execution_status`, `artifact`, and `manifest`. A failure MUST identify a stable error code and the failed input or publication boundary. An existing output directory MUST be rejected without modifying it.
 
 ## Product acceptance scenarios
 
