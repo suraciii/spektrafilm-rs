@@ -2,7 +2,9 @@ use super::*;
 use lcms2::{Intent, PixelFormat, Profile, Tag, TagSignature, ToneCurve, Transform};
 
 fn samples()->Vec<[f32;3]>{
-    let mut out=vec![[0.,0.,0.],[1.,1.,1.],[-0.1,0.5,1.1]];
+    let mut out=vec![[0.,0.,0.],[1.,1.,1.],[-0.1,0.5,1.1],
+        [f32::NAN,0.5,1.], [0.25,f32::NAN,0.75], [1.,0.,f32::NAN],
+        [f32::NEG_INFINITY,0.5,f32::INFINITY]];
     for byte in 0..256u32{
         let v=byte as f32/255.;
         // Both neighboring representable floats expose the viewer's truncation

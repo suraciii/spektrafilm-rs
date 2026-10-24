@@ -933,18 +933,63 @@ mod tests {
             3, 2,
         ))));
         let source = app.image.as_ref().unwrap().clone();
-        app.image_path = Some(directory.path().join("missing.png"));
+        let output = Arc::new(ImageBuf::new(3, 2));
+        app.output_image = Some(output.clone());
+        let accepted_state = app.current_state().unwrap().sections;
+        app.image_path = Some(directory.path().join("missing.KDC"));
+        let digest = "a".repeat(64);
+        app.photograph.source_digest = Some(digest.clone());
+        app.raw_lens_info = Some("accepted lens metadata".into());
         let params = app.params.clone();
         let revision = app.parameter_revision;
         let mut state = app.current_state().unwrap();
         state.sections["camera"]["exposure_compensation_ev"] = 2.0.into();
-        assert!(app.apply_state(state).is_err());
+        let committed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let completion = committed.clone();
+        app.apply_state_with_source(state, move |_| completion.set(true))
+            .unwrap();
+        assert_eq!(app.params, params, "queuing must not commit controls");
+        assert!(app.can_undo(), "queuing must not reset history");
+        crate::headless::await_app_input(&mut app, &ctx);
+        assert!(!committed.get(), "failure must not publish success");
         assert!(source.same_source(app.image.as_ref().unwrap()));
         assert_eq!(app.params, params);
         assert_eq!(app.parameter_revision, revision);
+        assert_eq!(app.current_state().unwrap().sections, accepted_state);
+        assert!(Arc::ptr_eq(app.output_image.as_ref().unwrap(), &output));
+        assert_eq!(
+            app.photograph.source_digest.as_deref(),
+            Some(digest.as_str())
+        );
+        assert_eq!(app.raw_lens_info.as_deref(), Some("accepted lens metadata"));
         assert!(app.can_undo());
-        app.image_path = None;
-        app.apply_state(app.current_state().unwrap()).unwrap();
+        // A deleted RGB file must not prevent applying state to accepted samples.
+        app.image_path = Some(directory.path().join("missing.png"));
+        let paper = app
+            .papers
+            .iter()
+            .find(|paper| paper.stock != app.print_name)
+            .unwrap()
+            .stock
+            .clone();
+        let print = profile::load_profile_by_name(&app.data_dir, &paper).unwrap();
+        let mut candidate = app.current_state().unwrap();
+        candidate.sections["simulation"]["print_paper"] = paper.clone().into();
+        let completion = committed.clone();
+        app.apply_state_with_source(candidate, move |_| completion.set(true))
+            .unwrap();
+        assert!(!committed.get(), "success awaits prepared source and view");
+        crate::headless::await_app_input(&mut app, &ctx);
+        assert!(committed.get());
+        assert_eq!(app.print_name, paper);
+        assert_eq!(app.print_dev_times, print.data.development_time);
+        assert!(app.output_image.is_none());
+        assert!(source.same_source(app.image.as_ref().unwrap()));
+        assert_eq!(
+            app.photograph.source_digest.as_deref(),
+            Some(digest.as_str())
+        );
+        assert_eq!(app.raw_lens_info.as_deref(), Some("accepted lens metadata"));
         assert!(!app.can_undo());
         assert!(!app.can_redo());
     }
@@ -1030,6 +1075,7 @@ mod tests {
         assert_eq!(app.input_rotation, 0);
         assert!(app.input_epoch > epoch);
         assert!(app.redo_adjustment());
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.input_rotation, 1);
         assert_eq!(
             (

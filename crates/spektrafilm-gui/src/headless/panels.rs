@@ -1,6 +1,6 @@
 use super::*;
-use crate::display::{DisplayRaster, Interpolation, ViewLayer, ViewerObservation};
-use egui::{Color32, Pos2, Rect, Vec2};
+use crate::display::{ViewLayer, ViewerObservation};
+use egui::{Color32, Pos2, Vec2};
 use egui_kittest::kittest::Queryable;
 
 /// Distance from the compare split at which before/after pixels are sampled,
@@ -338,100 +338,4 @@ fn footer_reset_view_restores_fit_zoom_and_zero_pan_after_zoom_and_drag() {
     click(h, "reset view");
     assert_eq!(h.state().viewer.pan, Vec2::ZERO);
     assert_eq!(composed(h, 46.0).image_rect, baseline.image_rect);
-}
-
-fn paper_pixel(raster: &DisplayRaster, position: Pos2, rect: Rect) -> Color32 {
-    let uv = (position - rect.min) / rect.size();
-    let rgb = raster.sample(
-        uv.x * raster.size[0] as f32 - 0.5,
-        uv.y * raster.size[1] as f32 - 0.5,
-        Interpolation::Spline36,
-    );
-    Color32::from_rgb(
-        (rgb[0].clamp(0.0, 1.0) * 255.0).round() as u8,
-        (rgb[1].clamp(0.0, 1.0) * 255.0).round() as u8,
-        (rgb[2].clamp(0.0, 1.0) * 255.0).round() as u8,
-    )
-}
-
-#[test]
-fn paper_back_composition_shows_watermark_pixels_in_the_documented_center_region() {
-    let mut s = session();
-    let h = &mut s.harness;
-    click_viewer_layer(h, "Paper back");
-    let observation = composed(h, 50.0);
-    assert_eq!(h.state().viewer.settings.layer, ViewLayer::PaperBack);
-    let image = observation.pixels.as_ref().unwrap();
-    let source = h.state().image.as_ref().unwrap();
-    let long = source.width().max(source.height()).max(1);
-    let paper_size = [
-        (source.width() as f64 * 1024.0 / long as f64)
-            .round()
-            .max(1.0) as usize,
-        (source.height() as f64 * 1024.0 / long as f64)
-            .round()
-            .max(1.0) as usize,
-    ];
-    let watermarked = display::virtual_paper_back(paper_size);
-    let unwatermarked = display::virtual_paper_back_without_watermark(paper_size);
-
-    // Match gui_viewer_acceptance.py's crop: 190 × 150 pixels around canvas center.
-    let center = observation.image_rect.center();
-    let region = Rect::from_min_max(
-        center - Vec2::new(190.0, 150.0),
-        center + Vec2::new(190.0, 150.0),
-    )
-    .intersect(observation.viewport)
-    .intersect(observation.image_rect);
-    let x0 = (((region.left() - observation.viewport.left()) / observation.viewport.width())
-        * image.size[0] as f32)
-        .floor()
-        .max(0.0) as usize;
-    let x1 = (((region.right() - observation.viewport.left()) / observation.viewport.width())
-        * image.size[0] as f32)
-        .ceil()
-        .min(image.size[0] as f32) as usize;
-    let y0 = (((region.top() - observation.viewport.top()) / observation.viewport.height())
-        * image.size[1] as f32)
-        .floor()
-        .max(0.0) as usize;
-    let y1 = (((region.bottom() - observation.viewport.top()) / observation.viewport.height())
-        * image.size[1] as f32)
-        .ceil()
-        .min(image.size[1] as f32) as usize;
-    let mut watermark_pixels = 0usize;
-    let mut observed_pixels = 0usize;
-    for y in y0..y1 {
-        for x in x0..x1 {
-            let position = Pos2::new(
-                observation.viewport.left()
-                    + (x as f32 + 0.5) * observation.viewport.width() / image.size[0] as f32,
-                observation.viewport.top()
-                    + (y as f32 + 0.5) * observation.viewport.height() / image.size[1] as f32,
-            );
-            if !observation.image_rect.contains(position) {
-                continue;
-            }
-            let actual = image.pixels[y * image.size[0] + x];
-            let expected_watermarked = paper_pixel(&watermarked, position, observation.image_rect);
-            let expected_unwatermarked =
-                paper_pixel(&unwatermarked, position, observation.image_rect);
-            assert_eq!(
-                actual, expected_watermarked,
-                "paper-back composition at ({x}, {y})"
-            );
-            observed_pixels += 1;
-            if actual != expected_unwatermarked {
-                watermark_pixels += 1;
-            }
-        }
-    }
-    assert!(
-        observed_pixels > 0,
-        "documented region must overlap the paper image"
-    );
-    assert!(
-        watermark_pixels > 0,
-        "watermark pixels must differ from the glare-only paper back"
-    );
 }

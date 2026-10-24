@@ -3,8 +3,10 @@ use crate::app::Message;
 use crate::*;
 use record::{PhotographRecord, PhotographSettings};
 
+pub(crate) mod preparation;
 pub(crate) mod record;
 pub(crate) mod worklist;
+use preparation::PhotoPreparation;
 
 #[cfg(test)]
 mod tests;
@@ -77,15 +79,6 @@ impl App {
         Ok(settings)
     }
 
-    pub(crate) fn mark_photograph_baseline(&mut self) {
-        self.photograph.baseline = self.capture_photograph_settings().ok();
-        self.photograph.record_path = None;
-        self.photograph.source_digest = self
-            .image_path
-            .as_deref()
-            .and_then(|path| Self::accepted_source_digest(path).ok());
-    }
-
     pub(crate) fn photograph_has_unsaved_changes(&self) -> bool {
         if self.image.is_none() {
             return false;
@@ -96,16 +89,15 @@ impl App {
         self.accepted_photograph_differs(b)
     }
 
-    pub(crate) fn prepare_photo_context(
+    pub(crate) fn photo_preparation(
         &self,
         path: &Path,
         settings: Option<PhotographSettings>,
-    ) -> Result<PhotoContext> {
+    ) -> Result<PhotoPreparation> {
         let mut settings = match settings {
             Some(s) => s,
             None => self.capture_photograph_settings()?,
         };
-        let source_digest = Self::accepted_source_digest(path)?;
         settings
             .params
             .restore_render_preparation_state(&settings.preparation);
@@ -131,75 +123,11 @@ impl App {
             &extras,
         )?;
         projected.runtime_params()?;
-        let (image, metadata, lens_info, lens_model_identity) = if image_io::is_raw(path) {
-            let raw = &settings.raw;
-            let options = spektrafilm_raw::RawOptions {
-                white_balance: match raw["white_balance"].as_str().unwrap_or("as_shot") {
-                    "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
-                    "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
-                    "custom" => spektrafilm_raw::WhiteBalance::Custom,
-                    _ => spektrafilm_raw::WhiteBalance::AsShot,
-                },
-                temperature: raw["temperature"].as_f64(),
-                tint: raw["tint"].as_f64(),
-                lens_correction: raw["lens_correction"].as_bool().unwrap_or(false),
-            };
-            if self.backend.is_gpu() {
-                let loaded = spektrafilm_raw::load_retained_with_backend(
-                    path,
-                    &options,
-                    self.backend.as_ref(),
-                )
-                .map_err(anyhow::Error::msg)?;
-                (
-                    crate::render::InputImage::Device(loaded.image),
-                    image_io::read_metadata(path),
-                    Some(loaded.lens_info),
-                    loaded.lens_model_identity,
-                )
-            } else {
-                let loaded = spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
-                (
-                    crate::render::InputImage::Host(Arc::new(loaded.image)),
-                    image_io::read_metadata(path),
-                    Some(loaded.lens_info),
-                    loaded.lens_model_identity,
-                )
-            }
-        } else {
-            let loaded = image_io::load(path)?;
-            (
-                crate::render::InputImage::Host(Arc::new(loaded.image)),
-                loaded.metadata,
-                None,
-                None,
-            )
-        };
-        anyhow::ensure!(
-            source_digest == Self::accepted_source_digest(path)?,
-            Message::new("photo.error.source_changed")
-        );
-        let history =
-            crate::app::history::AdjustmentHistory::from_photograph(&settings, &film, &print);
-        let baseline = Some(settings.clone());
-        let raw_draft = settings.raw.clone();
-        Ok(PhotoContext {
-            settings,
+        Ok(PhotoPreparation {
             path: path.to_path_buf(),
-            image,
-            metadata,
-            lens_info,
-            lens_model_identity,
-            history,
-            baseline,
-            record_path: None,
-            source_digest,
-            raw_draft,
-            numeric_drafts: Default::default(),
-            film_reference_illuminant: film.info.reference_illuminant.clone(),
-            film_medium: scan_medium(&film),
-            film_dev_times: film.data.development_time,
-            print_dev_times: print.data.development_time,
+            settings,
+            film,
+            print,
         })
     }
 
@@ -256,7 +184,11 @@ impl App {
         })
     }
 
-    pub(crate) fn install_photo_context(&mut self, context: PhotoContext) {
+    pub(crate) fn install_photo_context(
+        &mut self,
+        context: PhotoContext,
+        view: crate::input_worker::InputView,
+    ) {
         let PhotoContext {
             mut settings,
             path,
@@ -335,7 +267,7 @@ impl App {
         self.full_scan_requested = false;
         self.dirty_since = Some(Instant::now());
         self.search_index.reset();
-        self.refresh_input_viewer();
+        self.publish_input_viewer(view.oriented, view.raster);
     }
 
     pub(crate) fn pick_work_files(&mut self) -> Option<Vec<PathBuf>> {
@@ -357,15 +289,66 @@ impl App {
             settings.params.io.input_color_space = "ACES2065-1".into();
             settings.params.io.input_cctf_decoding = false;
         }
-        let context = self.prepare_photo_context(path, Some(settings))?;
-        self.retain_active_work_context()?;
-        self.install_photo_context(context);
-        self.photograph.work_list.detach_active();
-        self.status = Message::new("photo.opened").arg("path", path.display());
-        Ok(())
+        let preparation = self.photo_preparation(path, Some(settings))?;
+        self.queue_photograph(preparation, None)
+    }
+
+    fn queue_photograph(
+        &mut self,
+        preparation: PhotoPreparation,
+        record: Option<(PathBuf, PhotographRecord)>,
+    ) -> Result<()> {
+        let outgoing = self.stage_outgoing_work()?;
+        let mut inputs = vec![preparation.input(Some(self.params.settings.preview_max_size))];
+        if let Some(preparation) = &outgoing {
+            inputs.push(preparation.input(None));
+        }
+        let data_dir = self.data_dir.clone();
+        let source = preparation.path.clone();
+        let validation_record = record.as_ref().map(|(_, record)| record.clone());
+        self.queue_input_command(
+            inputs,
+            Some(Box::new(move |_, prepared| {
+                if let Some(record) = validation_record {
+                    record.validate(Some(&source), &data_dir)?;
+                    record
+                        .validate_accepted_lens_model(prepared[0].lens_model_identity.as_deref())?;
+                    anyhow::ensure!(
+                        prepared[0].digest.as_deref() == Some(record.source.sha256.as_str()),
+                        Message::new("photo.error.source_changed")
+                    );
+                }
+                Ok(())
+            })),
+            move |app, mut prepared| {
+                let loaded = prepared.remove(0);
+                let (mut context, view) = preparation.finish(loaded);
+                app.validate_photo_context(&context)?;
+                let restored = outgoing.map(|outgoing| outgoing.finish(prepared.remove(0)).0);
+                app.retain_prepared_work_context(restored)?;
+                let (key, path) = if let Some((path, _)) = record {
+                    context.record_path = Some(path.clone());
+                    app.photograph.relocation = None;
+                    ("photo.record.reopened", path)
+                } else {
+                    ("photo.opened", context.path.clone())
+                };
+                app.install_photo_context(
+                    context,
+                    view.expect("photograph request prepared its view"),
+                );
+                app.photograph.work_list.detach_active();
+                app.status = Message::new(key).arg("path", path.display());
+                Ok(())
+            },
+        )
     }
 
     pub(crate) fn request_photo_action(&mut self, action: PhotoAction) {
+        if self.input_transition_pending() {
+            self.status = Message::new("surfaces.status.preparing_input");
+            return;
+        }
         if self.photograph.pending.is_some() {
             return;
         }
@@ -384,16 +367,16 @@ impl App {
                 self.reopen_photograph_record(&path, source.as_deref())
             }
             PhotoAction::LoadState(path) => state::GuiState::load(&path).and_then(|state| {
-                self.apply_state(state)?;
-                self.remember_dialog("state", &path);
-                self.status = if let Some(detail) = &self.last_state_normalization {
-                    Message::new("surfaces.status.state_loaded_detail")
-                        .arg("path", path.display())
-                        .message_arg("detail", detail.clone())
-                } else {
-                    Message::new("surfaces.status.state_loaded").arg("path", path.display())
-                };
-                Ok(())
+                self.apply_state_with_source(state, move |app| {
+                    app.remember_dialog("state", &path);
+                    app.status = if let Some(detail) = &app.last_state_normalization {
+                        Message::new("surfaces.status.state_loaded_detail")
+                            .arg("path", path.display())
+                            .message_arg("detail", detail.clone())
+                    } else {
+                        Message::new("surfaces.status.state_loaded").arg("path", path.display())
+                    };
+                })
             }),
             PhotoAction::SelectEntry(index) => self.perform_work_select(index),
             PhotoAction::RemoveEntry(index) => self.perform_work_remove(index),
@@ -468,21 +451,8 @@ impl App {
                 return Err(error);
             }
         };
-        let expected_source = record.source.sha256.clone();
-        let mut context = self.prepare_photo_context(&source, Some(record.settings.clone()))?;
-        record.validate(Some(&source), &self.data_dir)?;
-        record.validate_accepted_lens_model(context.lens_model_identity.as_deref())?;
-        anyhow::ensure!(
-            context.source_digest == expected_source,
-            Message::new("photo.error.source_changed")
-        );
-        context.record_path = Some(path.to_path_buf());
-        self.retain_active_work_context()?;
-        self.install_photo_context(context);
-        self.photograph.work_list.detach_active();
-        self.photograph.relocation = None;
-        self.status = Message::new("photo.record.reopened").arg("path", path.display());
-        Ok(())
+        let preparation = self.photo_preparation(&source, Some(record.settings.clone()))?;
+        self.queue_photograph(preparation, Some((path.to_path_buf(), record)))
     }
 
     pub(crate) fn photograph_toolbar(&mut self, ui: &mut egui::Ui) {
@@ -527,6 +497,9 @@ impl App {
                 .as_ref()
                 .and_then(|action| self.affected_unsaved_work(action));
             egui::Modal::new(egui::Id::new("photograph-unsaved-transition")).show(ctx, |ui| {
+                if self.input_transition_pending() {
+                    ui.disable();
+                }
                 ui.heading(crate::i18n::text(ctx, "photo.unsaved.title"));
                 ui.label(crate::i18n::text(ctx, "photo.record.accepted_only"));
                 if let Some(path) = inactive
@@ -550,7 +523,9 @@ impl App {
                     }
                 });
             });
-            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            if !self.input_transition_pending()
+                && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
                 decision = Some(2);
             }
             match decision {
@@ -571,12 +546,13 @@ impl App {
                 },
                 Some(1) => {
                     if let Some(index) = inactive {
-                        match self.discard_inactive_work(index) {
-                            Ok(()) => {
-                                if let Some(action) = self.photograph.pending.take() {
-                                    self.request_photo_action(action);
-                                }
+                        match self.discard_inactive_work_then(index, |app| {
+                            if let Some(action) = app.photograph.pending.take() {
+                                app.request_photo_action(action);
                             }
+                            Ok(())
+                        }) {
+                            Ok(()) => {}
                             Err(error) => {
                                 self.photograph.transition_error = Some(Message::error(&error));
                             }

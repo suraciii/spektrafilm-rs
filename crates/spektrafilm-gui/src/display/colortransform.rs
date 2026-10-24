@@ -70,10 +70,8 @@ pub fn apply_display_profile(
     )
 }
 
-/// Viewer ICC conversion from authored profile data. The host parses LCMS
-/// stages; the device prepares numerical tables and evaluates image samples.
-/// A selected GPU error propagates rather than running LCMS over image data.
-/// The CPU backend retains its independent LCMS reference implementation.
+/// Apply cached LittleCMS-prepared data with a fixed device kernel.
+/// GPU errors propagate without evaluating image samples on the host.
 pub fn apply_display_profile_with(
     backend: &dyn ComputeBackend,
     raster: &DisplayRaster,
@@ -96,12 +94,11 @@ pub fn apply_display_profile_with(
 mod icc_pipeline;
 pub(crate) use icc_pipeline::ResolvedIccPipeline;
 
-/// Extract authored LCMS profile data; device preparation owns curve inversion,
-/// optimizer shapers, prelinearization, and generated interpolation lattices.
+/// Resolve and cache image-independent LittleCMS preparation.
 pub(crate) fn resolve_viewer_icc_pipeline(
     source: &lcms2::Profile,
     destination: &lcms2::Profile,
-) -> Result<ResolvedIccPipeline, String> {
+) -> Result<std::sync::Arc<ResolvedIccPipeline>, String> {
     icc_pipeline::resolve(source, destination)
 }
 

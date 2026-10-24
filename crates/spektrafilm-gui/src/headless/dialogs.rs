@@ -584,7 +584,7 @@ fn the_export_estimate_follows_the_input_while_the_dialog_is_open() {
     )
     .unwrap();
     h.state_mut().load_image_from_path(&path);
-    h.run_steps(3);
+    await_input(h);
 
     assert_eq!(h.state().image.as_ref().unwrap().width(), 320);
     assert!(h.state().export_dialog.is_open());
@@ -778,6 +778,7 @@ fn drop_file(h: &mut Harness<'_, App>, path: &Path) {
         ..Default::default()
     });
     h.step();
+    await_input(h);
 }
 
 #[test]

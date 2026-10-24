@@ -779,13 +779,14 @@ pub trait ComputeBackend: Send + Sync {
     /// This is the viewer's ICC display conversion, not a saving conversion:
     /// the source is always encoded sRGB, the destination is the selected
     /// profile, and the result is disposable viewer data that is never a
-    /// retained or saved sample. The request carries the resolved profile
-    /// pipeline — the per-channel transfer tables and the matrix the profile
-    /// defines — so the device evaluates the same per-pixel arithmetic the
-    /// host ICC transform does, including the RGB8 quantization at both
-    /// ends that the pinned workflow uses. `Ok(None)` reports that this
-    /// backend has no device ICC transform, and the caller keeps the
-    /// reference implementation.
+    /// retained or saved sample. The request carries immutable, image-independent
+    /// LittleCMS RGB8 Perceptual preparation. Fixed kernels apply identity,
+    /// channel tables, the pinned Q14 matrix-shaper evaluator, or an exhaustive
+    /// RGB8-domain map. The map contains every input code, not an interpolated
+    /// approximation. Input clamps to 0..=1 and truncates to RGB8; NaN maps to
+    /// zero. Output is the reference RGB8 result divided by 255.
+    /// `Ok(None)` reports an unavailable operation. A selected GPU caller must
+    /// fail instead of evaluating source-image ICC pixels on the host.
     fn viewer_icc_transform(
         &self,
         _rgb: &[[f32; 3]],
@@ -1335,18 +1336,49 @@ pub struct DisplayTransformGpuParams {
     pub clamp: bool,
 }
 
-/// One GUI viewer ICC display request: encoded sRGB viewing pixels through
-/// the selected display profile.
-///
-/// LCMS parses the authored stage descriptors, curve coefficients and CLUT
-/// samples. Device code prepares optimizer shapers/interpolation lattices and
-/// evaluates the RGB8 viewing transform; no generated image-sized or bulk
-/// numerical table is supplied by the host.
+/// Fixed RGB8 display-transform representations prepared by the host CMM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ViewerIccKind {
+    Identity = 0,
+    /// Three packed 256-byte channel tables.
+    Curves = 1,
+    /// Twelve Q14 matrix/offset words, 768 Q14 input-shaper words, then
+    /// three packed 16385-byte output-shaper tables.
+    MatrixShaper = 2,
+    /// Exact RGB8-domain map, lexicographic RGB order, packed RGB bytes.
+    /// Unlike a sampled 3D LUT, this representation has no interpolation error.
+    ExactRgb8 = 3,
+}
+
+impl ViewerIccKind {
+    pub fn word_count(self) -> usize {
+        match self {
+            Self::Identity => 1,
+            Self::Curves => 3 * 256 / 4,
+            Self::MatrixShaper => 12 + 3 * 256 + (3 * 16385usize).div_ceil(4),
+            Self::ExactRgb8 => 3 * 256 * 256 * 256 / 4,
+        }
+    }
+
+    pub fn from_id(id: u32) -> Option<Self> {
+        match id {
+            0 => Some(Self::Identity),
+            1 => Some(Self::Curves),
+            2 => Some(Self::MatrixShaper),
+            3 => Some(Self::ExactRgb8),
+            _ => None,
+        }
+    }
+}
+
+/// Immutable, image-independent LittleCMS preparation for fixed GPU application.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewerIccGpuParams<'a> {
-    /// Parsed stage descriptors and authored curve/CLUT data, not evaluated samples.
+    /// Content identity of the profiles, conversion semantics, CMM and format.
+    pub identity: [u8; 32],
+    pub kind: ViewerIccKind,
     pub words: &'a [u32],
-    pub values: &'a [f64],
 }
 
 /// One GUI viewer magnified full-source composition request: the bounded

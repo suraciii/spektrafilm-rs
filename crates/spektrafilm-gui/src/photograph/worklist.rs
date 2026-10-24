@@ -1,5 +1,6 @@
 //! Session-local photographs. Inactive entries own accepted context; the active
-//! context remains in App. Copy stages and validates each destination before commit.
+//! context remains in App. Workers prepare pixels and validate copied settings;
+//! only successful UI commits move histories, drafts, and list membership.
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Result, ensure};
@@ -290,6 +291,10 @@ fn scope_paths(source: &PhotographSettings, scope: CopyScope) -> Result<Vec<Stri
 
 impl App {
     pub(crate) fn add_work_paths(&mut self, paths: Vec<PathBuf>) {
+        if self.input_transition_pending() {
+            self.status = Message::new("surfaces.status.preparing_input");
+            return;
+        }
         let initial = match self.capture_photograph_settings() {
             Ok(settings) => settings,
             Err(error) => {
@@ -352,11 +357,36 @@ impl App {
         }
     }
 
-    /// Called after candidate loading succeeds, before an outside-list source is
-    /// installed. Losing membership must not lose the old entry's adjustments.
-    pub(crate) fn retain_active_work_context(&mut self) -> Result<()> {
+    /// Capture discard preparation without moving the active history or drafts.
+    pub(crate) fn stage_outgoing_work(&self) -> Result<Option<super::PhotoPreparation>> {
+        if self.photograph.work_list.active.is_some()
+            && self.photograph.work_list.discard_outgoing
+            && let (Some(path), Some(settings)) = (&self.image_path, &self.photograph.baseline)
+        {
+            return self
+                .photo_preparation(path, Some(settings.clone()))
+                .map(Some);
+        }
+        Ok(None)
+    }
+
+    /// Called only after every candidate and outgoing input has prepared.
+    pub(crate) fn retain_prepared_work_context(
+        &mut self,
+        restored: Option<PhotoContext>,
+    ) -> Result<()> {
         if let Some(index) = self.photograph.work_list.active {
-            let context = self.outgoing_work_context()?;
+            let context = if let Some(mut context) = restored {
+                ensure!(
+                    Some(context.source_digest.as_str())
+                        == self.photograph.source_digest.as_deref(),
+                    Message::new("photo.error.source_changed")
+                );
+                context.record_path = self.photograph.record_path.clone();
+                context
+            } else {
+                self.take_photo_context()?
+            };
             self.photograph.work_list.entries[index].context = Some(context);
             self.photograph.work_list.detach_active();
         }
@@ -364,29 +394,14 @@ impl App {
         Ok(())
     }
 
-    fn outgoing_work_context(&mut self) -> Result<PhotoContext> {
-        if self.photograph.work_list.discard_outgoing
-            && let (Some(path), Some(settings)) = (&self.image_path, &self.photograph.baseline)
-        {
-            let mut context = self.prepare_photo_context(path, Some(settings.clone()))?;
-            context.record_path = self.photograph.record_path.clone();
-            return Ok(context);
-        }
-        self.take_photo_context()
-    }
-
-    fn prepare_work_entry(&self, index: usize) -> Result<PhotoContext> {
+    fn prepare_work_entry(&self, index: usize) -> Result<super::PhotoPreparation> {
         let entry = self
             .photograph
             .work_list
             .entries
             .get(index)
             .ok_or_else(|| anyhow::Error::new(Message::new("photo_work.list.invalid_entry")))?;
-        let mut context = self.prepare_photo_context(&entry.path, Some(entry.initial.clone()))?;
-        context.baseline = Some(context.settings.clone());
-        context.record_path = None;
-        // prepare_photo_context owns material validation and history initialization.
-        Ok(context)
+        self.photo_preparation(&entry.path, Some(entry.initial.clone()))
     }
 
     pub(crate) fn perform_work_select(&mut self, index: usize) -> Result<()> {
@@ -397,35 +412,53 @@ impl App {
         if self.photograph.work_list.active == Some(index) {
             return Ok(());
         }
-        // Stage all fallible operations before taking either history owner.
-        let prepared = if self.photograph.work_list.entries[index].context.is_none() {
+        let preparation = if self.photograph.work_list.entries[index].context.is_none() {
             Some(self.prepare_work_entry(index)?)
         } else {
             None
         };
-        let candidate = prepared
-            .as_ref()
-            .or(self.photograph.work_list.entries[index].context.as_ref())
-            .expect("prepared entry");
-        self.validate_photo_context(candidate)?;
-        let previous = if self.image.is_some() {
-            Some(self.outgoing_work_context()?)
+        let max_size = Some(self.params.settings.preview_max_size);
+        let candidate = if let Some(preparation) = &preparation {
+            preparation.input(max_size)
         } else {
-            None
+            let context = self.photograph.work_list.entries[index]
+                .context
+                .as_ref()
+                .expect("retained entry");
+            self.validate_photo_context(context)?;
+            crate::input_worker::InputSpec {
+                source: crate::input_worker::InputSource::Existing(context.image.clone()),
+                rotation: context.settings.rotation,
+                space: context.settings.params.io.input_color_space.clone(),
+                decode: context.settings.params.io.input_cctf_decoding,
+                max_size,
+            }
         };
-        let candidate = prepared
-            .or_else(|| self.photograph.work_list.entries[index].context.take())
-            .expect("prepared entry");
-        if let Some(previous_index) = self.photograph.work_list.active {
-            self.photograph.work_list.entries[previous_index].context = previous;
+        let outgoing = self.stage_outgoing_work()?;
+        let mut inputs = vec![candidate];
+        if let Some(outgoing) = &outgoing {
+            inputs.push(outgoing.input(None));
         }
-        self.install_photo_context(candidate);
-        self.photograph.work_list.active = Some(index);
-        self.photograph.work_list.discard_outgoing = false;
-        Ok(())
+        self.queue_input_command(inputs, None, move |app, mut loaded| {
+            let restored = outgoing.map(|preparation| preparation.finish(loaded.remove(1)).0);
+            let mut loaded = loaded.remove(0);
+            let view = loaded.view.take().expect("selection prepares its view");
+            let candidate = preparation.map(|preparation| preparation.finish(loaded).0);
+            app.retain_prepared_work_context(restored)?;
+            let candidate = candidate
+                .or_else(|| app.photograph.work_list.entries[index].context.take())
+                .expect("prepared entry");
+            app.install_photo_context(candidate, view);
+            app.photograph.work_list.active = Some(index);
+            Ok(())
+        })
     }
 
     pub(crate) fn perform_work_remove(&mut self, index: usize) -> Result<()> {
+        ensure!(
+            !self.input_transition_pending(),
+            Message::new("surfaces.status.preparing_input")
+        );
         ensure!(
             index < self.photograph.work_list.entries.len(),
             Message::new("photo_work.list.invalid_entry")
@@ -446,88 +479,144 @@ impl App {
         }
     }
 
-    /// Individual failures leave destination settings, baseline, and history intact.
+    /// Each destination prepares independently; histories remain UI-owned.
     pub(crate) fn copy_work_adjustments(&mut self, scope: CopyScope) -> Result<()> {
         ensure!(
             self.image.is_some(),
             Message::new("photo_work.list.no_source")
         );
         let source = self.capture_photograph_settings()?;
+        let indices = self
+            .photograph
+            .work_list
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| entry.selected.then_some(index))
+            .collect();
+        self.queue_work_copy(indices, source, scope)
+    }
+
+    fn queue_work_copy(
+        &mut self,
+        indices: Vec<usize>,
+        source: PhotographSettings,
+        scope: CopyScope,
+    ) -> Result<()> {
+        ensure!(
+            !self.input_transition_pending(),
+            Message::new("surfaces.status.preparing_input")
+        );
         source.params.validate_detailed()?;
         captured_scope(&source, scope)?;
-        let count = self.photograph.work_list.entries.len();
-        for index in 0..count {
-            if !self.photograph.work_list.entries[index].selected {
-                continue;
-            }
+        let mut stages = Vec::new();
+        let mut plans = Vec::new();
+        for index in indices {
+            let entry = &self.photograph.work_list.entries[index];
             if self.photograph.work_list.active == Some(index)
-                || self.image_path.as_ref().is_some_and(|path| {
-                    normalized_path(path) == self.photograph.work_list.entries[index].path
-                })
+                || self
+                    .image_path
+                    .as_ref()
+                    .is_some_and(|path| normalized_path(path) == entry.path)
             {
                 self.photograph.work_list.entries[index].outcome =
                     Some(Message::new("photo_work.list.source_skipped"));
                 continue;
             }
-            let result = self.copy_work_destination(index, &source, scope);
-            self.photograph.work_list.entries[index].outcome = Some(match result {
-                Ok(changed) => Message::new(if changed {
-                    "photo_work.list.copy_done"
-                } else {
-                    "photo_work.list.copy_unchanged"
-                }),
-                Err(error) => Message::new("photo_work.list.entry_failed")
-                    .message_arg("detail", Message::error(&error)),
-            });
+            let preparation = if entry.context.is_none() {
+                match self.prepare_work_entry(index) {
+                    Ok(preparation) => Some(preparation),
+                    Err(error) => {
+                        self.photograph.work_list.entries[index].outcome = Some(
+                            Message::new("photo_work.list.entry_failed")
+                                .message_arg("detail", Message::error(&error)),
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+            let settings = preparation
+                .as_ref()
+                .map(|p| p.settings.clone())
+                .unwrap_or_else(|| {
+                    entry
+                        .context
+                        .as_ref()
+                        .expect("retained destination")
+                        .settings
+                        .clone()
+                });
+            plans.push((preparation.as_ref().map(|p| p.input(None)), settings));
+            stages.push((index, preparation));
         }
-        Ok(())
-    }
-
-    fn copy_work_destination(
-        &mut self,
-        index: usize,
-        source: &PhotographSettings,
-        scope: CopyScope,
-    ) -> Result<bool> {
-        let prepared = if self.photograph.work_list.entries[index].context.is_none() {
-            Some(self.prepare_work_entry(index)?)
-        } else {
-            None
-        };
-        let context = prepared
-            .as_ref()
-            .or(self.photograph.work_list.entries[index].context.as_ref())
-            .expect("prepared destination");
-        let settings = copied_settings(
-            source,
-            &context.settings,
-            scope,
-            &self.data_dir,
-            self.backend.as_ref(),
-        )?;
-        let film = profile::load_profile_by_name(&self.data_dir, &settings.film)?;
-        let print = profile::load_profile_by_name(&self.data_dir, &settings.print)?;
-        if let Some(prepared) = prepared {
-            self.photograph.work_list.entries[index].context = Some(prepared);
-        }
-        let context = self.photograph.work_list.entries[index]
-            .context
-            .as_mut()
-            .expect("destination context");
-        let changed = context.history.record_copied_params(
-            accepted_params(&settings),
-            settings.film.clone(),
-            settings.print.clone(),
-            &film,
-            &print,
-            settings.applied.clone(),
-        );
-        context.film_reference_illuminant = film.info.reference_illuminant.clone();
-        context.film_medium = crate::scan_medium(&film);
-        context.film_dev_times = film.data.development_time;
-        context.print_dev_times = print.data.development_time;
-        context.settings = settings;
-        Ok(changed)
+        let data_dir = self.data_dir.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        self.queue_input_command(
+            Vec::new(),
+            Some(Box::new(move |backend, _| {
+                let results = plans
+                    .into_iter()
+                    .map(|(input, destination)| {
+                        let loaded = input
+                            .map(|input| crate::input_worker::prepare(input, backend))
+                            .transpose()?;
+                        let settings =
+                            copied_settings(&source, &destination, scope, &data_dir, backend)?;
+                        let film = profile::load_profile_by_name(&data_dir, &settings.film)?;
+                        let print = profile::load_profile_by_name(&data_dir, &settings.print)?;
+                        Ok((loaded, settings, film, print))
+                    })
+                    .collect::<Vec<Result<_>>>();
+                send.send(results)
+                    .map_err(|_| anyhow::anyhow!("copy result receiver closed"))?;
+                Ok(())
+            })),
+            move |app, _| {
+                let results = receive
+                    .try_recv()
+                    .map_err(|_| anyhow::anyhow!("copy preparation result missing"))?;
+                for ((index, preparation), result) in stages.into_iter().zip(results) {
+                    let outcome = match result {
+                        Ok((loaded, settings, film, print)) => {
+                            if let Some(preparation) = preparation {
+                                app.photograph.work_list.entries[index].context = Some(
+                                    preparation.finish(loaded.expect("new destination input")).0,
+                                );
+                            }
+                            let context = app.photograph.work_list.entries[index]
+                                .context
+                                .as_mut()
+                                .expect("prepared destination");
+                            let changed = context.history.record_copied_params(
+                                accepted_params(&settings),
+                                settings.film.clone(),
+                                settings.print.clone(),
+                                &film,
+                                &print,
+                                settings.applied.clone(),
+                            );
+                            context.film_reference_illuminant =
+                                film.info.reference_illuminant.clone();
+                            context.film_medium = crate::scan_medium(&film);
+                            context.film_dev_times = film.data.development_time;
+                            context.print_dev_times = print.data.development_time;
+                            context.settings = settings;
+                            Message::new(if changed {
+                                "photo_work.list.copy_done"
+                            } else {
+                                "photo_work.list.copy_unchanged"
+                            })
+                        }
+                        Err(error) => Message::new("photo_work.list.entry_failed")
+                            .message_arg("detail", Message::error(&error)),
+                    };
+                    app.photograph.work_list.entries[index].outcome = Some(outcome);
+                }
+                Ok(())
+            },
+        )
     }
 
     /// The active photograph is guarded by the photograph controller. This
@@ -632,23 +721,39 @@ impl App {
         Ok(())
     }
 
-    /// Restore an inactive entry only after its original accepted source and
-    /// saved settings have been validated. No temporary live App mutation.
+    #[cfg(test)]
     pub(crate) fn discard_inactive_work(&mut self, index: usize) -> Result<()> {
+        self.discard_inactive_work_then(index, |_| Ok(()))
+    }
+
+    /// Keep the old context until its baseline source has completely prepared.
+    pub(crate) fn discard_inactive_work_then(
+        &mut self,
+        index: usize,
+        continuation: impl FnOnce(&mut Self) -> Result<()> + 'static,
+    ) -> Result<()> {
         let context = self.inactive_work_context(index)?;
         let settings = context
             .baseline
             .as_ref()
             .ok_or_else(|| anyhow::Error::new(Message::new("photo_work.list.invalid_entry")))?;
-        let mut restored = self.prepare_photo_context(&context.path, Some(settings.clone()))?;
-        ensure!(
-            restored.source_digest == context.source_digest,
-            Message::new("photo.error.source_changed")
-        );
-        restored.record_path = context.record_path.clone();
-        self.validate_photo_context(&restored)?;
-        self.photograph.work_list.entries[index].context = Some(restored);
-        Ok(())
+        let preparation = self.photo_preparation(&context.path, Some(settings.clone()))?;
+        let digest = context.source_digest.clone();
+        let record_path = context.record_path.clone();
+        self.queue_input_command(
+            vec![preparation.input(None)],
+            None,
+            move |app, mut loaded| {
+                let (mut restored, _) = preparation.finish(loaded.remove(0));
+                ensure!(
+                    restored.source_digest == digest,
+                    Message::new("photo.error.source_changed")
+                );
+                restored.record_path = record_path;
+                app.photograph.work_list.entries[index].context = Some(restored);
+                continuation(app)
+            },
+        )
     }
 
     pub(crate) fn submit_work_exports(
@@ -658,95 +763,129 @@ impl App {
         replace: bool,
     ) -> Result<()> {
         ensure!(
+            !self.input_transition_pending(),
+            Message::new("surfaces.status.preparing_input")
+        );
+        ensure!(
             directory.is_dir(),
             Message::new("photo_work.list.output_missing").arg("path", directory.display())
         );
         let options = self.export_options.clone();
-        let mut submissions = Vec::new();
-        for index in 0..self.photograph.work_list.entries.len() {
-            if !self.photograph.work_list.entries[index].selected {
+        let mut plans = Vec::new();
+        for (index, entry) in self.photograph.work_list.entries.iter().enumerate() {
+            if !entry.selected {
                 continue;
             }
-            let result = (|| -> Result<QueueSubmission> {
-                let prepared;
-                let active;
-                let (settings, image, metadata) = if self.photograph.work_list.active == Some(index)
+            let plan = (|| -> Result<_> {
+                let (settings, input, retained) = if self.photograph.work_list.active == Some(index)
                 {
-                    active = self.capture_photograph_settings()?;
+                    let image = self.image.clone().ok_or_else(|| {
+                        anyhow::Error::new(Message::new("photo_work.list.no_source"))
+                    })?;
                     (
-                        &active,
-                        self.image
-                            .as_ref()
-                            .ok_or_else(|| {
-                                anyhow::Error::new(Message::new("photo_work.list.no_source"))
-                            })?
-                            .clone(),
-                        self.source_metadata.clone(),
+                        self.capture_photograph_settings()?,
+                        None,
+                        Some((image, self.source_metadata.clone())),
+                    )
+                } else if let Some(context) = &entry.context {
+                    (
+                        context.settings.clone(),
+                        None,
+                        Some((context.image.clone(), context.metadata.clone())),
                     )
                 } else {
-                    prepared = if self.photograph.work_list.entries[index].context.is_none() {
-                        Some(self.prepare_work_entry(index)?)
-                    } else {
-                        None
-                    };
-                    let context = prepared
-                        .as_ref()
-                        .or(self.photograph.work_list.entries[index].context.as_ref())
-                        .expect("export context");
-                    (
-                        &context.settings,
-                        context.image.clone(),
-                        context.metadata.clone(),
-                    )
+                    let preparation = self.prepare_work_entry(index)?;
+                    let input = preparation.input(None);
+                    (preparation.settings, Some(input), None)
                 };
-                let path = &self.photograph.work_list.entries[index].path;
-                let stem = path.file_stem().ok_or_else(|| {
+                let stem = entry.path.file_stem().ok_or_else(|| {
                     anyhow::Error::new(Message::new("photo_work.list.invalid_entry"))
                 })?;
                 let mut name = stem.to_os_string();
                 name.push(format!(".{}", options.format.extension()));
-                let destination = directory.join(name);
-                Ok(QueueSubmission {
-                    source_name: path.display().to_string(),
-                    image,
-                    rotation_quarter_turns: settings.rotation.rem_euclid(4) as u32,
-                    snapshot: snapshot(settings, &self.data_dir),
-                    metadata,
-                    options: options.clone(),
-                    destination,
-                })
+                Ok((
+                    settings,
+                    input,
+                    retained,
+                    entry.path.display().to_string(),
+                    directory.join(name),
+                ))
             })();
-            match result {
-                Ok(submission) => submissions.push((index, submission)),
-                Err(error) => {
-                    self.photograph.work_list.entries[index].outcome = Some(
-                        Message::new("photo_work.list.entry_failed")
-                            .message_arg("detail", Message::error(&error)),
-                    )
-                }
-            }
+            plans.push((index, plan));
         }
         ensure!(
-            !submissions.is_empty(),
+            !plans.is_empty(),
             Message::new("photo_work.list.no_submissions")
         );
-        let indices: Vec<_> = submissions.iter().map(|(index, _)| *index).collect();
-        let result = self.enqueue_exports(
-            ctx,
-            submissions
-                .into_iter()
-                .map(|(_, submission)| submission)
-                .collect(),
-            replace,
-        );
-        for index in indices {
-            self.photograph.work_list.entries[index].outcome = Some(match &result {
-                Ok(()) => Message::new("photo_work.list.queued"),
-                Err(error) => Message::new("photo_work.list.entry_failed")
-                    .message_arg("detail", Message::error(error)),
-            });
-        }
-        result
+        let data_dir = self.data_dir.clone();
+        let ctx = ctx.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        self.queue_input_command(
+            Vec::new(),
+            Some(Box::new(move |backend, _| {
+                let results = plans
+                    .into_iter()
+                    .map(|(index, plan)| {
+                        let result = (|| -> Result<QueueSubmission> {
+                            let (settings, input, retained, source_name, destination) = plan?;
+                            let (image, metadata) = if let Some(input) = input {
+                                let loaded = crate::input_worker::prepare(input, backend)?;
+                                (loaded.source, loaded.metadata)
+                            } else {
+                                retained.expect("accepted export source")
+                            };
+                            Ok(QueueSubmission {
+                                source_name,
+                                image,
+                                metadata,
+                                destination,
+                                rotation_quarter_turns: settings.rotation.rem_euclid(4) as u32,
+                                snapshot: snapshot(&settings, &data_dir),
+                                options: options.clone(),
+                            })
+                        })();
+                        (index, result)
+                    })
+                    .collect::<Vec<_>>();
+                send.send(results)
+                    .map_err(|_| anyhow::anyhow!("export result receiver closed"))?;
+                Ok(())
+            })),
+            move |app, _| {
+                let results = receive
+                    .try_recv()
+                    .map_err(|_| anyhow::anyhow!("export preparation result missing"))?;
+                let mut submissions = Vec::new();
+                let mut indices = Vec::new();
+                for (index, result) in results {
+                    match result {
+                        Ok(submission) => {
+                            indices.push(index);
+                            submissions.push(submission);
+                        }
+                        Err(error) => {
+                            app.photograph.work_list.entries[index].outcome = Some(
+                                Message::new("photo_work.list.entry_failed")
+                                    .message_arg("detail", Message::error(&error)),
+                            )
+                        }
+                    }
+                }
+                ensure!(
+                    !submissions.is_empty(),
+                    Message::new("photo_work.list.no_submissions")
+                );
+                let result = app.enqueue_exports(&ctx, submissions, replace);
+                for index in indices {
+                    app.photograph.work_list.entries[index].outcome = Some(match &result {
+                        Ok(()) => Message::new("photo_work.list.queued"),
+                        Err(error) => Message::new("photo_work.list.entry_failed")
+                            .message_arg("detail", Message::error(error)),
+                    });
+                }
+                result
+            },
+        )
     }
 
     pub(crate) fn work_list_controls(&mut self, ctx: &egui::Context) {
@@ -770,6 +909,9 @@ impl App {
             .default_width(650.0)
             .vscroll(true)
             .show(ctx, |ui| {
+                if self.input_transition_pending() {
+                    ui.disable();
+                }
                 ui.label(crate::i18n::text(ctx, "photo_work.list.introduction"));
                 ui.horizontal_wrapped(|ui| {
                     let response = ui.button(crate::i18n::text(ctx, "photo_work.list.add"));
@@ -1041,9 +1183,10 @@ mod tests {
         );
         app.chooser.set_strict(true);
         let path = source(directory.path(), "first.png");
-        let context = app.prepare_photo_context(&path, None).unwrap();
-        app.install_photo_context(context);
-        (app, directory, egui::Context::default())
+        let ctx = egui::Context::default();
+        app.request_photo_action(PhotoAction::Open(path));
+        crate::headless::await_app_input(&mut app, &ctx);
+        (app, directory, ctx)
     }
 
     fn source(directory: &Path, name: &str) -> PathBuf {
@@ -1089,9 +1232,11 @@ mod tests {
         let baseline = app.photograph.baseline.clone();
         exposure(&mut app, &ctx, 1.25);
         app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
         exposure(&mut app, &ctx, -0.5);
         app.perform_work_select(0).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
         assert_eq!(app.photograph.baseline, baseline);
         assert!(app.undo_adjustment());
@@ -1111,12 +1256,15 @@ mod tests {
         let second_record = directory.path().join("second.spektra-photo.json");
         app.add_work_paths(vec![second.clone()]);
         app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         app.save_photograph_record_to(&second_record).unwrap();
         app.perform_work_select(0).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         exposure(&mut app, &ctx, 1.25);
         app.select_work_destination(1, true);
         app.copy_work_adjustments(CopyScope::Section(Section::Camera))
             .unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         let retained = app.photograph.work_list.entries[1]
             .context
             .as_mut()
@@ -1130,6 +1278,7 @@ mod tests {
         app.save_photograph_record_to(&directory.path().join("first.spektra-photo.json"))
             .unwrap();
         app.request_photo_action(PhotoAction::Open(second.clone()));
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.image_path.as_ref(), Some(&second));
         assert_eq!(app.photograph.work_list.active, None);
         app.add_work_paths(vec![third]);
@@ -1145,6 +1294,7 @@ mod tests {
         assert_eq!(retained.raw_draft, draft);
         assert!(pixels.same_source(&retained.image));
         app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.gui_state.sections["load_raw"], draft);
         assert_eq!(app.photograph.record_path.as_ref(), Some(&second_record));
         assert!(app.undo_adjustment());
@@ -1159,12 +1309,79 @@ mod tests {
         let image = app.image.clone().unwrap();
         let path = app.image_path.clone();
         app.photograph.work_list.discard_outgoing = true;
-        assert!(app.perform_work_select(1).is_err());
+        app.perform_work_select(1).unwrap();
+        assert!(app.input_pending());
+        crate::headless::await_app_input(&mut app, &ctx);
+        assert!(
+            app.status
+                .for_locale(crate::i18n::Locale::English)
+                .contains("missing.png")
+        );
         assert_eq!(app.image_path, path);
         assert!(image.same_source(app.image.as_ref().unwrap()));
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.75);
         assert!(app.undo_adjustment());
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
+    }
+
+    #[test]
+    fn failed_outgoing_discard_reload_preserves_both_history_owners_and_membership() {
+        let (mut app, directory, ctx) = app();
+        let second = source(directory.path(), "second.png");
+        app.add_work_paths(vec![second]);
+        app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
+        exposure(&mut app, &ctx, -0.5);
+        app.perform_work_select(0).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
+        exposure(&mut app, &ctx, 1.25);
+        app.gui_state.sections["load_raw"]["temperature"] = 4200.0.into();
+        let draft = app.gui_state.sections["load_raw"].clone();
+        let image = app.image.clone().unwrap();
+        let baseline = app.photograph.baseline.clone();
+        std::fs::remove_file(app.image_path.as_ref().unwrap()).unwrap();
+        app.photograph.work_list.discard_outgoing = true;
+        app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
+        assert_eq!(app.photograph.work_list.active, Some(0));
+        assert_eq!(app.photograph.baseline, baseline);
+        assert_eq!(app.gui_state.sections["load_raw"], draft);
+        assert!(image.same_source(app.image.as_ref().unwrap()));
+        assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
+        assert_eq!(
+            app.photograph.work_list.entries[1]
+                .context
+                .as_ref()
+                .unwrap()
+                .settings
+                .params
+                .camera
+                .exposure_compensation_ev,
+            -0.5
+        );
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
+        app.photograph.work_list.discard_outgoing = false;
+        app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
+        assert!(app.undo_adjustment());
+        assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
+    }
+
+    #[test]
+    fn pending_explicit_selection_rejects_new_commands_without_superseding_it() {
+        let (mut app, directory, ctx) = app();
+        let second = source(directory.path(), "second.png");
+        let third = source(directory.path(), "third.png");
+        app.add_work_paths(vec![second.clone(), third]);
+        app.perform_work_select(1).unwrap();
+        assert!(app.perform_work_select(2).is_err());
+        assert!(app.perform_work_remove(1).is_err());
+        assert!(app.copy_work_adjustments(CopyScope::Operator).is_err());
+        assert_eq!(app.photograph.work_list.active, Some(0));
+        crate::headless::await_app_input(&mut app, &ctx);
+        assert_eq!(app.image_path.as_ref(), Some(&second));
+        assert_eq!(app.photograph.work_list.active, Some(1));
     }
 
     #[test]
@@ -1175,8 +1392,11 @@ mod tests {
         exposure(&mut app, &ctx, 1.0);
         app.photograph.work_list.discard_outgoing = true;
         app.perform_work_select(1).unwrap();
+        app.photograph.work_list.discard_outgoing = false;
+        crate::headless::await_app_input(&mut app, &ctx);
         assert!(!app.photograph.work_list.discard_outgoing);
         app.perform_work_select(0).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
         assert!(!app.can_undo());
     }
@@ -1192,7 +1412,15 @@ mod tests {
         app.select_work_destination(1, true);
         let output = directory.path().join("output");
         std::fs::create_dir(&output).unwrap();
-        assert!(app.submit_work_exports(&ctx, &output, false).is_err());
+        app.submit_work_exports(&ctx, &output, false).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
+        assert!(app.photograph.work_list.entries.iter().all(|entry| {
+            entry.outcome.as_ref().is_some_and(|outcome| {
+                outcome
+                    .for_locale(crate::i18n::Locale::English)
+                    .contains("More than one pending export")
+            })
+        }));
         assert!(app.export_job.is_none());
         assert_eq!(std::fs::read_dir(output).unwrap().count(), 0);
     }
@@ -1207,6 +1435,7 @@ mod tests {
         app.select_work_destination(2, true);
         app.copy_work_adjustments(CopyScope::Section(Section::Camera))
             .unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         let work = &app.photograph.work_list;
         assert!(work.entries[2].context.is_none());
         assert!(
@@ -1230,6 +1459,7 @@ mod tests {
             0.0
         );
         app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert!(app.undo_adjustment());
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
         assert!(app.redo_adjustment());
@@ -1242,8 +1472,10 @@ mod tests {
         let second = source(directory.path(), "second.png");
         app.add_work_paths(vec![second]);
         app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         exposure(&mut app, &ctx, -0.25);
         app.perform_work_select(0).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         let before = app.photograph.work_list.entries[1]
             .context
             .as_ref()
@@ -1258,9 +1490,16 @@ mod tests {
             .clone();
         let mut invalid = app.capture_photograph_settings().unwrap();
         invalid.film = "missing-copy-material".into();
+        app.queue_work_copy(vec![1], invalid, CopyScope::Look)
+            .unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert!(
-            app.copy_work_destination(1, &invalid, CopyScope::Look)
-                .is_err()
+            app.photograph.work_list.entries[1]
+                .outcome
+                .as_ref()
+                .unwrap()
+                .for_locale(crate::i18n::Locale::English)
+                .contains("missing-copy-material")
         );
         let context = app.photograph.work_list.entries[1]
             .context
@@ -1269,6 +1508,7 @@ mod tests {
         assert_eq!(context.settings, before);
         assert_eq!(context.baseline, baseline);
         app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert!(app.undo_adjustment());
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
     }
@@ -1280,6 +1520,7 @@ mod tests {
         app.select_work_destination(1, true);
         app.copy_work_adjustments(CopyScope::Section(Section::Camera))
             .unwrap();
+        crate::headless::await_app_input(app, ctx);
         second
     }
 
@@ -1303,10 +1544,12 @@ mod tests {
         assert_eq!(app.work_entry_path(1), Some(second.as_path()));
         let active_image = app.image.clone().unwrap();
         app.discard_inactive_work(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.affected_unsaved_work(&PhotoAction::Close), None);
         assert!(active_image.same_source(app.image.as_ref().unwrap()));
         assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
         app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
         assert!(!app.can_undo());
     }
@@ -1322,8 +1565,10 @@ mod tests {
         app.select_work_destination(2, true);
         app.copy_work_adjustments(CopyScope::Section(Section::Camera))
             .unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.affected_unsaved_work(&PhotoAction::Close), Some(1));
         app.discard_inactive_work(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.affected_unsaved_work(&PhotoAction::Close), Some(2));
         assert_eq!(
             app.affected_unsaved_work(&PhotoAction::RemoveEntry(1)),
@@ -1382,6 +1627,7 @@ mod tests {
         assert_eq!(saved.settings, before);
         assert_eq!(app.params.camera.exposure_compensation_ev, 1.25);
         app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert!(app.undo_adjustment());
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
         assert!(app.photograph_has_unsaved_changes());
@@ -1397,11 +1643,13 @@ mod tests {
         let record = directory.path().join("second.spektra-photo.json");
         assert!(app.save_inactive_record_to(1, &record).is_err());
         assert!(!record.exists());
-        assert!(app.discard_inactive_work(1).is_err());
+        app.discard_inactive_work(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert_eq!(app.inactive_work_context(1).unwrap().settings, before);
         assert_eq!(app.inactive_work_context(1).unwrap().baseline, baseline);
         assert_eq!(app.affected_unsaved_work(&PhotoAction::Close), Some(1));
         app.perform_work_select(1).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert!(app.undo_adjustment());
         assert_eq!(app.params.camera.exposure_compensation_ev, 0.0);
     }
@@ -1556,6 +1804,7 @@ mod tests {
             app.select_work_destination(1, true);
             app.copy_work_adjustments(CopyScope::Feature(family))
                 .unwrap();
+            crate::headless::await_app_input(&mut app, &ctx);
             let expected = app.photograph.work_list.entries[1]
                 .context
                 .as_ref()
@@ -1568,6 +1817,7 @@ mod tests {
             app.mark_parameters_changed_invalidating_calibration();
             app.end_adjustment_frame(&ctx);
             app.perform_work_select(1).unwrap();
+            crate::headless::await_app_input(&mut app, &ctx);
             assert_eq!(
                 feature_profiles::effective_values(family, &app.params),
                 captured
@@ -1592,6 +1842,7 @@ mod tests {
         app.submit_work_exports(&ctx, &reference, false).unwrap();
         drain(&mut app, &ctx);
         app.submit_work_exports(&ctx, &output, false).unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         app.perform_work_remove(0).unwrap();
         app.params.camera.exposure_compensation_ev = 4.0;
         app.image = Some(crate::render::InputImage::Host(std::sync::Arc::new(
@@ -1615,6 +1866,7 @@ mod tests {
     }
 
     fn drain(app: &mut App, ctx: &egui::Context) {
+        crate::headless::await_app_input(app, ctx);
         let deadline = std::time::Instant::now() + crate::headless::WAIT_DEADLINE;
         while app.export_job.is_some() {
             assert!(

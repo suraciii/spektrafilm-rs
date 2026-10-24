@@ -874,6 +874,7 @@
   "surfaces.status.rotate_requires_image": "Load an image before rotating.",
   "surfaces.status.rotated": "Rotated input %{degrees}°",
   "surfaces.status.viewer_error": "Viewer input error: %{error}",
+  "surfaces.status.preparing_input": "Preparing source display…",
   "surfaces.status.display_profile": "Display ICC profile: %{path}",
   "surfaces.status.display_cleared": "Display ICC profile cleared",
   "surfaces.status.publication_error": "Diagnostic report publication error: %{error}",

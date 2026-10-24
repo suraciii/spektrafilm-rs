@@ -11,10 +11,6 @@ mod worker;
 
 pub(crate) use colortransform::output_display_raster_retained;
 pub use colortransform::{input_display_raster_with, output_display_raster_with};
-#[cfg(test)]
-pub use decorations::virtual_paper_back;
-#[cfg(test)]
-pub(crate) use decorations::virtual_paper_back_without_watermark;
 pub use raster::{DisplayRaster, Interpolation};
 pub use viewer::Viewer;
 #[cfg(test)]

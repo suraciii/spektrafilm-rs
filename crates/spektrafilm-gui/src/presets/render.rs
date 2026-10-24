@@ -131,6 +131,9 @@ impl App {
             panel.exact_width(38.0)
         };
         let response = panel.show(ctx, |ui| {
+            if self.input_transition_pending() {
+                ui.disable();
+            }
             ui.horizontal(|ui| {
                 if ui
                     .button(if expanded { "◀" } else { "▶" })

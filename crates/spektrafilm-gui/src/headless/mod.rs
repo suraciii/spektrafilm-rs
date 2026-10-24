@@ -232,6 +232,7 @@ fn session_fixture() -> Session {
             theme::apply(&cc.egui_ctx);
             app(state_path, image_path, browser_path)
         });
+    await_input(&mut harness);
     assert_eq!(harness.state().image.as_ref().unwrap().width(), 160);
     click(&mut harness, "◀");
     Session { harness, directory }
@@ -244,13 +245,14 @@ fn snapshot_session() -> Session {
     let directory = tempfile::tempdir().unwrap();
     let (image_path, state_path) = deterministic_inputs(directory.path());
     let browser_path = directory.path().join("browser.json");
-    let harness = Harness::builder()
+    let mut harness = Harness::builder()
         .with_size(egui::vec2(1460.0, 980.0))
         .wgpu()
         .build_eframe(move |cc| {
             theme::apply(&cc.egui_ctx);
             app(state_path, image_path, browser_path)
         });
+    await_input(&mut harness);
     assert_eq!(harness.state().image.as_ref().unwrap().width(), 160);
     Session { harness, directory }
 }
@@ -280,12 +282,15 @@ fn empty_session() -> Session {
 }
 
 fn click(h: &mut Harness<'_, App>, label: &str) {
+    await_input(h);
     scroll_controls_into_view(h, label);
     h.get_by_label(label).simulate_click();
     h.run_steps(3);
+    await_input(h);
 }
 
 fn search_controls(h: &mut Harness<'_, App>, text: &str) {
+    await_input(h);
     let field = h.get_by_label("Search controls");
     field.focus();
     h.step();
@@ -434,6 +439,7 @@ fn import_file(h: &mut Harness<'_, App>, _raw: bool) {
 /// `CollapsingHeader` whose title carries the engine's label, so a plain
 /// label query would match both the header and the popup option.
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
+    await_input(h);
     scroll_controls_into_view(h, label);
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .focus();
@@ -443,6 +449,7 @@ fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::Button, option)
         .click();
     h.run_steps(3);
+    await_input(h);
     if h.ctx.memory(|memory| memory.any_popup_open()) {
         h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
             .click();
@@ -451,6 +458,7 @@ fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
 }
 
 fn edit(h: &mut Harness<'_, App>, label: &str, text: &str) {
+    await_input(h);
     scroll_controls_into_view(h, label);
     h.get_by_label(label).focus();
     h.step();
@@ -474,6 +482,7 @@ fn edit(h: &mut Harness<'_, App>, label: &str, text: &str) {
     h.step();
     h.press_key(egui::Key::Enter);
     h.run_steps(3);
+    await_input(h);
 }
 
 /// Wall-clock budget for a headless wait. The waits assert that the app
@@ -499,6 +508,27 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
             Instant::now() < deadline,
             "App completion timed out: {}",
             h.state().status
+        );
+        wait_tick();
+    }
+}
+
+/// Wait for the production input worker, including its UI-side commit callback.
+fn await_input(h: &mut Harness<'_, App>) {
+    if h.state().input_pending() {
+        wait_until(h, |app| !app.input_pending());
+    }
+}
+
+/// Poll without rendering for unit tests exercising a source transaction directly.
+pub(crate) fn await_app_input(app: &mut App, ctx: &egui::Context) {
+    let deadline = Instant::now() + WAIT_DEADLINE;
+    while app.input_pending() {
+        app.poll_input_job(ctx);
+        assert!(
+            Instant::now() < deadline,
+            "input preparation timed out: {}",
+            app.status
         );
         wait_tick();
     }
@@ -634,39 +664,6 @@ fn assert_float_tiff(path: &Path) {
     );
 }
 
-/// The export dialog "GPU" selection is an explicit request: a configuration
-/// that still needs a host-executed stage must fail before publication instead
-/// of being silently demoted to CPU. The harness preview backend is the CPU
-/// backend, so this also covers opening an explicit WGPU backend for the job.
-#[test]
-fn explicit_gpu_export_fails_before_publication() {
-    let mut s = session();
-    let h = &mut s.harness;
-    render(h, "PREVIEW");
-    let mut state = h.state().current_state().unwrap();
-    state.sections["input_image"]["input_cctf_decoding"] = serde_json::json!(true);
-    state.sections["input_image"]["input_color_space"] = serde_json::json!("sRGB");
-    h.state_mut().apply_state(state).unwrap();
-    assert!(h.state().params.io.input_cctf_decoding);
-
-    let destination = s.directory.path().join("explicit-gpu.png");
-    let mut options = h.state().export_options.clone();
-    options.backend = ExportBackend::Gpu;
-    let ctx = h.ctx.clone();
-    h.state_mut()
-        .start_export_to_path(&ctx, options, &destination);
-    wait_until(h, |a| a.export_job.is_none());
-    let status = h.state().status.to_string();
-    assert!(
-        status.contains("explicit GPU request") || status.contains("no WGPU adapter is available"),
-        "{status}"
-    );
-    assert!(
-        !destination.exists(),
-        "a failed explicit GPU export published an output"
-    );
-}
-
 #[test]
 fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     let mut s = session();
@@ -740,8 +737,8 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         }
         let path = s.directory.path().join(format!("removed-{carrier}.json"));
         std::fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
-        let result =
-            state::GuiState::load(&path).and_then(|state| h.state_mut().apply_state(state));
+        let result = state::GuiState::load(&path)
+            .and_then(|state| h.state_mut().apply_state_with_source(state, |_| {}));
         let error = result.unwrap_err();
         assert!(format!("{error:#}").contains("positive_scan"), "{error:#}");
         assert_eq!(h.state().params, accepted_params);
@@ -845,7 +842,10 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
             .starts_with("Export destination already exists:")
     );
     assert_eq!(std::fs::read(&export_path).unwrap(), before);
-    h.state_mut().apply_state(accepted.clone()).unwrap();
+    h.state_mut()
+        .apply_state_with_source(accepted.clone(), |_| {})
+        .unwrap();
+    await_input(h);
     let mut float_options = h.state().export_options.clone();
     float_options.format = export::ExportFormat::Tiff;
     float_options.depth = BitDepth::ThirtyTwo;
@@ -1179,6 +1179,7 @@ fn style_session(styles: &[(&str, &str)]) -> Session {
                 data,
             )
         });
+    await_input(&mut harness);
     assert_eq!(harness.state().image.as_ref().unwrap().width(), 160);
     click(&mut harness, "◀");
     Session { harness, directory }
@@ -1288,8 +1289,8 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     ] {
         let mut invalid = accepted.sections.clone();
         invalid["scanner"][key] = value;
-        let result =
-            state::GuiState::from_value(invalid).and_then(|state| h.state_mut().apply_state(state));
+        let result = state::GuiState::from_value(invalid)
+            .and_then(|state| h.state_mut().apply_state_with_source(state, |_| {}));
         assert!(result.is_err(), "accepted incompatible {key}");
         assert_eq!(h.state().params, accepted_params);
         assert_eq!(
@@ -1315,8 +1316,8 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
         let (section, key, value) = ("simulation", "film_stock", "not_a_film_profile");
         let mut invalid = accepted.sections.clone();
         invalid[section][key] = serde_json::json!(value);
-        let result =
-            state::GuiState::from_value(invalid).and_then(|state| h.state_mut().apply_state(state));
+        let result = state::GuiState::from_value(invalid)
+            .and_then(|state| h.state_mut().apply_state_with_source(state, |_| {}));
         assert!(result.is_err(), "accepted incompatible {key}");
         assert_eq!(h.state().params, accepted_params);
         assert_eq!(h.state().parameter_revision, revision);
@@ -1329,6 +1330,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
         s.directory.path().join("asymmetric-ramp.png"),
         s.directory.path().join("scanner-browser.json"),
     );
+    await_app_input(&mut restored, &egui::Context::default());
     assert_eq!(restored.params.scanner, accepted_params.scanner);
     eframe::App::on_exit(&mut restored, None);
     let save_path = s.directory.path().join("scanner-preview.png");

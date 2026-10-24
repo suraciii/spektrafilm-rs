@@ -819,9 +819,11 @@ mod tests {
         app.capture_comparison(&ctx);
         let generation = app.comparison.generation;
         assert!(app.comparison.reference.is_some());
-        app.image_path = Some(_directory.path().join("missing-source.png"));
+        app.image_path = Some(_directory.path().join("missing-source.KDC"));
         let state = app.current_state().unwrap();
-        assert!(app.apply_state(state).is_err());
+        app.apply_state_with_source(state, |_| panic!("failed source published success"))
+            .unwrap();
+        crate::headless::await_app_input(&mut app, &ctx);
         assert!(
             app.comparison.reference.is_some(),
             "failed replacement keeps A"

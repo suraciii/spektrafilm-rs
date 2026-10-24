@@ -1126,8 +1126,8 @@ impl ComputeBackend for WgpuBackend {
         Ok(Some(transformed.as_chunks::<3>().0.to_vec()))
     }
 
-    /// Upload disposable viewer samples, prepare the parsed ICC pipeline on
-    /// device, and materialize only the final viewing raster.
+    /// Apply immutable host-prepared ICC RGB8 data with the fixed device kernel
+    /// and materialize only the final viewing raster.
     fn viewer_icc_transform(
         &self,
         rgb: &[[f32; 3]],

@@ -93,6 +93,10 @@ pub(crate) struct App {
     /// Latest submitted render, including a request queued behind active work.
     pub(crate) render_job: Option<RenderJob>,
     pub(crate) render_worker: RenderWorker,
+    pub(crate) input_worker: crate::input_worker::InputWorker,
+    pub(crate) input_job: Option<crate::input_worker::InputJob>,
+    pub(crate) input_view_job: Option<crate::input_worker::InputJob>,
+    pub(crate) input_command_job: Option<crate::input_worker::InputJob>,
     /// Innermost work unit of the in-flight render, shared with the render
     /// worker thread.
     pub(crate) render_progress: Arc<progress::RenderProgress>,
@@ -127,6 +131,16 @@ pub(crate) struct App {
     pub(crate) histogram: histogram::HistogramStrip,
     pub(crate) compare_active: bool,
     pub(crate) compare_split: f32,
+}
+
+/// A fully validated candidate; source preparation must succeed before installation.
+struct StateApplication {
+    state: state::GuiState,
+    params: RuntimeParams,
+    film: profile::Profile,
+    print: profile::Profile,
+    film_medium: controls::ScanMedium,
+    normalization: Option<crate::app::Message>,
 }
 
 impl App {
@@ -289,6 +303,10 @@ impl App {
             dirty_since: None,
             render_job: None,
             render_worker: RenderWorker::new(render_progress.clone()),
+            input_worker: crate::input_worker::InputWorker::new(),
+            input_job: None,
+            input_view_job: None,
+            input_command_job: None,
             render_progress,
             export_job: None,
             status: startup_error
@@ -419,7 +437,7 @@ impl App {
         self.mark_parameters_changed();
     }
 
-    pub(crate) fn apply_state(&mut self, state: state::GuiState) -> Result<()> {
+    fn validate_state(&self, state: state::GuiState) -> Result<StateApplication> {
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
         let print = profile::load_profile_by_name(&self.data_dir, state.paper())?;
@@ -434,83 +452,109 @@ impl App {
                 .into());
         }
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
-        // Decode the candidate source before replacing any accepted controls.
-        // A missing/corrupt source leaves both the state and history untouched.
-        let source_digest = self
-            .image_path
-            .as_deref()
-            .map(Self::accepted_source_digest)
-            .transpose()?;
-        let loaded = if let Some(path) = &self.image_path {
-            if image_io::is_raw(path) {
-                let settings = &state.sections["load_raw"];
-                let options = spektrafilm_raw::RawOptions {
-                    white_balance: match settings["white_balance"].as_str().unwrap_or("as_shot") {
-                        "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
-                        "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
-                        "custom" => spektrafilm_raw::WhiteBalance::Custom,
-                        _ => spektrafilm_raw::WhiteBalance::AsShot,
-                    },
-                    temperature: settings["temperature"].as_f64(),
-                    tint: settings["tint"].as_f64(),
-                    lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
-                };
-                params.io.input_color_space = "ACES2065-1".into();
-                params.io.input_cctf_decoding = false;
-                if self.backend.is_gpu() {
-                    let result = spektrafilm_raw::load_retained_with_backend(
-                        path,
-                        &options,
-                        self.backend.as_ref(),
-                    )
-                    .map_err(anyhow::Error::msg)?;
-                    Some((
-                        crate::render::InputImage::Device(result.image),
-                        image_io::read_metadata(path),
-                        Some(result.lens_info),
-                        result.lens_model_identity,
-                    ))
-                } else {
-                    let result =
-                        spektrafilm_raw::load(path, &options).map_err(anyhow::Error::msg)?;
-                    Some((
-                        crate::render::InputImage::Host(Arc::new(result.image)),
-                        image_io::read_metadata(path),
-                        Some(result.lens_info),
-                        result.lens_model_identity,
-                    ))
-                }
-            } else {
-                let result = image_io::load(path)?;
-                Some((
-                    crate::render::InputImage::Host(Arc::new(result.image)),
-                    result.metadata,
-                    None,
-                    None,
-                ))
-            }
-        } else {
-            None
-        };
-        if let Some(path) = &self.image_path {
-            anyhow::ensure!(
-                source_digest.as_deref() == Some(Self::accepted_source_digest(path)?.as_str()),
-                crate::app::Message::new("photo.error.source_changed")
-            );
+        if self.image_path.as_deref().is_some_and(image_io::is_raw) {
+            params.io.input_color_space = "ACES2065-1".into();
+            params.io.input_cctf_decoding = false;
         }
         let film_medium = scan_medium(&film);
-        let film_reference_illuminant = film.info.reference_illuminant.clone();
         let before_scanner = params.scanner.clone();
         normalize_scanner_selections(&mut params, film_medium);
-        self.last_state_normalization = App::scanner_normalization_detail(
+        let normalization = App::scanner_normalization_detail(
             &before_scanner,
             &params.scanner,
             film_medium,
             &params.workflow.route,
         );
+        Ok(StateApplication {
+            state,
+            params,
+            film,
+            print,
+            film_medium,
+            normalization,
+        })
+    }
+
+    /// Apply state synchronously only when there is no source to prepare.
+    pub(crate) fn apply_state(&mut self, state: state::GuiState) -> Result<()> {
+        let candidate = self.validate_state(state)?;
+        anyhow::ensure!(
+            !self.input_transition_pending(),
+            crate::app::Message::new("surfaces.status.preparing_input")
+        );
+        anyhow::ensure!(
+            self.image_path.is_none() && self.image.is_none(),
+            "loaded-source state application requires asynchronous preparation"
+        );
+        self.install_state(candidate, None);
+        Ok(())
+    }
+
+    /// Validate now, then install the candidate only after source and view preparation.
+    /// The completion callback runs on the UI thread after a successful commit.
+    pub(crate) fn apply_state_with_source(
+        &mut self,
+        state: state::GuiState,
+        on_success: impl FnOnce(&mut Self) + 'static,
+    ) -> Result<()> {
+        if self.image_path.is_none() && self.image.is_none() {
+            self.apply_state(state)?;
+            on_success(self);
+            return Ok(());
+        }
+        let candidate = self.validate_state(state)?;
+        anyhow::ensure!(
+            !self.input_transition_pending(),
+            crate::app::Message::new("surfaces.status.preparing_input")
+        );
+        let source = if let Some(path) = self
+            .image_path
+            .as_ref()
+            .filter(|path| image_io::is_raw(path))
+        {
+            Some(crate::input_worker::InputSource::File {
+                path: path.clone(),
+                raw: candidate.state.sections["load_raw"].clone(),
+            })
+        } else {
+            self.image
+                .as_ref()
+                .cloned()
+                .map(crate::input_worker::InputSource::Existing)
+        };
+        let source =
+            source.ok_or_else(|| crate::app::Message::new("photo.error.source_required"))?;
+        let spec = crate::input_worker::InputSpec {
+            source,
+            rotation: 0,
+            space: candidate.params.io.input_color_space.clone(),
+            decode: candidate.params.io.input_cctf_decoding,
+            max_size: Some(candidate.params.settings.preview_max_size),
+        };
+        self.queue_input_command(vec![spec], None, move |app, mut prepared| {
+            app.install_state(candidate, Some(prepared.remove(0)));
+            on_success(app);
+            Ok(())
+        })
+    }
+
+    fn install_state(
+        &mut self,
+        candidate: StateApplication,
+        loaded: Option<crate::input_worker::PreparedInput>,
+    ) {
+        let StateApplication {
+            state,
+            params,
+            film,
+            print,
+            film_medium,
+            normalization,
+        } = candidate;
+        self.last_state_normalization = normalization;
         self.film_name = state.film().to_owned();
         self.print_name = state.paper().to_owned();
-        self.film_reference_illuminant = film_reference_illuminant;
+        self.film_reference_illuminant = film.info.reference_illuminant;
         self.film_medium = film_medium;
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
@@ -537,11 +581,17 @@ impl App {
         self.force_preview = true;
         self.full_scan_requested = false;
         self.render_worker.cancel_active();
-        if let Some((image, metadata, lens_info, lens_model_identity)) = loaded {
-            self.image = Some(image);
-            self.source_metadata = metadata;
-            self.raw_lens_info = lens_info;
-            self.photograph.lens_model_identity = lens_model_identity;
+        if let Some(prepared) = loaded {
+            let view = prepared
+                .view
+                .expect("state application prepared its input view");
+            self.image = Some(prepared.source);
+            if prepared.digest.is_some() {
+                self.source_metadata = prepared.metadata;
+                self.raw_lens_info = prepared.lens_info;
+                self.photograph.lens_model_identity = prepared.lens_model_identity;
+                self.photograph.source_digest = prepared.digest;
+            }
             self.raw_applied_settings = self
                 .image_path
                 .as_ref()
@@ -555,7 +605,7 @@ impl App {
             self.viewer.set_retained_output(None);
             self.output_metadata = None;
             self.source_render = None;
-            self.refresh_input_viewer();
+            self.publish_input_viewer(view.oriented, view.raster);
         }
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);
@@ -568,9 +618,8 @@ impl App {
         self.clear_comparison();
         self.stale_save_confirmation = false;
         self.retained_kind = None;
-        self.mark_photograph_baseline();
-        self.photograph.source_digest = source_digest;
-        Ok(())
+        self.photograph.baseline = self.capture_photograph_settings().ok();
+        self.photograph.record_path = None;
     }
 
     pub(crate) fn persist_browser_state(&mut self, closing: bool) {

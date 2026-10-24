@@ -483,6 +483,7 @@ fn gpu_raw_import_preview_scan_and_export_reuse_retained_samples() {
     // path. The successful import above covers the chooser; this failure
     // assertion must not depend on sidebar scrolling/focus after Export.
     h.state_mut().load_image_from_path(&corrupt);
+    await_input(&mut h);
     assert!(
         h.state().status.to_string().starts_with("Load error:"),
         "{}",
