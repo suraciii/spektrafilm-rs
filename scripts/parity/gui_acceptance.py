@@ -757,7 +757,15 @@ class X11:
         if exporting:
             self.require_export_in_flight('close')
         self.xd('key', 'alt+F4')
-        self.discard_photograph_changes()
+        try:
+            self.discard_photograph_changes()
+        except (RuntimeError, subprocess.CalledProcessError):
+            # The native window may disappear before the process finishes
+            # teardown. A clean exit still must pass the check below.
+            try:
+                self.proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                raise
         self.proc.wait(timeout=240 if exporting else 30)
         require(self.proc.returncode == 0, f'GUI closed with status {self.proc.returncode}')
         self.proc = None
