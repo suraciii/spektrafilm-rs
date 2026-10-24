@@ -16,7 +16,9 @@ Applying a feature profile MUST replace exactly the leaves in its profile scope.
 
 A profile selection is an edit to active controls. It MUST NOT rewrite a built-in look or section document. A later direct edit MAY produce a `custom` effective profile; it MUST NOT cause the application to reapply the previous named profile silently.
 
-Feature profiles are built-in catalog entries. They are not a second user profile library. A user who wants a reusable custom combination MUST save the relevant controls as an existing section preset.
+Feature profiles are built-in catalog entries. They are not a second user profile library.
+
+A user who wants a reusable custom combination in the GUI MUST save a complete look. Shared section documents remain available to non-browser consumers.
 
 The GUI and CLI MUST resolve the same family identifiers, names, scope, validation, and values. A profile selected in either surface MUST produce the same resolved feature controls at the same precision boundary.
 

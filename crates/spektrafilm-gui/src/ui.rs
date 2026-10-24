@@ -862,9 +862,8 @@ impl App {
 
     /// The `modified` chip and the reset action of one section header.
     ///
-    /// Every resettable section presents these on its header, whether or not
-    /// it also carries a preset menu, so the reset scope the section table
-    /// declares is reachable from the surface that renders the section.
+    /// Every resettable section presents these on its header, so the reset scope
+    /// the section table declares is reachable from the surface rendering it.
     fn section_reset_controls(&mut self, ui: &mut egui::Ui, section: &str) -> bool {
         let mut changed = false;
         let material_modified = match section {
