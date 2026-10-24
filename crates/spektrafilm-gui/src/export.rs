@@ -390,6 +390,11 @@ impl ExportDialog {
                 if jpeg {
                     ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_warning"));
                 }
+                // The shared numeric owner models a parameter row: a labeled
+                // value entry with edit transactions and history gestures.
+                // This draft option is not a parameter row, and its editor is
+                // the labeled slider acceptance queries by role and name, so
+                // the dialog keeps it as the option's own editing owner.
                 let quality = ui.add_enabled(jpeg,
                     egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality"))).on_disabled_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality_help"));
                 controls::locate_row(ui, "extras.rust.jpeg_quality", &quality);
@@ -422,6 +427,9 @@ impl ExportDialog {
                     }
                 }
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
+                // The shared choice owner models label, selector, and help;
+                // this selector additionally offers selection guidance inside
+                // its popup, so the dialog keeps its own owner for it.
                 let color_space = egui::ComboBox::new("Saving color space", crate::i18n::text(ui.ctx(), "surfaces.export.color_space"))
                     .selected_text(&draft.saving_color_space)
                     .show_ui(ui, |ui| {
@@ -436,9 +444,20 @@ impl ExportDialog {
                 })
                 .response.on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.space_help"));
                 controls::locate_row(ui, "extras.rust.export_saving_color_space", &color_space);
-                let encoding = ui.add_enabled(draft.format == ExportFormat::Tiff,
-                    egui::Checkbox::new(&mut draft.saving_cctf_encoding, controls::localized(ui.ctx(), "Apply saving CCTF encoding")))
-                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help"));
+                // The shared switch owner models this boolean draft option:
+                // the same presentation, state, and accessible naming an
+                // inspector boolean gets. Its response keeps the row
+                // locatable by canonical path through the draft's real owner.
+                let cctf_help = crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help");
+                let encoding = ui.add_enabled_ui(draft.format == ExportFormat::Tiff, |ui| {
+                    controls::toggle_row(
+                        ui,
+                        "Apply saving CCTF encoding",
+                        &mut draft.saving_cctf_encoding,
+                        &cctf_help,
+                    )
+                })
+                .inner;
                 controls::locate_row(ui, "extras.rust.export_saving_cctf_encoding", &encoding);
                 draft.normalize();
                 match draft.format {

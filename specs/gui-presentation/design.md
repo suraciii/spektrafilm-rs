@@ -4,7 +4,7 @@
 
 This design is the implementation boundary for the SpektraFilm presentation language. It translates the semantic roles in the [GUI presentation specification](spec.md) into one native token set and one implementation per control kind.
 
-Presentation MUST preserve the vocabulary from [GUI product language](../gui-language/spec.md), the hierarchy from [GUI product design](../gui-product-design/spec.md), and [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership). It MUST NOT create a second language, token set, navigation model, or state model.
+Presentation MUST preserve the vocabulary from [GUI product language](../gui-language/spec.md), the hierarchy from [GUI product design](../gui-product-design/spec.md), and [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership). It MUST NOT create a second language, token set, navigation model, or state model. The quiet photo-first target in the [presentation specification](spec.md#spektrafilm-design-language) constrains this translation.
 
 ## Surface and component boundaries
 
@@ -26,7 +26,7 @@ Accessible names and state descriptions MUST come from the same product vocabula
 
 The inspector MUST use a single vertical scroll owner for its control list. Stage and module headings MUST remain in the same reading order as their rows. Long lists MUST retain readable labels, numeric entries, reset actions, and focus indicators without horizontal scrolling.
 
-Row wrapping MUST preserve label-before-value reading order. Help and inactive reasons MUST NOT cover the editor or its reset action.
+Row wrapping MUST preserve label-before-value reading order. Help and inactive reasons MUST NOT cover the editor or the module reset action.
 
 The stage strip MUST navigate to headings in that list rather than replace the list with mutually exclusive pages. Expansion, navigation, and search behavior follow [complete control access](../gui-workflow/spec.md#complete-control-access) and [control search](../gui-workflow/spec.md#control-search). Presentation MUST NOT add a second tab or page state.
 
@@ -46,7 +46,7 @@ The slider MUST NOT represent an unaccepted text draft as a committed parameter 
 
 ## Factory projection and modified state
 
-The row reset target MUST be the canonical control's projected factory value. The module reset target MUST be the factory projection of only the visible controls that the module owns under [complete control access](../gui-workflow/spec.md#complete-control-access). A route-inactive owned row remains part of that scope.
+The module reset target MUST be the factory projection of only the visible controls that the module owns under [complete control access](../gui-workflow/spec.md#complete-control-access). A route-inactive owned row remains part of that scope.
 
 Collapse and search visibility MUST NOT redefine ownership or reset scope.
 
@@ -58,6 +58,6 @@ The modified marker MUST be derived rather than persisted or serialized. Numeric
 
 A module's marker MUST aggregate only its owned rows. A marker MUST use a non-color cue and MUST NOT change the row's accessible label.
 
-Preset-section actions MUST remain separate from row and module reset actions. A section menu at its primary module anchor MUST state its full payload scope when that scope crosses visible module boundaries. Presentation MUST NOT change the preset schema or imply that visual module boundaries change stored section payloads.
+Preset-library actions MUST remain separate from module reset actions. Presentation MUST NOT change the preset schema or imply that visual module boundaries change stored section payloads.
 
 Reset and edit transactions MUST follow [edit history](../gui-workflow/spec.md#edit-history). Presentation MUST NOT infer explicit provenance from the modified marker or implement a second undo model.

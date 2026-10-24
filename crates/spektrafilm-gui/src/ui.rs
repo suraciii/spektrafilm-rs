@@ -228,7 +228,8 @@ impl App {
             if ui
                 .add_enabled(
                     ready,
-                    egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.scan")),
+                    egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.scan"))
+                        .min_size(egui::vec2(112.0, 38.0)),
                 )
                 .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.scan_help"))
                 .clicked()
@@ -240,7 +241,8 @@ impl App {
             let save = ui
                 .add_enabled(
                     (self.output_image.is_some() || self.output_retained.is_some()) && !busy,
-                    egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.save_retained")),
+                    egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.save_retained"))
+                        .min_size(egui::vec2(112.0, 38.0)),
                 )
                 .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.save_help"));
             controls::locate_row(ui, "action.save_retained", &save);
@@ -648,10 +650,7 @@ impl App {
                 } else {
                     section
                 };
-                let title = controls::localized(ui.ctx(), title);
-                let response = ui.button(format!("{} {title}", if open { "v" } else { ">" }));
-                ui.ctx()
-                    .accesskit_node_builder(response.id, |node| node.set_label(title.as_ref()));
+                let response = controls::disclosure_header(ui, title, open);
                 if response.clicked() && !temporary_open {
                     ui.ctx()
                         .data_mut(|data| data.insert_persisted(disclosure_id, !normal_open));
@@ -893,30 +892,7 @@ impl App {
             );
         }
         if section_reset::sections().any(|name| name == section) {
-            let response = ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.state.reset"))
-                            .color(theme::FG_MUTED)
-                            .size(theme::SIZE_HINT),
-                    )
-                    .corner_radius(theme::RADIUS_CARD),
-                )
-                .on_hover_text(crate::tr!(
-                    ui.ctx(),
-                    "surfaces.section.restore",
-                    section = controls::localized(ui.ctx(), section)
-                ));
-            // Name the action after its section, so one reset is
-            // addressable among the sections on a page.
-            let accessible_name = crate::tr!(
-                ui.ctx(),
-                "surfaces.section.reset_name",
-                section = controls::localized(ui.ctx(), section)
-            );
-            ui.ctx().accesskit_node_builder(response.id, |node| {
-                node.set_label(accessible_name);
-            });
+            let response = controls::module_reset(ui, section);
             if response.clicked() {
                 if !matches!(section, "Session" | "Display") {
                     self.label_adjustment_message(
@@ -1278,11 +1254,11 @@ impl App {
                 let response = ui.button(
                     egui::RichText::new(format!(
                         "{} {}",
-                        if open { "v" } else { ">" },
+                        if open { "⌄" } else { "›" },
                         controls::localized(ui.ctx(), stage.label())
                     ))
                     .strong()
-                    .size(theme::SIZE_TITLE),
+                    .size(theme::SIZE_STAGE),
                 );
                 let accessible_name = crate::tr!(
                     ui.ctx(),
@@ -1291,6 +1267,7 @@ impl App {
                 );
                 ui.ctx()
                     .accesskit_node_builder(response.id, |node| node.set_label(accessible_name));
+                controls::focus_feedback(ui, &response);
                 if response.clicked() && !filtered {
                     ui.ctx()
                         .data_mut(|data| data.insert_persisted(open_id, !normal_open));
@@ -1499,8 +1476,13 @@ impl App {
             ))
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new("spektrafilm").strong());
+                    ui.label(
+                        egui::RichText::new("spektrafilm")
+                            .strong()
+                            .size(theme::SIZE_TITLE),
+                    );
                     self.photograph_toolbar(ui);
+                    ui.add_space(theme::SPACE_GROUP);
                     if ui
                         .button(crate::i18n::text(ui.ctx(), "surfaces.action.open"))
                         .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.open_help"))
@@ -1508,40 +1490,49 @@ impl App {
                     {
                         self.open_image_dialog();
                     }
-                    let undo_label = self.undo_label_localized(ui.ctx()).map_or_else(
-                        || crate::i18n::text(ui.ctx(), "surfaces.history.no_undo").into_owned(),
-                        |label| {
-                            crate::tr!(ui.ctx(), "surfaces.history.undo", label = label)
-                                .into_owned()
-                        },
-                    );
-                    if ui
-                        .add_enabled(
-                            self.can_undo() && !self.input_transition_pending(),
-                            egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.undo")),
-                        )
-                        .on_hover_text(undo_label)
-                        .clicked()
-                    {
-                        self.undo_adjustment();
-                    }
-                    let redo_label = self.redo_label_localized(ui.ctx()).map_or_else(
-                        || crate::i18n::text(ui.ctx(), "surfaces.history.no_redo").into_owned(),
-                        |label| {
-                            crate::tr!(ui.ctx(), "surfaces.history.redo", label = label)
-                                .into_owned()
-                        },
-                    );
-                    if ui
-                        .add_enabled(
-                            self.can_redo() && !self.input_transition_pending(),
-                            egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.redo")),
-                        )
-                        .on_hover_text(redo_label)
-                        .clicked()
-                    {
-                        self.redo_adjustment();
-                    }
+                    ui.horizontal(|ui| {
+                        let undo_label = self.undo_label_localized(ui.ctx()).map_or_else(
+                            || crate::i18n::text(ui.ctx(), "surfaces.history.no_undo").into_owned(),
+                            |label| {
+                                crate::tr!(ui.ctx(), "surfaces.history.undo", label = label)
+                                    .into_owned()
+                            },
+                        );
+                        if ui
+                            .add_enabled(
+                                self.can_undo() && !self.input_transition_pending(),
+                                egui::Button::new(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.action.undo",
+                                )),
+                            )
+                            .on_hover_text(undo_label)
+                            .clicked()
+                        {
+                            self.undo_adjustment();
+                        }
+                        let redo_label = self.redo_label_localized(ui.ctx()).map_or_else(
+                            || crate::i18n::text(ui.ctx(), "surfaces.history.no_redo").into_owned(),
+                            |label| {
+                                crate::tr!(ui.ctx(), "surfaces.history.redo", label = label)
+                                    .into_owned()
+                            },
+                        );
+                        if ui
+                            .add_enabled(
+                                self.can_redo() && !self.input_transition_pending(),
+                                egui::Button::new(crate::i18n::text(
+                                    ui.ctx(),
+                                    "surfaces.action.redo",
+                                )),
+                            )
+                            .on_hover_text(redo_label)
+                            .clicked()
+                        {
+                            self.redo_adjustment();
+                        }
+                    });
+                    ui.add_space(theme::SPACE_GROUP);
                     let settings =
                         ui.button(crate::i18n::text(ui.ctx(), "surfaces.settings.title"));
                     if settings.is_pointer_button_down_on() {
@@ -1600,6 +1591,7 @@ impl App {
                     if self.photograph_has_unsaved_changes() {
                         ui.label(crate::i18n::text(ui.ctx(), "photo.record.unsaved"));
                     }
+                    ui.separator();
                     ui.label(crate::tr!(
                         ui.ctx(),
                         "surfaces.header.film",
@@ -1610,6 +1602,7 @@ impl App {
                         "surfaces.header.print",
                         name = profiles::selected_display(&self.papers, &self.print_name)
                     ));
+                    ui.separator();
                     ui.label(crate::tr!(
                         ui.ctx(),
                         "surfaces.header.route",
@@ -1627,7 +1620,9 @@ impl App {
                         theme::FG_SECONDARY
                     };
                     ui.label(
-                        egui::RichText::new(self.retained_result_identity(ui.ctx())).color(color),
+                        egui::RichText::new(self.retained_result_identity(ui.ctx()))
+                            .color(color)
+                            .size(theme::SIZE_UNIT),
                     );
                     if (self.output_image.is_some() || self.output_retained.is_some())
                         && self.retained_kind == Some(RenderKind::Preview)
@@ -1834,7 +1829,7 @@ impl eframe::App for App {
                 let scroll_height =
                     (ui.available_height() - theme::HEIGHT_ACTION_BAR_RESERVE).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
-                    egui::ScrollArea::both()
+                    egui::ScrollArea::vertical()
                         .id_salt((
                             "controls-scroll",
                             !self.filter.is_empty() || self.only_modified,
@@ -1858,81 +1853,7 @@ impl eframe::App for App {
         // Central viewer
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    self.viewer.layer_controls(ui);
-                    ui.checkbox(
-                        &mut self.viewer.settings.reveal,
-                        controls::localized(ui.ctx(), "reveal transition"),
-                    )
-                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.reveal_help"));
-                    ui.checkbox(
-                        &mut self.viewer.settings.crossfade,
-                        controls::localized(ui.ctx(), "crossfade transition"),
-                    )
-                    .on_hover_text(crate::i18n::text(
-                        ui.ctx(),
-                        "surfaces.viewer.crossfade_help",
-                    ));
-                    // View: zoom presets and the fit reset. Exact percentages
-                    // are a source-pixel-to-device-pixel scale, so 100% means
-                    // one source pixel per device pixel.
-                    for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
-                        let response = ui.button(label).on_hover_text(crate::tr!(
-                            ui.ctx(),
-                            "surfaces.viewer.zoom_exact_help",
-                            percent = format!("{percent:.0}")
-                        ));
-                        let path = match label {
-                            "100%" => "viewer.zoom.100",
-                            "200%" => "viewer.zoom.200",
-                            _ => "viewer.zoom.400",
-                        };
-                        controls::locate_row(ui, path, &response);
-                        if response.clicked() {
-                            self.viewer.set_zoom_percent(percent);
-                            ui.ctx().request_repaint();
-                        }
-                    }
-                    let fit = ui
-                        .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit"))
-                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit_help"));
-                    controls::locate_row(ui, "viewer.fit", &fit);
-                    if fit.clicked() {
-                        self.viewer.fit_view();
-                        ui.ctx().request_repaint();
-                    }
-                    let reset = ui
-                        .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.reset"))
-                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.reset_help"));
-                    controls::locate_row(ui, "viewer.reset", &reset);
-                    if reset.clicked() {
-                        self.viewer.reset_view();
-                        ui.ctx().request_repaint();
-                    }
-                    ui.separator();
-                    // Read-only: the current zoom.
-                    let zoom = self.viewer.zoom_percent().map_or_else(
-                        || {
-                            crate::tr!(
-                                ui.ctx(),
-                                "surfaces.viewer.zoom_fit",
-                                percent = format!("{:.0}", self.viewer.zoom * 100.0)
-                            )
-                            .into_owned()
-                        },
-                        |percent| format!("{percent:.0}%"),
-                    );
-                    ui.label(
-                        egui::RichText::new(crate::tr!(
-                            ui.ctx(),
-                            "surfaces.viewer.zoom",
-                            zoom = zoom
-                        ))
-                        .color(theme::FG_MUTED)
-                        .size(theme::SIZE_HINT),
-                    )
-                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.zoom_help"));
-                });
+                self.viewer.footer_controls(ui);
             });
             self.viewer
                 .set_display_max_size(self.params.settings.preview_max_size);

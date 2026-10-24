@@ -538,6 +538,10 @@ fn row_slider<T: egui::emath::Numeric>(
             },
         )
         .inner;
+    // The slider's track and handle carry no toolkit frame, so its keyboard
+    // focus comes from the one shared tokenized ring, the same cue framed
+    // controls get from the theme's active stroke.
+    crate::controls::focus_feedback(ui, &response);
     let state_id = response.id.with("adjustment");
     register_numeric_slider(ui.ctx(), response.id, state_id);
     let mut state = ui

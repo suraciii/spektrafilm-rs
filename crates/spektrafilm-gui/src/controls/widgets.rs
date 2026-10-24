@@ -475,65 +475,126 @@ pub(crate) fn fotufilm_sublayer_shares(
 /// set after the widget is added, because egui rewrites the node's role from
 /// its own widget info on every frame.
 pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) -> bool {
+    toggle_row(ui, label, value, tooltip).clicked()
+}
+
+/// The one switch implementation, returning its response.
+///
+/// A draft row that owns no canonical row identity — the Export dialog edits
+/// options, not inspector parameters — locates itself through its response's
+/// canonical path, which [`super::locate_row`] needs.
+pub(crate) fn toggle_row(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut bool,
+    tooltip: &str,
+) -> egui::Response {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        let label_response = ui
-            .label(crate::controls::localized(ui.ctx(), label))
-            .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
-        let mark = row_modified::RowMark::resolve(ui.ctx(), Some(label));
-        mark.paint(ui, &label_response);
-        mark.gold(ui, |ui| {
-            let (fill, knob, text) = if *value {
-                (theme::ACCENT, theme::CONTRAST_ON_ACCENT, "on")
-            } else {
-                (theme::SURFACE3, theme::FG_MUTED, "off")
-            };
-            let response = ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new(super::localized(ui.ctx(), text))
-                            .color(knob)
-                            .size(theme::SIZE_HINT),
-                    )
-                    .fill(fill)
-                    .corner_radius(theme::RADIUS_CARD)
-                    .min_size(egui::vec2(44.0, 18.0))
-                    .selected(*value),
-                )
+    let response = ui
+        .horizontal(|ui| {
+            let label_response = ui
+                .label(crate::controls::localized(ui.ctx(), label))
                 .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
-            super::focus_response(ui, label, &response);
-            if response.clicked() {
-                *value = !*value;
-                changed = true;
-            }
-            let accessible_label = super::localized(ui.ctx(), label);
-            response.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::WidgetType::Checkbox,
-                    ui.is_enabled(),
-                    *value,
-                    accessible_label.as_ref(),
-                )
-            });
-            // Name the switch and declare the visible label as its labelling
-            // node, so a label query resolves to the switch itself.
-            let id = response.id;
-            response.labelled_by(label_response.id);
-            ui.ctx().accesskit_node_builder(id, |node| {
-                node.set_role(egui::accesskit::Role::Switch);
-                node.set_toggled(if *value {
-                    egui::accesskit::Toggled::True
+            let mark = row_modified::RowMark::resolve(ui.ctx(), Some(label));
+            mark.paint(ui, &label_response);
+            mark.gold(ui, |ui| {
+                let (fill, knob, text) = if *value {
+                    (theme::ACCENT, theme::CONTRAST_ON_ACCENT, "on")
                 } else {
-                    egui::accesskit::Toggled::False
+                    (theme::SURFACE3, theme::FG_MUTED, "off")
+                };
+                let response = ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(super::localized(ui.ctx(), text))
+                                .color(knob)
+                                .size(theme::SIZE_HINT),
+                        )
+                        .fill(fill)
+                        .corner_radius(theme::RADIUS_CARD)
+                        .min_size(egui::vec2(44.0, 18.0))
+                        .selected(*value),
+                    )
+                    .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
+                super::focus_response(ui, label, &response);
+                if response.clicked() {
+                    *value = !*value;
+                    changed = true;
+                }
+                let accessible_label = super::localized(ui.ctx(), label);
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::Checkbox,
+                        ui.is_enabled(),
+                        *value,
+                        accessible_label.as_ref(),
+                    )
                 });
-                node.set_label(accessible_label.as_ref());
-            });
-        });
-    });
+                // Name the switch and declare the visible label as its labelling
+                // node, so a label query resolves to the switch itself.
+                let id = response.id;
+                let response = response.labelled_by(label_response.id);
+                ui.ctx().accesskit_node_builder(id, |node| {
+                    node.set_role(egui::accesskit::Role::Switch);
+                    node.set_toggled(if *value {
+                        egui::accesskit::Toggled::True
+                    } else {
+                        egui::accesskit::Toggled::False
+                    });
+                    node.set_label(accessible_label.as_ref());
+                });
+                response
+            })
+        })
+        .inner;
     if changed {
         super::record_label_edit(ui.ctx(), label);
     }
-    changed
+    response
+}
+/// The module factory-reset action presented on a module header.
+///
+/// One presentation for the reset every resettable module carries: a quiet
+/// chip whose resting fill and border come from the theme, legible secondary
+/// text rather than the smallest muted role, and a minimum hit target sized
+/// from the spacing scale so the action is easy to hit beside its header. The
+/// caller owns the reset transaction and its history label; this owner
+/// presents the action, names its target for assistive technology, and states
+/// the factory baseline in accessible help so both survive without hover.
+pub(crate) fn module_reset(ui: &mut Ui, section: &str) -> egui::Response {
+    let response = ui
+        .add(
+            egui::Button::new(
+                egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.state.reset"))
+                    .color(theme::FG_SECONDARY)
+                    .size(theme::SIZE_UNIT),
+            )
+            .corner_radius(theme::RADIUS_CARD)
+            .min_size(egui::vec2(theme::SPACE_4 * 3.0, theme::SPACE_3 * 2.0)),
+        )
+        .on_hover_text(crate::tr!(
+            ui.ctx(),
+            "surfaces.section.restore",
+            section = super::localized(ui.ctx(), section)
+        ));
+    // Name the action after its section, so one reset is addressable among
+    // the sections on a page, and carry the factory-baseline sentence as the
+    // node's description.
+    let accessible_name = crate::tr!(
+        ui.ctx(),
+        "surfaces.section.reset_name",
+        section = super::localized(ui.ctx(), section)
+    );
+    let baseline = crate::tr!(
+        ui.ctx(),
+        "surfaces.section.restore",
+        section = super::localized(ui.ctx(), section)
+    );
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_label(accessible_name);
+        node.set_description(baseline);
+    });
+    response
 }
 
 /// Mark a row's label as experimental.

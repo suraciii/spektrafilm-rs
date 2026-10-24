@@ -20,7 +20,7 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 ## Workspace
 
-The header provides **Save adjustments…**, **Reopen adjustments…**, **Photographs…**, **Open**, **Undo**, **Redo**, **Settings**, and primary **Export**. It identifies the accepted source, film, print material, and workflow route as read-only context, and reports import, delivery, completion, and error messages. While an export runs, **Cancel export** replaces **Export**. Live viewer rendering status appears inside the viewer.
+The header provides a **Photographs** menu (**照片**) containing **Save adjustments…**, **Reopen adjustments…**, and **Photographs…**, plus **Open**, **Undo**, **Redo**, **Settings**, and primary **Export**. It identifies the accepted source, film, print material, and workflow route as read-only context, and reports import, delivery, completion, and error messages. While an export runs, **Cancel export** replaces **Export**. Live viewer rendering status appears inside the viewer.
 
 The left **Presets** browser is collapsible and resizable. **Search presets** finds looks by name or film/print stock, including stock display names. **Clear preset search** restores the full list. **Built-in** looks are read-only; **My Presets** holds user looks. **Save preset…** saves a look, not a photograph or startup default. Searching, collapsing, or scrolling the browser does not apply a look or change the photograph.
 Built-in reference thumbnails sit beside the compact card controls; the fixed-reference warning, attribution, and license appear once above the group. Each card's visible action menu supports pointer and keyboard activation, with focused controls scrolled into view; library issues precede the cards, and the applied or missing look remains visible above the list.
@@ -71,7 +71,7 @@ Input color-space and CCTF controls reinterpret the accepted samples; they do no
 
 The choices use exposed-image long edges of 36 mm, 56 mm, and 127 mm respectively. **120** uses one representative size; it does not select a square crop. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph.
 
-Existing states and presets retain their exact `camera.film_format_mm` value. A value without a matching specification, including the existing 35 mm factory value, displays as Custom. Selecting a specification is one reversible adjustment; factory reset retains the existing default.
+Existing states and presets retain their exact `camera.film_format_mm` value. A value without a matching specification, including the existing 35 mm factory value, displays as Custom. Selecting a specification is one reversible adjustment; the module reset keeps the existing factory default.
 
 ### RAW decode draft
 
@@ -83,7 +83,7 @@ Simulated exposure remains a separate control at **Input and capture → Camera 
 
 **Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the control panel. Valid edits automatically refresh Preview after a short debounce. Incomplete or invalid text keeps the last valid parameter value and remains visible as an editing draft until Escape or ordinary focus loss. Opening language settings suspends the draft instead of finishing it; return to the field to continue or cancel it. Escape cancels the uncommitted edit. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
 
-Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. A modified row shows a gold marker and value; the marker uses the same section-reset baseline as the section `modified` chip. Tuple, optional, extra, and boolean rows use the same marker rule. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
+Each numeric row shows the parameter's name on the left and its value on the right of one line, with a slider on the line below. A modified row shows a marker beside its label and marks its value; the marker uses the same factory baseline as the module's `modified` chip. Tuple, optional, extra, and boolean rows use the same marker rule. The slider only moves the value; the field stays the row's editor. The slider is logarithmic when the declared range spans more than three decades, or when the declared minimum is zero and the declared maximum reaches one thousand or more. A signed range stays linear. A logarithmic slider anchors its smallest positive value at the parameter's declared step, so its floor matches the field's own granularity. A declared minimum of zero keeps zero as the track's leftmost stop.
 
 A boolean row is a switch that names the concept it enables. A choice row shows the parameter's name on the left and its selector on the right. A row marked experimental carries an `experimental` chip beside its name. A checkbox belongs to list selection only.
 
@@ -135,7 +135,7 @@ The `input` workflow color-manages an already rendered image to the output space
 
 ## Adjustment history
 
-Header **Undo** and **Redo** apply to accepted adjustments for the current source: parameter edits, workflow and material selection with their dependent normalizations, feature/section/look-preset application, source rotation, and row/module resets. Their hover text names the next action; unavailable actions are disabled. One completed slider drag or numeric text edit is one step; each original wheel event is one step. Rejected edits and canceled gestures add no step. A new accepted edit after Undo discards the redo branch.
+Header **Undo** and **Redo** apply to accepted adjustments for the current source: parameter edits, workflow and material selection with their dependent normalizations, feature and look-preset application, source rotation, and module resets. Their hover text names the next action; unavailable actions are disabled. One completed slider drag or numeric text edit is one step; each original wheel event is one step. Rejected edits and canceled gestures add no step. A new accepted edit after Undo discards the redo branch.
 
 Undo restores accepted controls, materials, route, explicit edit ownership, and the associated applied-preset state. Redo restores the recorded successor without rereading a possibly changed preset file. Both invalidate obsolete work and automatically refresh Preview; delayed worker results cannot overwrite a newer restored adjustment. The viewer retains its last completed frame while work runs and the retained-result label marks it stale until a current result is accepted.
 
@@ -147,7 +147,7 @@ Accepting another source, completing RAW reprocessing, or loading a complete GUI
 
 ## Preview and Scan
 
-Preview automatically renders a bounded image using the configured preview long-edge limit and current runtime controls. Set **preview max size** in **Settings → General**; accepting a new limit automatically updates Preview. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active.
+Preview automatically renders a bounded image using the configured preview long-edge limit and current runtime controls. Set **preview max size** in **Settings → General**; accepting a new limit automatically updates Preview. The General section's **reset** restores that limit to the factory value. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active.
 
 Opening an image, applying a preset, moving a slider, or accepting numeric text refreshes **Modified** automatically. No Preview button, Update action, or auto-preview preference is required. Rendering waits while calibration or the existing modal guards block submission.
 
@@ -173,7 +173,7 @@ The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at 
 
 The `Paper back` layer is a viewer-only virtual rendering generated from paper texture, watermark, and noise. It is not an editable material stage and does not alter retained, saved, or exported pixels.
 
-The viewer footer groups its controls by target: Original/Modified selection, view zoom, reveal/crossfade presentation, and the current zoom as a read-only readout. Source rotation belongs to the inspector, not this footer.
+The viewer footer groups its controls by target: Original/Modified/Paper back selection, reveal/crossfade presentation, view zoom, and the current zoom as a read-only readout. Source rotation belongs to the inspector, not this footer.
 
 The footer switches between **Original** (原图), the retained input, and **Modified** (修改图), the latest accepted Preview or Scan. Modified is disabled until output exists. The first accepted Preview or Scan selects Modified. Switching does not render or edit adjustments; both views share zoom and pan. **Paper back** remains a separate presentation. **Settings → Display → output interpolation** selects nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling for Modified. Original uses nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
 

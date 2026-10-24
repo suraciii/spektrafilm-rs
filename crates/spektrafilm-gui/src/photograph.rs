@@ -459,35 +459,79 @@ impl App {
     }
 
     pub(crate) fn photograph_toolbar(&mut self, ui: &mut egui::Ui) {
-        let save = ui
-            .add_enabled(
-                self.image.is_some() && !self.input_transition_pending(),
-                egui::Button::new(crate::i18n::text(ui.ctx(), "photo.record.save")),
+        let popup_id = ui.make_persistent_id("photograph-menu");
+        let focus_target = ui
+            .ctx()
+            .data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request")));
+        if focus_target.is_some_and(|(_, target)| {
+            matches!(
+                target.as_str(),
+                "action.save_photo_record"
+                    | "action.reopen_photo_record"
+                    | "action.work_list"
+                    | "Save adjustments…"
+                    | "Reopen adjustments…"
+                    | "Photographs…"
             )
-            .on_hover_text(crate::i18n::text(ui.ctx(), "photo.record.accepted_only"));
-        controls::locate_row(ui, "action.save_photo_record", &save);
-        if save.clicked()
-            && let Err(error) = self.save_photograph_record_dialog()
-        {
-            self.status =
-                Message::new("photo.error.action").message_arg("detail", Message::error(&error));
+        }) {
+            ui.memory_mut(|memory| memory.open_popup(popup_id));
         }
-        let reopen = ui
-            .button(crate::i18n::text(ui.ctx(), "photo.record.reopen"))
-            .on_hover_text(crate::i18n::text(ui.ctx(), "photo.record.dependencies"));
-        controls::locate_row(ui, "action.reopen_photo_record", &reopen);
-        if reopen.clicked()
-            && let Some(path) = self.chooser.pick_file(
-                self.file_dialog("photo_record")
-                    .add_filter("JSON", &["json"]),
-            )
-        {
-            self.request_photo_action(PhotoAction::Reopen(path, None));
+        let menu = ui.button(crate::i18n::text(ui.ctx(), "surfaces.header.photo_menu"));
+        if menu.clicked() {
+            ui.memory_mut(|memory| memory.toggle_popup(popup_id));
         }
-        let list = ui.button(crate::i18n::text(ui.ctx(), "photo.work_list"));
-        controls::locate_row(ui, "action.work_list", &list);
-        if list.clicked() {
-            self.photograph.work_list.open = true;
+        let mut action = None;
+        egui::popup::popup_below_widget(
+            ui,
+            popup_id,
+            &menu,
+            egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                ui.set_min_width(210.0);
+                let save = ui
+                    .add_enabled(
+                        self.image.is_some() && !self.input_transition_pending(),
+                        egui::Button::new(crate::i18n::text(ui.ctx(), "photo.record.save")),
+                    )
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "photo.record.accepted_only"));
+                controls::locate_row(ui, "action.save_photo_record", &save);
+                if save.clicked() {
+                    action = Some("save");
+                    ui.memory_mut(|memory| memory.close_popup());
+                }
+                let reopen = ui
+                    .button(crate::i18n::text(ui.ctx(), "photo.record.reopen"))
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "photo.record.dependencies"));
+                controls::locate_row(ui, "action.reopen_photo_record", &reopen);
+                if reopen.clicked() {
+                    action = Some("reopen");
+                    ui.memory_mut(|memory| memory.close_popup());
+                }
+                let list = ui.button(crate::i18n::text(ui.ctx(), "photo.work_list"));
+                controls::locate_row(ui, "action.work_list", &list);
+                if list.clicked() {
+                    action = Some("list");
+                    ui.memory_mut(|memory| memory.close_popup());
+                }
+            },
+        );
+        match action {
+            Some("save") => {
+                if let Err(error) = self.save_photograph_record_dialog() {
+                    self.status = Message::new("photo.error.action")
+                        .message_arg("detail", Message::error(&error));
+                }
+            }
+            Some("reopen") => {
+                if let Some(path) = self.chooser.pick_file(
+                    self.file_dialog("photo_record")
+                        .add_filter("JSON", &["json"]),
+                ) {
+                    self.request_photo_action(PhotoAction::Reopen(path, None));
+                }
+            }
+            Some("list") => self.photograph.work_list.open = true,
+            _ => {}
         }
     }
 

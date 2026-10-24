@@ -535,6 +535,88 @@ impl Viewer {
         });
         before != self.settings.layer
     }
+    /// The viewer footer, grouped by the target each action acts on: the shown
+    /// layer, the accepted-result transition, and the retained view. The
+    /// current zoom stays read-only text, apart from the actions. Every footer
+    /// control changes viewing only; none of them reaches retained, saved or
+    /// exported pixels.
+    pub fn footer_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            // Target: which retained image the viewer presents.
+            self.layer_controls(ui);
+            ui.separator();
+            // Transition: how an accepted result replaces the retained frame.
+            ui.checkbox(
+                &mut self.settings.reveal,
+                crate::controls::localized(ui.ctx(), "reveal transition"),
+            )
+            .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.reveal_help"));
+            ui.checkbox(
+                &mut self.settings.crossfade,
+                crate::controls::localized(ui.ctx(), "crossfade transition"),
+            )
+            .on_hover_text(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.viewer.crossfade_help",
+            ));
+            ui.separator();
+            // View: zoom presets and the fit reset. Exact percentages
+            // are a source-pixel-to-device-pixel scale, so 100% means
+            // one source pixel per device pixel.
+            for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
+                let response = ui.button(label).on_hover_text(crate::tr!(
+                    ui.ctx(),
+                    "surfaces.viewer.zoom_exact_help",
+                    percent = format!("{percent:.0}")
+                ));
+                let path = match label {
+                    "100%" => "viewer.zoom.100",
+                    "200%" => "viewer.zoom.200",
+                    _ => "viewer.zoom.400",
+                };
+                crate::controls::locate_row(ui, path, &response);
+                if response.clicked() {
+                    self.set_zoom_percent(percent);
+                    ui.ctx().request_repaint();
+                }
+            }
+            let fit = ui
+                .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit"))
+                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit_help"));
+            crate::controls::locate_row(ui, "viewer.fit", &fit);
+            if fit.clicked() {
+                self.fit_view();
+                ui.ctx().request_repaint();
+            }
+            let reset = ui
+                .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.reset"))
+                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.reset_help"));
+            crate::controls::locate_row(ui, "viewer.reset", &reset);
+            if reset.clicked() {
+                self.reset_view();
+                ui.ctx().request_repaint();
+            }
+            ui.separator();
+            // Read-only: the current zoom.
+            let zoom = self.zoom_percent().map_or_else(
+                || {
+                    crate::tr!(
+                        ui.ctx(),
+                        "surfaces.viewer.zoom_fit",
+                        percent = format!("{:.0}", self.zoom * 100.0)
+                    )
+                    .into_owned()
+                },
+                |percent| format!("{percent:.0}%"),
+            );
+            ui.label(
+                egui::RichText::new(crate::tr!(ui.ctx(), "surfaces.viewer.zoom", zoom = zoom))
+                    .color(crate::theme::FG_MUTED)
+                    .size(crate::theme::SIZE_HINT),
+            )
+            .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.zoom_help"));
+        });
+    }
     pub fn interpolation_control(&mut self, ui: &mut egui::Ui) {
         let response = egui::ComboBox::new(
             "output interpolation",
@@ -901,11 +983,11 @@ impl Viewer {
         if let Some((start, end)) = self.marquee {
             let selection = Rect::from_two_pos(start, end).intersect(rect);
             let painter = ui.painter_at(rect);
-            painter.rect_filled(selection, 0.0, Color32::from_white_alpha(24));
+            painter.rect_filled(selection, 0.0, crate::theme::FG.gamma_multiply(0.1));
             painter.rect_stroke(
                 selection,
                 0.0,
-                egui::Stroke::new(1.0_f32, Color32::WHITE),
+                crate::theme::stroke(crate::theme::FG),
                 egui::StrokeKind::Inside,
             );
         }
@@ -914,7 +996,7 @@ impl Viewer {
             let message = crate::i18n::text(ui.ctx(), "surfaces.viewer.empty");
             let galley = painter.layout(
                 message.to_string(),
-                egui::FontId::proportional(16.0),
+                crate::theme::text(egui::TextStyle::Body, crate::theme::SIZE_TITLE),
                 crate::theme::FG_SECONDARY,
                 rect.width(),
             );
@@ -1004,16 +1086,23 @@ impl Viewer {
         };
         let painter = ui.painter_at(rect);
         let text_rect = Rect::from_min_size(
-            rect.min + Vec2::splat(8.0),
-            Vec2::new(rect.width().min(650.0) - 16.0, 24.0),
+            rect.min + Vec2::splat(crate::theme::SPACE_2),
+            Vec2::new(rect.width().min(650.0) - 2.0 * crate::theme::SPACE_2, 24.0),
         );
-        painter.rect_filled(text_rect, 3.0, Color32::from_black_alpha(180));
+        // Viewer-only chrome over the image. The token set has no translucent
+        // overlay-scrim role, so the panel surface is the closest existing
+        // token at reduced alpha.
+        painter.rect_filled(
+            text_rect,
+            crate::theme::RADIUS_CARD,
+            crate::theme::SURFACE.gamma_multiply(0.85),
+        );
         painter.text(
-            text_rect.min + Vec2::new(5.0, 4.0),
+            text_rect.min + Vec2::splat(crate::theme::SPACE_1),
             egui::Align2::LEFT_TOP,
             text,
-            egui::FontId::monospace(12.0),
-            Color32::WHITE,
+            crate::theme::text(crate::theme::TEXT_READOUT, crate::theme::SIZE_HINT),
+            crate::theme::FG,
         );
         inspection
     }

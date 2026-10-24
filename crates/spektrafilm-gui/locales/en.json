@@ -761,6 +761,7 @@
   "surfaces.header.film": "Film: %{name}",
   "surfaces.header.print": "Print: %{name}",
   "surfaces.header.route": "Route: %{route}",
+  "surfaces.header.photo_menu": "Photographs",
   "surfaces.history.no_undo": "No adjustment to undo",
   "surfaces.history.no_redo": "No adjustment to redo",
   "surfaces.history.undo": "Undo %{label}",

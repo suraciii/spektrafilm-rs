@@ -209,6 +209,35 @@ pub(crate) fn apply_feature_profile(
     feature_profiles::apply(params, &[selection])
 }
 
+/// The shared module-header/disclosure presentation.
+///
+/// One glyph vocabulary, one title style, and one accessible name for every
+/// disclosure the inspector renders. The caller owns open-state persistence
+/// and the body; module headers add their own trailing controls. The header is
+/// a frameless focusable button, so it keeps the panel quiet while remaining
+/// pointer- and keyboard-operable, and [`focus_feedback`] supplies the focus
+/// ring its toolkit frame would otherwise carry.
+pub(crate) fn disclosure_header(ui: &mut Ui, title: &str, open: bool) -> egui::Response {
+    let glyph = if open { "⌄" } else { "›" };
+    let response = ui.add(
+        egui::Button::new(
+            egui::RichText::new(format!(
+                "{glyph} {}",
+                crate::controls::localized(ui.ctx(), title)
+            ))
+            .color(theme::FG)
+            .size(theme::SIZE_TITLE)
+            .strong(),
+        )
+        .frame(false),
+    );
+    let name = crate::controls::localized(ui.ctx(), title);
+    ui.ctx()
+        .accesskit_node_builder(response.id, |node| node.set_label(name.as_ref()));
+    focus_feedback(ui, &response);
+    response
+}
+
 /// A section or sub-section header. During a control search the body is
 /// revealed instead of collapsed, and a section whose controls do not match is
 /// dropped entirely.
@@ -228,6 +257,7 @@ pub(crate) fn section_header<R>(
         if !filter.section_matches() {
             return;
         }
+        ui.add_space(theme::SPACE_3);
         ui.label(
             egui::RichText::new(crate::controls::localized(ui.ctx(), title))
                 .color(theme::FG)
@@ -237,17 +267,24 @@ pub(crate) fn section_header<R>(
         add_contents(ui, filter);
         return;
     }
-    let response = egui::CollapsingHeader::new(
-        egui::RichText::new(crate::controls::localized(ui.ctx(), title))
-            .color(theme::FG)
-            .size(theme::SIZE_TITLE)
-            .strong(),
-    )
-    .id_salt(title)
-    .show(ui, |ui| add_contents(ui, filter));
+    ui.add_space(theme::SPACE_3);
+    // The same persisted disclosure the shared header presentation has always
+    // driven: `CollapsingHeader` sourced its state from `Id::new(title)`.
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        ui.make_persistent_id(egui::Id::new(title)),
+        false,
+    );
+    let header = ui.horizontal(|ui| {
+        if disclosure_header(ui, title, state.is_open()).clicked() {
+            state.toggle(ui);
+        }
+    });
+    let openness = state.openness(ui.ctx());
+    state.show_body_indented(&header.response, ui, |ui| add_contents(ui, filter));
     // A closed sub-section states what it holds, so a page of collapsed
     // headers still names its controls. Display-only: it reads no value.
-    if response.openness <= 0.0
+    if openness <= 0.0
         && let Some(summary) = section_summary(title)
     {
         ui.label(
@@ -517,6 +554,39 @@ impl Drop for RowIdentity {
             .data_mut(|data| data.remove_temp::<String>(egui::Id::new("control_row_path")));
     }
 }
+/// The one focus and locate cue, shared by every control kind.
+///
+/// The cue is a tokenized [`theme::ACCENT`] ring at [`theme::STROKE_FOCUS`]
+/// width, sitting one stroke width outside the control. Focus feedback and
+/// locate feedback differ only in the label a located control carries for the
+/// length of its highlight, never in ring geometry or colour.
+fn paint_focus_feedback(ui: &Ui, response: &egui::Response, located: bool) {
+    ui.painter().rect_stroke(
+        response.rect.expand(theme::STROKE_FOCUS),
+        egui::CornerRadius::same(theme::RADIUS_CARD),
+        egui::Stroke::new(theme::STROKE_FOCUS, theme::ACCENT),
+        egui::StrokeKind::Outside,
+    );
+    if located {
+        ui.painter().text(
+            response.rect.left_top() - egui::vec2(0.0, theme::SPACE_1),
+            egui::Align2::LEFT_BOTTOM,
+            localized(ui.ctx(), "Located control"),
+            theme::text(theme::TEXT_READOUT, theme::SIZE_HINT),
+            theme::FG,
+        );
+    }
+}
+
+/// Focus feedback for a control whose toolkit paint carries no border of its
+/// own, such as a slider or a frameless disclosure: the shared outer ring.
+/// Framed controls get the same ring from the theme's active stroke.
+pub(crate) fn focus_feedback(ui: &Ui, response: &egui::Response) {
+    if response.has_focus() {
+        paint_focus_feedback(ui, response, false);
+    }
+}
+
 pub(crate) fn focus_response(ui: &Ui, label: &str, response: &egui::Response) {
     let pending = ui
         .ctx()
@@ -556,19 +626,7 @@ pub(crate) fn focus_response(ui: &Ui, label: &str, response: &egui::Response) {
         .data(|data| data.get_temp::<(egui::Id, f64)>(egui::Id::new("control_located_row")))
         .is_some_and(|(id, until)| id == response.id && ui.input(|input| input.time) < until);
     if highlighted {
-        ui.painter().rect_stroke(
-            response.rect.expand(2.0),
-            2.0_f32,
-            egui::Stroke::new(2.0_f32, theme::ACCENT),
-            egui::StrokeKind::Outside,
-        );
-        ui.painter().text(
-            response.rect.left_top() - egui::vec2(0.0, 3.0),
-            egui::Align2::LEFT_BOTTOM,
-            "Located control",
-            egui::FontId::proportional(10.0),
-            theme::FG,
-        );
+        paint_focus_feedback(ui, response, true);
     }
 }
 
@@ -586,19 +644,7 @@ pub(crate) fn locate_row(ui: &Ui, path: &str, response: &egui::Response) {
         ui.ctx().data_mut(|data| {
             data.remove_temp::<(String, String)>(egui::Id::new("control_focus_request"))
         });
-        ui.painter().rect_stroke(
-            response.rect.expand(2.0),
-            2.0_f32,
-            egui::Stroke::new(2.0_f32, theme::ACCENT),
-            egui::StrokeKind::Outside,
-        );
-        ui.painter().text(
-            response.rect.left_top(),
-            egui::Align2::LEFT_BOTTOM,
-            "Located control",
-            egui::FontId::proportional(10.0),
-            theme::FG,
-        );
+        paint_focus_feedback(ui, response, true);
     }
 }
 

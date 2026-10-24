@@ -272,10 +272,18 @@ impl App {
                         );
                     }
                     if self.presets.entries.iter().any(|e| e.fault.is_some()) {
-                        egui::CollapsingHeader::new(crate::i18n::text(
-                            ui.ctx(),
-                            "surfaces.presets.issues",
-                        ))
+                        // Same disclosure presentation as the inspector's
+                        // disclosures: a section-title label and an arrow that
+                        // shows the expanded state without relying on color.
+                        egui::CollapsingHeader::new(
+                            egui::RichText::new(crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.presets.issues",
+                            ))
+                            .color(theme::FG)
+                            .size(theme::SIZE_TITLE)
+                            .strong(),
+                        )
                         .id_salt("Issues")
                         .default_open(true)
                         .show(ui, |ui| {
@@ -377,20 +385,21 @@ impl App {
                             } else {
                                 ""
                             };
-                            // Card-style preset entry with route metadata
-                            let card_frame = if active {
-                                egui::Frame::NONE
-                                    .fill(theme::ACCENT)
-                                    .stroke(egui::Stroke::new(1.0_f32, theme::ACCENT))
-                                    .corner_radius(6.0)
-                                    .inner_margin(8.0)
-                            } else {
-                                egui::Frame::NONE
-                                    .fill(theme::SURFACE2)
-                                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-                                    .corner_radius(6.0)
-                                    .inner_margin(8.0)
-                            };
+                            // Card-style preset entry with route metadata. The
+                            // card is quiet: the applied state is a border and
+                            // the text marker on the name, never a filled
+                            // accent block, so a long list stays recessive
+                            // behind the viewer and the state cue stays
+                            // distinct from an action fill.
+                            let card_frame = egui::Frame::NONE
+                                .fill(theme::SURFACE2)
+                                .stroke(theme::stroke(if active {
+                                    theme::ACCENT
+                                } else {
+                                    theme::BORDER
+                                }))
+                                .corner_radius(theme::RADIUS_CARD)
+                                .inner_margin(theme::SPACE_2);
                             card_frame.show(ui, |ui| {
                                 ui.horizontal_top(|ui| {
                                     if group == PresetGroup::BuiltIn {
@@ -398,74 +407,29 @@ impl App {
                                     }
                                     ui.vertical(|ui| {
                                         ui.set_width(ui.available_width());
-                                        let selected =
-                                            self.presets.preferences.favorites.iter().any(
-                                                |identity| {
-                                                    identity.group == entry.group
-                                                        && identity.name == entry.name
-                                                },
-                                            );
-                                        let response = ui.selectable_label(
-                                            selected,
-                                            crate::i18n::text(
-                                                ui.ctx(),
-                                                if selected {
-                                                    "surfaces.presets.discovery_unfavorite"
-                                                } else {
-                                                    "surfaces.presets.discovery_favorite"
-                                                },
-                                            ),
-                                        );
-                                        let accessible_name = crate::tr!(
-                                            ui.ctx(),
-                                            "surfaces.presets.discovery_favorite_accessible",
-                                            action = crate::i18n::text(
-                                                ui.ctx(),
-                                                if selected {
-                                                    "surfaces.presets.discovery_unfavorite"
-                                                } else {
-                                                    "surfaces.presets.discovery_favorite"
-                                                }
-                                            ),
-                                            group = crate::i18n::text(
-                                                ui.ctx(),
-                                                if entry.group == PresetGroup::BuiltIn {
-                                                    "surfaces.presets.builtin"
-                                                } else {
-                                                    "surfaces.presets.mine"
-                                                }
-                                            ),
-                                            name = &entry.name
-                                        );
-                                        ui.ctx().accesskit_node_builder(response.id, |node| {
-                                            node.set_label(accessible_name)
-                                        });
-                                        if response.gained_focus() {
-                                            response.scroll_to_me(Some(egui::Align::Center));
-                                        }
-                                        if response.clicked() {
-                                            favorite = Some(AppliedPreset {
-                                                group: entry.group,
-                                                name: entry.name.clone(),
-                                            });
-                                        }
-                                        let response = ui.add(
-                                            egui::Button::new(
-                                                egui::RichText::new(format!(
-                                                    "{}{}",
-                                                    entry.name,
-                                                    crate::controls::localized(ui.ctx(), suffix)
-                                                ))
-                                                .color(if active {
-                                                    theme::CONTRAST_ON_ACCENT
-                                                } else {
-                                                    theme::FG_SECONDARY
-                                                })
-                                                .size(11.0),
+                                        // The name applies the whole look. Its
+                                        // text also carries the non-color
+                                        // applied/modified/missing marker, and
+                                        // the full name stays readable and
+                                        // available in help.
+                                        let response = ui
+                                            .add(
+                                                egui::Button::new(
+                                                    egui::RichText::new(format!(
+                                                        "{}{}",
+                                                        entry.name,
+                                                        crate::controls::localized(
+                                                            ui.ctx(),
+                                                            suffix
+                                                        )
+                                                    ))
+                                                    .color(theme::FG)
+                                                    .size(theme::SIZE_LABEL),
+                                                )
+                                                .selected(active)
+                                                .wrap(),
                                             )
-                                            .selected(active)
-                                            .wrap(),
-                                        );
+                                            .on_hover_text(&entry.name);
                                         if response.gained_focus() {
                                             response.scroll_to_me(Some(egui::Align::Center));
                                         }
@@ -500,11 +464,7 @@ impl App {
                                                             ),
                                                             name = display
                                                         ))
-                                                        .color(if active {
-                                                            theme::CONTRAST_ON_ACCENT
-                                                        } else {
-                                                            theme::ACCENT_DIM
-                                                        })
+                                                        .color(theme::ACCENT_DIM)
                                                         .size(theme::SIZE_HINT),
                                                     )
                                                     .wrap(),
@@ -512,60 +472,125 @@ impl App {
                                                 .on_hover_text(&reference.stock);
                                             }
                                         }
-                                        // A visible action control beside the entry name. The
-                                        // context menu stays as an additional route, but the
-                                        // same actions are reachable here by pointer and by
-                                        // keyboard: the button takes focus, and Space or
-                                        // Enter opens its menu.
-                                        let entry_id = ui.id().with((
-                                            "preset actions",
-                                            entry.group == PresetGroup::User,
-                                            &entry.name,
-                                        ));
-                                        let actions = ui.push_id(entry_id, |ui| {
-                                            let actions = ui.menu_button(
+                                        // One quiet management row under the
+                                        // materials. Favorite and the entry
+                                        // actions are separate controls beside
+                                        // each other, never nested inside a
+                                        // clickable card; the context menu on
+                                        // the name stays an additional route to
+                                        // the same actions.
+                                        ui.horizontal_wrapped(|ui| {
+                                            let selected =
+                                                self.presets.preferences.favorites.iter().any(
+                                                    |identity| {
+                                                        identity.group == entry.group
+                                                            && identity.name == entry.name
+                                                    },
+                                                );
+                                            let response = ui.selectable_label(
+                                                selected,
                                                 egui::RichText::new(crate::i18n::text(
                                                     ui.ctx(),
-                                                    "surfaces.presets.actions",
+                                                    if selected {
+                                                        "surfaces.presets.discovery_unfavorite"
+                                                    } else {
+                                                        "surfaces.presets.discovery_favorite"
+                                                    },
                                                 ))
                                                 .color(theme::FG_MUTED)
                                                 .size(theme::SIZE_HINT),
-                                                |ui| self.preset_actions(ui, entry),
                                             );
-                                            // Name the control after its entry, so the
-                                            // action menu of one card is addressable among
-                                            // the cards.
                                             let accessible_name = crate::tr!(
                                                 ui.ctx(),
-                                                "surfaces.presets.actions_name",
+                                                "surfaces.presets.discovery_favorite_accessible",
+                                                action = crate::i18n::text(
+                                                    ui.ctx(),
+                                                    if selected {
+                                                        "surfaces.presets.discovery_unfavorite"
+                                                    } else {
+                                                        "surfaces.presets.discovery_favorite"
+                                                    }
+                                                ),
+                                                group = crate::i18n::text(
+                                                    ui.ctx(),
+                                                    if entry.group == PresetGroup::BuiltIn {
+                                                        "surfaces.presets.builtin"
+                                                    } else {
+                                                        "surfaces.presets.mine"
+                                                    }
+                                                ),
                                                 name = &entry.name
                                             );
-                                            ui.ctx().accesskit_node_builder(
-                                                actions.response.id,
-                                                |node| {
-                                                    node.set_label(accessible_name);
-                                                },
-                                            );
-                                            if actions.inner.as_ref().is_some_and(Option::is_some) {
-                                                // Capture the card control, not the transient
-                                                // focused menu item, as the dialog's invoker.
-                                                actions.response.request_focus();
+                                            ui.ctx().accesskit_node_builder(response.id, |node| {
+                                                node.set_label(accessible_name)
+                                            });
+                                            if response.gained_focus() {
+                                                response.scroll_to_me(Some(egui::Align::Center));
                                             }
-                                            if actions.response.gained_focus() {
-                                                actions
-                                                    .response
-                                                    .scroll_to_me(Some(egui::Align::Center));
+                                            if response.clicked() {
+                                                favorite = Some(AppliedPreset {
+                                                    group: entry.group,
+                                                    name: entry.name.clone(),
+                                                });
                                             }
-                                            actions.response.on_hover_text(crate::tr!(
-                                                ui.ctx(),
-                                                "surfaces.presets.actions_help",
-                                                name = &entry.name
+                                            // A visible action control for the entry. The
+                                            // same actions are reachable here by pointer and
+                                            // by keyboard: the button takes focus, and Space
+                                            // or Enter opens its menu.
+                                            let entry_id = ui.id().with((
+                                                "preset actions",
+                                                entry.group == PresetGroup::User,
+                                                &entry.name,
                                             ));
-                                            actions.inner.flatten()
+                                            let actions = ui.push_id(entry_id, |ui| {
+                                                let actions = ui.menu_button(
+                                                    egui::RichText::new(crate::i18n::text(
+                                                        ui.ctx(),
+                                                        "surfaces.presets.actions",
+                                                    ))
+                                                    .color(theme::FG_MUTED)
+                                                    .size(theme::SIZE_HINT),
+                                                    |ui| self.preset_actions(ui, entry),
+                                                );
+                                                // Name the control after its entry, so the
+                                                // action menu of one card is addressable among
+                                                // the cards.
+                                                let accessible_name = crate::tr!(
+                                                    ui.ctx(),
+                                                    "surfaces.presets.actions_name",
+                                                    name = &entry.name
+                                                );
+                                                ui.ctx().accesskit_node_builder(
+                                                    actions.response.id,
+                                                    |node| {
+                                                        node.set_label(accessible_name);
+                                                    },
+                                                );
+                                                if actions
+                                                    .inner
+                                                    .as_ref()
+                                                    .is_some_and(Option::is_some)
+                                                {
+                                                    // Capture the card control, not the transient
+                                                    // focused menu item, as the dialog's invoker.
+                                                    actions.response.request_focus();
+                                                }
+                                                if actions.response.gained_focus() {
+                                                    actions
+                                                        .response
+                                                        .scroll_to_me(Some(egui::Align::Center));
+                                                }
+                                                actions.response.on_hover_text(crate::tr!(
+                                                    ui.ctx(),
+                                                    "surfaces.presets.actions_help",
+                                                    name = &entry.name
+                                                ));
+                                                actions.inner.flatten()
+                                            });
+                                            if let Some(selected) = actions.inner {
+                                                action = Some((index, selected));
+                                            }
                                         });
-                                        if let Some(selected) = actions.inner {
-                                            action = Some((index, selected));
-                                        }
                                     });
                                 });
                             });

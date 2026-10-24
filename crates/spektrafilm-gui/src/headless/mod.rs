@@ -1054,7 +1054,7 @@ mod layout_snapshots {
             "Cancel",
         ] {
             let role = match label {
-                "Apply saving CCTF encoding" => egui::accesskit::Role::CheckBox,
+                "Apply saving CCTF encoding" => egui::accesskit::Role::Switch,
                 "Export file…" | "Cancel" => egui::accesskit::Role::Button,
                 _ => egui::accesskit::Role::ComboBox,
             };

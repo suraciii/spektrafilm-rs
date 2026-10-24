@@ -761,6 +761,7 @@
   "surfaces.header.film": "胶片：%{name}",
   "surfaces.header.print": "印相：%{name}",
   "surfaces.header.route": "路径：%{route}",
+  "surfaces.header.photo_menu": "照片",
   "surfaces.history.no_undo": "没有可撤销的调整",
   "surfaces.history.no_redo": "没有可重做的调整",
   "surfaces.history.undo": "撤销%{label}",

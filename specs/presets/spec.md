@@ -16,19 +16,17 @@ A preset **name** is its identity: the document `name`, the document file stem, 
 
 The [preset design](design.md) owns the name rules, file locations, discovery, conflicts, and writes.
 
-The GUI provides a Presets browser for look presets in a collapsible panel on the left of the window, and one preset menu per section for section presets. The browser shows the two groups. Each row shows the preset name and its film and print references.
+The GUI provides a Presets browser for look presets in a collapsible panel on the left of the window. The browser shows the two groups. Each row shows the preset name and its film and print references.
 
 The active row is marked. A modified marker appears while the active look controls differ from the applied document. The inspector MUST NOT repeat the browser list.
 
 User presets MUST NOT be implemented by reusing complete `GuiState`.
 
-A section preset MUST appear only in the menu of its own section, never in the browser. Every section of the section table MUST carry one menu at its named primary module anchor in the [preset design](design.md#sections). A section that spans modules or stages MUST NOT gain duplicate menus or split payloads.
+The GUI presents whole-look presets only. It MUST NOT offer a section-preset menu, section capture, section management, or section import, and a section document MUST NOT appear in the browser or be applicable from it.
 
-Its menu MUST identify the full carried scope, not just the controls under its anchor. Save as lives in that menu: an empty list MUST offer to save the section's current controls and MUST state that a preset file can also be placed in the library. A section menu MUST report the issues of the documents it would carry.
+A section document remains a valid library document for `core`, the CLI, and scoped photograph copying under [Photograph work](../gui-product-design/photo-work/spec.md#copy-adjustments). The GUI MUST NOT rewrite, migrate, or delete it because no GUI surface lists it.
 
-A section menu MUST show the name of the section preset whose controls match the section and `custom` otherwise. That match MUST be derived from the section's controls and MUST NOT be stored as separate state.
-
-Browser rows and section menus MUST be ordered by name, case-insensitively, with a deterministic tie-break, so one library always presents one order. User-selectable sorting is outside this contract.
+Browser rows MUST be ordered by name, case-insensitively, with a deterministic tie-break, so one library always presents one order. User-selectable sorting is outside this contract.
 
 ### Browser search
 
@@ -70,13 +68,13 @@ The GUI MUST support these library operations for look presets:
 - **Rename**: rename the document file and its name together, and preserve its look values.
 - **Duplicate**: copy a built-in or user preset into `My Presets` under a new name.
 - **Delete**: remove a user preset document after confirmation.
-- **Import**: copy an external document into `My Presets` as a new preset. An existing name in `My Presets` MUST NOT be replaced; a conflicting import MUST offer a renamed copy.
+- **Import**: copy an external look document into `My Presets` as a new preset; the GUI MUST reject a section document without writing or editing. An existing name in `My Presets` MUST NOT be replaced; a conflicting import MUST offer a renamed copy.
 - **Export**: write the selected document to a chosen path.
 - **Show file**: reveal the document path of a user preset. A built-in preset has no path, so this action MUST be unavailable for it.
 
-A section menu MUST offer the same operations for the section presets it lists: **Save as** captures that section's controls, and Rename, Duplicate, Delete, Export, and Show file act on that section's documents. Both kinds MUST share one discovery, write, and validation implementation.
+Library discovery, writes, and validation MUST treat both document kinds through one implementation under [preset design](design.md#writes).
 
-The remembered applied document is always a look preset; a section application is an edit and never becomes the applied preset. The GUI writes look presets through Save as and Update, and a section preset is authored as a file or through a section menu until an arbitrary scope-capture action exists.
+The remembered applied document is always a look preset; a section application is an edit and never becomes the applied preset. The GUI writes look presets through Save as and Update. A section document is authored as a file for `core`, the CLI, and scoped photograph copying.
 
 A name that exists in both groups MUST remain reachable in both. Editing look controls after an application MUST mark the active preset modified and MUST NOT rewrite any document. Built-in presets MUST remain immutable.
 
@@ -109,7 +107,7 @@ Multi-photograph application follows [Photograph work](../gui-product-design/pho
 - It clears transient Scan-for-print state, invalidates dependent render state, and schedules automatic Preview.
 - Applying a section preset that would introduce a scanner-output, workflow-route, scan-film, film-profile, or grain-engine combination the pipeline rejects MUST fail without changing any control. A state that already fails that check MAY still receive an unrelated section edit.
 - Applying a section preset MUST NOT replace the remembered applied preset. It is an edit, so an applied look preset becomes modified.
-- Each successful look or section preset application MUST create one undo transaction under [Edit history](../gui-workflow/spec.md#edit-history), including explicit-leaf provenance and dependent normalization. A failed application MUST NOT create a history entry.
+- Each successful GUI application of a look or section payload MUST create one undo transaction under [Edit history](../gui-workflow/spec.md#edit-history), including explicit-leaf provenance and dependent normalization. A failed application MUST NOT create a history entry.
 - Undo and Redo MUST NOT reverse preset-file or library writes.
 - Applying a preset preserves loaded image and metadata, RAW/source settings, source exposure correction, input color interpretation, crop, resize, rotation, viewer/display state, Save settings, and Export settings.
 - Built-in presets are immutable. Editing controls after an apply never rewrites the built-in definition.
