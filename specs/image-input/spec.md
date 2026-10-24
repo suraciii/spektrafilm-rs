@@ -6,10 +6,11 @@
 - Encoded raster input is decoded with its declared color space and transfer function. RAW input is returned as linear ACES2065-1 after camera orientation, selected white balance, and optional Lensfun correction.
 - RAW white balance supports as-shot, daylight, tungsten, and finite custom temperature and tint. Unsupported or invalid camera settings fail clearly.
 - Auto-exposure meters the complete source before crop and resize. Crop and resize then produce the working image and preserve the source pixel pitch for spatial stages.
-- Crop bounds, dimensions, and resize factors must be finite and valid. Empty crops are errors.
+- Crop bounds, dimensions, and resize factors MUST be finite and valid. Empty crops are errors.
 - Input loading does not apply film, print, grain, or output encoding; those belong to the film chain and output capabilities.
-- The renderer's `input` route must apply the requested crop and resize before output color conversion. It must preserve decoded input values without auto-exposure or exposure compensation. Observed input dimensions must identify the original source separately from working and published dimensions.
-- Backend selection and the separation of native unpacking from RAW and raster numerical processing follow [GPU computation scope](../gpu-execution/spec.md#computation-scope). Input normalization must not conceal CPU image arithmetic inside a GPU operation.
+- The renderer's `input` route MUST apply the requested crop and resize before output color conversion. It MUST preserve decoded input values without auto-exposure or exposure compensation.
+- Observed input dimensions MUST identify the original source separately from working and published dimensions.
+- Backend selection and the separation of native unpacking from RAW and raster numerical processing follow [GPU computation scope](../gpu-execution/spec.md#computation-scope). Input normalization MUST NOT conceal CPU image arithmetic inside a GPU operation.
 
 ## Capture illuminant
 
@@ -17,8 +18,10 @@ The **capture illuminant** is the assumed scene light of the photograph. It is a
 
 `camera.capture_illuminant` supplies that independent scene-light declaration. Without an explicit value, the selected film profile's `reference_illuminant` remains the effective scene-light assumption; changing the profile is not required to state a different photograph capture light.
 
-- `camera.capture_illuminant` is an optional runtime leaf. Its unset value — TOML omission, inline `null`, JSON `null`, or an omitted `parameters.camera.capture_illuminant` leaf in a preset — inherits the selected film profile's `reference_illuminant`. Unset is meaningful and is the state of every existing preset, stock, and invocation, so an unset leaf changes no pixels.
-- An explicit value is a catalog illuminant name or a `BB<kelvin>` token. The shared illuminant vocabulary that [CLI field discovery](../cli/spec.md#discovery-and-dry-run) already reports for `enlarger.illuminant` owns the accepted names. An unsupported or malformed value MUST fail validation with the permitted values and MUST NOT fall back to the profile reference.
+- `camera.capture_illuminant` is an optional runtime leaf. Its unset value — TOML omission, inline `null`, JSON `null`, or an omitted `parameters.camera.capture_illuminant` leaf in a preset — inherits the selected film profile's `reference_illuminant`.
+- Unset is meaningful and is the state of every existing preset, stock, and invocation, so an unset leaf changes no pixels.
+- An explicit value is a catalog illuminant name or a `BB<kelvin>` token. The shared illuminant vocabulary that [CLI field discovery](../cli/spec.md#discovery-and-dry-run) already reports for `enlarger.illuminant` owns the accepted names.
+- An unsupported or malformed value MUST fail validation with the permitted values and MUST NOT fall back to the profile reference.
 - The resolved value is the assumed scene light of the camera-side conversion into film exposure. It MUST NOT change the film's sensitivity data, density curves, development, calibration, or the developed negative.
 - EXIF and RAW metadata are not a capture-illuminant source in version 1. RAW white balance remains a loader choice reported separately; it MUST NOT select, bias, or silently replace this leaf.
 - The leaf is inactive where no film exposure is computed from scene RGB: the `input` route and a real negative-capture `input > convert-film > ...` route, where the incoming image is already a capture rather than a scene. An inactive value remains stored.

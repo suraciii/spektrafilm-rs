@@ -20,9 +20,9 @@ The pipe carries files. The report endpoint owns mode selection, pair validation
 
 The prepared-image review manifest supports chart-like sets, shared grid arithmetic, and measurement-region derivation. Those concepts are useful for controlled benchmark material but are unnecessary for an agent that has ordinary photographs and a few manually declared ROIs.
 
-Photo Report must not add `sets`, `grid`, `measurement`, or `default_pair` to its input. It must not overload the prepared-image review manifest with single-photo mode or arbitrary multi-photo comparison requests. One small contract is easier for a user and an agent to author, validate, and repair.
+Photo Report MUST NOT add `sets`, `grid`, `measurement`, or `default_pair` to its input. It MUST NOT overload the prepared-image review manifest with single-photo mode or arbitrary multi-photo comparison requests. One small contract is easier for a user and an agent to author, validate, and repair.
 
-The command must not be added to `spektrafilm-lab`. `spektrafilm-lab` remains the instrument for rendering, measurement, retained comparison, inspection, and comparison reporting. If the benchmark executable is consolidated later, the Photo Report subcommand must remain a benchmark product command with its own document kind and handler.
+The command MUST NOT be added to `spektrafilm-lab`. `spektrafilm-lab` remains the instrument for rendering, measurement, retained comparison, inspection, and comparison reporting. If the benchmark executable is consolidated later, the Photo Report subcommand MUST remain a benchmark product command with its own document kind and handler.
 
 ## Domain model
 
@@ -76,9 +76,9 @@ RoiSide = Available { rect, dimensions, display_artifact }
         | Unavailable { reason }
 ```
 
-`PhotoId`, `RoiId`, and `ComparisonId` are stable semantic identities. DOM order, vector index, generated filename, and display label must not become identity.
+`PhotoId`, `RoiId`, and `ComparisonId` are stable semantic identities. DOM order, vector index, generated filename, and display label MUST NOT become identity.
 
-The model must distinguish authored fields from observed fields:
+The model MUST distinguish authored fields from observed fields:
 
 - authored: paths, labels, notes, color declarations, ROI rectangles, and pair requests;
 - observed: source hashes, decoded dimensions, display artifact hashes, and display conversion records;
@@ -86,15 +86,19 @@ The model must distinguish authored fields from observed fields:
 
 ## Validation and source integrity
 
-Validation must complete before final publication. It must use strict JSON loading with duplicate-key and unknown-field rejection. It must resolve authored paths relative to the manifest, reject absolute and parent-traversing paths, and verify that each source is a supported regular raster file. The validator must accept only the closed color-space vocabulary in the product specification and must apply the fixed default declaration when fields are omitted.
+Validation MUST complete before final publication. It MUST use strict JSON loading with duplicate-key and unknown-field rejection. It MUST resolve authored paths relative to the manifest, reject absolute and parent-traversing paths, and verify that each source is a supported regular raster file.
 
-The generator must pass a source snapshot and an explicit declaration object to image decoding. It must not read a neighboring sidecar or infer source interpretation from a file extension.
+The validator MUST accept only the closed color-space vocabulary in the product specification and MUST apply the fixed default declaration when fields are omitted.
 
-The generator must snapshot each source before decoding, using an isolated temporary file or equivalent immutable read boundary. It must hash the snapshot and compare it with a hash taken from the authored path before publication. A source change during generation must fail with `hash_mismatch`. A neighboring sidecar must not override the explicit manifest color declaration.
+The generator MUST pass a source snapshot and an explicit declaration object to image decoding. It MUST NOT read a neighboring sidecar or infer source interpretation from a file extension.
 
-The validator must decode every photo once to observe dimensions and validate all ROI rectangles. An error must identify the photo ID and ROI ID when applicable. Validation must reject the output destination before reading or publishing any generated artifact if the destination already exists.
+The generator MUST snapshot each source before decoding, using an isolated temporary file or equivalent immutable read boundary. It MUST hash the snapshot and compare it with a hash taken from the authored path before publication. A source change during generation MUST fail with `hash_mismatch`.
 
-The generator must not mutate the manifest or source files. A failed generation must not leave a directory that looks like a completed report. If cleanup cannot remove an incomplete destination, the command result must identify it as incomplete and unusable.
+A neighboring sidecar MUST NOT override the explicit manifest color declaration.
+
+The validator MUST decode every photo once to observe dimensions and validate all ROI rectangles. An error MUST identify the photo ID and ROI ID when applicable. Validation MUST reject the output destination before reading or publishing any generated artifact if the destination already exists.
+
+The generator MUST NOT mutate the manifest or source files. A failed generation MUST NOT leave a directory that looks like a completed report. If cleanup cannot remove an incomplete destination, the command result MUST identify it as incomplete and unusable.
 
 ## Mode and pair resolution
 
@@ -123,9 +127,11 @@ For a comparison, build the ROI union by first listing the left photo's ROI orde
 
 ## Display artifact strategy
 
-Create exactly one lossless display image per source photo. Use the existing `image_data::display_rgb` conversion boundary and `write_png16` encoder. Store each generated image under an output-local path derived from a validated stable identity, not from the source filename. A collision-resistant generated filename may include a deterministic ordinal, but `report.json` must retain the photo ID as the semantic identity.
+Create exactly one lossless display image per source photo. Use the existing `image_data::display_rgb` conversion boundary and `write_png16` encoder. Store each generated image under an output-local path derived from a validated stable identity, not from the source filename.
 
-The browser must use the generated display image for full-image and ROI views. It may apply CSS sizing and viewport cropping. It must not create canvas-derived replacements, perform a second color conversion, or request the source file.
+A collision-resistant generated filename MAY include a deterministic ordinal, but `report.json` MUST retain the photo ID as the semantic identity.
+
+The browser MUST use the generated display image for full-image and ROI views. It MAY apply CSS sizing and viewport cropping. It MUST NOT create canvas-derived replacements, perform a second color conversion, or request the source file.
 
 Retain these records for every photo:
 
@@ -154,7 +160,9 @@ Retain these records for every photo:
 }
 ```
 
-`report.json` is the machine-readable terminal record. HTML must embed a sanitized view payload so direct file opening does not depend on loading JSON or JavaScript from another origin. `viewer.js` remains a local asset. The page must make no network request.
+`report.json` is the machine-readable terminal record. HTML MUST embed a sanitized view payload so direct file opening does not depend on loading JSON or JavaScript from another origin. `viewer.js` remains a local asset.
+
+The page MUST make no network request.
 
 ## Page state and interaction
 
@@ -183,17 +191,19 @@ PhotoReportViewState {
 }
 ```
 
-`split` is not a first-release layout because independently authored ROI rectangles do not establish pixel registration. A later contract may enable an explicit aligned display mode, but it must add a distinct declaration and must not infer it from equal dimensions.
+`split` is not a first-release layout because independently authored ROI rectangles do not establish pixel registration. A later contract MAY enable an explicit aligned display mode, but it MUST add a distinct declaration and MUST NOT infer it from equal dimensions.
 
-The URL fragment may contain only identities and view settings accepted by the generated payload. A malformed or unknown value must show an error and a recovery link. It must not fall back silently to another pair or ROI.
+The URL fragment MAY contain only identities and view settings accepted by the generated payload. A malformed or unknown value MUST show an error and a recovery link. It MUST NOT fall back silently to another pair or ROI.
 
-The page must preserve the selected pair while changing layout or zoom. When the pair changes, it must replace all pair-scoped labels, ROI entries, notes, coordinates, and unavailable states atomically.
+The page MUST preserve the selected pair while changing layout or zoom. When the pair changes, it MUST replace all pair-scoped labels, ROI entries, notes, coordinates, and unavailable states atomically.
 
 ## Artifact and security boundary
 
-The report page is a static presentation. The generator must escape all authored text in HTML and JavaScript data. It must encode embedded JSON so `<`, `</script`, and equivalent payloads cannot terminate the data element. It must use relative artifact paths generated by the builder and reject paths that escape the report directory.
+The report page is a static presentation. The generator MUST escape all authored text in HTML and JavaScript data. It MUST encode embedded JSON so `<`, `</script`, and equivalent payloads cannot terminate the data element.
 
-The output CSP should follow the existing offline report policy:
+It MUST use relative artifact paths generated by the builder and reject paths that escape the report directory.
+
+The output CSP SHOULD follow the existing offline report policy:
 
 ```text
 default-src 'none';
@@ -205,11 +215,11 @@ base-uri 'none';
 form-action 'none'
 ```
 
-The page must not execute notes, labels, source paths, or metadata. It must not load adjacent source sidecars. Redistribution restrictions do not apply to an authored local photo report unless a future input contract adds an explicit permission field; the generated report still records source identity and must fail if the source cannot be read.
+The page MUST NOT execute notes, labels, source paths, or metadata. It MUST NOT load adjacent source sidecars. Redistribution restrictions do not apply to an authored local photo report unless a future input contract adds an explicit permission field; the generated report still records source identity and MUST fail if the source cannot be read.
 
 ## Result and publication boundary
 
-The public result must identify the generated HTML and terminal manifest:
+The public result MUST identify the generated HTML and terminal manifest:
 
 ```json
 {
@@ -223,7 +233,7 @@ The public result must identify the generated HTML and terminal manifest:
 }
 ```
 
-Publication order must be:
+Publication order MUST be:
 
 1. validate the manifest and source dependencies;
 2. create a private temporary output;
@@ -232,13 +242,15 @@ Publication order must be:
 5. hash and validate every generated artifact;
 6. publish the completed directory without replacing an existing destination.
 
-The command must not claim success before `index.html`, `report.json`, every display image, and the artifact hashes are present and valid.
+The command MUST NOT claim success before `index.html`, `report.json`, every display image, and the artifact hashes are present and valid.
 
 ## Rejected alternatives
 
 ### Reuse the existing review manifest
 
-Rejected for this product. It requires set membership, grid or explicit-region forms, default-pair semantics, and at least two images. It does not naturally express one-photo reports or an explicit list of arbitrary pairs. Reusing it would make the smallest Agent input carry concepts that the page does not need.
+Rejected for this product. It requires set membership, grid or explicit-region forms, default-pair semantics, and at least two images. It does not naturally express one-photo reports or an explicit list of arbitrary pairs.
+
+Reusing it would make the smallest Agent input carry concepts that the page does not need.
 
 ### Generate every pair automatically
 
@@ -267,4 +279,4 @@ Rejected. These would turn a visual report into a second evaluation pipeline and
 7. Add offline fragment navigation, accessibility, and narrow-layout behavior.
 8. Add contract, security, publication-integrity, and real-browser smoke coverage.
 
-Each step must preserve the existing comparison report and prepared-image review contracts. No step may make a lab endpoint consume the new manifest.
+Each step MUST preserve the existing comparison report and prepared-image review contracts. No step MAY make a lab endpoint consume the new manifest.

@@ -62,5 +62,8 @@ spektrafilm-benchmark = { path = "../spektrafilm-benchmark", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
 tempfile = "3"
 
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
+
 [lints]
 workspace = true

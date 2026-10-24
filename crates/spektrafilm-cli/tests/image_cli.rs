@@ -30,8 +30,9 @@ impl Fixture {
         .unwrap();
         Self(root)
     }
-    fn run(&self, output: &str, extra: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+    fn command(&self, output: &str, extra: &[&str]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
+        command
             .arg("process")
             .arg(self.0.join("input.png"))
             .arg("--output")
@@ -49,9 +50,11 @@ impl Fixture {
             .env("SPEKTRAFILM_CONFIG_DIR", self.0.join("config"))
             .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
             .env_remove("SPEKTRAFILM_DATA_DIR")
-            .env_remove("SPEKTRAFILM_BACKEND")
-            .output()
-            .unwrap()
+            .env_remove("SPEKTRAFILM_BACKEND");
+        command
+    }
+    fn run(&self, output: &str, extra: &[&str]) -> Output {
+        self.command(output, extra).output().unwrap()
     }
     fn run_without_output(&self, extra: &[&str]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
@@ -97,6 +100,165 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn process_publishes_and_replaces_png_jpeg_tiff_and_openexr() {
+    let f = Fixture::new();
+    let directory = f.0.join("publication");
+    std::fs::create_dir(&directory).unwrap();
+    let sentinel = b"previous successfully published image";
+    for (extension, depth, encoded) in [
+        ("png", "8", "true"),
+        ("jpg", "8", "true"),
+        ("tif", "16", "true"),
+        ("exr", "32", "false"),
+    ] {
+        let relative = format!("publication/output.{extension}");
+        let output = f.0.join(&relative);
+        for existing in [false, true] {
+            if existing {
+                std::fs::write(&output, sentinel).unwrap();
+            }
+            // The input-only route exercises the real process saving path
+            // without running film simulation or stochastic effects.
+            let result = f.run(
+                &relative,
+                &[
+                    "--route",
+                    "input",
+                    "--input-color-space",
+                    "sRGB",
+                    "--input-cctf-decoding",
+                    "true",
+                    "--saving-color-space",
+                    "sRGB",
+                    "--saving-cctf-encoding",
+                    encoded,
+                    "--bit-depth",
+                    depth,
+                    "--set",
+                    "io.output_color_space=sRGB,io.output_cctf_encoding=true",
+                ],
+            );
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(result.status.success(), "{extension}: {stderr}");
+            assert!(result.stdout.is_empty(), "{extension}: {:?}", result.stdout);
+            assert!(
+                stderr.contains(&format!("Saved: {} (32x24)", output.display())),
+                "{extension}: {stderr}"
+            );
+            assert_ne!(std::fs::read(&output).unwrap(), sentinel);
+            let loaded = spektrafilm_core::image_io::load(&output).unwrap();
+            assert_eq!((loaded.image.width, loaded.image.height), (32, 24));
+            assert_eq!(loaded.image.data.len(), 32 * 24 * 3);
+            assert!(loaded.image.data.iter().all(|sample| sample.is_finite()));
+            if extension != "exr" {
+                // EXR deliberately bypasses the Exiv2 metadata boundary.
+                assert!(loaded.metadata.is_some(), "{extension} metadata missing");
+                assert!(!stderr.contains("Warning:"), "{extension}: {stderr}");
+            }
+            // Sample-storage precision is covered at the owning core writer
+            // boundary; this test proves entry-point publication and loading.
+            let entries: Vec<_> = std::fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect();
+            assert_eq!(entries, vec![output.clone()], "staging files survived");
+        }
+        std::fs::remove_file(output).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn process_native_write_failure_preserves_absent_and_existing_outputs() {
+    use std::os::unix::process::CommandExt;
+
+    let f = Fixture::new();
+    let directory = f.0.join("native-write-failure");
+    std::fs::create_dir(&directory).unwrap();
+    let sentinel = b"previous successfully published image";
+    for extension in ["png", "jpg", "tif", "exr"] {
+        let relative = format!("native-write-failure/output.{extension}");
+        let output = f.0.join(&relative);
+        for existing in [false, true] {
+            if existing {
+                std::fs::write(&output, sentinel).unwrap();
+            }
+            let mut command = f.command(
+                &relative,
+                &[
+                    "--route",
+                    "input",
+                    "--input-color-space",
+                    "sRGB",
+                    "--input-cctf-decoding",
+                    "true",
+                    "--saving-color-space",
+                    "sRGB",
+                    "--saving-cctf-encoding",
+                    if extension == "exr" { "false" } else { "true" },
+                    "--set",
+                    "io.output_color_space=sRGB,io.output_cctf_encoding=true",
+                ],
+            );
+            // Only the exec child inherits this limit and signal disposition.
+            // Every container's header/payload exceeds 64 bytes even for this
+            // cheap 32x24 input. Inputs and sentinels are prepared beforehand;
+            // no diagnostics/raw sidecar is requested under the file limit.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::signal(libc::SIGXFSZ, libc::SIG_IGN) == libc::SIG_ERR {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    let limit = libc::rlimit {
+                        rlim_cur: 64,
+                        rlim_max: 64,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_FSIZE, &limit) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let result = command.output().unwrap();
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(!result.status.success(), "{extension}: {stderr}");
+            assert!(
+                result.status.code().is_some(),
+                "child died by signal: {stderr}"
+            );
+            assert!(result.stdout.is_empty(), "{extension}: {:?}", result.stdout);
+            // Require both the CLI saving context and the native save error:
+            // a parser, setup, staging-create or rendering error cannot pass.
+            assert!(
+                stderr.contains(&format!("saving image: {}", output.display())),
+                "{extension}: {stderr}"
+            );
+            assert!(
+                stderr.contains(&format!("Image save failed for {}:", output.display())),
+                "{extension}: {stderr}"
+            );
+            assert!(!stderr.contains("Saved:"), "{extension}: {stderr}");
+            if existing {
+                assert_eq!(std::fs::read(&output).unwrap(), sentinel);
+            } else {
+                assert!(!output.exists(), "{extension} published failed output");
+            }
+            let entries: Vec<_> = std::fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect();
+            let expected = if existing {
+                vec![output.clone()]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(entries, expected, "{extension}: staging files survived");
+        }
+        std::fs::remove_file(output).unwrap();
     }
 }
 

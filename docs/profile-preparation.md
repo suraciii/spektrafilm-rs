@@ -5,8 +5,8 @@
 The displayed name includes `source fit` because the base spectrum and spectral
 reconstruction are estimates. No matched film captures establish stock fidelity.
 
-The [film material authoring contract](../specs/film-chain/spec.md#film-material-profiles-and-stock-presets)
-defines the material, input-adaptation, effect, and preset boundaries.
+The [profile authoring contract](../specs/profile-authoring/spec.md)
+defines fitting inputs, targets, invariants, and out-of-scope changes.
 
 ## Rebuild
 
