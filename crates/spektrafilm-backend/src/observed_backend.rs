@@ -356,11 +356,9 @@ impl ComputeBackend for ObservedBackend<'_> {
         i: Option<&DeviceImage>,
         paper: Option<&DeviceImage>,
         previous: Option<&DeviceImage>,
-        split: Option<&DeviceImage>,
         p: &ViewerComposeGpuParams,
     ) -> Result<Vec<[u8; 4]>, String> {
-        self.backend
-            .viewer_compose_retained(i, paper, previous, split, p)
+        self.backend.viewer_compose_retained(i, paper, previous, p)
     }
     fn viewer_paper_retained(
         &self,

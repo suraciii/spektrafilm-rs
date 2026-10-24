@@ -23,7 +23,7 @@ flowchart LR
     W --> Q[Queue exports]
 ```
 
-[Result identity](../gui-workflow/spec.md#result-identity-and-delivery-guidance) owns confidence in the displayed and delivered image. [Visual hierarchy](../gui-presentation/spec.md#visual-hierarchy) owns control density. [Preset discovery aids](../presets/spec.md#preset-discovery-aids) owns reference thumbnails, favorites, and recently used looks. [Photograph work](photo-work/spec.md) owns A/B comparison, adjustment records, and multi-photograph work.
+[Result identity](../gui-workflow/spec.md#result-identity-and-delivery-guidance) owns confidence in the displayed and delivered image. [Visual hierarchy](../gui-presentation/spec.md#visual-hierarchy) owns control density. [Preset discovery aids](../presets/spec.md#preset-discovery-aids) owns reference thumbnails, favorites, and recently used looks. [Photograph work](photo-work/spec.md) owns Original/Modified inspection, adjustment records, and multi-photograph work.
 
 These are target capabilities, not a statement of implementation. Delivery schedules and research candidates are not product contracts.
 
@@ -76,7 +76,7 @@ A row must offer help, its unit where applicable, and an individual factory rese
 
 ### Inspect and deliver
 
-Input, Output, and Paper back remain viewer layers. Zoom, pan, comparison, reveal, interpolation, display ICC, canvas, and paper-back presentation must not change retained, saved, or exported pixels.
+Original, Modified, and Paper back remain viewer presentations. Zoom, pan, layer selection, reveal, interpolation, display ICC, canvas, and paper-back presentation must not change retained, saved, or exported pixels.
 
 The viewer must retain the last accepted frame while work runs. It must identify when that frame does not represent the current controls. A delayed result must not appear to satisfy a newer edit.
 

@@ -225,7 +225,7 @@ impl AdjustmentHistory {
         self.undo.push(Entry {
             before,
             after: after.clone(),
-            label: crate::app::Message::new("photo_work.compare.copy_history"),
+            label: crate::app::Message::new("photo_work.copy_history"),
         });
         self.redo.clear();
         self.accepted = Some(after);
@@ -301,30 +301,6 @@ impl App {
                     .as_ref()
                     .unwrap_or(&accepted.raw_settings)
             || baseline.preparation != b.render_preparation_state()
-    }
-    /// A comparison adoption is one history transaction, independent of the
-    /// preset library and independent of whether A has rendered yet.
-    pub(super) fn adopt_adjustment(&mut self, target: Rc<AdjustmentState>) -> bool {
-        let before = self.accepted_adjustment();
-        if before == target {
-            return false;
-        }
-        if let Some((initial, label)) = self.adjustment_history.gesture.take() {
-            self.commit_adjustment(initial, before.clone(), label);
-        }
-        target.restore(self);
-        self.commit_adjustment(
-            before,
-            target.clone(),
-            crate::app::Message::new("photo_work.compare.adopt_history"),
-        );
-        self.adjustment_history.accepted = Some(target);
-        self.adjustment_history.label = None;
-        self.mark_parameters_changed_invalidating_calibration();
-        self.render_worker.cancel_active();
-        self.dirty_since = Some(Instant::now());
-        self.full_scan_requested = false;
-        true
     }
 
     pub(crate) fn reset_adjustment_history(&mut self) {

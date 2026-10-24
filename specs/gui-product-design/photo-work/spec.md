@@ -2,29 +2,19 @@
 
 ## Authority
 
-This target extends [GUI product design](../spec.md). It owns comparison references, photograph adjustment records, and multi-photograph work.
+This target extends [GUI product design](../spec.md). It owns Original/Modified inspection, photograph adjustment records, and multi-photograph work.
 
 [GUI workflow](../../gui-workflow/spec.md) owns edits, history, and render identity. [Presets](../../presets/spec.md) owns reusable looks. [Photo export](../../photo-export/spec.md) owns rendering and file publication.
 
-## A/B comparison
+## Original / Modified
 
-A **comparison reference** is one captured, accepted adjustment state for the current source. B is the current editable state. Neither A nor B means the original input or the scanner's automatic baseline.
+**Original** (原图) is the retained input under its accepted input interpretation and orientation. **Modified** (修改图) is the retained output of the latest accepted Preview or Scan. These are viewer selections, not captured adjustment versions or the scanner's automatic baseline.
 
-```mermaid
-flowchart LR
-    B[Current adjustments B] -->|Capture| A[Reference A]
-    A --> V[Shared viewer]
-    B --> V
-    A -->|Adopt: one reversible edit| B
-```
+Modified must remain disabled until output exists. The first accepted Preview or Scan must select Modified. Switching must share zoom and pan without rendering, editing adjustments, or adding history.
 
-The viewer must alternate A and B with shared zoom, image location, and display transform. Each side must identify its quality, dimensions, and readiness. Unequal quality must be explicit.
+Save must continue to write the retained output, even while Original is selected. Export must render the current accepted adjustments independently. A stale retained Modified image must keep its ordinary stale-result indication.
 
-Capture must exclude pending text and RAW drafts. It must retain material selections, workflow, explicit edit ownership, and preset context. A missing matching render must show pending or unavailable, not unrelated retained pixels.
-
-Inspecting A must not edit B, add history, or change Save and Export inputs. Adopting A must follow [Edit history](../../gui-workflow/spec.md#edit-history), without rereading a changed preset file. A failed render must preserve B.
-
-A must be session-local. Accepted source replacement, RAW reprocessing, or complete-state loading must clear it; failed replacement must preserve it. Incompatible geometry must disable synchronized comparison with an explanation. Multiple references and version trees are outside this target.
+Paper back may remain a separate presentation. The scanner's held automatic-baseline comparison must remain independent of Original/Modified selection.
 
 ## Photograph adjustment records
 

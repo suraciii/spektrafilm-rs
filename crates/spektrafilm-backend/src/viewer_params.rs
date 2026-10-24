@@ -11,6 +11,5 @@ pub struct ViewerComposeGpuParams {
     pub interpolation: u32,
     pub full_source: bool,
     pub output_layer: bool,
-    pub split: Option<f32>,
     pub fade: f32,
 }
