@@ -3,12 +3,8 @@ use crate::display::{DisplayRaster, Interpolation, ViewLayer, ViewerObservation}
 use egui::{Color32, Pos2, Rect, Vec2};
 use egui_kittest::kittest::Queryable;
 
-/// Distance from the compare split at which before/after pixels are sampled,
-/// and the accepted-value budget for driving the compare slider.
-const SPLIT_SAMPLE_MARGIN: f32 = 0.1;
-
 fn frame(h: &mut Harness<'_, App>, time: f64) {
-    h.input_mut().time = Some(time);
+    h.input_mut().time = Some(time.max(h.ctx.input(|input| input.time)));
     h.step();
 }
 
@@ -71,55 +67,6 @@ fn pointer(h: &mut Harness<'_, App>, position: Pos2, pressed: bool, time: f64) {
     frame(h, time);
 }
 
-fn compare_slider_bounds(h: &Harness<'_, App>) -> [f32; 4] {
-    let viewport = h.state().viewer.observation().viewport;
-    let sliders: Vec<_> = h
-        .query_all(egui_kittest::kittest::by().role(egui::accesskit::Role::Slider))
-        .filter_map(|node| node.raw_bounds())
-        .filter(|bounds| {
-            let center_x = (bounds.x0 + bounds.x1) * 0.5;
-            center_x >= viewport.left() as f64 && center_x <= viewport.right() as f64
-        })
-        .map(|bounds| {
-            [
-                bounds.x0 as f32,
-                bounds.y0 as f32,
-                bounds.x1 as f32,
-                bounds.y1 as f32,
-            ]
-        })
-        .collect();
-    assert_eq!(
-        sliders.len(),
-        1,
-        "expected the compare split slider in the viewer footer"
-    );
-    sliders[0]
-}
-
-fn set_compare_split(h: &mut Harness<'_, App>, fraction: f32, time: f64) {
-    let bounds = compare_slider_bounds(h);
-    let current = h.state().compare_split;
-    let point = |value: f32| {
-        Pos2::new(
-            bounds[0] + (bounds[2] - bounds[0]) * value,
-            (bounds[1] + bounds[3]) * 0.5,
-        )
-    };
-    pointer(h, point(current), true, time);
-    pointer(h, point(fraction), false, time + 0.01);
-    h.run_steps(2);
-    // egui's slider maps the pointer through its shrunk x-range with smart aim,
-    // so the accepted value snaps a few hundredths from the request. The budget
-    // is the pixel-sampling margin: a larger drift would put the sampled points
-    // on the wrong side of the split and fail the pixel assertions anyway.
-    assert!(
-        (h.state().compare_split - fraction).abs() < SPLIT_SAMPLE_MARGIN,
-        "compare slider requested {fraction}, accepted {}",
-        h.state().compare_split
-    );
-}
-
 fn pixel_at_fraction(observation: &ViewerObservation, x: f32, y: f32) -> Color32 {
     let image = observation.pixels.as_ref().expect("composed viewer pixels");
     let position = observation.image_rect.min + observation.image_rect.size() * Vec2::new(x, y);
@@ -147,83 +94,109 @@ pub(crate) fn assert_float_images_equal(before: &Path, after: &Path) {
 }
 
 #[test]
-fn compare_split_selects_before_and_after_pixels_and_never_changes_saved_or_exported_output() {
+fn original_modified_switching_preserves_adjustments_view_and_saved_exported_pixels() {
     let mut s = session();
     let h = &mut s.harness;
-    click_viewer_layer(h, "Input");
-    let _ = composed(h, 10.0);
-    let _output = render(h, "PREVIEW");
-    let (_, time) = settled(h, 20.0);
+    h.state_mut().force_preview = false;
+    h.state_mut().dirty = false;
+    h.run_steps(1);
+    assert!(h.get_by_label("Modified").node().is_disabled());
+    click_viewer_layer(h, "Modified");
+    assert_eq!(h.state().viewer.settings.layer, ViewLayer::Input);
+    assert!(h.state().render_job.is_none());
+
+    let output = render(h, "PREVIEW");
+    let (modified, time) = settled(h, 20.0);
     assert_eq!(h.state().viewer.settings.layer, ViewLayer::Output);
-    assert!(h.state().output_image.is_some());
+    assert!(!h.get_by_label("Modified").node().is_disabled());
+    let params = h.state().params.clone();
+    let revision = h.state().parameter_revision;
+    let source_render = h.state().source_render.clone();
+    let render_request = h.state().render_worker.next_request_id;
 
     let mut options = h.state().export_options.clone();
     options.format = export::ExportFormat::Exr;
     options.depth = BitDepth::ThirtyTwo;
     options.saving_cctf_encoding = false;
     let ctx = h.ctx.clone();
-    let save_before = s.directory.path().join("compare-off-save.exr");
-    let export_before = s.directory.path().join("compare-off-export.exr");
+    let save_before = s.directory.path().join("modified-save.exr");
+    let export_before = s.directory.path().join("modified-export.exr");
     h.state_mut().save_to_path(&save_before);
     h.state_mut()
         .start_export_to_path(&ctx, options.clone(), &export_before);
     wait_until(h, |app| app.export_job.is_none());
 
-    click(h, "compare");
-    assert!(h.state().compare_active);
-    assert!(h.query_by_label("compare ON").is_some());
-
-    set_compare_split(h, 1.0, time + 1.0);
-    let input_reference = composed(h, time + 1.1);
-    set_compare_split(h, 0.0, time + 2.0);
-    let output_reference = composed(h, time + 2.1);
+    click_viewer_layer(h, "Original");
+    let original = composed(h, time + 1.0);
+    assert_eq!(h.state().viewer.settings.layer, ViewLayer::Input);
     assert_ne!(
-        pixel_at_fraction(&input_reference, 0.5, 0.5),
-        pixel_at_fraction(&output_reference, 0.5, 0.5),
-        "before and after source rasters must be observably different"
+        pixel_at_fraction(&original, 0.5, 0.5),
+        pixel_at_fraction(&modified, 0.5, 0.5),
+        "Original must show input, not the accepted modified pixels"
     );
+    click(h, "200%");
+    let zoomed = composed(h, time + 2.0);
+    let center = zoomed.viewport.center();
+    pointer(h, center, true, time + 3.0);
+    h.input_mut()
+        .events
+        .push(egui::Event::PointerMoved(center + Vec2::new(24.0, 18.0)));
+    frame(h, time + 3.1);
+    pointer(h, center + Vec2::new(24.0, 18.0), false, time + 3.2);
+    let pan = h.state().viewer.pan;
+    assert!((pan - Vec2::new(24.0, 18.0)).length() < 0.01);
+    for label in ["Modified", "Original", "Modified", "Original"] {
+        click_viewer_layer(h, label);
+        let _ = composed(h, time + 4.0);
+        assert_eq!(h.state().viewer.zoom_percent(), Some(200.0));
+        assert_eq!(h.state().viewer.pan, pan);
+    }
+    assert_eq!(h.state().params, params);
+    assert_eq!(h.state().parameter_revision, revision);
+    assert_eq!(
+        h.state().render_worker.next_request_id,
+        render_request,
+        "switching must not render"
+    );
+    assert!(h.state().render_job.is_none());
+    assert!(!h.state().dirty);
+    assert!(!h.state().force_preview);
+    assert_eq!(h.state().source_render, source_render);
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &output
+    ));
+    assert!(h.get_by_label("Undo").node().is_disabled());
 
-    set_compare_split(h, 0.25, time + 3.0);
-    let left_split = composed(h, time + 3.1);
-    set_compare_split(h, 0.75, time + 4.0);
-    let right_split = composed(h, time + 4.1);
-    assert_eq!(
-        pixel_at_fraction(&left_split, SPLIT_SAMPLE_MARGIN, 0.5),
-        pixel_at_fraction(&input_reference, SPLIT_SAMPLE_MARGIN, 0.5),
-        "left side must sample the before/input raster"
-    );
-    assert_eq!(
-        pixel_at_fraction(&left_split, 1.0 - SPLIT_SAMPLE_MARGIN, 0.5),
-        pixel_at_fraction(&output_reference, 1.0 - SPLIT_SAMPLE_MARGIN, 0.5),
-        "right side must sample the after/output raster"
-    );
-    assert_eq!(
-        pixel_at_fraction(&right_split, SPLIT_SAMPLE_MARGIN, 0.5),
-        pixel_at_fraction(&input_reference, SPLIT_SAMPLE_MARGIN, 0.5)
-    );
-    assert_eq!(
-        pixel_at_fraction(&right_split, 1.0 - SPLIT_SAMPLE_MARGIN, 0.5),
-        pixel_at_fraction(&output_reference, 1.0 - SPLIT_SAMPLE_MARGIN, 0.5)
-    );
-
-    set_compare_split(h, 0.4, time + 5.0);
-    let below_split = composed(h, time + 5.1);
-    set_compare_split(h, 0.6, time + 6.0);
-    let above_split = composed(h, time + 6.1);
-    assert_ne!(
-        pixel_at_fraction(&below_split, 0.5, 0.5),
-        pixel_at_fraction(&above_split, 0.5, 0.5),
-        "moving the split must exchange the before/after source at the center"
-    );
-
-    let save_after = s.directory.path().join("compare-on-save.exr");
-    let export_after = s.directory.path().join("compare-on-export.exr");
+    let save_after = s.directory.path().join("original-save.exr");
+    let export_after = s.directory.path().join("original-export.exr");
     h.state_mut().save_to_path(&save_after);
     h.state_mut()
         .start_export_to_path(&ctx, options, &export_after);
     wait_until(h, |app| app.export_job.is_none());
     assert_float_images_equal(&save_before, &save_after);
     assert_float_images_equal(&export_before, &export_after);
+}
+
+#[test]
+fn first_scan_selects_modified_and_original_remains_available() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().force_preview = false;
+    h.state_mut().dirty = false;
+    click_viewer_layer(h, "Original");
+    assert!(h.get_by_label("Modified").node().is_disabled());
+    let output = render(h, "SCAN");
+    let _ = settled(h, 20.0);
+    assert_eq!(h.state().viewer.settings.layer, ViewLayer::Output);
+    click_viewer_layer(h, "Original");
+    assert_eq!(h.state().viewer.settings.layer, ViewLayer::Input);
+    click_viewer_layer(h, "Modified");
+    assert_eq!(h.state().viewer.settings.layer, ViewLayer::Output);
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &output
+    ));
 }
 
 #[test]
@@ -288,7 +261,7 @@ fn histogram_draws_retained_output_without_advancing_viewer_or_render_generation
 fn footer_reset_view_restores_fit_zoom_and_zero_pan_after_zoom_and_drag() {
     let mut s = session();
     let h = &mut s.harness;
-    click_viewer_layer(h, "Input");
+    click_viewer_layer(h, "Original");
     let baseline = composed(h, 40.0);
     click(h, "200%");
     let zoomed = composed(h, 41.0);
@@ -383,20 +356,17 @@ fn paper_back_composition_shows_watermark_pixels_in_the_documented_center_region
     )
     .intersect(observation.viewport)
     .intersect(observation.image_rect);
-    let x0 = (((region.left() - observation.viewport.left()) / observation.viewport.width())
-        * image.size[0] as f32)
+    let sampling = observation.sampling_rect;
+    let x0 = (((region.left() - sampling.left()) / sampling.width()) * image.size[0] as f32)
         .floor()
         .max(0.0) as usize;
-    let x1 = (((region.right() - observation.viewport.left()) / observation.viewport.width())
-        * image.size[0] as f32)
+    let x1 = (((region.right() - sampling.left()) / sampling.width()) * image.size[0] as f32)
         .ceil()
         .min(image.size[0] as f32) as usize;
-    let y0 = (((region.top() - observation.viewport.top()) / observation.viewport.height())
-        * image.size[1] as f32)
+    let y0 = (((region.top() - sampling.top()) / sampling.height()) * image.size[1] as f32)
         .floor()
         .max(0.0) as usize;
-    let y1 = (((region.bottom() - observation.viewport.top()) / observation.viewport.height())
-        * image.size[1] as f32)
+    let y1 = (((region.bottom() - sampling.top()) / sampling.height()) * image.size[1] as f32)
         .ceil()
         .min(image.size[1] as f32) as usize;
     let mut watermark_pixels = 0usize;
@@ -404,10 +374,8 @@ fn paper_back_composition_shows_watermark_pixels_in_the_documented_center_region
     for y in y0..y1 {
         for x in x0..x1 {
             let position = Pos2::new(
-                observation.viewport.left()
-                    + (x as f32 + 0.5) * observation.viewport.width() / image.size[0] as f32,
-                observation.viewport.top()
-                    + (y as f32 + 0.5) * observation.viewport.height() / image.size[1] as f32,
+                sampling.left() + (x as f32 + 0.5) * sampling.width() / image.size[0] as f32,
+                sampling.top() + (y as f32 + 0.5) * sampling.height() / image.size[1] as f32,
             );
             if !observation.image_rect.contains(position) {
                 continue;

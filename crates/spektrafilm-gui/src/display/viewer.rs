@@ -90,8 +90,6 @@ pub struct Viewer {
     prepared_output: Option<PreparedDisplay>,
     retained_output: Option<spektrafilm_backend::DeviceImage>,
     retained_input: Option<spektrafilm_backend::DeviceImage>,
-    /// Before/after split fraction (0..=1) of image width; `None` disables.
-    compare_split: Option<f32>,
     /// Active marquee selection in view coordinates `(start, current)`; a
     /// Shift or secondary-button drag sets it and its release zooms to it.
     marquee: Option<(Pos2, Pos2)>,
@@ -104,11 +102,14 @@ pub struct Viewer {
     #[cfg(test)]
     observed_geometry: Option<(Rect, Rect, Interpolation, Option<PixelInspection>)>,
     #[cfg(test)]
+    observed_sampling_rect: Option<Rect>,
+    #[cfg(test)]
     observed_image: Option<egui::ColorImage>,
 }
 #[cfg(test)]
 pub(crate) struct ViewerObservation {
     pub viewport: Rect,
+    pub sampling_rect: Rect,
     pub image_rect: Rect,
     pub interpolation: Interpolation,
     pub inspection: Option<PixelInspection>,
@@ -126,6 +127,7 @@ impl Viewer {
             self.observed_geometry.expect("viewer has been shown");
         ViewerObservation {
             viewport,
+            sampling_rect: self.observed_sampling_rect.expect("viewer has been shown"),
             image_rect,
             interpolation,
             inspection,
@@ -176,15 +178,6 @@ impl Viewer {
             ..Self::default()
         }
     }
-    /// Set the before/after split fraction (0..=1) of image width; `None`
-    /// disables split rendering. Viewer-only, never affects saved pixels.
-    pub fn set_compare_split(&mut self, fraction: Option<f32>) {
-        let normalized = fraction.map(|f| f.clamp(0.0, 1.0));
-        if self.compare_split != normalized {
-            self.compare_split = normalized;
-            self.revision = self.revision.wrapping_add(1);
-        }
-    }
     pub fn set_input(&mut self, raster: DisplayRaster, original_size: [usize; 2]) {
         self.input_size = Some(original_size);
         self.input = Some(raster);
@@ -195,7 +188,7 @@ impl Viewer {
         self.retained_output = None;
         self.output_size = None;
         self.transition = None;
-        self.settings.layer = ViewLayer::PaperBack;
+        self.settings.layer = ViewLayer::Input;
         self.reset_view();
         self.revision += 1;
     }
@@ -395,6 +388,9 @@ impl Viewer {
         }
         if value["settings"].is_object() {
             self.settings = DisplaySettings::from_json(&value["settings"]);
+        }
+        if self.settings.layer == ViewLayer::Output && self.output.is_none() {
+            self.settings.layer = ViewLayer::Input;
         }
         self.zoom = value["zoom"]
             .as_f64()
@@ -704,7 +700,6 @@ impl Viewer {
                         .map(|p| Arc::as_ptr(p) as *const () as usize as u64)
                 })
                 .unwrap_or(0),
-            self.compare_split.map(f32::to_bits).unwrap_or(0) as u64,
         ];
         if self.cache_key.as_ref() != Some(&key) {
             self.generation = self.generation.wrapping_add(1);
@@ -739,13 +734,6 @@ impl Viewer {
                 raster: selected.cloned(),
                 paper_size,
                 previous: self.transition.as_ref().and_then(|t| t.previous.clone()),
-                split: if layer == ViewLayer::Output {
-                    self.compare_split.and_then(|fraction| {
-                        self.input.as_ref().map(|raster| (fraction, raster.clone()))
-                    })
-                } else {
-                    None
-                },
                 source: source.cloned(),
                 retained_source: if layer == ViewLayer::Output {
                     self.retained_output.clone()
@@ -895,6 +883,7 @@ impl Viewer {
         #[cfg(test)]
         {
             self.observed_geometry = Some((rect, image_rect, interpolation, inspection));
+            self.observed_sampling_rect = Some(sampling_rect);
         }
         let text = if let Some(p) = inspection {
             crate::tr!(

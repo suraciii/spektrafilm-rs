@@ -382,10 +382,9 @@ impl WgpuBackend {
         image: Option<&DeviceImage>,
         paper: Option<&DeviceImage>,
         previous: Option<&DeviceImage>,
-        split: Option<&DeviceImage>,
         p: &ViewerComposeGpuParams,
     ) -> Result<Vec<[u8; 4]>, String> {
-        self.viewer_compose_gpu_with_limit(image, paper, previous, split, p, self.viewer_limit())
+        self.viewer_compose_gpu_with_limit(image, paper, previous, p, self.viewer_limit())
     }
 
     fn viewer_compose_gpu_with_limit(
@@ -393,13 +392,11 @@ impl WgpuBackend {
         image: Option<&DeviceImage>,
         paper: Option<&DeviceImage>,
         previous: Option<&DeviceImage>,
-        split: Option<&DeviceImage>,
         p: &ViewerComposeGpuParams,
         limit: u64,
     ) -> Result<Vec<[u8; 4]>, String> {
         self.check_cancelled()?;
         let previous = previous.filter(|_| image.is_some());
-        let split = split.filter(|_| image.is_some());
         let count = p
             .width
             .checked_mul(p.height)
@@ -411,8 +408,8 @@ impl WgpuBackend {
             self.check_cancelled()?;
             let mut n = (count - first).min((limit / 12).min(u64::from(u32::MAX)) as u32);
             let windows = loop {
-                let mut windows = [[0, 0, 1, 1]; 4];
-                for (i, source) in [image, paper, previous, split].into_iter().enumerate() {
+                let mut windows = [[0, 0, 1, 1]; 3];
+                for (i, source) in [image, paper, previous].into_iter().enumerate() {
                     if let Some(source) = source {
                         windows[i] = if i == 0 && p.full_source {
                             let (x0, x1, y0, y1) = output_extent(first, n, p.width);
@@ -444,7 +441,7 @@ impl WgpuBackend {
                 n = n.div_ceil(2);
             };
             let mut buffers = Vec::new();
-            for (i, source) in [image, paper, previous, split].into_iter().enumerate() {
+            for (i, source) in [image, paper, previous].into_iter().enumerate() {
                 buffers.push(if let Some(source) = source {
                     self.viewer_window(source, windows[i])?
                 } else {
@@ -453,15 +450,13 @@ impl WgpuBackend {
             }
             let mut words = vec![p.width, p.height];
             words.extend(image.map(|i| [i.width(), i.height()]).unwrap_or([0, 0]));
-            for size in [paper, previous, split] {
+            for size in [paper, previous] {
                 words.extend(size.map(|i| [i.width(), i.height()]).unwrap_or([0, 0]));
             }
             words.extend([
                 p.interpolation,
                 u32::from(p.full_source),
                 u32::from(p.output_layer),
-                0,
-                0,
                 0,
             ]);
             words.extend(
@@ -473,8 +468,7 @@ impl WgpuBackend {
                     .map(f32::to_bits),
             );
             words.extend(p.gray.map(f32::to_bits));
-            words.push(p.split.unwrap_or(-1.0).to_bits());
-            words.extend([p.fade.to_bits(), 0, 0, 0]);
+            words.push(p.fade.to_bits());
             words.extend(windows.into_iter().flatten());
             words.extend([first, n, 0, 0]);
             let references: Vec<_> = buffers.iter().collect();
@@ -589,7 +583,6 @@ mod tests {
             interpolation: 0,
             full_source: false,
             output_layer: true,
-            split: None,
             fade: 1.0,
         };
         let cancellation = Arc::new(AtomicBool::new(false));
@@ -607,7 +600,7 @@ mod tests {
         operation.cancellation = Some(cancellation.clone());
         assert_eq!(
             operation
-                .viewer_compose_gpu_with_limit(Some(&image), None, None, None, &params, 24)
+                .viewer_compose_gpu_with_limit(Some(&image), None, None, &params, 24)
                 .unwrap_err(),
             "operation cancelled"
         );
@@ -619,11 +612,11 @@ mod tests {
         gpu.pipe.test_on_readback(|| {});
         let healthy = operation.with_cancellation(None).unwrap();
         let pixels = healthy
-            .viewer_compose_retained(Some(&image), None, None, None, &params)
+            .viewer_compose_retained(Some(&image), None, None, &params)
             .unwrap();
         assert_eq!(pixels, vec![[128, 128, 128, 255]; 6]);
         assert_eq!(
-            gpu.viewer_compose_gpu_with_limit(Some(&image), None, None, None, &params, 24)
+            gpu.viewer_compose_gpu_with_limit(Some(&image), None, None, &params, 24)
                 .unwrap(),
             pixels
         );
@@ -631,7 +624,7 @@ mod tests {
         gpu.pipe.test_fail_operation("viewer_presentation");
         assert!(
             healthy
-                .viewer_compose_retained(Some(&image), None, None, None, &params)
+                .viewer_compose_retained(Some(&image), None, None, &params)
                 .unwrap_err()
                 .contains("injected device resource failure")
         );

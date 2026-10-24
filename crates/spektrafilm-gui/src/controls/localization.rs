@@ -9,19 +9,12 @@ fn key(label: &str) -> Option<&'static str> {
         "Work list" => Some("photo_work.list.title"),
         "Retained image" => Some("controls.section.retained_image"),
         "Photograph records" => Some("controls.section.photograph_records"),
-        "A/B comparison" => Some("photo_work.compare.title"),
         "Export queue" => Some("photo.queue.title"),
         "Preset discovery" => Some("controls.section.preset_discovery"),
         "Continue saving retained pixels" => Some("result.save.continue"),
         "Save adjustments…" => Some("photo.record.save"),
         "Reopen adjustments…" => Some("photo.record.reopen"),
         "Photographs…" => Some("photo.work_list"),
-        "Capture A" => Some("photo_work.compare.capture"),
-        "A · reference" => Some("photo_work.compare.a"),
-        "B · current" => Some("photo_work.compare.b"),
-        "Adopt A" => Some("photo_work.compare.adopt"),
-        "Clear A" => Some("photo_work.compare.clear"),
-        "Render A" => Some("photo_work.compare.render"),
         "Add photographs…" => Some("photo_work.list.add"),
         "Previous photograph" => Some("photo_work.list.previous"),
         "Next photograph" => Some("photo_work.list.next"),
@@ -40,12 +33,6 @@ fn key(label: &str) -> Option<&'static str> {
         "Clear search and filters" => Some("surfaces.presets.discovery_reset"),
         "retained image" => Some("controls.condition.retained_image"),
         "stale Save confirmation is open" => Some("controls.condition.stale_save"),
-        "loaded source; accepted adjustments only" => Some("controls.condition.accepted_source"),
-        "captured reference; matching geometry" => Some("controls.condition.comparison_geometry"),
-        "captured reference" => Some("controls.condition.comparison_reference"),
-        "captured reference without output or running render" => {
-            Some("controls.condition.comparison_render")
-        }
         "adjacent work list entry" => Some("controls.condition.work_adjacent"),
         "work list entry; removes membership, not files" => Some("controls.condition.work_remove"),
         "loaded source; selected destinations; explicit scope" => {
@@ -252,12 +239,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Common exposure contrast around the fixed reference exposure. Above 1 is harder; below 1 is softer. Channel differences and automatic setup are unchanged." => {
             Some("controls.scanner.contrast_help")
-        }
-        "Compare retained input and output side by side; the split is viewer-only." => {
-            Some("surfaces.viewer.compare_help")
-        }
-        "Comparison split inactive · enable compare; stored split retained." => {
-            Some("surfaces.viewer.split_inactive")
         }
         "Compress input chromaticities toward the visible spectral locus before spectral upsampling. Off passes input through unchanged." => {
             Some("controls.gamut.input_enable_help")
@@ -595,7 +576,8 @@ fn key(label: &str) -> Option<&'static str> {
         "Independent preflash Yellow shift around the calibrated neutral filter pack, in Kodak CC units." => {
             Some("controls.scanner.preflash_y_shift_help")
         }
-        "Input" => Some("surfaces.viewer.input"),
+        "Input" => Some("controls.label.input"),
+        "Original" => Some("surfaces.viewer.input"),
         "Input and capture" => Some("controls.label.input_and_capture"),
         "Input decoding: color space and cctf" => {
             Some("controls.label.input_decoding_color_space_and_cctf")
@@ -763,7 +745,8 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Operator correction" => Some("controls.scanner.operator_correction"),
         "OptionalNumeric" => Some("controls.metadata.optionalnumeric"),
-        "Output" => Some("surfaces.viewer.output"),
+        "Output" => Some("controls.label.output"),
+        "Modified" => Some("surfaces.viewer.output"),
         "Output gamut compress" => Some("controls.gamut.output_section"),
         "Output gamut compression: algorithm, knee" => Some("surfaces.summary.output_gamut"),
         "Overall grain amount." => Some("controls.grain.amount_help"),
@@ -977,7 +960,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Rotated input %{degrees}°" => Some("surfaces.status.rotated"),
         "Roughness of the glare light (0-1)" => Some("controls.help.glare.roughness"),
         "Route: %{route}" => Some("surfaces.header.route"),
-        "Run Preview or Scan to create a retained output before selecting the Output layer." => {
+        "Run Preview or Scan to create a retained output before selecting Modified." => {
             Some("surfaces.viewer.output_disabled")
         }
         "SAVE" => Some("surfaces.action.save_retained"),
@@ -1169,9 +1152,6 @@ fn key(label: &str) -> Option<&'static str> {
         "What these settings will write: format, bit depth, saving color space, and the transfer encoding (CCTF, the color component transfer function, or linear) plus compression. Save writes the retained output with the current simulation saving settings instead, without rerendering." => {
             Some("surfaces.export.summary_help")
         }
-        "Where the before and after halves meet. The retained input stays left of the split and the retained output right of it; neither half reaches saved or exported pixels." => {
-            Some("surfaces.viewer.split_help")
-        }
         "Which physical path the image takes through the pipeline: input color-manages RGB. input > film > scan exposes and scans film; negative film can retain its negative polarity or use Negative to positive, while slide film remains positive. input > film > print > scan exposes film, prints photographically, and scans positive paper. input > convert-film > print > scan converts the input to negative capture, prints photographically, and scans positive paper. input > convert-film > scan scans the negative capture with its film base; it can preserve negative polarity or convert Negative to positive. input > convert-film > scan-minus-base removes the film base and keeps negative polarity. CMYK ink style is independent in every workflow." => {
             Some("surfaces.route.help")
         }
@@ -1243,10 +1223,6 @@ fn key(label: &str) -> Option<&'static str> {
         "color" => Some("controls.grain.color"),
         "color component transfer function" => Some("controls.output.cctf_expansion"),
         "color filter" => Some("controls.scanner.color_filter"),
-        "compare" => Some("surfaces.viewer.compare"),
-        "compare ON" => Some("surfaces.viewer.compare_on"),
-        "comparison active; viewer-only" => Some("controls.condition.compare"),
-        "comparison split" => Some("surfaces.viewer.split"),
         "confirmation required" => Some("controls.condition.confirm"),
         "contrast" => Some("controls.scanner.contrast"),
         "conversion style" => Some("controls.scanner.conversion_style"),
@@ -1541,7 +1517,6 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "yellow" => Some("controls.base.yellow"),
         "zoom %{zoom}" => Some("surfaces.viewer.zoom"),
-        "←input %{input}% / %{output}%output→" => Some("surfaces.viewer.comparison"),
         _ => None,
     }
 }

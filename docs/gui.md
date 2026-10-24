@@ -102,7 +102,7 @@ A module's `Section preset: <name>` menu is a separate operation from its reset.
 
 **Scan → Scanner → Operator correction** adjusts the finished positive after this frame's automatic setup, before the fixed tone curve. **Finished exposure** is ±3 EV (positive is brighter); **Warmth** and **Green–magenta tint** are ±1 differential EV (positive is warmer and more magenta respectively, not Kelvin); **Contrast** spans 0.5–2 (1 is unchanged). These are editor ranges, not document limits. The controls are disabled outside eligible negative-to-positive `standard` scans, with their stored values retained.
 
-Each operator row has its own **Reset** action. **Restore automatic** resets only the four operator values to 0, 0, 0, 1. The workspace's source-local **Undo** and **Redo** include these edits, resets and paste actions. **Hold automatic comparison** (primary mouse button, or Space while focused) shows the same prepared frame with default operator values until release; it does not change saved corrections or the retained pixels used by Save. This is separate from the viewer's input/output split comparison.
+Each operator row has its own **Reset** action. **Restore automatic** resets only the four operator values to 0, 0, 0, 1. The workspace's source-local **Undo** and **Redo** include these edits, resets and paste actions. **Hold automatic comparison** (primary mouse button, or Space while focused) shows the same prepared frame with default operator values until release; it does not change saved corrections or the retained pixels used by Save. This is separate from the viewer's Original/Modified selection.
 
 **Copy operator correction** and **Paste operator correction** use a session-local clipboard containing only the four values. Load another frame and paste to apply them over that frame's own automatic setup; no offsets, film density, capture calibration, or other settings are copied. The clipboard and adjustment history are not saved in presets or GUI state.
 
@@ -145,6 +145,8 @@ Accepting another source, completing RAW reprocessing, or loading a complete GUI
 
 **PREVIEW** renders a bounded image using the configured preview long-edge limit and current runtime controls. Set **preview max size** and **auto preview** in **Settings → General**. The preview contract disables the spatial and stochastic effects it can safely omit, including lens blur, diffusion blur, physical grain, scanner blur, unsharp masking, and glare blur; Procedural and Fotufilm grain, halation, and diffusion filters remain active. Explicitly update it when auto preview is disabled.
 
+With **auto preview** on, applying a preset, releasing a slider, or accepting numeric text refreshes **Modified** without another Preview action.
+
 New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates skip the development animation; explicit Preview and Scan retain it.
 
 The retained-result label identifies **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
@@ -167,9 +169,9 @@ The viewer accepts pointer gestures on its surface. The wheel and pinch zoom at 
 
 The `Paper back` layer is a viewer-only virtual rendering generated from paper texture, watermark, and noise. It is not an editable material stage and does not alter retained, saved, or exported pixels.
 
-The viewer footer groups its controls by target: layer selection, view zoom, before/after comparison with its split position, reveal/crossfade presentation, and the current zoom as a read-only readout. Source rotation belongs to the inspector, not this footer.
+The viewer footer groups its controls by target: Original/Modified selection, view zoom, reveal/crossfade presentation, and the current zoom as a read-only readout. Source rotation belongs to the inspector, not this footer.
 
-The footer's layer selector switches between **Input**, **Output**, and **Paper back**. **Settings → Display → output interpolation** selects nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling for Output. Input retains the upstream nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
+The footer switches between **Original** (原图), the retained input, and **Modified** (修改图), the latest accepted Preview or Scan. Modified is disabled until output exists. The first accepted Preview or Scan selects Modified. Switching does not render or edit adjustments; both views share zoom and pan. **Paper back** remains a separate presentation. **Settings → Display → output interpolation** selects nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling for Modified. Original uses nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
 
 The collapsible tonal-distribution readout sits above inspector search and stage navigation and describes the retained output without another render. It is viewer-only. Its empty state and its source follow [viewer presentation](../specs/gui-workflow/spec.md#viewer-presentation).
 
@@ -177,7 +179,7 @@ The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized
 
 The window header shows the current source, film profile, print profile, and exact workflow route as read-only text; hover the route for its physical description. The operation status appears only in this header. While Preview or Scan runs, it names the operation and the stage that executes now, for example `Scan · Film development`. With no work running it describes the last accepted operation; Export reports its status with elapsed time and cancellation state there too. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
 
-With a selected GPU, the accepted render owns device samples through viewing and Save. Fitted resampling, display conversion, ICC evaluation, full-source interpolation, comparison/crossfade, development animation, and virtual-paper numerical synthesis use disposable device buffers; none rewrites the accepted render. The native egui frontend receives only packed presentation pixels. Histogram data and hovered source pixels are bounded readouts, not a full-image download followed by re-upload. A failed viewer computation keeps the last accepted texture and reports the display error.
+With a selected GPU, the accepted render owns device samples through viewing and Save. Fitted resampling, display conversion, ICC evaluation, full-source interpolation, crossfade, development animation, and virtual-paper numerical synthesis use disposable device buffers; none rewrites the accepted render. The native egui frontend receives only packed presentation pixels. Histogram data and hovered source pixels are bounded readouts, not a full-image download followed by re-upload. A failed viewer computation keeps the last accepted texture and reports the display error.
 
 ### Display transform and ICC
 
@@ -218,12 +220,6 @@ The GUI warns that JPEG remains lossy even at quality 100. 4:2:0 can soften colo
 - OpenEXR uses 16-bit half samples.
 
 Save uses upstream OpenImageIO JPEG defaults rather than Export's quality/subsampling settings. Neither TIFF nor EXR forces ACES or linear encoding. Viewer borders, watermark, and display ICC transforms stay out of saved pixels. See the [shared writer contract](cli.md) for output format details.
-
-## A/B comparison
-
-Use **Capture A** below the viewer to retain the accepted adjustments as a session-local reference. Pending numeric text and RAW decode drafts are excluded. **A · reference** and **B · current** alternate in the same viewer with synchronized image position, scale, and display transform. Both sides report quality, dimensions, and readiness; unequal quality and incompatible geometry are explicit.
-
-If A has no matching pixels, **Render A** uses an isolated renderer. It never substitutes B's stale output. Inspecting A does not change B, history, Save, or Export. **Adopt A** makes one reversible adjustment without rereading a preset. Accepted source replacement, RAW reprocessing, or complete-state loading clears A; a failed replacement preserves it.
 
 ## Photograph adjustment records
 

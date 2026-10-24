@@ -94,6 +94,59 @@ fn one_drag_with_multiple_intermediate_values_is_one_undo_step() {
 }
 
 #[test]
+fn released_slider_updates_preview_without_more_input() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let before = render(h, "PREVIEW");
+    h.state_mut().gui_state.sections["simulation"]["auto_preview"] = true.into();
+    reveal_control(h, "camera.exposure_compensation_ev");
+    let (tx, rx) = mpsc::channel();
+    h.ctx.set_request_repaint_callback(move |request| {
+        let _ = tx.send(request.delay);
+    });
+    let start = slider_point(h, 0.5);
+    pointer_frame(h, start, Some(true));
+    let end = slider_point(h, 0.56);
+    pointer_frame(h, end, None);
+    pointer_frame(h, end, Some(false));
+    let revision = h.state().parameter_revision;
+    assert!(h.state().params.camera.exposure_compensation_ev > 0.5);
+
+    // Drive only frames requested by the App or its workers, as the native
+    // event loop does. Unconditional stepping would hide a lost wakeup.
+    let deadline = Instant::now() + WAIT_DEADLINE;
+    while h.state().source_render.as_ref().unwrap().parameter_revision != Some(revision) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "released slider did not publish a Preview"
+        );
+        let mut delay = h.output().viewport_output[&egui::ViewportId::ROOT]
+            .repaint_delay
+            .min(remaining);
+        while let Ok(requested) = rx.try_recv() {
+            delay = delay.min(requested);
+        }
+        if !delay.is_zero() {
+            let _ = rx.recv_timeout(delay);
+        }
+        assert!(Instant::now() < deadline, "Preview lost its repaint wakeup");
+        h.step();
+    }
+    assert_eq!(h.state().retained_kind, Some(RenderKind::Preview));
+    assert_eq!(h.state().viewer.settings.layer, display::ViewLayer::Output);
+    assert!(!h.state().accepted_frame_is_stale());
+    let after = h.state().output_image.as_ref().unwrap();
+    assert!(
+        before
+            .data
+            .iter()
+            .zip(&after.data)
+            .any(|(a, b)| (*a - *b).abs() > 1e-4)
+    );
+}
+
+#[test]
 fn escape_cancels_a_drag_and_invalid_text_adds_no_adjustment() {
     let mut s = session();
     let h = &mut s.harness;

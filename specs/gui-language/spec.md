@@ -51,7 +51,7 @@ The Simplified Chinese presentation must use these core terms consistently. The 
 | Film Format / Custom | 胶片规格 / 自定义 |
 | Frame Long Edge | 画面长边 |
 | Reset to factory | 恢复出厂值 |
-| Input / Output / Paper back | 输入 / 输出 / 相纸背面 |
+| Original / Modified / Paper back | 原图 / 修改图 / 相纸背面 |
 
 ### Search and text entry
 
@@ -158,13 +158,15 @@ Camera diffusion and Enlarger diffusion must retain their distinct optical owner
 
 ## Viewer language
 
-The viewer layer labels remain:
+The viewer uses these presentation labels:
 
 ```text
-Input
-Output
+Original
+Modified
 Paper back
 ```
+
+Original and Modified follow [photograph inspection](../gui-product-design/photo-work/spec.md#original--modified). They must not expose capture, adopt, clear, or reference-render actions.
 
 `Paper back` is a viewer-only virtual rendering generated from the retained image. It is not a second editable material stage and it must not alter retained, saved, or exported pixels. Help must state this boundary before any future label change is considered.
 
@@ -175,7 +177,6 @@ The viewer must distinguish:
 - `fit`: return to fitted zoom without changing pan;
 - `reset view`: return to fitted zoom and recenter pan;
 - exact zoom percentages: source-pixel-to-device-pixel scale;
-- `compare`: before/after viewer composition only;
 - `select`: the Shift or secondary-button drag rectangle that zooms to its region on release.
 
 Viewer hints must name the gestures in this vocabulary: click zooms at the pointer, primary-button drag pans, Shift or secondary-button drag selects, and double click fits. A hint must not claim an effect on saved or exported pixels.
@@ -223,7 +224,7 @@ A status that reports route or profile normalization must identify which stored 
 
 ## State, reset, and search language
 
-`Modified` must mean that a row or module differs from its exact factory reset projection. It must not mean that the value differs from the selected preset or startup default. Factory comparison follows [presentation design](../gui-presentation/design.md#factory-projection-and-modified-state). Reset behavior follows [complete control access](../gui-workflow/spec.md#complete-control-access).
+In row and module state, `Modified` must mean that the control differs from its exact factory reset projection. It must not mean that the value differs from the selected preset or startup default. This state is distinct from the viewer's Modified image selection. Factory comparison follows [presentation design](../gui-presentation/design.md#factory-projection-and-modified-state). Reset behavior follows [complete control access](../gui-workflow/spec.md#complete-control-access).
 
 A row reset must be named `Reset to factory` with the row target available in accessible text or help. A module reset must name the module and its factory baseline. A section-preset menu whose stored payload spans more than one module must explicitly name its full scope. It must not describe the wider action as a module-only reset.
 
