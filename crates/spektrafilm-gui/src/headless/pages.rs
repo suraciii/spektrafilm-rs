@@ -800,6 +800,89 @@ fn canonical_search_reveals_unselected_grain_engines_without_mutating_values() {
 }
 
 #[test]
+fn dye_correlation_survives_bw_profile_switch_and_reactivates_for_color() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let color = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+    select_film(h, color.info.name.as_deref().unwrap_or("kodak_portra_400"));
+    choose_control(h, "film_render.grain.engine", "Engine", "Dye");
+    edit_control(
+        h,
+        "film_render.grain.channel_correlation",
+        "Channel correlation",
+        "0.35",
+    );
+    let mut retained = h.state().params.film_render.grain.clone();
+    assert!(!retained.monochrome);
+    assert_eq!(retained.channel_correlation, 0.35);
+
+    let bw = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
+    select_film(h, bw.info.name.as_deref().unwrap_or("kodak_doublex"));
+    retained.monochrome = true;
+    assert_eq!(h.state().params.film_render.grain, retained);
+    reveal_control(h, "film_render.grain.channel_correlation");
+    assert!(h.get_by_label("Channel correlation").node().is_disabled());
+    assert!(
+        h.query_by_label("Inactive for single-record black-and-white material; the requested value is retained for color film.")
+            .is_some()
+    );
+    // Ordinary GUI edits must not reset the profile-derived applicability.
+    edit_control(
+        h,
+        "film_render.grain.v3_event_area_um2",
+        "Event area (µm²)",
+        "0.5",
+    );
+    assert!(h.state().params.film_render.grain.monochrome);
+    assert_eq!(h.state().params.film_render.grain.channel_correlation, 0.35);
+
+    select_film(h, color.info.name.as_deref().unwrap_or("kodak_portra_400"));
+    assert!(!h.state().params.film_render.grain.monochrome);
+    reveal_control(h, "film_render.grain.channel_correlation");
+    assert!(!h.get_by_label("Channel correlation").node().is_disabled());
+    assert_eq!(h.state().params.film_render.grain.channel_correlation, 0.35);
+    edit(h, "Channel correlation", "0.25");
+    assert_eq!(h.state().params.film_render.grain.channel_correlation, 0.25);
+}
+
+#[test]
+fn dye_bw_grain_reset_preserves_layout_and_clears_factory_marker() {
+    let mut s = session();
+    let h = &mut s.harness;
+    choose_control(h, "film_render.grain.engine", "Engine", "Dye");
+    edit_control(
+        h,
+        "film_render.grain.channel_correlation",
+        "Channel correlation",
+        "0.35",
+    );
+    let bw = profile::load_profile_by_name(&data_dir(), "kodak_doublex").unwrap();
+    select_film(h, bw.info.name.as_deref().unwrap_or("kodak_doublex"));
+    let edited = h.state().params.film_render.grain.clone();
+    assert!(edited.monochrome);
+    reveal_control(h, "film_render.grain.channel_correlation");
+    click(h, "reset Grain");
+    assert!(h.state().params.film_render.grain.monochrome);
+    assert!(!section_reset::is_modified(
+        "Grain",
+        &h.state().params,
+        &serde_json::json!({})
+    ));
+    click(h, "Undo");
+    assert_eq!(h.state().params.film_render.grain, edited);
+    click(h, "Redo");
+    assert!(h.state().params.film_render.grain.monochrome);
+    assert!(!section_reset::is_modified(
+        "Grain",
+        &h.state().params,
+        &serde_json::json!({})
+    ));
+    choose_control(h, "film_render.grain.engine", "Engine", "Dye");
+    reveal_control(h, "film_render.grain.channel_correlation");
+    assert!(h.get_by_label("Channel correlation").node().is_disabled());
+}
+
+#[test]
 fn control_search_by_label_module_and_path_never_changes_parameters_or_saved_sections() {
     let mut s = session();
     let h = &mut s.harness;

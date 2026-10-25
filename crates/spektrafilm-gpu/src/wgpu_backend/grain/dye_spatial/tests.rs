@@ -345,6 +345,7 @@ fn params_of(g: &Geometry) -> DyeGpuParams {
         seed: 0,
         channel_correlation: 0.0,
         expectation: true,
+        monochrome: false,
     }
 }
 

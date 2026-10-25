@@ -50,6 +50,7 @@ pub(super) fn build_layers(
     backend: &WgpuBackend,
     source: [u32; 4],
     region: [u32; 2],
+    monochrome: bool,
     tables: &wgpu::Buffer,
     curves: &wgpu::Buffer,
     input: &wgpu::Buffer,
@@ -57,7 +58,7 @@ pub(super) fn build_layers(
     status: &wgpu::Buffer,
 ) -> LayerPass {
     build_layers_with_source(
-        backend, source, region, tables, curves, input, targets, status, SHADER,
+        backend, source, region, monochrome, tables, curves, input, targets, status, SHADER,
     )
 }
 
@@ -66,6 +67,7 @@ fn build_layers_with_source(
     backend: &WgpuBackend,
     source: [u32; 4],
     region: [u32; 2],
+    monochrome: bool,
     tables: &wgpu::Buffer,
     curves: &wgpu::Buffer,
     input: &wgpu::Buffer,
@@ -77,7 +79,7 @@ fn build_layers_with_source(
         "dye_layer_params",
         bytemuck::bytes_of(&LayerParams {
             source,
-            region: [region[0], region[1], 0, 0],
+            region: [region[0], region[1], u32::from(monochrome), 0],
         }),
         wgpu::BufferUsages::UNIFORM,
     );
@@ -219,6 +221,7 @@ impl WgpuBackend {
             self,
             [densities.len() as u32, 1, 0, 0],
             [densities.len() as u32, 1],
+            false,
             &table_buffer,
             &curve_buffer,
             &input,
@@ -245,6 +248,8 @@ mod tests {
 
     #[test]
     fn saturation_retains_retired_layers_and_zero_weights_use_capacity() {
+        assert_eq!(std::mem::size_of::<LayerParams>(), 32);
+        assert_eq!(std::mem::offset_of!(LayerParams, region), 16);
         let backend = crate::test_support::adapter();
         eprintln!("G2 boundary sweep adapter: {}", backend.name());
         let knots = [0.0, 6.0];

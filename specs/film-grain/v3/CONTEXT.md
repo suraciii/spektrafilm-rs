@@ -4,7 +4,9 @@ This context defines the domain language for the film-coordinate Dye grain model
 
 ## Language
 
-**Dye field**: The conditional film-coordinate CMY dye realization formed from developed record-density targets and read through output footprints. It is a modeled material response, not encoded-RGB noise.
+**Dye field**: The conditional film-coordinate record-density realization formed from developed targets and read through output footprints. It represents color dye records or an effective monochrome record, not encoded-RGB noise.
+
+**Single-record BW field**: One stochastic material-density realization for a monochrome profile. It describes record layout, not identified silver chemistry or stock calibration.
 
 **Dye support**: The normalized spatial operator that distributes conditional dye mass in film coordinates. Support controls spatial formation and is independent of event area and measured RMS.
 

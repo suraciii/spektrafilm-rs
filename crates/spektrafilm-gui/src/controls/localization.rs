@@ -995,7 +995,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Shared by Spektra and Dye; inactive until either engine is selected, stored values are retained." => {
             Some("controls.grain.inactive_shared_material")
         }
-        "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios." => {
+        "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios. Inactive for single-record black-and-white material; the requested value is retained for color film." => {
             Some("controls.grain.channel_correlation_help")
         }
         "Shared material controls" => Some("controls.grain.shared_material"),

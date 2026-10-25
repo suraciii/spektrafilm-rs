@@ -9,6 +9,7 @@ pub(super) enum Condition {
     Spektra,
     Procedural,
     Dye,
+    ColorRecords,
     Fotufilm,
     SpektraOrDye,
     Custom,
@@ -43,6 +44,9 @@ impl Condition {
             Self::Spektra => "film_render.grain.engine = spektra",
             Self::Procedural => "film_render.grain.engine = procedural",
             Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
+            Self::ColorRecords => {
+                "selected film has color records; channel_correlation is retained but inactive for single-record black-and-white material"
+            }
             Self::Fotufilm => "film_render.grain.engine = fotufilm",
             Self::SpektraOrDye => "film_render.grain.engine = spektra or dye",
             Self::Custom => {
@@ -105,6 +109,7 @@ impl Condition {
             Self::Spektra => g.engine == GrainEngine::Spektra,
             Self::Procedural => g.engine == GrainEngine::Procedural,
             Self::Dye => g.engine == GrainEngine::Dye,
+            Self::ColorRecords => film.is_color(),
             Self::Fotufilm => g.engine == GrainEngine::Fotufilm,
             Self::SpektraOrDye => matches!(g.engine, GrainEngine::Spektra | GrainEngine::Dye),
             Self::Custom => g.v2_profile == "custom",
@@ -203,6 +208,9 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
             || path.ends_with(".channel_correlation")
         {
             out.push(Dye);
+            if path.ends_with(".channel_correlation") {
+                out.push(ColorRecords);
+            }
         } else if ["density_min", "uniformity", "particle_scale_sublayers"]
             .iter()
             .any(|f| path.ends_with(f))

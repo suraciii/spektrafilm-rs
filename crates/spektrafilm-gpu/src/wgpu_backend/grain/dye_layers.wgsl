@@ -22,7 +22,7 @@ const WORKGROUP: u32 = 256u;
 
 struct LayerParams {
     source: vec4<u32>,
-    region: vec4<u32>,
+    region: vec4<u32>, // width, height, monochrome, padding
 }
 
 @group(0) @binding(0) var<uniform> params: LayerParams;
@@ -126,12 +126,28 @@ fn main(
     let x = index % params.region.x + params.source.z;
     let y = index / params.region.x + params.source.w;
     let source_index = (y * params.source.x + x) * 3u;
+    let first_density = densities[source_index];
+    if (params.region.z != 0u) {
+        for (var channel = 0u; channel < 3u; channel = channel + 1u) {
+            let density = densities[source_index + channel];
+            // Explicit IEEE finiteness check; NaN must not survive comparisons
+            // and infinities must not become successful clamped targets.
+            if ((bitcast<u32>(density) & 0x7f800000u) == 0x7f800000u) {
+                atomicOr(&status, 1u);
+            }
+            if (!(abs(density - first_density) <= 1e-6)) {
+                atomicOr(&status, 16u);
+            }
+        }
+    }
     for (var channel = 0u; channel < 3u; channel = channel + 1u) {
         let table = tables[channel];
-        let density = densities[source_index + channel];
-        if (!(density >= -table.min - 1e-6 && density <= table.cap_total - table.min + 1e-6)) {
+        let source_density = densities[source_index + channel];
+        if ((bitcast<u32>(source_density) & 0x7f800000u) == 0x7f800000u ||
+            !(source_density >= -table.min - 1e-6 && source_density <= table.cap_total - table.min + 1e-6)) {
             atomicOr(&status, 1u);
         }
+        let density = select(source_density, first_density, params.region.z != 0u);
         let layers = layer_target(table, density);
         let total = clamp(density + table.min, 0.0, table.cap_total);
         let sum = layers.x + layers.y + layers.z;

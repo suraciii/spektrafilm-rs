@@ -229,6 +229,8 @@ impl App {
         let mut params = gui_state
             .runtime_params()
             .expect("validated GUI factory state");
+        params.film_render.grain.monochrome =
+            film_profile.as_ref().is_some_and(|film| film.is_bw());
         normalize_scanner_selections(&mut params, film_medium);
         let film_dev_times = film_profile
             .as_ref()
@@ -474,6 +476,7 @@ impl App {
                 .arg("profile", state.paper())
                 .into());
         }
+        params.film_render.grain.monochrome = film.is_bw();
         spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         if self.image_path.as_deref().is_some_and(image_io::is_raw) {
             params.io.input_color_space = "ACES2065-1".into();
@@ -736,6 +739,54 @@ mod tests {
         assert!(directory.is_dir());
         let kept = sorted_entries(&directory);
         (directory, kept)
+    }
+
+    #[test]
+    fn gui_material_ingress_derives_only_the_monochrome_flag() {
+        let root = tempfile::tempdir().unwrap();
+        let factory = state::GuiState::factory();
+        let mut params = factory.runtime_params().unwrap();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
+        params.film_render.grain.channel_correlation = 0.35;
+        params.film_render.grain.uniformity = [0.2, 0.3, 0.4];
+        let bw = state::GuiState::from_runtime(
+            &params,
+            "kodak_doublex",
+            factory.paper(),
+            &factory.sections,
+        )
+        .unwrap();
+        let initial = root.path().join("bw-state.json");
+        bw.save(&initial).unwrap();
+        let mut app = App::new_with_browser_path(
+            Arc::new(CpuBackend),
+            None,
+            Some(initial),
+            None,
+            root.path().join("preset_browser_state.json"),
+            crate::headless::data_dir(),
+        );
+        let mut expected = params.film_render.grain.clone();
+        expected.monochrome = true;
+        assert_eq!(app.params.film_render.grain, expected);
+        // Loading an ordinary saved state also derives layout without
+        // broadcasting away the user's independent per-channel requests.
+        let color = state::GuiState::from_runtime(
+            &app.params,
+            "kodak_portra_400",
+            factory.paper(),
+            &factory.sections,
+        )
+        .unwrap();
+        app.apply_state(color).unwrap();
+        expected.monochrome = false;
+        assert_eq!(app.params.film_render.grain, expected);
+        app.apply_state(bw).unwrap();
+        expected.monochrome = true;
+        assert_eq!(app.params.film_render.grain, expected);
+        eframe::App::on_exit(&mut app, None);
     }
 
     #[test]

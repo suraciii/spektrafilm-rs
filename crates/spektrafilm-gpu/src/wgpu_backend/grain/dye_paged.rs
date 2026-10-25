@@ -157,6 +157,7 @@ impl WgpuBackend {
                 self,
                 [band.source_cols, band.source_rows, 0, 0],
                 [band.source_cols, band.source_rows],
+                params.monochrome,
                 &tables,
                 &curves,
                 &input_window,
@@ -223,6 +224,11 @@ mod tests {
 
     #[test]
     fn paged_source_preserves_the_same_stochastic_field() {
+        check_paged_source(false);
+        check_paged_source(true);
+    }
+
+    fn check_paged_source(monochrome: bool) {
         let backend = crate::test_support::adapter();
         let knots = [0.0, 1.0];
         let inv = [1.0];
@@ -239,7 +245,7 @@ mod tests {
             inv_dx: &inv,
             layers: [&knots, &zero, &zero],
         }));
-        let params = DyeGpuParams {
+        let mut params = DyeGpuParams {
             tables,
             cell_um: 1.0,
             taps: vec![0.25, 0.5, 0.25],
@@ -253,12 +259,17 @@ mod tests {
             seed: 0x1234_5678_9abc_def0,
             channel_correlation: 0.3,
             expectation: false,
+            monochrome: false,
         };
+        params.monochrome = monochrome;
         let image = ImageBuf::from_data(
             16,
             12,
             (0..16 * 12 * 3)
-                .map(|i| spektrafilm_math::precision::from_f64(0.2 + f64::from(i % 17) / 40.0))
+                .map(|i| {
+                    let index = if monochrome { i / 3 } else { i };
+                    spektrafilm_math::precision::from_f64(0.2 + f64::from(index % 17) / 40.0)
+                })
                 .collect(),
         );
         let contiguous = backend.pipe.upload_image(
@@ -313,6 +324,15 @@ mod tests {
                     .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
             })
             .collect();
+        if monochrome {
+            assert!(
+                actual
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .all(|p| p[0] == p[1] && p[0] == p[2])
+            );
+        }
         assert_eq!(
             expected, actual,
             "page transport must preserve one executor's stochastic draws and global footprints"

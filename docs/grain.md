@@ -81,6 +81,18 @@ Some preset channel ratios come from measured outputs of a commercial film simul
 
 `channel_correlation` defaults to `0.0` and accepts `[0, 0.45]`. This is the historical supported and acceptance range, not an identified universal material limit. The public constant `MEASURED_CHANNEL_CORRELATION_CEILING` retains its historical name for compatibility. The parameter sets the shared Poisson-event rate fraction among active records within each numerical component. Each record retains its marginal Poisson count distribution. For positive-rate records `a` and `b` in one component, count correlation is `rho × min_c(lambda_c) / sqrt(lambda_a × lambda_b)`, which is at most `rho`. This is not a bound on final RGB correlation or a guarantee of identical measured variance in a finite realization. Zero retains independent record counts. Processed scans do not, by themselves, separate material correlation from receiver or scanner effects.
 
+### Black-and-white material
+
+A resolved `channel_model=bw` filming profile selects one effective material record. Dye uses record 0's `rms_granularity`, `density_min`, and `uniformity`. `particle_scale_sublayers` still supplies three numerical-component scales, not three record controls. One sampled density is carried in three equal lanes before formation and readout. This is not final-RGB desaturation or a calibrated silver-particle simulation.
+
+`channel_correlation` has no effect for this layout. Its requested value remains stored. CLI edit feedback and the GUI explain the inactive control; selecting a color profile restores its applicability. Dry-run `film_grain_dye` reports `record_layout`, `calibration_status`, and requested/effective correlation without claiming a checked compute device.
+
+Resetting Grain restores its editable controls to factory values, but keeps the profile-derived record layout. This derived layout does not mark the section as modified.
+
+The bundled initial BW profiles are `kodak_doublex` (5222 negative, with selectable development times) and `kodak_trix` (7266 reversal, not still-film 400TX). Existing controls and presets remain uncalibrated for this effective model. A profile's monochrome identity does not identify silver versus chromogenic chemistry. The BW printing profile `kodak_2302` is not a filming stock.
+
+CPU material export retains the formed field in the existing `.sfstage` representation. Continuation does not generate a second field. Material export and continuation remain CPU-only; the existing exact-cell and aperture persistence restrictions still apply. See the [record-layout design](../specs/film-grain/v3/design.md#record-layout) for validation and ordering.
+
 
 ### Film geometry and routes
 
@@ -88,7 +100,7 @@ The field belongs to film coordinates. The pipeline develops the full frame. The
 
 Full-frame and cropped CMY reads use one global field and are compared under the precision budget declared by each acceptance record. A rounded output grid may change footprints. Only that sampling is then comparable.
 
-Dye supports still and cine color filming profiles, including both negative and positive color film. It uses the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`. It is not a roll-width designation.
+Dye supports still and cine color filming profiles and representable monochrome filming profiles, with negative or positive polarity. It uses the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`. It is not a roll-width designation.
 
 Format changes alter physical footprints and workload. Crop/resize determine output dimensions. Support and event area remain in film units. Large requests can fail an explicit resource bound.
 

@@ -837,13 +837,7 @@ fn cmd_process(
     let grain_v3_active = spektrafilm_core::stages::grain_v3::active(&params);
     let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
     if dry_run {
-        let grain_v3 = json!({
-            "active": grain_v3_active,
-            "effective_backend": null,
-            "note": grain_v3_active.then_some(
-                "Dye executor resolves when rendering; compute-device availability is unchecked."
-            ),
-        });
+        let grain_v3 = spektrafilm_core::stages::grain_v3::configuration_report(&film, &params);
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let output_format = plan.as_ref().map(|plan| plan.format.name());
         let output_bit_depth = plan

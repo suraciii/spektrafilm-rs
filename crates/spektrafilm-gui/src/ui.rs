@@ -419,6 +419,7 @@ impl App {
             }
         };
         self.film_name = selected;
+        self.params.film_render.grain.monochrome = film.is_bw();
         self.params.film_render.development_time = None;
         self.gui_state.sections["simulation"]["film_stock"] = serde_json::json!(self.film_name);
         self.film_reference_illuminant = film.info.reference_illuminant.clone();

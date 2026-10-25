@@ -22,6 +22,7 @@ fn curves() -> (Vec<[f64; 3]>, Vec<[[f64; 3]; 3]>) {
 fn params(cell_um: Option<f64>, expectation: bool, seed: u64, area: f64) -> GrainV3Params {
     let (composite_curves, layer_curves) = curves();
     GrainV3Params {
+        monochrome: false,
         support_um: SIGMA,
         cell_um,
         event_area_um2: area,
@@ -1231,6 +1232,346 @@ fn channel_correlation_out_of_range_fails_before_rendering() {
         let mut p = params(None, false, 1, 1.0);
         p.channel_correlation = value;
         Model::new(&p, PITCH).unwrap();
+    }
+}
+
+#[test]
+fn monochrome_expectation_forms_edges_instead_of_preserving_sharp_detail() {
+    let target = patterned(16, 12);
+    let rect = region(16, 12);
+    let mut p = params(None, true, 0xED6E, 1.28);
+    p.monochrome = true;
+    let actual = render(&p, &target, rect, (16, 12));
+    for (x, y) in [(4, 6), (5, 6), (10, 6), (15, 6)] {
+        let reference = oracle_readout(&target, rect, (16, 12), x, y, 0.5);
+        let value = pixel(&actual, x, y);
+        assert_eq!(value, [value[0]; 3]);
+        assert!(
+            (value[0] - reference[0]).abs() < 5e-3,
+            "expected formed density at {x},{y}: {value:?}, oracle {reference:?}"
+        );
+    }
+    assert!((pixel(&actual, 5, 6)[0] - pixel(&target, 5, 6)[0]).abs() > 1e-3);
+}
+
+#[test]
+fn monochrome_matches_color_record_zero_and_replicates_before_readout() {
+    let target = patterned(8, 7);
+    let grid = ReadoutGrid {
+        origin_um: [-1.25, 2.125],
+        pitch_um: [2.75, 11.25],
+        width: 13,
+        height: 4,
+    };
+    for positive_film in [false, true] {
+        for expectation in [false, true] {
+            let mut color = params(None, expectation, 0xBADC0DE, 1.28);
+            color.positive_film = positive_film;
+            if positive_film {
+                color.composite_curves.reverse();
+                color.layer_curves.reverse();
+            }
+            let mut bw = color.clone();
+            bw.monochrome = true;
+            // BW must use the private record-0 component streams, not the
+            // color shared streams even when correlation was requested.
+            bw.channel_correlation = 0.45;
+            let color_model = Model::new(&color, PITCH).unwrap();
+            let bw_model = Model::new(&bw, PITCH).unwrap();
+            let area = bw_model.cell_um.powi(2);
+            for density in [-MIN_DENSITY, 0.0, 0.12, 0.3] {
+                let layers = bw_model.layer_targets([density; 3]);
+                assert_eq!(layers, color_model.layer_targets([density; 3]));
+                for (i, j) in [(-7, -3), (-1, 0), (0, 0), (5, 11)] {
+                    let reference = color_model.accumulate(i, j, layers, area).unwrap()[0];
+                    let actual = bw_model.accumulate(i, j, layers, area).unwrap();
+                    assert_eq!(actual, [reference; 3]);
+                }
+            }
+            let reference = apply(&target, PITCH, grid, &color).unwrap();
+            let actual = apply(&target, PITCH, grid, &bw).unwrap();
+            for (expected, value) in reference.pixels().zip(actual.pixels()) {
+                assert_eq!(value, &[expected[0]; 3]);
+            }
+            // The response sees replicated material samples before any
+            // nonlinear optical mapping, not a final RGB desaturation.
+            let response = |density: &ImageBuf| {
+                for px in density.pixels() {
+                    assert_eq!(px, &[px[0]; 3]);
+                }
+                Ok(density.clone())
+            };
+            let through_response =
+                apply_with_response(&target, PITCH, grid, &bw, response).unwrap();
+            for (a, b) in actual.data.iter().zip(&through_response.data) {
+                assert!((to_f64(*a) - to_f64(*b)).abs() < precision_tol());
+            }
+        }
+    }
+}
+
+#[test]
+fn monochrome_correlation_is_inactive_without_bypassing_validation() {
+    let target = patterned(9, 7);
+    for expectation in [false, true] {
+        let mut p = params(None, expectation, 0xC011, 1.28);
+        p.monochrome = true;
+        let reference = render(&p, &target, region(9, 7), (13, 5));
+        for correlation in [0.2, 0.45] {
+            p.channel_correlation = correlation;
+            let actual = render(&p, &target, region(9, 7), (13, 5));
+            assert_eq!(actual.data, reference.data);
+        }
+        for correlation in [f64::NAN, f64::INFINITY, -0.1, 1.0] {
+            p.channel_correlation = correlation;
+            let error = Model::new(&p, PITCH).err().unwrap();
+            assert!(error.contains("correlation"), "{error}");
+        }
+    }
+}
+
+#[test]
+fn monochrome_cell_moments_preserve_the_single_record_law_and_statistical_floor() {
+    let mut p = params(None, false, 0, 1.28);
+    p.monochrome = true;
+    p.channel_correlation = 0.45;
+    let mut model = Model::new(&p, PITCH).unwrap();
+    let area = model.cell_um.powi(2);
+    let raw_total: f64 = MAXIMA.iter().sum();
+    let samples = 16384u64;
+    for density in [-MIN_DENSITY, 0.0, 0.12, 0.3] {
+        let layers = model.layer_targets([density; 3]);
+        let mut expected_variance = 0.0;
+        for (l, &raw_max) in MAXIMA.iter().enumerate() {
+            let fraction = raw_max / raw_total;
+            let capacity = raw_max + fraction * MIN_DENSITY;
+            let occupancy = layers[0][l] / capacity;
+            let s = 1.0 - 0.5 * (1.0 - 1e-6) * occupancy;
+            expected_variance += capacity * p.event_area_um2 * s * layers[0][l] / (fraction * area);
+        }
+        let expected_mean = density + MIN_DENSITY;
+        model.expectation = true;
+        let expected = model.accumulate(-3, 7, layers, area).unwrap();
+        assert_eq!(expected, [expected[0]; 3]);
+        assert!((expected[0] - expected_mean).abs() < 1e-14);
+        model.expectation = false;
+        let mut sum = 0.0;
+        let mut sum2 = 0.0;
+        for seed in 0..samples {
+            model.seed = seed;
+            let value = model.accumulate(-3, 7, layers, area).unwrap();
+            assert_eq!(value, [value[0]; 3]);
+            sum += value[0];
+            sum2 += value[0].powi(2);
+        }
+        let n = samples as f64;
+        let mean = sum / n;
+        let variance = (sum2 - sum * mean) / (n - 1.0);
+        if density == -MIN_DENSITY {
+            assert_eq!(sum, 0.0);
+            assert_eq!(sum2, 0.0);
+            assert_eq!(expected_variance, 0.0);
+        } else {
+            assert!(expected_variance > 0.0);
+            assert!(
+                (mean - expected_mean).abs() < 5.0 * (expected_variance / n).sqrt(),
+                "density {density}: mean {mean}, expected {expected_mean}"
+            );
+            assert!(
+                (variance / expected_variance - 1.0).abs() < 0.08,
+                "density {density}: variance {variance}, expected {expected_variance}"
+            );
+        }
+    }
+}
+
+#[test]
+fn monochrome_expectation_and_response_subtract_the_floor_once() {
+    let mut p = params(None, true, 0xF100, 1.28);
+    p.monochrome = true;
+    // Exact in both pixel precisions, so the true zero-count floor is not
+    // confused with a rounded developed density just above it.
+    p.density_min = [0.03125; 3];
+    let grid = ReadoutGrid {
+        origin_um: [-3.75, 1.125],
+        pitch_um: [7.25, 4.75],
+        width: 5,
+        height: 3,
+    };
+    for density in [-0.03125, 0.0, 0.12] {
+        let target = flat(6, 5, density);
+        let expected = apply(&target, PITCH, grid, &p).unwrap();
+        for px in expected.pixels() {
+            assert_eq!(px, &[px[0]; 3]);
+            assert!((to_f64(px[0]) - density).abs() < precision_tol());
+        }
+        let optical = apply_with_response(&target, PITCH, grid, &p, |field| {
+            let mut linear = field.clone();
+            for px in linear.pixels_mut() {
+                assert_eq!(px[1], px[0]);
+                assert_eq!(px[2], px[0]);
+                px.fill(from_f64(10.0f64.powf(-to_f64(px[0]) - 0.2)));
+            }
+            Ok(linear)
+        })
+        .unwrap();
+        for px in optical.pixels() {
+            assert_eq!(px, &[px[0]; 3]);
+            let reference = 10.0f64.powf(-density - 0.2);
+            assert!((to_f64(px[0]) - reference).abs() < precision_tol());
+        }
+        if density == -0.03125 {
+            p.expectation = false;
+            let realized = apply(&target, PITCH, grid, &p).unwrap();
+            assert_eq!(realized.data, expected.data);
+            p.expectation = true;
+        }
+    }
+    // Zero developed density still samples its positive absolute statistical
+    // floor; it is not a zero stochastic output or a zero-variance condition.
+    p.expectation = false;
+    let realized = apply(&flat(6, 5, 0.0), PITCH, grid, &p).unwrap();
+    assert!(
+        realized
+            .data
+            .iter()
+            .any(|v| to_f64(*v).abs() > precision_tol())
+    );
+}
+
+#[test]
+fn monochrome_fractional_crops_and_bands_keep_the_global_field() {
+    let target = patterned(9, 20);
+    let grid = ReadoutGrid {
+        origin_um: [-3.75, 1.125],
+        pitch_um: [2.75, 0.75],
+        width: 19,
+        height: 137,
+    };
+    let crop_grid = ReadoutGrid {
+        origin_um: [
+            grid.origin_um[0] + 4.0 * 2.75,
+            grid.origin_um[1] + 125.0 * 0.75,
+        ],
+        width: 9,
+        height: 9,
+        ..grid
+    };
+    for expectation in [false, true] {
+        let mut p = params(None, expectation, 0xBADD, 1.28);
+        p.monochrome = true;
+        let full = apply(&target, PITCH, grid, &p).unwrap();
+        let repeated = apply(&target, PITCH, grid, &p).unwrap();
+        assert_eq!(full.data, repeated.data);
+        let bounded = apply_with_budget(&target, PITCH, grid, &p, 2000).unwrap();
+        assert_eq!(full.data, bounded.data);
+        let cropped = apply(&target, PITCH, crop_grid, &p).unwrap();
+        for y in 0..9 {
+            for x in 0..9 {
+                let value = pixel(&cropped, x, y);
+                assert_eq!(value, pixel(&full, x + 4, y + 125));
+                assert_eq!(value, [value[0]; 3]);
+            }
+        }
+    }
+}
+
+#[test]
+fn monochrome_rejects_unresolved_single_record_and_mislabeled_color_curves() {
+    let mut canonical = params(None, true, 0xCA110, 1.28);
+    canonical.monochrome = true;
+    assert!(Model::new(&canonical, PITCH).is_ok());
+
+    // The monochrome spectral basis may be [s, 0, 0], but developed
+    // composite/component tables must already be resolved to three copies.
+    let mut unresolved_composite = canonical.clone();
+    for row in &mut unresolved_composite.composite_curves {
+        *row = [row[0], 0.0, 0.0];
+    }
+    let error = Model::new(&unresolved_composite, PITCH).err().unwrap();
+    assert!(error.contains("monochrome composite curve"), "{error}");
+    let mut unresolved_components = canonical.clone();
+    for row in &mut unresolved_components.layer_curves {
+        for layer in row {
+            *layer = [layer[0], 0.0, 0.0];
+        }
+    }
+    let error = Model::new(&unresolved_components, PITCH).err().unwrap();
+    assert!(error.contains("monochrome layer curve"), "{error}");
+
+    // Valid, individually consistent color records cannot become a scalar
+    // material merely by changing the request's profile-derived layout.
+    let mut color = canonical.clone();
+    color.monochrome = false;
+    let scales = [1.0, 0.8, 1.1];
+    for row in &mut color.layer_max {
+        for (value, scale) in row.iter_mut().zip(scales) {
+            *value *= scale;
+        }
+    }
+    for row in &mut color.composite_curves {
+        for (value, scale) in row.iter_mut().zip(scales) {
+            *value *= scale;
+        }
+    }
+    for row in &mut color.layer_curves {
+        for layer in row {
+            for (value, scale) in layer.iter_mut().zip(scales) {
+                *value *= scale;
+            }
+        }
+    }
+    assert!(Model::new(&color, PITCH).is_ok());
+    color.monochrome = true;
+    let error = Model::new(&color, PITCH).err().unwrap();
+    assert!(error.contains("monochrome layer maxima"), "{error}");
+}
+
+#[test]
+fn monochrome_rejects_noncanonical_tables_and_nonfinite_or_inconsistent_density() {
+    let mut good = params(None, true, 1, 1.28);
+    good.monochrome = true;
+    let cases: [fn(&mut GrainV3Params); 8] = [
+        |p| p.channel_scale[1] += 0.1,
+        |p| p.density_min[2] += 0.01,
+        |p| p.uniformity[1] += 0.1,
+        |p| p.layer_max[1][2] += 0.01,
+        |p| p.composite_curves[3][1] += 0.01,
+        |p| p.layer_curves[2][1][2] += 0.01,
+        |p| p.density_min = [f64::NAN; 3],
+        |p| p.layer_curves[2][1] = [f64::INFINITY; 3],
+    ];
+    for change in cases {
+        let mut bad = good.clone();
+        change(&mut bad);
+        let error = Model::new(&bad, PITCH).err().unwrap();
+        assert!(
+            error.contains("monochrome") && error.contains("finite and identical"),
+            "{error}"
+        );
+    }
+    let reference = flat(4, 3, 0.12);
+    let grid = grid(region(4, 3), (4, 3), PITCH);
+    let expected = apply(&reference, PITCH, grid, &good).unwrap();
+    let mut close = reference.clone();
+    close.data[1] += from_f64(0.5e-6);
+    let accepted = apply(&close, PITCH, grid, &good).unwrap();
+    assert_eq!(accepted.data, expected.data, "record zero is authoritative");
+    let mut inconsistent = reference.clone();
+    inconsistent.data[1] += from_f64(2e-6);
+    let error = apply(&inconsistent, PITCH, grid, &good).unwrap_err();
+    assert!(error.contains("lanes must agree"), "{error}");
+    for monochrome in [false, true] {
+        let mut p = good.clone();
+        p.monochrome = monochrome;
+        for lane in 0..3 {
+            for nonfinite in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let mut invalid = reference.clone();
+                invalid.data[lane] = from_f64(nonfinite);
+                let error = apply(&invalid, PITCH, grid, &p).unwrap_err();
+                assert!(error.contains("must be finite"), "{error}");
+            }
+        }
     }
 }
 
