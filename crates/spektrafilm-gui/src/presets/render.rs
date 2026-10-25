@@ -292,7 +292,7 @@ impl App {
                                 egui::vec2(CHECK_ICON, ui.spacing().interact_size.y),
                                 egui::Sense::hover(),
                             );
-                            paint_check(&ui.painter(), slot);
+                            paint_check(ui.painter(), slot);
                             ui.add(
                                 egui::Label::new(
                                     egui::RichText::new(summary)
@@ -574,7 +574,7 @@ impl App {
                                         // state is never carried by colour alone.
                                         // The localized action name stays this
                                         // control's accessible name exactly.
-                                        paint_star(&ui.painter(), favorite_response.rect, selected);
+                                        paint_star(ui.painter(), favorite_response.rect, selected);
                                         let accessible_name = crate::tr!(
                                             ui.ctx(),
                                             "surfaces.presets.discovery_favorite_accessible",
@@ -634,7 +634,7 @@ impl App {
                                             // The affordance is drawn rather than
                                             // typeset: three dots cannot go missing
                                             // with a font.
-                                            paint_actions(&ui.painter(), actions.response.rect);
+                                            paint_actions(ui.painter(), actions.response.rect);
                                             // Name the control after its entry, so the
                                             // action menu of one card is addressable among
                                             // the cards.

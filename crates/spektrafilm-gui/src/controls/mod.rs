@@ -174,8 +174,7 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         let width = ui
             .available_width()
-            .min(theme::WIDTH_COMBO_MAX)
-            .max(theme::WIDTH_COMBO_MIN);
+            .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
         ui.add_space((ui.available_width() - width).max(0.0));
         let response = egui::ComboBox::from_id_salt(label)
             .width(width)
