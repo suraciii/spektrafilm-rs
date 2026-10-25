@@ -62,6 +62,7 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
     let save_before = session.directory.path().join("operator-corrected.exr");
     script(h, chooser::ChooserResult::Scripted(save_before.clone()));
     click(h, "SAVE");
+    wait_until(h, |app| app.pending_saves.is_empty());
     assert!(
         h.state().status.to_string().starts_with("Saved"),
         "{}",

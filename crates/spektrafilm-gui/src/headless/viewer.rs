@@ -168,6 +168,7 @@ fn save_and_export_float_images(h: &mut Harness<'_, App>, save: &Path, export: &
         h.state().output_image.as_ref().unwrap(),
         &retained
     ));
+    wait_until(h, |app| app.pending_saves.is_empty());
 }
 
 fn pointer(h: &mut Harness<'_, App>, position: egui::Pos2, pressed: bool, time: f64) {
