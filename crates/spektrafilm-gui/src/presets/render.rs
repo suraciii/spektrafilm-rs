@@ -487,16 +487,19 @@ impl App {
                                                             && identity.name == entry.name
                                                     },
                                                 );
+                                            // The visible affordance is the
+                                            // prototype's quiet star glyph:
+                                            // filled once favorited, outline
+                                            // before. The localized action
+                                            // name below stays this control's
+                                            // accessible name exactly.
                                             let response = ui.selectable_label(
                                                 selected,
-                                                egui::RichText::new(crate::i18n::text(
-                                                    ui.ctx(),
-                                                    if selected {
-                                                        "surfaces.presets.discovery_unfavorite"
-                                                    } else {
-                                                        "surfaces.presets.discovery_favorite"
-                                                    },
-                                                ))
+                                                egui::RichText::new(if selected {
+                                                    "★"
+                                                } else {
+                                                    "☆"
+                                                })
                                                 .color(theme::FG_MUTED)
                                                 .size(theme::SIZE_HINT),
                                             );

@@ -225,30 +225,50 @@ impl App {
                 || self.export_job.is_some()
                 || self.calibration_job.is_some();
             let ready = self.image.is_some() && !busy;
-            if ui
-                .add_enabled(
+            ui.vertical(|ui| {
+                let scan = ui.add_enabled(
                     ready,
                     egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.scan"))
                         .min_size(egui::vec2(112.0, 38.0)),
-                )
-                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.scan_help"))
-                .clicked()
-            {
-                self.dirty = true;
-
-                self.full_scan_requested = true;
-            }
-            let save = ui
-                .add_enabled(
+                );
+                ui.label(
+                    egui::RichText::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.action.scan_caption",
+                    ))
+                    .small()
+                    .color(theme::FG_MUTED),
+                );
+                if scan
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.scan_help"))
+                    .clicked()
+                {
+                    self.dirty = true;
+                    self.full_scan_requested = true;
+                }
+            });
+            ui.vertical(|ui| {
+                let save = ui.add_enabled(
                     (self.output_image.is_some() || self.output_retained.is_some()) && !busy,
                     egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.save_retained"))
                         .min_size(egui::vec2(112.0, 38.0)),
-                )
-                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.save_help"));
-            controls::locate_row(ui, "action.save_retained", &save);
-            if save.clicked() {
-                self.save_dialog();
-            }
+                );
+                ui.label(
+                    egui::RichText::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.action.save_caption",
+                    ))
+                    .small()
+                    .color(theme::FG_MUTED),
+                );
+                controls::locate_row(ui, "action.save_retained", &save);
+                if save
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.save_help"))
+                    .clicked()
+                {
+                    self.save_dialog();
+                }
+            });
         });
     }
 
@@ -644,7 +664,7 @@ impl App {
             let temporary_open = !self.filter.is_empty() || self.only_modified;
             let open = normal_open || temporary_open || reveal;
             let mut heading = None;
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
                 let title = if section == "Glare" {
                     "Print viewing glare"
                 } else {
@@ -656,7 +676,9 @@ impl App {
                         .data_mut(|data| data.insert_persisted(disclosure_id, !normal_open));
                 }
                 heading = Some(response);
-                self.section_reset_controls(ui, section);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.section_reset_controls_with_order(ui, section, true);
+                });
             });
             if reveal {
                 self.pending_scroll = None;
@@ -864,7 +886,15 @@ impl App {
     /// Every resettable section presents these on its header, so the reset scope
     /// the section table declares is reachable from the surface rendering it.
     fn section_reset_controls(&mut self, ui: &mut egui::Ui, section: &str) -> bool {
-        let mut changed = false;
+        self.section_reset_controls_with_order(ui, section, false)
+    }
+
+    fn section_reset_controls_with_order(
+        &mut self,
+        ui: &mut egui::Ui,
+        section: &str,
+        trailing: bool,
+    ) -> bool {
         let material_modified = match section {
             "Film material" => controls::entry_matches(
                 "extras.simulation.film_stock",
@@ -882,40 +912,50 @@ impl App {
             ),
             _ => false,
         };
-        if material_modified
-            || section_reset::is_modified(section, &self.params, &self.gui_state.sections)
-        {
+        let modified = material_modified
+            || section_reset::is_modified(section, &self.params, &self.gui_state.sections);
+        let resettable = section_reset::sections().any(|name| name == section);
+        let mut changed = false;
+        if trailing && resettable {
+            changed |= self.section_reset_action(ui, section);
+        }
+        if modified {
             ui.label(
                 egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.state.modified"))
                     .color(theme::WARNING)
                     .size(theme::SIZE_HINT),
             );
         }
-        if section_reset::sections().any(|name| name == section) {
-            let response = controls::module_reset(ui, section);
-            if response.clicked() {
-                if !matches!(section, "Session" | "Display") {
-                    self.label_adjustment_message(
-                        crate::app::Message::new("operations.history.reset_section")
-                            .message_arg("section", crate::app::Message::control(section)),
-                    );
-                }
-                if section == "Film material" {
-                    self.select_film_profile(state::GuiState::factory().film().to_owned());
-                } else if section == "Print material" {
-                    self.select_print_profile(state::GuiState::factory().paper().to_owned());
-                }
-                section_reset::reset(&mut self.params, &mut self.gui_state.sections, section);
-                if section == "Workflow" {
-                    self.finish_route_change();
-                } else if section != "Display" {
-                    self.mark_parameters_changed_invalidating_calibration();
-                }
-                self.search_index.reset();
-                changed = true;
-            }
+        if !trailing && resettable {
+            changed |= self.section_reset_action(ui, section);
         }
         changed
+    }
+
+    fn section_reset_action(&mut self, ui: &mut egui::Ui, section: &str) -> bool {
+        let response = controls::module_reset(ui, section);
+        if !response.clicked() {
+            return false;
+        }
+        if !matches!(section, "Session" | "Display") {
+            self.label_adjustment_message(
+                crate::app::Message::new("operations.history.reset_section")
+                    .message_arg("section", crate::app::Message::control(section)),
+            );
+        }
+        if section == "Film material" {
+            self.select_film_profile(state::GuiState::factory().film().to_owned());
+        } else if section == "Print material" {
+            self.select_print_profile(state::GuiState::factory().paper().to_owned());
+        }
+        section_reset::reset(&mut self.params, &mut self.gui_state.sections, section);
+        if section == "Workflow" {
+            self.finish_route_change();
+        } else if section != "Display" {
+            self.mark_parameters_changed_invalidating_calibration();
+        }
+        self.search_index.reset();
+        true
     }
 
     fn retain_locator_focus(ctx: &egui::Context, current: Vec<egui::Id>) {
@@ -1331,12 +1371,12 @@ impl App {
         egui::Window::new(crate::i18n::text(ctx, "surfaces.settings.title"))
             .id(egui::Id::new("application-settings"))
             .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .default_width(520.0)
             .max_height((ctx.screen_rect().height() - 80.0).max(160.0))
             .show(ctx, |ui| {
-                close = ui.button(crate::i18n::text(ui.ctx(), "surfaces.settings.close")).clicked();
                 ui.separator();
-                egui::ScrollArea::vertical().id_salt("settings-scroll").max_height((ctx.screen_rect().height() - 180.0).max(100.0)).show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("settings-scroll").max_height((ctx.screen_rect().height() - 220.0).max(100.0)).show(ui, |ui| {
                 // The inspector query locates this owner; it never filters a dialog.
                 for section in ["Session", "GUI parameters", "Display", "Diagnostics"] {
                     let reveal = self.pending_scroll.as_deref() == Some(section);
@@ -1381,6 +1421,16 @@ impl App {
                         self.pending_scroll = None;
                     }
                 }
+                });
+                ui.horizontal(|ui| {
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            close = ui
+                                .button(crate::i18n::text(ui.ctx(), "surfaces.settings.close"))
+                                .clicked();
+                        },
+                    );
                 });
             });
         if !open
@@ -1864,6 +1914,38 @@ impl eframe::App for App {
             let viewer_rect = ui.available_rect_before_wrap();
             self.viewer
                 .show(ui, self.oriented_input.as_ref(), displayed_output.as_ref());
+            if self.output_image.is_some() || self.output_retained.is_some() {
+                let identity = self.retained_result_identity(ui.ctx());
+                let text = if self.retained_kind == Some(RenderKind::Preview) {
+                    crate::tr!(
+                        ui.ctx(),
+                        "surfaces.viewer.result_status",
+                        identity = identity,
+                        caveat = crate::i18n::text(ui.ctx(), "result.identity.preview_caveat")
+                    )
+                    .into_owned()
+                } else {
+                    identity
+                };
+                let painter = ui.painter_at(viewer_rect);
+                let font = egui::FontId::proportional(theme::SIZE_HINT);
+                let galley = painter.layout_no_wrap(text, font, theme::FG);
+                let size = galley.size() + egui::vec2(theme::SPACE_2 * 2.0, theme::SPACE_1 * 2.0);
+                let rect = egui::Rect::from_min_size(
+                    viewer_rect.center_top() + egui::vec2(-size.x * 0.5, theme::SPACE_2),
+                    size,
+                );
+                painter.rect_filled(
+                    rect,
+                    theme::RADIUS_CARD,
+                    theme::SURFACE.gamma_multiply(0.85),
+                );
+                painter.galley(
+                    rect.min + egui::vec2(theme::SPACE_2, theme::SPACE_1),
+                    galley,
+                    theme::FG,
+                );
+            }
             if self.viewer_render_pending() {
                 let text = crate::i18n::text(ui.ctx(), "surfaces.viewer.rendering");
                 let font = egui::FontId::proportional(theme::SIZE_HINT);

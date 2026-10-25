@@ -77,11 +77,11 @@ pub const SPACE_ROW: f32 = SPACE_1;
 pub const SPACE_BLOCK: f32 = SPACE_1;
 /// Height reserved below the scrollable controls for the action bar.
 ///
-/// Measured from the bar the inspector renders: one 38 pt button row (the
-/// bar's own `min_size` height) plus the 6 pt separator and one [`SPACE_ROW`]
-/// gap on each side of it. Reserving the measured footprint keeps the bar
+/// Measured from the bar the inspector renders: one 38 pt button row, its
+/// visible semantic caption, the 6 pt separator and one [`SPACE_ROW`] gap on
+/// each side of the bar. Reserving the measured footprint keeps the bar
 /// inside the panel without withholding list height from the controls.
-pub const HEIGHT_ACTION_BAR_RESERVE: f32 = 38.0 + 6.0 + 2.0 * SPACE_ROW;
+pub const HEIGHT_ACTION_BAR_RESERVE: f32 = 38.0 + SPACE_ROW + SIZE_HINT + 6.0 + 2.0 * SPACE_ROW;
 /// Gap between two action groups inside one region.
 pub const SPACE_GROUP: f32 = SPACE_2;
 // ---------------------------------------------------------------------------

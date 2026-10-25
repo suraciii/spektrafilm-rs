@@ -370,9 +370,9 @@ fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
         (
             bounds.x0,
             bounds.y0 + 65.0,
-            bounds.y1 - 20.0,
+            bounds.y1 - 70.0,
             egui::pos2(
-                bounds.x0 as f32 + 12.0,
+                ((bounds.x0 + bounds.x1) * 0.5) as f32,
                 ((bounds.y0 + bounds.y1) * 0.5) as f32,
             ),
         )
@@ -1044,11 +1044,11 @@ mod layout_snapshots {
         assert_eq!((image.width(), image.height()), (700, 650));
         let mut rows = Vec::new();
         for label in [
-            "Backend",
             "Format",
             "Bit depth",
             "Compression",
             "Saving color space",
+            "Backend",
             "Apply saving CCTF encoding",
             "Export file…",
             "Cancel",

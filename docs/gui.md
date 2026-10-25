@@ -37,7 +37,7 @@ The right inspector contains one continuous list, not mutually exclusive pages. 
 | Scan | Scanner, Print viewing glare |
 | Output | Output, Output gamut compress, CMYK ink style |
 
-The persistent **SCAN** and **SAVE** action bar stays below the inspector. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
+The persistent **SCAN** and **SAVE** action bar stays below the inspector. SCAN shows `full-resolution effects`; SAVE shows `retained result · no rerender`. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
 
 ## Interface language
 
@@ -201,7 +201,7 @@ On macOS, the Metal surface is tagged sRGB.
 
 ## Independent Export
 
-Header **Export** opens **Export options**. Choose **Backend**, **Format**, **Bit depth**, **Saving color space**, **Apply saving CCTF encoding**, and the applicable codec/compression settings, then **Export file…** to choose the destination. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, Escape, or closing **Export options** discards its unsubmitted draft without changing accepted adjustments or retained output.
+Header **Export** opens **Export options**. Choose **Format**, **Bit depth**, **Saving color space**, **Backend**, **Apply saving CCTF encoding**, and the applicable codec/compression settings, then **Export file…** to choose the destination. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, Escape, or closing **Export options** discards its unsubmitted draft without changing accepted adjustments or retained output.
 
 Locating another Export control while the dialog is open preserves its draft. The locator changes focus, not the selected delivery options.
 
@@ -267,7 +267,7 @@ The GUI remembers the preset browser selection and layout independently of start
 
 A failed preset application preserves the current controls and temporary white/black correction state. See [presets](presets.md) for library and composition rules. The [presets specification](../specs/presets/spec.md) owns the preset contract.
 
-Each preset card carries its own `preset actions` control beside the entry name. Opening it reaches the same actions as the card's context menu — update, revert, rename, duplicate, export, show file, and delete — by pointer or by keyboard, so the context menu is an additional route rather than the only one. Update applies only to the applied user preset; revert, rename, and delete apply to user presets only.
+Each preset card carries its own `preset actions` control beside the entry name and a star toggle for favorites. The star changes favorites only; it does not apply the look. Opening `preset actions` reaches the same actions as the card's context menu — update, revert, rename, duplicate, export, show file, and delete — by pointer or by keyboard, so the context menu is an additional route rather than the only one. Update applies only to the applied user preset; revert, rename, and delete apply to user presets only.
 
 ## Diagnostics
 

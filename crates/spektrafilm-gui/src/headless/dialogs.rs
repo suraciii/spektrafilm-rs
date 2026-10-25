@@ -798,7 +798,9 @@ fn diagnostics_user_selected_report_survives_later_renders() {
     assert_eq!(h.state().diagnostics.selected_report_id(), Some(first_id));
 
     // Simulate the user clicking the older report row (sets user_selected = true).
-    click(h, &format!("#{} {} · {}", first_id, "preview", "succeeded"));
+    h.get_by_label(&format!("#{} {} · {}", first_id, "preview", "succeeded"))
+        .click();
+    h.run_steps(2);
     assert_eq!(
         h.state().diagnostics.selected_report_id(),
         Some(first_id),

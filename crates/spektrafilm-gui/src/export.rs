@@ -344,6 +344,10 @@ impl ExportDialog {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
+            // The prototype presents a centered dialog. Anchoring keeps the
+            // options window in the middle of the available screen instead of
+            // egui's default top-left, with no other positioning involved.
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .default_width(440.0)
             .max_width((ctx.screen_rect().width() - 32.0).max(240.0))
             .max_height((ctx.screen_rect().height() - 48.0).max(120.0))
@@ -362,11 +366,15 @@ impl ExportDialog {
                     ui.ctx(), "result.export.guidance",
                 )).small().color(theme::FG_SECONDARY));
                 ui.separator();
-                let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
-                enum_choice(ui, "Backend", &mut draft.backend, &[
-                    (ExportBackend::Cpu, cpu_label),
-                    (ExportBackend::Gpu, "GPU (WGPU f32)"),
-                ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
+                // Quiet section headings group the option rows as the
+                // prototype does, changing no row or its values.
+                ui.add_space(theme::SPACE_3);
+                ui.label(
+                    egui::RichText::new(controls::localized(ui.ctx(), "File and container"))
+                        .color(theme::FG)
+                        .size(theme::SIZE_TITLE)
+                        .strong(),
+                );
                 enum_choice(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, ExportFormat::Jpeg.label()),
                     (ExportFormat::Png, ExportFormat::Png.label()),
@@ -426,24 +434,43 @@ impl ExportDialog {
                         controls::locate_row(ui, "extras.rust.export_compression", &response);
                     }
                 }
+                ui.add_space(theme::SPACE_3);
+                ui.label(
+                    egui::RichText::new(controls::localized(ui.ctx(), "Color and computation"))
+                        .color(theme::FG)
+                        .size(theme::SIZE_TITLE)
+                        .strong(),
+                );
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
                 // The shared choice owner models label, selector, and help;
                 // this selector additionally offers selection guidance inside
                 // its popup, so the dialog keeps its own owner for it.
-                let color_space = egui::ComboBox::new("Saving color space", crate::i18n::text(ui.ctx(), "surfaces.export.color_space"))
-                    .selected_text(&draft.saving_color_space)
-                    .show_ui(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.space_hint"))
-                            .small()
-                            .color(theme::FG_MUTED),
-                    );
-                    for &space in spaces {
-                        ui.selectable_value(&mut draft.saving_color_space, space.to_owned(), space);
-                    }
-                })
-                .response.on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.space_help"));
-                controls::locate_row(ui, "extras.rust.export_saving_color_space", &color_space);
+                ui.horizontal(|ui| {
+                    ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.color_space"))
+                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.space_help"));
+                    let color_space = egui::ComboBox::from_id_salt("Saving color space")
+                        .selected_text(&draft.saving_color_space)
+                        .show_ui(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.space_hint"))
+                                    .small()
+                                    .color(theme::FG_MUTED),
+                            );
+                            for &space in spaces {
+                                ui.selectable_value(&mut draft.saving_color_space, space.to_owned(), space);
+                            }
+                        })
+                        .response
+                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.space_help"));
+                    controls::locate_row(ui, "extras.rust.export_saving_color_space", &color_space);
+                    controls::focus_response(ui, "Saving color space", &color_space);
+                    controls::name_choice(ui, "Saving color space");
+                });
+                let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
+                enum_choice(ui, "Backend", &mut draft.backend, &[
+                    (ExportBackend::Cpu, cpu_label),
+                    (ExportBackend::Gpu, "GPU (WGPU f32)"),
+                ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
                 // The shared switch owner models this boolean draft option:
                 // the same presentation, state, and accessible naming an
                 // inspector boolean gets. Its response keeps the row
@@ -477,6 +504,13 @@ impl ExportDialog {
                     ExportFormat::Png => crate::tr!(ui.ctx(), "surfaces.export.summary_png", format = format_label, space = &draft.saving_color_space),
                     ExportFormat::Tiff => crate::tr!(ui.ctx(), "surfaces.export.summary_tiff", format = format_label, depth = depth_label, space = &draft.saving_color_space, encoding = if draft.saving_cctf_encoding { std::borrow::Cow::Borrowed("CCTF") } else { crate::i18n::text(ui.ctx(), "surfaces.export.linear") }, compression = match draft.compression { ExportCompression::Zip => std::borrow::Cow::Borrowed("ZIP"), ExportCompression::None => crate::i18n::text(ui.ctx(), "surfaces.export.none") }),
                 };
+                ui.add_space(theme::SPACE_3);
+                ui.label(
+                    egui::RichText::new(controls::localized(ui.ctx(), "Summary and actions"))
+                        .color(theme::FG)
+                        .size(theme::SIZE_TITLE)
+                        .strong(),
+                );
                 ui.label(egui::RichText::new(crate::tr!(ui.ctx(), "surfaces.export.summary", summary = summary)).small().color(theme::FG_MUTED))
                     .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.summary_help"));
                 let compressed = container_compresses(draft);
@@ -494,7 +528,7 @@ impl ExportDialog {
                     });
                     });
                 ui.separator();
-                ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // The sidebar opener and this submit are two steps of one
                     // flow, so they carry distinct labels.
                     let export = ui.add(egui::Button::new(
