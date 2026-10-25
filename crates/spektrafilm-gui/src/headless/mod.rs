@@ -117,7 +117,7 @@ fn deterministic_state(directory: &Path) -> PathBuf {
 
 /// Deterministic synthetic input shared by the headless fixtures: a ramp image
 /// plus the deterministic state from [`deterministic_state`].
-fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
+pub(crate) fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
     let image_path = directory.join("asymmetric-ramp.png");
     let mut image = ImageBuf::new(160, 80);
     for y in 0..image.height {
@@ -146,6 +146,32 @@ fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
     .unwrap();
     let state_path = deterministic_state(directory);
     (image_path, state_path)
+}
+
+/// Real startup with production defaults for automatic-diagnostics
+/// acceptance: no explicit diagnostics request, so every run records into its
+/// own persistent `<config_root>/logs/diagnostics/session-*` folder while
+/// scratch inputs stay in `work`. Returns after the startup preview completed
+/// and its reports reached the background writer.
+pub(crate) fn default_startup(config_root: &Path, work: &Path) -> Harness<'static, App> {
+    std::fs::create_dir_all(config_root).unwrap();
+    std::fs::create_dir_all(work).unwrap();
+    let (image_path, state_path) = deterministic_inputs(work);
+    let browser_path = config_root.join("preset_browser_state.json");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 800.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            app(state_path, image_path, browser_path)
+        });
+    await_input(&mut harness);
+    wait_until(&mut harness, |app| {
+        !app.dirty
+            && app.render_job.is_none()
+            && app.output_image.is_some()
+            && app.diagnostics.pending_publications() == 0
+    });
+    harness
 }
 
 /// Inspect the report returned by the real App worker, not a reconstructed

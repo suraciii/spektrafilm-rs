@@ -170,8 +170,22 @@ fn assert_quality_controls(h: &Harness<'_, App>) {
     );
 }
 
+/// Whether the collection mode selector is currently disclosed: it lives under
+/// the collapsed Advanced details row of the Diagnostics panel.
+fn diagnostics_mode_visible(h: &Harness<'_, App>) -> bool {
+    h.query_all_by_role(egui::accesskit::Role::ComboBox)
+        .any(|node| node.label().unwrap_or_default().is_empty())
+}
+
 fn choose_diagnostics_mode(h: &mut Harness<'_, App>, next: &str) {
-    reveal_control(h, "action.save_report");
+    reveal_control(h, "action.open_diagnostic_directory");
+    if !diagnostics_mode_visible(h) {
+        click(h, "Advanced details");
+        assert!(
+            diagnostics_mode_visible(h),
+            "Advanced details must disclose the collection mode selector"
+        );
+    }
     let combos: Vec<_> = h
         .query_all_by_role(egui::accesskit::Role::ComboBox)
         .filter(|node| node.label().unwrap_or_default().is_empty())
@@ -657,6 +671,13 @@ fn report_paths(directory: &Path) -> Vec<PathBuf> {
     paths
 }
 
+fn wait_for_report_paths(h: &mut Harness<'_, App>, directory: &Path, count: usize) -> Vec<PathBuf> {
+    wait_until(h, |app| {
+        app.diagnostics.pending_publications() == 0 && report_paths(directory).len() == count
+    });
+    report_paths(directory)
+}
+
 fn read_report(path: &Path) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
 }
@@ -665,6 +686,154 @@ fn save_report_from_panel(h: &mut Harness<'_, App>, path: &Path) {
     script(h, chooser::ChooserResult::Scripted(path.to_path_buf()));
     click(h, "Save report…");
     assert!(path.is_file());
+}
+
+/// Production startup records performance reports automatically: the program
+/// chooses the session folder, the first accepted preview already writes a
+/// valid report there without a chooser, a setup call or a parameter change,
+/// and later accepted edits save to the same folder without re-setup. Manual
+/// export of the selected report keeps working under Advanced details.
+#[test]
+fn diagnostics_gui_logs_previews_automatically_under_the_program_chosen_session_folder() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let revision = h.state().parameter_revision;
+    assert_eq!(
+        h.state().diagnostics.mode,
+        CollectionMode::Summary,
+        "sessions record from startup; users do not choose a collection mode"
+    );
+    let initial_output = preview(h);
+    let directory = h
+        .state()
+        .diagnostics
+        .publication_directory()
+        .expect("automatic publication chooses a session folder")
+        .to_path_buf();
+    assert!(
+        directory.starts_with(s.directory.path()) && directory != s.directory.path(),
+        "the session folder is program-chosen under the config root: {}",
+        directory.display()
+    );
+    assert!(directory.is_dir(), "the session folder exists on disk");
+
+    let reports = wait_for_report_paths(h, &directory, 1);
+    let bytes = std::fs::read(&reports[0]).unwrap();
+    let first: spektrafilm_core::telemetry::Report = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        first.configuration.collection_mode_requested,
+        CollectionMode::Summary
+    );
+    assert_eq!(
+        first.operation.kind,
+        spektrafilm_core::telemetry::OperationKind::Preview
+    );
+    assert_eq!(
+        first.operation.outcome,
+        spektrafilm_core::telemetry::Outcome::Succeeded
+    );
+    assert!(first.phases.iter().all(|phase| phase.duration.is_finite()));
+    let simulation = first
+        .phases
+        .iter()
+        .find(|phase| phase.name == "simulation")
+        .expect("the completed preview reports its simulation phase");
+    assert!(simulation.duration > 0.0);
+    assert_eq!(
+        h.state().diagnostics.selected_report_id(),
+        Some(first.operation.id)
+    );
+    // Automatic logging alone is not a photograph change.
+    assert_eq!(h.state().parameter_revision, revision);
+    assert!(!h.state().dirty);
+    assert!(h.state().render_job.is_none());
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &initial_output
+    ));
+
+    // The next accepted edit saves its report to the same folder automatically.
+    close_settings(h);
+    reveal_control(h, "camera.exposure_compensation_ev");
+    edit(h, "exposure compensation ev", "0.25");
+    preview(h);
+    let reports = wait_for_report_paths(h, &directory, 2);
+    let second = reports
+        .iter()
+        .map(|path| read_report(path))
+        .find(|report| report["operation"]["id"].as_u64() != Some(first.operation.id))
+        .expect("the edited preview writes its report automatically");
+    assert_eq!(second["operation"]["kind"], "preview");
+    assert_eq!(
+        second["configuration"]["collection_mode_requested"],
+        "summary"
+    );
+    let second_id = second["operation"]["id"].as_u64().unwrap();
+    assert_eq!(h.state().diagnostics.selected_report_id(), Some(second_id));
+
+    reveal_control(h, "action.save_report");
+    let manual = s.directory.path().join("manual-report.json");
+    save_report_from_panel(h, &manual);
+    assert_eq!(
+        read_report(&manual)["operation"]["id"].as_u64(),
+        Some(second_id)
+    );
+}
+
+/// `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` remains the controlled-launch shortcut:
+/// main.rs hands the explicit directory to the App unchanged, reports are
+/// written directly into it without an automatic session subfolder, and the
+/// collection default stays on.
+#[test]
+fn diagnostics_gui_env_override_publishes_directly_into_the_explicit_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let (image_path, state_path) = deterministic_inputs(directory.path());
+    let browser_path = directory.path().join("browser.json");
+    let explicit = directory.path().join("explicit-reports");
+    std::fs::create_dir(&explicit).unwrap();
+    let override_dir = Some(explicit.clone());
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1500.0, 1400.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            App::new_with_browser_path(
+                Arc::new(CpuBackend),
+                Some(image_path),
+                Some(state_path),
+                override_dir,
+                browser_path,
+                data_dir(),
+            )
+        });
+    await_input(&mut harness);
+    let mut s = Session { harness, directory };
+    let h = &mut s.harness;
+    assert_eq!(
+        h.state().diagnostics.mode,
+        CollectionMode::Summary,
+        "the override does not change the collection default"
+    );
+    assert_eq!(
+        h.state().diagnostics.publication_directory(),
+        Some(explicit.as_path()),
+        "the explicit directory is used directly"
+    );
+    preview(h);
+    let reports = wait_for_report_paths(h, &explicit, 1);
+    let report = read_report(&reports[0]);
+    assert_eq!(report["operation"]["kind"], "preview");
+    assert_eq!(
+        report["configuration"]["collection_mode_requested"],
+        "summary"
+    );
+    assert_eq!(
+        h.state().diagnostics.selected_report_id(),
+        report["operation"]["id"].as_u64()
+    );
+    assert!(
+        !s.directory.path().join("logs").join("diagnostics").exists(),
+        "the override replaces the automatic session folder"
+    );
 }
 
 #[test]
@@ -685,7 +854,7 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     edit(h, "exposure compensation ev", "0.25");
     preview(h);
     open_settings(h);
-    let first_reports = report_paths(&published);
+    let first_reports = wait_for_report_paths(h, &published, 1);
     assert_eq!(first_reports.len(), 1);
     let first = first_reports
         .iter()
@@ -713,7 +882,7 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     edit(h, "exposure compensation ev", "0.5");
     preview(h);
     open_settings(h);
-    let reports = report_paths(&published);
+    let reports = wait_for_report_paths(h, &published, 2);
     assert_eq!(reports.len(), 2);
     let gpu_report_path = reports
         .iter()
@@ -788,16 +957,18 @@ fn diagnostics_user_selected_report_survives_later_renders() {
     preview(h);
     open_settings(h);
 
-    let reports = report_paths(&published);
+    let reports = wait_for_report_paths(h, &published, 1);
     assert_eq!(reports.len(), 1);
     let first_id = read_report(&reports[0])["operation"]["id"]
         .as_u64()
         .unwrap();
 
-    // The single report is auto-selected.
+    // The newest report is auto-selected even though startup logging already
+    // published its own report to the automatic session folder.
     assert_eq!(h.state().diagnostics.selected_report_id(), Some(first_id));
 
-    // Simulate the user clicking the older report row (sets user_selected = true).
+    // Simulate the user clicking that report row (sets user_selected = true),
+    // so it ages into the older row after the next render.
     click(h, &format!("#{} {} · {}", first_id, "preview", "succeeded"));
     assert_eq!(
         h.state().diagnostics.selected_report_id(),

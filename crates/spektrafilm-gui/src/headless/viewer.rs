@@ -841,7 +841,9 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
             "unconsumed pipeline response is pending"
         );
     }
-    wait_until(&mut h, |app| app.render_job.is_none());
+    wait_until(&mut h, |app| {
+        app.render_job.is_none() && app.diagnostics.pending_publications() == 0
+    });
     let report_path = std::fs::read_dir(&reports)
         .unwrap()
         .next()

@@ -271,11 +271,17 @@ Each preset card carries its own `preset actions` control beside the entry name.
 
 ## Diagnostics
 
-**Settings → Diagnostics** selects Off, Summary, or GPU timing for subsequent operations. Changing the mode leaves running operations on their captured mode. The session keeps the latest 20 collected operation reports. Select a report to inspect its phases, stages, GPU work, timing availability, and outcome.
+Performance reports are recorded automatically from startup. Reproduce the problem, then choose **Settings → Diagnostics → Open log folder** to find the files. No folder or collection-mode setup is required.
 
-**Save report…** writes local JSON without rendering. Save reports identify the retained render that supplied their pixels. This includes renders made with collection off or removed from history.
+Completed operations write JSON reports in the background. Each application launch uses its own persistent session folder under the application's `logs/diagnostics` directory. Restarting does not overwrite earlier sessions. A report-write failure does not fail the image operation.
 
-Launching with `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` set to an existing directory publishes every completed operation's report there as a new `operation-<id>.json`. It selects summary collection for the session, as a CLI report request does. See the [telemetry specification](../specs/telemetry/spec.md) for report semantics.
+### Advanced details
+
+The collapsed **Advanced details** panel contains collection modes, the latest 20 in-memory reports, timing and work counters, and **Save report…** for individual export. Changing the mode affects only subsequent operations and does not render the image. Summary is the GUI default; GPU pass timing remains an explicit advanced choice.
+
+Reports distinguish measured values from unsupported or uncollected measurements. Host waits are not shader execution time, and requested buffer bytes are not process RSS or committed VRAM. See the [telemetry specification](../specs/telemetry/spec.md) for report semantics.
+
+For controlled launches, `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` can override the automatic session destination. Ordinary GUI use does not need it.
 
 ## Application configuration
 

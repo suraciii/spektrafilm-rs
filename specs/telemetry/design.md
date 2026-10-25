@@ -79,6 +79,13 @@ A pass duration covers the device's pass interval. It does not measure isolated 
 
 - The frontend finalizes the record at the [operation terminal boundary](metrics/spec.md#operation-and-phase-wall-time). CPU or GPU failure MAY leave partial observations; those values MUST identify their completed scope.
 - Telemetry persistence errors MUST NOT rewrite the operation outcome. Preview completion ends at the presentation handoff, not at physical display scanout.
+- GUI startup MUST select summary collection before the initial input request. It MUST create a unique persistent directory under the application configuration directory's `logs/diagnostics` area unless launch configuration provides an explicit destination.
+- GUI automatic publication MUST share immutable terminal reports with in-memory history rather than copy report contents. A session-local worker MUST serialize and write reports outside the GUI thread.
+- The nonblocking publication queue MUST retain at most 20 waiting reports in addition to the in-flight write.
+- Queue exhaustion, worker startup failure, and file errors MUST surface through the existing diagnostic status boundary without changing image outcomes. Error retention MUST remain bounded.
+- Each queued write MUST retain its session destination independently of report history eviction.
+- Normal shutdown MUST close the queue and drain accepted writes before releasing the publication worker.
+- Opening the log folder MUST NOT wait on the GUI thread. Completed opener processes MUST be reaped.
 - Detailed reports MUST use stable schema fields and stable enumerated categories. Paths and raw exceptions MUST NOT enter those fields.
 - Operation and revision identifiers are correlation fields for local reports and traces; they MUST NOT become metric labels. Device names, stock identifiers, dimensions, seeds, and arbitrary user strings MUST NOT become aggregate metric labels.
 - Validation MUST compare telemetry-off and telemetry-on image results using existing numerical budgets. A controlled warm/cold comparison MUST measure collection overhead on each exercised route and identify the adapter, dimensions, precision, and iterations.
