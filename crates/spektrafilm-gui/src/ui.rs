@@ -88,9 +88,17 @@ impl App {
                         std::process::Command::new("xdg-open")
                     };
                     command.arg(directory);
-                    if let Err(error) = command.spawn() {
-                        let detail = format!("{}: {}", directory.display(), error);
-                        self.diagnostics.record_publication_error(detail);
+                    match command.spawn() {
+                        Ok(mut child) => {
+                            // Dropping Child does not reap it on Unix.
+                            std::thread::spawn(move || {
+                                let _ = child.wait();
+                            });
+                        }
+                        Err(error) => {
+                            let detail = format!("{}: {}", directory.display(), error);
+                            self.diagnostics.record_publication_error(detail);
+                        }
                     }
                 }
             }
