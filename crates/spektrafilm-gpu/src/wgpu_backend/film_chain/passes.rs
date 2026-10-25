@@ -1898,6 +1898,7 @@ mod tests {
                 seed: 0x1234_5678_9abc_def0,
                 channel_correlation: 0.3,
                 expectation: false,
+                monochrome: false,
             };
             let expected_field = gpu.dye_field(&density, &dye).unwrap();
             let mut downstream = chain_params(width, height);

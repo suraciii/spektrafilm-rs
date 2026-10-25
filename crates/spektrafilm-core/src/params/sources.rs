@@ -2107,6 +2107,43 @@ mod tests {
     }
 
     #[test]
+    fn dye_correlation_is_preserved_for_bw_and_reactivated_for_color() {
+        use crate::profile::Profile;
+        let color: Profile = serde_json::from_value(serde_json::json!({
+            "metadata": {}, "info": {"channel_model": "color"}, "data": {}
+        }))
+        .unwrap();
+        let mut bw = color.clone();
+        bw.info.channel_model = "bw".into();
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.active = true;
+        params.film_render.grain.engine = crate::params::GrainEngine::Dye;
+        let path = "film_render.grain.channel_correlation";
+        ParameterEdits::parse(&format!("{path}=0.35"))
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        // Applicability follows the selected profile, not a stale runtime flag.
+        params.film_render.grain.monochrome = false;
+        assert_eq!(
+            inactive_reason(path, &params, &bw, &color).as_deref(),
+            Some(
+                "selected film has color records; channel_correlation is retained but inactive for single-record black-and-white material"
+            )
+        );
+        assert_eq!(params.film_render.grain.channel_correlation, 0.35);
+        params.film_render.grain.monochrome = true;
+        assert_eq!(inactive_reason(path, &params, &color, &bw), None);
+        assert_eq!(params.film_render.grain.channel_correlation, 0.35);
+        for other in [
+            "film_render.grain.v3_event_area_um2",
+            "film_render.grain.v3_dye_support_um",
+        ] {
+            assert_eq!(inactive_reason(other, &params, &bw, &color), None);
+        }
+    }
+
+    #[test]
     fn legacy_conversion_rejections_leave_documents_unchanged() {
         // A mixed print-exposure pair needs the settings group; a non-object
         // there must fail before any mutation instead of panicking.

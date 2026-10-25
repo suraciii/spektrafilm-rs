@@ -138,4 +138,6 @@ pub struct DyeGpuParams {
     pub seed: u64,
     pub channel_correlation: f32,
     pub expectation: bool,
+    /// Profile-derived single-record layout, carried in three equal lanes.
+    pub monochrome: bool,
 }

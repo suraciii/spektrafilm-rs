@@ -620,9 +620,7 @@ fn with_params_resolves_a_changed_conversion_style() {
 /// sample) with grain on and off, and the grain must cover the frame,
 /// stay bounded in density and be seed-deterministic. This exercises the
 /// single-curve record adaptation and the resolved reference on a real
-/// profile; the CLI cannot reach it, because the loaded monochrome
-/// profiles carry no Hanatos2025 adaptation window and the spectral front
-/// end rejects them on every revision.
+/// profile through the film-density boundary.
 #[test]
 fn fotufilm_grain_reaches_a_monochrome_film() {
     let dir = data_dir();

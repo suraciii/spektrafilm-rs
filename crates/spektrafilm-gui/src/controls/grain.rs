@@ -344,7 +344,19 @@ pub(crate) fn sections(
                     flags.runtime_changed |= param_numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, "film_render.grain.v3_event_area_um2", "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
                 }
                 if filter_matches(filter, "channel correlation") {
-                    flags.runtime_changed |= param_numeric(ui, "Channel correlation", &mut grain.channel_correlation, "film_render.grain.channel_correlation", "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios.");
+                    if grain.monochrome {
+                        ui.label(
+                            egui::RichText::new(crate::i18n::text(
+                                ui.ctx(),
+                                "controls.grain.inactive_bw_correlation",
+                            ))
+                            .small()
+                            .color(theme::FG_MUTED),
+                        );
+                    }
+                    ui.add_enabled_ui(!grain.monochrome, |ui| {
+                        flags.runtime_changed |= param_numeric(ui, "Channel correlation", &mut grain.channel_correlation, "film_render.grain.channel_correlation", "Shared Poisson-event rate fraction among active records within each numerical component, not realized CMY or final RGB correlation. Preserves each record's marginal count distribution; correlation depends on record-rate ratios. Inactive for single-record black-and-white material; the requested value is retained for color film.");
+                    });
                 }
             });
             engine_group(ui, filter, engine, GrainEngine::Fotufilm, |ui, filter| {

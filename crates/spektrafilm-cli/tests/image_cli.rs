@@ -547,6 +547,43 @@ fn dye_dry_run_does_not_claim_an_unchecked_executor() {
     );
     assert!(!f.0.join("output.tif").exists());
 }
+
+#[test]
+fn dye_bw_reports_one_record_and_preserves_inactive_correlation() {
+    let fixture = Fixture::new();
+    for stock in ["kodak_doublex", "kodak_trix"] {
+        let report = fixture.report_without_output(&[
+            "--film",
+            stock,
+            "--scan-film",
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--set",
+            "film_render.grain.engine=dye,film_render.grain.channel_correlation=0.35",
+            "--dry-run",
+        ]);
+        let dye = &report["film_grain_dye"];
+        assert_eq!(dye["record_layout"], "single_record");
+        assert_eq!(dye["calibration_status"], "uncalibrated");
+        assert!(dye["effective_backend"].is_null());
+        assert_eq!(dye["channel_correlation"]["requested"], 0.35);
+        assert!(dye["channel_correlation"]["effective"].is_null());
+        assert_eq!(dye["channel_correlation"]["status"], "inactive");
+        let edit = report["edits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|edit| edit["path"] == "film_render.grain.channel_correlation")
+            .unwrap();
+        assert_eq!(edit["status"], "inactive");
+        assert_eq!(
+            report["parameters"]["film_render"]["grain"]["channel_correlation"],
+            0.35
+        );
+    }
+}
 #[test]
 fn dye_positive_films_accept_direct_scan_and_preserve_native_polarity() {
     let f = Fixture::new();
