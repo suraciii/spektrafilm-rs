@@ -310,15 +310,58 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+/// Editor column width shared with the choice and switch rows, so a
+/// read-only value lines up with the editable rows' editors.
+fn editor_width(ui: &egui::Ui) -> f32 {
+    ui.available_width()
+        .min(theme::WIDTH_COMBO_MAX)
+        .max(theme::WIDTH_COMBO_MIN)
+}
+
+/// A read-only option row: product label and fixed value in the shared
+/// editor column, locatable at its canonical path. The value carries the
+/// row's accessible name like an editor does, so the row reads as the
+/// option's state rather than a disabled editor.
+fn readonly_row(ui: &mut egui::Ui, label: &str, value: &str, help: &str, path: &str) {
+    ui.horizontal(|ui| {
+        ui.label(controls::localized(ui.ctx(), label))
+            .on_hover_text(help);
+        let cell = editor_width(ui);
+        ui.add_space((ui.available_width() - cell).max(0.0));
+        let response = ui
+            .add_sized(
+                egui::vec2(cell, theme::HEIGHT_CONTROL),
+                egui::Label::new(
+                    egui::RichText::new(value)
+                        .color(theme::FG_SECONDARY)
+                        .size(theme::SIZE_LABEL),
+                )
+                .halign(egui::Align::Max)
+                .sense(egui::Sense::focusable_noninteractive()),
+            )
+            .on_hover_text(help);
+        let name = controls::localized(ui.ctx(), label);
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            node.set_label(name.as_ref());
+            node.set_value(value);
+        });
+        controls::locate_row(ui, path, &response);
+    });
+}
+
 #[derive(Default)]
 pub(crate) struct ExportDialog {
     draft: Option<ExportOptions>,
+    /// Set while a freshly opened draft still owes the dialog its one-time
+    /// initial focus. A canonical locator request owns the focus instead.
+    initial_focus: bool,
 }
 impl ExportDialog {
     pub(crate) fn open(&mut self, committed: &ExportOptions) {
         let mut draft = committed.clone();
         draft.normalize();
         self.draft = Some(draft);
+        self.initial_focus = true;
     }
     pub(crate) fn is_open(&self) -> bool {
         self.draft.is_some()
@@ -336,25 +379,50 @@ impl ExportDialog {
         source: Option<&Path>,
     ) -> Option<ExportOptions> {
         let draft = self.draft.as_mut()?;
-        let mut open = true;
         let mut submit = false;
         let mut cancel = false;
-        egui::Window::new(crate::i18n::text(ctx, "surfaces.export.title"))
-            .id(egui::Id::new("full_render_export_options"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            // The prototype presents a centered dialog. Anchoring keeps the
-            // options window in the middle of the available screen instead of
-            // egui's default top-left, with no other positioning involved.
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .default_width(440.0)
-            .max_width((ctx.screen_rect().width() - 32.0).max(240.0))
-            .max_height((ctx.screen_rect().height() - 48.0).max(120.0))
+        let mut close = false;
+        let title = crate::i18n::text(ctx, "surfaces.export.title");
+        // A canonical locator request owns the focus of its frame; otherwise
+        // the dialog places it once, on its explicit close action.
+        let locator_requested = ctx.data(|data| {
+            data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+                .is_some()
+        });
+        let initial_focus = self.initial_focus && !locator_requested;
+        self.initial_focus = false;
+        // A real modal: its backdrop takes every outside click, so the
+        // workspace behind the draft cannot change until the dialog is
+        // dismissed. `Modal` centers the sheet like the prototype's
+        // `min(500px, 100%)` dialog.
+        let modal = egui::Modal::new(egui::Id::new("full_render_export_options"))
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
+                let screen = ui.ctx().screen_rect();
+                let width = (screen.width() - 2.0 * theme::SPACE_4)
+                    .min(500.0)
+                    .max(theme::WIDTH_CONTROL_PANEL);
+                ui.set_min_width(width);
+                ui.set_max_width(width);
+                ui.set_max_height(screen.height() - 2.0 * theme::SPACE_4);
+                // Header: title and the explicit close action. Close drops
+                // the draft like Cancel; only the submit below returns it.
+                ui.horizontal(|ui| {
+                    ui.heading(title.clone());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let close_label = controls::localized(ui.ctx(), "Close export");
+                        let close_button = ui.button(close_label);
+                        if initial_focus {
+                            close_button.request_focus();
+                        }
+                        close = close_button.clicked();
+                    });
+                });
+                ui.separator();
+                let body_height =
+                    (ui.available_height() - theme::HEIGHT_ACTION_BAR_RESERVE).max(80.0);
+                let body = egui::ScrollArea::vertical()
                     .id_salt("export-options-scroll")
-                    .max_height((ctx.screen_rect().height() - 160.0).max(80.0))
+                    .max_height(body_height)
                     .show(ui, |ui| {
                 let source_name = source.and_then(Path::file_name)
                     .map(|name| name.to_string_lossy())
@@ -388,32 +456,64 @@ impl ExportDialog {
                     ExportFormat::Exr => &[(BitDepth::Sixteen, "16 bit"), (BitDepth::ThirtyTwo, "32 bit")],
                 };
                 if depth_choices.is_empty() {
-                    let response = ui.add(egui::Label::new(crate::i18n::text(ui.ctx(), "surfaces.export.depth_fixed"))
-                        .sense(egui::Sense::focusable_noninteractive()));
-                    controls::locate_row(ui, "extras.rust.save_bit_depth", &response);
+                    let fixed = crate::i18n::text(ui.ctx(), "surfaces.export.depth_fixed");
+                    let value = crate::i18n::text(ui.ctx(), "surfaces.export.bit8");
+                    readonly_row(ui, "Bit depth", &value, &fixed, "extras.rust.save_bit_depth");
                 } else {
                     enum_choice(ui, "Bit depth", &mut draft.depth, depth_choices, "Select the bit depth.");
                 }
                 let jpeg = draft.format == ExportFormat::Jpeg;
                 if jpeg {
                     ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_warning"));
-                }
-                // The shared numeric owner models a parameter row: a labeled
-                // value entry with edit transactions and history gestures.
-                // This draft option is not a parameter row, and its editor is
-                // the labeled slider acceptance queries by role and name, so
-                // the dialog keeps it as the option's own editing owner.
-                let quality = ui.add_enabled(jpeg,
-                    egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality"))).on_disabled_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality_help"));
-                controls::locate_row(ui, "extras.rust.jpeg_quality", &quality);
-                ui.add_enabled_ui(jpeg, |ui| {
+                    // The shared numeric owner models a parameter row: a
+                    // labeled value entry with edit transactions and history
+                    // gestures. This draft option is not a parameter row, and
+                    // its editor is the labeled slider acceptance queries by
+                    // role and name, so the dialog keeps it as the option's
+                    // own editing owner.
+                    let label = crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality");
+                    let help = crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_quality_help");
+                    let slider = egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text(label);
+                    let quality = ui.add(slider).on_hover_text(help);
+                    controls::locate_row(ui, "extras.rust.jpeg_quality", &quality);
                     enum_choice(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &[
                         (JpegSubsampling::Yuv444, "4:4:4"),
                         (JpegSubsampling::Yuv420, "4:2:0"),
                     ], "Select the JPEG chroma subsampling.");
-                });
-                if !jpeg {
-                    ui.label(egui::RichText::new(crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_inactive")).small().color(theme::FG_MUTED));
+                } else {
+                    // Another container's codec options are not editable
+                    // here. One short read-only row keeps both canonical
+                    // targets locatable and states the retained values,
+                    // instead of two full rows of disabled editors.
+                    let inactive = crate::i18n::text(ui.ctx(), "surfaces.export.jpeg_inactive");
+                    let not_applicable = controls::localized(ui.ctx(), "not applicable");
+                    let quality_name = controls::localized(ui.ctx(), "JPEG quality");
+                    let subsampling_name = controls::localized(ui.ctx(), "JPEG subsampling");
+                    let quality_value = draft.jpeg_quality.to_string();
+                    let subsampling_value = draft.jpeg_subsampling.as_str().to_owned();
+                    ui.horizontal_wrapped(|ui| {
+                        for (name, value, path) in [
+                            (quality_name, quality_value, "extras.rust.jpeg_quality"),
+                            (
+                                subsampling_name,
+                                subsampling_value,
+                                "extras.rust.jpeg_subsampling",
+                            ),
+                        ] {
+                            let text = format!("{name}: {value} · {not_applicable}");
+                            let response = ui
+                                .add(
+                                    egui::Label::new(
+                                        egui::RichText::new(text)
+                                            .small()
+                                            .color(theme::FG_MUTED),
+                                    )
+                                    .sense(egui::Sense::focusable_noninteractive()),
+                                )
+                                .on_hover_text(inactive.as_ref());
+                            controls::locate_row(ui, path, &response);
+                        }
+                    });
                 }
                 match draft.format {
                     ExportFormat::Tiff => {
@@ -423,15 +523,23 @@ impl ExportDialog {
                         ], "Select the TIFF compression method.");
                     }
                     format => {
-                        let text = match format {
-                            ExportFormat::Exr => "Compression: ZIP — required by the EXR writer",
-                            ExportFormat::Jpeg => "Compression: JPEG lossy — use JPEG quality and subsampling",
-                            ExportFormat::Png => "Compression: PNG lossless — fixed by the PNG writer",
+                        let (value, help) = match format {
+                            ExportFormat::Exr => {
+                                let help = crate::i18n::text(ui.ctx(), "surfaces.export.compression_exr");
+                                ("ZIP", help)
+                            }
+                            ExportFormat::Jpeg => {
+                                let help = crate::i18n::text(ui.ctx(), "surfaces.export.compression_jpeg");
+                                ("JPEG lossy", help)
+                            }
+                            ExportFormat::Png => {
+                                let help = crate::i18n::text(ui.ctx(), "surfaces.export.compression_png");
+                                ("PNG lossless", help)
+                            }
                             ExportFormat::Tiff => unreachable!(),
                         };
-                        let response = ui.add(egui::Label::new(controls::localized(ui.ctx(), text))
-                            .sense(egui::Sense::focusable_noninteractive()));
-                        controls::locate_row(ui, "extras.rust.export_compression", &response);
+                        let value = controls::localized(ui.ctx(), value);
+                        readonly_row(ui, "Compression", &value, &help, "extras.rust.export_compression");
                     }
                 }
                 ui.add_space(theme::SPACE_3);
@@ -448,7 +556,10 @@ impl ExportDialog {
                 ui.horizontal(|ui| {
                     ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.color_space"))
                         .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.space_help"));
+                    let cell = editor_width(ui);
+                    ui.add_space((ui.available_width() - cell).max(0.0));
                     let color_space = egui::ComboBox::from_id_salt("Saving color space")
+                        .width(cell)
                         .selected_text(&draft.saving_color_space)
                         .show_ui(ui, |ui| {
                             ui.label(
@@ -476,22 +587,40 @@ impl ExportDialog {
                 // inspector boolean gets. Its response keeps the row
                 // locatable by canonical path through the draft's real owner.
                 let cctf_help = crate::i18n::text(ui.ctx(), "surfaces.export.cctf_help");
-                let encoding = ui.add_enabled_ui(draft.format == ExportFormat::Tiff, |ui| {
-                    controls::toggle_row(
-                        ui,
-                        "Apply saving CCTF encoding",
-                        &mut draft.saving_cctf_encoding,
-                        &cctf_help,
-                    )
-                })
-                .inner;
-                controls::locate_row(ui, "extras.rust.export_saving_cctf_encoding", &encoding);
-                draft.normalize();
                 match draft.format {
-                    ExportFormat::Exr => { ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.exr_fixed")); }
-                    ExportFormat::Jpeg | ExportFormat::Png => { ui.label(crate::i18n::text(ui.ctx(), "surfaces.export.encoded_fixed")); }
-                    ExportFormat::Tiff => {}
+                    ExportFormat::Tiff => {
+                        let encoding = controls::toggle_row(
+                            ui,
+                            "Apply saving CCTF encoding",
+                            &mut draft.saving_cctf_encoding,
+                            &cctf_help,
+                        );
+                        controls::locate_row(ui, "extras.rust.export_saving_cctf_encoding", &encoding);
+                    }
+                    ExportFormat::Jpeg | ExportFormat::Png => {
+                        let fixed = crate::i18n::text(ui.ctx(), "surfaces.export.encoded_fixed");
+                        let value = controls::localized(ui.ctx(), "encoded");
+                        readonly_row(
+                            ui,
+                            "Apply saving CCTF encoding",
+                            &value,
+                            &fixed,
+                            "extras.rust.export_saving_cctf_encoding",
+                        );
+                    }
+                    ExportFormat::Exr => {
+                        let fixed = crate::i18n::text(ui.ctx(), "surfaces.export.exr_fixed");
+                        let value = crate::i18n::text(ui.ctx(), "surfaces.export.linear");
+                        readonly_row(
+                            ui,
+                            "Apply saving CCTF encoding",
+                            &value,
+                            &fixed,
+                            "extras.rust.export_saving_cctf_encoding",
+                        );
+                    }
                 }
+                draft.normalize();
                 let depth_label = match draft.depth {
                     BitDepth::Eight => "8 bit",
                     BitDepth::Sixteen => "16 bit",
@@ -527,8 +656,26 @@ impl ExportDialog {
                         crate::i18n::text(ui.ctx(), "surfaces.export.size_help")
                     });
                     });
+                // The body's visible viewport is what the locator and the
+                // acceptance queries address, not the full scroll content.
+                let viewport = ui.interact(
+                    body.inner_rect,
+                    ui.id().with("export-options-viewport"),
+                    egui::Sense::hover(),
+                );
+                let content = controls::localized(ui.ctx(), "Export options content");
+                viewport.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Other, true, content.as_ref())
+                });
+                ui.ctx().accesskit_node_builder(viewport.id, |node| {
+                    node.set_role(egui::accesskit::Role::ScrollView);
+                    node.set_label(content.as_ref());
+                });
                 ui.separator();
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), theme::HEIGHT_CONTROL),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
                     // The sidebar opener and this submit are two steps of one
                     // flow, so they carry distinct labels.
                     let export = ui.add(egui::Button::new(
@@ -540,9 +687,24 @@ impl ExportDialog {
                     let discard = ui.button(crate::i18n::text(ui.ctx(), "surfaces.action.cancel")).on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.export.discard_help"));
                     controls::locate_row(ui, "action.cancel_export_draft", &discard);
                     cancel = discard.clicked();
-                });
+                    },
+                );
             });
-        if !open || cancel || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+        // The modal root carries the dialog's accessible name and bounds.
+        modal.response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Other, true, title.as_ref())
+        });
+        ctx.accesskit_node_builder(modal.response.id, |node| {
+            node.set_role(egui::accesskit::Role::Dialog);
+            node.set_label(title.as_ref());
+        });
+        // Escape cancels like an explicit close. A click on the backdrop is
+        // an incidental click outside the dialog: it must neither dismiss the
+        // dialog nor reach the workspace the modal covers.
+        let escape = modal.is_top_modal
+            && !modal.any_popup_open
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        if close || cancel || escape {
             self.draft = None;
             return None;
         }
@@ -640,5 +802,45 @@ mod tests {
             )),
             "68.7 MB"
         );
+    }
+
+    /// The fixed rows state exactly what the writer receives: a normalized
+    /// draft carries no real writer-format violation for any format, while
+    /// the non-applicable codec values stay in the draft.
+    #[test]
+    fn normalized_drafts_satisfy_the_real_writer_for_every_format() {
+        let formats = [
+            ExportFormat::Jpeg,
+            ExportFormat::Png,
+            ExportFormat::Tiff,
+            ExportFormat::Exr,
+        ];
+        let depths = [BitDepth::Eight, BitDepth::Sixteen, BitDepth::ThirtyTwo];
+        let compressions = [ExportCompression::Zip, ExportCompression::None];
+        for format in formats {
+            for depth in depths {
+                for compression in compressions {
+                    for encoding in [true, false] {
+                        let mut draft = options(depth, format, compression);
+                        draft.jpeg_quality = 61;
+                        draft.jpeg_subsampling = JpegSubsampling::Yuv420;
+                        draft.saving_cctf_encoding = encoding;
+                        draft.saving_color_space = "Display P3".to_owned();
+                        draft.normalize();
+                        let violations = spektrafilm_core::image_io::save_option_violations(
+                            draft.image_format(),
+                            &draft.save_options(),
+                            false,
+                        );
+                        assert!(
+                            violations.is_empty(),
+                            "{format:?} keeps a writer violation after normalize"
+                        );
+                        assert_eq!(draft.jpeg_quality, 61);
+                        assert_eq!(draft.jpeg_subsampling, JpegSubsampling::Yuv420);
+                    }
+                }
+            }
+        }
     }
 }

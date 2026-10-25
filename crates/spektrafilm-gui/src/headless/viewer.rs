@@ -12,20 +12,10 @@ fn session() -> Session {
     s
 }
 
-fn assert_rendering_overlay(h: &Harness<'_, App>) {
+fn assert_rendering_indicator(h: &Harness<'_, App>) {
     let text = crate::i18n::text(&h.ctx, "surfaces.viewer.rendering");
     let label = h.query_by_label(text.as_ref());
     assert_eq!(label.is_some(), h.state().viewer_render_pending());
-    if let Some(label) = label {
-        assert_ne!(label.node().role(), egui::accesskit::Role::Button);
-        let bounds = label.raw_bounds().unwrap();
-        let viewport = h.state().viewer.observation().viewport;
-        assert!(bounds.x0 >= viewport.left() as f64);
-        assert!(bounds.x1 <= viewport.right() as f64 - 8.0);
-        assert!(bounds.x1 >= viewport.right() as f64 - 32.0);
-        assert!(bounds.y0 >= viewport.top() as f64 + 8.0);
-        assert!(bounds.y1 < viewport.center().y as f64);
-    }
 }
 
 fn click(h: &mut Harness<'_, App>, label: &str) {
@@ -56,6 +46,10 @@ fn click(h: &mut Harness<'_, App>, label: &str) {
         nodes[0].simulate_click();
         h.run_steps(3);
     } else {
+        if matches!(label, "100%" | "200%" | "400%") {
+            super::click(h, label);
+            return;
+        }
         assert!(
             h.query_by_label(label).is_some(),
             "viewer control is unavailable: {label}"
@@ -115,7 +109,7 @@ fn finish_animation(h: &mut Harness<'_, App>, mut time: f64) -> f64 {
     for _ in 0..51 {
         time += 0.04;
         let observation = composed(h, time);
-        assert_rendering_overlay(h);
+        assert_rendering_indicator(h);
         match observation.transition {
             Some(current) => {
                 assert_eq!(current.1, previous.1);
@@ -187,6 +181,68 @@ fn pointer(h: &mut Harness<'_, App>, position: egui::Pos2, pressed: bool, time: 
         },
     ]);
     frame(h, time);
+}
+
+#[test]
+fn locating_viewer_popovers_keeps_choices_open_without_executing_them() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let params = h.state().params.clone();
+    for (path, label, percent) in [
+        ("viewer.zoom.100", "100%", 100.0),
+        ("viewer.zoom.200", "200%", 200.0),
+        ("viewer.zoom.400", "400%", 400.0),
+    ] {
+        let before = h.state().viewer.zoom_percent;
+        reveal_control(h, path);
+        assert_eq!(h.state().viewer.zoom_percent, before);
+        for choice in ["100%", "200%", "400%"] {
+            assert!(h.query_by_label(choice).is_some(), "missing {choice}");
+        }
+        // Select the already-open menu directly: searching again would conceal
+        // a popup that closed on its locator's own outside-click event.
+        h.get_by_label(label).simulate_click();
+        h.run_steps(6);
+        assert_eq!(h.state().viewer.zoom_percent, Some(percent));
+    }
+    for (path, label) in [
+        ("viewer.reveal", "reveal transition"),
+        ("viewer.crossfade", "crossfade transition"),
+    ] {
+        let before = (
+            h.state().viewer.settings.reveal,
+            h.state().viewer.settings.crossfade,
+        );
+        reveal_control(h, path);
+        assert_eq!(
+            (
+                h.state().viewer.settings.reveal,
+                h.state().viewer.settings.crossfade,
+            ),
+            before,
+            "locating must not toggle either transition"
+        );
+        assert!(h.query_by_label("reveal transition").is_some());
+        assert!(h.query_by_label("crossfade transition").is_some());
+        h.get_by_label(label).simulate_click();
+        h.run_steps(6);
+        let expected = if path == "viewer.reveal" {
+            (!before.0, before.1)
+        } else {
+            (before.0, !before.1)
+        };
+        assert_eq!(
+            (
+                h.state().viewer.settings.reveal,
+                h.state().viewer.settings.crossfade,
+            ),
+            expected
+        );
+        click(h, "fit");
+        assert!(h.query_by_label("reveal transition").is_none());
+        assert!(h.query_by_label("crossfade transition").is_none());
+    }
+    assert_eq!(h.state().params, params);
 }
 
 #[test]
@@ -708,7 +764,7 @@ fn first_output_and_scan_animate_but_automatic_parameter_update_does_not() {
     let h = &mut harness;
     develop(h, 0.0);
     assert_eq!(composed(h, 0.0).transition, Some((0, true)));
-    assert_rendering_overlay(h);
+    assert_rendering_indicator(h);
     let time = finish_animation(h, 0.0);
     reveal_control(h, "camera.exposure_compensation_ev");
     let before = h.state().output_image.clone().unwrap();
@@ -719,7 +775,7 @@ fn first_output_and_scan_animate_but_automatic_parameter_update_does_not() {
         &before
     ));
     assert_eq!(composed(h, time).transition, None);
-    assert_rendering_overlay(h);
+    assert_rendering_indicator(h);
 
     // An explicit Scan on the output layer crossfades the previous output.
     close_settings(h);
@@ -745,7 +801,7 @@ fn first_output_and_scan_animate_but_automatic_parameter_update_does_not() {
     ));
     assert!(h.state().status.to_string().starts_with("Preview ·"));
     assert_eq!(composed(h, time + 1.0).transition, None);
-    assert_rendering_overlay(h);
+    assert_rendering_indicator(h);
 }
 
 #[test]
@@ -767,7 +823,7 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
             )
         });
     assert!(!h.state().viewer_render_pending());
-    assert_rendering_overlay(&h);
+    assert_rendering_indicator(&h);
     let layer = h.state().viewer.settings.layer;
     click(&mut h, "Modified");
     assert_eq!(
@@ -788,17 +844,17 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
         "input preparation and render debounce belong to viewer work"
     );
     frame(&mut h, 0.0);
-    assert_rendering_overlay(&h);
+    assert_rendering_indicator(&h);
     assert!(h.query_by_label("Rendering…").is_none());
     wait_until(&mut h, |app| app.render_job.is_some());
     assert!(h.state().viewer_render_pending());
-    assert_rendering_overlay(&h);
+    assert_rendering_indicator(&h);
     assert!(h.query_by_label("渲染中……").is_some());
     drop(worker_guard);
     develop(&mut h, 0.0);
     composed(&mut h, 0.0);
     assert!(!h.state().viewer_render_pending());
-    assert_rendering_overlay(&h);
+    assert_rendering_indicator(&h);
 
     h.state_mut()
         .select_language(&ctx, crate::i18n::LanguagePreference::English)
@@ -809,7 +865,7 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
     edit(&mut h, "exposure compensation ev", "0.5");
     wait_until(&mut h, |app| app.render_job.is_some());
     assert!(h.state().viewer_render_pending());
-    assert_rendering_overlay(&h);
+    assert_rendering_indicator(&h);
     assert!(h.query_by_label("Rendering…").is_some());
     drop(worker_guard);
     develop(&mut h, 1.0);
@@ -820,7 +876,7 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
     );
     composed(&mut h, 1.0);
     assert!(!h.state().viewer_render_pending());
-    assert_rendering_overlay(&h);
+    assert_rendering_indicator(&h);
 
     // An unavailable real profile must fail without retaining a spinner or
     // replacing the last successfully accepted output.
@@ -856,7 +912,7 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
         h.state().output_image.as_ref().unwrap(),
         &accepted
     ));
-    assert_rendering_overlay(&h);
+    assert_rendering_indicator(&h);
     assert!(h.query_by_label("渲染中……").is_none());
     assert!(h.query_by_label("PREVIEW").is_none());
 }
@@ -1069,7 +1125,13 @@ fn canonical_search_preserves_inspector_and_viewer_geometry_at_supported_desktop
             app(state_path, image_path, browser_path)
         });
         h.ctx.style_mut(|style| style.animation_time = 0.0);
-        click(&mut h, "◀");
+        await_input(&mut h);
+        h.run_steps(3);
+        // Compact workspaces already start with the browser's reopen rail.
+        if size.x > theme::WIDTH_COMPACT_WORKSPACE {
+            click(&mut h, "◀");
+        }
+        assert!(h.query_by_label("▶").is_some());
         let params = h.state().params.clone();
         let initial_search = h.get_by_label("Search controls").raw_bounds().unwrap();
         let initial_viewer = h.state().viewer.observation().viewport;

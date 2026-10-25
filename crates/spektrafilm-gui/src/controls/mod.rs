@@ -172,7 +172,14 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     ui.horizontal(|ui| {
         ui.label(crate::controls::localized(ui.ctx(), label))
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
+        let width = ui
+            .available_width()
+            .min(theme::WIDTH_COMBO_MAX)
+            .max(theme::WIDTH_COMBO_MIN);
+        ui.add_space((ui.available_width() - width).max(0.0));
         let response = egui::ComboBox::from_id_salt(label)
+            .width(width)
+            .wrap_mode(egui::TextWrapMode::Truncate)
             .selected_text(crate::controls::localized(ui.ctx(), selected))
             .show_ui(ui, |ui| {
                 for &(option, label) in choices {
@@ -218,22 +225,61 @@ pub(crate) fn apply_feature_profile(
 /// pointer- and keyboard-operable, and [`focus_feedback`] supplies the focus
 /// ring its toolkit frame would otherwise carry.
 pub(crate) fn disclosure_header(ui: &mut Ui, title: &str, open: bool) -> egui::Response {
-    let glyph = if open { "⌄" } else { "›" };
-    let response = ui.add(
-        egui::Button::new(
-            egui::RichText::new(format!(
-                "{glyph} {}",
-                crate::controls::localized(ui.ctx(), title)
-            ))
-            .color(theme::FG)
-            .size(theme::SIZE_TITLE)
-            .strong(),
-        )
-        .frame(false),
-    );
+    disclosure(ui, title, open, theme::SIZE_TITLE)
+}
+
+pub(crate) fn stage_disclosure(ui: &mut Ui, title: &str, open: bool) -> egui::Response {
+    disclosure(ui, title, open, theme::SIZE_STAGE)
+}
+
+fn disclosure(ui: &mut Ui, title: &str, open: bool, size: f32) -> egui::Response {
     let name = crate::controls::localized(ui.ctx(), title);
-    ui.ctx()
-        .accesskit_node_builder(response.id, |node| node.set_label(name.as_ref()));
+    let galley = ui.painter().layout_no_wrap(
+        name.as_ref().to_owned(),
+        egui::FontId::proportional(size),
+        theme::FG,
+    );
+    let size = egui::vec2(
+        galley.size().x + theme::SPACE_4 + theme::SPACE_2,
+        theme::HEIGHT_CONTROL,
+    );
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, theme::RADIUS_CARD, theme::SURFACE3);
+    }
+    let center = egui::pos2(rect.left() + theme::SPACE_2, rect.center().y);
+    let points = if open {
+        [
+            center + egui::vec2(-3.0, -2.0),
+            center + egui::vec2(0.0, 2.0),
+            center + egui::vec2(3.0, -2.0),
+        ]
+    } else {
+        [
+            center + egui::vec2(-2.0, -3.0),
+            center + egui::vec2(2.0, 0.0),
+            center + egui::vec2(-2.0, 3.0),
+        ]
+    };
+    let stroke = egui::Stroke::new(theme::STROKE_DEFAULT, theme::FG_SECONDARY);
+    ui.painter().line_segment([points[0], points[1]], stroke);
+    ui.painter().line_segment([points[1], points[2]], stroke);
+    ui.painter().galley(
+        egui::pos2(
+            rect.left() + theme::SPACE_4,
+            rect.center().y - galley.size().y * 0.5,
+        ),
+        galley,
+        theme::FG,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name.as_ref())
+    });
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_label(name.as_ref());
+        node.set_expanded(open);
+    });
     focus_feedback(ui, &response);
     response
 }
@@ -617,9 +663,11 @@ pub(crate) fn focus_response(ui: &Ui, label: &str, response: &egui::Response) {
                 (response.id, highlight_until),
             )
         });
-        ui.ctx().data_mut(|data| {
-            data.remove_temp::<(String, String)>(egui::Id::new("control_focus_request"))
-        });
+        if ui.clip_rect().contains_rect(response.rect) {
+            ui.ctx().data_mut(|data| {
+                data.remove_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+            });
+        }
     }
     let highlighted = ui
         .ctx()
@@ -641,9 +689,11 @@ pub(crate) fn locate_row(ui: &Ui, path: &str, response: &egui::Response) {
     }) {
         response.request_focus();
         response.scroll_to_me(Some(egui::Align::Center));
-        ui.ctx().data_mut(|data| {
-            data.remove_temp::<(String, String)>(egui::Id::new("control_focus_request"))
-        });
+        if ui.clip_rect().contains_rect(response.rect) {
+            ui.ctx().data_mut(|data| {
+                data.remove_temp::<(String, String)>(egui::Id::new("control_focus_request"))
+            });
+        }
         paint_focus_feedback(ui, response, true);
     }
 }

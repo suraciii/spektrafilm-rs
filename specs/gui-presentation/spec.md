@@ -42,7 +42,7 @@ The native token vocabulary belongs to SpektraFilm:
 | Action | `ACCENT`, `ACCENT_DIM`, `CONTRAST_ON_ACCENT` | Identify selection, focus, action, and readable content on an accent fill. |
 | Feedback | `ERROR`, `WARNING` | Distinguish invalid input from inactive capability, experimental behavior, or retained-value notices. |
 
-The exact values, geometry, type sizes, and toolkit mapping remain in [`theme.rs`](../../crates/spektrafilm-gui/src/theme.rs). A presentation module uses a semantic role or shared component token, not a new raw appearance value.
+The exact palette values and toolkit mapping remain in [`theme.rs`](../../crates/spektrafilm-gui/src/theme.rs). It MUST provide the shared [native layout baseline](#native-layout-baseline). A presentation module uses a semantic role or shared component token, not a new raw appearance value.
 
 ## Language authority
 
@@ -73,6 +73,23 @@ Labels and current values MUST have greater visual emphasis than reset, manageme
 Numeric entries and sliders MUST remain available under [Parameter rows](#parameter-rows); reducing visual weight MUST NOT remove an editing method. Canonical paths MUST remain secondary detail rather than replace product labels. Inactive values MUST stay legible.
 
 These changes MUST use the existing semantic tokens rather than introduce a second theme.
+
+## Native layout baseline
+
+The shared native tokens MUST use this baseline in logical points. Settings, Export, and the inspector MUST share row alignment and control sizing; a surface MUST NOT squeeze a value or selector to make room for its label or action.
+
+| Role | Baseline |
+| --- | --- |
+| Body, label, and button text | 13 |
+| Small text and units | 11 |
+| Title text | 13.5 |
+| Stage heading text | 15 |
+| Control height | 28 |
+| Inspector width | 344 |
+| Selector maximum width | 160 |
+| Action width and reserved action area | 64 and 80 |
+
+Long labels MUST wrap without obscuring their values. Fixed and inapplicable Export rows MUST use the same readable row structure as editable options under [dialog interaction](../gui-workflow/spec.md#dialog-interaction). Responsive preset geometry follows the [preset browser boundary](../presets/design.md#boundaries).
 
 ## Parameter rows
 

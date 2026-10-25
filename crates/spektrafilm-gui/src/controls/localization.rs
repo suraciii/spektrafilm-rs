@@ -141,6 +141,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Auto normalizes the print exposure so the developed midgray density prints to the paper midgray and follows camera exposure compensation, like a color analyzer or minilab. Manual applies the print exposure time alone, like a test strip." => {
             Some("controls.scanner.print_exposure_mode_help")
         }
+        "Collection mode" => Some("surfaces.diagnostics.mode"),
         "Backend" => Some("controls.label.backend"),
         "Base" => Some("controls.base.print_section"),
         "Base density: scale and per-channel masks" => Some("surfaces.summary.print_base"),
@@ -441,6 +442,12 @@ fn key(label: &str) -> Option<&'static str> {
         "Export" => Some("surfaces.action.export"),
         "Export file…" => Some("surfaces.export.submit"),
         "Export options" => Some("surfaces.export.title"),
+        "Close export" => Some("surfaces.export.close"),
+        "Export options content" => Some("surfaces.export.content"),
+        "not applicable" => Some("surfaces.export.not_applicable"),
+        "encoded" => Some("surfaces.export.encoded"),
+        "JPEG lossy" => Some("surfaces.export.compression_jpeg_value"),
+        "PNG lossless" => Some("surfaces.export.compression_png_value"),
         "File and container" => Some("surfaces.export.section_file"),
         "Color and computation" => Some("surfaces.export.section_color"),
         "Summary and actions" => Some("surfaces.export.section_summary"),
@@ -866,7 +873,7 @@ fn key(label: &str) -> Option<&'static str> {
         "RAW source; explicit Reprocess RAW" => Some("controls.condition.raw_reprocess"),
         "RMS density" => Some("controls.grain.rms_density"),
         "Radius span" => Some("controls.grain.radius_span"),
-        "Read-only zoom status: the fitted zoom, or the exact source-pixel-to-device-pixel percentage. Viewer presentation only." => {
+        "Open exact 100%, 200%, and 400% zoom choices. The button shows the current fit scale or source-pixel-to-device-pixel percentage. Viewer only." => {
             Some("surfaces.viewer.zoom_help")
         }
         "Readout stray light: percent, roughness, blur" => Some("surfaces.summary.glare"),

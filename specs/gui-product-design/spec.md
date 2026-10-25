@@ -51,7 +51,7 @@ The inspector MUST keep search and stage navigation visible while its controls s
 
 Application settings MUST contain general application preferences, startup-state actions, display configuration, and diagnostics. General replaces the visible Session group and includes the [interface language selector](../gui-language/spec.md#interface-language). Export options MUST remain in the independent Export dialog.
 
-Neither surface MUST become a destination for photographic controls merely because they are less common.
+Neither surface MUST become a destination for photographic controls merely because they are less common. Settings and Export MUST follow [dialog interaction](../gui-workflow/spec.md#dialog-interaction) for input isolation, explicit dismissal, focus restoration, and canonical row locating.
 
 ## User flows
 
@@ -132,7 +132,7 @@ The native application MUST reuse the [semantic token system](../gui-presentatio
 
 The image MUST have the largest uninterrupted visual area at the supported desktop layout. Panels MUST use restrained surfaces, aligned labels and values, and a warm accent for action or selection. Dense technical explanations belong in help rather than between every ordinary control.
 
-At 1460 × 980, the toolbar, stage navigation, and numeric editors MUST remain readable and operable without overlap or clipping. A narrower supported window MUST allow the preset browser to collapse and long control lists to scroll. Shrinking the window MUST NOT make a control permanently unreachable.
+At 1460 × 980, the toolbar, stage navigation, and numeric editors MUST remain readable and operable without overlap or clipping. A narrower supported window MUST use the [responsive preset rail](../presets/design.md#boundaries) and allow long control lists to scroll. Shrinking the window MUST NOT make a control permanently unreachable.
 
 This specification does not require a mobile-native GUI.
 

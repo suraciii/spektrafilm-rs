@@ -20,14 +20,15 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 ## Workspace
 
-The header provides a **Photographs** menu (**照片**) containing **Save adjustments…**, **Reopen adjustments…**, and **Photographs…**, plus **Open**, **Undo**, **Redo**, **Settings**, and primary **Export**. It identifies the accepted source, film, print material, and workflow route as read-only context, and reports import, delivery, completion, and error messages. While an export runs, **Cancel export** replaces **Export**. Live viewer rendering status appears inside the viewer.
+The header provides a **Photographs** menu (**照片**) containing **Save adjustments…**, **Reopen adjustments…**, and **Photographs…**, plus **Open**, **Undo**, **Redo**, **Settings**, and primary **Export**. It identifies the accepted source, film, print material, and workflow route as read-only context, and reports import, delivery, completion, and error messages. While an export runs, **Cancel export** replaces **Export**. The single viewer status strip above the canvas owns result identity and live rendering status.
 
 The left **Presets** browser is collapsible and resizable. **Search presets** finds looks by name or film/print stock, including stock display names. **Clear preset search** restores the full list. **Built-in** looks are read-only; **My Presets** holds user looks. **Save preset…** saves a look, not a photograph or startup default. Searching, collapsing, or scrolling the browser does not apply a look or change the photograph.
+At narrow window widths, the browser automatically becomes a reopenable rail under the [responsive preset layout](../specs/presets/design.md#boundaries). Reopening it while narrow is session-only; it does not change the saved expanded preference, which returns in a wider window.
 Built-in reference thumbnails sit beside the compact card controls; the fixed-reference warning, attribution, and license appear once above the group. Each card's visible action menu supports pointer and keyboard activation, with focused controls scrolled into view; library issues precede the cards, and the applied or missing look remains visible above the list.
 
 **Favorites** and **Recently used** filter the same library together with search. Favoriting or browsing does not apply a look. Recently used retains ten distinct successful whole-look applications. These discovery preferences persist separately from photographic controls and preset files. Reference thumbnails use one licensed photograph, not the active source; missing or outdated assets show an unavailable reference instead of a misleading image.
 
-The right inspector contains one continuous list, not mutually exclusive pages. Its sticky **Search controls**, **Only modified**, and stage-jump strip remain visible while controls scroll. The jumps reveal and scroll to **Input and capture**, **Film**, **Print**, **Scan**, or **Output** in that same list; they clear the active search and Only modified filter without changing parameters. Several stages and modules can remain open together. Folding a module changes its presentation only, and ordinary edits, render completion, and route changes retain its disclosure and scroll state.
+The right inspector contains one continuous list, not mutually exclusive pages. Its sticky **Search controls**, **Only modified**, and stage-jump strip remain visible while controls scroll. The jumps reveal and scroll to **Input and capture**, **Film**, **Print**, **Scan**, or **Output** in that same list while preserving the active search and Only modified filter without changing parameters. Several stages and modules can remain open together. Folding a module changes its presentation only, and ordinary edits, render completion, and route changes retain its disclosure and scroll state.
 
 | Stage | Main modules |
 | --- | --- |
@@ -153,7 +154,7 @@ Opening an image, applying a preset, moving a slider, or accepting numeric text 
 
 New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates after the first output skip the development animation; the first output and explicit Scan retain it.
 
-The retained-result label identifies **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
+The viewer status strip identifies the retained **Preview** or **Scan**, pixel dimensions, and whether it matches the current adjustments. This identity stays visible while another operation runs. Preview has an explicit detail-effects caveat; independent Export is the file-delivery action.
 
 **SCAN** renders the full-resolution input with spatial and stochastic effects. Automatic backend selection chooses CPU only when a usable GPU is unavailable. A selected GPU computation failure fails the operation without substituting host arithmetic. The resulting full-resolution output is retained for Save and inspection in the viewport.
 
@@ -181,7 +182,9 @@ The collapsible tonal-distribution readout sits above inspector search and stage
 
 The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel. GPU hover readings arrive asynchronously without blocking viewer navigation. Moving to another source pixel or changing the source or layer clears the old reading until the current result is ready.
 
-The window header shows the current source, film profile, print profile, and exact workflow route as read-only text; hover the route for its physical description. A lightweight **Rendering…** status appears at the viewer's top-right, or **渲染中……** in Simplified Chinese. It covers debounce, pipeline work, and the latest viewer composition. It disappears on completion or failure and is absent without a source. The last completed image and pointer navigation remain available while it runs. The header does not repeat this running message; it retains import, Save, Export, completion, and error evidence, including Export elapsed time and cancellation. Status ownership follows [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
+The single status strip above the canvas identifies **Original**, **Paper back**, or the retained Preview/Scan result and its detail-effects caveat where applicable. It shows **Rendering…**, or **渲染中……** in Simplified Chinese, during debounce, pipeline work, and the latest viewer composition. The running message disappears on completion or failure and is absent without a source. The last completed image and pointer navigation remain available while it runs. There is no top-right canvas overlay or duplicate result identity in the header. The header retains import, Save, Export, completion, and error evidence, including Export elapsed time and cancellation. Status ownership follows [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
+
+The strip reserves two text lines so changing status does not resize the canvas. A long identity is shortened on screen; hover shows its full text.
 
 With a selected GPU, the accepted render owns device samples through viewing and Save. Fitted resampling, display conversion, ICC evaluation, full-source interpolation, crossfade, development animation, and virtual-paper numerical synthesis use disposable device buffers; none rewrites the accepted render. The native egui frontend receives only packed RGBA8 presentation pixels. Histogram data and hovered source pixels are bounded readouts, not a full-image download followed by re-upload. Inactive camera and scanner lens blur do not allocate their image-sized blur scratch buffers. A failed viewer computation keeps the last accepted texture and reports the display error.
 
@@ -201,7 +204,7 @@ On macOS, the Metal surface is tagged sRGB.
 
 ## Independent Export
 
-Header **Export** opens **Export options**. Choose **Format**, **Bit depth**, **Saving color space**, **Backend**, **Apply saving CCTF encoding**, and the applicable codec/compression settings, then **Export file…** to choose the destination. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, Escape, or closing **Export options** discards its unsubmitted draft without changing accepted adjustments or retained output.
+Header **Export** opens the modal **Export options** dialog. Choose **Format**, **Bit depth**, **Saving color space**, **Backend**, **Apply saving CCTF encoding**, and the applicable codec/compression settings, then **Export file…** to choose the destination. Export renders a snapshot of the full input and simulation parameters independently of retained preview output. **Cancel**, an explicit close action, or Escape when Export is the topmost modal discards its unsubmitted draft without changing accepted adjustments or retained output. A backdrop click does not dismiss it.
 
 Locating another Export control while the dialog is open preserves its draft. The locator changes focus, not the selected delivery options.
 
@@ -209,7 +212,16 @@ Export uses the in-memory input pixels with the simulation parameters. It runs a
 
 Export has no second options area in the inspector. Bottom **SAVE** chooses its format from the filename extension independently of Export preferences; it does not submit an Export request.
 
-Export's saving color space and transfer encoding are independent of Save's current simulation saving settings. JPEG exposes quality (1–100) and 4:4:4/4:2:0 chroma sampling. TIFF/EXR expose their supported depth/compression settings. See the [CLI image output](cli.md#image-output) and [photo-export specification](../specs/photo-export/spec.md) for supported output combinations.
+Export's saving color space and transfer encoding are independent of Save's current simulation saving settings. Format capabilities follow the [shared writer](../specs/photo-export/spec.md) and [saving conversion rules](../specs/cli/spec.md#export-and-execution-options):
+
+| Format | Depth | Saving encoding | Compression or codec options |
+| --- | --- | --- | --- |
+| JPEG | 8-bit | Encoded | Quality 1–100; 4:4:4 or 4:2:0 chroma sampling |
+| PNG | 8-bit | Encoded | Fixed by the writer |
+| TIFF | 8-bit, 16-bit, or 32-bit float | Optional CCTF | ZIP or none |
+| OpenEXR | 16-bit half or 32-bit float | Linear | ZIP |
+
+Fixed rows show their effective values and reasons instead of one-choice selectors. JPEG quality and subsampling remain readable with their stored preferences in other formats, marked not applicable. Every row remains locatable by its canonical control identity; locating it does not alter the draft.
 
 The header reports Export status and elapsed time. **Cancel export** discards the result before publication through the active worker's cancellation path. Cancellation may wait for active computation or writing.
 
@@ -271,6 +283,8 @@ Each preset card carries its own `preset actions` control beside the entry name 
 
 ## Diagnostics
 
+The Diagnostics section has one disclosure. Search for `diagnostics.collection_mode` to reveal **Collection mode**, even before the first report exists.
+
 **Settings → Diagnostics** selects Off, Summary, or GPU timing for subsequent operations. Changing the mode leaves running operations on their captured mode. The session keeps the latest 20 collected operation reports. Select a report to inspect its phases, stages, GPU work, timing availability, and outcome.
 
 **Save report…** writes local JSON without rendering. Save reports identify the retained render that supplied their pixels. This includes renders made with collection off or removed from history.
@@ -279,7 +293,7 @@ Launching with `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` set to an existing directory pu
 
 ## Application configuration
 
-**Settings** contains **General**, **GUI parameters**, **Display**, and **Diagnostics**. It is separate from photographic adjustments and independent Export options. **Close settings**, Escape, or the window close action returns to the workspace and restores focus to the invoking control. Closing Export options likewise returns focus to its invoking control.
+**Settings** contains **General**, **GUI parameters**, **Display**, and **Diagnostics**. General and Display start open. Settings and Export block background pointer and keyboard input while open; a backdrop click does not dismiss them. **Close settings**, an explicit window close action, or Escape when Settings is the topmost modal returns to the workspace and restores focus to the invoking control. Closing Export options likewise restores its opener's focus. Factory-default confirmation can stack above Settings; Escape dismisses only the topmost modal.
 
 The viewer interpolation mode, canvas, white padding, and display transform affect the disposable viewer raster. See [Viewer](#viewer).
 

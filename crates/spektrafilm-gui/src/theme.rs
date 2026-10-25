@@ -77,11 +77,9 @@ pub const SPACE_ROW: f32 = SPACE_1;
 pub const SPACE_BLOCK: f32 = SPACE_1;
 /// Height reserved below the scrollable controls for the action bar.
 ///
-/// Measured from the bar the inspector renders: one 38 pt button row, its
-/// visible semantic caption, the 6 pt separator and one [`SPACE_ROW`] gap on
-/// each side of the bar. Reserving the measured footprint keeps the bar
-/// inside the panel without withholding list height from the controls.
-pub const HEIGHT_ACTION_BAR_RESERVE: f32 = 38.0 + SPACE_ROW + SIZE_HINT + 6.0 + 2.0 * SPACE_ROW;
+/// Includes the two-line 64 pt buttons and spacing around the separator.
+/// The same reservation applies in both interface languages.
+pub const HEIGHT_ACTION_BAR_RESERVE: f32 = 64.0 + SPACE_2 * 2.0;
 /// Gap between two action groups inside one region.
 pub const SPACE_GROUP: f32 = SPACE_2;
 // ---------------------------------------------------------------------------
@@ -110,12 +108,12 @@ pub const TEXT_READOUT: TextStyle = TextStyle::Small;
 
 /// Point size of the hint and readout role: the smallest text the panel
 /// renders. Muted text at this size must stay readable.
-pub const SIZE_HINT: f32 = 9.0;
+pub const SIZE_HINT: f32 = 11.0;
 /// Point size of a unit suffix and the experimental marker.
 /// Matches the prototype's `--fs-unit`.
 pub const SIZE_UNIT: f32 = 11.0;
 /// Point size of a parameter row's label. Matches the prototype's `--fs-label`.
-pub const SIZE_LABEL: f32 = 12.0;
+pub const SIZE_LABEL: f32 = 13.0;
 /// Point size of a value in a parameter row, at the parameter's declared
 /// decimals. Monospace so the value column aligns.
 pub const SIZE_VALUE: f32 = 13.0;
@@ -126,7 +124,7 @@ pub const SIZE_TITLE: f32 = 13.5;
 /// step above the module titles it groups.
 pub const SIZE_STAGE: f32 = 15.0;
 /// Point size of the histogram axis labels.
-pub const SIZE_CHART_AXIS: f32 = 10.0;
+pub const SIZE_CHART_AXIS: f32 = 11.0;
 /// Font id for a role's point size, keeping the role's family.
 pub fn text(role: TextStyle, size: f32) -> FontId {
     FontId::new(size, font_family(role))
@@ -141,16 +139,18 @@ fn font_family(role: TextStyle) -> egui::FontFamily {
 
 /// Width of the value column in a parameter row.
 pub const WIDTH_VALUE: f32 = 72.0;
+/// Width reserved for a unit suffix beside a numeric value.
+pub const WIDTH_UNIT: f32 = 60.0;
 /// Width of the right-hand control panel. The panel is fixed-width, so its
 /// geometry is a layout token rather than a literal at each use.
-pub const WIDTH_CONTROL_PANEL: f32 = 320.0;
+pub const WIDTH_CONTROL_PANEL: f32 = 344.0;
 /// Narrowest a choice row's selector may be, so a long label still leaves a
 /// usable selector.
 pub const WIDTH_COMBO_MIN: f32 = 60.0;
 /// Widest a choice row's selector may be. Narrow enough that a selector
 /// sharing a row with another control leaves room for it inside the control
 /// panel.
-pub const WIDTH_COMBO_MAX: f32 = 120.0;
+pub const WIDTH_COMBO_MAX: f32 = 160.0;
 /// Width of a default border stroke.
 pub const STROKE_DEFAULT: f32 = 1.0;
 /// Width of the invalid-state ring around a value field.
@@ -182,6 +182,10 @@ pub const SHADOW_POPUP: Shadow = Shadow {
 };
 /// Horizontal and vertical padding inside a button.
 pub const BUTTON_PADDING: [f32; 2] = [6.0, 3.0];
+/// Shared control height and minimum photographic work area.
+pub const HEIGHT_CONTROL: f32 = 28.0;
+/// Window width below which the preset browser defaults to its reopen rail.
+pub const WIDTH_COMPACT_WORKSPACE: f32 = 1250.0;
 
 /// A default-width stroke in `color`.
 pub fn stroke(color: Color32) -> Stroke {
@@ -259,6 +263,22 @@ pub fn apply(ctx: &egui::Context) {
     // Row density: the control panel is a dense list of parameter rows, so
     // its vertical rhythm is tighter than egui's default.
     let mut style = (*ctx.style()).clone();
+    style
+        .text_styles
+        .insert(TextStyle::Body, FontId::proportional(13.0));
+    style
+        .text_styles
+        .insert(TextStyle::Button, FontId::proportional(13.0));
+    style
+        .text_styles
+        .insert(TextStyle::Small, FontId::proportional(SIZE_HINT));
+    style
+        .text_styles
+        .insert(TextStyle::Heading, FontId::proportional(SIZE_STAGE));
+    style
+        .text_styles
+        .insert(TextStyle::Monospace, FontId::monospace(SIZE_VALUE));
+    style.spacing.interact_size.y = HEIGHT_CONTROL;
     style.spacing.item_spacing = egui::vec2(style.spacing.item_spacing.x, SPACE_ROW);
     style.spacing.button_padding = egui::vec2(BUTTON_PADDING[0], BUTTON_PADDING[1]);
     ctx.set_style(style);

@@ -43,7 +43,7 @@ A route or film profile change that makes the selected mode ineligible resets it
 
 ## Result identity and delivery guidance
 
-The header MUST identify the retained result's operation, pixel dimensions, and whether it matches current adjustments. A pending operation MUST NOT hide that identity or imply that the retained result is current.
+The viewer status strip above the canvas MUST be the single owner of retained-result identity. It MUST identify the retained result's operation, pixel dimensions, and whether it matches current adjustments. A pending operation MUST NOT hide that identity or imply that the retained result is current.
 
 ```mermaid
 flowchart LR
@@ -105,6 +105,18 @@ The window has three regions and one header.
 
 A region is a layout slot, not a mutually exclusive page. A control belongs to exactly one surface under [Labels and surfaces](#labels-and-surfaces). A dialog MAY edit only the values assigned to it.
 
+## Dialog interaction
+
+Settings and Export MUST isolate background pointer and keyboard input while open. A backdrop click MUST NOT dismiss either dialog.
+
+Only an explicit close or Cancel action, or Escape on the topmost modal, MUST dismiss it. Closing a dialog MUST restore focus to its invoking control.
+
+General and Display MUST start open in Settings. A control locator MUST reveal, scroll to, and focus the actual canonical row, including a fixed or inactive row. Factory-default confirmation MAY stack above Settings; Escape MUST dismiss only the topmost modal.
+
+Export MUST keep its format, depth, saving color, encoding, compression, JPEG quality, and JPEG subsampling rows readable and canonically locatable. A fixed capability MUST show its effective value and why it is fixed, rather than a one-choice selector.
+
+An inapplicable JPEG row MUST retain its stored preference and visibly state that it does not apply. Writer capabilities remain owned by [photo export](../photo-export/spec.md) and [saving conversion](../cli/spec.md#export-and-execution-options); presentation MUST NOT offer an unsupported combination or change writer behavior.
+
 ## Optical and grain labels
 
 Scan → Scanner MUST distinguish Lens blur (readout optics) from Unsharp mask (digital sharpening). Tooltips MUST explain the [optical-order cutover](../film-chain/spec.md#optical-order-cutover) without offering a legacy late-blur mode.
@@ -135,7 +147,9 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 
 Rotation is a source operation and MUST NOT be offered as viewer-only pan or zoom. A read-only summary or action that locates its owner MAY appear elsewhere; a second editable copy MUST NOT.
 
-The stage jump strip MUST reveal and scroll to one heading in the continuous inspector. It MUST NOT close other stages or change any parameter. A heading toggle MUST affect only its own open state.
+The stage jump strip MUST reveal and scroll to one heading in the continuous inspector. It MUST preserve the control-search query and Only modified filter.
+
+It MUST NOT close other stages or change any parameter. A heading toggle MUST affect only its own open state.
 
 Open state and scroll position MUST survive ordinary edits, render completion, and route changes.
 
@@ -243,11 +257,15 @@ The viewer presents the retained input, the retained output, or the paper back. 
 
 The viewer presents an explicit empty state when no image is loaded. The empty state MUST name the import action and MUST NOT present a blank canvas. It is viewer-only and MUST NOT alter saved or exported pixels.
 
-The viewer MUST show a legible, lightweight `Rendering…` overlay at its top-right while its current update is pending. Simplified Chinese MUST show `渲染中……`. The status covers accepted edits waiting for debounce, pipeline computation, and composition until the latest viewer frame is accepted.
+The viewer MUST have one legible status strip above the canvas, outside the image. It MUST identify the selected Original or Paper back presentation, or show the retained-result identity under [Result identity](#result-identity-and-delivery-guidance).
 
-Superseded work MUST NOT keep it visible after the current update completes. A failed request MUST end its pending status and retain the last completed image. No source means no rendering overlay.
+It MUST include the Preview detail-effects caveat when describing a retained Preview. The header and canvas MUST NOT duplicate this identity or carry a top-right rendering overlay.
 
-The overlay MUST NOT prevent zoom, pan, or pointer inspection.
+The strip MUST show `Rendering…`, or `渲染中……` in Simplified Chinese, while the current update is pending. The status covers accepted edits waiting for debounce, pipeline computation, and composition until the latest viewer frame is accepted.
+
+Superseded work MUST NOT keep the pending status visible after the current update completes. A failed request MUST end its pending status and retain the last completed image.
+
+No source means no rendering status. The strip MUST NOT prevent zoom, pan, or pointer inspection.
 
 The viewer footer owns the layer selector. It is the only surface that exposes it. Application settings MUST NOT repeat it.
 

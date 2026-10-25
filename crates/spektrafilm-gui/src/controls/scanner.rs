@@ -444,6 +444,7 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T) -> bool {
         let width = ui
             .available_width()
             .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
+        ui.add_space((ui.available_width() - width).max(0.0));
         let response = mark.gold(ui, |ui| {
             egui::ComboBox::from_id_salt("Film Format")
                 .selected_text(if custom {

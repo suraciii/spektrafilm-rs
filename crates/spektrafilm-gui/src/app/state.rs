@@ -359,7 +359,10 @@ impl App {
     pub(crate) fn language_selector(&mut self, ui: &mut egui::Ui) {
         let mut selected = self.language_preference;
         let mut chosen = None;
+        let width = ui.available_width().min(theme::WIDTH_COMBO_MAX);
+        ui.add_space((ui.available_width() - width).max(0.0));
         let response = egui::ComboBox::from_id_salt("application.language_preference")
+            .width(width)
             .selected_text(selected.label())
             .show_ui(ui, |ui| {
                 for preference in i18n::LanguagePreference::ALL {

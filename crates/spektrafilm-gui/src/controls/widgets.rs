@@ -497,6 +497,7 @@ pub(crate) fn toggle_row(
                 .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
             let mark = row_modified::RowMark::resolve(ui.ctx(), Some(label));
             mark.paint(ui, &label_response);
+            ui.add_space((ui.available_width() - 44.0).max(0.0));
             mark.gold(ui, |ui| {
                 let (fill, knob, text) = if *value {
                     (theme::ACCENT, theme::CONTRAST_ON_ACCENT, "on")
@@ -512,7 +513,7 @@ pub(crate) fn toggle_row(
                         )
                         .fill(fill)
                         .corner_radius(theme::RADIUS_CARD)
-                        .min_size(egui::vec2(44.0, 18.0))
+                        .min_size(egui::vec2(44.0, theme::HEIGHT_CONTROL))
                         .selected(*value),
                     )
                     .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
@@ -800,21 +801,19 @@ pub(crate) fn choice_tip_options<'a>(
         .unwrap_or_else(|| value.as_str())
         .to_owned();
     let prev = value.clone();
-    // Label first, selector second, so a choice row reads like every other
-    // parameter row. The selector paints in its own horizontal row inside a
-    // vertical section body, so both share one explicit row here. `from_id_salt`
-    // paints the box where it is placed instead of appending its own label
-    // after it. The width is capped so a selector sharing a row with another
-    // control leaves room for it.
-    ui.horizontal(|ui| {
+    let stacked = label == "workflow";
+    let row = |ui: &mut Ui| {
         row_label(ui, label, experimental)
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
-        // The selector takes the width still unclaimed in its row, capped, so a
-        // selector sharing a row with another control leaves room for it and
-        // never pushes the row past its container.
-        let width = ui
-            .available_width()
-            .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
+        let width = if stacked {
+            ui.available_width()
+        } else {
+            ui.available_width()
+                .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX)
+        };
+        if !stacked {
+            ui.add_space((ui.available_width() - width).max(0.0));
+        }
         let response = egui::ComboBox::from_id_salt(label)
             .selected_text(if translate_options {
                 crate::controls::localized(ui.ctx(), &selected_label)
@@ -822,14 +821,9 @@ pub(crate) fn choice_tip_options<'a>(
                 std::borrow::Cow::Borrowed(selected_label.as_str())
             })
             .width(width)
-            // Truncate rather than extend: an extending selector takes its
-            // text's full width and pushes whatever shares the row past the
-            // container.
             .wrap_mode(egui::TextWrapMode::Truncate)
             .show_ui(ui, |ui| {
                 for (option, display_label) in choices {
-                    // Allocate only when a selection changes, not for every
-                    // option each frame.
                     if ui
                         .selectable_label(
                             value.as_str() == option,
@@ -851,7 +845,12 @@ pub(crate) fn choice_tip_options<'a>(
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         super::focus_response(ui, label, &response);
         name_choice(ui, label);
-    });
+    };
+    if stacked {
+        ui.vertical(row);
+    } else {
+        ui.horizontal(row);
+    }
     if prev != *value {
         super::record_label_edit(ui.ctx(), label);
     }

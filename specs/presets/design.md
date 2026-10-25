@@ -97,7 +97,10 @@ The flows a user actually runs MUST be short; every one below is two or three st
 
 ## Boundaries
 
-- The GUI state keeps its complete-state contract; the panel width, the expanded state, and the last applied group and name belong to the versioned Rust extension and MUST NOT enter the Python-compatible sections. They MUST NOT change the meaning of a saved preset document.
+- The GUI state keeps its complete-state contract; the panel width, the expanded preference, and the last applied group and name belong to the versioned Rust extension and MUST NOT enter the Python-compatible sections. They MUST NOT change the meaning of a saved preset document.
+- At a window width of 1250 logical points or less, the browser MUST automatically collapse to a 48-point rail.
+- A manual reopen at that width MUST remain session-local and MUST NOT rewrite the serialized expanded or width preference.
+- Returning to a wider window MUST restore the stored expanded and width preferences.
 - Modified detection compares the active look controls and the film and print references with the applied document. It MUST use `LookParameters::matches` to respect an omitted legacy camera group under the [preset file format rules](spec.md#file-formats); it MUST NOT compare GUI state or a prepared runtime parameter tree.
 - Look capture MUST collect existing material controls through their existing sections and output mix through its own section; it MUST never collect an `IoParams` snapshot or output gamut settings. Schema migration MUST follow the [preset file-format contract](spec.md#file-formats): older whole looks gain full output mix, while older sections retain sparse omission.
 - Capture, apply, and migrated export MUST NOT expand `io` ownership; preparation MUST preserve existing material capability, scan-inverse, and calibration semantics under [Output mix and material controls](../output-mix/spec.md). Unshipped response groups and the Cyan-shift field are unknown fields, including in draft version 3 documents; neither capture nor migration MAY materialize them.
