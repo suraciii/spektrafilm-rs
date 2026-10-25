@@ -115,9 +115,12 @@ fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
             std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", cap);
         }
         let img = image(&backend, &values);
+        let mut gaussian_scratch = super::super::blur::GaussianScratch::new(width, height);
         match stage {
             0 => {
-                let state = build_halation_state(&hp, width, height, &img, &backend).unwrap();
+                let state =
+                    build_halation_state(&hp, width, height, &img, &mut gaussian_scratch, &backend)
+                        .unwrap();
                 state.submit(&backend).unwrap();
             }
             1 | 2 => {
@@ -128,8 +131,16 @@ fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
                     base_seed: 0x12ab34cd,
                     rgb_offset: [0.7, 0.9, 1.1],
                 };
-                let state =
-                    build_glare_state(&backend.device, &gp, width, height, &img, &backend).unwrap();
+                let state = build_glare_state(
+                    &backend.device,
+                    &gp,
+                    width,
+                    height,
+                    &img,
+                    &mut gaussian_scratch,
+                    &backend,
+                )
+                .unwrap();
                 state.submit(&backend).unwrap();
             }
             _ => {
@@ -137,9 +148,16 @@ fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
                     sigma_px: 2.5,
                     amount: 0.8,
                 };
-                let state =
-                    build_unsharp_state(&backend.device, &up, width, height, &img, &backend)
-                        .unwrap();
+                let state = build_unsharp_state(
+                    &backend.device,
+                    &up,
+                    width,
+                    height,
+                    &img,
+                    &mut gaussian_scratch,
+                    &backend,
+                )
+                .unwrap();
                 state.submit(&backend).unwrap();
             }
         }
@@ -158,4 +176,67 @@ fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
             }
         }
     }
+
+    // Retain all stage states at once, as chain setup does. Sequential reuse
+    // must be numerically identical to independent working sets, including
+    // scatter tails, compressed-source bounces, seeded glare, and USM combine.
+    let run_sequence = |reuse: bool| {
+        unsafe {
+            std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "192");
+        }
+        let img = image(&backend, &values);
+        let mut shared = super::super::blur::GaussianScratch::new(width, height);
+        let mut glare_scratch = super::super::blur::GaussianScratch::new(width, height);
+        let mut unsharp_scratch = super::super::blur::GaussianScratch::new(width, height);
+        let halation =
+            build_halation_state(&hp, width, height, &img, &mut shared, &backend).unwrap();
+        let gp = spektrafilm_backend::GlareGpuParams {
+            mu: -2.0,
+            sigma: 0.6,
+            blur_px: 3.5,
+            base_seed: 0x12ab34cd,
+            rgb_offset: [0.7, 0.9, 1.1],
+        };
+        let glare = build_glare_state(
+            &backend.device,
+            &gp,
+            width,
+            height,
+            &img,
+            if reuse {
+                &mut shared
+            } else {
+                &mut glare_scratch
+            },
+            &backend,
+        )
+        .unwrap();
+        let up = spektrafilm_backend::UnsharpGpuParams {
+            sigma_px: 2.5,
+            amount: 0.8,
+        };
+        let unsharp = build_unsharp_state(
+            &backend.device,
+            &up,
+            width,
+            height,
+            &img,
+            if reuse {
+                &mut shared
+            } else {
+                &mut unsharp_scratch
+            },
+            &backend,
+        )
+        .unwrap();
+        // Jobs, not the setup helper, must retain all referenced GPU buffers.
+        drop(shared);
+        drop(glare_scratch);
+        drop(unsharp_scratch);
+        halation.submit(&backend).unwrap();
+        glare.submit(&backend).unwrap();
+        unsharp.submit(&backend).unwrap();
+        readback(&backend, &img)
+    };
+    assert_eq!(run_sequence(true), run_sequence(false));
 }

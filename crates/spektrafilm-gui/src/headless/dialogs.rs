@@ -666,6 +666,10 @@ fn report_paths(directory: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<_> = std::fs::read_dir(directory)
         .unwrap()
         .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .collect();
     paths.sort();
     paths

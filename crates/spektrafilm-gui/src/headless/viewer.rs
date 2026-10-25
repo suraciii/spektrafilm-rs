@@ -846,10 +846,12 @@ fn rendering_overlay_is_bilingual_and_settles_after_import_adjustment_and_failur
     });
     let report_path = std::fs::read_dir(&reports)
         .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .unwrap();
     let report: serde_json::Value =
         serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
     assert_eq!(report["operation"]["outcome"], "failed");
@@ -1342,12 +1344,12 @@ fn gpu_gui_scan_view_transition_and_save_keep_the_accepted_device_samples() {
         samples.data
     );
     let saved = directory.path().join("accepted.tiff");
-    h.state_mut().save_to_path(&saved);
+    save_retained(&mut h, &saved);
     assert!(saved.exists(), "{}", h.state().status);
     let bytes = std::fs::read(&saved).unwrap();
     h.state_mut().viewer.set_zoom_percent(100.0);
     composed(&mut h, time + 2.0);
-    h.state_mut().save_to_path(&saved);
+    save_retained(&mut h, &saved);
     assert_eq!(
         std::fs::read(&saved).unwrap(),
         bytes,

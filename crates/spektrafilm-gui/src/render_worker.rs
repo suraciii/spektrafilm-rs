@@ -221,6 +221,13 @@ impl RenderWorker {
                         *active_cancel_for_worker.lock() = request.snapshot.cancellation().clone();
                         request
                     };
+                    let cancellation = request.snapshot.cancellation();
+                    let progress_ready = request.operation.wait_for_progress_or_cancel(|| {
+                        shutdown_for_worker.load(Ordering::SeqCst)
+                            || cancellation
+                                .as_ref()
+                                .is_some_and(|token| token.load(Ordering::SeqCst))
+                    });
                     drop(request.worker_wait);
                     if invalidate_cache_for_worker.swap(false, Ordering::SeqCst) {
                         runtime_cache = RuntimeCache::default();
@@ -236,6 +243,9 @@ impl RenderWorker {
                         Some((job.request_id, job.kind, job.collection_mode));
                     let ctx = request.ctx.clone();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        if !progress_ready {
+                            return Err(crate::app::Message::new("operations.operation_cancelled"));
+                        }
                         let prepare_unit = spektrafilm_core::progress::report("input_prepare");
                         let pipeline_template = runtime_cache.prepare_observed_with_backend(
                             &request.snapshot,
@@ -516,10 +526,10 @@ impl RenderWorker {
                         })
                     }))
                     .unwrap_or_else(|panic| Err(panic_message(&panic)));
-                    let cancelled = request
-                        .snapshot
-                        .cancellation()
-                        .is_some_and(|token| token.load(Ordering::SeqCst));
+                    let cancelled = !progress_ready
+                        || cancellation
+                            .as_ref()
+                            .is_some_and(|token| token.load(Ordering::SeqCst));
                     let result = if cancelled {
                         Err(crate::app::Message::new("operations.operation_cancelled"))
                     } else {
@@ -656,6 +666,153 @@ mod tests {
     use crate::render::InputImage;
     use spektrafilm_backend::{DeviceImage, SampleDomain};
     use spektrafilm_core::params::RuntimeParams;
+
+    fn held_request(
+        directory: &std::path::Path,
+    ) -> (RenderRequest, spektrafilm_core::telemetry::ProgressReceiver) {
+        let mut operation = Operation::new(
+            spektrafilm_core::telemetry::OperationKind::Preview,
+            CollectionMode::Summary,
+        );
+        let receiver = operation.progress().unwrap();
+        let worker_wait = operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image);
+        let request = RenderRequest {
+            job: RenderJob {
+                input_epoch: 1,
+                parameter_revision: 1,
+                request_id: 0,
+                kind: RenderKind::Preview,
+                animate: false,
+                rotation_quarter_turns: 0,
+                collection_mode: CollectionMode::Summary,
+            },
+            image: InputImage::Host(Arc::new(ImageBuf::from_data(1, 1, vec![0.0; 3]))),
+            snapshot: RenderSnapshot::new(
+                RuntimeParams::default(),
+                "kodak_portra_400".into(),
+                "kodak_portra_endura".into(),
+                directory.to_path_buf(),
+                serde_json::json!({}),
+            )
+            .with_cancellation(Some(Arc::new(AtomicBool::new(false)))),
+            backend: Arc::new(spektrafilm_backend::cpu_backend::CpuBackend),
+            source_metadata: None,
+            display_enabled: false,
+            display_profile: None,
+            ctx: egui::Context::default(),
+            operation,
+            worker_wait,
+        };
+        (request, receiver)
+    }
+
+    fn wait_for_held_request(worker: &RenderWorker, token: &Arc<AtomicBool>) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !worker
+            .active_cancel
+            .lock()
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, token))
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "render did not reach readiness gate"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn superseding_an_unready_render_releases_it_without_poisoning_its_successor() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut worker = RenderWorker::new();
+        let (first, first_receiver) = held_request(directory.path());
+        let first_token = first.snapshot.cancellation().unwrap();
+        let (first_job, replaced) = worker.submit(first);
+        assert!(replaced.is_none());
+        wait_for_held_request(&worker, &first_token);
+        let (successor, successor_receiver) = held_request(directory.path());
+        let successor_token = successor.snapshot.cancellation().unwrap();
+        let (successor_job, replaced) = worker.submit(successor);
+        assert!(replaced.is_none());
+        let (job, operation, result) = worker
+            .rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(job.request_id, first_job.request_id);
+        assert!(result.is_err());
+        assert!(!operation.progress_ready());
+        let report = operation.finish(Outcome::Superseded).unwrap();
+        assert_eq!(report.operation.outcome, Outcome::Superseded);
+        assert!(
+            report
+                .attempts
+                .iter()
+                .all(|attempt| attempt.outcome == Some(Outcome::Cancelled))
+        );
+        assert!(
+            report
+                .phases
+                .iter()
+                .all(|phase| phase.name == "worker_wait")
+        );
+        assert!(report.diagnostic_issues.is_empty());
+        wait_for_held_request(&worker, &successor_token);
+        assert!(!successor_token.load(Ordering::SeqCst));
+        assert!(matches!(
+            worker.rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        worker.cancel_active();
+        let (job, operation, result) = worker
+            .rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(job.request_id, successor_job.request_id);
+        assert!(result.is_err());
+        let report = operation.finish(Outcome::Cancelled).unwrap();
+        assert_eq!(report.operation.outcome, Outcome::Cancelled);
+        assert!(report.diagnostic_issues.is_empty());
+        assert!(worker.shutdown().is_none());
+        drop((first_receiver, successor_receiver));
+    }
+
+    #[test]
+    fn shutdown_joins_a_render_while_its_progress_receiver_remains_unready() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut worker = RenderWorker::new();
+        let (request, held_receiver) = held_request(directory.path());
+        let token = request.snapshot.cancellation().unwrap();
+        let (_, replaced) = worker.submit(request);
+        assert!(replaced.is_none());
+        wait_for_held_request(&worker, &token);
+        let (joined, completion) = mpsc::sync_channel(1);
+        let shutdown = std::thread::spawn(move || {
+            assert!(worker.shutdown().is_none());
+            let (_, operation, result) = worker
+                .rx
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .unwrap();
+            assert!(result.is_err());
+            assert!(!operation.progress_ready());
+            joined
+                .send(operation.finish(Outcome::Cancelled).unwrap())
+                .unwrap();
+        });
+        let report = completion
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .unwrap();
+        shutdown.join().unwrap();
+        assert_eq!(report.operation.outcome, Outcome::Cancelled);
+        assert!(report.diagnostic_issues.is_empty());
+        assert!(
+            report
+                .phases
+                .iter()
+                .all(|phase| phase.name == "worker_wait")
+        );
+        drop(held_receiver);
+    }
 
     fn retained(input: InputImage) -> DeviceImage {
         let InputImage::Device(image) = input else {

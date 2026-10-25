@@ -128,7 +128,7 @@ fn standard_operator_preview_matches_scan_and_hold_compare_preserves_saved_corre
         .directory
         .path()
         .join("operator-while-comparing.exr");
-    h.state_mut().save_to_path(&save_while_held);
+    save_retained(h, &save_while_held);
     assert!(
         h.state().status.to_string().starts_with("Saved"),
         "{}",
@@ -503,7 +503,7 @@ fn gpu_operator_comparison_keeps_the_corrected_device_carrier() {
     ));
     assert!(h.state().image.as_ref().unwrap().same_source(&source));
     let path = directory.path().join("corrected-comparison.tiff");
-    h.state_mut().save_to_path(&path);
+    save_retained(&mut h, &path);
     assert!(path.is_file(), "{}", h.state().status);
     assert!(Arc::ptr_eq(
         h.state()
@@ -528,7 +528,7 @@ fn gpu_operator_comparison_keeps_the_corrected_device_carrier() {
     // Always-auto Preview can republish the corrected frame on release.
     // Its carrier identity is disposable; its saved pixels must be unchanged.
     let released_path = directory.path().join("corrected-released.tiff");
-    h.state_mut().save_to_path(&released_path);
+    save_retained(&mut h, &released_path);
     super::panels::assert_float_images_equal(&path, &released_path);
     assert_eq!(h.state().params, corrected_params);
 }

@@ -233,13 +233,21 @@ buffers. It must not change parameters, routing, or numerical results. See the a
 [debug and diagnostics contract](../specs/cli/spec.md#debug-diagnostics).
 
 `--diagnostics REPORT.json` is separate: `process` and `render` accept it to persist a
-structured execution report.
+structured execution report and a live `REPORT.json.progress.jsonl` sidecar.
+The sidecar appears before image work and exposes elapsed time, coarse phases and stages,
+and the most recent scope begin and end while the command runs.
+
+The sidecar keeps a bounded circular history; readers order valid JSONL records by `seq`.
+Ignore malformed crash-write records. A journal without an `end` record and a non-null
+`outcome` is incomplete. See [progress record semantics](../specs/telemetry/metrics/spec.md#live-progress-records).
+
 Add `--gpu-timings` to collect compute-pass timestamps when the adapter supports them.
-The report includes operation outcomes, repeated simulation attempts, saving attribution, actual GPU work, and explicit availability reasons.
+The final report includes operation outcomes, repeated simulation attempts, saving attribution, actual GPU work, and explicit availability reasons.
 Diagnostics do not change image parameters or machine-readable render output.
-Report-write errors are reported separately from the image result.
-CLI reports never replace an existing file.
-Report paths must not alias input, output, or configuration files.
+
+Report and progress-write errors are reported separately from the image result.
+Neither destination may replace an existing file or alias input, output, or configuration files.
+Without `--diagnostics`, the CLI starts no progress writer and creates no diagnostics files.
 
 ```bash
 ./target/release/spektrafilm process input.tif -o out.png \

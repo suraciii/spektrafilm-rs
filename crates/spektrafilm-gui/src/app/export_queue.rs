@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use eframe::egui;
 use spektrafilm_core::image_io::ImageMetadata;
-use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome};
+use spektrafilm_core::telemetry::{OperationKind, Outcome};
 #[cfg(test)]
 use spektrafilm_math::image::ImageBuf;
 
@@ -179,7 +179,7 @@ impl App {
         let submission = entry.submission.clone();
         let replace_existing = entry.replace_existing;
         let dependencies = entry.dependencies.clone();
-        let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
+        let mut operation = self.diagnostics.begin(OperationKind::Export);
         // Queued work belongs to the submission, not the currently active source.
         operation.set_input_dimensions(submission.image.width(), submission.image.height());
         operation.set_backend_requested(match submission.options.backend {

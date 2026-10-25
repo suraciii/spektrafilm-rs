@@ -3,6 +3,76 @@ use super::grain::raster::RasterCommands;
 use super::paged::ImagePage;
 use super::*;
 
+/// One operation's sequential Gaussian working set, sized before any job is built.
+/// Queue submission order permits reuse without a host wait; jobs retain their
+/// own handles, and no allocation is shared with another operation.
+pub(super) struct GaussianScratch {
+    width: u32,
+    height: u32,
+    pages: Option<GaussianBuffers>,
+}
+
+#[derive(Default)]
+pub(super) struct GaussianBuffers {
+    pub(super) intermediate: Vec<ImagePage>,
+    pub(super) output: Vec<ImagePage>,
+}
+
+impl GaussianScratch {
+    pub(super) fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            pages: None,
+        }
+    }
+
+    /// Allocate only for an active Gaussian. A smaller raster gets its own
+    /// exact page extent while retaining the maximum-capacity backing buffers.
+    pub(super) fn buffers(
+        &mut self,
+        backend: &WgpuBackend,
+        width: u32,
+        height: u32,
+    ) -> Result<GaussianBuffers, String> {
+        let count = u64::from(width) * u64::from(height);
+        if count == 0 || count > u64::from(self.width) * u64::from(self.height) {
+            return Err("Gaussian scratch geometry exceeds its operation capacity".into());
+        }
+        if self.pages.is_none() {
+            self.pages = Some(GaussianBuffers {
+                intermediate: backend.allocate_image_pages(
+                    self.width,
+                    self.height,
+                    "operation_gaussian_intermediate",
+                )?,
+                output: backend.allocate_image_pages(
+                    self.width,
+                    self.height,
+                    "operation_gaussian_output",
+                )?,
+            });
+        }
+        let pages = self.pages.as_ref().expect("Gaussian pages allocated above");
+        let view = |pages: &[ImagePage]| {
+            pages
+                .iter()
+                .take_while(|page| u64::from(page.first_pixel) < count)
+                .map(|page| ImagePage {
+                    first_pixel: page.first_pixel,
+                    n_pixels: u64::from(page.n_pixels).min(count - u64::from(page.first_pixel))
+                        as u32,
+                    buffer: page.buffer.clone(),
+                })
+                .collect()
+        };
+        Ok(GaussianBuffers {
+            intermediate: view(&pages.intermediate),
+            output: view(&pages.output),
+        })
+    }
+}
+
 /// One exact reference Gaussian over interleaved RGB storage pages.
 ///
 /// The filter itself lives in `grain::v1::blur`: FIR below sigma 3 with
@@ -286,5 +356,111 @@ impl WgpuBackend {
             rb.unmap();
         }
         Ok(out_imgs)
+    }
+}
+
+#[cfg(all(test, not(feature = "precision-f64")))]
+mod tests {
+    use super::*;
+
+    struct RestoreLimit(Option<std::ffi::OsString>);
+
+    impl Drop for RestoreLimit {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.0 {
+                    Some(value) => std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", value),
+                    None => std::env::remove_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sequential_gaussians_reuse_maximum_geometry_without_overwriting_results() {
+        let gpu = crate::test_support::adapter();
+        let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
+        // The adapter lock serializes process-wide device-test limit overrides.
+        unsafe {
+            std::env::set_var("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES", "192");
+        }
+        let mut scratch = GaussianScratch::new(17, 9);
+        assert!(
+            scratch.pages.is_none(),
+            "inactive optics must not allocate scratch"
+        );
+        let full = scratch.buffers(&gpu, 17, 9).unwrap();
+        assert!(full.intermediate.len() > 1);
+        assert!(scratch.buffers(&gpu, 18, 9).is_err());
+
+        // Build every job before submission, just as the resident chain does.
+        // The middle job models a scanner tail larger than its film source.
+        let mut jobs = Vec::new();
+        for (width, height, sigma) in [(7, 3, 0.8), (17, 9, 3.5), (9, 5, 1.7)] {
+            let buffers = scratch.buffers(&gpu, width, height).unwrap();
+            for (view, capacity) in [
+                (&buffers.intermediate, &full.intermediate),
+                (&buffers.output, &full.output),
+            ] {
+                assert_eq!(
+                    view.iter().map(|page| page.n_pixels).sum::<u32>(),
+                    width * height
+                );
+                for (page, original) in view.iter().zip(capacity) {
+                    assert_eq!(
+                        page.buffer, original.buffer,
+                        "a job allocated fresh scratch"
+                    );
+                    assert!(page.n_pixels <= original.n_pixels);
+                }
+            }
+            assert_ne!(buffers.output[0].buffer, buffers.intermediate[0].buffer);
+            let values: Vec<f32> = (0..width * height * 3)
+                .map(|i| (i % 31) as f32 * 0.04 - 0.3 + if i == 48 { 3.0 } else { 0.0 })
+                .collect();
+            let image = ImageBuf::from_data(width, height, values.clone());
+            let expected = spektrafilm_math::gaussian::gaussian_blur(&image, f64::from(sigma));
+            let source = gpu
+                .allocate_image_pages(width, height, "sequential_gaussian_source")
+                .unwrap();
+            for page in &source {
+                let start = page.first_pixel as usize * 3;
+                let end = start + page.n_pixels as usize * 3;
+                gpu.queue
+                    .write_buffer(&page.buffer, 0, bytemuck::cast_slice(&values[start..end]));
+            }
+            let state = build_simple_blur_state(
+                &gpu,
+                sigma,
+                width,
+                height,
+                &source,
+                &buffers.output,
+                &buffers.intermediate,
+                "sequential_gaussian",
+            )
+            .unwrap();
+            jobs.push((state, source, expected));
+        }
+        for (state, source, _) in &jobs {
+            state.submit(&gpu, source).unwrap();
+        }
+        // Read only after all reuse, so later Gaussian writes cannot hide a
+        // premature overwrite of an earlier stage's completed output.
+        for (_, source, expected) in jobs {
+            let actual: Vec<f32> = source
+                .iter()
+                .flat_map(|page| {
+                    gpu.pipe
+                        .readback_buffer(&page.buffer, u64::from(page.n_pixels) * 12)
+                })
+                .collect();
+            for (index, (&got, &want)) in actual.iter().zip(&expected.data).enumerate() {
+                assert!(
+                    got.is_finite() && (got - want).abs() < 2e-5,
+                    "sample {index}: {got} != {want}"
+                );
+            }
+        }
     }
 }

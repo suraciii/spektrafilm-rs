@@ -36,6 +36,28 @@ CLI saving sample conversion MUST bind the selected backend to its saving phase,
 - Event filtering MUST NOT change explicitly requested report collection; summary collection MUST cover every accepted operation while enabled. Pass timing MUST apply to the selected operations consistently; a report MUST identify its requested and effective collection mode.
 - Unsupported GPU timing retains summary with a stable availability reason; a benchmark that selects only some iterations for timing MUST report that selection. Aggregates MUST identify sample count and MUST NOT silently combine collection modes.
 
+## Live progress ownership
+
+The operation MUST attach its bounded progress sink before any observation context is cloned for image work. Backend scopes MUST emit coarse begin and end events through that sink; core MUST own progress snapshots, journal serialization, and destination validation.
+
+Frontends MUST own journal creation and writer lifetime. The CLI MUST create the journal before command work, poll it on a dedicated thread every 250 milliseconds, then finish the operation, join and flush the writer, and publish the final report.
+
+GUI progress writes MUST run outside the interface and image workers. The background publisher MUST synchronize the begin record before releasing image-worker readiness; begin failure MUST release readiness with a separate diagnostic rather than fail image work.
+
+Image-worker readiness waits MUST honor cancellation, supersession, and shutdown without requiring the journal writer to become ready. Cancelling readiness MUST stop image work rather than classify diagnostic unavailability as an image failure.
+
+The frontend MUST defer retained Save nonblockingly until its journal is ready. A deferred Save MUST retain the pixels, saving settings, metadata, and source-render identity captured when accepted, independently of later interface changes.
+
+The frontend MUST retain at most one Save awaiting journal readiness. Every request entry point MUST reject further Saves before allocating another operation collector or copying metadata; the Save action MUST remain disabled until the accepted Save leaves that pending state.
+
+The session publisher MUST periodically drain active journals even when no terminal report is queued. It MUST flush and retire the matching progress journal before publishing its terminal report. Shutdown MUST cancel deferred image work and drain accepted progress and terminal reports before releasing its workers.
+
+Progress events MUST remain independent of the final report detail budget. Full progress transport MUST increment a bounded loss counter rather than wait for a consumer; disabled collection MUST allocate neither a transport nor a writer.
+
+The journal MUST preserve its initial begin record and reuse fixed-size circular snapshot slots. Snapshot throttling MUST occur at the persistence boundary; terminal events and shutdown flush MUST bypass that throttle. [Progress record semantics](metrics/spec.md#live-progress-records) own the disk format and reader ordering.
+
+Journal creation MUST use exclusive file creation after protected-path validation. Recoverable creation, polling, and flushing errors MUST remain independent of image execution and final report publication.
+
 ## Routing and timing
 
 - Runtime reports the resident eligibility decision separately from the route that actually executed. A declined resident route can still dispatch GPU stages.

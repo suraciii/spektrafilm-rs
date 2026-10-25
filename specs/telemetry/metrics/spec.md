@@ -38,6 +38,34 @@ A report describes one operation as defined in the [contract](../spec.md). Owner
 - Unknown user-defined identifiers MUST use `custom`, not a path-derived name. At most 64 issue entries MAY be retained, with exact omitted issue counts.
 - Default JSON reports MUST NOT embed human log messages or arbitrary `tracing` fields.
 
+## Live progress records
+
+The progress journal is a separate UTF-8 JSONL document. It MUST NOT change the final report schema or replace the final report's exact counters and detailed observations.
+
+The file MUST retain one immutable begin line followed by 127 circular record slots. Every line MUST occupy 1,024 bytes, including JSON whitespace padding and its final newline; writing new snapshots MUST reuse slots rather than grow the file without a bound.
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | Progress format version, currently `1`, independent of the final report schema |
+| `seq` | Monotonically increasing snapshot sequence within the operation |
+| `operation_id` | Correlation identifier of the final report's operation |
+| `observation_root_id` | Root identifier for backend observation ancestry |
+| `operation_kind` | Stable operation kind from the report vocabulary |
+| `event` | `begin`, `progress`, or `end` |
+| `elapsed_seconds` | Finite monotonic wall time since operation acceptance, in seconds |
+| `current_phase` | Current observed coarse phase name, or `null` |
+| `current_stage` | Current observed coarse stage name, or `null` |
+| `last_begin` | Most recent observed scope-begin name, or `null` |
+| `last_end` | Most recent observed scope-end name, or `null` |
+| `outcome` | Stable terminal outcome for `end`, otherwise `null` |
+| `dropped_events` | Number of events omitted by bounded progress collection |
+
+Scope names MUST remain bounded and allowlisted. Progress MUST NOT include image data, paths, arbitrary messages, or complete parameter snapshots.
+
+Readers MUST order retained records by `seq`, not their physical file positions. They MUST ignore malformed or partially written crash records. Completion requires a valid `end` record with a non-null `outcome`; otherwise readers MUST present the operation as incomplete.
+
+A changed current scope MUST reflect observed begin and end events. Dropped events indicate incomplete progress coverage; elapsed time and coarse scopes MUST NOT be interpreted as sampled CPU utilization, isolated kernel time, or proof of complete executor coverage.
+
 ## Effective configuration
 - `configuration` contains `collection_mode_requested` and `collection_mode_effective` (`summary` or `gpu_timing`), operation input dimensions, simulation working dimensions, and published output dimensions when a file was published. GPU timing can be only partially available across batches; pass coverage MUST describe that separately.
 - It MUST also contain host scalar precision (`f32` or `f64`) and GPU arithmetic precision (`f32` when GPU work executed). Spectral preparation that uses f64 MUST remain identified independently of host scalar precision.

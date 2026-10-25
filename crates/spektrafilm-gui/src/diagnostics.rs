@@ -5,7 +5,7 @@ use eframe::egui;
 use spektrafilm_backend::telemetry::CollectionMode;
 pub use spektrafilm_core::telemetry::BackendRequested;
 use spektrafilm_core::telemetry::{
-    ColorSpaceRole, Operation, Outcome, Report, validate_report_destination,
+    ColorSpaceRole, Operation, OperationKind, Outcome, Report, validate_report_destination,
 };
 use std::{
     collections::VecDeque,
@@ -47,9 +47,9 @@ pub(crate) fn preview_backend_requested() -> BackendRequested {
 }
 
 impl Diagnostics {
-    /// Publish every completed operation's report as a new file in `directory`.
+    /// Publish live progress and completed reports in `directory`.
     ///
-    /// Session-only configuration. It never replaces an existing report file;
+    /// Session-only configuration. It never replaces an existing diagnostics file;
     /// background publication failures do not change image-operation outcomes.
     pub fn publish_completed_to(&mut self, directory: PathBuf) {
         self.publication = Some(Arc::new(directory));
@@ -79,6 +79,22 @@ impl Diagnostics {
             .or_else(|| self.publisher.as_ref()?.take_error())
     }
 
+    /// Attach the progress sink before any image worker clones the context.
+    pub fn begin(&mut self, kind: OperationKind) -> Operation {
+        let mut operation = Operation::new(kind, self.mode);
+        if let Some(directory) = self.publication.as_ref().map(Arc::clone)
+            && let Some(receiver) = operation.progress()
+        {
+            let result = self
+                .publisher()
+                .and_then(|publisher| publisher.begin(directory, operation.id(), receiver));
+            if let Err(error) = result {
+                self.publication_error = Some(error);
+            }
+        }
+        operation
+    }
+
     pub fn finish(&mut self, operation: Operation, outcome: Outcome) {
         if let Some(report) = operation.finish(outcome) {
             let report = Arc::new(report);
@@ -90,16 +106,30 @@ impl Diagnostics {
     }
 
     fn publish(&mut self, report: &Arc<Report>) -> Result<(), String> {
-        let Some(directory) = self.publication.as_ref() else {
+        let Some(directory) = self.publication.as_ref().map(Arc::clone) else {
             return Ok(());
         };
+        self.publisher()?.enqueue(directory, Arc::clone(report))
+    }
+
+    fn publisher(&mut self) -> Result<&publication::Publisher, String> {
         if self.publisher.is_none() {
             self.publisher = Some(publication::Publisher::new()?);
         }
-        self.publisher
+        Ok(self
+            .publisher
             .as_ref()
-            .expect("publisher initialized above")
-            .enqueue(Arc::clone(directory), Arc::clone(report))
+            .expect("publisher initialized above"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_publication_for_test(
+        &mut self,
+    ) -> (
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::SyncSender<()>,
+    ) {
+        self.publisher().unwrap().pause_for_test()
     }
 
     fn retain(&mut self, report: Arc<Report>) {
@@ -559,17 +589,17 @@ mod tests {
     }
     #[test]
     fn publication_writes_one_new_file_per_completed_operation() {
-        let directory = std::env::temp_dir().join(format!(
-            "spektrafilm-gui-publication-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&directory).unwrap();
-        let mut diagnostics = Diagnostics::default();
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path().to_path_buf();
+        let mut diagnostics = Diagnostics {
+            mode: CollectionMode::Summary,
+            ..Diagnostics::default()
+        };
         diagnostics.publish_completed_to(directory.clone());
-        let preview = Operation::new(OperationKind::Preview, CollectionMode::Summary);
+        let preview = diagnostics.begin(OperationKind::Preview);
         let preview_id = preview.id();
         diagnostics.finish(preview, Outcome::Succeeded);
-        let scan = Operation::new(OperationKind::Scan, CollectionMode::Summary);
+        let scan = diagnostics.begin(OperationKind::Scan);
         let scan_id = scan.id();
         diagnostics.finish(scan, Outcome::Succeeded);
         wait_for_publications(&diagnostics);
@@ -583,28 +613,39 @@ mod tests {
             assert_eq!(report.operation.id, id);
             assert_eq!(report.operation.kind, kind);
             assert_eq!(report.operation.outcome, Outcome::Succeeded);
+            assert!(
+                directory
+                    .join(format!("operation-{id}.json.progress.jsonl"))
+                    .is_file()
+            );
         }
         assert!(diagnostics.take_publication_error().is_none());
         // Every completed operation publishes its own file; none replaces another.
-        diagnostics.finish(
-            Operation::new(OperationKind::Preview, CollectionMode::Summary),
-            Outcome::Succeeded,
-        );
+        let preview = diagnostics.begin(OperationKind::Preview);
+        diagnostics.finish(preview, Outcome::Succeeded);
         wait_for_publications(&diagnostics);
-        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 3);
-        std::fs::remove_dir_all(&directory).unwrap();
+        assert_eq!(
+            std::fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path
+                    .extension()
+                    .is_some_and(|extension| extension == "json"))
+                .count(),
+            3,
+        );
+        diagnostics.shutdown();
     }
     #[test]
     fn publication_failure_surfaces_without_losing_the_report() {
-        let mut diagnostics = Diagnostics::default();
-        diagnostics.publish_completed_to(std::env::temp_dir().join(format!(
-            "spektrafilm-gui-missing-publication-{}",
-            std::process::id()
-        )));
-        diagnostics.finish(
-            Operation::new(OperationKind::Preview, CollectionMode::Summary),
-            Outcome::Succeeded,
-        );
+        let directory = tempfile::tempdir().unwrap();
+        let mut diagnostics = Diagnostics {
+            mode: CollectionMode::Summary,
+            ..Diagnostics::default()
+        };
+        diagnostics.publish_completed_to(directory.path().join("missing"));
+        let operation = diagnostics.begin(OperationKind::Preview);
+        diagnostics.finish(operation, Outcome::Succeeded);
         wait_for_publications(&diagnostics);
         assert!(diagnostics.take_publication_error().is_some());
         assert_eq!(diagnostics.history.len(), 1);
@@ -613,5 +654,58 @@ mod tests {
             Outcome::Succeeded
         );
         assert!(diagnostics.take_publication_error().is_none());
+    }
+
+    #[test]
+    fn begin_captures_collection_mode_before_workers_clone_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.publish_completed_to(directory.path().to_path_buf());
+        let off = diagnostics.begin(OperationKind::Preview);
+        assert_eq!(off.mode(), CollectionMode::Off);
+        assert!(diagnostics.publisher.is_none());
+        diagnostics.mode = CollectionMode::Summary;
+        let collected = diagnostics.begin(OperationKind::Scan);
+        let id = collected.id();
+        let context = collected.context();
+        diagnostics.mode = CollectionMode::Off;
+        let scope = context.scope(
+            "simulation",
+            spektrafilm_core::telemetry::ObservationKind::Phase,
+            spektrafilm_core::telemetry::Purpose::Image,
+        );
+        scope.finish(Outcome::Succeeded);
+        diagnostics.finish(off, Outcome::Succeeded);
+        diagnostics.finish(collected, Outcome::Cancelled);
+        wait_for_publications(&diagnostics);
+        assert_eq!(diagnostics.history.len(), 1);
+        assert_eq!(diagnostics.history[0].operation.id, id);
+        assert_eq!(diagnostics.history[0].operation.outcome, Outcome::Cancelled);
+        assert_eq!(
+            diagnostics.history[0]
+                .configuration
+                .collection_mode_requested,
+            CollectionMode::Summary,
+        );
+        assert!(
+            directory
+                .path()
+                .join(format!("operation-{id}.json"))
+                .is_file()
+        );
+        let progress = std::fs::read_to_string(
+            directory
+                .path()
+                .join(format!("operation-{id}.json.progress.jsonl")),
+        )
+        .unwrap();
+        assert!(
+            progress
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .any(|record| record["event"] == "end" && record["outcome"] == "cancelled")
+        );
+        assert!(diagnostics.take_publication_error().is_none());
+        diagnostics.shutdown();
     }
 }

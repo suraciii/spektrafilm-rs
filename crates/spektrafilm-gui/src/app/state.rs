@@ -99,6 +99,8 @@ pub(crate) struct App {
     /// surfaces success/failure in `status` when the worker thread
     /// completes. Joined eagerly to release the thread.
     pub(crate) export_job: Option<ExportJob>,
+    /// Captured retained Saves waiting nonblockingly for their diagnostic begin.
+    pub(crate) pending_saves: std::collections::VecDeque<super::export::PendingSave>,
     /// Transient control-search filter. Not persisted.
     pub(crate) filter: String,
     /// Restore-factory-default confirmation is open. Transient, never
@@ -320,6 +322,7 @@ impl App {
             input_view_job: None,
             input_command_job: None,
             export_job: None,
+            pending_saves: std::collections::VecDeque::new(),
             status: startup_error
                 .map(|error| {
                     crate::app::Message::new("operations.startup_error")
@@ -678,10 +681,16 @@ mod tests {
         paths
     }
 
-    /// Every published file parses as a valid report of the startup preview,
-    /// collected under the automatic Summary default. Returns the file list.
+    /// Every published `.json` file parses as a startup preview report,
+    /// collected under the automatic Summary default. Sidecars are independent.
     fn assert_preview_reports(directory: &Path) -> Vec<PathBuf> {
-        let paths = sorted_entries(directory);
+        let paths: Vec<_> = sorted_entries(directory)
+            .into_iter()
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .collect();
         let mut succeeded = false;
         for path in &paths {
             let report = Report::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();

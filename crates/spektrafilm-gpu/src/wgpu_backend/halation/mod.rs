@@ -1,3 +1,4 @@
+use super::blur::{GaussianBuffers, GaussianScratch};
 use super::grain::raster::{RasterStorage, paged_transport};
 use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged_with_scratch};
 use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, pointwise_job};
@@ -92,21 +93,35 @@ fn per_channel_job(
     )
 }
 
+/// Whether scatter or an effective bounce actually constructs a Gaussian job.
+pub(super) fn uses_gaussian(hp: &spektrafilm_backend::HalationGpuParams) -> bool {
+    hp.scatter_amount > 0.0
+        || (hp.halation_n_bounces >= 1
+            && hp.halation_a_tot.iter().any(|&value| value > 0.0)
+            && (0..3).any(|c| hp.halation_a_tot[c] != 0.0 && hp.halation_first_sigma_px[c] > 0.0))
+}
+
 pub(super) fn build_halation_state(
     hp: &spektrafilm_backend::HalationGpuParams,
     width: u32,
     height: u32,
     buf_b: &(impl RasterStorage + ?Sized),
+    gaussian_scratch: &mut GaussianScratch,
     backend: &WgpuBackend,
 ) -> Result<HalationState, String> {
     let n_pixels = (width as usize) * (height as usize);
     let img_bytes = image_transport_bytes(backend, width, height, "halation")?;
     let source_pages = buf_b.pages();
     let buf_b = &source_pages;
-    let buf_c = paged_transport(backend, img_bytes, "halation_c")?;
+    let GaussianBuffers {
+        intermediate: blur_scratch,
+        output: buf_c,
+    } = if uses_gaussian(hp) {
+        gaussian_scratch.buffers(backend, width, height)?
+    } else {
+        GaussianBuffers::default()
+    };
     let buf_d = paged_transport(backend, img_bytes, "halation_d")?;
-    // All sequential core/tail/bounce jobs share this physically paged raster.
-    let blur_scratch = paged_transport(backend, img_bytes, "halation_blur_scratch")?;
 
     // ── Scatter ────────────────────────────────────────────────────────
     // The reference skips a channel only when its core and tail widths are

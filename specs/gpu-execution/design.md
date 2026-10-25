@@ -165,7 +165,19 @@ The GPU backend MUST validate buffer arithmetic, binding sizes, workgroup limits
 
 Spatial tiles MUST include the context required by the actual kernel and route. Grain tiles MUST retain absolute film coordinates and actual rounded output footprints. Global measurements MUST use the complete input once and remain invariant under tile selection.
 
-Intermediate GPU storage MAY be reused only after its commands complete.
+Intermediate GPU storage MAY be reused only after prior commands finish accessing it. Queue dependencies MAY establish this ordering without host waits.
+
+Command-count limits MUST be paired with a bound on unfinished submissions and their retained transient resources. Work producers MUST apply completion backpressure before exceeding that bound.
+
+Partial resource retirement MUST NOT mark a complete image batch ready.
+
+Gaussian gathering and scattering MUST address target-channel samples on the device without changing sample bits. Copy-only or binding-incompatible storage MAY use bounded contiguous device copies for adaptation, but host commands MUST NOT be generated for individual pixels or filter taps.
+
+Gaussian transport MUST preserve the reference support, endpoint policy, and axis order. Recursive filter state MUST continue through forward and backward page boundaries without restarting.
+
+Sequential Gaussian jobs MAY share operation-owned intermediate and output pages sized for the largest active geometry. Each job MUST retain its exact logical extent and keep live sources and combine accumulators distinct from reusable output.
+
+Scratch reuse MUST preserve dependent reads and writes in queue order. Mutable scratch MUST NOT be shared between operations.
 
 Spektra raster storage windows preserve the original flattened pixel identity for fast statistics. Sequential MT19937 retains each plane's generator across windows and completes the complete-source Poisson walk before the binomial walk; a storage boundary never reseeds a plane. Multiplicative grain USM reduces complete-source mass before applying normalization.
 

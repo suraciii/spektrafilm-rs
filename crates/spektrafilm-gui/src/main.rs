@@ -19,7 +19,7 @@ use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::presets::workflow_default;
 use spektrafilm_core::profile;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
-use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome, SourceRender};
+use spektrafilm_core::telemetry::{OperationKind, Outcome, SourceRender};
 use spektrafilm_math::image::ImageBuf;
 mod app;
 mod backend;
@@ -183,6 +183,7 @@ fn main() -> eframe::Result<()> {
 mod telemetry_lifecycle_tests {
     use super::*;
     use spektrafilm_backend::telemetry::ObservationContext;
+    use spektrafilm_core::telemetry::Operation;
 
     fn scanner_app(config_root: &std::path::Path) -> App {
         let mut app = App::new_with_browser_path(
