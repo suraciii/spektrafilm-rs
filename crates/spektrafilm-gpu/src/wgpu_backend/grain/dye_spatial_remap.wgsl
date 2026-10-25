@@ -14,10 +14,8 @@ const WORKGROUP: u32 = 256u;
 @group(0) @binding(2) var<storage, read_write> cell_layers: array<f32>;
 
 // Second rectangle's start relative to the cell start: `x * P - i * h`.
-fn pixel_gap(x: i32, cell: i32) -> vec2<u32> {
-    return fx_sub(
-        fx_signed_mul(x, p.pitches.zw),
-        fx_signed_mul(cell, p.pitches.xy));
+fn pixel_gap(x: i32, cell_start: vec2<u32>) -> vec2<u32> {
+    return fx_sub(fx_signed_mul(x, p.pitches.zw), cell_start);
 }
 
 // First source pixel of the conservative window of one cell. The estimate
@@ -42,18 +40,20 @@ fn main(
     let cy = index / ext_cols;
     let i = bitcast<i32>(p.cell_rect.x) + i32(cx);
     let j = bitcast<i32>(p.cell_rect.y) + i32(cy);
+    let cell_x = fx_signed_mul(i, p.pitches.xy);
+    let cell_y = fx_signed_mul(j, p.pitches.xy);
     let px0 = pixel_window_start(i);
     let py0 = pixel_window_start(j);
     let span = p.ratios.x + 5u;
     var acc: array<vec3<f32>, 3>;
     for (var wy = 0u; wy < span; wy = wy + 1u) {
         let y = py0 + i32(wy);
-        let weight_y = overlap_weight(pixel_gap(y, j), p.widths.w, p.widths.z);
+        let weight_y = overlap_weight(pixel_gap(y, cell_y), p.widths.w, p.widths.z);
         if (weight_y == 0.0) { continue; }
         let sy = u32(clamp(y, 0, i32(p.dims.y) - 1) - i32(p.source_rect.y));
         for (var wx = 0u; wx < span; wx = wx + 1u) {
             let x = px0 + i32(wx);
-            let weight_x = overlap_weight(pixel_gap(x, i), p.widths.w, p.widths.z);
+            let weight_x = overlap_weight(pixel_gap(x, cell_x), p.widths.w, p.widths.z);
             if (weight_x == 0.0) { continue; }
             let sx = u32(clamp(x, 0, i32(p.dims.x) - 1) - i32(p.source_rect.x));
             let weight = weight_x * weight_y;

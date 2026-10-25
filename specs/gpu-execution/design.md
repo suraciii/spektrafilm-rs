@@ -46,6 +46,10 @@ Device image ownership MUST represent dimensions, sample domain, color and trans
 
 The operation MUST retain device ownership through input numerical preparation, film and scan work, output composition, and final saving or display conversion. Save MUST consume retained output in its actual storage domain without rerendering. A final host materialization for the native writer or a diagnostic output is an explicit handoff, not an internal stage boundary.
 
+An operation MUST hand off its owned final image pages without duplicating the image solely for publication. Crop extraction MAY allocate a separate carrier. Later operations MUST NOT modify retained input or previously published output.
+
+Dye density readout pages MUST directly supply downstream density consumers. Optional cell-spectral scan response MAY retain a separate RGB destination.
+
 A selected GPU operation MUST NOT materialize an intermediate on the host to execute CPU image arithmetic.
 
 Named diagnostic taps use the same typed `Tap` boundaries on CPU and GPU:
@@ -175,9 +179,13 @@ Gaussian gathering and scattering MUST address target-channel samples on the dev
 
 Gaussian transport MUST preserve the reference support, endpoint policy, and axis order. Recursive filter state MUST continue through forward and backward page boundaries without restarting.
 
+Gaussian page planning SHOULD balance serial coordinate work against independent lines. A complete supported raster that fits binding, coordinate, and line-state limits SHOULD remain one page.
+
 Sequential Gaussian jobs MAY share operation-owned intermediate and output pages sized for the largest active geometry. Each job MUST retain its exact logical extent and keep live sources and combine accumulators distinct from reusable output.
 
 Scratch reuse MUST preserve dependent reads and writes in queue order. Mutable scratch MUST NOT be shared between operations.
+
+Source working pages MAY supply an equal-geometry tail after their final source read. Reuse MUST preserve live inputs and each pass's required source and destination separation.
 
 Spektra raster storage windows preserve the original flattened pixel identity for fast statistics. Sequential MT19937 retains each plane's generator across windows and completes the complete-source Poisson walk before the binomial walk; a storage boundary never reseeds a plane. Multiplicative grain USM reduces complete-source mass before applying normalization.
 

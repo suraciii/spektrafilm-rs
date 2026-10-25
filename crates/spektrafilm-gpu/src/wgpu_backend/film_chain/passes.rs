@@ -235,7 +235,11 @@ impl WgpuBackend {
                     .map(|grain| (grain.width, grain.height))
             })
             .unwrap_or((image_width, image_height));
-        let print_input = if dye_state.is_some() || fotufilm_state.is_some() {
+        let print_input = if p.inject == Tap::CmyFilm {
+            buf_a.clone()
+        } else if let Some(state) = dye_state.as_ref() {
+            state.output_pages()
+        } else if fotufilm_state.is_some() {
             self.allocate_image_pages(print_width, print_height, "field_density")?
         } else {
             buf_a.clone()
@@ -244,16 +248,18 @@ impl WgpuBackend {
         let tail_height = print_height / p.grain_dye_aperture.unwrap_or(1);
         let tail_buf =
             |label: &str, width: u32, height: u32| self.allocate_image_pages(width, height, label);
-        let changed = dye_state.is_some() || fotufilm_state.is_some();
-        let tail_a = if changed {
-            tail_buf("field_tail_density", tail_width, tail_height)?
-        } else {
+        // Source work pages are no longer read after field formation. Reuse
+        // them in queue order only when the tail has the same logical extent.
+        let same_tail = (tail_width, tail_height) == (image_width, image_height);
+        let tail_a = if same_tail {
             buf_a.clone()
-        };
-        let tail_b = if changed {
-            tail_buf("field_tail_rgb", tail_width, tail_height)?
         } else {
+            tail_buf("field_tail_density", tail_width, tail_height)?
+        };
+        let tail_b = if same_tail {
             buf_b.clone()
+        } else {
+            tail_buf("field_tail_rgb", tail_width, tail_height)?
         };
         let print_output = if p.grain_dye_aperture.is_some() {
             tail_buf("field_fine_exposure", print_width, print_height)?
@@ -940,34 +946,30 @@ impl WgpuBackend {
                 execute: Box::new(move || gs.submit(self)),
             });
         }
-        // 3d. Film-grain Dye: the device field on the developed density in
-        //     buf_a, in the density-fence position (after the film density
-        //     curve and DIR, before printing). The pass resolves the
-        //     conditional field and writes its readout back into the same
-        //     buffer, so the pre-bound print bind groups keep addressing it.
-        //     Its bounded status is checked after the run and before the
-        //     output is published below.
+        // 3d. Dye forms its field after development and DIR. Downstream
+        // consumers already bind its output pages; only the optional scanner
+        // cell response needs a separate RGB destination. Check the bounded
+        // status after execution and before publishing any carrier.
         let dye_status = dye_state.as_ref().map(|state| state.status_buffer());
         if let Some(dye_state) = dye_state {
-            let destination = film_density_output.clone();
             let scan_destination =
                 (p.grain_dye_cell_spectral && p.scan_film).then(|| tail_b.clone());
             stages.push(super::super::pipe::ChainStage::Device {
                 name: "grain_dye",
                 execute: Box::new(move || {
                     dye_state.submit(self)?;
-                    let payload = super::device_image::BufferPayload::from_pages(
-                        self.backend_id(),
-                        dye_state.output_pages(),
-                        dye_state.width,
-                        dye_state.height,
-                    );
-                    let mut copy = super::super::grain::raster::RasterCommands::default();
-                    copy.copy(&payload.pages, 0, &destination, 0, payload.bytes);
                     if let Some(scan) = scan_destination {
+                        let payload = super::device_image::BufferPayload::from_pages(
+                            self.backend_id(),
+                            dye_state.output_pages(),
+                            dye_state.width,
+                            dye_state.height,
+                        );
+                        let mut copy = super::super::grain::raster::RasterCommands::default();
                         copy.copy(&payload.pages, 0, &scan, 0, payload.bytes);
+                        copy.submit(self)?;
                     }
-                    copy.submit(self)
+                    Ok(())
                 }),
             });
         }
@@ -1312,21 +1314,9 @@ impl WgpuBackend {
         let (pages, width, height) = if let Some(rect) = p.grain_dye_crop {
             (self.dye_crop_pages(&payload, rect)?, rect[2], rect[3])
         } else {
-            let pages =
-                self.allocate_image_pages(final_output.1, final_output.2, "chain_result")?;
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            for page in &pages {
-                self.copy_samples_to(
-                    &mut encoder,
-                    &payload,
-                    u64::from(page.first_pixel) * 3,
-                    u64::from(page.n_pixels) * 3,
-                    &page.buffer,
-                    0,
-                )?;
-            }
-            self.queue.submit(Some(encoder.finish()));
-            (pages, final_output.1, final_output.2)
+            // These pages belong to this invocation, not a reusable scratch
+            // pool. The retained carrier owns them after the chain is dropped.
+            (payload.pages, final_output.1, final_output.2)
         };
         Ok(self.retain_image_pages(
             pages,
@@ -1661,7 +1651,7 @@ mod tests {
         p.scan_illuminant = &light;
         p.print_sensitivity = &spectral;
         p.collect = Tap::LogEFilm;
-        let source = ImageBuf::from_data(1, 1, vec![0.1 as _, 1.0 as _, 10.0 as _]);
+        let source = ImageBuf::from_data(1, 1, f32_to_scalars(vec![0.1, 1.0, 10.0]));
         let input = backend
             .retain_image(
                 &source,
@@ -1815,6 +1805,150 @@ mod tests {
         }));
         let error = backend.run_film_chain_retained(&exposure, &p).unwrap_err();
         assert!(error.contains("CPU image-stage fence"), "{error}");
+    }
+
+    #[test]
+    fn dye_carriers_preserve_segmented_routes_crops_and_prior_outputs() {
+        use spektrafilm_backend::dye_params::{
+            DyeChannelParts, DyeChannelTablesGpu, DyeGpuParams, DyeReadoutGrid,
+        };
+
+        let gpu = crate::test_support::adapter();
+        let knots = [-1.0, 0.0, 1.0];
+        let curves = [[0.0; 3], [1.0; 3], [2.0; 3]];
+        let spectral = [[0.1, 0.2, 0.3]; 81];
+        let base = [0.0; 81];
+        let light = [1.0; 81];
+        let sensitivity = [[0.01, 0.02, 0.03]; 81];
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let chain_params = |width, height| {
+            let mut p = params(width, height);
+            p.film_log_exposure = &knots;
+            p.film_density_curves_normalized = &curves;
+            p.print_log_exposure = &knots;
+            p.print_density_curves = &curves;
+            p.film_channel_density = &spectral;
+            p.print_channel_density = &spectral;
+            p.film_base_density = &base;
+            p.print_base_density = &base;
+            p.print_illuminant = &light;
+            p.scan_illuminant = &light;
+            p.print_sensitivity = &sensitivity;
+            p.scan_xyz_to_rgb = &identity;
+            p.scan_cat = &identity;
+            p.scan_base_xyz_to_rgb = &identity;
+            p
+        };
+        let retain = |image: &ImageBuf, domain| {
+            gpu.retain_image(
+                image,
+                &RetainedImageMeta {
+                    width: image.width,
+                    height: image.height,
+                    domain,
+                    precision: Precision::host(),
+                    space: &colorspace::SRGB,
+                    pixel_pitch_um: Some(1.0),
+                },
+            )
+            .unwrap()
+        };
+        let host = ImageBuf::from_data(
+            9,
+            7,
+            (0..9 * 7 * 3)
+                .map(|i| spektrafilm_math::precision::from_f64(-0.75 + f64::from(i % 17) / 64.0))
+                .collect(),
+        );
+        let input = retain(&host, SampleDomain::LogExposure);
+        let mut p = chain_params(9, 7);
+        p.inject = Tap::LogEFilm;
+        p.collect = Tap::CmyFilm;
+        let density = gpu
+            .run_film_chain_retained(&input, &p)
+            .unwrap()
+            .to_host(gpu.backend())
+            .unwrap();
+        let dye_knots = [0.0, 1.0];
+        let inverse = [1.0];
+        let zero = [0.0; 2];
+        for (width, height) in [(9, 7), (11, 9)] {
+            let dye = DyeGpuParams {
+                tables: DyeChannelTablesGpu::pack(std::array::from_fn(|_| DyeChannelParts {
+                    min: 0.1,
+                    cap_total: 1.0,
+                    cap: [1.0, 0.0, 0.0],
+                    frac: [1.0, 0.0, 0.0],
+                    area: [0.2; 3],
+                    uniformity: 0.0,
+                    lookup_sign: 1.0,
+                    knots: &dye_knots,
+                    inv_dx: &inverse,
+                    layers: [&dye_knots, &zero, &zero],
+                })),
+                cell_um: 1.0,
+                taps: vec![0.25, 0.5, 0.25],
+                source_pitch_um: 1.0,
+                grid: DyeReadoutGrid {
+                    origin_um: [-0.25, 0.375],
+                    pitch_um: [0.875, 1.125],
+                    width,
+                    height,
+                },
+                seed: 0x1234_5678_9abc_def0,
+                channel_correlation: 0.3,
+                expectation: false,
+            };
+            let expected_field = gpu.dye_field(&density, &dye).unwrap();
+            let mut downstream = chain_params(width, height);
+            downstream.inject = Tap::CmyFilm;
+            let field = retain(&expected_field, SampleDomain::Density);
+            let expected = gpu
+                .run_film_chain_retained(&field, &downstream)
+                .unwrap()
+                .to_host(gpu.backend())
+                .unwrap();
+            downstream.grain_dye = Some(dye.clone());
+            let resumed = gpu.run_film_chain_retained(&field, &downstream).unwrap();
+            assert_eq!(resumed.to_host(gpu.backend()).unwrap().data, expected.data);
+            p.grain_dye = Some(dye);
+            p.collect = Tap::RgbOut;
+            let result = gpu.run_film_chain_retained(&input, &p).unwrap();
+            assert_eq!(result.to_host(gpu.backend()).unwrap().data, expected.data);
+
+            p.collect = Tap::CmyFilm;
+            let field_result = gpu.run_film_chain_retained(&input, &p).unwrap();
+            assert_eq!(field_result.domain(), SampleDomain::Density);
+            assert_eq!(
+                field_result.to_host(gpu.backend()).unwrap().data,
+                expected_field.data
+            );
+            p.collect = Tap::RgbOut;
+            p.grain_dye_crop = Some([1, 1, width - 2, height - 2]);
+            let crop = gpu.run_film_chain_retained(&input, &p).unwrap();
+            let expected_crop: Vec<_> = (1..height - 1)
+                .flat_map(|y| {
+                    let first = (y * width + 1) as usize * 3;
+                    expected.data[first..first + (width - 2) as usize * 3]
+                        .iter()
+                        .copied()
+                })
+                .collect();
+            assert_eq!((crop.width(), crop.height()), (width - 2, height - 2));
+            assert_eq!(crop.to_host(gpu.backend()).unwrap().data, expected_crop);
+
+            p.grain_dye_crop = None;
+            p.grain_dye.as_mut().unwrap().seed += 1;
+            let next = gpu.run_film_chain_retained(&input, &p).unwrap();
+            assert_ne!(next.to_host(gpu.backend()).unwrap().data, expected.data);
+            assert_eq!(result.to_host(gpu.backend()).unwrap().data, expected.data);
+            assert_eq!(
+                field_result.to_host(gpu.backend()).unwrap().data,
+                expected_field.data
+            );
+            assert_eq!(crop.to_host(gpu.backend()).unwrap().data, expected_crop);
+            assert_eq!(input.to_host(gpu.backend()).unwrap().data, host.data);
+        }
     }
 
     #[test]

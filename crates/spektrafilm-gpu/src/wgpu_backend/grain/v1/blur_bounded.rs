@@ -7,6 +7,7 @@ use crate::wgpu_backend::grain::raster::SubmissionWindow;
 use crate::wgpu_backend::paged::ImagePage;
 
 const MAX_PAGE_COORDINATES: u32 = 4096;
+const TARGET_PAGE_COORDINATES: u32 = 64;
 const MAX_PAGE_VALUES: u32 = 65536;
 const MAX_COMMANDS_PER_SUBMIT: u32 = 128;
 
@@ -496,31 +497,19 @@ impl BoundedBlur {
                 let halo = 2 * radius;
                 let capacity = (page_bytes / 4) as u32;
                 let max_lines = (page_bytes / 12) as u32;
-                let (count, lines) = if vertical {
-                    let lines = (capacity / (1 + halo))
-                        .min(max_lines)
-                        .min(line_count)
-                        .max(1);
-                    (
-                        (capacity / lines)
-                            .saturating_sub(halo)
-                            .max(1)
-                            .min(length)
-                            .min(MAX_PAGE_COORDINATES),
-                        lines,
-                    )
-                } else {
-                    let count = length
-                        .min(capacity.saturating_sub(halo).max(1))
-                        .min(MAX_PAGE_COORDINATES);
-                    (
-                        count,
-                        (capacity / (count + halo))
-                            .min(max_lines)
-                            .min(line_count)
-                            .max(1),
-                    )
-                };
+                // Fill the page from the available independent lines before
+                // splitting coordinates. This keeps full-fit rasters together
+                // and avoids tiny serial chunks when a raster has few lines.
+                let target_count =
+                    TARGET_PAGE_COORDINATES.max((capacity / line_count).saturating_sub(halo));
+                let count = length
+                    .min(target_count)
+                    .min(MAX_PAGE_COORDINATES)
+                    .min(capacity.saturating_sub(halo).max(1));
+                let lines = (capacity / (count + halo))
+                    .min(max_lines)
+                    .min(line_count)
+                    .max(1);
                 let mut pages = Vec::new();
                 let mut line = 0;
                 while line < line_count {
@@ -1122,8 +1111,20 @@ mod tests {
     }
 
     #[test]
+    fn paged_fir_and_iir_match_reference_across_both_axis_batch_tails() {
+        compare(137, 131, [2.99, 3.0, 0.0], 4096);
+    }
+
+    #[test]
     fn gpu_transport_command_growth_and_cancelled_partial_state_reuse() {
         compare_with_reuse(129, 97, [3.0, 0.4, 0.0], 65536, true);
+    }
+
+    #[test]
+    fn narrow_rasters_bound_transport_and_preserve_cancelled_recurrence() {
+        for (width, height) in [(1, 65537), (65537, 1)] {
+            compare_with_reuse(width, height, [3.0, 0.0, 0.0], 262144, true);
+        }
     }
 }
 

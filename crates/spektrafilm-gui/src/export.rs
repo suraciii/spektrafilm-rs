@@ -314,8 +314,7 @@ fn format_size(bytes: u64) -> String {
 /// read-only value lines up with the editable rows' editors.
 fn editor_width(ui: &egui::Ui) -> f32 {
     ui.available_width()
-        .min(theme::WIDTH_COMBO_MAX)
-        .max(theme::WIDTH_COMBO_MIN)
+        .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX)
 }
 
 /// A read-only option row: product label and fixed value in the shared
@@ -399,8 +398,7 @@ impl ExportDialog {
             .show(ctx, |ui| {
                 let screen = ui.ctx().screen_rect();
                 let width = (screen.width() - 2.0 * theme::SPACE_4)
-                    .min(500.0)
-                    .max(theme::WIDTH_CONTROL_PANEL);
+                    .clamp(theme::WIDTH_CONTROL_PANEL, 500.0);
                 ui.set_min_width(width);
                 ui.set_max_width(width);
                 ui.set_max_height(screen.height() - 2.0 * theme::SPACE_4);
