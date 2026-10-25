@@ -104,12 +104,6 @@ fn main() -> Result<(), String> {
                 let mut p = base.clone();
                 p.io.output_color_space = space.into();
                 p.io.output_cctf_encoding = encoded;
-                // Every case except the FIR blur-support limit keeps the
-                // resident route: the capability-class stages the per-stage
-                // route used to own (camera diffusion, input transfer
-                // decoding, scanner/enlarger LUT acquisition) now run as
-                // assembled fences inside the chain.
-                let resident_expected = !matches!(case, "wide_blur");
                 match case {
                     "scan" => p.io.scan_film = true,
                     "geometry" => {
@@ -166,12 +160,11 @@ fn main() -> Result<(), String> {
                     Some(Tap::RgbOut),
                 )?;
                 let routed = pipeline.process(input.clone(), &gpu)?;
-                let resident = pipeline.process_resident_borrowed(&input, &gpu)?;
-                if resident.is_some() != resident_expected {
-                    return Err(format!(
-                        "{space}/{encoded}/{case}: unexpected resident route"
-                    ));
-                }
+                let resident = pipeline
+                    .process_resident_borrowed(&input, &gpu)?
+                    .ok_or_else(|| {
+                        format!("{space}/{encoded}/{case}: expected resident execution")
+                    })?;
                 for (label, output) in [("stages", &stages), ("routed", &routed)] {
                     let (max, mean) = difference(&reference, output)?;
                     let range = output
@@ -182,7 +175,7 @@ fn main() -> Result<(), String> {
                             (lo.min(v), hi.max(v))
                         });
                     println!(
-                        "space={space:?} encoded={encoded} case={case} path={label} geometry={}x{} range={range:?} max_abs={max:.9e} mean_abs={mean:.9e} resident={resident_expected}",
+                        "space={space:?} encoded={encoded} case={case} path={label} geometry={}x{} range={range:?} max_abs={max:.9e} mean_abs={mean:.9e} resident=true",
                         output.width, output.height
                     );
                     if max > BUDGET {
@@ -194,12 +187,10 @@ fn main() -> Result<(), String> {
                         return Err(format!("{case}: blank output"));
                     }
                 }
-                if let Some(resident) = resident {
-                    let (max, mean) = difference(&stages, &resident)?;
-                    println!("resident_vs_stages max_abs={max:.9e} mean_abs={mean:.9e}");
-                    if max > BUDGET {
-                        return Err(format!("{case}: resident drift {max}"));
-                    }
+                let (max, mean) = difference(&stages, &resident)?;
+                println!("resident_vs_stages max_abs={max:.9e} mean_abs={mean:.9e}");
+                if max > BUDGET {
+                    return Err(format!("{case}: resident drift {max}"));
                 }
                 if space == "sRGB" && !encoded {
                     if case == "plain" {

@@ -497,16 +497,11 @@ impl BoundedBlur {
                 let halo = 2 * radius;
                 let capacity = (page_bytes / 4) as u32;
                 let max_lines = (page_bytes / 12) as u32;
-                // Keep a full-fit support image together instead of multiplying
-                // transport work. Otherwise balance sequential work per line
-                // with parallel lines on both axes.
-                let target_count = if line_count <= max_lines
-                    && length <= (capacity / line_count).saturating_sub(halo)
-                {
-                    length
-                } else {
-                    TARGET_PAGE_COORDINATES
-                };
+                // Fill the page from the available independent lines before
+                // splitting coordinates. This keeps full-fit rasters together
+                // and avoids tiny serial chunks when a raster has few lines.
+                let target_count =
+                    TARGET_PAGE_COORDINATES.max((capacity / line_count).saturating_sub(halo));
                 let count = length
                     .min(target_count)
                     .min(MAX_PAGE_COORDINATES)
@@ -1123,6 +1118,13 @@ mod tests {
     #[test]
     fn gpu_transport_command_growth_and_cancelled_partial_state_reuse() {
         compare_with_reuse(129, 97, [3.0, 0.4, 0.0], 65536, true);
+    }
+
+    #[test]
+    fn narrow_rasters_bound_transport_and_preserve_cancelled_recurrence() {
+        for (width, height) in [(1, 65537), (65537, 1)] {
+            compare_with_reuse(width, height, [3.0, 0.0, 0.0], 262144, true);
+        }
     }
 }
 
