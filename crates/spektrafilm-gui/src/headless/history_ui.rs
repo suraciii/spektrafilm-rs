@@ -255,7 +255,7 @@ fn rotation_undo_redo_automatically_refreshes_viewable_and_saveable_output() {
         h.state_mut().viewer.set_zoom_percent(100.0);
         settle_animation(&mut h);
         let baseline = directory.path().join("rotated.tiff");
-        h.state_mut().save_to_path(&baseline);
+        save_retained(&mut h, &baseline);
         assert!(baseline.exists(), "{}", h.state().status);
         let rotated = image_io::load(&baseline).unwrap().image;
         assert_eq!((rotated.width, rotated.height), (80, 160));
@@ -276,7 +276,7 @@ fn rotation_undo_redo_automatically_refreshes_viewable_and_saveable_output() {
             assert!(h.state().image.as_ref().unwrap().same_source(&source));
             assert!(!h.get_by_label("Modified").node().is_disabled());
             let saved = directory.path().join(format!("{action}.tiff"));
-            h.state_mut().save_to_path(&saved);
+            save_retained(&mut h, &saved);
             assert!(saved.exists(), "{}", h.state().status);
             let output = image_io::load(&saved).unwrap().image;
             assert_eq!((output.width, output.height), dimensions);
@@ -289,7 +289,7 @@ fn rotation_undo_redo_automatically_refreshes_viewable_and_saveable_output() {
             h.state_mut().viewer.settings.layer = crate::display::ViewLayer::Output;
             settle_animation(&mut h);
             let viewed = directory.path().join(format!("{action}-viewed.tiff"));
-            h.state_mut().save_to_path(&viewed);
+            save_retained(&mut h, &viewed);
             super::panels::assert_float_images_equal(&saved, &viewed);
         }
         eframe::App::on_exit(h.state_mut(), None);

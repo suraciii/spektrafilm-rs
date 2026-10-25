@@ -147,6 +147,10 @@ fn on_exit_cancels_and_joins_staged_export_without_publication() {
     let export_reports: Vec<_> = files(&reports)
         .into_iter()
         .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .filter(|path| {
             let report: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
             report["operation"]["kind"] == "export"

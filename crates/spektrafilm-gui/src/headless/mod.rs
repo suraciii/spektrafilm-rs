@@ -538,6 +538,11 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
     }
 }
 
+fn save_retained(h: &mut Harness<'_, App>, path: &Path) {
+    h.state_mut().save_to_path(path);
+    wait_until(h, |app| app.pending_saves.is_empty());
+}
+
 /// Wait for the production input worker, including its UI-side commit callback.
 fn await_input(h: &mut Harness<'_, App>) {
     if h.state().input_pending() {
@@ -784,7 +789,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         assert_eq!(h.state().output_image.as_ref().unwrap().data, preview.data);
     }
     let save_path = s.directory.path().join("retained.png");
-    h.state_mut().save_to_path(&save_path);
+    save_retained(h, &save_path);
     assert!(
         h.state()
             .status
@@ -1373,7 +1378,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     assert_eq!(restored.params.scanner, accepted_params.scanner);
     eframe::App::on_exit(&mut restored, None);
     let save_path = s.directory.path().join("scanner-preview.png");
-    h.state_mut().save_to_path(&save_path);
+    save_retained(h, &save_path);
     let expected = image_io::convert_image(
         &accepted_output,
         &h.state().output_color_space,

@@ -46,7 +46,7 @@ The UI MUST NOT rank nested phases as independent costs or diagnose an unmeasure
 
 The GUI MUST retain the latest 20 terminal reports in memory, newest first. It MUST label superseded operations separately from accepted output. The retained output MUST keep a small render reference independently of history eviction.
 
-Save MUST identify that source render and state whether its diagnostic report was collected. Closing the application MUST discard report history; closing during work MUST finalize reachable cancellation observations before releasing worker-owned records. Abrupt process termination need not produce a terminal report.
+Save MUST identify that source render and state whether its diagnostic report was collected. Closing the application MUST discard report history; closing during work MUST finalize reachable cancellation observations before releasing worker-owned records. Abrupt termination MAY leave only an incomplete progress journal.
 
 Automatic writing MUST publish each collected terminal report as a new `operation-<id>.json` file in the session directory. `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` MAY override the automatic directory for controlled launches without changing the collection default.
 
@@ -62,7 +62,7 @@ A protected-path collision or invalid option combination MUST be rejected before
 
 CLI report publication MUST create a new file atomically and MUST NOT replace an existing destination, including one created by another process after validation. GUI report saving MAY replace an existing file only after the normal save-dialog overwrite confirmation. Report persistence MUST NOT affect image publication.
 
-Serialization and report writing occur after the operation terminal boundary and MUST NOT enter image operation duration.
+Final report serialization and writing occur after the operation terminal boundary and MUST NOT enter image operation duration. Live progress persistence follows [Live progress](#live-progress).
 
 A report MUST contain a schema version, application build identity, operation identity, effective execution configuration, dimensions, timing observations, GPU work observations, and measurement availability. Report fields and units are defined in [metrics](metrics/spec.md). Operation identifiers MUST be local correlation values, not persistent user or machine identifiers.
 
@@ -73,6 +73,28 @@ Summary collection MUST include operation duration, phase durations, execution p
 Reports MUST remain valid for historical and explicit CPU execution, WGPU resident execution, and WGPU per-stage execution with CPU or GPU stages. Historical mixed-path validity MUST NOT authorize CPU image stages or a CPU restart after GPU selection under the [backend-selection contract](../gpu-execution/spec.md#backend-selection). Save MUST report writing costs without claiming a new simulation.
 
 A report MUST distinguish render output configuration from file saving configuration.
+
+## Live progress
+
+Each collected operation MUST expose a bounded local progress journal before its image work starts. The journal MUST remain readable while the operation is running, including when image work stalls before a terminal report exists.
+
+| Surface | Progress destination |
+| --- | --- |
+| CLI `--diagnostics FILE` | Append `.progress.jsonl` to the full report filename |
+| GUI automatic recording | `operation-<id>.json.progress.jsonl` in the session report directory |
+| Collection `off` | No progress file or writer |
+
+Progress MUST identify the operation and elapsed time. It MUST expose the current coarse phase and stage, the most recent scope begin and end, and a terminal outcome when observed. It MUST NOT claim instruction-level sampling or GPU completion that was not observed.
+
+Progress collection MUST NOT wait for file I/O or an external consumer on image threads. Overload MUST retain bounded storage and expose dropped events instead of blocking image work.
+
+The progress destination MUST obey the report destination's local-file and protected-path rules. A protected alias or invalid destination MUST be rejected before CLI image work. Creating a progress file MUST NOT follow a symlink or replace an existing destination.
+
+Progress I/O failures MUST produce a separate frontend diagnostic without changing the image outcome or preventing final report publication. A CLI progress failure MUST use stderr and MUST NOT alter machine-readable stdout.
+
+Normal operation completion MUST drain terminal progress before publishing the final report. Normal shutdown MUST flush accepted progress writes. Missing terminal progress MUST mean incomplete observation, never successful completion.
+
+Progress journals MUST use the privacy allowlist and [progress record semantics](metrics/spec.md#live-progress-records). A completed report remains the authoritative source for measured totals and detailed observations.
 
 ## Privacy and failure
 

@@ -114,7 +114,7 @@ fn original_modified_switching_preserves_adjustments_view_and_saved_exported_pix
     let ctx = h.ctx.clone();
     let save_before = s.directory.path().join("modified-save.exr");
     let export_before = s.directory.path().join("modified-export.exr");
-    h.state_mut().save_to_path(&save_before);
+    save_retained(h, &save_before);
     h.state_mut()
         .start_export_to_path(&ctx, options.clone(), &export_before);
     wait_until(h, |app| app.export_job.is_none());
@@ -162,7 +162,7 @@ fn original_modified_switching_preserves_adjustments_view_and_saved_exported_pix
 
     let save_after = s.directory.path().join("original-save.exr");
     let export_after = s.directory.path().join("original-export.exr");
-    h.state_mut().save_to_path(&save_after);
+    save_retained(h, &save_after);
     h.state_mut()
         .start_export_to_path(&ctx, options, &export_after);
     wait_until(h, |app| app.export_job.is_none());

@@ -73,6 +73,32 @@ impl Operation {
         self.context.clone()
     }
 
+    /// Subscribe before handing any context to a worker. Never clones a report.
+    pub fn progress(&mut self) -> Option<super::ProgressReceiver> {
+        let receiver = self.context.progress()?;
+        Some(super::ProgressReceiver::new(
+            self.id,
+            self.kind,
+            self.context.root_id(),
+            receiver,
+        ))
+    }
+
+    pub fn progress_ready(&self) -> bool {
+        self.context.progress_ready()
+    }
+
+    /// Wait on an image worker until durable begin or a separate diagnostic failure.
+    pub fn wait_for_progress(&self) {
+        self.context.wait_for_progress();
+    }
+
+    /// Return false if cancelled while awaiting diagnostic readiness. True admits
+    /// image work after durable begin or a separate diagnostic failure.
+    pub fn wait_for_progress_or_cancel(&self, cancelled: impl FnMut() -> bool) -> bool {
+        self.context.wait_for_progress_or_cancel(cancelled)
+    }
+
     pub fn scope(
         &self,
         name: &'static str,
@@ -442,6 +468,82 @@ impl SourceRender {
             diagnostics_collected,
             color_space,
             transfer_encoded,
+        }
+    }
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::sync_channel,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn cancellation_and_supersession_interrupt_unready_gates_without_poisoning_successors() {
+        for outcome in [Outcome::Cancelled, Outcome::Superseded] {
+            let mut operation = Operation::new(OperationKind::Preview, CollectionMode::Summary);
+            let held_receiver = operation.progress().unwrap();
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let worker_cancelled = Arc::clone(&cancelled);
+            let (entered, entering) = sync_channel(1);
+            let (finished, completion) = sync_channel(1);
+            let worker = std::thread::spawn(move || {
+                let mut entered = Some(entered);
+                let admitted = operation.wait_for_progress_or_cancel(|| {
+                    if let Some(entered) = entered.take() {
+                        entered.send(()).unwrap();
+                    }
+                    worker_cancelled.load(Ordering::SeqCst)
+                });
+                assert!(
+                    !admitted,
+                    "cancelled work must not cross the image boundary"
+                );
+                assert!(
+                    !operation.progress_ready(),
+                    "receiver must remain held and unready"
+                );
+                finished.send(operation.finish(outcome).unwrap()).unwrap();
+            });
+            entering.recv_timeout(Duration::from_secs(30)).unwrap();
+            cancelled.store(true, Ordering::SeqCst);
+            let report = completion.recv_timeout(Duration::from_secs(30)).unwrap();
+            worker.join().unwrap();
+            assert_eq!(report.operation.outcome, outcome);
+            assert!(report.diagnostic_issues.is_empty());
+            assert!(report.phases.is_empty());
+            report.to_json().unwrap();
+
+            // Keep the old receiver unready while a fresh operation accepts a
+            // durable begin, proving cancellation did not mutate a shared gate.
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("successor.progress.jsonl");
+            let mut successor = Operation::new(OperationKind::Preview, CollectionMode::Summary);
+            let receiver = successor.progress().unwrap();
+            let mut journal = crate::telemetry::ProgressJournal::new(
+                crate::telemetry::validate_report_destination(&path, &[]).unwrap(),
+                receiver,
+            )
+            .unwrap();
+            assert!(successor.wait_for_progress_or_cancel(|| false));
+            let report = successor.finish(Outcome::Succeeded).unwrap();
+            journal.flush().unwrap();
+            assert_eq!(report.operation.outcome, Outcome::Succeeded);
+            assert!(report.diagnostic_issues.is_empty());
+            drop(held_receiver);
+        }
+    }
+
+    #[test]
+    fn cancellation_is_honored_when_no_progress_sink_is_attached() {
+        for mode in [CollectionMode::Off, CollectionMode::Summary] {
+            let operation = Operation::new(OperationKind::Export, mode);
+            assert!(!operation.wait_for_progress_or_cancel(|| true));
+            assert!(operation.wait_for_progress_or_cancel(|| false));
         }
     }
 }

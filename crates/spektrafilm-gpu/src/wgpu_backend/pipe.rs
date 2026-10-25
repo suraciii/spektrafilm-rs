@@ -568,7 +568,6 @@ pub(super) enum ChainStage<'a> {
     /// A device operation that owns bounded submissions and can fail before
     /// publication. It never materializes an image or runs host numerics.
     Device {
-        #[allow(dead_code)]
         name: &'static str,
         execute: Box<dyn FnOnce() -> Result<(), String> + 'a>,
     },
@@ -582,7 +581,12 @@ impl GpuPipe {
         for stage in stages {
             self.check_cancelled()?;
             match stage {
-                ChainStage::Device { execute, .. } => execute()?,
+                ChainStage::Device { name, execute } => {
+                    self.device.context.chain_progress(name, true);
+                    let result = execute();
+                    self.device.context.chain_progress(name, false);
+                    result?;
+                }
             }
         }
         self.check_cancelled()?;

@@ -1,7 +1,7 @@
 use super::*;
 use buffers::ChainBuffers;
 
-use super::super::blur::SimpleBlurState;
+use super::super::blur::{GaussianScratch, SimpleBlurState};
 use super::super::chain_chunks::PointwisePass;
 use super::super::couplers::DirState;
 use super::super::gamut::GamutState;
@@ -503,14 +503,45 @@ impl WgpuBackend {
         let bg_scan =
             self.build_scan_direct_state(p, scan_input, &tail_b, tail_width, tail_height)?;
 
-        // ── Halation auxiliary buffers + bind groups (only if active) ────
-        // The device passes own their working buffers; the state is fallible
-        // because a device resource limit must fail the operation rather than
-        // silently omit the optical stage.
+        // All optical Gaussians execute sequentially on this operation's queue.
+        // Size their two distinct working rasters to the largest active geometry;
+        // a grain readout can make the scanner tail larger than the source.
+        let source_gaussian = p
+            .halation
+            .as_ref()
+            .is_some_and(super::super::halation::uses_gaussian)
+            || p.camera_lens_blur_px.is_some_and(|sigma| sigma > 0.0)
+            || p.dir_couplers
+                .as_ref()
+                .is_some_and(|dp| dp.diffusion_size_px > 0.0);
+        let tail_gaussian = p.unsharp.is_some()
+            || p.glare.as_ref().is_some_and(|gp| gp.blur_px > 0.0)
+            || p.scanner_lens_blur_px.is_some_and(|sigma| sigma > 0.0);
+        let gaussian_geometry = if source_gaussian
+            && (!tail_gaussian
+                || u64::from(image_width) * u64::from(image_height)
+                    > u64::from(tail_width) * u64::from(tail_height))
+        {
+            (image_width, image_height)
+        } else {
+            (tail_width, tail_height)
+        };
+        let mut gaussian_scratch = GaussianScratch::new(gaussian_geometry.0, gaussian_geometry.1);
+
+        // Device limits fail an active optical stage rather than omitting it.
         let halation_state = p
             .halation
             .as_ref()
-            .map(|hp| build_halation_state(hp, image_width, image_height, &buf_b, self))
+            .map(|hp| {
+                build_halation_state(
+                    hp,
+                    image_width,
+                    image_height,
+                    &buf_b,
+                    &mut gaussian_scratch,
+                    self,
+                )
+            })
             .transpose()?;
 
         // ── Highlight boost state ────────────────────────────────────────
@@ -521,36 +552,42 @@ impl WgpuBackend {
             .map(|hp| build_highlight_boost_state(&self.device, hp, n_pixels, &buf_b, self))
             .transpose()?;
 
-        // The blur state retains its scratch pages for the encoded work.
-        // Allocate only once the corresponding optical stage is active.
+        // The blur jobs retain handles to their shared operation-owned pages.
         let camera_lens_blur_state = p
             .camera_lens_blur_px
             .filter(|&sigma| sigma > 0.0)
             .map(|sigma| {
-                let lens_blur_scratch =
-                    self.allocate_image_pages(image_width, image_height, "lens_blur_scratch")?;
+                let buffers = gaussian_scratch.buffers(self, image_width, image_height)?;
                 build_simple_blur_state(
                     self,
                     sigma,
                     image_width,
                     image_height,
                     &buf_b,
-                    &buf_a,
-                    &lens_blur_scratch,
+                    &buffers.output,
+                    &buffers.intermediate,
                     "camera_lens",
                 )
             })
             .transpose()?;
 
         // ── Unsharp mask state ───────────────────────────────────────────
-        // Last pass before readback. Blurs buf_b → buf_c (via buf_a mid),
-        // then combines: buf_b_out = (1+amount)*buf_b - amount*buf_c.
-        // Since the combine writes back to buf_b in-place we need to
-        // route via a temporary buffer to satisfy wgpu aliasing rules.
+        // Complete the Gaussian before the bounded combine reads the distinct
+        // blur output and writes the original scan raster.
         let unsharp_state = p
             .unsharp
             .as_ref()
-            .map(|up| build_unsharp_state(&self.device, up, tail_width, tail_height, &tail_b, self))
+            .map(|up| {
+                build_unsharp_state(
+                    &self.device,
+                    up,
+                    tail_width,
+                    tail_height,
+                    &tail_b,
+                    &mut gaussian_scratch,
+                    self,
+                )
+            })
             .transpose()?;
         // Encode the destination space before Grain Procedural preparation; all
         // resolution and grain passes stay in this resident command buffer.
@@ -596,27 +633,37 @@ impl WgpuBackend {
         // Applied in place on buf_b (the scan_spectral output) just before
         // readback. Generates per-pixel lognormal noise into a scratch
         // buffer, optionally blurs it, then adds `g * rgb_offset[c]` to
-        // the image. Uses buf_a (free after scan_spectral consumed
-        // density_cmy) and one fresh scratch buffer.
+        // the image. Its blur output and intermediate reuse the operation's
+        // Gaussian pages only after earlier optical stages finish using them.
         let glare_state = p
             .glare
             .as_ref()
-            .map(|gp| build_glare_state(&self.device, gp, tail_width, tail_height, &tail_b, self))
+            .map(|gp| {
+                build_glare_state(
+                    &self.device,
+                    gp,
+                    tail_width,
+                    tail_height,
+                    &tail_b,
+                    &mut gaussian_scratch,
+                    self,
+                )
+            })
             .transpose()?;
 
         let scanner_lens_blur_state = p
             .scanner_lens_blur_px
             .filter(|&sigma| sigma > 0.0)
             .map(|sigma| {
-                let tail_scratch = tail_buf("scanner_tail_scratch", tail_width, tail_height)?;
+                let buffers = gaussian_scratch.buffers(self, tail_width, tail_height)?;
                 build_simple_blur_state(
                     self,
                     sigma,
                     tail_width,
                     tail_height,
                     &tail_b,
-                    &tail_a,
-                    &tail_scratch,
+                    &buffers.output,
+                    &buffers.intermediate,
                     "scanner_lens",
                 )
             })
@@ -626,10 +673,8 @@ impl WgpuBackend {
         // Allocated lazily when the DIR stage is active. Reads buf_a
         // (density_cmy from film density curve) and buf_b (log_raw),
         // produces a corrected buf_a via re-interpolation of
-        // `density_curves_0` against `log_raw - correction`. Owns three
-        // working buffers (correction, blur target, accumulator) and one
-        // shared filter scratch; the final density_curve_interp overwrites
-        // buf_a, so buf_a is only a staging input.
+        // `density_curves_0` against `log_raw - correction`. Stage accumulators
+        // remain distinct from the shared Gaussian output and intermediate.
         let dir_state = p
             .dir_couplers
             .as_ref()
@@ -641,6 +686,7 @@ impl WgpuBackend {
                     image_height,
                     &buf_a,
                     &buf_b,
+                    &mut gaussian_scratch,
                     self,
                 )
             })

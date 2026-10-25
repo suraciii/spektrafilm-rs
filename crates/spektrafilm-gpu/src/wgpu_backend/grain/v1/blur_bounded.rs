@@ -1,19 +1,14 @@
-//! Device-only line paging for the reference Gaussian. RGB intermediates are
-//! physically paged copy transports, never whole-image storage bindings. FIR
-//! pages include reflected support; IIR pages carry state across both sweeps.
-// Per-binding minima: FIR 4*(2*radius+1) bytes (at most 76 for sigma<3),
-// IIR 12 bytes (three carried f32 states), identity 4 bytes. No full line
-// must fit. Live image storage is one paged 12*width*height intermediate,
-// reusable across sequential jobs, plus two P-byte pages and at most
-// min(P, 12*max(width,height)) state bytes, where P<=the effective limit.
-// Kernel bindings are <=76 bytes; each encoded page owns a 48-byte uniform.
+//! Bounded reference Gaussian with raw-u32 GPU gather/scatter. Physical image
+//! pages and layer offsets are byte-addressed on the host; kernels see only
+//! aligned, capped views and packed target-channel samples. The numerical
+//! shader and its FIR/IIR arithmetic order are unchanged.
 use super::*;
+use crate::wgpu_backend::grain::raster::SubmissionWindow;
 use crate::wgpu_backend::paged::ImagePage;
 
-// Bound serial recurrence length and aggregate work independently of generous
-// physical binding limits. Paging only transports samples and carried states.
 const MAX_PAGE_COORDINATES: u32 = 4096;
 const MAX_PAGE_VALUES: u32 = 65536;
+const MAX_COMMANDS_PER_SUBMIT: u32 = 128;
 
 #[derive(Clone)]
 struct Store(Vec<BytePage>);
@@ -48,15 +43,14 @@ impl Store {
     }
 
     fn allocate(backend: &WgpuBackend, bytes: u64, limit: u64) -> Self {
-        let capacity = limit / 4 * 4;
-        let mut first = 0;
         let mut pages = Vec::new();
+        let mut first = 0;
         while first < bytes {
-            let len = capacity.min(bytes - first);
+            let len = (limit / 4 * 4).min(bytes - first);
             pages.push(BytePage {
                 first,
                 bytes: len,
-                buffer: transport(backend, "gaussian_image_page", len, false),
+                buffer: transport(backend, "gaussian_image_page", len, true),
             });
             first += len;
         }
@@ -75,6 +69,7 @@ impl Store {
         for page in &self.0 {
             if page.first != end
                 || page.bytes == 0
+                || page.bytes % 4 != 0
                 || page.bytes > page.buffer.size()
                 || page.buffer.size() > max
                 || !page.buffer.usage().contains(usage)
@@ -95,6 +90,31 @@ impl Store {
         Ok(())
     }
 
+    /// Find only the physical page and capped view containing this support
+    /// sample. Never enumerate unrelated page pairs or intervening row gaps.
+    fn view(&self, sample: u64, limit: u64, alignment: u64, adapter_bytes: u64) -> View<'_> {
+        let byte = sample * 4;
+        let page = &self.0[self.0.partition_point(|p| p.first + p.bytes <= byte)];
+        let direct = page.buffer.usage().contains(wgpu::BufferUsages::STORAGE)
+            && (page.bytes <= limit || limit >= alignment);
+        let capacity = if direct && page.bytes > limit {
+            limit / alignment * alignment
+        } else if direct {
+            limit / 4 * 4
+        } else {
+            adapter_bytes
+        };
+        let local = (byte - page.first) / capacity * capacity;
+        View {
+            page,
+            local,
+            first: (page.first + local) / 4,
+            bytes: capacity.min(page.bytes - local),
+            direct,
+        }
+    }
+
+    #[cfg(all(test, not(feature = "precision-f64")))]
     fn copy(
         &self,
         encoder: &mut ObservedEncoder,
@@ -124,6 +144,14 @@ impl Store {
     }
 }
 
+struct View<'a> {
+    page: &'a BytePage,
+    local: u64,
+    first: u64,
+    bytes: u64,
+    direct: bool,
+}
+
 const LAYOUT: [wgpu::BufferBindingType; 5] = [
     wgpu::BufferBindingType::Uniform,
     wgpu::BufferBindingType::Storage { read_only: true },
@@ -131,6 +159,24 @@ const LAYOUT: [wgpu::BufferBindingType; 5] = [
     wgpu::BufferBindingType::Storage { read_only: true },
     wgpu::BufferBindingType::Storage { read_only: false },
 ];
+const COPY_LAYOUT: [wgpu::BufferBindingType; 3] = [
+    wgpu::BufferBindingType::Uniform,
+    wgpu::BufferBindingType::Storage { read_only: false },
+    wgpu::BufferBindingType::Storage { read_only: false },
+];
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct TransportParams {
+    count: u32,
+    columns: u32,
+    image_start: u32,
+    image_row_step: u32,
+    scratch_start: i32,
+    scratch_row_step: i32,
+    scratch_col_step: i32,
+    scatter: u32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -150,8 +196,6 @@ struct Params {
 }
 
 struct Page {
-    _params: wgpu::Buffer,
-    group: wgpu::BindGroup,
     params: Params,
     first: u32,
     line: u32,
@@ -164,19 +208,23 @@ struct Direction {
     destination_offset: u64,
     channel: u32,
     vertical: bool,
+    kernel: wgpu::Buffer,
     pages: Vec<Page>,
 }
 
 pub(super) struct BoundedBlur {
     width: u32,
     height: u32,
+    limit: u64,
     pipeline: CachedPipelineRef,
+    copy_pipeline: CachedPipelineRef,
     input: wgpu::Buffer,
     output: wgpu::Buffer,
+    adapter: wgpu::Buffer,
     _state: wgpu::Buffer,
     _intermediate: Store,
     directions: Vec<Direction>,
-    copies: Vec<(Store, Store, u64, u64, u32)>,
+    identities: Vec<(Store, Store, u64, u64, u32)>,
 }
 
 fn transport(backend: &WgpuBackend, name: &str, bytes: u64, storage: bool) -> wgpu::Buffer {
@@ -192,6 +240,49 @@ fn transport(backend: &WgpuBackend, name: &str, bytes: u64, storage: bool) -> wg
             },
         mapped_at_creation: false,
     })
+}
+
+/// Bounds actual encoded commands and in-flight resources, rather than counting
+/// pages whose physical intersections can vary greatly. Queue order preserves
+/// recurrence and scratch dependencies across gather/scatter batch boundaries.
+struct Submission<'a> {
+    backend: &'a WgpuBackend,
+    encoder: ObservedEncoder,
+    pending: u32,
+    window: SubmissionWindow,
+}
+
+impl<'a> Submission<'a> {
+    fn new(backend: &'a WgpuBackend) -> Self {
+        Self {
+            backend,
+            encoder: backend.device.create_command_encoder(&Default::default()),
+            pending: 0,
+            window: SubmissionWindow::default(),
+        }
+    }
+    fn command(&mut self) -> Result<(), String> {
+        self.pending += 1;
+        self.backend.check_cancelled()?;
+        if self.pending >= MAX_COMMANDS_PER_SUBMIT {
+            self.flush()?;
+        }
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<(), String> {
+        self.backend.check_cancelled()?;
+        if self.pending != 0 {
+            let encoder = std::mem::replace(
+                &mut self.encoder,
+                self.backend
+                    .device
+                    .create_command_encoder(&Default::default()),
+            );
+            self.window.submit(self.backend, encoder.finish())?;
+            self.pending = 0;
+        }
+        Ok(())
+    }
 }
 
 impl BoundedBlur {
@@ -303,11 +394,9 @@ impl BoundedBlur {
             .iter()
             .try_fold(4u64, |minimum, &s| -> Result<u64, String> {
                 if s <= 0.0 {
-                    return Ok(minimum);
-                }
-                if from_f64(s) < from_f64(3.0) {
-                    let (_, weights) = gaussian_kernel(s)?;
-                    Ok(minimum.max(weights.len() as u64 * 4))
+                    Ok(minimum)
+                } else if from_f64(s) < from_f64(3.0) {
+                    Ok(minimum.max(gaussian_kernel(s)?.1.len() as u64 * 4))
                 } else {
                     Ok(minimum.max(12))
                 }
@@ -317,43 +406,51 @@ impl BoundedBlur {
                 "Gaussian bounded blur minimum working set requires {minimum} bytes per storage binding; limit is {limit}"
             ));
         }
-        let page_bytes = (limit / 4 * 4)
-            .min(bytes.saturating_add(minimum.saturating_sub(4) * u64::from(width.max(height)) * 3))
-            .min(u64::from(MAX_PAGE_VALUES) * 12)
-            .max(minimum);
+        let limit = limit / 4 * 4;
+        let page_bytes = limit
+            .min(u64::from(MAX_PAGE_VALUES) * 4)
+            .min(bytes.max(minimum));
         let input = transport(backend, "gaussian_page_input", page_bytes, true);
         let output = transport(backend, "gaussian_page_output", page_bytes, true);
+        // COPY-only callers and sub-alignment caps use this one shared adapter,
+        // not a retained allocation or bind group per physical image page.
+        let adapter = transport(backend, "gaussian_transport_adapter", page_bytes, true);
         let state = transport(
             backend,
             "gaussian_line_state",
             page_bytes.min(u64::from(width.max(height)) * 12),
             true,
         );
-        let intermediate = match scratch.filter(|store| {
-            store
-                .validate(
-                    "scratch",
-                    0,
-                    bytes,
-                    wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-                    max,
-                )
-                .is_ok()
-        }) {
-            Some(store) => store,
-            None => Store::allocate(backend, bytes, limit),
+        let intermediate = if sigma.iter().all(|&s| s <= 0.0) {
+            Store(Vec::new())
+        } else {
+            scratch
+                .filter(|store| {
+                    store
+                        .validate(
+                            "scratch",
+                            0,
+                            bytes,
+                            wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                            max,
+                        )
+                        .is_ok()
+                })
+                .unwrap_or_else(|| Store::allocate(backend, bytes, limit))
         };
         let pipeline = backend.cached_pipeline(include_str!("blur_bounded.wgsl"), &LAYOUT);
+        let copy_pipeline =
+            backend.cached_pipeline(include_str!("blur_bounded_copy.wgsl"), &COPY_LAYOUT);
         let mut directions = Vec::new();
-        let mut copies = Vec::new();
+        let mut identities = Vec::new();
         for channel in 0..3u32 {
             let s = sigma[channel as usize];
             if s <= 0.0 {
-                copies.push((
+                identities.push((
                     source.clone(),
                     destination.clone(),
-                    source_offset * 4,
-                    destination_offset * 4,
+                    source_offset,
+                    destination_offset,
                     channel,
                 ));
                 continue;
@@ -397,94 +494,61 @@ impl BoundedBlur {
                 let length = if vertical { height } else { width };
                 let line_count = if vertical { width } else { height };
                 let halo = 2 * radius;
-                // RGB transport coalesces entire horizontal spans and batches
-                // adjacent columns. Tiny limits use packed single-channel pages.
-                let stride = if page_bytes / 12 > u64::from(halo) {
-                    3
-                } else {
-                    1
-                };
-                let capacity =
-                    (page_bytes / (u64::from(stride) * 4)).min(u64::from(MAX_PAGE_VALUES)) as u32;
-                let count = length.min(capacity - halo).min(MAX_PAGE_COORDINATES);
-                let lines = (capacity / (count + halo))
-                    .min((page_bytes / 12) as u32)
-                    .min(
-                        backend
-                            .device
-                            .limits()
-                            .max_compute_workgroups_per_dimension
-                            .saturating_mul(64),
+                let capacity = (page_bytes / 4) as u32;
+                let max_lines = (page_bytes / 12) as u32;
+                let (count, lines) = if vertical {
+                    let lines = (capacity / (1 + halo))
+                        .min(max_lines)
+                        .min(line_count)
+                        .max(1);
+                    (
+                        (capacity / lines)
+                            .saturating_sub(halo)
+                            .max(1)
+                            .min(length)
+                            .min(MAX_PAGE_COORDINATES),
+                        lines,
                     )
-                    .min(line_count)
-                    .max(1);
+                } else {
+                    let count = length
+                        .min(capacity.saturating_sub(halo).max(1))
+                        .min(MAX_PAGE_COORDINATES);
+                    (
+                        count,
+                        (capacity / (count + halo))
+                            .min(max_lines)
+                            .min(line_count)
+                            .max(1),
+                    )
+                };
                 let mut pages = Vec::new();
                 let mut line = 0;
                 while line < line_count {
+                    backend.check_cancelled()?;
                     let batch = lines.min(line_count - line);
                     for mode in if fir { 0..1 } else { 1..3 } {
                         let page_count = length.div_ceil(count);
                         for ordinal in 0..page_count {
-                            let page = if mode == 2 {
+                            let first = if mode == 2 {
                                 page_count - 1 - ordinal
                             } else {
                                 ordinal
-                            };
-                            let first = page * count;
-                            let params = Params {
-                                count: count.min(length - first),
-                                lines: batch,
-                                stride,
-                                channel: if stride == 3 { channel } else { 0 },
-                                radius,
-                                mode,
-                                initialize: u32::from(ordinal == 0),
-                                axis_major: u32::from(vertical),
-                                a: coefficients.0,
-                                b1: coefficients.1,
-                                b2: coefficients.2,
-                                b3: coefficients.3,
-                            };
-                            let uniform = backend.device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
-                                    label: Some("gaussian_page_params"),
-                                    contents: bytemuck::bytes_of(&params),
-                                    usage: wgpu::BufferUsages::UNIFORM,
-                                },
-                            );
-                            let group =
-                                backend
-                                    .device
-                                    .create_bind_group(&wgpu::BindGroupDescriptor {
-                                        label: Some("gaussian_page_group"),
-                                        layout: &pipeline.layout,
-                                        entries: &[
-                                            wgpu::BindGroupEntry {
-                                                binding: 0,
-                                                resource: uniform.as_entire_binding(),
-                                            },
-                                            wgpu::BindGroupEntry {
-                                                binding: 1,
-                                                resource: input.as_entire_binding(),
-                                            },
-                                            wgpu::BindGroupEntry {
-                                                binding: 2,
-                                                resource: output.as_entire_binding(),
-                                            },
-                                            wgpu::BindGroupEntry {
-                                                binding: 3,
-                                                resource: kernel.as_entire_binding(),
-                                            },
-                                            wgpu::BindGroupEntry {
-                                                binding: 4,
-                                                resource: state.as_entire_binding(),
-                                            },
-                                        ],
-                                    });
+                            } * count;
                             pages.push(Page {
-                                _params: uniform,
-                                group,
-                                params,
+                                params: Params {
+                                    count: count.min(length - first),
+                                    lines: batch,
+                                    stride: 1,
+                                    channel: 0,
+                                    radius,
+                                    mode,
+                                    initialize: u32::from(ordinal == 0),
+                                    axis_major: u32::from(vertical),
+                                    a: coefficients.0,
+                                    b1: coefficients.1,
+                                    b2: coefficients.2,
+                                    b3: coefficients.3,
+                                },
                                 first,
                                 line,
                             });
@@ -499,6 +563,7 @@ impl BoundedBlur {
                     destination_offset: dst_offset,
                     channel,
                     vertical,
+                    kernel: kernel.clone(),
                     pages,
                 });
             }
@@ -506,237 +571,363 @@ impl BoundedBlur {
         Ok(Self {
             width,
             height,
+            limit,
             pipeline,
+            copy_pipeline,
             input,
             output,
+            adapter,
             _state: state,
             _intermediate: intermediate,
             directions,
-            copies,
+            identities,
         })
     }
 
     pub(super) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
+        let mut submission = Submission::new(backend);
         for direction in &self.directions {
             for page in &direction.pages {
                 backend.check_cancelled()?;
-                let mut encoder = backend.device.create_command_encoder(&Default::default());
-                self.encode_page(&mut encoder, direction, page);
-                backend.check_cancelled()?;
-                backend.queue.submit(Some(encoder.finish()));
+                self.encode_page(&mut submission, direction, page)?;
             }
         }
-        let pixels = u64::from(self.width) * u64::from(self.height);
-        let capacity = (self.input.size() / 12).clamp(1, 4096);
-        for copy in &self.copies {
-            let mut first = 0;
-            while first < pixels {
-                backend.check_cancelled()?;
-                let mut encoder = backend.device.create_command_encoder(&Default::default());
-                let count = capacity.min(pixels - first);
-                self.encode_identity(&mut encoder, copy, first, count);
-                backend.check_cancelled()?;
-                backend.queue.submit(Some(encoder.finish()));
-                first += count;
+        // Identity uses bounded packed tiles too, with raw integer loads/stores.
+        // It shares no filter arithmetic and preserves NaNs and signed zero.
+        let capacity = (self.input.size() / 4) as u32;
+        for (source, destination, source_offset, destination_offset, channel) in &self.identities {
+            let columns = self.width.min(capacity);
+            let rows = (capacity / columns).min(self.height).max(1);
+            let mut y = 0;
+            while y < self.height {
+                let nrows = rows.min(self.height - y);
+                let mut x = 0;
+                while x < self.width {
+                    let ncols = columns.min(self.width - x);
+                    let rect = Rect {
+                        x,
+                        y,
+                        columns: ncols,
+                        rows: nrows,
+                        scratch: 0,
+                        row_step: ncols as i32,
+                        col_step: 1,
+                    };
+                    self.transfer(
+                        &mut submission,
+                        source,
+                        *source_offset,
+                        *channel,
+                        &self.input,
+                        rect,
+                        false,
+                    )?;
+                    self.transfer(
+                        &mut submission,
+                        destination,
+                        *destination_offset,
+                        *channel,
+                        &self.input,
+                        rect,
+                        true,
+                    )?;
+                    x += ncols;
+                }
+                y += nrows;
             }
         }
+        submission.flush()?;
+        submission.window.finish(backend)?;
         backend.check_cancelled()
     }
 
-    fn encode_page(&self, encoder: &mut ObservedEncoder, direction: &Direction, page: &Page) {
+    fn encode_page(
+        &self,
+        submission: &mut Submission<'_>,
+        direction: &Direction,
+        page: &Page,
+    ) -> Result<(), String> {
+        let p = page.params;
+        let (source, offset) = if p.mode == 2 {
+            (&direction.destination, direction.destination_offset)
+        } else {
+            (&direction.source, direction.source_offset)
+        };
         let length = if direction.vertical {
             self.height
         } else {
             self.width
         };
-        let p = page.params;
-        let backward = p.mode == 2;
-        let source = if backward {
-            &direction.destination
-        } else {
-            &direction.source
-        };
-        let source_offset = if backward {
-            direction.destination_offset
-        } else {
-            direction.source_offset
-        };
-        self.gather(
-            encoder,
-            source,
-            source_offset,
-            &self.input,
-            direction,
-            page,
-            p.count + 2 * p.radius,
-            i64::from(page.first) - i64::from(p.radius),
-            length,
-        );
-        // Preserve other RGB channels when transporting a packed span.
-        if p.stride == 3 {
-            self.gather(
-                encoder,
-                &direction.destination,
-                direction.destination_offset,
-                &self.output,
-                direction,
-                page,
-                p.count,
-                i64::from(page.first),
-                length,
-            );
+        let count = p.count + 2 * p.radius;
+        // Split only at true reflection turns. A segment is an affine image
+        // rectangle, including repeated halo support for one-pixel dimensions.
+        let mut j = 0;
+        while j < count {
+            let coordinate = i64::from(page.first) - i64::from(p.radius) + i64::from(j);
+            let start = reflect(coordinate, length);
+            let folded = coordinate.rem_euclid(2 * i64::from(length)) as u32;
+            let reversed = folded >= length;
+            let run = (if reversed {
+                2 * length - folded
+            } else {
+                length - folded
+            })
+            .min(count - j);
+            let low = if reversed { start + 1 - run } else { start };
+            let scratch = if reversed { j + run - 1 } else { j };
+            let step = if reversed { -1 } else { 1 };
+            let rect = if direction.vertical {
+                Rect {
+                    x: page.line,
+                    y: low,
+                    columns: p.lines,
+                    rows: run,
+                    scratch: (scratch * p.lines) as i32,
+                    row_step: step * p.lines as i32,
+                    col_step: 1,
+                }
+            } else {
+                Rect {
+                    x: low,
+                    y: page.line,
+                    columns: run,
+                    rows: p.lines,
+                    scratch: scratch as i32,
+                    row_step: count as i32,
+                    col_step: step,
+                }
+            };
+            self.transfer(
+                submission,
+                source,
+                offset,
+                direction.channel,
+                &self.input,
+                rect,
+                false,
+            )?;
+            j += run;
         }
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("gaussian_bounded_line"),
-                timestamp_writes: None,
+        let backend = submission.backend;
+        let uniform = backend
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("gaussian_page_params"),
+                contents: bytemuck::bytes_of(&p),
+                usage: wgpu::BufferUsages::UNIFORM,
             });
+        let buffers = [
+            &uniform,
+            &self.input,
+            &self.output,
+            &direction.kernel,
+            &self._state,
+        ];
+        let entries = std::array::from_fn::<_, 5, _>(|binding| wgpu::BindGroupEntry {
+            binding: binding as u32,
+            resource: buffers[binding].as_entire_binding(),
+        });
+        let group = backend
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gaussian_page_group"),
+                layout: &self.pipeline.layout,
+                entries: &entries,
+            });
+        {
+            let mut pass = submission
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("gaussian_bounded_line"),
+                    timestamp_writes: None,
+                });
             pass.set_pipeline(&self.pipeline.pipeline);
-            pass.set_bind_group(0, &page.group, &[]);
+            pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(p.lines.div_ceil(64), 1, 1);
         }
-        self.scatter(encoder, direction, page);
-    }
-
-    fn encode_identity(
-        &self,
-        encoder: &mut ObservedEncoder,
-        copy: &(Store, Store, u64, u64, u32),
-        first: u64,
-        count: u64,
-    ) {
-        let (source, destination, src, dst, channel) = copy;
-        for pixel in first..first + count {
-            source.copy(
-                encoder,
-                src + pixel * 12 + u64::from(*channel) * 4,
-                &self.input,
-                0,
-                4,
-                false,
-            );
-            destination.copy(
-                encoder,
-                dst + pixel * 12 + u64::from(*channel) * 4,
-                &self.input,
-                0,
-                4,
-                true,
-            );
-        }
+        submission.command()?;
+        let rect = if direction.vertical {
+            Rect {
+                x: page.line,
+                y: page.first,
+                columns: p.lines,
+                rows: p.count,
+                scratch: 0,
+                row_step: p.lines as i32,
+                col_step: 1,
+            }
+        } else {
+            Rect {
+                x: page.first,
+                y: page.line,
+                columns: p.count,
+                rows: p.lines,
+                scratch: 0,
+                row_step: p.count as i32,
+                col_step: 1,
+            }
+        };
+        // Only the target channel is scattered: no destination-preserve gather.
+        self.transfer(
+            submission,
+            &direction.destination,
+            direction.destination_offset,
+            direction.channel,
+            &self.output,
+            rect,
+            true,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn gather(
+    fn transfer(
         &self,
-        encoder: &mut ObservedEncoder,
-        source: &Store,
-        source_offset: u64,
+        submission: &mut Submission<'_>,
+        store: &Store,
+        offset: u64,
+        channel: u32,
         scratch: &wgpu::Buffer,
-        direction: &Direction,
-        page: &Page,
-        count: u32,
-        first: i64,
-        length: u32,
-    ) {
-        let p = page.params;
-        let mut run: Option<(u64, u64, u64)> = None;
-        for outer in 0..if direction.vertical { count } else { p.lines } {
-            for inner in 0..if direction.vertical { p.lines } else { count } {
-                let (coordinate, line) = if direction.vertical {
-                    (outer, inner)
-                } else {
-                    (inner, outer)
-                };
-                let coordinate = reflect(first + i64::from(coordinate), length);
-                let line = page.line + line;
-                let (x, y) = if direction.vertical {
-                    (line, coordinate)
-                } else {
-                    (coordinate, line)
-                };
-                let source_byte = (source_offset
-                    + (u64::from(y) * u64::from(self.width) + u64::from(x)) * 3
-                    + if p.stride == 1 {
-                        u64::from(direction.channel)
-                    } else {
-                        0
-                    })
-                    * 4;
-                let scratch_byte = (u64::from(outer)
-                    * u64::from(if direction.vertical { p.lines } else { count })
-                    + u64::from(inner))
-                    * u64::from(p.stride)
-                    * 4;
-                let bytes = u64::from(p.stride) * 4;
-                if let Some((src, dst, size)) = &mut run
-                    && *src + *size == source_byte
-                    && *dst + *size == scratch_byte
-                {
-                    *size += bytes;
-                    continue;
-                }
-                if let Some((src, dst, size)) = run.take() {
-                    source.copy(encoder, src, scratch, dst, size, false);
-                }
-                run = Some((source_byte, scratch_byte, bytes));
+        rect: Rect,
+        scatter: bool,
+    ) -> Result<(), String> {
+        let row_stride = u64::from(self.width) * 3;
+        let alignment = u64::from(
+            submission
+                .backend
+                .device
+                .limits()
+                .min_storage_buffer_offset_alignment,
+        );
+        let mut row = 0;
+        let mut col = 0;
+        while row < rect.rows {
+            submission.backend.check_cancelled()?;
+            let sample = offset
+                + (u64::from(rect.y + row) * u64::from(self.width) + u64::from(rect.x + col)) * 3
+                + u64::from(channel);
+            let view = store.view(sample, self.limit, alignment, self.adapter.size());
+            let end = view.first + view.bytes / 4;
+            let columns = rect.columns.min(col + ((end - 1 - sample) / 3 + 1) as u32) - col;
+            let rows = if col == 0 && columns == rect.columns {
+                (1 + (end - 1 - sample - u64::from(columns - 1) * 3) / row_stride)
+                    .min(u64::from(rect.rows - row)) as u32
+            } else {
+                1
+            };
+            let params = TransportParams {
+                count: columns * rows,
+                columns,
+                image_start: (sample - view.first) as u32,
+                image_row_step: row_stride as u32,
+                scratch_start: rect.scratch
+                    + row as i32 * rect.row_step
+                    + col as i32 * rect.col_step,
+                scratch_row_step: rect.row_step,
+                scratch_col_step: rect.col_step,
+                scatter: u32::from(scatter),
+            };
+            self.encode_transfer(submission, &view, scratch, params)?;
+            col += columns;
+            if col == rect.columns {
+                col = 0;
+                row += rows;
             }
         }
-        if let Some((src, dst, size)) = run {
-            source.copy(encoder, src, scratch, dst, size, false);
-        }
+        Ok(())
     }
 
-    fn scatter(&self, encoder: &mut ObservedEncoder, direction: &Direction, page: &Page) {
-        let p = page.params;
-        let mut run: Option<(u64, u64, u64)> = None;
-        for outer in 0..if direction.vertical { p.count } else { p.lines } {
-            for inner in 0..if direction.vertical { p.lines } else { p.count } {
-                let (coordinate, line) = if direction.vertical {
-                    (outer, inner)
-                } else {
-                    (inner, outer)
-                };
-                let (x, y) = if direction.vertical {
-                    (page.line + line, page.first + coordinate)
-                } else {
-                    (page.first + coordinate, page.line + line)
-                };
-                let destination_byte = (direction.destination_offset
-                    + (u64::from(y) * u64::from(self.width) + u64::from(x)) * 3
-                    + if p.stride == 1 {
-                        u64::from(direction.channel)
-                    } else {
-                        0
-                    })
-                    * 4;
-                let scratch_byte = (u64::from(outer)
-                    * u64::from(if direction.vertical { p.lines } else { p.count })
-                    + u64::from(inner))
-                    * u64::from(p.stride)
-                    * 4;
-                let bytes = u64::from(p.stride) * 4;
-                if let Some((src, dst, size)) = &mut run
-                    && *src + *size == scratch_byte
-                    && *dst + *size == destination_byte
-                {
-                    *size += bytes;
-                    continue;
-                }
-                if let Some((src, dst, size)) = run.take() {
-                    direction
-                        .destination
-                        .copy(encoder, dst, &self.output, src, size, true);
-                }
-                run = Some((scratch_byte, destination_byte, bytes));
-            }
+    fn encode_transfer(
+        &self,
+        submission: &mut Submission<'_>,
+        view: &View<'_>,
+        scratch: &wgpu::Buffer,
+        params: TransportParams,
+    ) -> Result<(), String> {
+        let backend = submission.backend;
+        let buffer = if view.direct {
+            &view.page.buffer
+        } else {
+            &self.adapter
+        };
+        let binding_offset = if view.direct { view.local } else { 0 };
+        if !view.direct {
+            // Bulk copies adapt COPY-only or sub-alignment physical pages.
+            // Scatter reads the same capped window first to preserve neighbours.
+            submission.encoder.copy_buffer_to_buffer(
+                &view.page.buffer,
+                view.local,
+                &self.adapter,
+                0,
+                view.bytes,
+            );
+            submission.command()?;
         }
-        if let Some((src, dst, size)) = run {
-            direction
-                .destination
-                .copy(encoder, dst, &self.output, src, size, true);
+        let uniform = backend
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("gaussian_transport_params"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let group = backend
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gaussian_transport_group"),
+                layout: &self.copy_pipeline.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer,
+                            offset: binding_offset,
+                            size: NonZeroU64::new(view.bytes),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: scratch.as_entire_binding(),
+                    },
+                ],
+            });
+        {
+            let mut pass = submission
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("gaussian_raw_transport"),
+                    timestamp_writes: None,
+                });
+            pass.set_pipeline(&self.copy_pipeline.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            dispatch_linear(&mut pass, params.count);
         }
+        submission.command()?;
+        if !view.direct && params.scatter != 0 {
+            submission.encoder.copy_buffer_to_buffer(
+                &self.adapter,
+                0,
+                &view.page.buffer,
+                view.local,
+                view.bytes,
+            );
+            submission.command()?;
+        }
+        Ok(())
     }
+}
+
+#[derive(Clone, Copy)]
+struct Rect {
+    x: u32,
+    y: u32,
+    columns: u32,
+    rows: u32,
+    scratch: i32,
+    row_step: i32,
+    col_step: i32,
 }
 
 fn reflect(index: i64, length: u32) -> u32 {
@@ -752,10 +943,29 @@ fn reflect(index: i64, length: u32) -> u32 {
 #[cfg(all(test, not(feature = "precision-f64")))]
 mod tests {
     use super::*;
+    use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
     use spektrafilm_math::gaussian::gaussian_blur_channel;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     fn compare(width: u32, height: u32, sigma: [f64; 3], limit: u64) {
+        compare_with_reuse(width, height, sigma, limit, false);
+    }
+
+    fn compare_with_reuse(
+        width: u32,
+        height: u32,
+        sigma: [f64; 3],
+        limit: u64,
+        cancelled_reuse: bool,
+    ) {
         let gpu = crate::test_support::adapter();
+        let mut gpu = gpu.derived_explicit();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        gpu.pipe = gpu.pipe.with_cancellation(Some(cancellation.clone()));
+        gpu.cancellation = Some(cancellation.clone());
         let samples = width as usize * height as usize * 3;
         let source_offset = 5;
         let destination_offset = 7;
@@ -808,9 +1018,23 @@ mod tests {
         assert!(state._state.size() <= limit);
         assert!(
             state._intermediate.0.iter().all(
-                |p| p.bytes <= limit && !p.buffer.usage().contains(wgpu::BufferUsages::STORAGE)
+                |p| p.bytes <= limit && p.buffer.usage().contains(wgpu::BufferUsages::STORAGE)
             )
         );
+        if cancelled_reuse {
+            // Leave genuine partial recurrence/scratch work on the queue, then
+            // cancel and rerun the same state. The first true endpoint must
+            // initialize fresh state rather than consuming the abandoned sweep.
+            let mut partial = Submission::new(&gpu);
+            let direction = &state.directions[0];
+            state
+                .encode_page(&mut partial, direction, &direction.pages[0])
+                .unwrap();
+            partial.flush().unwrap();
+            cancellation.store(true, Ordering::Relaxed);
+            assert_eq!(state.submit(&gpu).unwrap_err(), "operation cancelled");
+            cancellation.store(false, Ordering::Relaxed);
+        }
         let direct = build_grain_blur(
             &gpu,
             width,
@@ -829,7 +1053,18 @@ mod tests {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        let context = ObservationContext::new(CollectionMode::Summary);
+        gpu.context_mut(context.clone());
         state.submit(&gpu).unwrap();
+        if cancelled_reuse {
+            let work = context.snapshot().totals;
+            // Real encoded work, not source inspection: ordinary STORAGE
+            // images need no device copies at all for transport. Commands scale
+            // with intersecting bounded rectangles, never with image samples.
+            assert_eq!(work.device_copy_count, Some(0));
+            assert!(work.dispatch_count.unwrap() < u64::from(width) * u64::from(height) / 100);
+            assert!(work.submit_count.unwrap() <= 2);
+        }
         direct.submit(&gpu).unwrap();
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
@@ -885,6 +1120,11 @@ mod tests {
     fn column_batches_match_reference_without_per_pixel_channel_transport() {
         compare(37, 5, [0.4, 3.0, 0.0], 192);
     }
+
+    #[test]
+    fn gpu_transport_command_growth_and_cancelled_partial_state_reuse() {
+        compare_with_reuse(129, 97, [3.0, 0.4, 0.0], 65536, true);
+    }
 }
 
 #[cfg(test)]
@@ -931,8 +1171,8 @@ mod physical_page_tests {
         let gpu = crate::test_support::adapter();
         let (width, height) = (29, 23);
         let pixels = (width * height) as usize;
-        let source_sample = 9u64;
-        let destination_sample = 6u64;
+        let source_sample = 5u64;
+        let destination_sample = 7u64;
         let mut values: Vec<f32> = (0..pixels * 3 + 15)
             .map(|i| ((i * 37 + i * i * 13) % 103) as f32 / 103.0)
             .collect();
@@ -1009,5 +1249,110 @@ mod physical_page_tests {
                 .iter()
                 .all(|&x| x == 123.0)
         );
+    }
+
+    #[test]
+    fn identity_preserves_uncertain_bits_offsets_and_neighbours_on_copy_only_pages() {
+        let gpu = crate::test_support::adapter();
+        let (width, height) = (13, 5);
+        let samples = (width * height * 3) as usize;
+        let source_offset = 5u64;
+        let destination_offset = 7u64;
+        let patterns = [
+            0u32,
+            0x8000_0000,
+            0x7f80_0000,
+            0xff80_0000,
+            0x7fc1_2345,
+            0x7f81_2345,
+            1,
+            0x807f_ffff,
+            0x3f80_0001,
+        ];
+        let values: Vec<f32> = (0..samples + 15)
+            .map(|i| f32::from_bits(patterns[i % patterns.len()]))
+            .collect();
+        let sentinel = vec![f32::from_bits(0xdead_beef); values.len()];
+        for (copy_only, limit) in [
+            (true, 12),
+            (true, 76),
+            (true, 192),
+            (false, 192),
+            (false, 4096),
+        ] {
+            let split = |values: &[f32], page_pixels: usize| -> Vec<ImagePage> {
+                values
+                    .chunks(page_pixels * 3)
+                    .enumerate()
+                    .map(|(i, chunk)| ImagePage {
+                        first_pixel: (i * page_pixels) as u32,
+                        n_pixels: (chunk.len() / 3) as u32,
+                        buffer: gpu
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("gaussian_identity_bits_page"),
+                                contents: bytemuck::cast_slice(chunk),
+                                usage: wgpu::BufferUsages::COPY_SRC
+                                    | wgpu::BufferUsages::COPY_DST
+                                    | if copy_only {
+                                        wgpu::BufferUsages::empty()
+                                    } else {
+                                        wgpu::BufferUsages::STORAGE
+                                    },
+                            }),
+                    })
+                    .collect()
+            };
+            let source = split(&values, if copy_only { 7 } else { values.len() / 3 });
+            let destination = split(&sentinel, if copy_only { 11 } else { values.len() / 3 });
+            let state = BoundedBlur::build_paged(
+                &gpu,
+                width,
+                height,
+                &source,
+                &destination,
+                None,
+                [0.0, -1.0, -0.0],
+                source_offset,
+                destination_offset,
+                limit,
+            )
+            .unwrap();
+            let bytes = values.len() as u64 * 4;
+            let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gaussian_identity_bits_readback"),
+                size: bytes * 2,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            state.submit(&gpu).unwrap();
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            Store::image(&destination).copy(&mut encoder, 0, &readback, 0, bytes, false);
+            Store::image(&source).copy(&mut encoder, 0, &readback, bytes, bytes, false);
+            gpu.queue.submit(Some(encoder.finish()));
+            let actual = gpu.read_mapped_f32(&readback, bytes * 2);
+            let (output, unchanged_source) = actual.split_at(values.len());
+            for (i, value) in output.iter().enumerate() {
+                let expected = if (destination_offset as usize
+                    ..destination_offset as usize + samples)
+                    .contains(&i)
+                {
+                    values[source_offset as usize + i - destination_offset as usize]
+                } else {
+                    sentinel[i]
+                };
+                assert_eq!(
+                    value.to_bits(),
+                    expected.to_bits(),
+                    "COPY-only {copy_only}, cap {limit}, sample {i}"
+                );
+            }
+            assert!(
+                unchanged_source
+                    .iter()
+                    .zip(&values)
+                    .all(|(a, b)| a.to_bits() == b.to_bits())
+            );
+        }
     }
 }

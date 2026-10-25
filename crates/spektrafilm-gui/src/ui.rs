@@ -266,7 +266,9 @@ impl App {
             }
             let save = ui
                 .add_enabled(
-                    (self.output_image.is_some() || self.output_retained.is_some()) && !busy,
+                    (self.output_image.is_some() || self.output_retained.is_some())
+                        && !busy
+                        && self.pending_saves.is_empty(),
                     egui::Button::new(crate::i18n::text(ui.ctx(), "surfaces.action.save_retained")),
                 )
                 .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.action.save_help"));
@@ -1706,6 +1708,7 @@ impl eframe::App for App {
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
         self.poll_export_job(ctx);
+        self.poll_pending_saves(ctx);
         let editing_text = ctx
             .memory(|memory| memory.focused())
             .is_some_and(|id| egui::text_edit::TextEditState::load(ctx, id).is_some());
@@ -2035,6 +2038,7 @@ impl eframe::App for App {
     /// Cancel pending export publication and drain its worker before exiting.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.persist_browser_state(true);
+        self.cancel_pending_saves();
         if let Some(mut job) = self.export_job.take() {
             job.cancel.store(true, Ordering::SeqCst);
             #[cfg(test)]
