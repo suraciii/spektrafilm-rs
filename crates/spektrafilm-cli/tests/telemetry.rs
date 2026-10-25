@@ -102,6 +102,13 @@ fn diagnostics_preserve_pixels_stdout_and_retain_indexed_attempts() {
     let fixture = Fixture::new();
     let off = fixture.process("off.png").output().unwrap();
     success(&off);
+    assert!(fs::read_dir(&fixture.directory).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".progress.jsonl")
+    }));
     let on = fixture
         .process("on.png")
         .arg("--diagnostics")
@@ -134,6 +141,18 @@ fn diagnostics_preserve_pixels_stdout_and_retain_indexed_attempts() {
             .any(|phase| phase["name"] == "file_write")
     );
     assert!(String::from_utf8_lossy(&on.stderr).contains("Diagnostics report saved:"));
+    let progress: Vec<Value> = fs::read(fixture.path("report.json.progress.jsonl"))
+        .unwrap()
+        .split(|byte| *byte == b'\n')
+        .filter_map(|line| serde_json::from_slice(line).ok())
+        .collect();
+    assert_eq!(progress[0]["event"], "begin");
+    assert_eq!(progress[0]["operation_id"], report["operation"]["id"]);
+    assert!(
+        progress
+            .iter()
+            .any(|record| { record["event"] == "end" && record["outcome"] == "succeeded" })
+    );
 }
 
 #[test]
@@ -261,6 +280,80 @@ fn existing_report_does_not_change_success_or_clobber() {
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("Diagnostics report could not be saved:")
     );
+}
+
+#[test]
+fn existing_progress_preserves_image_success_and_final_report() {
+    let fixture = Fixture::new();
+    let progress = fixture.path("report.json.progress.jsonl");
+    fs::write(&progress, b"retain progress").unwrap();
+    let output = fixture
+        .process("output.png")
+        .arg("--diagnostics")
+        .arg(fixture.path("report.json"))
+        .output()
+        .unwrap();
+    success(&output);
+    assert!(fixture.path("output.png").is_file());
+    assert_eq!(fs::read(progress).unwrap(), b"retain progress");
+    assert_eq!(
+        fixture.report("report.json")["operation"]["outcome"],
+        "succeeded"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Diagnostics progress could not be saved:")
+    );
+}
+
+#[test]
+fn protected_progress_destinations_are_rejected_before_image_work() {
+    let fixture = Fixture::new();
+    let progress = fixture.path("report.json.progress.jsonl");
+    let output = fixture
+        .process("report.json.progress.jsonl")
+        .arg("--diagnostics")
+        .arg(fixture.path("report.json"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!progress.exists());
+    assert!(!fixture.path("report.json").exists());
+
+    let original = fs::read(fixture.path("input.png")).unwrap();
+    fs::hard_link(fixture.path("input.png"), &progress).unwrap();
+    let output = fixture
+        .process("output.png")
+        .arg("--diagnostics")
+        .arg(fixture.path("report.json"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!fixture.path("output.png").exists());
+    assert_eq!(fs::read(progress).unwrap(), original);
+    assert_eq!(fs::read(fixture.path("input.png")).unwrap(), original);
+}
+
+#[cfg(unix)]
+#[test]
+fn progress_symlinks_are_never_followed_or_replaced() {
+    let fixture = Fixture::new();
+    let progress = fixture.path("report.json.progress.jsonl");
+    for target in [fixture.path("input.png"), fixture.path("missing-target")] {
+        let original = fs::read(&target).ok();
+        std::os::unix::fs::symlink(&target, &progress).unwrap();
+        let output = fixture
+            .process("output.png")
+            .arg("--diagnostics")
+            .arg(fixture.path("report.json"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(!fixture.path("output.png").exists());
+        assert_eq!(fs::read(&target).ok(), original);
+        assert_eq!(fs::read_link(&progress).unwrap(), target);
+        fs::remove_file(&progress).unwrap();
+    }
 }
 
 #[test]
@@ -412,6 +505,10 @@ fn unwritable_report_parent_preserves_image_success() {
     assert!(fixture.path("output.png").is_file());
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("Diagnostics report could not be saved:")
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Diagnostics progress could not be saved:")
     );
 }
 

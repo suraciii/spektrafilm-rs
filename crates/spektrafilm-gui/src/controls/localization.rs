@@ -102,6 +102,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Advanced. Multiplier on the halo weight; the three group weights are renormalized to sum to 1. 1.0 = use family default." => {
             Some("controls.help.diffusion.halo_intensity")
         }
+        "Advanced details" => Some("surfaces.diagnostics.advanced"),
         "Aligns the scan's overall brightness to the model (gain = 2^ev). Brighter input -> less recovered film density." => {
             Some("controls.convert.exposure_compensation_help")
         }
@@ -743,6 +744,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Open image — RGB and supported RAW formats use their existing import paths." => {
             Some("surfaces.action.open_help")
         }
+        "Open log folder" => Some("surfaces.diagnostics.open_directory"),
         "Operator correction" => Some("controls.scanner.operator_correction"),
         "OptionalNumeric" => Some("controls.metadata.optionalnumeric"),
         "Output" => Some("controls.label.output"),
@@ -789,6 +791,7 @@ fn key(label: &str) -> Option<&'static str> {
             Some("controls.grain.rms_granularity_help")
         }
         "Percentage of the glare light (typically 0.1-0.25)" => Some("controls.help.glare.percent"),
+        "Performance logs are recorded automatically." => Some("surfaces.diagnostics.automatic"),
         "Permutation of film density channels. Selecting a channel swaps its prior position so no record is duplicated or dropped." => {
             Some("controls.help.channels.permutation")
         }

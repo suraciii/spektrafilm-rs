@@ -117,7 +117,7 @@ fn deterministic_state(directory: &Path) -> PathBuf {
 
 /// Deterministic synthetic input shared by the headless fixtures: a ramp image
 /// plus the deterministic state from [`deterministic_state`].
-fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
+pub(crate) fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
     let image_path = directory.join("asymmetric-ramp.png");
     let mut image = ImageBuf::new(160, 80);
     for y in 0..image.height {
@@ -146,6 +146,32 @@ fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
     .unwrap();
     let state_path = deterministic_state(directory);
     (image_path, state_path)
+}
+
+/// Real startup with production defaults for automatic-diagnostics
+/// acceptance: no explicit diagnostics request, so every run records into its
+/// own persistent `<config_root>/logs/diagnostics/session-*` folder while
+/// scratch inputs stay in `work`. Returns after the startup preview completed
+/// and its reports reached the background writer.
+pub(crate) fn default_startup(config_root: &Path, work: &Path) -> Harness<'static, App> {
+    std::fs::create_dir_all(config_root).unwrap();
+    std::fs::create_dir_all(work).unwrap();
+    let (image_path, state_path) = deterministic_inputs(work);
+    let browser_path = config_root.join("preset_browser_state.json");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 800.0))
+        .build_eframe(move |cc| {
+            theme::apply(&cc.egui_ctx);
+            app(state_path, image_path, browser_path)
+        });
+    await_input(&mut harness);
+    wait_until(&mut harness, |app| {
+        !app.dirty
+            && app.render_job.is_none()
+            && app.output_image.is_some()
+            && app.diagnostics.pending_publications() == 0
+    });
+    harness
 }
 
 /// Inspect the report returned by the real App worker, not a reconstructed
@@ -542,6 +568,11 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
     }
 }
 
+fn save_retained(h: &mut Harness<'_, App>, path: &Path) {
+    h.state_mut().save_to_path(path);
+    wait_until(h, |app| app.pending_saves.is_empty());
+}
+
 /// Wait for the production input worker, including its UI-side commit callback.
 fn await_input(h: &mut Harness<'_, App>) {
     if h.state().input_pending() {
@@ -787,7 +818,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         assert_eq!(h.state().output_image.as_ref().unwrap().data, preview.data);
     }
     let save_path = s.directory.path().join("retained.png");
-    h.state_mut().save_to_path(&save_path);
+    save_retained(h, &save_path);
     assert!(
         h.state()
             .status
@@ -1373,7 +1404,7 @@ fn scanner_state_rejection_uses_the_neutral_scan_model() {
     assert_eq!(restored.params.scanner, accepted_params.scanner);
     eframe::App::on_exit(&mut restored, None);
     let save_path = s.directory.path().join("scanner-preview.png");
-    h.state_mut().save_to_path(&save_path);
+    save_retained(h, &save_path);
     let expected = image_io::convert_image(
         &accepted_output,
         &h.state().output_color_space,

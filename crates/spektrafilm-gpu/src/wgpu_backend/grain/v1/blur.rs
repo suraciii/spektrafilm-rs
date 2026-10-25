@@ -109,8 +109,9 @@ struct ChannelPasses {
 /// their own sigma and pass order.
 ///
 /// `source`, `destination`, and `scratch` MUST be distinct buffers. Small jobs
-/// bind aligned image regions; larger jobs transport bounded RGB pages with
-/// device copies. The latter requires source COPY_SRC and destination
+/// bind aligned image regions; larger jobs gather/scatter raw target-channel
+/// bits with bounded GPU kernels. COPY-only or oversized physical pages use
+/// bounded bulk-copy adapters. Source requires COPY_SRC, destination requires
 /// COPY_SRC | COPY_DST. Offsets count float samples, without alignment rules.
 ///
 /// Arithmetic is binary32. A `precision-f64` host build evaluates its
@@ -192,8 +193,9 @@ pub(in crate::wgpu_backend) fn build_grain_blur(
 /// Build a Gaussian blur using caller-owned scratch for sequential filter jobs.
 ///
 /// Direct execution uses width*height*3 scratch samples. Bounded execution
-/// reuses full-size COPY_SRC | COPY_DST scratch as its copy-only intermediate,
-/// or allocates one if unavailable. It also owns bounded page/state buffers.
+/// reuses full-size COPY_SRC | COPY_DST scratch as its paged intermediate,
+/// or allocates one if unavailable. STORAGE usage permits direct capped views;
+/// COPY-only scratch uses the same bounded bulk adapter as external images.
 /// Keep supplied buffers alive until encoded work completes. Offsets count f32.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(

@@ -137,7 +137,7 @@ impl App {
             return;
         };
         options.normalize();
-        let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
+        let mut operation = self.diagnostics.begin(OperationKind::Export);
         operation.set_revisions(Some(self.input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width(), image.height());
         operation.set_backend_requested(match options.backend {
@@ -248,6 +248,7 @@ impl App {
             operation.set_saved_attempt(attempt.id());
         }
         let observation = attempt.context().clone();
+        let progress = operation.context();
         let worker_wait = operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image);
         #[cfg(test)]
         let worker_pause = pause.clone();
@@ -256,7 +257,9 @@ impl App {
                 drop(worker_wait);
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
                     || -> Result<ExportResult> {
-                        if cancel_for_worker.load(Ordering::SeqCst) {
+                        if !progress.wait_for_progress_or_cancel(|| {
+                            cancel_for_worker.load(Ordering::SeqCst)
+                        }) {
                             anyhow::bail!("cancelled");
                         }
                         let snapshot =

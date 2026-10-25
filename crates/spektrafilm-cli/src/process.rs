@@ -74,7 +74,7 @@ pub struct ProcessArgs {
     /// Print per-stage timing information to stderr.
     #[arg(long, help_heading = "Execution and diagnostics")]
     pub(crate) timings: bool,
-    /// Save a local JSON diagnostics report without replacing an existing file.
+    /// Save a JSON diagnostics report and live .progress.jsonl sidecar; never replace files.
     #[arg(long, help_heading = "Execution and diagnostics")]
     pub(crate) diagnostics: Option<PathBuf>,
     /// Collect available GPU pass timings; requires --diagnostics.

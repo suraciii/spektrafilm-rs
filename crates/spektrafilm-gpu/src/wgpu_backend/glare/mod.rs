@@ -1,5 +1,6 @@
+use super::blur::GaussianScratch;
 use super::grain::raster::{RasterStorage, paged_transport};
-use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged};
+use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged_with_scratch};
 use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, pointwise_job};
 use super::*;
 
@@ -14,12 +15,14 @@ pub(super) struct GlareState {
     apply_dispatch: PointwiseJob,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_glare_state(
     _device: &ObservedDevice,
     gp: &spektrafilm_backend::GlareGpuParams,
     width: u32,
     height: u32,
     buf_b: &(impl RasterStorage + ?Sized),
+    gaussian_scratch: &mut GaussianScratch,
     backend: &WgpuBackend,
 ) -> Result<GlareState, String> {
     let img_bytes = image_transport_bytes(backend, width, height, "glare")?;
@@ -55,13 +58,15 @@ pub(super) fn build_glare_state(
         "glare_gen",
     )?;
     let blur = if gp.blur_px > 0.0 {
-        let out = paged_transport(backend, img_bytes, "glare_blurred")?;
-        let job = build_grain_blur_paged(
+        let buffers = gaussian_scratch.buffers(backend, width, height)?;
+        let out = buffers.output;
+        let job = build_grain_blur_paged_with_scratch(
             backend,
             width,
             height,
             &scratch,
             &out,
+            Some(&buffers.intermediate),
             [gp.blur_px.max(0.01) as f64; 3],
             0,
             0,

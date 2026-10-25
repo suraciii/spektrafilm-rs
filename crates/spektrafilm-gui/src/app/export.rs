@@ -3,10 +3,29 @@ use crate::*;
 
 use super::state::App;
 
+/// Immutable accepted output and save settings, held only until journal begin is durable.
+pub(crate) struct PendingSave {
+    operation: spektrafilm_core::telemetry::Operation,
+    path: PathBuf,
+    image: Option<Arc<ImageBuf>>,
+    retained: Option<spektrafilm_backend::DeviceImage>,
+    metadata: Option<ImageMetadata>,
+    source_color_space: String,
+    source_encoded: bool,
+    destination: String,
+    encoded: bool,
+    format: image_io::ImageFormat,
+    depth: BitDepth,
+    backend: Arc<dyn ComputeBackend>,
+}
+
 impl App {
     /// Save retained pixels, asking before choosing a destination if they no
     /// longer match accepted adjustments. This never rerenders.
     pub(crate) fn save_dialog(&mut self) {
+        if !self.pending_saves.is_empty() {
+            return;
+        }
         if self.output_image.is_none() && self.output_retained.is_none() {
             self.status = crate::app::Message::new("operations.nothing_to_save");
             return;
@@ -67,6 +86,9 @@ impl App {
     }
 
     fn choose_retained_save_path(&mut self) {
+        if !self.pending_saves.is_empty() {
+            return;
+        }
         let default_name = match &self.image_path {
             Some(p) => {
                 let stem = p
@@ -91,14 +113,19 @@ impl App {
         self.save_to_path(&path);
     }
 
-    /// Save retained output directly. Consumers own any UI confirmation; this
-    /// raw pixel-writing boundary deliberately does not ask or rerender.
+    /// Capture retained output directly, without asking or rerendering. Image
+    /// work stays on this thread but is deferred until background diagnostics begin.
     pub(crate) fn save_to_path(&mut self, path: &Path) {
+        // One deferred Save owns its captured output. Reject repeated requests
+        // before allocating an operation collector or copying image metadata.
+        if !self.pending_saves.is_empty() {
+            return;
+        }
         if self.output_image.is_none() && self.output_retained.is_none() {
             self.status = crate::app::Message::new("operations.nothing_to_save");
             return;
         }
-        let mut operation = Operation::new(OperationKind::Save, self.diagnostics.mode);
+        let mut operation = self.diagnostics.begin(OperationKind::Save);
         if let Some(source) = self.source_render.clone() {
             operation.set_source_render(source);
         }
@@ -116,7 +143,6 @@ impl App {
                 return;
             }
         };
-        let t = Instant::now();
         let destination = self.gui_state.saving_color_space();
         let encoded = self.gui_state.saving_cctf_encoding();
         let save_options = SaveOptions {
@@ -138,6 +164,81 @@ impl App {
                 ),
             );
         }
+        self.pending_saves.push_back(PendingSave {
+            operation,
+            path: path.to_path_buf(),
+            image: self.output_image.clone(),
+            retained: self.output_retained.clone(),
+            metadata: self.output_metadata.clone(),
+            source_color_space: self.output_color_space.clone(),
+            source_encoded: self.output_cctf_encoding,
+            destination: destination.to_owned(),
+            encoded,
+            format: actual_format,
+            depth: save_options.depth,
+            backend: Arc::clone(&self.backend),
+        });
+        self.run_ready_saves();
+        if !self.pending_saves.is_empty()
+            && let Some(ctx) = &self.photograph.context
+        {
+            ctx.request_repaint();
+        }
+    }
+
+    pub(crate) fn poll_pending_saves(&mut self, ctx: &egui::Context) {
+        self.run_ready_saves();
+        if !self.pending_saves.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+    }
+
+    fn run_ready_saves(&mut self) {
+        while self
+            .pending_saves
+            .front()
+            .is_some_and(|save| save.operation.progress_ready())
+        {
+            let save = self.pending_saves.pop_front().expect("ready save exists");
+            self.write_retained_save(save);
+        }
+    }
+
+    pub(crate) fn cancel_pending_saves(&mut self) {
+        while let Some(mut save) = self.pending_saves.pop_front() {
+            save.operation
+                .issue(IssueCategory::Cancelled, IssueBoundary::Operation);
+            self.diagnostics.finish(save.operation, Outcome::Cancelled);
+        }
+    }
+
+    fn write_retained_save(&mut self, save: PendingSave) {
+        let PendingSave {
+            mut operation,
+            path,
+            image,
+            retained,
+            metadata,
+            source_color_space,
+            source_encoded,
+            destination,
+            encoded,
+            format: actual_format,
+            depth,
+            backend,
+        } = save;
+        // Readiness was checked nonblockingly above; this records a diagnostic
+        // failure if begin failed, and never waits on filesystem work here.
+        operation.wait_for_progress();
+        let t = Instant::now();
+        let save_options = SaveOptions {
+            depth,
+            color_space: &destination,
+            cctf_encoding: encoded,
+            jpeg_quality: None,
+            jpeg_subsampling: None,
+            compression: None,
+        };
         let saving_convert =
             operation.scope("saving_convert", ObservationKind::Phase, Purpose::Image);
         let kind = match image_io::output_sample_kind(actual_format, save_options.depth) {
@@ -153,23 +254,23 @@ impl App {
                 return;
             }
         };
-        let pixels = match if let Some(retained) = self.output_retained.as_ref() {
+        let pixels = match if let Some(retained) = retained.as_ref() {
             image_io::convert_retained_samples_with_backend(
                 retained,
-                destination,
+                &destination,
                 encoded,
                 kind,
-                self.backend.as_ref(),
+                backend.as_ref(),
             )
         } else {
             image_io::convert_samples_with_backend(
-                self.output_image.as_ref().expect("accepted CPU output"),
-                &self.output_color_space,
-                self.output_cctf_encoding,
-                destination,
+                image.as_ref().expect("accepted CPU output"),
+                &source_color_space,
+                source_encoded,
+                &destination,
                 encoded,
                 kind,
-                self.backend.as_ref(),
+                backend.as_ref(),
             )
         } {
             Ok(image) => image,
@@ -188,9 +289,9 @@ impl App {
         let file_write = operation.scope("file_write", ObservationKind::Phase, Purpose::Image);
         let result = pixels
             .prepare_observed(
-                path,
+                &path,
                 save_options,
-                self.output_metadata.as_ref(),
+                metadata.as_ref(),
                 true,
                 file_write.context(),
             )

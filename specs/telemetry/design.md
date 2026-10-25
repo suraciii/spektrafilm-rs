@@ -36,6 +36,28 @@ CLI saving sample conversion MUST bind the selected backend to its saving phase,
 - Event filtering MUST NOT change explicitly requested report collection; summary collection MUST cover every accepted operation while enabled. Pass timing MUST apply to the selected operations consistently; a report MUST identify its requested and effective collection mode.
 - Unsupported GPU timing retains summary with a stable availability reason; a benchmark that selects only some iterations for timing MUST report that selection. Aggregates MUST identify sample count and MUST NOT silently combine collection modes.
 
+## Live progress ownership
+
+The operation MUST attach its bounded progress sink before any observation context is cloned for image work. Backend scopes MUST emit coarse begin and end events through that sink; core MUST own progress snapshots, journal serialization, and destination validation.
+
+Frontends MUST own journal creation and writer lifetime. The CLI MUST create the journal before command work, poll it on a dedicated thread every 250 milliseconds, then finish the operation, join and flush the writer, and publish the final report.
+
+GUI progress writes MUST run outside the interface and image workers. The background publisher MUST synchronize the begin record before releasing image-worker readiness; begin failure MUST release readiness with a separate diagnostic rather than fail image work.
+
+Image-worker readiness waits MUST honor cancellation, supersession, and shutdown without requiring the journal writer to become ready. Cancelling readiness MUST stop image work rather than classify diagnostic unavailability as an image failure.
+
+The frontend MUST defer retained Save nonblockingly until its journal is ready. A deferred Save MUST retain the pixels, saving settings, metadata, and source-render identity captured when accepted, independently of later interface changes.
+
+The frontend MUST retain at most one Save awaiting journal readiness. Every request entry point MUST reject further Saves before allocating another operation collector or copying metadata; the Save action MUST remain disabled until the accepted Save leaves that pending state.
+
+The session publisher MUST periodically drain active journals even when no terminal report is queued. It MUST flush and retire the matching progress journal before publishing its terminal report. Shutdown MUST cancel deferred image work and drain accepted progress and terminal reports before releasing its workers.
+
+Progress events MUST remain independent of the final report detail budget. Full progress transport MUST increment a bounded loss counter rather than wait for a consumer; disabled collection MUST allocate neither a transport nor a writer.
+
+The journal MUST preserve its initial begin record and reuse fixed-size circular snapshot slots. Snapshot throttling MUST occur at the persistence boundary; terminal events and shutdown flush MUST bypass that throttle. [Progress record semantics](metrics/spec.md#live-progress-records) own the disk format and reader ordering.
+
+Journal creation MUST use exclusive file creation after protected-path validation. Recoverable creation, polling, and flushing errors MUST remain independent of image execution and final report publication.
+
 ## Routing and timing
 
 - Runtime reports the resident eligibility decision separately from the route that actually executed. A declined resident route can still dispatch GPU stages.
@@ -79,6 +101,13 @@ A pass duration covers the device's pass interval. It does not measure isolated 
 
 - The frontend finalizes the record at the [operation terminal boundary](metrics/spec.md#operation-and-phase-wall-time). CPU or GPU failure MAY leave partial observations; those values MUST identify their completed scope.
 - Telemetry persistence errors MUST NOT rewrite the operation outcome. Preview completion ends at the presentation handoff, not at physical display scanout.
+- GUI startup MUST select summary collection before the initial input request. It MUST create a unique persistent directory under the application configuration directory's `logs/diagnostics` area unless launch configuration provides an explicit destination.
+- GUI automatic publication MUST share immutable terminal reports with in-memory history rather than copy report contents. A session-local worker MUST serialize and write reports outside the GUI thread.
+- The nonblocking publication queue MUST retain at most 20 waiting reports in addition to the in-flight write.
+- Queue exhaustion, worker startup failure, and file errors MUST surface through the existing diagnostic status boundary without changing image outcomes. Error retention MUST remain bounded.
+- Each queued write MUST retain its session destination independently of report history eviction.
+- Normal shutdown MUST close the queue and drain accepted writes before releasing the publication worker.
+- Opening the log folder MUST NOT wait on the GUI thread. Completed opener processes MUST be reaped.
 - Detailed reports MUST use stable schema fields and stable enumerated categories. Paths and raw exceptions MUST NOT enter those fields.
 - Operation and revision identifiers are correlation fields for local reports and traces; they MUST NOT become metric labels. Device names, stock identifiers, dimensions, seeds, and arbitrary user strings MUST NOT become aggregate metric labels.
 - Validation MUST compare telemetry-off and telemetry-on image results using existing numerical budgets. A controlled warm/cold comparison MUST measure collection overhead on each exercised route and identify the adapter, dimensions, precision, and iterations.

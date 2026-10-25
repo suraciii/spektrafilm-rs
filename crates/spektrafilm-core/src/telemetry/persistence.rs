@@ -33,6 +33,13 @@ impl ReportDestination {
         &self.path
     }
 
+    /// Live progress belongs beside the final report, with the same protections.
+    pub fn progress_destination(&self, protected: &[&Path]) -> Result<Self, PersistenceError> {
+        let mut name = self.path.as_os_str().to_os_string();
+        name.push(".progress.jsonl");
+        validate_report_destination(Path::new(&name), protected)
+    }
+
     pub fn write_new(&self, report: &Report) -> Result<(), PersistenceError> {
         let json = report.to_json().map_err(|error| {
             PersistenceError::Io(io::Error::new(
@@ -288,7 +295,7 @@ fn write_temporary(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     Ok(())
 }
 
-fn sync_parent(path: &Path) -> Result<(), PersistenceError> {
+pub(super) fn sync_parent(path: &Path) -> Result<(), PersistenceError> {
     #[cfg(unix)]
     {
         let parent = path

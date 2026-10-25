@@ -81,7 +81,7 @@ enum Commands {
         /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
         #[arg(long, default_value = "data")]
         data_dir: PathBuf,
-        /// Save one local JSON diagnostics report without replacing an existing file.
+        /// Save a JSON diagnostics report and live .progress.jsonl sidecar; never replace files.
         #[arg(long)]
         diagnostics: Option<PathBuf>,
         /// Collect GPU pass timings when available; requires --diagnostics.

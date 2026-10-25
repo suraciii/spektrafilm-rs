@@ -65,13 +65,10 @@ impl App {
             RenderKind::Preview
         };
         let input_epoch = self.input_epoch;
-        let mut operation = Operation::new(
-            match kind {
-                RenderKind::Preview => OperationKind::Preview,
-                RenderKind::Scan => OperationKind::Scan,
-            },
-            self.diagnostics.mode,
-        );
+        let mut operation = self.diagnostics.begin(match kind {
+            RenderKind::Preview => OperationKind::Preview,
+            RenderKind::Scan => OperationKind::Scan,
+        });
         operation.set_revisions(Some(input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width(), image.height());
         operation.set_backend_requested(diagnostics::preview_backend_requested());

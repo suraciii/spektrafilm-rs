@@ -57,6 +57,7 @@ fn stale_save_cancel_and_continue_preserve_retained_pixels_and_adjustments() {
     h.get_by_label("Continue saving retained pixels")
         .simulate_click();
     h.run_steps(3);
+    wait_until(h, |app| app.pending_saves.is_empty());
     assert!(!h.state().stale_save_confirmation);
     let expected = image_io::convert_image(
         &retained,
@@ -244,4 +245,160 @@ fn quiet_secondary_actions_keep_visible_keyboard_focus() {
     ] {
         assert_painted_focus(h, label);
     }
+}
+
+#[test]
+fn repeated_deferred_saves_are_bounded_and_preserve_captured_pixels_settings_and_provenance() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let earlier = preview(h);
+    let earlier_source = h.state().source_render.clone();
+    let earlier_color_space = h.state().output_color_space.clone();
+    let earlier_encoded = h.state().output_cctf_encoding;
+    let retained = scan(h);
+    let source = h.state().source_render.clone().unwrap();
+    h.state_mut().gui_state.sections["simulation"]["saving_color_space"] =
+        serde_json::json!("sRGB");
+    h.state_mut().gui_state.sections["simulation"]["saving_cctf_encoding"] =
+        serde_json::json!(true);
+    let expected = image_io::convert_image(
+        &retained,
+        &h.state().output_color_space,
+        h.state().output_cctf_encoding,
+        "sRGB",
+        true,
+    )
+    .unwrap();
+    let directory = h
+        .state()
+        .diagnostics
+        .publication_directory()
+        .unwrap()
+        .to_path_buf();
+    let (paused, release) = h.state_mut().diagnostics.pause_publication_for_test();
+    paused.recv_timeout(WAIT_DEADLINE).unwrap();
+    let destination = s.directory.path().join("captured-scan.png");
+    h.state_mut().save_to_path(&destination);
+    assert_eq!(h.state().pending_saves.len(), 1);
+    assert!(!destination.exists());
+
+    // The current retained result can change while journal creation is pending.
+    // Reuse a real earlier Preview rather than manufacturing replacement pixels.
+    let app = h.state_mut();
+    app.output_image = Some(earlier);
+    app.output_retained = None;
+    app.source_render = earlier_source;
+    app.output_color_space = earlier_color_space;
+    app.output_cctf_encoding = earlier_encoded;
+    app.retained_kind = Some(RenderKind::Preview);
+    app.gui_state.sections["simulation"]["saving_color_space"] = serde_json::json!("ProPhoto RGB");
+    app.gui_state.sections["simulation"]["saving_cctf_encoding"] = serde_json::json!(false);
+    h.run_steps(2);
+    assert_eq!(h.state().pending_saves.len(), 1);
+    assert!(!destination.exists());
+
+    let waiting_writes = h.state().diagnostics.pending_publications();
+    let rejected = s.directory.path().join("rejected-repeat.png");
+    for _ in 0..128 {
+        h.state_mut().save_to_path(&rejected);
+        assert_eq!(h.state().pending_saves.len(), 1);
+        assert_eq!(h.state().diagnostics.pending_publications(), waiting_writes);
+    }
+    h.state_mut().save_dialog();
+    assert!(!h.state().stale_save_confirmation);
+    assert!(!rejected.exists());
+
+    drop(release);
+    wait_until(h, |app| app.pending_saves.is_empty());
+    assert_png(&destination, &expected);
+    assert!(!rejected.exists());
+    let id = h.state().diagnostics.selected_report_id().unwrap();
+    let report_path = directory.join(format!("operation-{id}.json"));
+    wait_until(h, |app| {
+        app.diagnostics.pending_publications() == 0 && report_path.is_file()
+    });
+    let report: spektrafilm_core::telemetry::Report =
+        serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+    assert_eq!(
+        report.operation.kind,
+        spektrafilm_core::telemetry::OperationKind::Save
+    );
+    assert_eq!(report.source_render.as_ref(), Some(&source));
+    let saving = report.configuration.saving.unwrap();
+    assert_eq!(
+        saving.color_space,
+        spektrafilm_core::telemetry::ColorSpaceRole::Srgb
+    );
+    assert!(saving.transfer_encoded);
+}
+
+#[test]
+fn shutdown_cancels_save_waiting_for_journal_creation_without_writing_pixels() {
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+    let directory = h
+        .state()
+        .diagnostics
+        .publication_directory()
+        .unwrap()
+        .to_path_buf();
+    let (paused, release) = h.state_mut().diagnostics.pause_publication_for_test();
+    paused.recv_timeout(WAIT_DEADLINE).unwrap();
+    let destination = s.directory.path().join("cancelled-save.png");
+    h.state_mut().save_to_path(&destination);
+    assert_eq!(h.state().pending_saves.len(), 1);
+    assert!(!destination.exists());
+    let waiting_writes = h.state().diagnostics.pending_publications();
+    let rejected = s.directory.path().join("rejected-before-shutdown.png");
+    for _ in 0..128 {
+        h.state_mut().save_to_path(&rejected);
+        assert_eq!(h.state().pending_saves.len(), 1);
+        assert_eq!(h.state().diagnostics.pending_publications(), waiting_writes);
+    }
+    // Releasing the publisher does not run the UI-side pixel writer.
+    drop(release);
+    eframe::App::on_exit(h.state_mut(), None);
+    assert!(h.state().pending_saves.is_empty());
+    assert!(!destination.exists());
+    assert!(!rejected.exists());
+    // Shutdown deliberately discards in-memory history. The durable report,
+    // rather than a selected UI row, owns the cancellation evidence afterward.
+    assert!(h.state().diagnostics.selected_report_id().is_none());
+    let mut saves: Vec<spektrafilm_core::telemetry::Report> = std::fs::read_dir(&directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .map(|path| {
+            spektrafilm_core::telemetry::Report::from_json(&std::fs::read_to_string(path).unwrap())
+                .unwrap()
+        })
+        .filter(|report| report.operation.kind == spektrafilm_core::telemetry::OperationKind::Save)
+        .collect();
+    assert_eq!(
+        saves.len(),
+        1,
+        "only the accepted Save owns a terminal report"
+    );
+    let report = saves.pop().unwrap();
+    let id = report.operation.id;
+    assert_eq!(
+        report.operation.kind,
+        spektrafilm_core::telemetry::OperationKind::Save
+    );
+    assert_eq!(
+        report.operation.outcome,
+        spektrafilm_core::telemetry::Outcome::Cancelled
+    );
+    let progress_path = directory.join(format!("operation-{id}.json.progress.jsonl"));
+    assert!(
+        std::fs::read(progress_path)
+            .unwrap()
+            .split(|byte| *byte == b'\n')
+            .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
+            .any(|record| record["event"] == "end" && record["outcome"] == "cancelled")
+    );
 }

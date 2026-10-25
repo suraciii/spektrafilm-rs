@@ -1,4 +1,4 @@
-use super::blur::DispatchJob;
+use super::blur::{DispatchJob, GaussianBuffers, GaussianScratch};
 use super::grain::raster::RasterStorage;
 use super::grain::v1::blur::{GrainBlurState, build_grain_blur_paged_with_scratch};
 use super::paged::ImagePage;
@@ -222,6 +222,7 @@ pub(super) fn build_dir_state<A: RasterStorage + ?Sized, B: RasterStorage + ?Siz
     height: u32,
     buf_a: &A,
     buf_b: &B,
+    gaussian_scratch: &mut GaussianScratch,
     backend: &WgpuBackend,
 ) -> Result<DirState, String> {
     build_dir_state_with_limit(
@@ -231,6 +232,7 @@ pub(super) fn build_dir_state<A: RasterStorage + ?Sized, B: RasterStorage + ?Siz
         height,
         buf_a,
         buf_b,
+        gaussian_scratch,
         backend,
         super::bounded::storage_binding_limit(backend)?,
     )
@@ -244,6 +246,7 @@ fn build_dir_state_with_limit<A: RasterStorage + ?Sized, B: RasterStorage + ?Siz
     height: u32,
     buf_a: &A,
     buf_b: &B,
+    gaussian_scratch: &mut GaussianScratch,
     backend: &WgpuBackend,
     limit: u64,
 ) -> Result<DirState, String> {
@@ -289,12 +292,26 @@ fn build_dir_state_with_limit<A: RasterStorage + ?Sized, B: RasterStorage + ?Siz
             })
             .collect::<Vec<_>>()
     };
-    let correction = transport("dir_correction");
-    let gaussian = transport("dir_gaussian");
-    let tail = transport("dir_exponential_tail");
-    let mix = transport("dir_mix");
-    let blur_scratch = transport("dir_blur_scratch");
     let diffuse = dp.diffusion_size_px > 0.0;
+    let GaussianBuffers {
+        intermediate: blur_scratch,
+        output: gaussian,
+    } = if diffuse {
+        gaussian_scratch.buffers(backend, width, height)?
+    } else {
+        GaussianBuffers::default()
+    };
+    let correction = if diffuse {
+        transport("dir_correction")
+    } else {
+        Vec::new()
+    };
+    let tail = if diffuse {
+        transport("dir_exponential_tail")
+    } else {
+        Vec::new()
+    };
+    let mix = transport("dir_mix");
 
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -797,6 +814,7 @@ mod tests {
                 let b = upload(&log_raw, 7);
                 // 60 bytes: five image pixels and five coefficient rows. A
                 // 36-byte second run splits curves into overlapping pages too.
+                let mut gaussian_scratch = GaussianScratch::new(width, height);
                 for limit in [60, 36] {
                     for (pages, values) in [(&a, &density), (&b, &log_raw)] {
                         for page in pages {
@@ -816,6 +834,7 @@ mod tests {
                         height,
                         &a,
                         &b,
+                        &mut gaussian_scratch,
                         &gpu,
                         limit,
                     )

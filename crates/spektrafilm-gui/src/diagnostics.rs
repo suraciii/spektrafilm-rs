@@ -1,23 +1,32 @@
 //! Session-only native diagnostics. No field belongs to persisted GUI state.
+mod publication;
+
 use eframe::egui;
 use spektrafilm_backend::telemetry::CollectionMode;
 pub use spektrafilm_core::telemetry::BackendRequested;
 use spektrafilm_core::telemetry::{
-    ColorSpaceRole, Operation, Outcome, Report, validate_report_destination,
+    ColorSpaceRole, Operation, OperationKind, Outcome, Report, validate_report_destination,
 };
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 #[derive(Default)]
 pub(crate) struct Diagnostics {
     pub mode: CollectionMode,
-    history: VecDeque<Report>,
+    history: VecDeque<Arc<Report>>,
     selected: Option<u64>,
     user_selected: bool,
-    publication: Option<PathBuf>,
+    publication: Option<Arc<PathBuf>>,
+    publisher: Option<publication::Publisher>,
     publication_error: Option<String>,
+}
+
+pub(crate) enum Action {
+    SaveSelected,
+    OpenDirectory,
 }
 
 pub(crate) fn color_space(value: &str) -> ColorSpaceRole {
@@ -38,21 +47,57 @@ pub(crate) fn preview_backend_requested() -> BackendRequested {
 }
 
 impl Diagnostics {
-    /// Publish every completed operation's report as a new file in `directory`.
+    /// Publish live progress and completed reports in `directory`.
     ///
-    /// A launch-time choice: it stays out of saved GUI state, it never replaces
-    /// an existing file, and a failure surfaces as a status diagnostic instead of
-    /// failing the operation.
+    /// Session-only configuration. It never replaces an existing diagnostics file;
+    /// background publication failures do not change image-operation outcomes.
     pub fn publish_completed_to(&mut self, directory: PathBuf) {
-        self.publication = Some(directory);
+        self.publication = Some(Arc::new(directory));
+    }
+
+    pub fn record_publication_error(&mut self, error: String) {
+        self.publication_error = Some(error);
+    }
+
+    pub fn stop_publication(&mut self) {
+        self.publication = None;
+    }
+
+    pub fn publication_directory(&self) -> Option<&Path> {
+        self.publication.as_deref().map(|path| path.as_path())
+    }
+
+    pub fn pending_publications(&self) -> usize {
+        self.publisher
+            .as_ref()
+            .map_or(0, publication::Publisher::pending)
     }
 
     pub fn take_publication_error(&mut self) -> Option<String> {
-        self.publication_error.take()
+        self.publication_error
+            .take()
+            .or_else(|| self.publisher.as_ref()?.take_error())
+    }
+
+    /// Attach the progress sink before any image worker clones the context.
+    pub fn begin(&mut self, kind: OperationKind) -> Operation {
+        let mut operation = Operation::new(kind, self.mode);
+        if let Some(directory) = self.publication.as_ref().map(Arc::clone)
+            && let Some(receiver) = operation.progress()
+        {
+            let result = self
+                .publisher()
+                .and_then(|publisher| publisher.begin(directory, operation.id(), receiver));
+            if let Err(error) = result {
+                self.publication_error = Some(error);
+            }
+        }
+        operation
     }
 
     pub fn finish(&mut self, operation: Operation, outcome: Outcome) {
         if let Some(report) = operation.finish(outcome) {
+            let report = Arc::new(report);
             if let Err(error) = self.publish(&report) {
                 self.publication_error = Some(error);
             }
@@ -60,17 +105,34 @@ impl Diagnostics {
         }
     }
 
-    fn publish(&self, report: &Report) -> Result<(), String> {
-        let Some(directory) = self.publication.as_deref() else {
+    fn publish(&mut self, report: &Arc<Report>) -> Result<(), String> {
+        let Some(directory) = self.publication.as_ref().map(Arc::clone) else {
             return Ok(());
         };
-        let path = directory.join(format!("operation-{}.json", report.operation.id));
-        validate_report_destination(&path, &[])
-            .and_then(|destination| destination.write_new(report))
-            .map_err(|error| error.to_string())
+        self.publisher()?.enqueue(directory, Arc::clone(report))
     }
 
-    fn retain(&mut self, report: Report) {
+    fn publisher(&mut self) -> Result<&publication::Publisher, String> {
+        if self.publisher.is_none() {
+            self.publisher = Some(publication::Publisher::new()?);
+        }
+        Ok(self
+            .publisher
+            .as_ref()
+            .expect("publisher initialized above"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_publication_for_test(
+        &mut self,
+    ) -> (
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::SyncSender<()>,
+    ) {
+        self.publisher().unwrap().pause_for_test()
+    }
+
+    fn retain(&mut self, report: Arc<Report>) {
         if !self.user_selected {
             self.selected = Some(report.operation.id);
         }
@@ -93,7 +155,9 @@ impl Diagnostics {
         self.selected
     }
 
-    pub fn clear(&mut self) {
+    pub fn shutdown(&mut self) {
+        self.stop_publication();
+        drop(self.publisher.take());
         self.history.clear();
         self.selected = None;
         self.user_selected = false;
@@ -116,181 +180,220 @@ impl Diagnostics {
         render: Option<(&str, CollectionMode)>,
         queued: Option<(&str, CollectionMode)>,
         export: Option<(&str, CollectionMode)>,
-    ) -> bool {
-        let mut save = false;
+    ) -> Option<Action> {
+        let mut action = None;
         ui.vertical(|ui| {
-            let mode_response = egui::ComboBox::from_id_salt("diagnostics-mode")
-                .selected_text(mode_label(ui.ctx(), self.mode))
-                .show_ui(ui, |ui| {
-                    for mode in [
-                        CollectionMode::Off,
-                        CollectionMode::Summary,
-                        CollectionMode::GpuTiming,
-                    ] {
-                        ui.selectable_value(&mut self.mode, mode, mode_label(ui.ctx(), mode));
-                    }
-                })
-                .response;
-            let mode_name = crate::controls::localized(ui.ctx(), "Collection mode");
-            ui.ctx().accesskit_node_builder(mode_response.id, |node| {
-                node.set_label(mode_name.as_ref());
+            let status = if self.mode == CollectionMode::Off {
+                "surfaces.diagnostics.off"
+            } else if self.publication_directory().is_some() {
+                "surfaces.diagnostics.automatic"
+            } else {
+                "surfaces.diagnostics.unavailable"
+            };
+            ui.label(crate::i18n::text(ui.ctx(), status));
+            let open = ui.add_enabled(
+                self.publication_directory().is_some(),
+                egui::Button::new(crate::i18n::text(
+                    ui.ctx(),
+                    "surfaces.diagnostics.open_directory",
+                )),
+            );
+            crate::controls::locate_row(ui, "action.open_diagnostic_directory", &open);
+            if open.clicked() {
+                action = Some(Action::OpenDirectory);
+            }
+            let requested = ui.ctx().data(|data| {
+                data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
             });
-            crate::controls::locate_row(ui, "diagnostics.collection_mode", &mode_response);
-            ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.session"));
-            for (kind, mode) in render.into_iter().chain(export) {
-                ui.label(crate::tr!(
-                    ui.ctx(),
-                    "surfaces.diagnostics.in_flight",
-                    kind = crate::controls::localized(ui.ctx(), kind),
-                    mode = mode_label(ui.ctx(), mode)
-                ));
-            }
-            if let Some((kind, mode)) = queued {
-                ui.label(crate::tr!(
-                    ui.ctx(),
-                    "surfaces.diagnostics.queued",
-                    kind = crate::controls::localized(ui.ctx(), kind),
-                    mode = mode_label(ui.ctx(), mode)
-                ));
-            }
-            if self.history.is_empty() {
-                ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.empty"));
-            }
-            for report in &self.history {
-                let label = format!(
-                    "#{} {} · {}",
-                    report.operation.id,
-                    words(&report.operation.kind),
-                    words(&report.operation.outcome)
-                );
-                if ui
-                    .selectable_value(&mut self.selected, Some(report.operation.id), label)
-                    .clicked()
+            let locate_details = requested.as_ref().is_some_and(|(section, target)| {
+                section == "Diagnostics"
+                    && target != "action.open_diagnostic_directory"
+                    && !target.eq_ignore_ascii_case("Open log folder")
+            });
+            egui::CollapsingHeader::new(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.diagnostics.advanced",
+            ))
+            .id_salt("diagnostics.advanced")
+            .default_open(false)
+            .open(locate_details.then_some(true))
+            .show(ui, |ui| {
+                let mode_response = egui::ComboBox::from_id_salt("diagnostics-mode")
+                    .selected_text(mode_label(ui.ctx(), self.mode))
+                    .show_ui(ui, |ui| {
+                        for mode in [
+                            CollectionMode::Off,
+                            CollectionMode::Summary,
+                            CollectionMode::GpuTiming,
+                        ] {
+                            ui.selectable_value(&mut self.mode, mode, mode_label(ui.ctx(), mode));
+                        }
+                    })
+                    .response;
+                let mode_name = crate::controls::localized(ui.ctx(), "Collection mode");
+                ui.ctx().accesskit_node_builder(mode_response.id, |node| {
+                    node.set_label(mode_name.as_ref());
+                });
+                crate::controls::locate_row(ui, "diagnostics.collection_mode", &mode_response);
+                ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.session"));
+                for (kind, mode) in render.into_iter().chain(export) {
+                    ui.label(crate::tr!(
+                        ui.ctx(),
+                        "surfaces.diagnostics.in_flight",
+                        kind = crate::controls::localized(ui.ctx(), kind),
+                        mode = mode_label(ui.ctx(), mode)
+                    ));
+                }
+                if let Some((kind, mode)) = queued {
+                    ui.label(crate::tr!(
+                        ui.ctx(),
+                        "surfaces.diagnostics.queued",
+                        kind = crate::controls::localized(ui.ctx(), kind),
+                        mode = mode_label(ui.ctx(), mode)
+                    ));
+                }
+                if self.history.is_empty() {
+                    ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.empty"));
+                }
+                for report in &self.history {
+                    let label = format!(
+                        "#{} {} · {}",
+                        report.operation.id,
+                        words(&report.operation.kind),
+                        words(&report.operation.outcome)
+                    );
+                    if ui
+                        .selectable_value(&mut self.selected, Some(report.operation.id), label)
+                        .clicked()
+                    {
+                        self.user_selected = true;
+                    }
+                }
+                if let Some(report) = self
+                    .history
+                    .iter()
+                    .find(|report| Some(report.operation.id) == self.selected)
                 {
-                    self.user_selected = true;
-                }
-            }
-            if let Some(report) = self
-                .history
-                .iter()
-                .find(|report| Some(report.operation.id) == self.selected)
-            {
-                let summary = report.summary();
-                let dimensions = summary.working_dimensions.map_or_else(
-                    || {
-                        crate::i18n::text(ui.ctx(), "surfaces.diagnostics.dimensions_missing")
-                            .into_owned()
-                    },
-                    |[w, h]| format!("{w} × {h}"),
-                );
-                let duration = summary.duration_seconds.map_or_else(
-                    || {
-                        crate::i18n::text(ui.ctx(), "surfaces.diagnostics.duration_missing")
-                            .into_owned()
-                    },
-                    |value| format!("{:.1} ms", value * 1000.0),
-                );
-                ui.label(format!(
-                    "{} · {} · {dimensions} · {duration}",
-                    words(&summary.kind),
-                    words(&summary.outcome)
-                ));
-                ui.label(crate::tr!(
-                    ui.ctx(),
-                    "surfaces.diagnostics.backend",
-                    requested = optional_words(ui.ctx(), summary.backend_requested),
-                    selected = optional_words(ui.ctx(), summary.backend_selected),
-                    route = optional_words(ui.ctx(), summary.path)
-                ));
-                if let Some((phase, duration)) = summary.largest_phase {
-                    ui.label(crate::tr!(
-                        ui.ctx(),
-                        "surfaces.diagnostics.phase",
-                        phase = phase,
-                        ms = format!("{:.1}", duration * 1000.0)
+                    let summary = report.summary();
+                    let dimensions = summary.working_dimensions.map_or_else(
+                        || {
+                            crate::i18n::text(ui.ctx(), "surfaces.diagnostics.dimensions_missing")
+                                .into_owned()
+                        },
+                        |[w, h]| format!("{w} × {h}"),
+                    );
+                    let duration = summary.duration_seconds.map_or_else(
+                        || {
+                            crate::i18n::text(ui.ctx(), "surfaces.diagnostics.duration_missing")
+                                .into_owned()
+                        },
+                        |value| format!("{:.1} ms", value * 1000.0),
+                    );
+                    ui.label(format!(
+                        "{} · {} · {dimensions} · {duration}",
+                        words(&summary.kind),
+                        words(&summary.outcome)
                     ));
-                }
-                if summary.software_adapter {
-                    ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.software"));
-                }
-                for reason in summary.resident_decline_reasons {
                     ui.label(crate::tr!(
                         ui.ctx(),
-                        "surfaces.diagnostics.declined",
-                        reason = words(&reason)
+                        "surfaces.diagnostics.backend",
+                        requested = optional_words(ui.ctx(), summary.backend_requested),
+                        selected = optional_words(ui.ctx(), summary.backend_selected),
+                        route = optional_words(ui.ctx(), summary.path)
                     ));
-                }
-                for (stage, reason) in summary.cpu_stage_reasons {
-                    ui.label(crate::tr!(
-                        ui.ctx(),
-                        "surfaces.diagnostics.cpu_reason",
-                        stage = stage,
-                        reason = words(&reason)
-                    ));
-                }
-                if let Some(source) = &report.source_render {
-                    ui.label(crate::tr!(
-                        ui.ctx(),
-                        "surfaces.diagnostics.source",
-                        id = source.operation_id,
-                        width = source.dimensions[0],
-                        height = source.dimensions[1],
-                        state = crate::i18n::text(
+                    if let Some((phase, duration)) = summary.largest_phase {
+                        ui.label(crate::tr!(
                             ui.ctx(),
-                            if source.diagnostics_collected {
-                                "surfaces.diagnostics.collected"
-                            } else {
-                                "surfaces.diagnostics.not_collected"
-                            }
-                        )
-                    ));
-                }
-                egui::CollapsingHeader::new(crate::i18n::text(
-                    ui.ctx(),
-                    "surfaces.diagnostics.phases",
-                ))
-                .id_salt("diagnostics.phases")
-                .show(ui, |ui| {
-                    details(ui, &report.phases);
-                });
-                egui::CollapsingHeader::new(crate::i18n::text(
-                    ui.ctx(),
-                    "surfaces.diagnostics.stages",
-                ))
-                .id_salt("diagnostics.stages")
-                .show(ui, |ui| {
-                    details(ui, &report.stages);
-                });
-                egui::CollapsingHeader::new(crate::i18n::text(
-                    ui.ctx(),
-                    "surfaces.diagnostics.transfers",
-                ))
-                .id_salt("diagnostics.transfers")
-                .show(ui, |ui| {
-                    ui.small(crate::i18n::text(
+                            "surfaces.diagnostics.phase",
+                            phase = phase,
+                            ms = format!("{:.1}", duration * 1000.0)
+                        ));
+                    }
+                    if summary.software_adapter {
+                        ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.software"));
+                    }
+                    for reason in summary.resident_decline_reasons {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.declined",
+                            reason = words(&reason)
+                        ));
+                    }
+                    for (stage, reason) in summary.cpu_stage_reasons {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.cpu_reason",
+                            stage = stage,
+                            reason = words(&reason)
+                        ));
+                    }
+                    if let Some(source) = &report.source_render {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.source",
+                            id = source.operation_id,
+                            width = source.dimensions[0],
+                            height = source.dimensions[1],
+                            state = crate::i18n::text(
+                                ui.ctx(),
+                                if source.diagnostics_collected {
+                                    "surfaces.diagnostics.collected"
+                                } else {
+                                    "surfaces.diagnostics.not_collected"
+                                }
+                            )
+                        ));
+                    }
+                    egui::CollapsingHeader::new(crate::i18n::text(
                         ui.ctx(),
-                        "surfaces.diagnostics.transfers_help",
-                    ));
-                    details(ui, &report.measurements);
-                });
-                egui::CollapsingHeader::new(crate::i18n::text(
-                    ui.ctx(),
-                    "surfaces.diagnostics.gpu",
-                ))
-                .id_salt("diagnostics.gpu")
-                .show(ui, |ui| {
-                    ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.gpu_help"));
-                    details(ui, &report.gpu_batches);
-                    details(ui, &report.execution);
-                    details(ui, &report.coverage);
-                    details(ui, &report.diagnostic_issues);
-                });
-                let response = ui.button(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.save"));
-                crate::controls::locate_row(ui, "action.save_report", &response);
-                save = response.clicked();
-            }
+                        "surfaces.diagnostics.phases",
+                    ))
+                    .id_salt("diagnostics.phases")
+                    .show(ui, |ui| {
+                        details(ui, &report.phases);
+                    });
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.stages",
+                    ))
+                    .id_salt("diagnostics.stages")
+                    .show(ui, |ui| {
+                        details(ui, &report.stages);
+                    });
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.transfers",
+                    ))
+                    .id_salt("diagnostics.transfers")
+                    .show(ui, |ui| {
+                        ui.small(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.diagnostics.transfers_help",
+                        ));
+                        details(ui, &report.measurements);
+                    });
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.gpu",
+                    ))
+                    .id_salt("diagnostics.gpu")
+                    .show(ui, |ui| {
+                        ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.gpu_help"));
+                        details(ui, &report.gpu_batches);
+                        details(ui, &report.execution);
+                        details(ui, &report.coverage);
+                        details(ui, &report.diagnostic_issues);
+                    });
+                    let response =
+                        ui.button(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.save"));
+                    crate::controls::locate_row(ui, "action.save_report", &response);
+                    if response.clicked() {
+                        action = Some(Action::SaveSelected);
+                    }
+                }
+            });
         });
-        save
+        action
     }
 }
 
@@ -370,6 +473,17 @@ fn show_value(ui: &mut egui::Ui, key: Option<&str>, value: &serde_json::Value) {
 mod tests {
     use super::*;
     use spektrafilm_core::telemetry::{OperationKind, SourceRender};
+
+    fn wait_for_publications(diagnostics: &Diagnostics) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while diagnostics.pending_publications() > 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "report publication timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
     #[test]
     fn history_is_bounded_newest_first_and_source_survives_eviction() {
         let mut diagnostics = Diagnostics::default();
@@ -469,19 +583,20 @@ mod tests {
     }
     #[test]
     fn publication_writes_one_new_file_per_completed_operation() {
-        let directory = std::env::temp_dir().join(format!(
-            "spektrafilm-gui-publication-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&directory).unwrap();
-        let mut diagnostics = Diagnostics::default();
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path().to_path_buf();
+        let mut diagnostics = Diagnostics {
+            mode: CollectionMode::Summary,
+            ..Diagnostics::default()
+        };
         diagnostics.publish_completed_to(directory.clone());
-        let preview = Operation::new(OperationKind::Preview, CollectionMode::Summary);
+        let preview = diagnostics.begin(OperationKind::Preview);
         let preview_id = preview.id();
         diagnostics.finish(preview, Outcome::Succeeded);
-        let scan = Operation::new(OperationKind::Scan, CollectionMode::Summary);
+        let scan = diagnostics.begin(OperationKind::Scan);
         let scan_id = scan.id();
         diagnostics.finish(scan, Outcome::Succeeded);
+        wait_for_publications(&diagnostics);
         assert_ne!(preview_id, scan_id);
         for (id, kind) in [
             (preview_id, OperationKind::Preview),
@@ -492,27 +607,40 @@ mod tests {
             assert_eq!(report.operation.id, id);
             assert_eq!(report.operation.kind, kind);
             assert_eq!(report.operation.outcome, Outcome::Succeeded);
+            assert!(
+                directory
+                    .join(format!("operation-{id}.json.progress.jsonl"))
+                    .is_file()
+            );
         }
         assert!(diagnostics.take_publication_error().is_none());
         // Every completed operation publishes its own file; none replaces another.
-        diagnostics.finish(
-            Operation::new(OperationKind::Preview, CollectionMode::Summary),
-            Outcome::Succeeded,
+        let preview = diagnostics.begin(OperationKind::Preview);
+        diagnostics.finish(preview, Outcome::Succeeded);
+        wait_for_publications(&diagnostics);
+        assert_eq!(
+            std::fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path
+                    .extension()
+                    .is_some_and(|extension| extension == "json"))
+                .count(),
+            3,
         );
-        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 3);
-        std::fs::remove_dir_all(&directory).unwrap();
+        diagnostics.shutdown();
     }
     #[test]
     fn publication_failure_surfaces_without_losing_the_report() {
-        let mut diagnostics = Diagnostics::default();
-        diagnostics.publish_completed_to(std::env::temp_dir().join(format!(
-            "spektrafilm-gui-missing-publication-{}",
-            std::process::id()
-        )));
-        diagnostics.finish(
-            Operation::new(OperationKind::Preview, CollectionMode::Summary),
-            Outcome::Succeeded,
-        );
+        let directory = tempfile::tempdir().unwrap();
+        let mut diagnostics = Diagnostics {
+            mode: CollectionMode::Summary,
+            ..Diagnostics::default()
+        };
+        diagnostics.publish_completed_to(directory.path().join("missing"));
+        let operation = diagnostics.begin(OperationKind::Preview);
+        diagnostics.finish(operation, Outcome::Succeeded);
+        wait_for_publications(&diagnostics);
         assert!(diagnostics.take_publication_error().is_some());
         assert_eq!(diagnostics.history.len(), 1);
         assert_eq!(
@@ -520,5 +648,58 @@ mod tests {
             Outcome::Succeeded
         );
         assert!(diagnostics.take_publication_error().is_none());
+    }
+
+    #[test]
+    fn begin_captures_collection_mode_before_workers_clone_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.publish_completed_to(directory.path().to_path_buf());
+        let off = diagnostics.begin(OperationKind::Preview);
+        assert_eq!(off.mode(), CollectionMode::Off);
+        assert!(diagnostics.publisher.is_none());
+        diagnostics.mode = CollectionMode::Summary;
+        let collected = diagnostics.begin(OperationKind::Scan);
+        let id = collected.id();
+        let context = collected.context();
+        diagnostics.mode = CollectionMode::Off;
+        let scope = context.scope(
+            "simulation",
+            spektrafilm_core::telemetry::ObservationKind::Phase,
+            spektrafilm_core::telemetry::Purpose::Image,
+        );
+        scope.finish(Outcome::Succeeded);
+        diagnostics.finish(off, Outcome::Succeeded);
+        diagnostics.finish(collected, Outcome::Cancelled);
+        wait_for_publications(&diagnostics);
+        assert_eq!(diagnostics.history.len(), 1);
+        assert_eq!(diagnostics.history[0].operation.id, id);
+        assert_eq!(diagnostics.history[0].operation.outcome, Outcome::Cancelled);
+        assert_eq!(
+            diagnostics.history[0]
+                .configuration
+                .collection_mode_requested,
+            CollectionMode::Summary,
+        );
+        assert!(
+            directory
+                .path()
+                .join(format!("operation-{id}.json"))
+                .is_file()
+        );
+        let progress = std::fs::read_to_string(
+            directory
+                .path()
+                .join(format!("operation-{id}.json.progress.jsonl")),
+        )
+        .unwrap();
+        assert!(
+            progress
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .any(|record| record["event"] == "end" && record["outcome"] == "cancelled")
+        );
+        assert!(diagnostics.take_publication_error().is_none());
+        diagnostics.shutdown();
     }
 }

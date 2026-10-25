@@ -19,7 +19,7 @@ use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::presets::workflow_default;
 use spektrafilm_core::profile;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
-use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome, SourceRender};
+use spektrafilm_core::telemetry::{OperationKind, Outcome, SourceRender};
 use spektrafilm_math::image::ImageBuf;
 mod app;
 mod backend;
@@ -96,8 +96,8 @@ fn main() -> eframe::Result<()> {
             "--help" | "-h" => {
                 println!("Usage: spektrafilm-gui [IMAGE] [--state GUI_STATE.json]");
                 println!(
-                    "SPEKTRAFILM_GUI_DIAGNOSTICS_DIR publishes each completed operation's report \
-                     as operation-<id>.json in that existing directory."
+                    "Performance logs are recorded automatically. Open the session folder in Settings > Diagnostics.\n\
+                     SPEKTRAFILM_GUI_DIAGNOSTICS_DIR overrides the destination with an existing directory."
                 );
                 return Ok(());
             }
@@ -183,21 +183,15 @@ fn main() -> eframe::Result<()> {
 mod telemetry_lifecycle_tests {
     use super::*;
     use spektrafilm_backend::telemetry::ObservationContext;
+    use spektrafilm_core::telemetry::Operation;
 
-    fn scanner_app() -> App {
+    fn scanner_app(config_root: &std::path::Path) -> App {
         let mut app = App::new_with_browser_path(
             Arc::new(spektrafilm_backend::cpu_backend::CpuBackend),
             None,
             None,
             None,
-            std::env::temp_dir().join(format!(
-                "scanner-snapshots-{}-{}.json",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            )),
+            config_root.join("browser.json"),
             crate::headless::data_dir(),
         );
         app.film_name = "kodak_portra_400".into();
@@ -231,7 +225,8 @@ mod telemetry_lifecycle_tests {
 
     #[test]
     fn app_manual_scanner_edits_reach_the_render_snapshot() {
-        let mut app = scanner_app();
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = scanner_app(directory.path());
         let context = ObservationContext::default();
         let source = app.render_snapshot(app.params.clone());
         app.params.scanner.lens_blur = 2.5;
@@ -260,7 +255,8 @@ mod telemetry_lifecycle_tests {
     #[test]
     fn app_preview_scan_and_export_render_the_same_raster() {
         for first in [Some(true), Some(false)] {
-            let mut app = scanner_app();
+            let directory = tempfile::tempdir().unwrap();
+            let mut app = scanner_app(directory.path());
             let snapshot = app.render_snapshot(app.params.clone());
             let context = ObservationContext::default();
             let input = app.image.as_ref().unwrap().host_image().unwrap().clone();
@@ -335,7 +331,8 @@ mod telemetry_lifecycle_tests {
 
     #[test]
     fn app_real_negative_setup_ignores_virtual_camera_metering() {
-        let mut app = scanner_app();
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = scanner_app(directory.path());
         app.params.workflow.route = "input > convert-film > scan".into();
         app.params.scanner.scan_output = "negative_to_positive".into();
         let context = ObservationContext::default();
@@ -362,7 +359,8 @@ mod telemetry_lifecycle_tests {
 
     #[test]
     fn app_channel_swaps_use_identical_canonical_and_render_calibration() {
-        let mut app = scanner_app();
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = scanner_app(directory.path());
         app.gui_state.sections["special"]["film_channel_swap"] = serde_json::json!([2, 0, 1]);
         app.gui_state.sections["special"]["print_channel_swap"] = serde_json::json!([1, 2, 0]);
         let snapshot = app.render_snapshot(app.params.clone());
@@ -383,7 +381,8 @@ mod telemetry_lifecycle_tests {
 
     #[test]
     fn imported_negative_conversion_slide_state_fails_without_mutating_current_scan() {
-        let mut app = scanner_app();
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = scanner_app(directory.path());
         let original = app.params.clone();
         let revision = app.parameter_revision;
         let mut invalid = app.current_state().unwrap();

@@ -99,6 +99,8 @@ pub(crate) struct App {
     /// surfaces success/failure in `status` when the worker thread
     /// completes. Joined eagerly to release the thread.
     pub(crate) export_job: Option<ExportJob>,
+    /// Captured retained Saves waiting nonblockingly for their diagnostic begin.
+    pub(crate) pending_saves: std::collections::VecDeque<super::export::PendingSave>,
     /// Transient control-search filter. Not persisted.
     pub(crate) filter: String,
     /// Restore-factory-default confirmation is open. Transient, never
@@ -133,6 +135,29 @@ struct StateApplication {
     print: profile::Profile,
     film_medium: controls::ScanMedium,
     normalization: Option<crate::app::Message>,
+}
+
+/// Fresh persistent folder for one GUI run's automatic diagnostics, created
+/// under the shared `<config directory>/logs/diagnostics` root.
+///
+/// Each run keeps its own `session-*` folder: `keep()` preserves it and its
+/// reports past shutdown, and no run ever reuses an earlier folder. A creation
+/// failure is a status error only; it never falls back to another directory.
+fn default_publication_directory(config_directory: &Path) -> std::result::Result<PathBuf, String> {
+    let root = config_directory.join("logs").join("diagnostics");
+    let session = std::fs::create_dir_all(&root)
+        .and_then(|()| {
+            tempfile::Builder::new()
+                .prefix("session-")
+                .tempdir_in(&root)
+        })
+        .map_err(|error| {
+            format!(
+                "automatic report directory under {} cannot be created: {error}",
+                root.display()
+            )
+        })?;
+    Ok(session.keep())
 }
 
 impl App {
@@ -297,6 +322,7 @@ impl App {
             input_view_job: None,
             input_command_job: None,
             export_job: None,
+            pending_saves: std::collections::VecDeque::new(),
             status: startup_error
                 .map(|error| {
                     crate::app::Message::new("operations.startup_error")
@@ -320,11 +346,19 @@ impl App {
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
-        if let Some(directory) = diagnostics_dir {
-            // Requesting reports selects summary collection for the session, as the
-            // CLI's report request does; the panel can still change the mode.
-            app.diagnostics.mode = CollectionMode::Summary;
-            app.diagnostics.publish_completed_to(directory);
+        // Every GUI session collects a Summary from startup on, configured
+        // before the first input loads so the startup preview is covered; the
+        // panel can still change the mode. Reports publish where an explicit
+        // request names, or into a fresh per-run session folder otherwise.
+        app.diagnostics.mode = CollectionMode::Summary;
+        match diagnostics_dir {
+            Some(directory) => app.diagnostics.publish_completed_to(directory),
+            None => match default_publication_directory(&app.config_directory) {
+                Ok(directory) => app.diagnostics.publish_completed_to(directory),
+                // Publication is expendable: collection and the image session
+                // continue, and the failure surfaces as the status error.
+                Err(error) => app.diagnostics.record_publication_error(error),
+            },
         }
         if let Some(p) = initial_image {
             app.load_image_from_path(&p);
@@ -628,5 +662,165 @@ impl App {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Automatic session diagnostics at the real GUI startup boundary: the
+    //! production default records every session without any diagnostics
+    //! request, into a folder no later run disturbs.
+    use super::*;
+    use spektrafilm_backend::cpu_backend::CpuBackend;
+    use spektrafilm_core::telemetry::{OperationKind, Outcome, Report};
+
+    /// Sorted direct entries of `directory`, files and folders alike.
+    fn sorted_entries(directory: &Path) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    /// Every published `.json` file parses as a startup preview report,
+    /// collected under the automatic Summary default. Sidecars are independent.
+    fn assert_preview_reports(directory: &Path) -> Vec<PathBuf> {
+        let paths: Vec<_> = sorted_entries(directory)
+            .into_iter()
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .collect();
+        let mut succeeded = false;
+        for path in &paths {
+            let report = Report::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+            assert_eq!(report.operation.kind, OperationKind::Preview);
+            assert_eq!(
+                report.configuration.collection_mode_requested,
+                CollectionMode::Summary
+            );
+            if report.operation.outcome == Outcome::Succeeded {
+                assert!(
+                    report.phases.iter().any(|phase| {
+                        phase.name == "simulation"
+                            && phase.duration.is_finite()
+                            && phase.duration > 0.0
+                    }),
+                    "startup reports include measured work"
+                );
+                succeeded = true;
+            }
+        }
+        assert!(succeeded, "the startup preview succeeded");
+        paths
+    }
+
+    /// One real GUI startup with production defaults; returns the automatic
+    /// publication directory and the file set shutdown left in it.
+    fn completed_startup(config_root: &Path, work: &Path) -> (PathBuf, Vec<PathBuf>) {
+        let mut harness = crate::headless::default_startup(config_root, work);
+        assert_eq!(harness.state().diagnostics.mode, CollectionMode::Summary);
+        let directory = harness
+            .state()
+            .diagnostics
+            .publication_directory()
+            .expect("every GUI session records automatically")
+            .to_path_buf();
+        let reports = assert_preview_reports(&directory);
+        eframe::App::on_exit(harness.state_mut(), None);
+        // Shutdown keeps the run's folder and every report in it.
+        assert!(reports.iter().all(|path| path.is_file()));
+        assert!(directory.is_dir());
+        let kept = sorted_entries(&directory);
+        (directory, kept)
+    }
+
+    #[test]
+    fn every_startup_publishes_summary_reports_to_a_fresh_persistent_session_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let config_root = root.path().join("config");
+        let logs_root = config_root.join("logs").join("diagnostics");
+
+        // Two fresh runs sharing one config directory, as two launches of the
+        // GUI would.
+        let work_one = root.path().join("work-1");
+        let (first_directory, first_kept) = completed_startup(&config_root, &work_one);
+        let first_contents: Vec<_> = first_kept
+            .iter()
+            .map(|path| std::fs::read(path).unwrap())
+            .collect();
+        let work_two = root.path().join("work-2");
+        let (second_directory, _) = completed_startup(&config_root, &work_two);
+        assert_ne!(
+            first_directory, second_directory,
+            "a restart never reuses an earlier session directory"
+        );
+        for directory in [&first_directory, &second_directory] {
+            assert_eq!(directory.parent(), Some(logs_root.as_path()));
+            assert!(
+                directory
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("session-")
+            );
+        }
+        // The later run left the earlier run's folder and files untouched.
+        assert_eq!(sorted_entries(&first_directory), first_kept);
+        for (path, contents) in first_kept.iter().zip(first_contents) {
+            assert_eq!(std::fs::read(path).unwrap(), contents);
+        }
+        let mut expected = vec![first_directory, second_directory];
+        expected.sort();
+        assert_eq!(
+            sorted_entries(&logs_root),
+            expected,
+            "exactly one persistent folder per run"
+        );
+    }
+
+    #[test]
+    fn blocked_default_root_surfaces_the_error_and_keeps_the_session_running() {
+        let root = tempfile::tempdir().unwrap();
+        let config_root = root.path().join("config");
+        // A regular file where the diagnostics root must be: no session
+        // directory can be created, anywhere.
+        let logs = config_root.join("logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(logs.join("diagnostics"), b"blocked").unwrap();
+        let work = root.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let (image_path, _) = crate::headless::deterministic_inputs(&work);
+
+        let mut app = App::new_with_browser_path(
+            Arc::new(CpuBackend),
+            Some(image_path),
+            None,
+            None,
+            config_root.join("preset_browser_state.json"),
+            crate::headless::data_dir(),
+        );
+        // Startup survives the failed folder: the image loads through the
+        // real input worker and collection stays on.
+        crate::headless::await_app_input(&mut app, &egui::Context::default());
+        assert!(app.image.is_some(), "the image session survives");
+        assert_eq!(app.diagnostics.mode, CollectionMode::Summary);
+        assert!(
+            app.diagnostics.publication_directory().is_none(),
+            "publication never falls back to another directory"
+        );
+        let error = app
+            .diagnostics
+            .take_publication_error()
+            .expect("the creation failure surfaces");
+        let blocked = logs.join("diagnostics").display().to_string();
+        assert!(
+            error.contains(blocked.as_str()),
+            "the error names the blocked root: {error}"
+        );
+        assert!(logs.join("diagnostics").is_file());
     }
 }

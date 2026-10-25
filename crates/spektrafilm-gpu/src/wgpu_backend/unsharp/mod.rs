@@ -1,5 +1,6 @@
-use super::grain::raster::{RasterStorage, paged_transport};
-use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged};
+use super::blur::GaussianScratch;
+use super::grain::raster::RasterStorage;
+use super::grain::v1::blur::{GrainBlurState as BlurJob, build_grain_blur_paged_with_scratch};
 use super::highlight::{PointwiseAccess, PointwiseJob, image_transport_bytes, pointwise_job};
 use super::*;
 
@@ -19,19 +20,22 @@ pub(super) fn build_unsharp_state(
     width: u32,
     height: u32,
     buf_b: &(impl RasterStorage + ?Sized),
+    gaussian_scratch: &mut GaussianScratch,
     backend: &WgpuBackend,
 ) -> Result<UnsharpState, String> {
-    let img_bytes = image_transport_bytes(backend, width, height, "unsharp")?;
+    image_transport_bytes(backend, width, height, "unsharp")?;
     let n_pixels = (u64::from(width) * u64::from(height)) as u32;
     let source_pages = buf_b.pages();
     let buf_b = &source_pages;
-    let blur_dst = paged_transport(backend, img_bytes, "unsharp_blurred")?;
-    let blur = build_grain_blur_paged(
+    let buffers = gaussian_scratch.buffers(backend, width, height)?;
+    let blur_dst = buffers.output;
+    let blur = build_grain_blur_paged_with_scratch(
         backend,
         width,
         height,
         buf_b,
         &blur_dst,
+        Some(&buffers.intermediate),
         [up.sigma_px.max(0.01) as f64; 3],
         0,
         0,

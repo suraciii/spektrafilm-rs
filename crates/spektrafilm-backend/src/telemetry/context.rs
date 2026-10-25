@@ -74,6 +74,7 @@ pub struct ObservationContext {
     purpose: Option<Purpose>,
     meta: Option<ScopeMeta>,
     span: Option<tracing::Span>,
+    progress: Option<super::progress::ProgressSender>,
 }
 impl std::fmt::Debug for ObservationContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -135,6 +136,7 @@ impl ObservationContext {
             span: Some(
                 tracing::debug_span!(target:"spektrafilm::telemetry", parent: None, "operation", observation_root_id=root_id),
             ),
+            progress: None,
         }
     }
     pub fn enabled(&self) -> bool {
@@ -169,6 +171,72 @@ impl ObservationContext {
     }
     pub fn root_id(&self) -> u64 {
         self.root
+    }
+    /// Attach before cloning the root context for worker dispatch.
+    pub fn progress(&mut self) -> Option<super::CoarseProgressReceiver> {
+        if self.progress.is_some() {
+            return None;
+        }
+        let start = self.collector.as_ref()?.lock().start;
+        let (sender, receiver) = super::progress::channel(start);
+        self.progress = Some(sender);
+        Some(receiver)
+    }
+
+    /// Nonblocking readiness query for frontend deferral; no filesystem access.
+    pub fn progress_ready(&self) -> bool {
+        self.progress
+            .as_ref()
+            .is_none_or(|progress| progress.is_ready())
+    }
+
+    /// Image-worker acceptance gate. Never call from a GUI frame callback.
+    pub fn wait_for_progress(&self) {
+        if let Some(progress) = &self.progress
+            && !progress.wait_ready()
+        {
+            self.issue(
+                IssueCategory::CollectionUnavailable,
+                IssueBoundary::Operation,
+            );
+        }
+    }
+
+    /// Return false on cancellation, without treating it as collection failure.
+    /// True admits image work after durable begin or a separate diagnostic failure.
+    /// Uses 10 ms timed waits to recheck cancellation/shutdown tokens.
+    pub fn wait_for_progress_or_cancel(&self, mut cancelled: impl FnMut() -> bool) -> bool {
+        let Some(progress) = &self.progress else {
+            return !cancelled();
+        };
+        let Some(ready) = progress.wait_ready_or_cancel(&mut cancelled) else {
+            return false;
+        };
+        if !ready {
+            self.issue(
+                IssueCategory::CollectionUnavailable,
+                IssueBoundary::Operation,
+            );
+        }
+        true
+    }
+
+    /// Coarse chain boundaries are progress only, not nested Stage observations.
+    pub fn chain_progress(&self, name: &'static str, begin: bool) {
+        self.emit_progress(name, ObservationKind::Stage, self.id, begin);
+    }
+
+    fn emit_progress(&self, name: &'static str, kind: ObservationKind, id: u64, begin: bool) {
+        if is_summary(kind)
+            && let Some(progress) = &self.progress
+        {
+            progress.send(super::ProgressEvent {
+                id,
+                name,
+                kind,
+                begin,
+            });
+        }
     }
     pub fn purpose(&self) -> Purpose {
         self.purpose.unwrap_or(Purpose::Image)
@@ -259,6 +327,7 @@ impl ObservationContext {
             }
         }
         drop(c);
+        self.emit_progress(name, kind, id, true);
         let _entered = self.span.as_ref().map(|span| span.enter());
         tracing::debug!(target:"spektrafilm::telemetry",parent:self.span.as_ref().and_then(|s|s.id()),event="observation_start",observation_root_id=self.root,observation_id=id,parent_id=self.id,name,kind=?kind,purpose=?purpose,start_offset=offset,attempt_index=index);
         let parent_span_id = self.span.as_ref().and_then(|s| s.id());
@@ -271,6 +340,7 @@ impl ObservationContext {
                 retained: retain,
                 purpose: Some(purpose),
                 meta: Some(ScopeMeta { name, kind }),
+                progress: self.progress.clone(),
                 span: Some(
                     tracing::debug_span!(target:"spektrafilm::telemetry", parent: parent_span_id, "observation", observation_root_id=self.root, observation_id=id, parent_id=self.id, name, kind=?kind),
                 ),
@@ -338,6 +408,9 @@ impl ObservationContext {
             c.snapshot.duration = c.start.elapsed().as_secs_f64();
             c.snapshot.outcome = Some(outcome);
             tracing::debug!(target:"spektrafilm::telemetry",parent:self.span.as_ref().and_then(|s|s.id()),event="operation_finish",observation_root_id=self.root,outcome=?outcome,duration=c.snapshot.duration);
+        }
+        if let Some(progress) = &self.progress {
+            progress.finish(outcome);
         }
     }
     fn mutate(&self, f: impl FnOnce(&mut ObservationSnapshot)) {
@@ -620,6 +693,10 @@ impl Drop for ObservationScope {
             }
             o.outcome = self.outcome;
         });
+        if let Some(meta) = &self.context.meta {
+            self.context
+                .emit_progress(meta.name, kind, self.context.id, false);
+        }
         if self.context.enabled() {
             tracing::debug!(target:"spektrafilm::telemetry",parent:self.context.span().and_then(|s|s.id()),event="observation_finish",observation_root_id=self.context.root_id(),observation_id=self.context.id(),kind=?kind,outcome=?self.outcome,complete=self.complete,duration)
         }

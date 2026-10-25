@@ -195,7 +195,7 @@ fn live_language_switch_does_not_change_retained_save_or_independent_export_pixe
     let output = scan(h);
     let revision = h.state().parameter_revision;
     let before = s.directory.path().join("english.png");
-    h.state_mut().save_to_path(&before);
+    save_retained(h, &before);
     let retained = h.state().output_image.clone().unwrap();
     language(h, LanguagePreference::SimplifiedChinese);
     assert!(Arc::ptr_eq(
@@ -204,7 +204,7 @@ fn live_language_switch_does_not_change_retained_save_or_independent_export_pixe
     ));
     assert_eq!(h.state().parameter_revision, revision);
     let after = s.directory.path().join("中文保存.png");
-    h.state_mut().save_to_path(&after);
+    save_retained(h, &after);
     let english = image_io::load(&before).unwrap().image;
     let chinese = image_io::load(&after).unwrap().image;
     assert_eq!(
@@ -582,7 +582,7 @@ fn chinese_save_rejection_translates_owned_cause_and_recovery_without_hiding_ext
     preview(h);
     language(h, LanguagePreference::SimplifiedChinese);
     let destination = s.directory.path().join("拒绝.xyz");
-    h.state_mut().save_to_path(&destination);
+    save_retained(h, &destination);
     let explanation = h.state().status.localized(&h.ctx);
     assert!(explanation.contains("xyz"), "{explanation}");
     assert!(
