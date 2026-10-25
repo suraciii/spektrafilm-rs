@@ -182,223 +182,217 @@ impl Diagnostics {
         export: Option<(&str, CollectionMode)>,
     ) -> Option<Action> {
         let mut action = None;
-        egui::CollapsingHeader::new(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.title"))
-            .id_salt("Diagnostics")
-            .default_open(true)
-            .show(ui, |ui| {
-                let status = if self.mode == CollectionMode::Off {
-                    "surfaces.diagnostics.off"
-                } else if self.publication_directory().is_some() {
-                    "surfaces.diagnostics.automatic"
-                } else {
-                    "surfaces.diagnostics.unavailable"
-                };
-                ui.label(crate::i18n::text(ui.ctx(), status));
-                let open = ui.add_enabled(
-                    self.publication_directory().is_some(),
-                    egui::Button::new(crate::i18n::text(
-                        ui.ctx(),
-                        "surfaces.diagnostics.open_directory",
-                    )),
-                );
-                crate::controls::locate_row(ui, "action.open_diagnostic_directory", &open);
-                if open.clicked() {
-                    action = Some(Action::OpenDirectory);
-                }
-                let requested = ui.ctx().data(|data| {
-                    data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
-                });
-                let locate_details = requested.as_ref().is_some_and(|(section, target)| {
-                    section == "Diagnostics"
-                        && target != "action.open_diagnostic_directory"
-                        && !target.eq_ignore_ascii_case("Open log folder")
-                });
-                egui::CollapsingHeader::new(crate::i18n::text(
+        ui.vertical(|ui| {
+            let status = if self.mode == CollectionMode::Off {
+                "surfaces.diagnostics.off"
+            } else if self.publication_directory().is_some() {
+                "surfaces.diagnostics.automatic"
+            } else {
+                "surfaces.diagnostics.unavailable"
+            };
+            ui.label(crate::i18n::text(ui.ctx(), status));
+            let open = ui.add_enabled(
+                self.publication_directory().is_some(),
+                egui::Button::new(crate::i18n::text(
                     ui.ctx(),
-                    "surfaces.diagnostics.advanced",
-                ))
-                .id_salt("diagnostics.advanced")
-                .default_open(false)
-                .open(locate_details.then_some(true))
-                .show(ui, |ui| {
-                    let mode_response = egui::ComboBox::from_id_salt("diagnostics-mode")
-                        .selected_text(mode_label(ui.ctx(), self.mode))
-                        .show_ui(ui, |ui| {
-                            for mode in [
-                                CollectionMode::Off,
-                                CollectionMode::Summary,
-                                CollectionMode::GpuTiming,
-                            ] {
-                                ui.selectable_value(
-                                    &mut self.mode,
-                                    mode,
-                                    mode_label(ui.ctx(), mode),
-                                );
-                            }
-                        })
-                        .response;
-                    crate::controls::locate_row(ui, "diagnostics.collection_mode", &mode_response);
-                    ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.session"));
-                    for (kind, mode) in render.into_iter().chain(export) {
-                        ui.label(crate::tr!(
-                            ui.ctx(),
-                            "surfaces.diagnostics.in_flight",
-                            kind = crate::controls::localized(ui.ctx(), kind),
-                            mode = mode_label(ui.ctx(), mode)
-                        ));
-                    }
-                    if let Some((kind, mode)) = queued {
-                        ui.label(crate::tr!(
-                            ui.ctx(),
-                            "surfaces.diagnostics.queued",
-                            kind = crate::controls::localized(ui.ctx(), kind),
-                            mode = mode_label(ui.ctx(), mode)
-                        ));
-                    }
-                    if self.history.is_empty() {
-                        ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.empty"));
-                    }
-                    for report in &self.history {
-                        let label = format!(
-                            "#{} {} · {}",
-                            report.operation.id,
-                            words(&report.operation.kind),
-                            words(&report.operation.outcome)
-                        );
-                        if ui
-                            .selectable_value(&mut self.selected, Some(report.operation.id), label)
-                            .clicked()
-                        {
-                            self.user_selected = true;
-                        }
-                    }
-                    if let Some(report) = self
-                        .history
-                        .iter()
-                        .find(|report| Some(report.operation.id) == self.selected)
-                    {
-                        let summary = report.summary();
-                        let dimensions = summary.working_dimensions.map_or_else(
-                            || {
-                                crate::i18n::text(
-                                    ui.ctx(),
-                                    "surfaces.diagnostics.dimensions_missing",
-                                )
-                                .into_owned()
-                            },
-                            |[w, h]| format!("{w} × {h}"),
-                        );
-                        let duration = summary.duration_seconds.map_or_else(
-                            || {
-                                crate::i18n::text(ui.ctx(), "surfaces.diagnostics.duration_missing")
-                                    .into_owned()
-                            },
-                            |value| format!("{:.1} ms", value * 1000.0),
-                        );
-                        ui.label(format!(
-                            "{} · {} · {dimensions} · {duration}",
-                            words(&summary.kind),
-                            words(&summary.outcome)
-                        ));
-                        ui.label(crate::tr!(
-                            ui.ctx(),
-                            "surfaces.diagnostics.backend",
-                            requested = optional_words(ui.ctx(), summary.backend_requested),
-                            selected = optional_words(ui.ctx(), summary.backend_selected),
-                            route = optional_words(ui.ctx(), summary.path)
-                        ));
-                        if let Some((phase, duration)) = summary.largest_phase {
-                            ui.label(crate::tr!(
-                                ui.ctx(),
-                                "surfaces.diagnostics.phase",
-                                phase = phase,
-                                ms = format!("{:.1}", duration * 1000.0)
-                            ));
-                        }
-                        if summary.software_adapter {
-                            ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.software"));
-                        }
-                        for reason in summary.resident_decline_reasons {
-                            ui.label(crate::tr!(
-                                ui.ctx(),
-                                "surfaces.diagnostics.declined",
-                                reason = words(&reason)
-                            ));
-                        }
-                        for (stage, reason) in summary.cpu_stage_reasons {
-                            ui.label(crate::tr!(
-                                ui.ctx(),
-                                "surfaces.diagnostics.cpu_reason",
-                                stage = stage,
-                                reason = words(&reason)
-                            ));
-                        }
-                        if let Some(source) = &report.source_render {
-                            ui.label(crate::tr!(
-                                ui.ctx(),
-                                "surfaces.diagnostics.source",
-                                id = source.operation_id,
-                                width = source.dimensions[0],
-                                height = source.dimensions[1],
-                                state = crate::i18n::text(
-                                    ui.ctx(),
-                                    if source.diagnostics_collected {
-                                        "surfaces.diagnostics.collected"
-                                    } else {
-                                        "surfaces.diagnostics.not_collected"
-                                    }
-                                )
-                            ));
-                        }
-                        egui::CollapsingHeader::new(crate::i18n::text(
-                            ui.ctx(),
-                            "surfaces.diagnostics.phases",
-                        ))
-                        .id_salt("diagnostics.phases")
-                        .show(ui, |ui| {
-                            details(ui, &report.phases);
-                        });
-                        egui::CollapsingHeader::new(crate::i18n::text(
-                            ui.ctx(),
-                            "surfaces.diagnostics.stages",
-                        ))
-                        .id_salt("diagnostics.stages")
-                        .show(ui, |ui| {
-                            details(ui, &report.stages);
-                        });
-                        egui::CollapsingHeader::new(crate::i18n::text(
-                            ui.ctx(),
-                            "surfaces.diagnostics.transfers",
-                        ))
-                        .id_salt("diagnostics.transfers")
-                        .show(ui, |ui| {
-                            ui.small(crate::i18n::text(
-                                ui.ctx(),
-                                "surfaces.diagnostics.transfers_help",
-                            ));
-                            details(ui, &report.measurements);
-                        });
-                        egui::CollapsingHeader::new(crate::i18n::text(
-                            ui.ctx(),
-                            "surfaces.diagnostics.gpu",
-                        ))
-                        .id_salt("diagnostics.gpu")
-                        .show(ui, |ui| {
-                            ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.gpu_help"));
-                            details(ui, &report.gpu_batches);
-                            details(ui, &report.execution);
-                            details(ui, &report.coverage);
-                            details(ui, &report.diagnostic_issues);
-                        });
-                        let response =
-                            ui.button(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.save"));
-                        crate::controls::locate_row(ui, "action.save_report", &response);
-                        if response.clicked() {
-                            action = Some(Action::SaveSelected);
-                        }
-                    }
-                });
+                    "surfaces.diagnostics.open_directory",
+                )),
+            );
+            crate::controls::locate_row(ui, "action.open_diagnostic_directory", &open);
+            if open.clicked() {
+                action = Some(Action::OpenDirectory);
+            }
+            let requested = ui.ctx().data(|data| {
+                data.get_temp::<(String, String)>(egui::Id::new("control_focus_request"))
             });
+            let locate_details = requested.as_ref().is_some_and(|(section, target)| {
+                section == "Diagnostics"
+                    && target != "action.open_diagnostic_directory"
+                    && !target.eq_ignore_ascii_case("Open log folder")
+            });
+            egui::CollapsingHeader::new(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.diagnostics.advanced",
+            ))
+            .id_salt("diagnostics.advanced")
+            .default_open(false)
+            .open(locate_details.then_some(true))
+            .show(ui, |ui| {
+                let mode_response = egui::ComboBox::from_id_salt("diagnostics-mode")
+                    .selected_text(mode_label(ui.ctx(), self.mode))
+                    .show_ui(ui, |ui| {
+                        for mode in [
+                            CollectionMode::Off,
+                            CollectionMode::Summary,
+                            CollectionMode::GpuTiming,
+                        ] {
+                            ui.selectable_value(&mut self.mode, mode, mode_label(ui.ctx(), mode));
+                        }
+                    })
+                    .response;
+                let mode_name = crate::controls::localized(ui.ctx(), "Collection mode");
+                ui.ctx().accesskit_node_builder(mode_response.id, |node| {
+                    node.set_label(mode_name.as_ref());
+                });
+                crate::controls::locate_row(ui, "diagnostics.collection_mode", &mode_response);
+                ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.session"));
+                for (kind, mode) in render.into_iter().chain(export) {
+                    ui.label(crate::tr!(
+                        ui.ctx(),
+                        "surfaces.diagnostics.in_flight",
+                        kind = crate::controls::localized(ui.ctx(), kind),
+                        mode = mode_label(ui.ctx(), mode)
+                    ));
+                }
+                if let Some((kind, mode)) = queued {
+                    ui.label(crate::tr!(
+                        ui.ctx(),
+                        "surfaces.diagnostics.queued",
+                        kind = crate::controls::localized(ui.ctx(), kind),
+                        mode = mode_label(ui.ctx(), mode)
+                    ));
+                }
+                if self.history.is_empty() {
+                    ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.empty"));
+                }
+                for report in &self.history {
+                    let label = format!(
+                        "#{} {} · {}",
+                        report.operation.id,
+                        words(&report.operation.kind),
+                        words(&report.operation.outcome)
+                    );
+                    if ui
+                        .selectable_value(&mut self.selected, Some(report.operation.id), label)
+                        .clicked()
+                    {
+                        self.user_selected = true;
+                    }
+                }
+                if let Some(report) = self
+                    .history
+                    .iter()
+                    .find(|report| Some(report.operation.id) == self.selected)
+                {
+                    let summary = report.summary();
+                    let dimensions = summary.working_dimensions.map_or_else(
+                        || {
+                            crate::i18n::text(ui.ctx(), "surfaces.diagnostics.dimensions_missing")
+                                .into_owned()
+                        },
+                        |[w, h]| format!("{w} × {h}"),
+                    );
+                    let duration = summary.duration_seconds.map_or_else(
+                        || {
+                            crate::i18n::text(ui.ctx(), "surfaces.diagnostics.duration_missing")
+                                .into_owned()
+                        },
+                        |value| format!("{:.1} ms", value * 1000.0),
+                    );
+                    ui.label(format!(
+                        "{} · {} · {dimensions} · {duration}",
+                        words(&summary.kind),
+                        words(&summary.outcome)
+                    ));
+                    ui.label(crate::tr!(
+                        ui.ctx(),
+                        "surfaces.diagnostics.backend",
+                        requested = optional_words(ui.ctx(), summary.backend_requested),
+                        selected = optional_words(ui.ctx(), summary.backend_selected),
+                        route = optional_words(ui.ctx(), summary.path)
+                    ));
+                    if let Some((phase, duration)) = summary.largest_phase {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.phase",
+                            phase = phase,
+                            ms = format!("{:.1}", duration * 1000.0)
+                        ));
+                    }
+                    if summary.software_adapter {
+                        ui.label(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.software"));
+                    }
+                    for reason in summary.resident_decline_reasons {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.declined",
+                            reason = words(&reason)
+                        ));
+                    }
+                    for (stage, reason) in summary.cpu_stage_reasons {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.cpu_reason",
+                            stage = stage,
+                            reason = words(&reason)
+                        ));
+                    }
+                    if let Some(source) = &report.source_render {
+                        ui.label(crate::tr!(
+                            ui.ctx(),
+                            "surfaces.diagnostics.source",
+                            id = source.operation_id,
+                            width = source.dimensions[0],
+                            height = source.dimensions[1],
+                            state = crate::i18n::text(
+                                ui.ctx(),
+                                if source.diagnostics_collected {
+                                    "surfaces.diagnostics.collected"
+                                } else {
+                                    "surfaces.diagnostics.not_collected"
+                                }
+                            )
+                        ));
+                    }
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.phases",
+                    ))
+                    .id_salt("diagnostics.phases")
+                    .show(ui, |ui| {
+                        details(ui, &report.phases);
+                    });
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.stages",
+                    ))
+                    .id_salt("diagnostics.stages")
+                    .show(ui, |ui| {
+                        details(ui, &report.stages);
+                    });
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.transfers",
+                    ))
+                    .id_salt("diagnostics.transfers")
+                    .show(ui, |ui| {
+                        ui.small(crate::i18n::text(
+                            ui.ctx(),
+                            "surfaces.diagnostics.transfers_help",
+                        ));
+                        details(ui, &report.measurements);
+                    });
+                    egui::CollapsingHeader::new(crate::i18n::text(
+                        ui.ctx(),
+                        "surfaces.diagnostics.gpu",
+                    ))
+                    .id_salt("diagnostics.gpu")
+                    .show(ui, |ui| {
+                        ui.small(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.gpu_help"));
+                        details(ui, &report.gpu_batches);
+                        details(ui, &report.execution);
+                        details(ui, &report.coverage);
+                        details(ui, &report.diagnostic_issues);
+                    });
+                    let response =
+                        ui.button(crate::i18n::text(ui.ctx(), "surfaces.diagnostics.save"));
+                    crate::controls::locate_row(ui, "action.save_report", &response);
+                    if response.clicked() {
+                        action = Some(Action::SaveSelected);
+                    }
+                }
+            });
+        });
         action
     }
 }

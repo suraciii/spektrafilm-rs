@@ -308,9 +308,24 @@ fn empty_session() -> Session {
 
 fn click(h: &mut Harness<'_, App>, label: &str) {
     await_input(h);
+    // Widget disclosure animation must settle before sampling pointer bounds.
+    // This does not disable the Viewer's composition/development animation.
+    h.ctx.style_mut(|style| style.animation_time = 0.0);
+    h.run_steps(3);
+    if matches!(label, "100%" | "200%" | "400%") {
+        h.query_all_by_role(egui::accesskit::Role::Button)
+            .find(|node| {
+                node.label()
+                    .is_some_and(|caption| caption.starts_with("zoom "))
+            })
+            .expect("Viewer exact zoom menu")
+            .simulate_click();
+        h.run_steps(3);
+    }
     scroll_controls_into_view(h, label);
     h.get_by_label(label).simulate_click();
-    h.run_steps(3);
+    // Centered dialogs measure their content before their final placement.
+    h.run_steps(6);
     await_input(h);
 }
 
@@ -360,10 +375,14 @@ fn open_export(h: &mut Harness<'_, App>) {
     close_settings(h);
     if !h.state().export_dialog.is_open() {
         click(h, "Export");
+        // The centered Area first measures its content, then places it.
+        h.run_steps(3);
     }
 }
 
 fn reveal_control(h: &mut Harness<'_, App>, path: &str) {
+    h.ctx.style_mut(|style| style.animation_time = 0.0);
+    h.run_steps(3);
     close_settings(h);
     if h.state().export_dialog.is_open() {
         click(h, "Cancel");
@@ -380,45 +399,42 @@ fn reveal_control(h: &mut Harness<'_, App>, path: &str) {
     let separate = !matches!(entry.owner, controls::ControlOwner::Stage(_));
     search_controls(h, path);
     if separate {
-        click(h, &locator);
+        // Locator results are above the inspector's parameter ScrollView.
+        h.get_by_label(&locator).simulate_click();
+        h.run_steps(6);
     }
 }
 
 /// Bring a retained AccessKit node into its real owner's visible scroll band.
 fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
-    let settings = ["Settings", "Export options"]
-        .into_iter()
-        .find_map(|title| {
-            h.query_by_role_and_label(egui::accesskit::Role::Window, title)
-                .and_then(|node| node.node().raw_bounds())
-        });
-    let (left, top, bottom, pointer) = if let Some(bounds) = settings {
-        (
-            bounds.x0,
-            bounds.y0 + 65.0,
-            bounds.y1 - 20.0,
-            egui::pos2(
-                bounds.x0 as f32 + 12.0,
-                ((bounds.y0 + bounds.y1) * 0.5) as f32,
-            ),
-        )
-    } else {
-        let search = h
-            .get_by_label("Search controls")
-            .node()
-            .raw_bounds()
-            .unwrap();
-        let left = search.x0;
-        let top = search.y1 + 70.0;
-        let bottom = h.get_by_label("SCAN").node().raw_bounds().unwrap().y0 - 8.0;
-        (
-            left,
-            top,
-            bottom,
-            egui::pos2(left as f32 + 2.0, ((top + bottom) * 0.5) as f32),
-        )
+    if matches!(
+        label,
+        "Close settings" | "Close export" | "Cancel" | "Export file…" | "SCAN" | "SAVE"
+    ) {
+        return;
+    }
+    let Some(viewport_label) = [
+        "Settings content",
+        "Export options content",
+        "Inspector controls",
+    ]
+    .into_iter()
+    .find(|title| {
+        h.query_by_role_and_label(egui::accesskit::Role::ScrollView, title)
+            .is_some()
+    }) else {
+        return;
     };
     for _ in 0..24 {
+        let viewport = h
+            .get_by_role_and_label(egui::accesskit::Role::ScrollView, viewport_label)
+            .raw_bounds()
+            .expect("visible scroll owner");
+        let (left, top, bottom) = (viewport.x0, viewport.y0, viewport.y1);
+        let pointer = egui::pos2(
+            ((viewport.x0 + viewport.x1) * 0.5) as f32,
+            ((viewport.y0 + viewport.y1) * 0.5) as f32,
+        );
         let target = h
             .query_all_by_label(label)
             .filter_map(|node| node.node().raw_bounds())
@@ -431,7 +447,15 @@ fn scroll_controls_into_view(h: &mut Harness<'_, App>, label: &str) {
             .push(egui::Event::PointerMoved(pointer));
         h.input_mut().events.push(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, if bounds.y0 < top { 350.0 } else { -350.0 }),
+            delta: egui::vec2(
+                0.0,
+                if bounds.y0 < top {
+                    top - bounds.y0 + 8.0
+                } else {
+                    bottom - bounds.y1 - 8.0
+                }
+                .clamp(-350.0, 350.0) as f32,
+            ),
             modifiers: Default::default(),
         });
         h.run_steps(10);
@@ -451,6 +475,12 @@ fn export_action(h: &mut Harness<'_, App>, step: &str) {
     assert_eq!(buttons.len(), 1, "expected one enabled {step} action");
     buttons[0].simulate_click();
     h.run_steps(3);
+    if step == "Export file…" {
+        assert!(
+            !h.state().export_dialog.is_open(),
+            "Export submit closes its draft"
+        );
+    }
 }
 
 /// The production Open action selects the decoder from the accepted file kind.
@@ -698,8 +728,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > scan");
     assert_eq!(h.state().params.workflow.route, "input > film > scan");
-    navigate_stage(h, controls::Stage::Film);
-    click(h, "Film material");
+    reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     let profile_label = profile.info.name.as_deref().unwrap_or("kodak_portra_400");
     choose(h, "film profile", profile_label);
@@ -949,8 +978,7 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
     let h = &mut s.harness;
     reveal_control(h, "workflow.route");
     choose(h, "workflow", "input > film > scan");
-    navigate_stage(h, controls::Stage::Film);
-    click(h, "Film material");
+    reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     let profile_label = profile.info.name.as_deref().unwrap_or("kodak_portra_400");
     choose(h, "film profile", profile_label);
@@ -1075,17 +1103,17 @@ mod layout_snapshots {
         assert_eq!((image.width(), image.height()), (700, 650));
         let mut rows = Vec::new();
         for label in [
-            "Backend",
             "Format",
             "Bit depth",
             "Compression",
             "Saving color space",
+            "Backend",
             "Apply saving CCTF encoding",
             "Export file…",
             "Cancel",
         ] {
             let role = match label {
-                "Apply saving CCTF encoding" => egui::accesskit::Role::CheckBox,
+                "Apply saving CCTF encoding" => egui::accesskit::Role::Switch,
                 "Export file…" | "Cancel" => egui::accesskit::Role::Button,
                 _ => egui::accesskit::Role::ComboBox,
             };
@@ -1248,8 +1276,7 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
         "standard",
         "the shipped default is the automatic standard"
     );
-    navigate_stage(h, controls::Stage::Film);
-    click(h, "Film material");
+    reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
     reveal_control(h, "workflow.route");
@@ -1292,8 +1319,7 @@ fn conversion_style_combo_offers_installed_styles_and_renders_them() {
 fn scanner_state_rejection_uses_the_neutral_scan_model() {
     let mut s = session();
     let h = &mut s.harness;
-    navigate_stage(h, controls::Stage::Film);
-    click(h, "Film material");
+    reveal_control(h, "extras.simulation.film_stock");
     let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
     choose(h, "film profile", profile.info.name.as_deref().unwrap());
     reveal_control(h, "workflow.route");

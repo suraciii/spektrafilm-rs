@@ -19,7 +19,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 - The Scanner controls show exactly the controls that
 [Scan medium and scanner controls](../film-chain/spec.md#scan-medium-and-scanner-controls) assign to the scanned medium. For a negative film profile on the direct `input > film > scan` route or the real negative-capture `input > convert-film > scan` route, they offer `direct_scan` and `negative_to_positive`. Labels MUST follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance).
 
-Every route shows lens blur and unsharp mask; the readout illuminant is not a control. Conversion control display names MUST follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). Eligible `standard` negative scans MUST expose operator correction and its reset, restore, copy/paste and held automatic-comparison actions under the [operator contract](../film-chain/lab-scan/spec.md#operator-correction).
+Every route shows lens blur and unsharp mask; the readout illuminant is not a control. Conversion control display names MUST follow the [conversion control naming contract](../film-chain/spec.md#conversion-control-naming-acceptance). Eligible `standard` negative scans MUST expose operator correction and its restore, copy/paste and held automatic-comparison actions under the [operator contract](../film-chain/lab-scan/spec.md#operator-correction).
 
 Operator edits use the workspace's adjustment history, not a second local Undo/Redo owner. Comparison MUST leave retained Save pixels and correction parameters unchanged. It activates only while the primary mouse button holds its control or focused Space is held; secondary and middle presses MUST NOT start comparison or invalidate the accepted render.
 
@@ -43,7 +43,7 @@ A route or film profile change that makes the selected mode ineligible resets it
 
 ## Result identity and delivery guidance
 
-The header MUST identify the retained result's operation, pixel dimensions, and whether it matches current adjustments. A pending operation MUST NOT hide that identity or imply that the retained result is current.
+The viewer status strip above the canvas MUST be the single owner of retained-result identity. It MUST identify the retained result's operation, pixel dimensions, and whether it matches current adjustments. A pending operation MUST NOT hide that identity or imply that the retained result is current.
 
 ```mermaid
 flowchart LR
@@ -79,11 +79,11 @@ Film and Print MUST retain their existing chemistry and development controls. De
 
 Profile and route feedback MUST identify unsupported or inactive controls without clearing stored values or fabricating model support. Film-development controls are inactive when converting a real captured negative; print-development controls remain available only on admitted printing routes. The `input` workflow MUST mark material and Scanner controls inapplicable.
 
-Material edits MUST use existing scanner calibration and inverse reconstruction semantics. The GUI MUST NOT promise creative-reference isolation or add separate baseline and effective reference controls. Module and row resets follow [Section reset](#section-reset).
+Material edits MUST use existing scanner calibration and inverse reconstruction semantics. The GUI MUST NOT promise creative-reference isolation or add separate baseline and effective reference controls. Module resets follow [Section reset](#section-reset).
 
-Section presets retain their serialized ownership; no response reset or preset section is added.
+Serialized section payloads retain their core ownership under [Preset design](../presets/design.md#sections); no response reset or preset section is added.
 
-Output MUST expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix), with its existing section menu. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output MUST NOT expose standalone lightness compression, an Output response section or preset, or a separate output-processing switch for the `input` workflow.
+Output MUST expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix). Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output MUST NOT expose standalone lightness compression, an Output response section or preset, or a separate output-processing switch for the `input` workflow.
 
 A negative-capture source MUST state that zero Simulation blend returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
 
@@ -104,6 +104,18 @@ The window has three regions and one header.
 - Scan and Save remain reachable from a persistent action area without opening an inspector module.
 
 A region is a layout slot, not a mutually exclusive page. A control belongs to exactly one surface under [Labels and surfaces](#labels-and-surfaces). A dialog MAY edit only the values assigned to it.
+
+## Dialog interaction
+
+Settings and Export MUST isolate background pointer and keyboard input while open. A backdrop click MUST NOT dismiss either dialog.
+
+Only an explicit close or Cancel action, or Escape on the topmost modal, MUST dismiss it. Closing a dialog MUST restore focus to its invoking control.
+
+General and Display MUST start open in Settings. A control locator MUST reveal, scroll to, and focus the actual canonical row, including a fixed or inactive row. Factory-default confirmation MAY stack above Settings; Escape MUST dismiss only the topmost modal.
+
+Export MUST keep its format, depth, saving color, encoding, compression, JPEG quality, and JPEG subsampling rows readable and canonically locatable. A fixed capability MUST show its effective value and why it is fixed, rather than a one-choice selector.
+
+An inapplicable JPEG row MUST retain its stored preference and visibly state that it does not apply. Writer capabilities remain owned by [photo export](../photo-export/spec.md) and [saving conversion](../cli/spec.md#export-and-execution-options); presentation MUST NOT offer an unsupported combination or change writer behavior.
 
 ## Optical and grain labels
 
@@ -126,7 +138,7 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Input and capture | Workflow selector; input color space and decoding; RAW white balance, temperature, tint, lens correction, and reprocess action; crop, upscale, and source rotation; Camera exposure, metering, film format, color filter, and capture illuminant; Camera diffusion; input gamut compression; spectral reconstruction and its applicable adaptation controls; Convert imported-capture scan illuminant, exposure, base estimation, calibration, channel swaps, and calibration actions. |
 | Film | Film material selector and its development-time family; Chemistry; Film base; Halation; Couplers; Grain selector, shared material-grain parameters, and every engine-specific parameter group. |
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
-| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; operator correction, reset, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare. |
+| Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; operator correction, restore, copy/paste and held automatic comparison; lens blur, unsharp mask; Print viewing glare. |
 | Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style; Simulation blend; retained Save color and encoding settings. |
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; GUI parameters: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
@@ -135,11 +147,13 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 
 Rotation is a source operation and MUST NOT be offered as viewer-only pan or zoom. A read-only summary or action that locates its owner MAY appear elsewhere; a second editable copy MUST NOT.
 
-The stage jump strip MUST reveal and scroll to one heading in the continuous inspector. It MUST NOT close other stages or change any parameter. A heading toggle MUST affect only its own open state.
+The stage jump strip MUST reveal and scroll to one heading in the continuous inspector. It MUST preserve the control-search query and Only modified filter.
+
+It MUST NOT close other stages or change any parameter. A heading toggle MUST affect only its own open state.
 
 Open state and scroll position MUST survive ordinary edits, render completion, and route changes.
 
-The [preset section table](../presets/design.md#sections) remains authoritative for serialized section payloads and their menu anchors. A visual module is not a new serialized section. Moving Print viewing glare to Scan or splitting Preflash from Enlarger MUST NOT migrate their canonical leaves or expand a preset's scope.
+The [preset section table](../presets/design.md#sections) remains authoritative for serialized section payloads and their primary module anchors. A visual module is not a new serialized section. Moving Print viewing glare to Scan or splitting Preflash from Enlarger MUST NOT migrate their canonical leaves or expand a preset's scope.
 
 ## Complete control access
 
@@ -169,23 +183,25 @@ A route or material change MUST NOT erase inactive values except for normalizati
 
 Inherited optional values MUST show both their inherited state and effective value. Entering an explicit value and returning to inheritance MUST remain distinct operations. Development-time controls MUST use the selected material's actual family rather than invented common time choices.
 
-Rows and modules expose factory resets under [Section reset](#section-reset). Control coverage acceptance MUST exercise every inventory owner and every engine branch through production GUI controls, with applicable and inapplicable states. It MUST check canonical values and component independence, not only count widgets.
+Modules expose factory resets under [Section reset](#section-reset). Control coverage acceptance MUST exercise every inventory owner and every engine branch through production GUI controls, with applicable and inapplicable states. It MUST check canonical values and component independence, not only count widgets.
 
 ## Section reset
 
-A visible module reset MUST restore exactly that module's editable canonical paths to their projected factory values. An individual reset MUST restore exactly its canonical leaf; a vector leaf resets its editable components together. Neither operation MAY reset another module because the modules share a serialized preset section.
+A visible module reset MUST restore exactly that module's editable canonical paths to their projected factory values. A module reset MUST NOT reset another module because modules can share one serialized preset section.
 
-In particular, Preflash reset MUST leave main Enlarger exposure and filtration unchanged, and Print viewing glare reset MUST leave Print chemistry unchanged.
+In particular, Preflash reset MUST leave main Enlarger exposure and filtration unchanged, and Print viewing glare reset MUST leave Print chemistry unchanged. A material module reset MUST also restore its material selection and development time.
 
 A factory projection MUST include runtime-only editable leaves and preserve each leaf's type and optional state. It is not the selected material's suggested values, the last applied preset, or the prototype's example configuration. The row marker, module marker, Only modified filter, and reset action MUST use the same projection and comparison rule under [GUI presentation](../gui-presentation/design.md).
 
-The reset action MUST name its scope and baseline. A module's section-preset menu MUST name its different scope when it covers more controls than the visible module. Reset and Revert to applied preset MUST remain separate actions.
+The reset action MUST name its scope and baseline. Reset and Revert to applied preset MUST remain separate actions.
 
-Neither reset MAY change a preset file or startup default. A reset is one reversible edit; normal validation MUST complete before it changes accepted controls.
+A module reset MUST NOT change a preset file or startup default. It is one reversible edit; normal validation MUST complete before it changes accepted controls.
+
+Application settings sections General and Display each offer one grouped reset over the values their section owns. General restores its preview limit. Display restores display transform, canvas, padding, and interpolation and keeps the selected ICC profile.
 
 ## Edit history
 
-Undo and Redo apply to accepted adjustments for the current source: direct parameter edits, workflow and material selection, feature-profile and section/look-preset application, and individual or module reset. Each action includes its required dependent normalizations. A rejected edit creates no history entry.
+Undo and Redo apply to accepted adjustments for the current source: direct parameter edits, workflow and material selection, feature-profile and look-preset application, and module reset. Each action includes its required dependent normalizations. A rejected edit creates no history entry.
 
 One slider drag is one history entry, even if intermediate valid values schedule previews. A completed numeric text edit is one entry. One original wheel event over a numeric field is one entry.
 
@@ -241,11 +257,15 @@ The viewer presents the retained input, the retained output, or the paper back. 
 
 The viewer presents an explicit empty state when no image is loaded. The empty state MUST name the import action and MUST NOT present a blank canvas. It is viewer-only and MUST NOT alter saved or exported pixels.
 
-The viewer MUST show a legible, lightweight `Rendering…` overlay at its top-right while its current update is pending. Simplified Chinese MUST show `渲染中……`. The status covers accepted edits waiting for debounce, pipeline computation, and composition until the latest viewer frame is accepted.
+The viewer MUST have one legible status strip above the canvas, outside the image. It MUST identify the selected Original or Paper back presentation, or show the retained-result identity under [Result identity](#result-identity-and-delivery-guidance).
 
-Superseded work MUST NOT keep it visible after the current update completes. A failed request MUST end its pending status and retain the last completed image. No source means no rendering overlay.
+It MUST include the Preview detail-effects caveat when describing a retained Preview. The header and canvas MUST NOT duplicate this identity or carry a top-right rendering overlay.
 
-The overlay MUST NOT prevent zoom, pan, or pointer inspection.
+The strip MUST show `Rendering…`, or `渲染中……` in Simplified Chinese, while the current update is pending. The status covers accepted edits waiting for debounce, pipeline computation, and composition until the latest viewer frame is accepted.
+
+Superseded work MUST NOT keep the pending status visible after the current update completes. A failed request MUST end its pending status and retain the last completed image.
+
+No source means no rendering status. The strip MUST NOT prevent zoom, pan, or pointer inspection.
 
 The viewer footer owns the layer selector. It is the only surface that exposes it. Application settings MUST NOT repeat it.
 

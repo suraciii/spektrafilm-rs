@@ -36,9 +36,11 @@ Inactive conditions MUST NOT mutate parameters during rendering.
 
 A visual module owns its displayed canonical paths. A serialized preset section owns the path set in [Preset design](../presets/design.md#sections). These sets need not be identical.
 
-Preflash illustrates the boundary: its module owns three leaves, while the Enlarger section preset retains its broader serialized payload. Print viewing glare is displayed under Scan while its preset ownership remains in `print`. The module reset MUST use the visible-module projection; section-preset capture and application MUST use the core preset scope.
+Preflash illustrates the boundary: its module owns three leaves, while the `enlarger` section retains its broader serialized payload. Print viewing glare is displayed under Scan while its preset ownership remains in `print`. The module reset MUST use the visible-module projection; section capture and application MUST use the core preset scope.
 
-One primary menu anchor MUST represent each serialized section. A menu whose scope crosses module or stage boundaries MUST state those affected modules. The application MUST NOT create duplicate menus, change serialization keys, or expand capture because the inspector layout changed.
+The GUI MUST NOT present a section-preset menu, section capture, or section management. Section documents remain shared by `core`, the CLI, and scoped photograph copying under [Photograph work](photo-work/spec.md#copy-adjustments).
+
+Inspector layout changes MUST NOT change serialization keys, section payloads, or the core capture scope.
 
 Feature-profile actions MUST use the shared feature resolver. They are scoped edit operations rather than new preset documents or GUI state fields. The Halation selector derives its effective named or custom state from its two scoped arrays.
 

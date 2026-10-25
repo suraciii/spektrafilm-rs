@@ -688,6 +688,24 @@ fn append_nonruntime(entries: &mut Vec<ControlEntry>) {
 /// not pretend to be serialized numeric/boolean parameters.
 const SURFACES: &[SurfaceEntry] = &[
     SurfaceEntry {
+        path: "viewer.reveal",
+        label: "reveal transition",
+        owner: ControlOwner::Viewer,
+        section: "Viewer",
+        editor: EditorKind::Toggle,
+        validator: "display::DisplaySettings",
+        conditions: &["viewer-only"],
+    },
+    SurfaceEntry {
+        path: "viewer.crossfade",
+        label: "crossfade transition",
+        owner: ControlOwner::Viewer,
+        section: "Viewer",
+        editor: EditorKind::Toggle,
+        validator: "display::DisplaySettings",
+        conditions: &["viewer-only"],
+    },
+    SurfaceEntry {
         path: "action.save_retained",
         label: "SAVE",
         owner: ControlOwner::Result,
@@ -1181,6 +1199,15 @@ const SURFACES: &[SurfaceEntry] = &[
         editor: EditorKind::Action,
         validator: "GuiState::set_display_profile",
         conditions: &["selected ICC profile"],
+    },
+    SurfaceEntry {
+        path: "diagnostics.collection_mode",
+        label: "Collection mode",
+        owner: ControlOwner::Settings,
+        section: "Diagnostics",
+        editor: EditorKind::Choice,
+        validator: "telemetry::CollectionMode",
+        conditions: &["session-only; next operation"],
     },
     SurfaceEntry {
         path: "action.open_diagnostic_directory",

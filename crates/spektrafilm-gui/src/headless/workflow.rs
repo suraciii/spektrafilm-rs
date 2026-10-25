@@ -37,6 +37,7 @@ fn every_supported_route_preview_scan_state_roundtrip_and_save() {
         let destination = s.directory.path().join(format!("route-{index}.png"));
         script(h, chooser::ChooserResult::Scripted(destination.clone()));
         click(h, "SAVE");
+        wait_until(h, |app| app.pending_saves.is_empty());
         let expected = image_io::convert_image(
             &reloaded,
             &h.state().output_color_space,

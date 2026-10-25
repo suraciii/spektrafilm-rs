@@ -2,7 +2,7 @@
 
 ## Authority and scope
 
-This specification defines the photo-first desktop workspace and its user flows. [GUI workflow](../gui-workflow/spec.md) owns control placement, editing, history, retained output, and persistence. [GUI presentation](../gui-presentation/spec.md) owns visual tokens and component states.
+This specification defines the photo-first desktop workspace and its user flows. [GUI workflow](../gui-workflow/spec.md) owns control placement, editing, history, retained output, and persistence. [GUI presentation](../gui-presentation/spec.md) owns visual tokens, component states, and the quiet photo-first presentation target.
 
 [GUI product language](../gui-language/spec.md) owns labels and help. [The product design](design.md) defines the boundaries that implement these contracts.
 
@@ -51,7 +51,7 @@ The inspector MUST keep search and stage navigation visible while its controls s
 
 Application settings MUST contain general application preferences, startup-state actions, display configuration, and diagnostics. General replaces the visible Session group and includes the [interface language selector](../gui-language/spec.md#interface-language). Export options MUST remain in the independent Export dialog.
 
-Neither surface MUST become a destination for photographic controls merely because they are less common.
+Neither surface MUST become a destination for photographic controls merely because they are less common. Settings and Export MUST follow [dialog interaction](../gui-workflow/spec.md#dialog-interaction) for input isolation, explicit dismissal, focus restoration, and canonical row locating.
 
 ## User flows
 
@@ -74,7 +74,7 @@ The header MUST identify any resulting route or scanner normalization.
 
 A material selector MUST list only materials accepted for its role. Development-time choices MUST come from the selected material's family. A material without a selectable family MUST show its effective state without a one-choice selector.
 
-A feature profile, a section preset, and a look preset MUST remain distinct operations. A feature profile MUST NOT change materials, route, enable state, or unrelated controls. A section preset MUST state its full scope when it spans more than one visible module.
+A feature profile and a look preset MUST remain distinct operations. A feature profile MUST NOT change materials, route, enable state, or unrelated controls. Multi-photograph copying scopes follow [Photograph work](photo-work/spec.md#copy-adjustments).
 
 ### Refine the photograph
 
@@ -86,7 +86,7 @@ Parameter search MUST find controls across all stages, including collapsed and i
 
 The Scan and Output stages MUST distinguish scan acquisition through the fixed product readout illuminant, scan output polarity and negative conversion, readout optics and digital sharpening, and downstream digital output.
 
-A row MUST offer help, its unit where applicable, and an individual factory reset. A module MUST offer its own factory reset. Factory differences MUST remain distinct from differences against the applied preset.
+A row MUST offer help and its unit where applicable. A module MUST offer the factory reset for its controls, and a row MUST NOT offer one of its own. Factory differences MUST remain distinct from differences against the applied preset.
 
 A drag, reset, feature-profile selection, material selection, or preset application MUST be reversible under [Edit history](../gui-workflow/spec.md#edit-history).
 
@@ -132,7 +132,7 @@ The native application MUST reuse the [semantic token system](../gui-presentatio
 
 The image MUST have the largest uninterrupted visual area at the supported desktop layout. Panels MUST use restrained surfaces, aligned labels and values, and a warm accent for action or selection. Dense technical explanations belong in help rather than between every ordinary control.
 
-At 1460 × 980, the toolbar, stage navigation, and numeric editors MUST remain readable and operable without overlap or clipping. A narrower supported window MUST allow the preset browser to collapse and long control lists to scroll. Shrinking the window MUST NOT make a control permanently unreachable.
+At 1460 × 980, the toolbar, stage navigation, and numeric editors MUST remain readable and operable without overlap or clipping. A narrower supported window MUST use the [responsive preset rail](../presets/design.md#boundaries) and allow long control lists to scroll. Shrinking the window MUST NOT make a control permanently unreachable.
 
 This specification does not require a mobile-native GUI.
 
@@ -156,7 +156,7 @@ The HTML design reference is not an engine implementation. Its sample values, pa
 | Expand several modules; edit and wait for preview | Open state, scroll, and numeric focus remain usable; the image remains visible. |
 | Search a folded or inactive control by label or canonical path | The correct owner is revealed with its current value and applicability reason; no second editor or parameter change appears. |
 | Search an Export or display option | The result opens that dialog or setting; unrelated dialogs are not filtered by the inspector query. |
-| Use Only modified, reset a row, then undo | Filtering uses the factory baseline; reset changes only its owned scope; undo restores values and edit provenance. |
+| Use Only modified, reset a module, then undo | Filtering uses the factory baseline; reset changes only the module's owned scope; undo restores values and edit provenance. |
 | Drag a slider through several intermediate values | Its number updates consistently; the completed gesture creates one undo step. |
 | Apply a Halation profile; edit an RGB component | Only the feature profile's declared scope changes; the direct edit remains available and profile identity is recomputed. |
 | Set Preflash exposure and Y/M shifts; set exposure to zero | Flash stops while both filter values remain; a route without printing marks the group inactive without clearing it. |

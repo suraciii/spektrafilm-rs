@@ -13,6 +13,7 @@ fn save_import_and_export_buttons_use_scripted_chooser_and_remember_directories(
     let saved = s.directory.path().join("button-save.png");
     script(h, chooser::ChooserResult::Scripted(saved.clone()));
     click(h, "SAVE");
+    wait_until(h, |app| app.pending_saves.is_empty());
     let expected = image_io::convert_image(
         &preview,
         &h.state().output_color_space,
@@ -460,6 +461,7 @@ fn rotation_save_and_export_preserve_pixel_positions_and_normalize_metadata() {
     let save = s.directory.path().join("rotated-save.tiff");
     script(h, chooser::ChooserResult::Scripted(save.clone()));
     click(h, "SAVE");
+    wait_until(h, |app| app.pending_saves.is_empty());
     let actual = image_io::load(&save).unwrap().image;
     assert_eq!((actual.width, actual.height), (2, 4));
     for (&a, &e) in actual.data.iter().zip(&expected.data) {

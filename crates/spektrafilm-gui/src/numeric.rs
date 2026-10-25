@@ -468,28 +468,47 @@ pub(crate) fn numeric_marked<T: egui::emath::Numeric>(
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        let label_response = crate::controls::row_label(ui, label, experimental);
+        let editor_width = theme::WIDTH_VALUE + theme::WIDTH_UNIT + ui.spacing().item_spacing.x;
+        let label_width =
+            (ui.available_width() - editor_width - ui.spacing().item_spacing.x).max(40.0);
+        let label_response = ui
+            .allocate_ui_with_layout(
+                egui::vec2(label_width, theme::HEIGHT_CONTROL),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_min_width(label_width);
+                    crate::controls::row_label(ui, label, experimental)
+                },
+            )
+            .inner;
         label_response
             .clone()
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         mark.paint(ui, &label_response);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= mark.gold(ui, |ui| {
-                numeric_field(
-                    ui,
-                    label,
-                    label,
-                    value,
-                    min,
-                    max,
-                    step,
-                    decimals,
-                    tooltip,
-                    unit,
-                    Some(label_response.id),
-                )
-            });
-        });
+        changed |= ui
+            .allocate_ui_with_layout(
+                egui::vec2(editor_width, theme::HEIGHT_CONTROL),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_width(editor_width);
+                    mark.gold(ui, |ui| {
+                        numeric_field(
+                            ui,
+                            label,
+                            label,
+                            value,
+                            min,
+                            max,
+                            step,
+                            decimals,
+                            tooltip,
+                            unit,
+                            Some(label_response.id),
+                        )
+                    })
+                },
+            )
+            .inner;
     });
     changed |= row_slider(ui, label, value, min, max, step);
     changed
@@ -538,6 +557,10 @@ fn row_slider<T: egui::emath::Numeric>(
             },
         )
         .inner;
+    // The slider's track and handle carry no toolkit frame, so its keyboard
+    // focus comes from the one shared tokenized ring, the same cue framed
+    // controls get from the theme's active stroke.
+    crate::controls::focus_feedback(ui, &response);
     let state_id = response.id.with("adjustment");
     register_numeric_slider(ui.ctx(), response.id, state_id);
     let mut state = ui
@@ -726,7 +749,7 @@ where
             text_edit = text_edit.text_color(theme::ERROR);
         }
         let mut response = ui
-            .add(text_edit)
+            .add_sized([theme::WIDTH_VALUE, theme::HEIGHT_CONTROL], text_edit)
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         crate::controls::focus_response(ui, label, &response);
         // Name the editor itself, so assistive technology and the
@@ -741,10 +764,14 @@ where
             response = response.labelled_by(label_id);
         }
         if let Some(unit) = unit {
-            ui.label(
-                egui::RichText::new(crate::controls::localized(ui.ctx(), unit))
-                    .color(theme::FG_MUTED)
-                    .size(theme::SIZE_UNIT),
+            ui.add_sized(
+                [theme::WIDTH_UNIT, theme::HEIGHT_CONTROL],
+                egui::Label::new(
+                    egui::RichText::new(crate::controls::localized(ui.ctx(), unit))
+                        .color(theme::FG_MUTED)
+                        .size(theme::SIZE_UNIT),
+                )
+                .wrap(),
             )
             .on_hover_text(crate::controls::localized(ui.ctx(), tooltip));
         }

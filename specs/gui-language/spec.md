@@ -28,7 +28,7 @@ The selector MUST distinguish System from an explicit language even when they cu
 
 An explicit choice MUST override system detection and persist across application restarts. Switching to System MUST resolve the current system preference immediately. Continuous monitoring of system-language changes while the application is running is not required.
 
-Language MUST be an application preference, not a photograph adjustment. Applying a look or section preset, loading GUI state, saving or restoring startup controls, resetting a photographic module, and Undo/Redo MUST NOT change it. Language MUST NOT be carried by presets, photographic GUI-state files, render recipes, CLI parameters, or exported image metadata.
+Language MUST be an application preference, not a photograph adjustment. Applying a preset, loading GUI state, saving or restoring startup controls, resetting a photographic module, and Undo/Redo MUST NOT change it. Language MUST NOT be carried by presets, photographic GUI-state files, render recipes, CLI parameters, or exported image metadata.
 
 Failure to save the preference MUST leave the selected language usable for the current run and report that persistence failed.
 
@@ -66,7 +66,8 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Film / Print / Output | 胶片 / 印相 / 输出 |
 | Film Format / Custom | 胶片规格 / 自定义 |
 | Frame Long Edge | 画面长边 |
-| Reset to factory | 恢复出厂值 |
+| reset <module> · help: Restore <module> to the factory state | 重置<模块> · 提示：将<模块>恢复为出厂状态 |
+| history: Reset <module> to factory | 历史：将<模块>恢复出厂值 |
 | Original / Modified / Paper back | 原图 / 修改图 / 相纸背面 |
 
 ### Search and text entry
@@ -227,6 +228,7 @@ Actions MUST use one stable verb and one explicit target:
 | `Load from file` | Load GUI state from a selected state file. |
 | `Save current as default` | Replace the startup GUI state. |
 | `Restore factory default` | Restore factory GUI state and remove the saved startup default. |
+| `reset <module>` | Restore one module's editable controls to their factory projection. |
 
 Action labels MAY use uppercase casing. Tooltips and status messages MUST preserve the meanings in this table.
 
@@ -250,11 +252,9 @@ A status that reports route or profile normalization MUST identify which stored 
 
 In row and module state, `Modified` MUST mean that the control differs from its exact factory reset projection. It MUST NOT mean that the value differs from the selected preset or startup default. This state is distinct from the viewer's Modified image selection.
 
-Factory comparison follows [presentation design](../gui-presentation/design.md#factory-projection-and-modified-state). Reset behavior follows [complete control access](../gui-workflow/spec.md#complete-control-access).
+Factory comparison follows [presentation design](../gui-presentation/design.md#factory-projection-and-modified-state). Reset behavior follows [Section reset](../gui-workflow/spec.md#section-reset).
 
-A row reset MUST be named `Reset to factory` with the row target available in accessible text or help. A module reset MUST name the module and its factory baseline. A section-preset menu whose stored payload spans more than one module MUST explicitly name its full scope.
-
-It MUST NOT describe the wider action as a module-only reset.
+A module reset MUST name its module and the factory baseline in its action label, accessible help, and history description under the core-term table. A grouped settings reset MUST name its settings section instead of a photographic module.
 
 The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, and `Output`. A stage jump MUST identify the heading it reaches, not a page it replaces. `Settings` and `Export` MUST name dialogs rather than additional stages.
 

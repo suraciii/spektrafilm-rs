@@ -14,6 +14,9 @@ pub struct Browser {
     pub(crate) scan_error: Option<String>,
     pub(crate) name_dialog: Option<NameDialog>,
     pub(crate) delete: Option<String>,
+    /// Session-only narrow-window reopen; deliberately outside BrowserState,
+    /// so resizing never rewrites the stored `expanded` preference.
+    pub(crate) narrow_open: bool,
     dialog_focus: Option<egui::Id>,
     dialog_open: bool,
     dialog_composing: bool,
@@ -32,6 +35,7 @@ impl Browser {
             scan_error: None,
             name_dialog: None,
             delete: None,
+            narrow_open: false,
             dialog_focus: None,
             dialog_open: false,
             dialog_composing: false,
@@ -120,54 +124,90 @@ impl Browser {
 
 impl App {
     pub(crate) fn preset_panel(&mut self, ctx: &egui::Context) {
-        let expanded = self.presets.state.expanded;
-        let panel = egui::SidePanel::left("presets")
+        // Responsive collapse: at compact workspace widths the library lives in
+        // the narrow rail unless the user reopens it for the session.
+        // `state.expanded` is the stored preference: a resize never writes it,
+        // and widening the window returns to it.
+        let wide = ctx.screen_rect().width() > theme::WIDTH_COMPACT_WORKSPACE;
+        let expanded = if wide {
+            self.presets.state.expanded
+        } else {
+            self.presets.narrow_open
+        };
+        let panel_id = match (expanded, wide) {
+            (false, _) => "presets-rail",
+            (true, false) => "presets-narrow",
+            (true, true) => "presets",
+        };
+        let panel = egui::SidePanel::left(panel_id)
             .resizable(expanded)
             .default_width(self.presets.state.width)
-            .min_width(if expanded { 180.0 } else { 38.0 });
+            .min_width(if expanded { 180.0 } else { RAIL_WIDTH });
         let panel = if expanded {
             panel
         } else {
-            panel.exact_width(38.0)
+            panel.exact_width(RAIL_WIDTH)
         };
         let response = panel.show(ctx, |ui| {
             if self.input_transition_pending() {
                 ui.disable();
             }
-            ui.horizontal(|ui| {
-                if ui
-                    .button(if expanded { "◀" } else { "▶" })
-                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.toggle"))
-                    .clicked()
-                {
-                    self.presets.state.expanded = !expanded;
-                }
-                if expanded {
+            if expanded {
+                // Title and save share one compact row; the collapse control
+                // stays reachable at the row's end.
+                ui.horizontal(|ui| {
                     ui.heading(crate::i18n::text(ui.ctx(), "surfaces.presets.title"));
-                }
-            });
+                    if quiet_button(ui, |ui| {
+                        ui.button(crate::i18n::text(ui.ctx(), "surfaces.presets.save"))
+                    })
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.save_help"))
+                    .clicked()
+                    {
+                        self.save_preset_as();
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if quiet_button(ui, |ui| ui.button("◀"))
+                            .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.toggle"))
+                            .clicked()
+                        {
+                            if wide {
+                                self.presets.state.expanded = false;
+                            } else {
+                                self.presets.narrow_open = false;
+                            }
+                        }
+                    });
+                });
+            } else {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.add_space(theme::SPACE_2);
+                    if quiet_button(ui, |ui| ui.button("▶"))
+                        .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.toggle"))
+                        .clicked()
+                    {
+                        if wide {
+                            self.presets.state.expanded = true;
+                        } else {
+                            self.presets.narrow_open = true;
+                        }
+                    }
+                });
+            }
             if !expanded {
                 return;
             }
-            // The save action sits on its own row rather than beside the
-            // heading: a labeled button needs the panel's width, and the
-            // browser is collapsible down to a narrow strip.
-            if ui
-                .button(crate::i18n::text(ui.ctx(), "surfaces.presets.save"))
-                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.presets.save_help"))
-                .clicked()
-            {
-                self.save_preset_as();
-            }
-            let search_label = ui.label(crate::i18n::text(ui.ctx(), "surfaces.presets.search"));
-            let search_response = ui
-                .add(
-                    egui::TextEdit::singleline(&mut self.presets.query)
-                        .id_salt("preset search")
-                        .desired_width(ui.available_width())
-                        .hint_text(crate::i18n::text(ui.ctx(), "surfaces.presets.search_hint")),
-                )
-                .labelled_by(search_label.id);
+            let search_response = ui.add(
+                egui::TextEdit::singleline(&mut self.presets.query)
+                    .id_salt("preset search")
+                    .desired_width(ui.available_width())
+                    .hint_text(crate::i18n::text(ui.ctx(), "surfaces.presets.search_hint")),
+            );
+            // The hint states the wording on screen, so the redundant visible
+            // label is gone while the field keeps the same accessible name.
+            let search_name = crate::i18n::text(ui.ctx(), "surfaces.presets.search");
+            ui.ctx().accesskit_node_builder(search_response.id, |node| {
+                node.set_label(search_name.as_ref());
+            });
             crate::controls::locate_row(ui, "presets.discovery.search", &search_response);
             if !self.presets.query.is_empty()
                 && ui
@@ -231,16 +271,38 @@ impl App {
                 } else {
                     "My Presets"
                 };
-                ui.add(
-                    egui::Label::new(crate::tr!(
-                        ui.ctx(),
-                        "surfaces.presets.current",
-                        group = crate::controls::localized(ui.ctx(), group),
-                        name = &applied.name,
-                        state = crate::controls::localized(ui.ctx(), state)
-                    ))
-                    .wrap(),
+                let summary = crate::tr!(
+                    ui.ctx(),
+                    "surfaces.presets.current",
+                    group = crate::controls::localized(ui.ctx(), group),
+                    name = &applied.name,
+                    state = crate::controls::localized(ui.ctx(), state)
                 );
+                // The current look sits in its own block above the list, so its
+                // readable name and state stay visible even when search or
+                // filters hide its card, or the preset is missing entirely.
+                egui::Frame::NONE
+                    .fill(theme::SURFACE2)
+                    .stroke(theme::stroke(theme::ACCENT_DIM))
+                    .corner_radius(theme::RADIUS_CARD)
+                    .inner_margin(theme::SPACE_2)
+                    .show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                            let (slot, _) = ui.allocate_exact_size(
+                                egui::vec2(CHECK_ICON, ui.spacing().interact_size.y),
+                                egui::Sense::hover(),
+                            );
+                            paint_check(&ui.painter(), slot);
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(summary)
+                                        .color(theme::FG)
+                                        .size(theme::SIZE_LABEL),
+                                )
+                                .wrap(),
+                            );
+                        });
+                    });
             }
             self.presets.update_search(&self.films, &self.papers);
             if (!self.presets.query.is_empty()
@@ -272,10 +334,18 @@ impl App {
                         );
                     }
                     if self.presets.entries.iter().any(|e| e.fault.is_some()) {
-                        egui::CollapsingHeader::new(crate::i18n::text(
-                            ui.ctx(),
-                            "surfaces.presets.issues",
-                        ))
+                        // Same disclosure presentation as the inspector's
+                        // disclosures: a section-title label and an arrow that
+                        // shows the expanded state without relying on color.
+                        egui::CollapsingHeader::new(
+                            egui::RichText::new(crate::i18n::text(
+                                ui.ctx(),
+                                "surfaces.presets.issues",
+                            ))
+                            .color(theme::FG)
+                            .size(theme::SIZE_TITLE)
+                            .strong(),
+                        )
                         .id_salt("Issues")
                         .default_open(true)
                         .show(ui, |ui| {
@@ -377,27 +447,114 @@ impl App {
                             } else {
                                 ""
                             };
-                            // Card-style preset entry with route metadata
-                            let card_frame = if active {
-                                egui::Frame::NONE
-                                    .fill(theme::ACCENT)
-                                    .stroke(egui::Stroke::new(1.0_f32, theme::ACCENT))
-                                    .corner_radius(6.0)
-                                    .inner_margin(8.0)
-                            } else {
-                                egui::Frame::NONE
-                                    .fill(theme::SURFACE2)
-                                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-                                    .corner_radius(6.0)
-                                    .inner_margin(8.0)
-                            };
-                            card_frame.show(ui, |ui| {
-                                ui.horizontal_top(|ui| {
+                            // Card-style preset entry with route metadata. The
+                            // card is quiet: the applied state is the accent
+                            // side rail, the check and the state word, never a
+                            // filled name button, so a long list stays
+                            // recessive behind the viewer and the state cue
+                            // stays distinct from any action fill.
+                            let card_frame = egui::Frame::NONE
+                                .fill(theme::SURFACE2)
+                                .stroke(theme::stroke(if active {
+                                    theme::ACCENT_DIM
+                                } else {
+                                    theme::BORDER
+                                }))
+                                .corner_radius(theme::RADIUS_CARD)
+                                .inner_margin(theme::SPACE_2);
+                            let card = card_frame.show(ui, |ui| {
+                                ui.set_min_height(CARD_HEIGHT - 2.0 * theme::SPACE_2);
+                                ui.horizontal(|ui| {
                                     if group == PresetGroup::BuiltIn {
-                                        self.presets.thumbnails.show(ui, entry);
+                                        self.presets.thumbnails.show(ui, entry, THUMBNAIL);
                                     }
+                                    let controls =
+                                        theme::HEIGHT_CONTROL + ui.spacing().item_spacing.x;
                                     ui.vertical(|ui| {
-                                        ui.set_width(ui.available_width());
+                                        ui.set_width((ui.available_width() - controls).max(0.0));
+                                        ui.horizontal(|ui| {
+                                            if active {
+                                                let (slot, _) = ui.allocate_exact_size(
+                                                    egui::vec2(CHECK_ICON, theme::HEIGHT_CONTROL),
+                                                    egui::Sense::hover(),
+                                                );
+                                                paint_check(ui.painter(), slot);
+                                            }
+                                            let response = quiet_button(ui, |ui| {
+                                                ui.add(
+                                                    egui::Button::new(
+                                                        egui::RichText::new(&entry.name)
+                                                            .color(theme::FG)
+                                                            .size(theme::SIZE_LABEL),
+                                                    )
+                                                    .wrap(),
+                                                )
+                                            })
+                                            .on_hover_text(&entry.name);
+                                            if active {
+                                                let name = format!("{}{suffix}", entry.name);
+                                                ui.ctx().accesskit_node_builder(
+                                                    response.id,
+                                                    |node| {
+                                                        node.set_label(name);
+                                                    },
+                                                );
+                                            }
+                                            crate::controls::focus_feedback(ui, &response);
+                                            if response.gained_focus() {
+                                                response.scroll_to_me(Some(egui::Align::Center));
+                                            }
+                                            if response.clicked() {
+                                                action = Some((index, PresetAction::Load));
+                                            }
+                                            response.context_menu(|ui| {
+                                                if let Some(selected) =
+                                                    self.preset_actions(ui, entry)
+                                                {
+                                                    response.request_focus();
+                                                    action = Some((index, selected));
+                                                }
+                                            });
+                                        });
+                                        if active {
+                                            ui.small(crate::controls::localized(ui.ctx(), suffix));
+                                        }
+                                        for (role, reference, profiles) in [
+                                            ("Film", &entry.film_profile, &self.films),
+                                            ("Print", &entry.print_profile, &self.papers),
+                                        ] {
+                                            if let Some(reference) = reference {
+                                                let display = crate::profiles::selected_display(
+                                                    profiles,
+                                                    &reference.stock,
+                                                );
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(crate::tr!(
+                                                            ui.ctx(),
+                                                            "surfaces.presets.role",
+                                                            role = crate::controls::localized(
+                                                                ui.ctx(),
+                                                                role
+                                                            ),
+                                                            name = display
+                                                        ))
+                                                        .color(theme::FG_SECONDARY)
+                                                        .size(theme::SIZE_HINT),
+                                                    )
+                                                    .truncate(),
+                                                )
+                                                .on_hover_text(&reference.stock);
+                                            }
+                                        }
+                                    });
+                                    // Favorite and the entry actions are two
+                                    // compact controls beside the content,
+                                    // never nested inside the clickable name;
+                                    // the context menu on the name stays an
+                                    // additional route to the same actions.
+                                    ui.vertical(|ui| {
+                                        ui.set_width(theme::HEIGHT_CONTROL);
                                         let selected =
                                             self.presets.preferences.favorites.iter().any(
                                                 |identity| {
@@ -405,17 +562,19 @@ impl App {
                                                         && identity.name == entry.name
                                                 },
                                             );
-                                        let response = ui.selectable_label(
-                                            selected,
-                                            crate::i18n::text(
-                                                ui.ctx(),
-                                                if selected {
-                                                    "surfaces.presets.discovery_unfavorite"
-                                                } else {
-                                                    "surfaces.presets.discovery_favorite"
-                                                },
-                                            ),
-                                        );
+                                        let favorite_response = quiet_button(ui, |ui| {
+                                            ui.add(egui::Button::new("").min_size(egui::vec2(
+                                                theme::HEIGHT_CONTROL,
+                                                theme::HEIGHT_CONTROL,
+                                            )))
+                                        });
+                                        // The star is drawn rather than typeset:
+                                        // filled once favorited and outlined before,
+                                        // so no font glyph can go missing and the
+                                        // state is never carried by colour alone.
+                                        // The localized action name stays this
+                                        // control's accessible name exactly.
+                                        paint_star(&ui.painter(), favorite_response.rect, selected);
                                         let accessible_name = crate::tr!(
                                             ui.ctx(),
                                             "surfaces.presets.discovery_favorite_accessible",
@@ -437,101 +596,45 @@ impl App {
                                             ),
                                             name = &entry.name
                                         );
-                                        ui.ctx().accesskit_node_builder(response.id, |node| {
-                                            node.set_label(accessible_name)
-                                        });
-                                        if response.gained_focus() {
-                                            response.scroll_to_me(Some(egui::Align::Center));
+                                        ui.ctx()
+                                            .accesskit_node_builder(favorite_response.id, |node| {
+                                                node.set_label(accessible_name)
+                                            });
+                                        crate::controls::focus_feedback(ui, &favorite_response);
+                                        if favorite_response.gained_focus() {
+                                            favorite_response
+                                                .scroll_to_me(Some(egui::Align::Center));
                                         }
-                                        if response.clicked() {
+                                        if favorite_response.clicked() {
                                             favorite = Some(AppliedPreset {
                                                 group: entry.group,
                                                 name: entry.name.clone(),
                                             });
                                         }
-                                        let response = ui.add(
-                                            egui::Button::new(
-                                                egui::RichText::new(format!(
-                                                    "{}{}",
-                                                    entry.name,
-                                                    crate::controls::localized(ui.ctx(), suffix)
-                                                ))
-                                                .color(if active {
-                                                    theme::CONTRAST_ON_ACCENT
-                                                } else {
-                                                    theme::FG_SECONDARY
-                                                })
-                                                .size(11.0),
-                                            )
-                                            .selected(active)
-                                            .wrap(),
-                                        );
-                                        if response.gained_focus() {
-                                            response.scroll_to_me(Some(egui::Align::Center));
-                                        }
-                                        if response.clicked() {
-                                            action = Some((index, PresetAction::Load));
-                                        }
-                                        response.context_menu(|ui| {
-                                            if let Some(selected) = self.preset_actions(ui, entry) {
-                                                // The popup item disappears when it closes;
-                                                // dialogs must return to the persistent row.
-                                                response.request_focus();
-                                                action = Some((index, selected));
-                                            }
-                                        });
-                                        for (role, reference, profiles) in [
-                                            ("Film", &entry.film_profile, &self.films),
-                                            ("Print", &entry.print_profile, &self.papers),
-                                        ] {
-                                            if let Some(reference) = reference {
-                                                let display = crate::profiles::selected_display(
-                                                    profiles,
-                                                    &reference.stock,
-                                                );
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(crate::tr!(
-                                                            ui.ctx(),
-                                                            "surfaces.presets.role",
-                                                            role = crate::controls::localized(
-                                                                ui.ctx(),
-                                                                role
-                                                            ),
-                                                            name = display
-                                                        ))
-                                                        .color(if active {
-                                                            theme::CONTRAST_ON_ACCENT
-                                                        } else {
-                                                            theme::ACCENT_DIM
-                                                        })
-                                                        .size(theme::SIZE_HINT),
-                                                    )
-                                                    .wrap(),
-                                                )
-                                                .on_hover_text(&reference.stock);
-                                            }
-                                        }
-                                        // A visible action control beside the entry name. The
-                                        // context menu stays as an additional route, but the
-                                        // same actions are reachable here by pointer and by
-                                        // keyboard: the button takes focus, and Space or
-                                        // Enter opens its menu.
+                                        // A visible action control for the entry. The
+                                        // same actions are reachable here by pointer and
+                                        // by keyboard: the button takes focus, and Space
+                                        // or Enter opens its menu.
                                         let entry_id = ui.id().with((
                                             "preset actions",
                                             entry.group == PresetGroup::User,
                                             &entry.name,
                                         ));
                                         let actions = ui.push_id(entry_id, |ui| {
-                                            let actions = ui.menu_button(
-                                                egui::RichText::new(crate::i18n::text(
-                                                    ui.ctx(),
-                                                    "surfaces.presets.actions",
-                                                ))
-                                                .color(theme::FG_MUTED)
-                                                .size(theme::SIZE_HINT),
-                                                |ui| self.preset_actions(ui, entry),
-                                            );
+                                            let actions = quiet_button(ui, |ui| {
+                                                egui::menu::menu_custom_button(
+                                                    ui,
+                                                    egui::Button::new("").min_size(egui::vec2(
+                                                        theme::HEIGHT_CONTROL,
+                                                        theme::HEIGHT_CONTROL,
+                                                    )),
+                                                    |ui| self.preset_actions(ui, entry),
+                                                )
+                                            });
+                                            // The affordance is drawn rather than
+                                            // typeset: three dots cannot go missing
+                                            // with a font.
+                                            paint_actions(&ui.painter(), actions.response.rect);
                                             // Name the control after its entry, so the
                                             // action menu of one card is addressable among
                                             // the cards.
@@ -546,6 +649,7 @@ impl App {
                                                     node.set_label(accessible_name);
                                                 },
                                             );
+                                            crate::controls::focus_feedback(ui, &actions.response);
                                             if actions.inner.as_ref().is_some_and(Option::is_some) {
                                                 // Capture the card control, not the transient
                                                 // focused menu item, as the dialog's invoker.
@@ -569,6 +673,23 @@ impl App {
                                     });
                                 });
                             });
+                            if active {
+                                // The applied look's left rail: the solid cue
+                                // that keeps company with the check and the
+                                // state word instead of a filled name button.
+                                let rect = card.response.rect;
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(rect.left(), rect.top() + theme::SPACE_3),
+                                        egui::pos2(
+                                            rect.left() + CARD_RAIL,
+                                            rect.bottom() - theme::SPACE_3,
+                                        ),
+                                    ),
+                                    egui::CornerRadius::same(1),
+                                    theme::ACCENT,
+                                );
+                            }
                         }
                         if let Some(identity) = favorite {
                             self.presets.preferences.toggle_favorite(identity);
@@ -580,7 +701,7 @@ impl App {
                     }
                 });
         });
-        if expanded {
+        if expanded && wide {
             self.presets.state.width = response.response.rect.width();
         }
         self.preset_dialogs(ctx);
@@ -748,7 +869,7 @@ impl App {
                             .button(crate::i18n::text(ui.ctx(), "surfaces.action.cancel"))
                             .clicked();
                     });
-                    if !ime_frame {
+                    if !ime_frame && ui.memory(|memory| memory.allows_interaction(ui.layer_id())) {
                         cancel |= ui.input_mut(|input| {
                             input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
                         });
@@ -851,9 +972,11 @@ impl App {
                             self.presets.delete = None;
                         }
                     });
-                    if ui.input_mut(|input| {
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
-                    }) {
+                    if ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
+                        && ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                        })
+                    {
                         self.presets.delete = None;
                     }
                 });
@@ -869,6 +992,85 @@ impl App {
         }
     }
 }
+/// The collapsed library rail and the prototype's card metrics: a 48 pt rail,
+/// and 64 pt rows around the 46 pt fixed-reference thumbnail.
+const RAIL_WIDTH: f32 = 48.0;
+const CARD_HEIGHT: f32 = 64.0;
+const THUMBNAIL: f32 = 46.0;
+/// The size of the current look's painted check.
+const CHECK_ICON: f32 = 12.0;
+/// The current look's side rail width.
+const CARD_RAIL: f32 = 2.0;
+
+/// The prototype's quiet button: transparent at rest with a `SURFACE3` hover
+/// fill, so a card of controls stays recessive behind the viewer while every
+/// control keeps an ordinary hover cue. Callers paint their own icon on top.
+fn quiet_button<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.scope(|ui| {
+        let widgets = &mut ui.style_mut().visuals.widgets;
+        widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+        widgets.inactive.bg_stroke = egui::Stroke::NONE;
+        add_contents(ui)
+    })
+    .inner
+}
+
+/// The current-look check, drawn rather than typeset so it cannot go missing
+/// with a font.
+fn paint_check(painter: &egui::Painter, rect: egui::Rect) {
+    let center = rect.center();
+    painter.line(
+        vec![
+            center + egui::vec2(-4.5, 0.5),
+            center + egui::vec2(-1.5, 3.5),
+            center + egui::vec2(4.5, -3.5),
+        ],
+        egui::Stroke::new(2.0_f32, theme::ACCENT),
+    );
+}
+
+/// The favorite star, drawn rather than typeset: filled once favorited and
+/// outlined before, so the state is not carried by colour alone and no glyph
+/// can go missing. A star is not convex, and epaint fills a closed path with a
+/// fan from its first point, so the filled path starts and ends at the centre:
+/// the fan then covers the star exactly in either winding order.
+fn paint_star(painter: &egui::Painter, rect: egui::Rect, favorited: bool) {
+    let center = rect.center();
+    let radius = 8.0;
+    let inner = radius * 0.4;
+    let boundary: Vec<egui::Pos2> = (0..10)
+        .map(|step| {
+            let angle = -std::f32::consts::FRAC_PI_2 + step as f32 * std::f32::consts::PI / 5.0;
+            let radius = if step % 2 == 0 { radius } else { inner };
+            center + radius * egui::vec2(angle.cos(), angle.sin())
+        })
+        .collect();
+    if favorited {
+        let mut points = Vec::with_capacity(boundary.len() + 2);
+        points.push(center);
+        points.extend(boundary.iter().copied());
+        points.push(center);
+        painter.add(egui::Shape::convex_polygon(
+            points,
+            theme::ACCENT,
+            egui::Stroke::NONE,
+        ));
+    } else {
+        painter.add(egui::Shape::closed_line(
+            boundary,
+            egui::Stroke::new(1.2_f32, theme::FG_MUTED),
+        ));
+    }
+}
+
+/// The entry-actions affordance, drawn rather than typeset.
+fn paint_actions(painter: &egui::Painter, rect: egui::Rect) {
+    let center = rect.center();
+    for offset in [-4.0, 0.0, 4.0] {
+        painter.circle_filled(center + egui::vec2(offset, 0.0), 1.5, theme::FG_MUTED);
+    }
+}
+
 pub(super) fn document_error_message(
     error: &spektrafilm_core::presets::PresetDocumentError,
 ) -> crate::app::Message {

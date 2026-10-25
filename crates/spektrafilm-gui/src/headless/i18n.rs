@@ -333,7 +333,9 @@ fn chinese_header_actions_and_search_remain_reachable_at_supported_desktop_sizes
             theme::apply(&cc.egui_ctx);
             app(state_path, image_path, browser)
         });
-        click(&mut h, "◀");
+        if h.query_by_label("◀").is_some() {
+            click(&mut h, "◀");
+        }
         language(&mut h, LanguagePreference::SimplifiedChinese);
         for label in ["打开", "设置", "导出", "搜索控件", "扫描", "保存"] {
             let mut nodes = h.query_all_by_label(label).peekable();
@@ -407,8 +409,6 @@ fn real_language_selector_retains_invalid_and_deferred_numeric_drafts() {
             modifiers: egui::Modifiers::NONE,
         });
         h.step();
-        h.run_steps(3);
-        h.get_by_label("General").click();
         h.run_steps(3);
         h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "语言 / Language")
             .click();
@@ -521,8 +521,6 @@ fn language_selector_does_not_finalize_valid_pending_numeric_history() {
     assert!(!h.state().can_undo(), "uncommitted numeric gesture");
     let revision = h.state().parameter_revision;
     h.get_by_label("Settings").click();
-    h.run_steps(3);
-    h.get_by_label("General").click();
     h.run_steps(3);
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "语言 / Language")
         .click();

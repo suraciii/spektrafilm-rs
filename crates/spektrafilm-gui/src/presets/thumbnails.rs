@@ -99,9 +99,8 @@ impl Thumbnails {
             });
         }
     }
-    pub(super) fn show(&self, ui: &mut egui::Ui, entry: &LibraryEntry) {
+    pub(super) fn show(&self, ui: &mut egui::Ui, entry: &LibraryEntry, width: f32) {
         let texture = self.textures.get(&entry.name).and_then(Option::as_ref);
-        let width = 64.0_f32.min(ui.available_width() * 0.4);
         if let Some(texture) = texture {
             let size = texture.size_vec2();
             let label = crate::tr!(

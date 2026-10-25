@@ -668,7 +668,7 @@ fn browser_clear_collapse_and_reopen_preserve_controls_and_missing_context() {
     let params = serde_json::to_value(&app.params).unwrap();
     let revision = app.parameter_revision;
     let mut harness = Harness::builder()
-        .with_size(egui::vec2(900.0, 980.0))
+        .with_size(egui::vec2(1460.0, 980.0))
         .build_state(
             |ctx, app: &mut App| {
                 app.preset_panel(ctx);
@@ -687,6 +687,35 @@ fn browser_clear_collapse_and_reopen_preserve_controls_and_missing_context() {
     assert!(
         harness
             .query_by_label("No matching look presets. Clear preset search to show all looks.")
+            .is_some()
+    );
+    let preferred_width = harness.state().presets.state.width;
+    harness.set_size(egui::vec2(1100.0, 760.0));
+    harness.run();
+    assert!(harness.state().presets.state.expanded);
+    assert!(
+        harness
+            .query_by_label("Current look: My Presets / Absent look • missing")
+            .is_none()
+    );
+    harness.get_by_label("▶").click();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Current look: My Presets / Absent look • missing")
+            .is_some()
+    );
+    assert!(harness.state().presets.state.expanded);
+    assert_eq!(harness.state().presets.state.width, preferred_width);
+    harness.get_by_label("◀").click();
+    harness.run();
+    assert!(harness.state().presets.state.expanded);
+    harness.set_size(egui::vec2(1460.0, 980.0));
+    harness.run();
+    assert_eq!(harness.state().presets.state.width, preferred_width);
+    assert!(
+        harness
+            .query_by_label("Current look: My Presets / Absent look • missing")
             .is_some()
     );
     harness.get_by_label("◀").click();

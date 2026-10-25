@@ -145,17 +145,27 @@ fn assert_preset_marker(h: &Harness<'_, App>, expected: presets::Marker) {
     );
 }
 
-fn assert_quality_disabled(h: &Harness<'_, App>) {
+fn assert_codec_inactive(h: &Harness<'_, App>) {
     assert!(
-        h.get_by_role_and_label(egui::accesskit::Role::Slider, "JPEG quality")
-            .node()
-            .is_disabled()
+        h.query_by_role_and_label(egui::accesskit::Role::Slider, "JPEG quality")
+            .is_none()
     );
     assert!(
-        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "JPEG subsampling")
-            .node()
-            .is_disabled()
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "JPEG subsampling")
+            .is_none()
     );
+    for expected in [
+        format!(
+            "JPEG quality: {} · not applicable",
+            h.state().export_options.jpeg_quality
+        ),
+        "JPEG subsampling: 4:2:0 · not applicable".to_owned(),
+    ] {
+        assert!(
+            h.query_by_label(&expected).is_some(),
+            "stored codec preference must remain readable: {expected}"
+        );
+    }
 }
 fn assert_quality_controls(h: &Harness<'_, App>) {
     assert!(
@@ -170,28 +180,10 @@ fn assert_quality_controls(h: &Harness<'_, App>) {
     );
 }
 
-/// Whether the collection mode selector is currently disclosed: it lives under
-/// the collapsed Advanced details row of the Diagnostics panel.
-fn diagnostics_mode_visible(h: &Harness<'_, App>) -> bool {
-    h.query_all_by_role(egui::accesskit::Role::ComboBox)
-        .any(|node| node.label().unwrap_or_default().is_empty())
-}
-
 fn choose_diagnostics_mode(h: &mut Harness<'_, App>, next: &str) {
-    reveal_control(h, "action.open_diagnostic_directory");
-    if !diagnostics_mode_visible(h) {
-        click(h, "Advanced details");
-        assert!(
-            diagnostics_mode_visible(h),
-            "Advanced details must disclose the collection mode selector"
-        );
-    }
-    let combos: Vec<_> = h
-        .query_all_by_role(egui::accesskit::Role::ComboBox)
-        .filter(|node| node.label().unwrap_or_default().is_empty())
-        .collect();
-    assert_eq!(combos.len(), 1, "diagnostics mode selector");
-    combos[0].simulate_click();
+    reveal_control(h, "diagnostics.collection_mode");
+    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Collection mode")
+        .simulate_click();
     h.run_steps(3);
     let options: Vec<_> = h.query_all_by_label(next).collect();
     assert_eq!(options.len(), 1, "diagnostics option {next}");
@@ -200,14 +192,13 @@ fn choose_diagnostics_mode(h: &mut Harness<'_, App>, next: &str) {
 }
 
 fn click_status_row(h: &mut Harness<'_, App>, label: &str) {
-    scroll_controls_into_view(h, label);
     let rows: Vec<_> = h
         .query_all_by_label_contains(label)
         .filter(|node| node.node().role() == egui::accesskit::Role::Button)
         .collect();
     assert_eq!(rows.len(), 1, "report selection row {label}");
-    rows[0].simulate_click();
-    h.run_steps(3);
+    let caption = rows[0].label().expect("report action caption");
+    click(h, &caption);
 }
 
 fn click_preset_action(h: &mut Harness<'_, App>, row: &str, action: &str) {
@@ -426,6 +417,124 @@ fn edit_export_draft(h: &mut Harness<'_, App>) {
 }
 
 #[test]
+fn settings_and_export_block_background_pointer_and_keyboard_and_restore_focus() {
+    let mut s = session();
+    let h = &mut s.harness;
+    preview(h);
+    click(h, "Modified");
+    let original = h.get_by_label("Original").raw_bounds().unwrap();
+    let source = h.state().viewer.settings.layer;
+    let params = h.state().params.clone();
+    for (open, close) in [("Settings", "Close settings"), ("Export", "Close export")] {
+        click(h, open);
+        for pressed in [true, false] {
+            let pos = egui::pos2(
+                ((original.x0 + original.x1) * 0.5) as f32,
+                ((original.y0 + original.y1) * 0.5) as f32,
+            );
+            h.input_mut().events.extend([
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+            h.step();
+        }
+        assert_eq!(
+            h.state().viewer.settings.layer,
+            source,
+            "{open} backdrop must be inert"
+        );
+        assert!(h.state().settings_open || h.state().export_dialog.is_open());
+        for _ in 0..32 {
+            h.press_key(egui::Key::Tab);
+            h.step();
+            for background in [
+                "Open",
+                "Undo",
+                "Redo",
+                "Search controls",
+                "Original",
+                "Modified",
+            ] {
+                assert!(
+                    !h.get_by_label(background).node().is_focused(),
+                    "{open} escaped to {background}"
+                );
+            }
+        }
+        assert_eq!(h.state().params, params);
+        click(h, close);
+        assert!(
+            h.get_by_label(open).node().is_focused(),
+            "restore invoking {open} focus"
+        );
+    }
+}
+
+#[test]
+fn settings_does_not_submit_or_cancel_a_background_preset_dialog() {
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "▶");
+    click(h, "Save preset…");
+    edit_preset_name(h, "Modal isolation");
+    click(h, "Settings");
+    h.get_by_label("preview max size").focus();
+    h.step();
+    h.press_key(egui::Key::Enter);
+    h.run_steps(3);
+    assert!(h.state().settings_open);
+    assert!(h.state().presets.name_dialog.is_some());
+    assert!(
+        !s.directory
+            .path()
+            .join("presets/Modal isolation.toml")
+            .exists()
+    );
+    h.press_key(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(!h.state().settings_open);
+    assert!(h.state().presets.name_dialog.is_some());
+    h.press_key(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(h.state().presets.name_dialog.is_none());
+}
+
+#[test]
+fn settings_locators_reveal_actual_rows_after_scrolling_without_toggling_sections() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.set_size(egui::vec2(1100.0, 760.0));
+    h.run_steps(3);
+    let params = h.state().params.clone();
+    for path in [
+        "action.save_startup",
+        "settings.preview_max_size",
+        "action.save_startup",
+    ] {
+        reveal_control(h, path);
+        h.run_steps(40);
+        let entry = controls::lookup(path).unwrap();
+        let target = h.get_by_label(&entry.label).raw_bounds().unwrap();
+        let clip = h
+            .get_by_role_and_label(egui::accesskit::Role::ScrollView, "Settings content")
+            .raw_bounds()
+            .unwrap();
+        assert!(
+            target.y0 >= clip.y0 && target.y1 <= clip.y1,
+            "{path} must be fully inside the actual viewport: {target:?} vs {clip:?}"
+        );
+    }
+    click(h, "Save current as default");
+    assert!(s.directory.path().join("gui_default_state.json").is_file());
+    assert_eq!(h.state().params, params);
+}
+
+#[test]
 fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_nothing() {
     let mut s = session();
     let h = &mut s.harness;
@@ -439,9 +548,12 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
             .is_some()
     );
     assert!(
-        h.get_by_label("Apply saving CCTF encoding")
-            .node()
-            .is_disabled()
+        h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
+            .is_none()
+    );
+    assert!(
+        h.query_all_by_label("encoded")
+            .any(|node| node.label().as_deref() == Some("Apply saving CCTF encoding"))
     );
     choose(h, "JPEG subsampling", "4:2:0");
 
@@ -450,9 +562,9 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
         h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Compression")
             .is_some()
     );
-    assert_quality_disabled(h);
+    assert_codec_inactive(h);
     assert!(
-        !h.get_by_label("Apply saving CCTF encoding")
+        !h.get_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
             .node()
             .is_disabled()
     );
@@ -468,11 +580,14 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
     assert!(h.state().export_dialog.is_open());
 
     change_export_format(h, "EXR");
-    assert_quality_disabled(h);
+    assert_codec_inactive(h);
     assert!(
-        h.get_by_label("Apply saving CCTF encoding")
-            .node()
-            .is_disabled()
+        h.query_by_role_and_label(egui::accesskit::Role::Switch, "Apply saving CCTF encoding")
+            .is_none()
+    );
+    assert!(
+        h.query_all_by_label("linear")
+            .any(|node| node.label().as_deref() == Some("Apply saving CCTF encoding"))
     );
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Saving color space")
         .simulate_click();
@@ -511,7 +626,7 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
     let close_path = s.directory.path().join("close-export.png");
     open_export_dialog(h);
     script(h, chooser::ChooserResult::Scripted(close_path.clone()));
-    click(h, "Close window");
+    click(h, "Close export");
     assert!(!h.state().export_dialog.is_open());
     assert!(h.state().export_job.is_none());
     assert!(!close_path.exists());
@@ -841,6 +956,48 @@ fn diagnostics_gui_env_override_publishes_directly_into_the_explicit_directory()
 }
 
 #[test]
+fn diagnostics_locator_reopens_a_collapsed_section_without_changing_parameters() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let params = h.state().params.clone();
+    choose_diagnostics_mode(h, "Summary");
+    click(h, "Advanced details");
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Collection mode")
+            .is_none(),
+        "Advanced details can be collapsed independently"
+    );
+    assert_eq!(
+        h.query_all_by_role_and_label(egui::accesskit::Role::Button, "Diagnostics")
+            .count(),
+        1,
+        "Settings owns the sole Diagnostics section header"
+    );
+    click(h, "Diagnostics");
+    h.run_steps(20);
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Collection mode")
+            .is_none()
+    );
+
+    reveal_control(h, "diagnostics.collection_mode");
+    let row = h
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Collection mode")
+        .raw_bounds()
+        .unwrap();
+    let viewport = h
+        .get_by_role_and_label(egui::accesskit::Role::ScrollView, "Settings content")
+        .raw_bounds()
+        .unwrap();
+    assert!(row.y0 >= viewport.y0 && row.y1 <= viewport.y1);
+    assert_eq!(
+        h.state().diagnostics.mode,
+        spektrafilm_backend::telemetry::CollectionMode::Summary
+    );
+    assert_eq!(h.state().params, params);
+}
+
+#[test]
 fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() {
     let mut s = session();
     let h = &mut s.harness;
@@ -973,7 +1130,7 @@ fn diagnostics_user_selected_report_survives_later_renders() {
 
     // Simulate the user clicking that report row (sets user_selected = true),
     // so it ages into the older row after the next render.
-    click(h, &format!("#{} {} · {}", first_id, "preview", "succeeded"));
+    click_status_row(h, &format!("#{} {} · {}", first_id, "preview", "succeeded"));
     assert_eq!(
         h.state().diagnostics.selected_report_id(),
         Some(first_id),

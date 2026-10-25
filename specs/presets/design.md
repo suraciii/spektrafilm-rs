@@ -12,7 +12,7 @@
 - The kind is derived from the carried scope, never declared by a field, and a built-in document MAY be either kind. A document that carries neither a whole look nor exactly one section MUST be rejected.
 - A section preset MUST pass the same value validators as a look preset for the paths it carries. Its payload MUST follow the parameter-file leaf discipline: only supplied leaves are edited, unknown fields and duplicate keys fail, and omitted values MUST NOT be filled from defaults.
 - Applying it edits exactly its section and registers those values as explicit, so neither stock initialization nor database calibration rewrites them, and it MUST NOT clear explicit values outside its section.
-- GUI application of either kind MUST commit one transaction under [Edit history](../gui-workflow/spec.md#edit-history). The transaction MUST retain explicit-leaf provenance and dependent normalized values, not only the carried payload; Undo and Redo MUST NOT reverse library writes.
+- GUI application MUST commit one transaction under [Edit history](../gui-workflow/spec.md#edit-history). The transaction MUST retain explicit-leaf provenance and dependent normalized values, not only the carried payload; Undo and Redo MUST NOT reverse library writes.
 - Writes, atomicity, rename, delete, duplicate, import, and export MUST treat both kinds through one code path. The resolver MUST reuse the parameter-file leaf-merge implementation for section presets instead of adding a second merge.
 - The library directory is `<config_dir>/presets`. The configuration directory policy is shared by the GUI and the CLI.
 - `SPEKTRAFILM_CONFIG_DIR` MUST override it; there is no separate preset directory override. The library directory MUST NOT require a data directory.
@@ -26,40 +26,36 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 - `film_render.glare` is not preset-owned because the pipeline never reads it and no control surface edits it. `film_render.grain.monochrome` is derived from the film profile (`broadcast_monochrome_layout`) and `film_render.grain.micro_sublayers` is a no-op (`sources::effects` classifies it `NoOp`).
 - `enlarger.lens_blur` is zeroed by digest and applied by no upstream stage; the neutral enlarger filter anchors are database-calibration state rather than section-owned look controls. Print viewing glare remains in `print` through `print_render`; its [readout boundary](../film-chain/spec.md#scan-optics-and-print-viewing-glare) MUST NOT be inferred from that storage location.
 
-- `film`: `film_render.density_curve_gamma`, `film_render.development_time`, `film_render.chemistry`. Primary menu anchor: Film / Chemistry.
-- `grain`: `film_render.grain`. Primary menu anchor: Film / Grain.
-- `halation`: `film_render.halation`. Primary menu anchor: Film / Halation.
-- `couplers`: `film_render.dir_couplers`. Primary menu anchor: Film / Couplers.
-- `base`: `film_render.base`. Primary menu anchor: Film / Film base.
-- `convert`: `film_render.convert`. Primary menu anchor: Input and capture / Convert.
-- `camera`: `camera.exposure_compensation_ev`, `camera.auto_exposure`, `camera.auto_exposure_method`, `camera.capture_illuminant`. Primary menu anchor: Input and capture / Camera.
-- `camera filter`: `camera_diffusion_filter`. Primary menu anchor: Input and capture / Camera diffusion.
-- `enlarger filter`: `enlarger.diffusion_filter`. Primary menu anchor: Print / Enlarger diffusion.
-- `enlarger`: `enlarger` without `enlarger.diffusion_filter`. Primary menu anchor: Print / Enlarger.
-- `scanner`: `scanner.scan_output`, `scanner.conversion_style`, `scanner.lens_blur`, `scanner.unsharp_mask`. Primary menu anchor: Scan / Scanner.
-- `cmyk ink style`: `cmyk`. Primary menu anchor: Output / CMYK ink style.
-- `print`: `print_render`. Primary menu anchor: Print / Chemistry.
-- `output mix`: `output_mix`. Primary menu anchor: Output / Simulation blend.
+- `film`: `film_render.density_curve_gamma`, `film_render.development_time`, `film_render.chemistry`. Primary module anchor: Film / Chemistry.
+- `grain`: `film_render.grain`. Primary module anchor: Film / Grain.
+- `halation`: `film_render.halation`. Primary module anchor: Film / Halation.
+- `couplers`: `film_render.dir_couplers`. Primary module anchor: Film / Couplers.
+- `base`: `film_render.base`. Primary module anchor: Film / Film base.
+- `convert`: `film_render.convert`. Primary module anchor: Input and capture / Convert.
+- `camera`: `camera.exposure_compensation_ev`, `camera.auto_exposure`, `camera.auto_exposure_method`, `camera.capture_illuminant`. Primary module anchor: Input and capture / Camera.
+- `camera filter`: `camera_diffusion_filter`. Primary module anchor: Input and capture / Camera diffusion.
+- `enlarger filter`: `enlarger.diffusion_filter`. Primary module anchor: Print / Enlarger diffusion.
+- `enlarger`: `enlarger` without `enlarger.diffusion_filter`. Primary module anchor: Print / Enlarger.
+- `scanner`: `scanner.scan_output`, `scanner.conversion_style`, `scanner.lens_blur`, `scanner.unsharp_mask`. Primary module anchor: Scan / Scanner.
+- `cmyk ink style`: `cmyk`. Primary module anchor: Output / CMYK ink style.
+- `print`: `print_render`. Primary module anchor: Print / Chemistry.
+- `output mix`: `output_mix`. Primary module anchor: Output / Simulation blend.
 
 The `convert` section includes the imported-capture acquisition light in `film_render.convert.scan_illuminant`. The fixed product readout illuminant is not preset-owned. Retired scanner lamp keys and the input-only `neutral` style alias follow the [lab scan migration contract](../film-chain/lab-scan/spec.md#point-wise-consumers-and-migration).
 
-- The browser lists look presets only. A section preset MUST NOT appear in it and MUST NOT be applicable from it.
-- A section preset loads from the menu of its own section; the menu MUST show the preset whose carried controls equal the section's current controls, or `custom`. The comparison MUST use the carried editable controls and never derived or prepared values, and equal matches MUST resolve deterministically by name order.
-- Every section in this table MUST carry one menu at its named primary module anchor, because Save as lives there. The menu MUST state its full section scope when that scope spans modules or stages.
-- The `enlarger` menu includes the Print / Preflash controls; the `print` menu includes print chemistry, print base, print density-curve controls, and Scan / Print viewing glare. Those placements MUST NOT split sections, add duplicate menus, or change schemas or canonical payload scopes.
-- A menu whose list is empty MUST offer Save as for the section's current controls and MUST state that a preset file can also be placed in the library. The menu MUST NOT repeat a control that already exists inside the section.
-- The section menu owns load, Save as, Rename, Duplicate, Delete, Export, and Show file for its own documents; the browser keeps the same operations for look presets. Both MUST call the shared library implementation.
+- The browser lists look presets only. A section preset MUST NOT appear in it, and the GUI MUST NOT offer a section menu, section capture, section management, or section import.
+- A section payload is captured and applied by `core`, the CLI, and scoped photograph copying under [Photograph work](../gui-product-design/photo-work/spec.md#copy-adjustments). Stored section documents keep their payloads and file locations.
+- The `enlarger` section includes the Print / Preflash controls; the `print` section includes print chemistry, print base, print density-curve controls, and Scan / Print viewing glare. Those placements MUST NOT split sections or change schemas or canonical payload scopes.
 - A section preset MUST NOT change a profile reference or the workflow.
-- Visible stage and module ownership follows [Stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership), not serialized group names. Module resets follow [Section reset](../gui-workflow/spec.md#section-reset); a section menu's wider payload MUST NOT expand a visible module's reset scope.
+- Visible stage and module ownership follows [Stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership), not serialized group names. Module resets follow [Section reset](../gui-workflow/spec.md#section-reset); a section's wider payload MUST NOT expand a visible module's reset scope.
 
 ## Everyday flows
 
 The flows a user actually runs MUST be short; every one below is two or three steps, and none of them needs a dialog that asks for a scope.
 
 - Start a look: pick a browser row. Profiles, carried look controls, and the workflow default follow, and a render is scheduled.
-- Keep a section: adjust that section, open its menu (it reads `custom`), Save as, name it. The file lands in the library and the menu reads that name; the next image applies it in one click after the look.
 - Change an applied look: edit any look control, then Update the user document, Save as under a new name, or Revert.
-- Move a preset between machines: Export either kind, drop the file into `<config_dir>/presets`, refresh. The same name then resolves for the GUI and the CLI.
+- Move a preset between machines: Export the document, drop the file into `<config_dir>/presets`, refresh. The same name then resolves for the GUI and the CLI.
 - Reopen the app: controls come from the restored state, and the browser re-marks the remembered group and name; a missing document shows as missing.
 - Script a run: `preset list` and `preset show` describe the same names and groups the browser shows, and `--preset` resolves them with the same rules.
 
@@ -69,7 +65,7 @@ The flows a user actually runs MUST be short; every one below is two or three st
 - The built-in documents form the `Built-in` group. The library directory forms the `My Presets` group.
 - A name MUST be unique inside a group. Two built-in documents MUST NOT share a name, and two library documents MUST NOT share a name; the same name in both groups is valid.
 - Name comparison MUST be case-insensitive, because some file systems resolve names without case.
-- Browser rows and section menus MUST sort by name, case-insensitively, with a deterministic tie-break. A file-system scan order MUST never reach the UI, and one library MUST present one order.
+- Browser rows MUST sort by name, case-insensitively, with a deterministic tie-break. A file-system scan order MUST never reach the UI, and one library MUST present one order.
 - Browser search MUST implement the [browser search contract](spec.md#browser-search) as a transient presentation filter over discovered look presets. It MUST match a case-insensitive substring of the preset name or referenced film or print stock names or identifiers.
 - It MUST retain group/name identities, deterministic ordering, library faults, and applied/modified/missing context. It MUST NOT change exact name resolution or write to the library, GUI-state files, or preset documents.
 - A filtered browser with no matches MUST offer query clearing, not claim that the library is empty. An empty query MUST restore the unfiltered list and its existing order.
@@ -101,7 +97,10 @@ The flows a user actually runs MUST be short; every one below is two or three st
 
 ## Boundaries
 
-- The GUI state keeps its complete-state contract; the panel width, the expanded state, and the last applied group and name belong to the versioned Rust extension and MUST NOT enter the Python-compatible sections. They MUST NOT change the meaning of a saved preset document.
+- The GUI state keeps its complete-state contract; the panel width, the expanded preference, and the last applied group and name belong to the versioned Rust extension and MUST NOT enter the Python-compatible sections. They MUST NOT change the meaning of a saved preset document.
+- At a window width of 1250 logical points or less, the browser MUST automatically collapse to a 48-point rail.
+- A manual reopen at that width MUST remain session-local and MUST NOT rewrite the serialized expanded or width preference.
+- Returning to a wider window MUST restore the stored expanded and width preferences.
 - Modified detection compares the active look controls and the film and print references with the applied document. It MUST use `LookParameters::matches` to respect an omitted legacy camera group under the [preset file format rules](spec.md#file-formats); it MUST NOT compare GUI state or a prepared runtime parameter tree.
 - Look capture MUST collect existing material controls through their existing sections and output mix through its own section; it MUST never collect an `IoParams` snapshot or output gamut settings. Schema migration MUST follow the [preset file-format contract](spec.md#file-formats): older whole looks gain full output mix, while older sections retain sparse omission.
 - Capture, apply, and migrated export MUST NOT expand `io` ownership; preparation MUST preserve existing material capability, scan-inverse, and calibration semantics under [Output mix and material controls](../output-mix/spec.md). Unshipped response groups and the Cyan-shift field are unknown fields, including in draft version 3 documents; neither capture nor migration MAY materialize them.

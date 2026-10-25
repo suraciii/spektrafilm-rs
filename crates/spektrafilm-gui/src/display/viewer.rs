@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::theme;
+
 #[cfg(windows)]
 use super::colortransform::discover_display_profile;
 use super::raster::{DisplayRaster, Interpolation};
@@ -496,9 +498,11 @@ impl Viewer {
                 .unwrap_or(0.0) as f32,
         );
     }
+    /// The shown layer: one compact row of the three viewer targets, with the
+    /// canonical locate paths and accessible names unchanged.
     pub fn layer_controls(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.settings.layer;
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
             let input = ui
                 .selectable_value(
                     &mut self.settings.layer,
@@ -535,30 +539,212 @@ impl Viewer {
         });
         before != self.settings.layer
     }
-    pub fn interpolation_control(&mut self, ui: &mut egui::Ui) {
-        let response = egui::ComboBox::new(
-            "output interpolation",
-            crate::i18n::text(ui.ctx(), "surfaces.viewer.interpolation"),
-        )
-        .selected_text(crate::controls::localized(
-            ui.ctx(),
-            self.settings.interpolation.name(),
-        ))
-        .show_ui(ui, |ui| {
-            for name in INTERPOLATIONS {
-                ui.selectable_value(
-                    &mut self.settings.interpolation,
-                    Interpolation::parse(name),
-                    crate::controls::localized(ui.ctx(), name),
-                );
+    /// The viewer footer as one compact row, grouped by the target each action
+    /// acts on: the shown layer, the accepted-result transition, and the
+    /// retained view. The two transitions stay independent booleans in one
+    /// labelled popover, and the exact zoom choices live in one menu whose
+    /// button carries the current zoom as read-only text. Every footer control
+    /// changes viewing only; none of them reaches retained, saved or exported
+    /// pixels.
+    pub fn footer_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            // Target: which retained image the viewer presents.
+            self.layer_controls(ui);
+            ui.separator();
+            // Transition: how an accepted result replaces the retained frame.
+            self.transition_menu(ui);
+            ui.separator();
+            // View: the exact zoom menu, then the distinct fit and reset.
+            // Exact percentages are a source-pixel-to-device-pixel scale, so
+            // 100% means one source pixel per device pixel.
+            self.zoom_menu(ui);
+            let fit = ui
+                .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit"))
+                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.fit_help"));
+            crate::controls::locate_row(ui, "viewer.fit", &fit);
+            if fit.clicked() {
+                self.fit_view();
+                ui.ctx().request_repaint();
             }
-        })
-        .response
-        .on_hover_text(crate::i18n::text(
-            ui.ctx(),
-            "surfaces.viewer.interpolation_help",
-        ));
-        crate::controls::locate_row(ui, "extras.display.output_interpolation", &response);
+            let reset = ui
+                .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.reset"))
+                .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.reset_help"));
+            crate::controls::locate_row(ui, "viewer.reset", &reset);
+            if reset.clicked() {
+                self.reset_view();
+                ui.ctx().request_repaint();
+            }
+        });
+    }
+    /// The accepted-result transitions: two independent booleans in one
+    /// labelled popover, never one exclusive choice. A pending control-search
+    /// locate for either toggle opens the popover, so the hidden rows stay
+    /// reachable and focusable like any other control.
+    fn transition_menu(&mut self, ui: &mut egui::Ui) {
+        let popup_id = ui.make_persistent_id("viewer-transitions-menu");
+        let located = ui
+            .ctx()
+            .data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request")))
+            .is_some_and(|(section, target)| {
+                section == "Viewer"
+                    && [
+                        ("viewer.reveal", "reveal transition"),
+                        ("viewer.crossfade", "crossfade transition"),
+                    ]
+                    .into_iter()
+                    .any(|(path, label)| target == path || target.eq_ignore_ascii_case(label))
+            });
+        if located {
+            ui.memory_mut(|memory| memory.open_popup(popup_id));
+        }
+        let menu = ui
+            .button(crate::i18n::text(ui.ctx(), "surfaces.viewer.transitions"))
+            .on_hover_text(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.viewer.transitions_help",
+            ));
+        if menu.clicked() {
+            ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+        }
+        // The footer sits at the window bottom, so the popover opens above its
+        // button instead of dropping below the fold.
+        egui::popup::popup_above_or_below_widget(
+            ui,
+            popup_id,
+            &menu,
+            egui::AboveOrBelow::Above,
+            if located {
+                // The locator's activating click is outside this new popup.
+                // Ignore it only in the opening frame, then close normally.
+                egui::popup::PopupCloseBehavior::IgnoreClicks
+            } else {
+                egui::popup::PopupCloseBehavior::CloseOnClickOutside
+            },
+            |ui| {
+                ui.set_min_width(240.0);
+                let reveal = crate::controls::toggle_row(
+                    ui,
+                    "reveal transition",
+                    &mut self.settings.reveal,
+                    "Viewer-only wipe between input and output; retained and written pixels are unchanged.",
+                );
+                crate::controls::locate_row(ui, "viewer.reveal", &reveal);
+                let crossfade = crate::controls::toggle_row(
+                    ui,
+                    "crossfade transition",
+                    &mut self.settings.crossfade,
+                    "Viewer-only transition between accepted outputs.",
+                );
+                crate::controls::locate_row(ui, "viewer.crossfade", &crossfade);
+            },
+        );
+    }
+    /// The exact source-pixel zoom choices in one menu; the menu button carries
+    /// the current zoom as read-only text. Fit stays a separate button, so the
+    /// menu holds no duplicate fit action. A pending control-search locate for
+    /// an exact zoom opens the menu, so the hidden choices stay reachable and
+    /// focusable like any other control.
+    fn zoom_menu(&mut self, ui: &mut egui::Ui) {
+        let popup_id = ui.make_persistent_id("viewer-zoom-menu");
+        let located = ui
+            .ctx()
+            .data(|data| data.get_temp::<(String, String)>(egui::Id::new("control_focus_request")))
+            .is_some_and(|(section, target)| {
+                section == "Viewer"
+                    && [
+                        ("viewer.zoom.100", "100%"),
+                        ("viewer.zoom.200", "200%"),
+                        ("viewer.zoom.400", "400%"),
+                    ]
+                    .into_iter()
+                    .any(|(path, label)| target == path || target.eq_ignore_ascii_case(label))
+            });
+        if located {
+            ui.memory_mut(|memory| memory.open_popup(popup_id));
+        }
+        // Read-only: the current zoom, carried by the menu button.
+        let zoom = self.zoom_percent().map_or_else(
+            || {
+                crate::tr!(
+                    ui.ctx(),
+                    "surfaces.viewer.zoom_fit",
+                    percent = format!("{:.0}", self.zoom * 100.0)
+                )
+                .into_owned()
+            },
+            |percent| format!("{percent:.0}%"),
+        );
+        let menu = ui
+            .button(crate::tr!(ui.ctx(), "surfaces.viewer.zoom", zoom = zoom))
+            .on_hover_text(crate::i18n::text(ui.ctx(), "surfaces.viewer.zoom_help"));
+        if menu.clicked() {
+            ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+        }
+        // The footer sits at the window bottom, so the menu opens above its
+        // button instead of dropping below the fold.
+        egui::popup::popup_above_or_below_widget(
+            ui,
+            popup_id,
+            &menu,
+            egui::AboveOrBelow::Above,
+            if located {
+                // The locator's activating click is outside this new popup.
+                // Ignore it only in the opening frame, then close normally.
+                egui::popup::PopupCloseBehavior::IgnoreClicks
+            } else {
+                egui::popup::PopupCloseBehavior::CloseOnClickOutside
+            },
+            |ui| {
+                for (label, percent, path) in [
+                    ("100%", 100.0, "viewer.zoom.100"),
+                    ("200%", 200.0, "viewer.zoom.200"),
+                    ("400%", 400.0, "viewer.zoom.400"),
+                ] {
+                    let response = ui.button(label).on_hover_text(crate::tr!(
+                        ui.ctx(),
+                        "surfaces.viewer.zoom_exact_help",
+                        percent = format!("{percent:.0}")
+                    ));
+                    crate::controls::locate_row(ui, path, &response);
+                    if response.clicked() {
+                        self.set_zoom_percent(percent);
+                        ui.ctx().request_repaint();
+                        ui.memory_mut(|memory| memory.close_popup());
+                    }
+                }
+            },
+        );
+    }
+    pub fn interpolation_control(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(crate::i18n::text(ui.ctx(), "surfaces.viewer.interpolation"));
+            let width = ui
+                .available_width()
+                .clamp(theme::WIDTH_COMBO_MIN, theme::WIDTH_COMBO_MAX);
+            ui.add_space((ui.available_width() - width).max(0.0));
+            let response = egui::ComboBox::from_id_salt("output interpolation")
+                .width(width)
+                .selected_text(crate::controls::localized(
+                    ui.ctx(),
+                    self.settings.interpolation.name(),
+                ))
+                .show_ui(ui, |ui| {
+                    for name in INTERPOLATIONS {
+                        ui.selectable_value(
+                            &mut self.settings.interpolation,
+                            Interpolation::parse(name),
+                            crate::controls::localized(ui.ctx(), name),
+                        );
+                    }
+                })
+                .response
+                .on_hover_text(crate::i18n::text(
+                    ui.ctx(),
+                    "surfaces.viewer.interpolation_help",
+                ));
+            crate::controls::name_choice(ui, "output interpolation");
+            crate::controls::locate_row(ui, "extras.display.output_interpolation", &response);
+        });
     }
     fn display_source(&self, layer: ViewLayer) -> DisplaySource {
         if layer == ViewLayer::Input {
@@ -901,11 +1087,11 @@ impl Viewer {
         if let Some((start, end)) = self.marquee {
             let selection = Rect::from_two_pos(start, end).intersect(rect);
             let painter = ui.painter_at(rect);
-            painter.rect_filled(selection, 0.0, Color32::from_white_alpha(24));
+            painter.rect_filled(selection, 0.0, crate::theme::FG.gamma_multiply(0.1));
             painter.rect_stroke(
                 selection,
                 0.0,
-                egui::Stroke::new(1.0_f32, Color32::WHITE),
+                crate::theme::stroke(crate::theme::FG),
                 egui::StrokeKind::Inside,
             );
         }
@@ -914,7 +1100,7 @@ impl Viewer {
             let message = crate::i18n::text(ui.ctx(), "surfaces.viewer.empty");
             let galley = painter.layout(
                 message.to_string(),
-                egui::FontId::proportional(16.0),
+                crate::theme::text(egui::TextStyle::Body, crate::theme::SIZE_TITLE),
                 crate::theme::FG_SECONDARY,
                 rect.width(),
             );
@@ -969,8 +1155,12 @@ impl Viewer {
         {
             self.observed_geometry = Some((rect, image_rect, interpolation, inspection));
         }
-        let text = if let Some(p) = inspection {
-            crate::tr!(
+        // Pixel inspection is the only chrome painted over the image, and it
+        // sits along the bottom edge: the parent's result and rendering status
+        // strips own the top of the viewer. Gesture help is documented at the
+        // top of `show` and lives in the application help, not over the canvas.
+        if let Some(p) = inspection {
+            let text = crate::tr!(
                 ui.ctx(),
                 "surfaces.viewer.inspection",
                 layer = crate::i18n::text(
@@ -986,35 +1176,32 @@ impl Viewer {
                 r = format!("{:.6}", p.rgb[0]),
                 g = format!("{:.6}", p.rgb[1]),
                 b = format!("{:.6}", p.rgb[2])
-            )
-        } else {
-            crate::tr!(
-                ui.ctx(),
-                "surfaces.viewer.gestures",
-                layer = crate::i18n::text(
-                    ui.ctx(),
-                    match layer {
-                        ViewLayer::Input => "surfaces.viewer.input",
-                        ViewLayer::Output => "surfaces.viewer.output",
-                        ViewLayer::PaperBack => "surfaces.viewer.paper_back",
-                    }
+            );
+            let painter = ui.painter_at(rect);
+            let text_rect = Rect::from_min_size(
+                Pos2::new(
+                    rect.min.x + crate::theme::SPACE_2,
+                    (rect.max.y - 24.0 - crate::theme::SPACE_2)
+                        .max(rect.min.y + crate::theme::SPACE_2),
                 ),
-                zoom = format!("{:.2}", self.zoom_percent.unwrap_or(self.zoom * 100.0))
-            )
-        };
-        let painter = ui.painter_at(rect);
-        let text_rect = Rect::from_min_size(
-            rect.min + Vec2::splat(8.0),
-            Vec2::new(rect.width().min(650.0) - 16.0, 24.0),
-        );
-        painter.rect_filled(text_rect, 3.0, Color32::from_black_alpha(180));
-        painter.text(
-            text_rect.min + Vec2::new(5.0, 4.0),
-            egui::Align2::LEFT_TOP,
-            text,
-            egui::FontId::monospace(12.0),
-            Color32::WHITE,
-        );
+                Vec2::new(rect.width().min(650.0) - 2.0 * crate::theme::SPACE_2, 24.0),
+            );
+            // Viewer-only chrome over the image. The token set has no translucent
+            // overlay-scrim role, so the panel surface is the closest existing
+            // token at reduced alpha.
+            painter.rect_filled(
+                text_rect,
+                crate::theme::RADIUS_CARD,
+                crate::theme::SURFACE.gamma_multiply(0.85),
+            );
+            painter.text(
+                text_rect.min + Vec2::splat(crate::theme::SPACE_1),
+                egui::Align2::LEFT_TOP,
+                text,
+                crate::theme::text(crate::theme::TEXT_READOUT, crate::theme::SIZE_HINT),
+                crate::theme::FG,
+            );
+        }
         inspection
     }
 }

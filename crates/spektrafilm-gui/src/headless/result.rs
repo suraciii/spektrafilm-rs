@@ -108,7 +108,7 @@ fn escape_cancels_stale_save_without_opening_the_chooser() {
 }
 
 #[test]
-fn header_keeps_preview_identity_and_quality_caveat_while_scan_is_pending() {
+fn viewer_keeps_retained_preview_identity_and_caveat_while_scan_is_pending() {
     let mut s = session();
     let h = &mut s.harness;
     let retained = preview(h);

@@ -18,6 +18,18 @@ Every interactive presentation decision MUST identify the material or workflow s
 
 The interface is process-first, material-aware, layered, quiet, explicit, precise, reversible, and native. It presents film simulation as a material process, treats the viewer as an inspection surface, and keeps the control panel as the parameter workbench. It uses a restrained warm accent for selection and action and explains route capability and retained values in product language.
 
+The presentation target is a quiet photo-first hierarchy over restrained surfaces.
+
+| Concern | Target |
+| --- | --- |
+| Hierarchy | The retained image leads every layout decision under [visual hierarchy](#visual-hierarchy). |
+| Surfaces | Panels use restrained dark warm surfaces rather than competing frames. |
+| Inactive values | A retained inactive value stays readable beside its reason under [states](#states). |
+| State cues | Selection, modified, and focus states never rely on color alone under [states](#states). |
+| Viewer footer | Footer actions group by target under [viewer footer](#viewer-footer). |
+| Preset browser | The left browser owns whole-look presets under [Presets](../presets/spec.md#contract). |
+| Components | One shared implementation serves each control kind under [presentation design](design.md#surface-and-component-boundaries). |
+
 ## Semantic role vocabulary
 
 The native token vocabulary belongs to SpektraFilm:
@@ -30,7 +42,7 @@ The native token vocabulary belongs to SpektraFilm:
 | Action | `ACCENT`, `ACCENT_DIM`, `CONTRAST_ON_ACCENT` | Identify selection, focus, action, and readable content on an accent fill. |
 | Feedback | `ERROR`, `WARNING` | Distinguish invalid input from inactive capability, experimental behavior, or retained-value notices. |
 
-The exact values, geometry, type sizes, and toolkit mapping remain in [`theme.rs`](../../crates/spektrafilm-gui/src/theme.rs). A presentation module uses a semantic role or shared component token, not a new raw appearance value.
+The exact palette values and toolkit mapping remain in [`theme.rs`](../../crates/spektrafilm-gui/src/theme.rs). It MUST provide the shared [native layout baseline](#native-layout-baseline). A presentation module uses a semantic role or shared component token, not a new raw appearance value.
 
 ## Language authority
 
@@ -62,6 +74,23 @@ Numeric entries and sliders MUST remain available under [Parameter rows](#parame
 
 These changes MUST use the existing semantic tokens rather than introduce a second theme.
 
+## Native layout baseline
+
+The shared native tokens MUST use this baseline in logical points. Settings, Export, and the inspector MUST share row alignment and control sizing; a surface MUST NOT squeeze a value or selector to make room for its label or action.
+
+| Role | Baseline |
+| --- | --- |
+| Body, label, and button text | 13 |
+| Small text and units | 11 |
+| Title text | 13.5 |
+| Stage heading text | 15 |
+| Control height | 28 |
+| Inspector width | 344 |
+| Selector maximum width | 160 |
+| Action width and reserved action area | 64 and 80 |
+
+Long labels MUST wrap without obscuring their values. Fixed and inapplicable Export rows MUST use the same readable row structure as editable options under [dialog interaction](../gui-workflow/spec.md#dialog-interaction). Responsive preset geometry follows the [preset browser boundary](../presets/design.md#boundaries).
+
 ## Parameter rows
 
 - The inspector presents an editable parameter as a parameter row in its owning module.
@@ -85,11 +114,11 @@ These changes MUST use the existing semantic tokens rather than introduce a seco
 
 ## Module headers and resets
 
-A module header MUST present its collapse control, title, modified state, and factory reset action. A parameter row MUST also expose a factory reset for that row. Reset actions MUST be keyboard reachable and MUST identify their target and factory baseline in accessible help.
+A module header MUST present its collapse control, title, modified state, and the module's factory reset action. Rows, sliders, and dialog options MUST NOT present their own reset actions; Undo reverses an individual adjustment. Reset actions MUST be keyboard reachable and MUST identify their target and factory baseline in accessible help.
 
-Reset scope follows [complete control access](../gui-workflow/spec.md#complete-control-access), and reset transactions follow [edit history](../gui-workflow/spec.md#edit-history). A module reset MUST identify the module's owned controls, not imply a reset of the whole serialized preset section. A wider section-preset menu MUST identify its full scope at its primary module anchor.
+Reset scope follows [complete control access](../gui-workflow/spec.md#complete-control-access), and reset transactions follow [edit history](../gui-workflow/spec.md#edit-history). A module reset MUST identify the module's owned controls, not imply a reset of the whole serialized preset section.
 
-A row whose value differs from its factory reset target MUST present a non-color modified marker. A module header MUST present the aggregate modified state of its owned rows. Markers MUST NOT change the row's accessible label.
+A row whose value differs from its projected factory value MUST present a non-color modified marker. A module header MUST present the aggregate modified state of its owned rows. Markers MUST NOT change the row's accessible label.
 
 The [presentation design](design.md#factory-projection-and-modified-state) owns the comparison and projection boundary.
 
@@ -113,6 +142,7 @@ Locator results and destination cues MUST remain readable and keyboard accessibl
 ## Viewer footer
 
 - The footer groups its actions by target. One action belongs to one group.
+- Its groups are layer selection, view zoom, and reveal or crossfade presentation.
 - The footer presents the current zoom as read-only text, apart from the actions.
 
 ## Preset browser
@@ -131,4 +161,4 @@ Locator results and destination cues MUST remain readable and keyboard accessibl
 - Every control is operable by pointer and by keyboard.
 - Text, values, units, and inactive reasons MUST remain legible against their semantic surfaces. Muted roles MUST NOT make retained values unreadable.
 - Focus MUST be visible and MUST NOT be clipped by scrolling containers. Keyboard navigation MUST reach collapse controls, resets, search results, and each editable row in a predictable visual order.
-- A row's accessible name MUST identify its product label. Its value, unit, state, inactive reason, and reset target MUST remain available without hover.
+- A row's accessible name MUST identify its product label. Its value, unit, state, and inactive reason MUST remain available without hover.
