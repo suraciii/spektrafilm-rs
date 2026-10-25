@@ -1183,6 +1183,15 @@ const SURFACES: &[SurfaceEntry] = &[
         conditions: &["selected ICC profile"],
     },
     SurfaceEntry {
+        path: "action.open_diagnostic_directory",
+        label: "Open log folder",
+        owner: ControlOwner::Settings,
+        section: "Diagnostics",
+        editor: EditorKind::Action,
+        validator: "diagnostics::Action::OpenDirectory",
+        conditions: &[],
+    },
+    SurfaceEntry {
         path: "action.save_report",
         label: "Save report…",
         owner: ControlOwner::Settings,

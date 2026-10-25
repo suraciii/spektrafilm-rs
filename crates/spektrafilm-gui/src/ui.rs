@@ -62,20 +62,39 @@ impl App {
             .export_job
             .as_ref()
             .map(|job| ("Export", job.operation.mode()));
-        let save_report = self.diagnostics.show(ui, render, queued, export);
-        if save_report
-            && let Some(path) = self.chooser.save_file(
-                rfd::FileDialog::new()
-                    .add_filter("JSON report", &["json"])
-                    .set_file_name("spektrafilm-report.json"),
-            )
-        {
-            self.status = match self.diagnostics.save_selected(&path) {
-                Ok(()) => crate::app::Message::new("surfaces.status.report_saved"),
-                Err(error) => {
-                    crate::app::Message::new("surfaces.status.report_error").arg("error", error)
+        match self.diagnostics.show(ui, render, queued, export) {
+            Some(diagnostics::Action::SaveSelected) => {
+                if let Some(path) = self.chooser.save_file(
+                    rfd::FileDialog::new()
+                        .add_filter("JSON report", &["json"])
+                        .set_file_name("spektrafilm-report.json"),
+                ) {
+                    self.status = match self.diagnostics.save_selected(&path) {
+                        Ok(()) => crate::app::Message::new("surfaces.status.report_saved"),
+                        Err(error) => crate::app::Message::new("surfaces.status.report_error")
+                            .arg("error", error),
+                    };
                 }
-            };
+            }
+            Some(diagnostics::Action::OpenDirectory) => {
+                if let Some(directory) = self.diagnostics.publication_directory() {
+                    // Open the captured directory in the platform file manager
+                    // as one argument, without waiting on the manager's lifetime.
+                    let mut command = if cfg!(target_os = "macos") {
+                        std::process::Command::new("open")
+                    } else if cfg!(windows) {
+                        std::process::Command::new("explorer")
+                    } else {
+                        std::process::Command::new("xdg-open")
+                    };
+                    command.arg(directory);
+                    if let Err(error) = command.spawn() {
+                        let detail = format!("{}: {}", directory.display(), error);
+                        self.diagnostics.record_publication_error(detail);
+                    }
+                }
+            }
+            None => {}
         }
     }
 
@@ -1851,6 +1870,9 @@ impl eframe::App for App {
         if self.browser_state_changed_at.is_some() {
             ctx.request_repaint_after(Duration::from_millis(300));
         }
+        if self.diagnostics.pending_publications() > 0 {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
         if let Some(error) = self.diagnostics.take_publication_error() {
             self.status =
                 crate::app::Message::new("surfaces.status.publication_error").arg("error", error);
@@ -2040,6 +2062,6 @@ impl eframe::App for App {
         {
             let _ = handle.join();
         }
-        self.diagnostics.clear();
+        self.diagnostics.shutdown();
     }
 }

@@ -6,7 +6,7 @@ Telemetry explains the cost and execution of one image operation. An operation i
 
 It MUST produce one invocation terminal record and attribute the final write only to the output attempt that was saved. Save MUST reference the retained render that produced its pixels.
 
-Collection modes are `off`, `summary`, and `gpu_timing`. Collection MUST default to `off`. Users MUST be able to select summary or GPU timing for subsequent operations without restarting the GUI.
+Collection modes are `off`, `summary`, and `gpu_timing`. GUI collection MUST default to `summary` with automatic local report writing. CLI collection MUST default to `off` unless explicitly requested.
 
 Existing diagnostic output MUST remain available without a remote service. Enabling telemetry MUST NOT change image parameters, random seeds, precision, adapter selection, fallback policy, or publication behavior.
 
@@ -32,6 +32,14 @@ The GUI MUST expose `Diagnostics` in the Settings dialog under [Stage and surfac
 
 It MUST NOT trigger a render or change an in-flight operation. Diagnostics mode and reports MUST remain session-local and outside saved GUI states, presets, and recipes.
 
+GUI sessions MUST start recording before the initial image request. Users MUST NOT need to choose a folder or collection mode to obtain performance reports.
+
+The application MUST create a distinct persistent report directory for each GUI session. Starting another session MUST NOT overwrite reports from an earlier session.
+
+Diagnostics MUST offer `Open log folder` for the current session. Collection modes, report history, and individual report export MUST remain available under initially collapsed advanced details.
+
+Automatic writing MUST keep the interface responsive. Normal shutdown MUST finish accepted report writes. Diagnostics settings MUST remain session-local and outside saved GUI states, presets, and recipes.
+
 The GUI summary MUST show operation kind, outcome, working dimensions, elapsed time, requested and selected backend, actual route, and the largest observed phase. It MUST show CPU-stage reasons and software-adapter status in plain language. Phase durations, logical transfers, and GPU pass timing MUST be available in expanded detail.
 
 The UI MUST NOT rank nested phases as independent costs or diagnose an unmeasured shader bottleneck from a host wait. An empty history MUST explain that collection applies to the next operation; exporting a report MUST NOT rerun the image.
@@ -40,9 +48,9 @@ The GUI MUST retain the latest 20 terminal reports in memory, newest first. It M
 
 Save MUST identify that source render and state whether its diagnostic report was collected. Closing the application MUST discard report history; closing during work MUST finalize reachable cancellation observations before releasing worker-owned records. Abrupt process termination need not produce a terminal report.
 
-A GUI session launched with `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR`, an existing directory, MUST publish every completed operation's report as a new `operation-<id>.json` file in that directory. The launch request selects summary collection, as a CLI report request does; the panel MAY still change the mode.
+Automatic writing MUST publish each collected terminal report as a new `operation-<id>.json` file in the session directory. `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` MAY override the automatic directory for controlled launches without changing the collection default.
 
-Publication MUST NOT replace an existing file, MUST NOT change the operation outcome, and MUST NOT enter the operation duration. A publication failure MUST surface as a status diagnostic without failing the operation. The directory is launch configuration, not saved GUI state.
+Publication MUST NOT replace an existing file, MUST NOT change the operation outcome, and MUST NOT enter the operation duration. A publication failure MUST surface as a status diagnostic without failing the operation.
 
 The `process` and `render` CLI commands MUST accept `--diagnostics PATH` for one UTF-8 JSON report. `--gpu-timings` MUST require `--diagnostics` and select GPU timing; a report request without it selects summary. Existing `process --timings` MUST keep its human timing output and MUST NOT require a report path.
 
@@ -68,7 +76,9 @@ A report MUST distinguish render output configuration from file saving configura
 
 ## Privacy and failure
 
-Telemetry MUST remain local. Collection MUST NOT start a network connection or install a remote exporter. Local report export MUST be a user action or an explicit CLI request.
+Telemetry MUST remain local. Collection MUST NOT start a network connection or install a remote exporter.
+
+Automatic GUI recording MUST follow [Local surfaces](#local-surfaces). Other report exports MUST require a user action or an explicit CLI request.
 
 Default reports MUST exclude image pixels, image or profile content hashes, absolute paths, filenames, EXIF/IPTC/XMP, camera serial numbers, and complete parameter snapshots. They MAY include bundled stock identifiers and the effective algorithm settings required by [metrics](metrics/spec.md). Error records MUST use stable error categories; user data in error messages MUST NOT enter default reports.
 
