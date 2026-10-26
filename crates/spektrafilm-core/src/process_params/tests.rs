@@ -96,7 +96,6 @@ fn raw_legacy_resolution_retains_original_digest_parameters() {
 fn monochrome_reports_match_runtime_for_legacy_and_added_sources() {
     let mut baseline = RuntimeParams::default();
     baseline.settings.rgb_to_raw_method = "mallett2019".into();
-    baseline.film_render.grain.particle_scale = [1.0, 2.0, 3.0];
     baseline.film_render.grain.rms_granularity = [1.0, 2.0, 3.0];
     baseline.film_render.grain.density_min = [0.1, 0.2, 0.3];
     baseline.film_render.grain.uniformity = [0.5, 0.6, 0.7];
@@ -128,7 +127,6 @@ fn monochrome_reports_match_runtime_for_legacy_and_added_sources() {
         let resolved = resolve(req, &data_dir()).unwrap();
         let params = &resolved.params;
         assert!(params.film_render.grain.monochrome);
-        assert_eq!(params.film_render.grain.particle_scale, [1.0; 3]);
         assert_eq!(params.film_render.grain.rms_granularity, [1.0; 3]);
         assert_eq!(params.film_render.grain.density_min, [0.1; 3]);
         assert_eq!(params.film_render.grain.uniformity, [0.5; 3]);
@@ -179,7 +177,7 @@ fn monochrome_reports_match_runtime_for_legacy_and_added_sources() {
 }
 
 #[test]
-fn sparse_legacy_params_retain_field_deserialization_defaults() {
+fn sparse_legacy_params_use_database_neutral_filters() {
     let path = std::env::temp_dir().join(format!(
         "spektrafilm-process-legacy-{}.json",
         std::process::id()
@@ -194,8 +192,6 @@ fn sparse_legacy_params_retain_field_deserialization_defaults() {
     req.params_file = Some(&path);
     let result = resolve(req, &data_dir()).unwrap();
     std::fs::remove_file(&path).unwrap();
-    assert_eq!(result.params.film_render.grain.blur, 0.65);
-    assert_eq!(result.params.film_render.grain.blur_dye_clouds_um, 1.0);
     let neutral = NeutralFilters::load(&data_dir()).unwrap();
     assert_eq!(
         result.params.enlarger.m_filter_neutral,
@@ -286,6 +282,224 @@ fn explicit_stock_values_and_individual_filters_survive() {
     assert_eq!(result.params.enlarger.m_filter_neutral, 65.0);
     assert_ne!(result.params.enlarger.y_filter_neutral, 55.0);
     assert!(result.params.settings.neutral_print_filters_from_database);
+}
+
+#[test]
+fn dye_engine_source_selects_the_same_stock_defaults_as_legacy_params() {
+    let path = std::env::temp_dir().join(format!(
+        "spektrafilm-dye-engine-baseline-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, r#"{"film_render":{"grain":{"engine":"dye"}}}"#).unwrap();
+    let mut legacy = request(&[]);
+    legacy.params_file = Some(&path);
+    let legacy = resolve(legacy, &data_dir()).unwrap();
+    std::fs::remove_file(path).unwrap();
+
+    let sources = vec!["film_render.grain.engine=dye".into()];
+    let edited = resolve(request(&sources), &data_dir()).unwrap();
+    assert_eq!(
+        edited.params.film_render.grain.rms_granularity,
+        [5.6385, 4.5, 5.544]
+    );
+    assert_eq!(
+        edited.params.film_render.grain.uniformity,
+        [0.97, 0.99, 0.97]
+    );
+    assert_eq!(
+        edited.params.film_render.grain,
+        legacy.params.film_render.grain
+    );
+
+    let sources = vec![
+        "film_render.grain.rms_granularity=[1,2,3],film_render.grain.density_min=[0.1,0.2,0.3]"
+            .into(),
+        "film_render.grain.engine=spektra".into(),
+        "film_render.grain.engine=dye".into(),
+    ];
+    let explicit = resolve(request(&sources), &data_dir()).unwrap();
+    assert_eq!(
+        explicit.params.film_render.grain.rms_granularity,
+        [1.0, 2.0, 3.0]
+    );
+    assert_eq!(
+        explicit.params.film_render.grain.density_min,
+        [0.1, 0.2, 0.3]
+    );
+    assert_eq!(
+        explicit.params.film_render.grain.uniformity,
+        [0.97, 0.99, 0.97]
+    );
+}
+
+#[test]
+fn winning_engine_selects_omitted_rms_before_stock_seeding() {
+    for (sources, mode, engine, expected) in [
+        (
+            vec![],
+            DigestMode::PreserveUserEdits,
+            GrainEngine::Dye,
+            [0.0; 3],
+        ),
+        (
+            vec!["film_render.grain.engine=spektra".into()],
+            DigestMode::PreserveUserEdits,
+            GrainEngine::Spektra,
+            [6.0, 8.0, 10.0],
+        ),
+        (
+            vec![
+                "film_render.grain.engine=dye".into(),
+                "film_render.grain.engine=spektra".into(),
+            ],
+            DigestMode::ApplyStockSpecifics,
+            GrainEngine::Spektra,
+            [4.5; 3],
+        ),
+        (
+            vec![
+                "film_render.grain.engine=spektra".into(),
+                "film_render.grain.engine=dye".into(),
+            ],
+            DigestMode::ApplyStockSpecifics,
+            GrainEngine::Dye,
+            [5.6385, 4.5, 5.544],
+        ),
+    ] {
+        let mut req = request(&sources);
+        req.digest_mode = mode;
+        let resolved = resolve(req, &data_dir()).unwrap();
+        assert_eq!(resolved.params.film_render.grain.engine, engine);
+        assert_eq!(resolved.params.film_render.grain.rms_granularity, expected);
+    }
+}
+
+#[test]
+fn explicit_rms_is_not_replaced_by_engine_defaults() {
+    for engine in ["spektra", "dye"] {
+        for authored in [[6.0; 3], [6.0, 8.0, 10.0], [0.0; 3]] {
+            let sources = vec![format!(
+                "film_render.grain.rms_granularity={authored:?},film_render.grain.engine={engine}"
+            )];
+            let resolved = resolve(request(&sources), &data_dir()).unwrap();
+            assert_eq!(resolved.params.film_render.grain.rms_granularity, authored);
+            let rms = resolved
+                .edits
+                .iter()
+                .find(|edit| edit.path == "film_render.grain.rms_granularity")
+                .unwrap();
+            assert_eq!(rms.status, EditStatus::Active);
+        }
+    }
+}
+
+#[test]
+fn sparse_baseline_resolves_omitted_rms_without_rewriting_authored_zero() {
+    let path = std::env::temp_dir().join(format!(
+        "spektrafilm-engine-rms-baseline-{}.json",
+        std::process::id()
+    ));
+    for (document, engine, expected) in [
+        (serde_json::json!({}), GrainEngine::Dye, [0.0; 3]),
+        (
+            serde_json::json!({"film_render":{"grain":{"engine":"spektra"}}}),
+            GrainEngine::Spektra,
+            [6.0, 8.0, 10.0],
+        ),
+        (
+            serde_json::json!({"film_render":{"grain":{"engine":"spektra","rms_granularity":[0,0,0]}}}),
+            GrainEngine::Spektra,
+            [0.0; 3],
+        ),
+        (
+            serde_json::json!({"film_render":{"grain":{"engine":"dye","rms_granularity":[6,6,6]}}}),
+            GrainEngine::Dye,
+            [6.0; 3],
+        ),
+    ] {
+        std::fs::write(&path, document.to_string()).unwrap();
+        let mut req = request(&[]);
+        req.params_file = Some(&path);
+        req.digest_mode = DigestMode::PreserveUserEdits;
+        let resolved = resolve(req, &data_dir()).unwrap();
+        assert_eq!(resolved.params.film_render.grain.engine, engine);
+        assert_eq!(resolved.params.film_render.grain.rms_granularity, expected);
+    }
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn unknown_stock_dye_uses_omitted_baseline_fallback_but_preserves_authored_values() {
+    let path = std::env::temp_dir().join(format!(
+        "spektrafilm-unknown-dye-baseline-{}.json",
+        std::process::id()
+    ));
+    let sources = vec!["film_render.grain.engine=dye".into()];
+    let mut bare = request(&sources);
+    bare.film = Some("fujifilm_velvia_50");
+    bare.scan_film = true;
+    let bare = resolve(bare, &data_dir()).unwrap();
+    assert_eq!(bare.params.film_render.grain.rms_granularity, [0.0; 3]);
+
+    for (document, expected) in [
+        (r#"{"film_render":{"grain":{"engine":"dye"}}}"#, [0.0; 3]),
+        (
+            r#"{"film_render":{"grain":{"engine":"spektra","rms_granularity":[6,8,10]}}}"#,
+            [6.0, 8.0, 10.0],
+        ),
+    ] {
+        std::fs::write(&path, document).unwrap();
+        let mut req = request(&sources);
+        req.params_file = Some(&path);
+        req.film = Some("fujifilm_velvia_50");
+        req.scan_film = true;
+        req.digest_mode = DigestMode::PreserveUserEdits;
+        let resolved = resolve(req, &data_dir()).unwrap();
+        assert_eq!(resolved.params.film_render.grain.rms_granularity, expected);
+    }
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn grain_section_engine_and_authored_controls_precede_later_sources() {
+    let document = serde_json::json!({
+        "schema_version": presets::PRESET_SCHEMA_VERSION,
+        "name": "Dye engine",
+        "parameters": {"film_render": {"grain": {"engine": "dye"}}},
+        "provenance": {"implementation_version": "test", "model_version": "test"}
+    });
+    let engine = presets::Preset::from_json_str(&document.to_string()).unwrap();
+    let documents = vec![engine];
+    let mut req = request(&[]);
+    req.presets = &documents;
+    let resolved = resolve(req, &data_dir()).unwrap();
+    assert_eq!(
+        resolved.params.film_render.grain.rms_granularity,
+        [5.6385, 4.5, 5.544]
+    );
+
+    let mut authored = document;
+    authored["parameters"]["film_render"]["grain"]["rms_granularity"] =
+        serde_json::json!([9, 8, 7]);
+    let documents = vec![presets::Preset::from_json_str(&authored.to_string()).unwrap()];
+    let sources =
+        vec!["film_render.grain.engine=spektra,film_render.grain.density_min=[0.1,0.2,0.3]".into()];
+    let mut req = request(&sources);
+    req.presets = &documents;
+    let resolved = resolve(req, &data_dir()).unwrap();
+    assert_eq!(
+        resolved.params.film_render.grain.engine,
+        GrainEngine::Spektra
+    );
+    assert_eq!(
+        resolved.params.film_render.grain.rms_granularity,
+        [9.0, 8.0, 7.0]
+    );
+    assert_eq!(
+        resolved.params.film_render.grain.density_min,
+        [0.1, 0.2, 0.3]
+    );
+    assert_eq!(resolved.params.film_render.grain.uniformity, [0.97; 3]);
 }
 #[test]
 fn final_preview_switch_does_not_leave_intermediate_damage() {

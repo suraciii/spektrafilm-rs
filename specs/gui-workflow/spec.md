@@ -137,9 +137,9 @@ Dye MUST expose Event area and Dye support immediately. One Advanced disclosure 
 
 Dye support MUST NOT be described as a pure grain-diameter control. The panel MUST explain the lightweight Preview bypass and direct inspection to SCAN and exact 100% zoom.
 
-Black-and-white Dye MUST show only record 0 for relative strength, density minimum, and uniformity. It MUST hide color-only channel correlation. Hidden color requests MUST remain stored.
+Black-and-white Spektra and Dye MUST show only record 0 for RMS or relative strength, density minimum, and uniformity. Hidden G/B requests MUST remain stored and reactivate for color material.
 
-Its three numerical-component scales MUST remain independent editors. Spektra's consumed channel controls MUST NOT be hidden merely because the material is monochrome.
+Dye MUST hide color-only channel correlation without clearing its request. The three numerical-component scales MUST remain independent editors for both material models.
 
 Procedural Grain Profiles MUST appear ordinarily only for Procedural. Named profiles MUST retain the allowed Amount override. Custom-only controls MUST appear only after explicit Custom selection.
 

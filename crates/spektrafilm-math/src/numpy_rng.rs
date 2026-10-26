@@ -43,8 +43,14 @@ pub struct GaussRng {
 
 impl GaussRng {
     pub fn new(seed: u32) -> Self {
+        Self::from_mt(Mt::new(seed))
+    }
+
+    /// Continue a legacy RandomState stream after discrete draws. Poisson
+    /// and binomial do not populate the Gaussian spare-sample cache.
+    pub fn from_mt(rng: Mt) -> Self {
         Self {
-            rng: Mt::new(seed),
+            rng,
             has_gauss: false,
             gauss: 0.0,
         }

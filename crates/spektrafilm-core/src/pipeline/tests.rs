@@ -2031,6 +2031,7 @@ fn completed_film_and_print_splits_preserve_exact_cpu_math_and_source_geometry()
         full.params.random_seed = 42;
         full.params.film_render.grain.active = true;
         full.params.film_render.grain.engine = engine;
+        full.params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
         full.params.io.crop = true;
         full.params.io.crop_size = [0.75, 0.625];
         full.params.io.upscale_factor = 0.5;

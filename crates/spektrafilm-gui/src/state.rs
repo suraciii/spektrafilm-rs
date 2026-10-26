@@ -272,6 +272,21 @@ impl GuiState {
             }
         }
         // Promote extension-only controls before canonical factory defaults merge.
+        if let Some(grain) = value
+            .pointer("/rust/runtime/film_render/grain")
+            .and_then(Value::as_object)
+        {
+            for (key, selection) in grain {
+                if state.sections["grain"].get(key).is_some()
+                    && normalized["grain"].get(key).is_none()
+                {
+                    if !normalized["grain"].is_object() {
+                        normalized["grain"] = json!({});
+                    }
+                    normalized["grain"][key] = selection.clone();
+                }
+            }
+        }
         for key in ["scan_output", "conversion_style", "operator"] {
             if normalized["scanner"].get(key).is_none()
                 && let Some(selection) = value["rust"]["runtime"]["scanner"].get(key)

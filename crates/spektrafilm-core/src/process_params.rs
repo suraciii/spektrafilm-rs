@@ -1,10 +1,10 @@
 //! Process-only composition of legacy baselines, complete looks and sparse edits.
 use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
-use crate::params::RuntimeParams;
 use crate::params::sources::lookup;
 use crate::params::sources::{ParameterEdits, validate_finite};
 use crate::params::validation::REMOVED_MAGAZINE_ROUTE;
+use crate::params::{GrainEngine, RuntimeParams};
 use crate::params_builder::{
     apply_database_neutral_print_filters_protected, apply_film_specifics,
     apply_runtime_constraints, digest_params, normalize_runtime_topology,
@@ -12,7 +12,7 @@ use crate::params_builder::{
 use crate::presets;
 use crate::profile::{self, Profile};
 use crate::runtime::DigestMode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -163,14 +163,48 @@ fn resolve_with_preview_mode(
     {
         return Err("--preset conflicts with --film, --paper and --params when it supplies their profile references".into());
     }
-    let mut params = load_baseline(request.params_file)?;
+    let (mut params, baseline_granularity_authored) = load_baseline(request.params_file)?;
     let mut declarations = baseline_declarations(request.params_file)?;
     let mut winning = BTreeMap::new();
-    let mut parsed_sources = Vec::new();
     // A saved removed route must be reported before any explicit route
     // override can mask it.
     if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
         params.validate()?;
+    }
+    let parsed_sources: Vec<ParameterEdits> = request
+        .sources
+        .iter()
+        .map(|source| ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}")))
+        .collect::<Result<_, _>>()?;
+    // Stock defaults depend on the winning engine, not the engine carried by
+    // an earlier baseline. Apply all other authored controls in normal order.
+    let mut grain_engine = params.film_render.grain.engine;
+    for preset in request.presets {
+        preset.validate()?;
+        match &preset.parameters {
+            presets::PresetParameters::Look(look) => grain_engine = look.film_render.grain.engine,
+            presets::PresetParameters::Section(payload) => {
+                if let Some(value) = lookup(payload, "film_render.grain.engine") {
+                    grain_engine = GrainEngine::deserialize(value).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    for edits in &parsed_sources {
+        for (path, value) in edits.values() {
+            if path == "film_render.grain.engine" {
+                grain_engine = GrainEngine::deserialize(value).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    params.film_render.grain.engine = grain_engine;
+    // Resolve omitted RMS by the winning engine before stock seeding. Presence,
+    // never numeric equality, distinguishes a baseline's authored strength.
+    if !baseline_granularity_authored {
+        params.film_render.grain.rms_granularity = match grain_engine {
+            GrainEngine::Spektra => [6.0, 8.0, 10.0],
+            _ => [0.0; 3],
+        };
     }
     let added_sources = !request.presets.is_empty() || !request.sources.is_empty();
     let profile_sources = !request.feature_profiles.is_empty();
@@ -180,9 +214,7 @@ fn resolve_with_preview_mode(
         .map(WorkflowRoute::parse)
         .is_some_and(|route| route.artifact_output().is_some() && route.artifact_input().is_none());
     if image_stage_route {
-        for source in request.sources {
-            let edits =
-                ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}"))?;
+        for (source, edits) in request.sources.iter().zip(&parsed_sources) {
             if edits
                 .paths()
                 .any(|p| matches!(p, "taps.inject" | "taps.collect"))
@@ -311,7 +343,7 @@ fn resolve_with_preview_mode(
         }
         (film, print, name.to_owned(), print_name)
     };
-    if image_stage_route && !supplies_film {
+    if !supplies_film {
         for preset in request.presets {
             params = preset.overlay_section(&params)?;
         }
@@ -339,9 +371,7 @@ fn resolve_with_preview_mode(
         }
     }
     if added_sources {
-        for (index, source) in request.sources.iter().enumerate() {
-            let edits =
-                ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}"))?;
+        for (index, (source, edits)) in request.sources.iter().zip(&parsed_sources).enumerate() {
             if request.input_is_raw {
                 edits
                     .validate_raw_input()
@@ -361,7 +391,6 @@ fn resolve_with_preview_mode(
                 }
                 winning.insert(path.to_owned(), (value.clone(), origin.clone()));
             }
-            parsed_sources.push(edits);
         }
     }
     for (path, value, option) in [
@@ -599,7 +628,7 @@ fn resolve_with_preview_mode(
     })
 }
 
-fn load_baseline(path: Option<&Path>) -> Result<RuntimeParams, String> {
+fn load_baseline(path: Option<&Path>) -> Result<(RuntimeParams, bool), String> {
     match path {
         Some(path) => {
             let text = std::fs::read_to_string(path)
@@ -616,6 +645,9 @@ fn load_baseline(path: Option<&Path>) -> Result<RuntimeParams, String> {
                     crate::params::sources::retired_lightness_error()
                 ));
             }
+            let granularity_authored = value
+                .pointer("/film_render/grain/rms_granularity")
+                .is_some();
             let params: RuntimeParams = serde_json::from_value(value)
                 .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
             params
@@ -627,9 +659,9 @@ fn load_baseline(path: Option<&Path>) -> Result<RuntimeParams, String> {
                 &params.scanner.scan_output,
             )
             .map_err(|e| format!("params file {}: {e}", path.display()))?;
-            Ok(params)
+            Ok((params, granularity_authored))
         }
-        None => Ok(RuntimeParams::default()),
+        None => Ok((RuntimeParams::default(), false)),
     }
 }
 

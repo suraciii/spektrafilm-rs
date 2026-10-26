@@ -43,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 params.camera.auto_exposure = false;
                 params.io.scan_film = scan_film;
                 params.film_render.grain.engine = engine;
+                params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
                 params.film_render.grain.select_custom_grain_v2();
                 params.film_render.grain.v2_mode = mode;
                 params.film_render.grain.v2_film_type = film_type;

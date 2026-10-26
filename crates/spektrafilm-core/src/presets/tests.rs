@@ -537,49 +537,64 @@ fn parity_only_film_glare_is_rejected_as_unowned() {
 }
 
 #[test]
-fn builtin_look_documents_do_not_carry_unowned_leaves() {
-    // Non-effective, derived, and calibration-only leaves stay out of preset
-    // ownership, so a compiled document cannot publish a hidden surface.
-    const UNOWNED: &[(&str, &[&str])] = &[
-        ("film_render", &["glare"]),
-        ("enlarger", &["lens_blur"]),
+fn complete_look_resolves_omitted_rms_by_engine_and_preserves_authored_strength() {
+    let template = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    let mut current = RuntimeParams::default();
+    current.film_render.grain.rms_granularity = [4.5; 3];
+    for (engine, expected_engine, fallback) in [
+        (None, crate::params::GrainEngine::Dye, [0.0; 3]),
+        (Some("dye"), crate::params::GrainEngine::Dye, [0.0; 3]),
         (
-            "film_render.grain",
-            &["micro_sublayers", "monochrome", "particle_scale_layers"],
+            Some("spektra"),
+            crate::params::GrainEngine::Spektra,
+            [6.0, 8.0, 10.0],
         ),
-    ];
-    for preset in builtin_presets() {
-        let value = serde_json::to_value(preset.look_parameters().unwrap()).unwrap();
-        for (group, fields) in UNOWNED {
-            if let Some(object) = group
-                .split('.')
-                .try_fold(&value, |current, key| current.get(key))
-                .and_then(Value::as_object)
-            {
-                for field in *fields {
-                    assert!(
-                        !object.contains_key(*field),
-                        "{} carries {group}.{field}",
-                        preset.name
-                    );
-                }
+    ] {
+        for authored in [None, Some([6.0; 3]), Some([6.0, 8.0, 10.0]), Some([0.0; 3])] {
+            let mut document = template.clone();
+            let grain = document["parameters"]["film_render"]["grain"]
+                .as_object_mut()
+                .unwrap();
+            grain.remove("engine");
+            if let Some(engine) = engine {
+                grain.insert("engine".into(), serde_json::json!(engine));
             }
-        }
-        // Effective runtime leaves the document still owns are unchanged.
-        let grain = &value["film_render"]["grain"];
-        for owned in [
-            "active",
-            "engine",
-            "sublayers_active",
-            "particle_area_um2",
-            "particle_scale",
-            "n_sub_layers",
-        ] {
-            assert!(
-                grain.get(owned).is_some(),
-                "{} lost effective grain leaf {owned}",
-                preset.name
+            grain.remove("rms_granularity");
+            if let Some(value) = authored {
+                grain.insert("rms_granularity".into(), serde_json::json!(value));
+            }
+            let preset = Preset::from_json_str(&document.to_string()).unwrap();
+            let resolved = preset.resolve(&data(), &current).unwrap();
+            assert_eq!(resolved.params.film_render.grain.engine, expected_engine);
+            assert_eq!(
+                resolved.params.film_render.grain.rms_granularity,
+                authored.unwrap_or(fallback),
+                "complete look engine={engine:?} authored={authored:?}"
             );
+        }
+    }
+}
+
+#[test]
+fn grain_preset_import_rejects_retired_controls() {
+    let look = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    let section = serde_json::json!({
+        "schema_version": PRESET_SCHEMA_VERSION,
+        "name": "Retired grain control",
+        "parameters": {"film_render": {"grain": {}}},
+        "provenance": provenance()
+    });
+    for (field, value) in [
+        ("particle_area_um2", serde_json::json!(0.2)),
+        ("particle_scale", serde_json::json!([1.6, 1.6, 3.2])),
+        ("particle_scale_layers", serde_json::json!([1.0, 1.0, 1.0])),
+        ("sublayers_active", serde_json::json!(true)),
+        ("n_sub_layers", serde_json::json!(1)),
+    ] {
+        for mut document in [look.clone(), section.clone()] {
+            document["parameters"]["film_render"]["grain"][field] = value.clone();
+            let error = Preset::from_json_str(&document.to_string()).unwrap_err();
+            assert!(error.contains(field), "{error}");
         }
     }
 }

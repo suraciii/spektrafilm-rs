@@ -637,8 +637,7 @@ pub fn collapse_log_exposure_on_backend(
 /// Measured readout RMS also depends on density, support, and the receiver.
 /// Non-positive or non-finite values retain the reference-scale fallback;
 /// disabling grain uses `active`, not a zero preset. This is the only
-/// per-channel strength input; Spektra's `particle_scale` would count a
-/// coarser blue record a second time.
+/// per-channel strength input.
 fn channel_event_scale(rms_granularity: [f64; 3]) -> [f64; 3] {
     rms_granularity.map(|granularity| {
         if !granularity.is_finite() || granularity <= 0.0 {
@@ -1941,22 +1940,14 @@ mod tests {
         // Unset granularity resolves to the reference scale.
         assert_eq!(channel_event_scale([0.0, f64::NAN, 6.0]), [1.0; 3]);
 
-        // Spektra's blue-heavy `particle_scale` must not double a coarser blue
-        // record: only the granularity preset separates the channels.
+        // Only the granularity preset separates the channels.
         let film = load("kodak_portra_800");
         let mut params = supported_params();
         params.film_render.grain.rms_granularity = [6.0, 6.0, 12.0];
-        params.film_render.grain.particle_scale = [1.6, 1.6, 3.2];
-        params.film_render.grain.particle_area_um2 = 0.2;
         params.film_render.grain.v3_event_area_um2 = 1.28;
         let resolved = resolve(&film, &params).unwrap();
         assert_eq!(resolved.channel_scale, [1.0, 1.0, 4.0]);
         assert_eq!(resolved.event_area_um2, 1.28);
-        params.film_render.grain.particle_scale = [9.0; 3];
-        params.film_render.grain.particle_area_um2 = 0.9;
-        let ignored = resolve(&film, &params).unwrap();
-        assert_eq!(ignored.channel_scale, resolved.channel_scale);
-        assert_eq!(ignored.event_area_um2, resolved.event_area_um2);
     }
 
     #[test]

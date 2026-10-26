@@ -87,9 +87,11 @@ fn apply_preview_constraints(params: &mut RuntimeParams) {
         }
         params.enlarger.lens_blur = 0.0;
         params.film_render.dir_couplers.diffusion_size_um = 0.0;
-        params.film_render.grain.particle_area_um2 = 0.0;
         params.film_render.grain.rms_granularity = [0.0; 3];
         params.film_render.grain.blur = 0.0;
+        if params.film_render.grain.engine == crate::params::GrainEngine::Spektra {
+            params.film_render.grain.mult_usm_amount = 0.0;
+        }
         params.print_render.glare.blur = 0.0;
         params.camera.lens_blur_um = 0.0;
         params.scanner.lens_blur = 0.0;
@@ -134,6 +136,9 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         params.film_render.dir_couplers.diffusion_size_um = 0.0;
         params.film_render.grain.blur = 0.0;
         params.film_render.grain.blur_dye_clouds_um = 0.0;
+        if params.film_render.grain.engine == crate::params::GrainEngine::Spektra {
+            params.film_render.grain.mult_usm_amount = 0.0;
+        }
         params.print_render.glare.blur = 0.0;
         params.camera.lens_blur_um = 0.0;
         params.enlarger.lens_blur = 0.0;
@@ -221,9 +226,13 @@ struct GrainPresetFile {
 }
 
 fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
-    let Ok(file) =
-        toml::from_str::<GrainPresetFile>(include_str!("../../../data/presets/grain.toml"))
-    else {
+    let spektra = params.film_render.grain.engine == crate::params::GrainEngine::Spektra;
+    let source = if spektra {
+        include_str!("../../../data/presets/grain_spektra.toml")
+    } else {
+        include_str!("../../../data/presets/grain.toml")
+    };
+    let Ok(file) = toml::from_str::<GrainPresetFile>(source) else {
         return;
     };
     let class = if film.is_bw() { "bw" } else { "color" };
@@ -260,7 +269,7 @@ fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
     array("density_min", &mut g.density_min);
     array("uniformity", &mut g.uniformity);
     array("particle_scale_sublayers", &mut g.particle_scale_sublayers);
-    if film.info.stock.as_deref() == Some("kodak_portra_400") {
+    if !spektra && film.info.stock.as_deref() == Some("kodak_portra_400") {
         g.uniformity = [0.97, 0.99, 0.97];
     }
 }
@@ -387,7 +396,6 @@ pub fn broadcast_monochrome_layout(film: &Profile, params: &mut RuntimeParams) {
     dir.gamma_interlayer_r_to_gb = [0.0, 0.0];
     dir.gamma_interlayer_g_to_rb = [0.0, 0.0];
     dir.gamma_interlayer_b_to_rg = [0.0, 0.0];
-    g.particle_scale = [g.particle_scale[0]; 3];
     g.rms_granularity = [g.rms_granularity[0]; 3];
     g.density_min = [g.density_min[0]; 3];
     g.uniformity = [g.uniformity[0]; 3];
@@ -535,7 +543,6 @@ mod tests {
         assert_eq!(d.enlarger.lens_blur, 0.0);
         assert_eq!(d.film_render.dir_couplers.diffusion_size_um, 0.0);
         assert!(!d.film_render.grain.active);
-        assert_eq!(d.film_render.grain.particle_area_um2, 0.0);
         assert_eq!(d.film_render.grain.blur, 0.0);
         assert_eq!(d.print_render.glare.blur, 0.0);
         assert_eq!(d.camera.lens_blur_um, 0.0);
@@ -626,18 +633,15 @@ mod tests {
         let film = film_profile("kodak_portra_400", "negative", "still", "strong");
         let print = blank_profile();
         let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = crate::params::GrainEngine::Spektra;
         params.film_render.grain.rms_granularity = [99.0; 3];
         params.film_render.grain.uniformity = [0.5; 3];
         params.film_render.dir_couplers.gamma_samelayer_rgb = [0.9; 3];
         let seeded = digest_params(params.clone(), &film, &print, None, true);
-        // The stock preset replaces the caller's value with the table's; the
-        // channel ratio of this stock comes from its measured granularity
-        // (data/presets/grain.toml).
-        assert_eq!(
-            seeded.film_render.grain.rms_granularity,
-            [5.6385, 4.5, 5.544]
-        );
-        assert_eq!(seeded.film_render.grain.uniformity, [0.97, 0.99, 0.97]);
+        // Spektra uses the original upstream stock row and class defaults,
+        // independent of Dye's authored appearance table and Portra override.
+        assert_eq!(seeded.film_render.grain.rms_granularity, [4.5; 3]);
+        assert_eq!(seeded.film_render.grain.uniformity, [0.97; 3]);
         assert_eq!(
             seeded.film_render.dir_couplers.gamma_samelayer_rgb,
             [0.5159, 0.5934, 0.2829]
@@ -649,10 +653,48 @@ mod tests {
             [0.9; 3]
         );
         let unknown = film_profile("custom_stock", "negative", "still", "strong");
-        let mut custom = RuntimeParams::default();
-        custom.film_render.grain.rms_granularity = [99.0; 3];
-        let custom = digest_params(custom, &unknown, &print, None, true);
-        assert_eq!(custom.film_render.grain.rms_granularity, [99.0; 3]);
+        let mut dye = RuntimeParams::default();
+        dye.film_render.grain.engine = crate::params::GrainEngine::Dye;
+        let dye = digest_params(dye, &film, &print, None, true);
+        assert_eq!(dye.film_render.grain.rms_granularity, [5.6385, 4.5, 5.544]);
+        assert_eq!(dye.film_render.grain.uniformity, [0.97, 0.99, 0.97]);
+        for engine in [
+            crate::params::GrainEngine::Spektra,
+            crate::params::GrainEngine::Dye,
+        ] {
+            let mut custom = RuntimeParams::default();
+            custom.film_render.grain.engine = engine;
+            custom.film_render.grain.rms_granularity = [99.0; 3];
+            custom.film_render.grain.uniformity = [0.5; 3];
+            let custom = digest_params(custom, &unknown, &print, None, true);
+            assert_eq!(custom.film_render.grain.rms_granularity, [99.0; 3]);
+            assert_eq!(custom.film_render.grain.uniformity, [0.5; 3]);
+        }
+    }
+
+    #[test]
+    fn spektra_stock_presets_resolve_cine_overrides_and_bw_class_defaults() {
+        let print = blank_profile();
+        let cine = film_profile("kodak_vision3_500t", "negative", "cine", "strong");
+        let mut spektra = RuntimeParams::default();
+        spektra.film_render.grain.engine = crate::params::GrainEngine::Spektra;
+        spektra.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
+        let cine = digest_params(spektra.clone(), &cine, &print, None, true);
+        assert_eq!(cine.film_render.grain.rms_granularity, [9.0, 13.0, 30.0]);
+        assert_eq!(cine.film_render.grain.uniformity, [0.93, 0.97, 0.99]);
+        assert_eq!(cine.film_render.grain.density_min, [0.12, 0.10, 0.35]);
+        assert_eq!(
+            cine.film_render.grain.particle_scale_sublayers,
+            [1.0, 0.3, 0.25]
+        );
+
+        let mut bw = film_profile("kodak_doublex", "negative", "cine", "strong");
+        bw.info.channel_model = "bw".into();
+        let mut bw_params = digest_params(spektra, &bw, &print, None, true);
+        broadcast_monochrome_layout(&bw, &mut bw_params);
+        assert_eq!(bw_params.film_render.grain.rms_granularity, [14.0; 3]);
+        assert_eq!(bw_params.film_render.grain.uniformity, [0.6; 3]);
+        assert_eq!(bw_params.film_render.grain.density_min, [0.01; 3]);
     }
 
     #[test]
@@ -738,21 +780,20 @@ mod tests {
         assert!(err.is_err(), "typo'd field must not deserialize silently");
         let err = serde_json::from_str::<RuntimeParams>(r#"{"debugo": {}}"#);
         assert!(err.is_err());
-        // The 0.3.4 names deserialize.
-        let params: RuntimeParams = serde_json::from_str(
-            r#"{"film_render": {"grain": {"particle_area_um2": 0.4,
-               "particle_scale": [1.0, 1.0, 1.0],
-               "particle_scale_layers": [1.0, 1.0, 1.0]}}}"#,
-        )
-        .unwrap();
-        assert_eq!(params.film_render.grain.particle_area_um2, 0.4);
-        // ...and the pre-rename names no longer do.
-        assert!(
-            serde_json::from_str::<RuntimeParams>(
-                r#"{"film_render": {"grain": {"agx_particle_area_um2": 0.4}}}"#
-            )
-            .is_err()
-        );
+        for field in [
+            "particle_area_um2",
+            "particle_scale",
+            "particle_scale_layers",
+            "sublayers_active",
+            "n_sub_layers",
+            "agx_particle_area_um2",
+        ] {
+            let document = serde_json::json!({"film_render": {"grain": {(field): 1}}});
+            assert!(
+                serde_json::from_value::<RuntimeParams>(document).is_err(),
+                "{field}"
+            );
+        }
     }
 
     #[test]

@@ -558,13 +558,8 @@ impl Pipeline {
                 )
             })
             .transpose()?;
-        // Spektra v1 grain runs on the device in both sampling regimes; the
-        // pass takes the film density buffer in place in the density-fence
-        // position. The layered `fast_stats` regime is a per-pixel mapping,
-        // and the scipy MT19937 regime (the composite path always, and the
-        // layered path without `use_fast_stats`) is a sequential dispatch
-        // reproducing the reference draw order — all Poisson first, then all
-        // binomial — so the device never substitutes a different noise law.
+        // Spektra realizes either upstream sampling regime on the device.
+        // Preparation errors propagate instead of becoming a host fallback.
         let grain_v1 = if develop
             && !convert_route
             && self.params.film_render.grain.active
@@ -572,14 +567,14 @@ impl Pipeline {
                 self.params.film_render.grain.engine,
                 crate::params::grain::GrainEngine::Spektra
             ) {
-            crate::stages::filming::spektra_grain_device_params(
+            Some(crate::stages::filming::spektra_grain_device_params(
                 &self.film,
                 &self.params.film_render.grain,
                 film_curves_norm,
                 self.params.settings.use_fast_stats,
                 self.params.random_seed,
                 pixel_size_um,
-            )
+            )?)
         } else {
             None
         };

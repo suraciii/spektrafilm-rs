@@ -1,4 +1,4 @@
-use super::{default_one, default_true};
+use super::default_true;
 use serde::{Deserialize, Serialize};
 
 /// Selects one of four independent grain routes. Spektra preserves the
@@ -143,8 +143,7 @@ pub struct GrainParams {
     pub v3_dye_support_um: f32,
     /// Base statistical event area of Dye, in square film micrometers. The
     /// relative `rms_granularity` scale multiplies it per channel; it never
-    /// changes dye support or certifies material RMS. Dye-only; Spektra reads
-    /// `particle_area_um2` instead.
+    /// changes dye support or certifies material RMS. Dye-only.
     #[serde(default = "default_v3_event_area_um2")]
     pub v3_event_area_um2: f64,
     /// Shared Poisson-event rate fraction among active records within each
@@ -155,44 +154,33 @@ pub struct GrainParams {
     #[serde(default = "default_channel_correlation")]
     pub channel_correlation: f64,
     #[serde(default = "default_07")]
-    pub mult_usm_sigma: f32,
+    pub mult_usm_sigma: f64,
     #[serde(default = "default_15")]
-    pub mult_usm_amount: f32,
+    pub mult_usm_amount: f64,
     #[serde(default = "default_micro_sublayers")]
     pub micro_sublayers: u32,
     /// Film Resolution override, 0..=100. Unset inherits the profile.
     #[serde(default)]
     pub v2_resolution_factor: Option<f32>,
-    #[serde(default = "default_true")]
-    pub sublayers_active: bool,
-    // f64 to preserve Python JSON precision through the Poisson/Binomial
-    // RNG pipeline — the f32 truncation of these values shifts the
-    // Poisson lambda by ~5e-8 and produces a different RNG stream.
-    // Field names mirror upstream 0.3.4 `GrainParams` exactly
-    // (`particle_area_um2` / `particle_scale` / `particle_scale_layers`).
-    #[serde(default = "default_02_f64")]
-    pub particle_area_um2: f64,
-    #[serde(default = "default_particle_scale_f64")]
-    pub particle_scale: [f64; 3],
-    #[serde(default = "default_particle_scale_layers_f64", skip_serializing)]
-    pub particle_scale_layers: [f64; 3],
-    /// Relative Dye strength `G`: event-area scale `k = (G / 6)^2`, not a
-    /// certified optical RMS target. Zero retains the reference-scale fallback.
-    /// Spektra retains this value as a no-op.
-    #[serde(default = "default_rms_granularity_f64")]
+    /// Spektra's upstream RMS granularity control derives particle area from
+    /// the film's density curves. Dye treats it as relative strength `G`:
+    /// event-area scale `k = (G / 6)^2`, not a certified optical RMS target;
+    /// zero retains Dye's reference-scale fallback.
+    /// Typed defaults use zero. Source resolution supplies omitted Spektra
+    /// targets `[6, 8, 10]` before stock defaults; direct Spektra API callers
+    /// must supply positive targets themselves.
+    #[serde(default)]
     pub rms_granularity: [f64; 3],
     #[serde(default = "default_density_min_f64")]
     pub density_min: [f64; 3],
     #[serde(default = "default_uniformity_f64")]
     pub uniformity: [f64; 3],
-    #[serde(default = "default_065")]
-    pub blur: f32,
-    #[serde(default = "default_one")]
-    pub blur_dye_clouds_um: f32,
+    #[serde(default = "default_grain_blur")]
+    pub blur: f64,
+    #[serde(default = "default_dye_cloud_blur")]
+    pub blur_dye_clouds_um: f64,
     #[serde(default = "default_micro_structure")]
-    pub micro_structure: [f32; 2],
-    #[serde(default = "default_1i")]
-    pub n_sub_layers: u32,
+    pub micro_structure: [f64; 2],
     /// One shared noise field across all channels instead of independent
     /// per-channel RNG streams. Set by the pipeline for B&W films
     /// (upstream n_channels==1 has a single emulsion); not user-facing.
@@ -200,15 +188,6 @@ pub struct GrainParams {
     pub monochrome: bool,
 }
 
-fn default_02_f64() -> f64 {
-    0.2
-}
-fn default_particle_scale_f64() -> [f64; 3] {
-    [1.6, 1.6, 3.2]
-}
-fn default_particle_scale_layers_f64() -> [f64; 3] {
-    [2.0, 1.0, 0.5]
-}
 fn default_particle_scale_sublayers_f64() -> [f64; 3] {
     [1.0, 0.4, 0.25]
 }
@@ -242,10 +221,10 @@ fn default_grain_v2_resolution_type() -> u32 {
 fn default_grain_v2_timer() -> f32 {
     0.0
 }
-fn default_07() -> f32 {
+fn default_07() -> f64 {
     0.7
 }
-fn default_15() -> f32 {
+fn default_15() -> f64 {
     1.5
 }
 fn default_micro_sublayers() -> u32 {
@@ -254,11 +233,14 @@ fn default_micro_sublayers() -> u32 {
 fn default_density_min_f64() -> [f64; 3] {
     [0.03, 0.03, 0.03]
 }
-fn default_rms_granularity_f64() -> [f64; 3] {
-    [0.0, 0.0, 0.0]
-}
 fn default_uniformity_f64() -> [f64; 3] {
     [0.97, 0.97, 0.97]
+}
+fn default_grain_blur() -> f64 {
+    0.89
+}
+fn default_dye_cloud_blur() -> f64 {
+    2.0
 }
 impl Default for GrainParams {
     fn default() -> Self {
@@ -278,11 +260,7 @@ impl Default for GrainParams {
             v2_resolution_type: default_grain_v2_resolution_type(),
             v2_timer: default_grain_v2_timer(),
             v2_resolution_factor: None,
-            sublayers_active: true,
-            particle_area_um2: 0.2,
-            particle_scale: [1.6, 1.6, 3.2],
-            particle_scale_layers: [2.0, 1.0, 0.5],
-            rms_granularity: [0.0, 0.0, 0.0],
+            rms_granularity: [0.0; 3],
             density_min: [0.03, 0.03, 0.03],
             uniformity: [0.97, 0.97, 0.97],
             particle_scale_sublayers: [1.0, 0.4, 0.25],
@@ -295,7 +273,6 @@ impl Default for GrainParams {
             blur_dye_clouds_um: 2.0,
             micro_sublayers: 1,
             micro_structure: [0.2, 30.0],
-            n_sub_layers: 1,
             monochrome: false,
         }
     }
@@ -387,14 +364,8 @@ impl GrainParams {
     }
 }
 
-fn default_065() -> f32 {
-    0.65
-}
-fn default_micro_structure() -> [f32; 2] {
+fn default_micro_structure() -> [f64; 2] {
     [0.2, 30.0]
-}
-fn default_1i() -> u32 {
-    1
 }
 
 #[cfg(test)]
@@ -404,6 +375,7 @@ mod fotufilm_tests {
     fn authored_and_sparse_grain_defaults_use_dye_without_rewriting_explicit_engines() {
         assert_eq!(GrainEngine::default(), GrainEngine::Dye);
         assert_eq!(GrainParams::default().engine, GrainEngine::Dye);
+        assert_eq!(GrainParams::default().rms_granularity, [0.0; 3]);
         for source in [
             "{}",
             r#"{"film_render":{}}"#,
@@ -411,10 +383,12 @@ mod fotufilm_tests {
         ] {
             let params: crate::params::RuntimeParams = serde_json::from_str(source).unwrap();
             assert_eq!(params.film_render.grain.engine, GrainEngine::Dye);
+            assert_eq!(params.film_render.grain.rms_granularity, [0.0; 3]);
         }
         for source in ["", "[film_render]", "[film_render.grain]"] {
             let params: crate::params::RuntimeParams = toml::from_str(source).unwrap();
             assert_eq!(params.film_render.grain.engine, GrainEngine::Dye);
+            assert_eq!(params.film_render.grain.rms_granularity, [0.0; 3]);
         }
         let edits = crate::params::sources::ParameterEdits::parse(
             "film_render.grain.v3_event_area_um2=2.25",
@@ -424,6 +398,7 @@ mod fotufilm_tests {
         edits.apply(&mut params).unwrap();
         assert_eq!(params.film_render.grain.engine, GrainEngine::Dye);
         params.film_render.grain.engine = GrainEngine::Spektra;
+        params.film_render.grain.rms_granularity = [6.0, 8.0, 10.0];
         edits.apply(&mut params).unwrap();
         assert_eq!(params.film_render.grain.engine, GrainEngine::Spektra);
         for (name, engine) in [

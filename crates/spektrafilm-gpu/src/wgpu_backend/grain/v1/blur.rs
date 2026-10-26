@@ -1,9 +1,12 @@
 use super::super::super::*;
-use spektrafilm_math::precision::{Scalar, from_f64};
 use std::num::NonZeroU64;
 
 #[path = "blur_bounded.rs"]
 pub(in crate::wgpu_backend) mod bounded;
+
+#[cfg(all(test, not(feature = "precision-f64")))]
+#[path = "blur_reference.rs"]
+mod reference;
 
 const FIR_LAYOUT: [wgpu::BufferBindingType; 4] = [
     wgpu::BufferBindingType::Uniform,
@@ -39,10 +42,10 @@ struct IirParams {
     height: u32,
     channel: u32,
     vertical: u32,
-    a: f32,
-    b1: f32,
-    b2: f32,
-    b3: f32,
+    a: f64,
+    b1: f64,
+    b2: f64,
+    b3: f64,
     grid_width: u32,
     source_base: u32,
     destination_base: u32,
@@ -114,9 +117,9 @@ struct ChannelPasses {
 /// bounded bulk-copy adapters. Source requires COPY_SRC, destination requires
 /// COPY_SRC | COPY_DST. Offsets count float samples, without alignment rules.
 ///
-/// Arithmetic is binary32. A `precision-f64` host build evaluates its
-/// reference on f64 samples, so this port serves the native-f32 reference
-/// domain and is not a bit-compatible f64 oracle.
+/// Samples remain binary32. Kernel products, horizontal FIR accumulation and
+/// recursive state use binary64; vertical FIR narrows after every tap, exactly
+/// like the upstream f32 intermediate. Native shader f64 is required.
 pub(in crate::wgpu_backend) struct GrainBlurState {
     execution: Execution,
 }
@@ -240,6 +243,13 @@ pub(in crate::wgpu_backend) fn build_grain_blur_with_scratch(
     if sigma.iter().any(|value| !value.is_finite()) {
         return Err("Gaussian blur sigma values must be finite".into());
     }
+    if !backend
+        .device
+        .features()
+        .contains(wgpu::Features::SHADER_F64)
+    {
+        return Err("grain Gaussian requires native shader f64 arithmetic".into());
+    }
     let max_groups = backend.device.limits().max_compute_workgroups_per_dimension;
     let fir = backend.cached_pipeline(include_str!("blur_fir.wgsl"), &FIR_LAYOUT);
     let iir = backend.cached_pipeline(include_str!("blur_iir.wgsl"), &IMAGE_LAYOUT);
@@ -345,6 +355,35 @@ pub(in crate::wgpu_backend) fn build_grain_blur_paged_with_scratch(
             source,
             destination,
             scratch,
+            sigma,
+            source_sample,
+            destination_sample,
+            super::super::super::bounded::storage_binding_limit(backend)?,
+        )?),
+    })
+}
+
+/// Reference Gaussian over interleaved binary64 RGB storage (24 bytes/pixel).
+/// Storage pages are byte-addressed; source/destination offsets count f64 samples.
+/// The bounded implementation preserves full-line endpoints across all pages.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::wgpu_backend) fn build_grain_blur_f64_paged(
+    backend: &WgpuBackend,
+    width: u32,
+    height: u32,
+    source: &(impl super::super::raster::RasterStorage + ?Sized),
+    destination: &(impl super::super::raster::RasterStorage + ?Sized),
+    sigma: [f64; 3],
+    source_sample: u64,
+    destination_sample: u64,
+) -> Result<GrainBlurState, String> {
+    Ok(GrainBlurState {
+        execution: Execution::Bounded(bounded::BoundedBlur::build_f64_paged(
+            backend,
+            width,
+            height,
+            source,
+            destination,
             sigma,
             source_sample,
             destination_sample,
@@ -543,7 +582,6 @@ fn build_channel(
     max_groups: u32,
 ) -> Result<ChannelPasses, String> {
     let pixels = u64::from(region.width) * u64::from(region.height);
-    let sigma: Scalar = from_f64(sigma_f64);
     if sigma_f64 <= 0.0 {
         let grid = bounded_grid(pixels.div_ceil(u64::from(FIR_WORKGROUP_SIZE)), max_groups)?;
         return Ok(ChannelPasses {
@@ -552,11 +590,11 @@ fn build_channel(
             _kernel: None,
         });
     }
-    if sigma < from_f64(3.0) {
-        let (radius, weights) = gaussian_kernel(sigma_f64)?;
+    if sigma_f64 < 3.0 {
+        let (radius, weights) = gaussian_kernel_f64(sigma_f64)?;
         let kernel_bytes = u64::try_from(weights.len())
             .ok()
-            .and_then(|count| count.checked_mul(4))
+            .and_then(|count| count.checked_mul(8))
             .ok_or_else(|| "Gaussian FIR kernel size overflows".to_owned())?;
         check_region_limit(backend, kernel_bytes)?;
         let kernel = backend
@@ -599,7 +637,7 @@ fn build_channel(
             _kernel: Some(kernel),
         })
     } else {
-        let coefficients = iir_coefficients(sigma_f64);
+        let coefficients = iir_coefficients_f64(sigma_f64);
         if ![
             coefficients.0,
             coefficients.1,
@@ -609,7 +647,7 @@ fn build_channel(
         .iter()
         .all(|value| value.is_finite())
         {
-            return Err("Gaussian IIR coefficients exceed the f32 device range".into());
+            return Err("Gaussian IIR coefficients exceed the f64 device range".into());
         }
         let horizontal_grid = bounded_grid(
             u64::from(region.height).div_ceil(u64::from(IIR_WORKGROUP_SIZE)),
@@ -651,58 +689,46 @@ fn build_channel(
     }
 }
 
-fn gaussian_kernel(sigma_f64: f64) -> Result<(u32, Vec<f32>), String> {
-    let sigma: Scalar = from_f64(sigma_f64);
-    let radius_value = from_f64(3.0) * sigma + from_f64(0.5);
-    if !radius_value.is_finite() || radius_value < from_f64(0.0) {
+fn gaussian_kernel_f64(sigma: f64) -> Result<(u32, Vec<f64>), String> {
+    let radius_value = 3.0 * sigma + 0.5;
+    if !radius_value.is_finite() || radius_value < 0.0 || radius_value > u32::MAX as f64 {
         return Err("Gaussian FIR radius is not representable".into());
     }
-    let radius = radius_value as usize;
-    let size = radius
+    let radius = radius_value as u32;
+    let size = (radius as usize)
         .checked_mul(2)
         .and_then(|value| value.checked_add(1))
         .ok_or_else(|| "Gaussian FIR kernel size overflows".to_owned())?;
     let mut weights = Vec::with_capacity(size);
-    let half = from_f64(-0.5);
+    let mut sum = 0.0;
     for index in 0..size {
-        let x = from_f64(index as f64) - from_f64(radius as f64);
-        let scaled = x / sigma;
-        weights.push((half * (scaled * scaled)).exp());
+        let scaled = (index as f64 - f64::from(radius)) / sigma;
+        let weight = (-0.5 * (scaled * scaled)).exp();
+        weights.push(weight);
+        sum += weight;
     }
-    let sum: Scalar = weights.iter().copied().sum();
-    if !sum.is_finite() || sum == from_f64(0.0) {
+    if !sum.is_finite() || sum == 0.0 {
         return Err("Gaussian FIR kernel normalization is not finite".into());
     }
     for weight in &mut weights {
         *weight /= sum;
     }
-    Ok((
-        u32::try_from(radius).map_err(|_| "Gaussian FIR radius exceeds u32".to_owned())?,
-        weights.into_iter().map(|weight| weight as f32).collect(),
-    ))
+    Ok((radius, weights))
 }
 
-fn iir_coefficients(sigma_f64: f64) -> (f32, f32, f32, f32) {
-    let sigma: Scalar = from_f64(sigma_f64);
-    let q = if sigma >= from_f64(2.5) {
-        from_f64(0.98711) * sigma - from_f64(0.96330)
+fn iir_coefficients_f64(sigma: f64) -> (f64, f64, f64, f64) {
+    let q = if sigma >= 2.5 {
+        0.98711 * sigma - 0.96330
     } else {
-        from_f64(3.97156) - from_f64(4.14554) * (from_f64(1.0) - from_f64(0.26891) * sigma).sqrt()
+        3.97156 - 4.14554 * (1.0 - 0.26891 * sigma).sqrt()
     };
     let q2 = q * q;
     let q3 = q2 * q;
-    let b0 =
-        from_f64(1.57825) + from_f64(2.44413) * q + from_f64(1.4281) * q2 + from_f64(0.422205) * q3;
-    let b1_raw = from_f64(2.44413) * q + from_f64(2.85619) * q2 + from_f64(1.26661) * q3;
-    let b2_raw = -(from_f64(1.4281) * q2 + from_f64(1.26661) * q3);
-    let b3_raw = from_f64(0.422205) * q3;
-    let a = from_f64(1.0) - (b1_raw + b2_raw + b3_raw) / b0;
-    (
-        a as f32,
-        (b1_raw / b0) as f32,
-        (b2_raw / b0) as f32,
-        (b3_raw / b0) as f32,
-    )
+    let b0 = 1.57825 + 2.44413 * q + 1.4281 * q2 + 0.422205 * q3;
+    let b1 = 2.44413 * q + 2.85619 * q2 + 1.26661 * q3;
+    let b2 = -(1.4281 * q2 + 1.26661 * q3);
+    let b3 = 0.422205 * q3;
+    (1.0 - (b1 + b2 + b3) / b0, b1 / b0, b2 / b0, b3 / b0)
 }
 
 fn bind<'a>(buffer: &'a wgpu::Buffer, range: &BindingRange) -> wgpu::BindingResource<'a> {
@@ -783,7 +809,7 @@ fn make_iir_pass(
     region: &Region,
     channel: u32,
     vertical: bool,
-    coefficients: (f32, f32, f32, f32),
+    coefficients: (f64, f64, f64, f64),
     grid: (u32, u32),
     source: &wgpu::Buffer,
     source_range: &BindingRange,
@@ -930,22 +956,19 @@ impl DirectBlurState {
     }
 }
 
-// The device executes binary32 while `precision-f64` switches the reference to
-// f64 samples and coefficients, so these comparisons belong to the native-f32
-// reference domain (see the module docs). The f64 boundary is validated
-// separately.
+// These comparisons exercise f32 sample storage. Binary64 sample filtering has
+// separate bounded tests; changing host Scalar must not change device storage.
 #[cfg(all(test, not(feature = "precision-f64")))]
 mod tests {
+    use super::reference::blur_channel;
     use super::*;
-    use spektrafilm_math::gaussian::gaussian_blur_channel;
-    use spektrafilm_math::precision::to_f64;
 
     const TOLERANCE: f64 = 2e-5;
 
     /// Run the device blur over a synthetic interleaved image and compare every
-    /// channel with `spektrafilm_math::gaussian::gaussian_blur_channel`, which
-    /// owns the reference FIR/IIR laws. Offsets place the image inside larger
-    /// buffers so sample-unit addressing and untouched neighbours are exercised.
+    /// channel with an independent port of the pinned upstream Gaussian law.
+    /// Offsets place the image inside larger buffers so sample-unit addressing
+    /// and untouched neighbours are exercised.
     fn compare_with_reference(
         gpu: &crate::test_support::DeviceBackend,
         width: u32,
@@ -1005,17 +1028,13 @@ mod tests {
         let actual = gpu.read_mapped_f32(&readback, bytes);
 
         for (channel, &channel_sigma) in sigma.iter().enumerate() {
-            let reference_input: Vec<Scalar> = (0..pixels)
-                .map(|pixel| {
-                    from_f64(f64::from(
-                        source[source_offset as usize + pixel * 3 + channel],
-                    ))
-                })
+            let reference_input: Vec<f32> = (0..pixels)
+                .map(|pixel| source[source_offset as usize + pixel * 3 + channel])
                 .collect();
-            let expected = gaussian_blur_channel(&reference_input, width, height, channel_sigma);
+            let expected = blur_channel(&reference_input, width, height, channel_sigma);
             for (pixel, &reference) in expected.iter().enumerate() {
                 let index = destination_offset as usize + pixel * 3 + channel;
-                let want = to_f64(reference);
+                let want = f64::from(reference);
                 let got = f64::from(actual[index]);
                 assert!(
                     (got - want).abs() < TOLERANCE,
@@ -1067,5 +1086,20 @@ mod tests {
         // Channel 0 is FIR, channel 1 is IIR, channel 2 is the zero-σ copy.
         // The reference applies the same per-channel dispatch.
         compare_with_reference(&gpu, 9, 5, [0.4, 3.5, 0.0], 3, 9);
+    }
+}
+
+#[cfg(test)]
+mod sigma_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn original_binary64_sigma_controls_fir_support_before_device_narrowing() {
+        let below_half = 0.5 - 1e-10;
+        assert_eq!(below_half as f32, 0.5);
+        let (below_radius, below_weights) = gaussian_kernel_f64(below_half).unwrap();
+        let (at_radius, at_weights) = gaussian_kernel_f64(0.5).unwrap();
+        assert_eq!((below_radius, below_weights.len()), (1, 3));
+        assert_eq!((at_radius, at_weights.len()), (2, 5));
     }
 }

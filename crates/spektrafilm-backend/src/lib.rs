@@ -1159,38 +1159,22 @@ pub struct InputDecodeGpuParams {
 /// density-fence position (after the film density curve and DIR, before
 /// printing).
 ///
-/// Every f64 control is resolved on the host from the profile and the request
-/// — the device pass performs no image-dependent host arithmetic
-/// (`specs/gpu-execution` §Residency and resources). The values mirror
-/// `spektrafilm_model::grain::v1::apply_grain_to_density_layers` exactly:
+/// The model's `prepare_grain` resolves all density floors, adjusted maxima,
+/// and particle counts from the profile curves and RMS controls. No host
+/// image-dependent fields are generated. Three-slot coefficient rows retain
+/// the profile carrier layout; only `layer_count` slots are active.
 ///
-/// * `density_min_layers[sl][ch]` is `fractions[sl][ch] * density_min[ch]`
-///   with `fractions = density_max_layers / sum(density_max_layers)`.
-/// * `density_max_adj[sl][ch]` is `density_max_layers[sl][ch] +
-///   density_min_layers[sl][ch]`.
-/// * `n_particles[sl][ch]` is `pixel_area * fractions[sl][ch] /
-///   (particle_area[ch] * particle_scale_layers[sl])`.
-///
-/// `curve_x` is the composite curve's x column per channel (`knots` rows × 3
-/// channels), negated for a positive film; `curve_layers` is the layer curve
-/// tensor (`knots` rows × 3 sublayers × 3 channels).
-///
-/// The device realizes the layered `fast_stats` sampling regime only; a request
-/// that samples the scipy MT19937 regime (the composite path always does, and
-/// the layered path does whenever `use_fast_stats` is false) is a host fence,
-/// because that regime's single sequential MT19937 over the whole array is not
-/// a per-pixel mapping. See `spektrafilm_gpu::wgpu_backend::grain::v1`.
+/// `curve_x` is the composite axis, negated for positive film, and
+/// `curve_layers` is the matching fixed-three-slot layer tensor. Device
+/// interpolation uses these f64 tables, then grain working arithmetic is f32.
+/// Both tagged fast-statistics and sequential NumPy MT19937 sampling remain
+/// resident, including continuation into NumPy microstructure normals.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrainV1GpuParams {
-    /// Base seed of the per-element `fast_stats` streams (the request's
-    /// `random_seed`).
+    /// Request seed shared by the plane MT19937 and tagged fast-statistics draws.
     pub base_seed: u64,
-    /// Pixel pitch in microns (`pixel_size_um`).
-    pub pixel_size_um: f64,
-    /// Per-channel particle area in µm², already scaled by `particle_scale`.
-    pub particle_area: [f64; 3],
-    /// Per-sublayer particle-area scale (`particle_scale_sublayers`).
-    pub particle_scale_layers: [f64; 3],
+    /// Active layers in the fixed three-slot profile carrier (1..=3).
+    pub layer_count: u32,
     /// Per-channel composite density floor.
     pub density_min: [f64; 3],
     /// Per-channel grain uniformity control.
@@ -1206,8 +1190,8 @@ pub struct GrainV1GpuParams {
     /// Sign of both the composite lookup axis and lookup query.
     pub lookup_sign: f32,
     /// Sublayer particle-field blur control, applied before summing layers.
-    pub blur_dye_clouds: f32,
-    /// Whether the reference pipeline stores intermediate samples in f64.
+    pub blur_dye_clouds: f64,
+    /// Host input representation only; interpolation tables remain f64 and grain works in f32.
     pub reference_f64: bool,
     /// Micro-structure standard deviation in pixels (`micro_structure[1] ·
     /// 0.001 / pixel_size_um`); the clumping field is drawn only above 0.05.
@@ -1216,25 +1200,17 @@ pub struct GrainV1GpuParams {
     /// pixel_size_um`).
     pub micro_blur_px: f64,
     /// Final grain blur σ in pixels.
-    pub grain_blur: f32,
+    pub grain_blur: f64,
     /// Multiplicative unsharp mask σ in pixels.
-    pub usm_sigma: f32,
+    pub usm_sigma: f64,
     /// Multiplicative unsharp mask amount.
-    pub usm_amount: f32,
+    pub usm_amount: f64,
     /// Composite curve x column, `knots` rows × 3 channels.
     pub curve_x: Vec<f64>,
     /// Layer curve tensor, `knots` rows × 3 sublayers × 3 channels.
     pub curve_layers: Vec<f64>,
-    /// Selects the layered model; false selects composite sampling.
-    pub sublayers_active: bool,
-    /// Composite layer count; the layered model always forms three layers.
-    pub n_sub_layers: u32,
     /// Preserves sequential NumPy draws instead of independent fast streams.
     pub mt19937_regime: bool,
-    /// Composite per-channel density maximum, without the density floor.
-    pub density_max_composite: [f64; 3],
-    /// Composite particle count per layer and pixel.
-    pub n_particles_composite: [f64; 3],
 }
 
 /// One auto-exposure metering request.
@@ -1484,7 +1460,7 @@ impl FilmChainParams<'_> {
             && self
                 .grain_v1
                 .as_ref()
-                .is_none_or(|p| p.grain_blur <= 0.0 || supports(p.grain_blur))
+                .is_none_or(|p| p.grain_blur <= 0.0 || p.grain_blur.is_finite())
     }
 }
 

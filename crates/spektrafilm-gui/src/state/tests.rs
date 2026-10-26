@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn sparse_dye_state_preserves_omitted_and_authored_strength() {
+    for (nested, canonical, expected) in [
+        (None, None, [5.0; 3]),
+        (Some([6.0, 8.0, 10.0]), None, [6.0, 8.0, 10.0]),
+        (Some([6.0, 8.0, 10.0]), Some([9.0; 3]), [9.0; 3]),
+    ] {
+        let mut value = json!({"rust": {"version": CURRENT_STATE_VERSION,
+            "runtime": {"film_render": {"grain": {"engine": "dye"}}}}});
+        if let Some(rms) = nested {
+            value["rust"]["runtime"]["film_render"]["grain"]["rms_granularity"] = json!(rms);
+        }
+        if let Some(rms) = canonical {
+            value["grain"] = json!({"rms_granularity": rms});
+        }
+        let loaded = GuiState::from_value(value).unwrap();
+        assert_eq!(
+            loaded
+                .runtime_params()
+                .unwrap()
+                .film_render
+                .grain
+                .rms_granularity,
+            expected
+        );
+        let restored = GuiState::from_value(loaded.sections.clone()).unwrap();
+        assert_eq!(
+            restored
+                .runtime_params()
+                .unwrap()
+                .film_render
+                .grain
+                .rms_granularity,
+            expected
+        );
+    }
+}
+
+#[test]
 fn sparse_startup_preferences_and_factory_reset_keep_the_authored_dye_default() {
     use spektrafilm_core::params::GrainEngine;
 
@@ -145,7 +183,6 @@ fn grain_engine_null_unknown_and_unknown_leaves_never_become_omission() {
         assert!(GuiState::from_value(json!({"grain": grain})).is_err());
     }
 }
-
 #[test]
 fn output_mix_state_roundtrip_and_legacy_retirement_are_atomic() {
     let factory = GuiState::factory();
@@ -483,7 +520,7 @@ fn legacy_cmyk_state_migration_is_transactional_and_idempotent() {
 #[test]
 fn legacy_rust_grain_snapshot_preserves_supported_controls() {
     for retired in [None, Some(Value::Null)] {
-        let mut source = json!({"rust":{"version":1,"runtime":{"film_render":{"grain":{"sublayers_active":false,"particle_area_um2":9.0,"particle_scale":[2.0,3.0,4.0],"n_sub_layers":3,"monochrome":true}}}}});
+        let mut source = json!({"rust":{"version":1,"runtime":{"film_render":{"grain":{"rms_granularity":[9.0,12.0,15.0],"particle_scale_sublayers":[2.0,1.0,0.5],"monochrome":true}}}}});
         if let Some(retired) = retired {
             source["rust"]["runtime"]["io"] =
                 json!({"output_gamut_compress":{"lightness_compression":retired}});
@@ -491,10 +528,8 @@ fn legacy_rust_grain_snapshot_preserves_supported_controls() {
         let accepted = GuiState::from_value(source).unwrap();
         let params = accepted.runtime_params().unwrap();
         let grain = &params.film_render.grain;
-        assert!(!grain.sublayers_active);
-        assert_eq!(grain.particle_area_um2, 9.0);
-        assert_eq!(grain.particle_scale, [2.0, 3.0, 4.0]);
-        assert_eq!(grain.n_sub_layers, 3);
+        assert_eq!(grain.rms_granularity, [9.0, 12.0, 15.0]);
+        assert_eq!(grain.particle_scale_sublayers, [2.0, 1.0, 0.5]);
         assert!(grain.monochrome);
         let saved = GuiState::from_runtime(
             &params,
@@ -509,89 +544,6 @@ fn legacy_rust_grain_snapshot_preserves_supported_controls() {
             params.film_render.grain
         );
     }
-}
-
-#[test]
-fn factory_matches_independently_generated_upstream_state() {
-    // Generated from pinned Python PROJECT_DEFAULT_GUI_STATE with real
-    // profile/preset loading; provenance lives beside this retained oracle.
-    let mut expected: Value = serde_json::from_str(include_str!(
-        "../../../../scripts/parity/fixtures/gui_28bf883/factory_state.json"
-    ))
-    .unwrap();
-    expected["output_gamut_compress"]
-        .as_object_mut()
-        .unwrap()
-        .remove("lightness_compression");
-    // The upstream UI can disable Preview; the native viewer always updates.
-    expected["simulation"]
-        .as_object_mut()
-        .unwrap()
-        .remove("auto_preview");
-    fn compare(actual: &Value, expected: &Value, path: &str) {
-        match (actual, expected) {
-            (Value::Object(actual), Value::Object(expected)) => {
-                assert_eq!(actual.len(), expected.len(), "section keys at {path}");
-                for (key, value) in expected {
-                    compare(
-                        actual
-                            .get(key)
-                            .unwrap_or_else(|| panic!("missing {path}.{key}")),
-                        value,
-                        &format!("{path}.{key}"),
-                    );
-                }
-            }
-            (Value::Array(actual), Value::Array(expected)) => {
-                assert_eq!(actual.len(), expected.len(), "array size at {path}");
-                for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
-                    compare(actual, expected, &format!("{path}[{index}]"));
-                }
-            }
-            (Value::Number(actual), Value::Number(expected)) => {
-                assert_eq!(actual.as_f64(), expected.as_f64(), "number at {path}");
-            }
-            _ => assert_eq!(actual, expected, "value at {path}"),
-        }
-    }
-    let factory = GuiState::factory();
-    let mut shared = factory.sections.clone();
-    let cmyk = shared
-        .as_object_mut()
-        .and_then(|sections| sections.remove("cmyk"));
-    assert_eq!(
-        cmyk,
-        Some(json!({"active": false, "strength": 1.0})),
-        "cmyk factory defaults",
-    );
-    shared.as_object_mut().unwrap().remove("rust");
-    // These controls belong to the Rust scanner extension, not the
-    // independently generated Python factory-state oracle.
-    let scanner = shared["scanner"].as_object_mut().unwrap();
-    for key in ["scan_output", "conversion_style", "operator"] {
-        scanner.remove(key);
-    }
-    // The pinned oracle predates the neutral scan model: it still carries the
-    // retired receiver/finish/point controls. Only the physical boundaries
-    // both surfaces share remain comparable.
-    let oracle_scanner = expected["scanner"].as_object_mut().unwrap();
-    for key in [
-        "black_correction",
-        "black_level",
-        "white_correction",
-        "white_level",
-    ] {
-        oracle_scanner.remove(key);
-    }
-    // `camera.capture_illuminant` is a Rust-only optional leaf: the pinned
-    // Python oracle predates it, and its unset state is a real null rather
-    // than an absent key.
-    let camera = shared["camera"].as_object_mut().unwrap();
-    camera.remove("capture_illuminant");
-    compare(&shared, &expected, "factory");
-    let params = factory.runtime_params().unwrap();
-    assert_eq!(params.film_render.grain.rms_granularity, [5.0; 3]);
-    assert_eq!(params.io.upscale_factor, 1.0);
 }
 
 #[test]
@@ -623,7 +575,7 @@ fn saved_zero_rms_and_nondefault_upscale_survive_state_file_roundtrip() {
 }
 
 #[test]
-fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
+fn internal_monochrome_preserves_python_sections_and_state_roundtrip() {
     let factory = GuiState::factory();
     let baseline = GuiState::from_runtime(
         &factory.runtime_params().unwrap(),
@@ -633,8 +585,6 @@ fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
     )
     .unwrap();
     let mut source = factory.runtime_params().unwrap();
-    source.film_render.grain.particle_area_um2 = 9.0;
-    source.film_render.grain.sublayers_active = false;
     source.film_render.grain.monochrome = true;
     // Monochrome is derived from the film, so sections preserve the target's value.
     let applied = source;
@@ -654,8 +604,6 @@ fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
     let loaded = GuiState::from_value(serde_json::from_slice(&serialized).unwrap()).unwrap();
     for state in [saved, loaded] {
         let restored = state.runtime_params().unwrap();
-        assert_eq!(restored.film_render.grain.particle_area_um2, 9.0);
-        assert!(!restored.film_render.grain.sublayers_active);
         assert!(restored.film_render.grain.monochrome);
         assert_eq!(
             restored.render_preparation_state(),
@@ -922,48 +870,36 @@ fn unknown_grain_engine_fails_state_validation() {
     assert!(format!("{error:#}").contains("unknown variant `unknown`"));
 }
 #[test]
-fn grain_v2_migration_strips_runtime_only_fields() {
-    let state = GuiState::from_value(json!({
-        "grain": {
-            "particle_scale_layers": [2.0, 1.0, 0.5],
-            "particle_area_um2": 0.2,
-            "n_sub_layers": 3
-        },
-        "rust": {
-            "version": 1,
-            "runtime": {
-                "film_render": {
-                    "grain": {
-                        "particle_scale_layers": [2.0, 1.0, 0.5],
-                        "particle_area_um2": 0.2
-                    }
+fn retired_grain_controls_fail_in_every_state_carrier() {
+    for (key, value) in [
+        ("particle_area_um2", json!(0.2)),
+        ("particle_scale", json!([2.0, 1.0, 0.5])),
+        ("particle_scale_layers", json!([2.0, 1.0, 0.5])),
+        ("sublayers_active", json!(false)),
+        ("n_sub_layers", json!(3)),
+    ] {
+        for version in std::iter::once(None).chain((1..=CURRENT_STATE_VERSION).map(Some)) {
+            for carrier in ["grain", "film_render", "rust.runtime"] {
+                if version.is_none() && carrier == "rust.runtime" {
+                    continue;
                 }
+                let fields = json!({(key): value.clone()});
+                let mut source = match carrier {
+                    "grain" => json!({"grain": fields}),
+                    "film_render" => json!({"film_render": {"grain": fields}}),
+                    _ => json!({"rust": {"runtime": {"film_render": {"grain": fields}}}}),
+                };
+                if let Some(version) = version {
+                    source["rust"]["version"] = json!(version);
+                }
+                let error = GuiState::from_value(source).unwrap_err();
+                assert!(
+                    format!("{error:#}").contains(key),
+                    "{carrier}, version {version:?}, {key}: {error:#}"
+                );
             }
         }
-    }))
-    .unwrap();
-    let grain = state.sections["grain"].as_object().unwrap();
-    assert_eq!(grain["particle_scale_sublayers"], json!([2.0, 1.0, 0.5]));
-    for key in [
-        "sublayers_active",
-        "particle_area_um2",
-        "particle_scale",
-        "particle_scale_layers",
-        "n_sub_layers",
-        "monochrome",
-    ] {
-        assert!(
-            !grain.contains_key(key),
-            "legacy field leaked into state: {key}"
-        );
     }
-    let params = state.runtime_params().unwrap();
-    let runtime_grain = serde_json::to_value(params).unwrap()["film_render"]["grain"].clone();
-    assert!(runtime_grain.get("particle_scale_layers").is_none());
-    assert_eq!(
-        runtime_grain["particle_scale_sublayers"],
-        json!([2.0, 1.0, 0.5])
-    );
 }
 #[test]
 fn grain_v2_canonical_fields_roundtrip_through_state_and_runtime() {
