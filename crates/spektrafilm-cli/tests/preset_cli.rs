@@ -165,7 +165,7 @@ fn capture_illuminant_reports_inheritance_overrides_clearing_and_inactive_routes
         "--route",
         "input",
         "--set",
-        "camera.capture_illuminant=BB4000",
+        "camera.capture_illuminant=BB4000,film_render.grain.active=false",
         "--dry-run",
     ]);
     assert_eq!(inactive["capture_illuminant"]["status"], "inactive");
@@ -1056,7 +1056,7 @@ fn finished_input_dry_run_preserves_profiles_with_independent_cmyk() {
         "--route",
         "input",
         "--set",
-        "cmyk.active=true,cmyk.strength=0.75",
+        "cmyk.active=true,cmyk.strength=0.75,film_render.grain.active=false",
         "--dry-run",
     ]);
     assert_eq!(report["film_profile"], "kodak_portra_400");
