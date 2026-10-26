@@ -9,13 +9,16 @@ use super::dye_decisions::DYE_MAX_RATE;
 use super::dye_layers::{self, LayerPass};
 use super::dye_spatial::{self, BAND_BUFFERS, DyeBand, DyePlan, DyeSpatialState};
 use super::*;
-use spektrafilm_backend::dye_params::{DyeGpuParams, DyeReadoutGrid};
+use spektrafilm_backend::dye_params::{DyeFieldLaw, DyeGpuParams, DyeReadoutGrid};
 
 #[path = "dye_optical.rs"]
 mod optical;
 
 #[path = "dye_paged.rs"]
 mod paged;
+
+#[path = "dye_scalar.rs"]
+mod scalar;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -124,24 +127,53 @@ impl WgpuBackend {
         response_wavelengths: Option<usize>,
     ) -> Result<u64, String> {
         let plan = self.dye_plan(width, height, params)?;
-        let per_band = dye_layers::LAYER_PARAMS_BYTES
-            + std::mem::size_of::<AccumulateParams>() as u64
+        let (law_bytes, source_bytes, per_band) = match &params.law {
+            DyeFieldLaw::Capacity(tables) => (
+                std::mem::size_of_val(tables.tables.as_slice()) as u64
+                    + tables.curves.len() as u64 * 4,
+                plan.max_band_bytes[0] / 3,
+                dye_layers::LAYER_PARAMS_BYTES + std::mem::size_of::<AccumulateParams>() as u64,
+            ),
+            DyeFieldLaw::ScalarRecord { .. } => (scalar::PARAMS_BYTES, 0, 0),
+        };
+        let per_band = per_band
             + 2 * dye_spatial::SPATIAL_PARAMS_BYTES
             + response_wavelengths.map_or(0, |_| optical::RESPONSE_PARAMS_BYTES);
+        let page_pixels = crate::wgpu_backend::bounded::chunk_elements(
+            crate::wgpu_backend::bounded::storage_binding_limit(self)?,
+            12,
+        )?;
+        let validation_bytes = if matches!(params.law, DyeFieldLaw::ScalarRecord { .. }) {
+            16
+        } else if params.monochrome {
+            dye_layers::LAYER_PARAMS_BYTES
+        } else {
+            0
+        };
+        let source_pages = (u64::from(width) * u64::from(height)).div_ceil(page_pixels as u64);
         let parts = [
             u64::from(params.grid.width)
                 .checked_mul(u64::from(params.grid.height))
                 .and_then(|v| v.checked_mul(12)),
-            Some(plan.max_band_bytes[0] / 3),
+            Some(source_bytes),
             plan.max_band_bytes
                 .into_iter()
                 .try_fold(0u64, u64::checked_add),
             Some(plan.max_output_bytes),
             (plan.bands.len() as u64).checked_mul(per_band),
-            Some(std::mem::size_of_val(params.tables.tables.as_slice()) as u64),
-            (params.tables.curves.len() as u64).checked_mul(4),
+            Some(law_bytes),
+            source_pages.checked_mul(validation_bytes),
             (params.taps.len() as u64).checked_mul(4),
             response_wavelengths.map_or(Some(0), |n| (n as u64).checked_mul(32)),
+            Some(
+                if response_wavelengths.is_some()
+                    && matches!(params.law, DyeFieldLaw::ScalarRecord { .. })
+                {
+                    plan.max_band_bytes[4] * 3
+                } else {
+                    0
+                },
+            ),
             Some(8), // execution status and its four-byte readback
         ];
         parts.into_iter().try_fold(0u64, |sum, part| {
@@ -157,10 +189,14 @@ impl WgpuBackend {
         limits.max_storage_buffer_binding_size = limits
             .max_storage_buffer_binding_size
             .min(effective.min(u64::from(u32::MAX)) as u32);
-        if limits.max_storage_buffers_per_shader_stage < 5 {
-            return Err(
-                "film grain Dye: device needs five storage bindings per shader stage".into(),
-            );
+        let storage_bindings = match params.law {
+            DyeFieldLaw::Capacity(_) => 5,
+            DyeFieldLaw::ScalarRecord { .. } => 4,
+        };
+        if limits.max_storage_buffers_per_shader_stage < storage_bindings {
+            return Err(format!(
+                "film grain Dye: device needs {storage_bindings} storage bindings per shader stage"
+            ));
         }
         let plan = DyePlan::new(width, height, params, &limits)?;
         let bound = limits
@@ -173,18 +209,25 @@ impl WgpuBackend {
             .copied()
             .zip(plan.max_band_bytes)
             .chain([
-                ("channel curves", params.tables.curves.len() as u64 * 4),
+                (
+                    "channel curves",
+                    match &params.law {
+                        DyeFieldLaw::Capacity(tables) => tables.curves.len() as u64 * 4,
+                        DyeFieldLaw::ScalarRecord { .. } => 0,
+                    },
+                ),
                 ("formation taps", params.taps.len() as u64 * 4),
             ])
         {
-            if bytes == 0 || bytes > bound {
+            if bytes > bound {
                 return Err(format!(
                     "film grain Dye: {name} needs {bytes} bytes; device storage limit is {bound} bytes"
                 ));
             }
         }
-        if !params.channel_correlation.is_finite()
-            || !(0.0..1.0).contains(&params.channel_correlation)
+        if matches!(params.law, DyeFieldLaw::Capacity(_))
+            && (!params.channel_correlation.is_finite()
+                || !(0.0..1.0).contains(&params.channel_correlation))
         {
             return Err("film grain Dye: device channel correlation must be in [0, 1)".into());
         }
@@ -199,10 +242,31 @@ impl WgpuBackend {
         {
             return Err("film grain Dye: formation taps must be finite and nonnegative".into());
         }
-        for (c, table) in params.tables.tables.iter().enumerate() {
+        let tables = match &params.law {
+            DyeFieldLaw::Capacity(tables) => tables,
+            DyeFieldLaw::ScalarRecord {
+                event_contribution_d_um2,
+            } => {
+                let q = *event_contribution_d_um2 as f32;
+                let density_per_event = q / area;
+                if !params.monochrome
+                    || !event_contribution_d_um2.is_finite()
+                    || *event_contribution_d_um2 <= 0.0
+                    || !q.is_normal()
+                    || !area.is_normal()
+                    || !density_per_event.is_normal()
+                    || density_per_event <= 0.0
+                    || !(density_per_event * 16777216.0).is_finite()
+                {
+                    return Err("film grain Dye: scalar record event contribution is not representable in f32".into());
+                }
+                return Ok(plan);
+            }
+        };
+        for (c, table) in tables.tables.iter().enumerate() {
             let k = table.knot_count as usize;
             let end = table.offset as usize + k * 5;
-            if k < 2 || end == 0 || end - 1 > params.tables.curves.len() {
+            if k < 2 || end == 0 || end - 1 > tables.curves.len() {
                 return Err(format!(
                     "film grain Dye: channel {c} packed curves do not match their knot count"
                 ));
@@ -249,15 +313,15 @@ impl WgpuBackend {
                 }
             }
         }
-        if params.tables.curves.iter().any(|v| !v.is_finite()) {
+        if tables.curves.iter().any(|v| !v.is_finite()) {
             return Err("film grain Dye: channel curves are not representable in f32".into());
         }
         if params.monochrome {
-            let first = &params.tables.tables[0];
+            let first = &tables.tables[0];
             let first_start = first.offset as usize;
             let first_curves =
-                &params.tables.curves[first_start..first_start + first.knot_count as usize * 5 - 1];
-            for (c, table) in params.tables.tables.iter().enumerate() {
+                &tables.curves[first_start..first_start + first.knot_count as usize * 5 - 1];
+            for (c, table) in tables.tables.iter().enumerate() {
                 let scalar_equal = [
                     table.min,
                     table.cap_total,
@@ -279,8 +343,7 @@ impl WgpuBackend {
                         .all(|(value, canonical)| value.is_finite() && value == canonical)
                 });
                 let start = table.offset as usize;
-                let curves =
-                    &params.tables.curves[start..start + table.knot_count as usize * 5 - 1];
+                let curves = &tables.curves[start..start + table.knot_count as usize * 5 - 1];
                 if !scalar_equal || !components_equal || curves != first_curves {
                     return Err(format!(
                         "film grain Dye: monochrome channel {c} tables must match record 0 exactly"
@@ -374,7 +437,7 @@ impl WgpuBackend {
             layers: [&knots, &zero, &zero],
         }));
         let mut params = DyeGpuParams {
-            tables,
+            law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(tables),
             cell_um: 1.0,
             taps: vec![1.0],
             source_pitch_um: 1.0,
@@ -388,6 +451,9 @@ impl WgpuBackend {
             channel_correlation: 0.45,
             expectation: false,
             monochrome: false,
+        };
+        let DyeFieldLaw::Capacity(tables) = &params.law else {
+            unreachable!()
         };
         let band = DyeBand {
             output_x: 0,
@@ -408,7 +474,7 @@ impl WgpuBackend {
         };
         let table_buffer = self.pipe.static_buffer(
             "dye_check_tables",
-            bytemuck::cast_slice(&params.tables.tables),
+            bytemuck::cast_slice(&tables.tables),
             wgpu::BufferUsages::STORAGE,
         );
         let inputs = [
@@ -490,6 +556,11 @@ impl WgpuBackend {
         self.check_cancelled()?;
         if code == 0 {
             return Ok(());
+        }
+        if code & 32 != 0 {
+            return Err(format!(
+                "film grain Dye: device field failed (scalar developed density must be finite, nonnegative, and identical in all lanes; flags {code:#x})"
+            ));
         }
         let reason = if code & 1 != 0 {
             "developed density is outside the finite channel capacity envelope"
@@ -590,7 +661,7 @@ mod tests {
                     layers: [&knots, &zero, &zero],
                 }));
                 let params = DyeGpuParams {
-                    tables,
+                    law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(tables),
                     cell_um: 1.0,
                     taps: vec![1.0],
                     source_pitch_um: 1.0,
@@ -605,9 +676,12 @@ mod tests {
                     expectation: false,
                     monochrome: false,
                 };
+                let DyeFieldLaw::Capacity(tables) = &params.law else {
+                    unreachable!()
+                };
                 let table_buffer = backend.pipe.static_buffer(
                     "accumulation_test_tables",
-                    bytemuck::cast_slice(&params.tables.tables),
+                    bytemuck::cast_slice(&tables.tables),
                     wgpu::BufferUsages::STORAGE,
                 );
                 let output = backend.device.create_buffer(&wgpu::BufferDescriptor {
@@ -681,7 +755,7 @@ mod tests {
                             (0..3)
                                 .filter(|&l| c <= (index + l) % 3)
                                 .map(|l| {
-                                    let table = &params.tables.tables[c];
+                                    let table = &tables.tables[c];
                                     let mass = table.cap[l] * table.area[l] / table.frac[l];
                                     mass * (counts[l * 4] + counts[l * 4 + c + 1]) as f32
                                 })
@@ -742,18 +816,20 @@ mod tests {
         let inverse = [1.0 / 3.0];
         let layers = [[0.0, 0.5], [0.0, 1.0], [0.0, 1.5]];
         DyeGpuParams {
-            tables: DyeChannelTablesGpu::pack(std::array::from_fn(|_| DyeChannelParts {
-                min: 0.125,
-                cap_total: 3.0,
-                cap: [0.5, 1.0, 1.5],
-                frac: [0.25, 0.25, 0.5],
-                area: [0.125, 0.25, 0.5],
-                uniformity: 0.0,
-                lookup_sign: 1.0,
-                knots: &knots,
-                inv_dx: &inverse,
-                layers: [&layers[0], &layers[1], &layers[2]],
-            })),
+            law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(DyeChannelTablesGpu::pack(
+                std::array::from_fn(|_| DyeChannelParts {
+                    min: 0.125,
+                    cap_total: 3.0,
+                    cap: [0.5, 1.0, 1.5],
+                    frac: [0.25, 0.25, 0.5],
+                    area: [0.125, 0.25, 0.5],
+                    uniformity: 0.0,
+                    lookup_sign: 1.0,
+                    knots: &knots,
+                    inv_dx: &inverse,
+                    layers: [&layers[0], &layers[1], &layers[2]],
+                }),
+            )),
             cell_um: 1.0,
             taps: vec![1.0],
             source_pitch_um: 1.0,
@@ -818,8 +894,10 @@ mod tests {
     fn monochrome_device_formation_is_replicated_and_correlation_invariant() {
         let backend = crate::test_support::adapter();
         let mut params = monochrome_params(13, 7);
-        params
-            .tables
+        let DyeFieldLaw::Capacity(tables) = &mut params.law else {
+            unreachable!()
+        };
+        tables
             .tables
             .iter_mut()
             .for_each(|table| table.uniformity = 0.3);
@@ -944,7 +1022,10 @@ mod tests {
         );
         for mutation in 0..8 {
             let mut invalid = params.clone();
-            let table = &mut invalid.tables.tables[1];
+            let DyeFieldLaw::Capacity(tables) = &mut invalid.law else {
+                unreachable!()
+            };
+            let table = &mut tables.tables[1];
             match mutation {
                 0 => table.min += 0.01,
                 1 => table.cap_total += 0.01,
@@ -953,7 +1034,7 @@ mod tests {
                 4 => table.area[0] += 0.01,
                 5 => table.uniformity += 0.01,
                 6 => table.lookup_sign = -1.0,
-                _ => invalid.tables.curves[table.offset as usize] += 0.01,
+                _ => tables.curves[table.offset as usize] += 0.01,
             }
             let error = backend.validate_dye_resources(2, 1, &invalid).unwrap_err();
             assert!(error.contains("tables must match record 0"), "{error}");
@@ -985,7 +1066,7 @@ mod range_tests {
             layers: [&knots, &zero, &zero],
         }));
         let mut params = DyeGpuParams {
-            tables,
+            law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(tables),
             cell_um: 1.0,
             taps: vec![1.0],
             source_pitch_um: 1.0,
@@ -1013,7 +1094,10 @@ mod range_tests {
         let error = backend.dye_field(&input, &params).unwrap_err();
         assert!(error.contains("conditional dye mass or rate"), "{error}");
 
-        let table = &mut params.tables.tables[0];
+        let DyeFieldLaw::Capacity(tables) = &mut params.law else {
+            unreachable!()
+        };
+        let table = &mut tables.tables[0];
         table.cap = [2.0_f32.powi(-81), 1.0, 0.0, 0.0];
         table.frac = table.cap;
         table.area = [2.0_f32.powi(-50), 1.0, 1.0, 0.0];

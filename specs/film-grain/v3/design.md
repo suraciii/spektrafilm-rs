@@ -6,7 +6,7 @@ Dye is a conditional, film-coordinate record-field algorithm. It consumes the de
 
 It models color dye records or an effective monochrome record. It does not reconstruct microscopic crystals, model a scanner, or add noise to an encoded image.
 
-The algorithm has four required operations:
+The default capacity law has four required operations:
 
 ```mermaid
 flowchart LR
@@ -43,7 +43,9 @@ The source target is piecewise constant over source-pixel rectangles unless a se
 
 Source-center interpolation followed by another box average MUST NOT be used as an implicit reconstruction step.
 
-Dye MUST return formed CMY record density to the next spectral stage. Printing, scanner acquisition, film-base spectra, dye spectra, negative interpretation, color conversion, gamut mapping, lens blur, unsharp mask, transfer encoding, and other downstream operations remain outside the Dye model. Dye MUST NOT compose grain after encoding.
+The default density readout MUST return formed CMY record density to the next spectral stage. Printing, scanner acquisition, film-base spectra, dye spectra, negative interpretation, color conversion, gamut mapping, lens blur, unsharp mask, transfer encoding, and other downstream operations remain outside the Dye model. Dye MUST NOT compose grain after encoding.
+
+The scalar-record optical callback boundary is specified separately below.
 
 The host pipeline owns lifecycle bypasses. When it selects active Dye, it MUST run the algorithm described here. When it selects an inactive, preview, LUT, spatial-deactivation, or stochastic-deactivation path, it MUST bypass Dye before field preparation.
 
@@ -158,6 +160,52 @@ The CPU f64 implementation is the reference for the count law. The device MUST r
 A normal approximation, a clipped tail, a fixed count, or a silently truncated substitute MUST fail the same predeclared probability, mean, variance, and higher-moment checks over a declared rate set. A build that changes the law MUST fail those checks.
 
 Event mass MUST NOT depend on crop, tile size, output resolution, traversal order, or thread scheduling. The local expectation MUST be `t_lc`. Count moments and the target invariant MUST be checked independently of final image similarity.
+
+## Scalar fixed-contribution law
+
+The [scalar-record experiment](spec.md#scalar-record-experiment) replaces component allocation and capacity-dependent event mass with one absolute nonnegative image-forming record-density target. All three source storage lanes MUST agree.
+
+The film stage owns this target; deterministic film-base absorption remains outside the random field. The law MUST NOT add or subtract a statistical floor.
+
+For cell area `A`, conservatively remapped source density `D_bar`, and explicit record contribution `q`, the law is:
+
+```text
+N ~ Poisson(A * D_bar / q)
+cell_density = q * N / A
+E[cell_density] = D_bar
+```
+
+The law MUST use globally addressed exact Poisson counts. The existing normalized cell-integrated formation operator MUST act on the complete field.
+
+Expectation mode MUST replace cell counts by their conditional means and MUST retain formation. It is not the ensemble mean after nonlinear optical conversion.
+
+The optical callback MUST convert each formed scalar cell to a finite, shape-preserving pointwise linear response before fractional footprint integration. It MUST NOT perform spatial or image-dependent processing.
+
+The caller owns spectra, deterministic base absorption, scanner response, and output encoding. Applying the callback after averaging density is not equivalent.
+
+Planning and readout MUST use the same global pixel endpoint expression `origin + index * pitch`. Tiles MUST NOT introduce a locally rounded origin.
+
+All tiles' coordinate, halo, scratch, and source-stencil bounds MUST pass an allocation-free preflight before full-output allocation or any optical callback. Support taps MUST be shared across tiles. Unrepresentable work MUST fail without coarsening the field.
+
+The CPU reference source and output storage each have a `2^26` pixel limit. Each CPU tile has at most `2^18` halo-inclusive cells and a `2^18` source-stencil-entry bound.
+
+These bounds do not make full-image storage streaming or bound arbitrary callback memory. Field pitch MUST NOT exceed `support / 2`; no default q or material calibration follows from these numerical limits.
+
+### Scalar optical execution
+
+Scan preparation MUST run once per render and MUST be shared by its cell callbacks. For an effective wavelength-invariant basis `[k, 0, 0]`, the response MAY precompute `C_j = sum_lambda(w_j_lambda * 10^(-B_lambda))` and evaluate `XYZ_j(D) = C_j * 10^(-kD)` before normalization. The base spectrum need not be constant.
+
+Eligibility MUST use resolved effective spectral rows, not a BW label. Missing spectral rows MUST retain the generic integration semantics. Signed spectral weights, unrepresentable coefficients, or unsafe exponent ranges MUST retain generic per-cell integration instead of clipping density or rejecting a generically representable response.
+
+The CPU response MUST retain its normalization, epsilon, log/exp, and separate color-matrix operations. The GPU response MUST retain the device optical tail and the declared f32 numerical boundary. Both MUST apply optics before footprint integration.
+
+The CPU reference MUST reuse bounded scratch across tiles. Independent cell rows MAY execute in parallel without changing a cell's random stream or accumulation order.
+
+The GPU MUST validate the full original source on the device, including samples outside crops. It MUST fuse scalar remap and count realization without numerical-component allocation. Cell density and both formation buffers MUST carry one scalar lane; RGB storage begins at optical response or final density publication.
+
+The device MUST retain globally addressed counts, bounded paged source/output storage, reusable band scratch, and complete formation halos. It MUST NOT download bands for host numerical processing. Scalar minimum working sets MUST NOT include unused capacity tables or nine-lane layer buffers.
+
+The device uses the certified f32 Dye count law and its `65536` rate ceiling. Nonrepresentable or subnormal source/rate coefficients MUST fail explicitly rather than flush a positive target to zero. Expectation and crop/partition comparisons MUST supplement the existing count-law controls; stochastic CPU/GPU pixel identity is not required by the [Dye executor contract](../../gpu-execution/design.md#stochastic-alignment).
 
 ## Channel coupling
 

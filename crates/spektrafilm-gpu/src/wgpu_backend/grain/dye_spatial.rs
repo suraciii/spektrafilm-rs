@@ -1,6 +1,9 @@
 //! G3 and G5 of the Dye device path: exact-overlap remap of the source
 //! sublayer targets onto the field cells, cell-integrated formation, and
 //! fractional readout into the output grid.
+//! Scalar records fuse source remap and the certified count law, then carry
+//! one density lane through the shared formation kernels. RGB is produced
+//! only at the optical response or density publication boundary.
 //!
 //! This module owns the spatial halves of
 //! `specs/film-grain/v3/design.md`: `dye_layers` allocates sublayer targets
@@ -24,7 +27,7 @@
 
 use super::*;
 use spektrafilm_backend::dye_params::{DyeChannelTableGpu, DyeChannelTablesGpu};
-use spektrafilm_backend::dye_params::{DyeGpuParams, DyeReadoutGrid};
+use spektrafilm_backend::dye_params::{DyeFieldLaw, DyeGpuParams, DyeReadoutGrid};
 
 /// Output rows per band before the cell budget applies.
 const BAND_OUTPUT_ROWS: u32 = 128;
@@ -87,8 +90,8 @@ pub(super) struct DyeBand {
 /// Bounded resource plan of one Dye run.
 pub(super) struct DyePlan {
     pub bands: Vec<DyeBand>,
-    /// Per-band maxima of [`band_bytes`], in the same binding order: the
-    /// scratch buffers `prepare_dye` allocates and `dye_plan` validates.
+    /// Per-band maxima of [`law_band_bytes`], in allocation order. Scalar
+    /// slot 0 is the RGB source window; slot 1 is unused, not allocated.
     pub max_band_bytes: [u64; 5],
     pub max_output_bytes: u64,
 }
@@ -186,9 +189,9 @@ fn tile_geometry(
     })
 }
 
-/// Names of the band scratch buffers, in binding order. The per-band bound,
-/// the plan maxima and the allocations all read [`band_bytes`] in this order,
-/// so a name cannot drift from its size.
+/// Names of capacity-path scratch slots. [`law_band_bytes`] keeps the same
+/// order for scalar records but replaces source layers with the RGB source
+/// window, removes cell layers, and uses one-float density/formation lanes.
 pub(super) const BAND_BUFFERS: [&str; 5] = [
     "source layers",
     "cell layers",
@@ -197,11 +200,9 @@ pub(super) const BAND_BUFFERS: [&str; 5] = [
     "formed density",
 ];
 
-/// Byte size of every band scratch buffer, in binding order: the two
-/// nine-float `source`/`cell layers` tables, the cell density, the horizontal
-/// formation buffer, and the formed density. This is the one rule behind the
-/// per-band bound [`band_fit`] enforces, the maxima `dye_plan` validates, and
-/// the buffers `prepare_dye` and the shared runner allocate.
+/// Capacity-path scratch sizes. [`law_band_bytes`] is the authoritative
+/// law-dependent sizing rule used by planning, validation, and allocation;
+/// capacity spatial self-checks also use these original three-record sizes.
 pub(super) fn band_bytes(band: &DyeBand) -> [u64; 5] {
     [
         u64::from(band.source_cols) * u64::from(band.source_rows) * 36,
@@ -212,12 +213,24 @@ pub(super) fn band_bytes(band: &DyeBand) -> [u64; 5] {
     ]
 }
 
+fn law_band_bytes(band: &DyeBand, p: &DyeGpuParams) -> [u64; 5] {
+    let mut bytes = band_bytes(band);
+    if matches!(p.law, DyeFieldLaw::ScalarRecord { .. }) {
+        bytes[0] /= 3; // RGB source window; no source layer targets.
+        bytes[1] = 0; // Fused remap/count has no cell layer targets.
+        for bytes in &mut bytes[2..] {
+            *bytes /= 3;
+        }
+    }
+    bytes
+}
+
 /// The named bounds one band must fit before it is committed: the cell and
 /// source-pixel budget and the device storage binding size. The two
 /// nine-float buffers (`source layers`, `cell layers`) are the binding-count
 /// limiter; the reason is returned so both the one-row guard and the
 /// decomposition loop can name it.
-fn band_fit(band: &DyeBand, bound: u64) -> Result<(), String> {
+fn band_fit(band: &DyeBand, bound: u64, p: &DyeGpuParams) -> Result<(), String> {
     let band_cells = u64::from(band.ext_cols) * u64::from(band.ext_rows);
     let band_pixels = u64::from(band.source_cols) * u64::from(band.source_rows);
     if band_cells > MAX_BAND_CELLS || band_pixels > MAX_BAND_CELLS {
@@ -225,10 +238,19 @@ fn band_fit(band: &DyeBand, bound: u64) -> Result<(), String> {
             "needs up to {band_cells} field cells and {band_pixels} source pixels, above the {MAX_BAND_CELLS} limit"
         ));
     }
-    for (name, bytes) in BAND_BUFFERS.iter().zip(band_bytes(band)) {
+    for (name, bytes) in BAND_BUFFERS.iter().zip(law_band_bytes(band, p)) {
         if bytes > bound.min(MAX_BAND_BYTES) {
             return Err(format!(
                 "{name} needs {bytes} bytes, above the {}-byte band budget",
+                bound.min(MAX_BAND_BYTES)
+            ));
+        }
+    }
+    if matches!(p.law, DyeFieldLaw::ScalarRecord { .. }) {
+        let response_bytes = u64::from(band.cols) * u64::from(band.rows) * 12;
+        if response_bytes > bound.min(MAX_BAND_BYTES) {
+            return Err(format!(
+                "cell optical RGB response needs {response_bytes} bytes, above the {}-byte band budget",
                 bound.min(MAX_BAND_BYTES)
             ));
         }
@@ -397,7 +419,7 @@ impl DyePlan {
         while let Some([x, y, cols, rows]) = pending.pop() {
             let band = tile_geometry(width, height, p, [x, y, cols, rows])?;
             let output_bytes = u64::from(cols) * u64::from(rows) * 12;
-            let fit = band_fit(&band, bound);
+            let fit = band_fit(&band, bound, p);
             if fit.is_ok() && output_bytes <= bound.min(MAX_BAND_BYTES) {
                 bands.push(band);
             } else if rows > 1 {
@@ -412,7 +434,7 @@ impl DyePlan {
                 let start = bands.len();
                 let mut cells = vec![band];
                 while let Some(piece) = cells.pop() {
-                    if band_fit(&piece, bound).is_ok() {
+                    if band_fit(&piece, bound, p).is_ok() {
                         bands.push(piece);
                     } else {
                         let [first, second] = split_cell_band(width, height, p, piece)?;
@@ -430,7 +452,7 @@ impl DyePlan {
         // Stable ordering keeps all cell partitions of a footprint together.
         bands.sort_by_key(|band| (band.output_y, band.output_x));
         for band in &bands {
-            for (max, bytes) in max_band_bytes.iter_mut().zip(band_bytes(band)) {
+            for (max, bytes) in max_band_bytes.iter_mut().zip(law_band_bytes(band, p)) {
                 *max = (*max).max(bytes);
             }
             max_output_bytes = max_output_bytes
@@ -517,7 +539,16 @@ fn spatial_uniform(
             band.rows,
             band.output_y,
         ],
-        ratios: [q_rp, q_x, q_y, 0],
+        ratios: [
+            q_rp,
+            q_x,
+            q_y,
+            if matches!(p.law, DyeFieldLaw::ScalarRecord { .. }) {
+                8
+            } else {
+                0
+            },
+        ],
         phase: [
             ox_int as i64 as u32,
             oy_int as i64 as u32,
@@ -527,12 +558,15 @@ fn spatial_uniform(
         fracs: [rp_hi, rp_lo, (ox - ox_int) as f32, (oy - oy_int) as f32],
         fracs2: [rx_hi, rx_lo, ry_hi, ry_lo],
         widths: [col_w as f32, row_w as f32, h as f32, pitch as f32],
-        mins: [
-            p.tables.tables[0].min,
-            p.tables.tables[1].min,
-            p.tables.tables[2].min,
-            0.0,
-        ],
+        mins: match &p.law {
+            DyeFieldLaw::Capacity(tables) => [
+                tables.tables[0].min,
+                tables.tables[1].min,
+                tables.tables[2].min,
+                0.0,
+            ],
+            DyeFieldLaw::ScalarRecord { .. } => [0.0; 4],
+        },
     }
 }
 
@@ -542,7 +576,7 @@ pub(super) struct SpatialPass {
     items: u32,
 }
 
-/// The G3 and G5 passes of one band.
+/// Remap/count (scalar) or remap (capacity), formation, and density readout.
 pub(super) struct DyeSpatialState {
     remap: SpatialPass,
     form_h: SpatialPass,
@@ -603,6 +637,15 @@ const PRODUCTION_SHADERS: SpatialShaders = SpatialShaders {
     ),
 };
 
+pub(super) fn formation_taps(backend: &WgpuBackend, p: &DyeGpuParams) -> wgpu::Buffer {
+    let taps: Vec<f32> = p.taps.iter().map(|&tap| tap as f32).collect();
+    backend.pipe.static_buffer(
+        "dye_spatial_taps",
+        bytemuck::cast_slice(&taps),
+        wgpu::BufferUsages::STORAGE,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_spatial_with(
     backend: &WgpuBackend,
@@ -617,6 +660,7 @@ fn build_spatial_with(
     formed: &wgpu::Buffer,
     output: &wgpu::Buffer,
     shaders: &SpatialShaders,
+    scalar: Option<(&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer)>,
 ) -> DyeSpatialState {
     let uniform = spatial_uniform(p, band, width, height);
     let params = backend.pipe.static_buffer(
@@ -624,27 +668,47 @@ fn build_spatial_with(
         bytemuck::bytes_of(&uniform),
         wgpu::BufferUsages::UNIFORM,
     );
-    let taps: Vec<f32> = p.taps.iter().map(|&tap| tap as f32).collect();
-    let taps = backend.pipe.static_buffer(
-        "dye_spatial_taps",
-        bytemuck::cast_slice(&taps),
-        wgpu::BufferUsages::STORAGE,
-    );
+    let taps = if let Some((_, _, taps)) = scalar {
+        taps.clone()
+    } else {
+        formation_taps(backend, p)
+    };
     let uniform_ty = wgpu::BufferBindingType::Uniform;
     let storage = wgpu::BufferBindingType::Storage { read_only: true };
     let writable = wgpu::BufferBindingType::Storage { read_only: false };
-    let remap = backend.cached_pipeline(shaders.remap, &[uniform_ty, storage, writable]);
+    let remap = if scalar.is_some() {
+        backend.cached_pipeline(
+            concat!(
+                include_str!("dye_count.wgsl"),
+                include_str!("dye_spatial_params.wgsl"),
+                include_str!("dye_scalar.wgsl")
+            ),
+            &[uniform_ty, storage, writable, uniform_ty, writable],
+        )
+    } else {
+        backend.cached_pipeline(shaders.remap, &[uniform_ty, storage, writable])
+    };
+    let remap_group = if let Some((record, status, _)) = scalar {
+        spatial_group(
+            backend,
+            "dye_scalar_remap_count",
+            &remap,
+            &[&params, source_layers, cell_layers, record, status],
+        )
+    } else {
+        spatial_group(
+            backend,
+            "dye_spatial_remap",
+            &remap,
+            &[&params, source_layers, cell_layers],
+        )
+    };
     let form_h = backend.cached_pipeline(shaders.form_h, &[uniform_ty, storage, writable, storage]);
     let form_v = backend.cached_pipeline(shaders.form_v, &[uniform_ty, storage, writable, storage]);
     let readout = backend.cached_pipeline(shaders.readout, &[uniform_ty, storage, writable]);
     DyeSpatialState {
         remap: SpatialPass {
-            group: spatial_group(
-                backend,
-                "dye_spatial_remap",
-                &remap,
-                &[&params, source_layers, cell_layers],
-            ),
+            group: remap_group,
             pipeline: remap,
             items: band.ext_cols * band.ext_rows,
         },
@@ -708,6 +772,39 @@ pub(super) fn build_spatial(
         formed,
         output,
         &PRODUCTION_SHADERS,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_scalar_spatial(
+    backend: &WgpuBackend,
+    p: &DyeGpuParams,
+    band: &DyeBand,
+    source_dims: [u32; 2],
+    input: &wgpu::Buffer,
+    cells: &wgpu::Buffer,
+    horizontal: &wgpu::Buffer,
+    formed: &wgpu::Buffer,
+    output: &wgpu::Buffer,
+    record: &wgpu::Buffer,
+    status: &wgpu::Buffer,
+    taps: &wgpu::Buffer,
+) -> DyeSpatialState {
+    build_spatial_with(
+        backend,
+        p,
+        band,
+        source_dims[0],
+        source_dims[1],
+        input,
+        cells,
+        cells,
+        horizontal,
+        formed,
+        output,
+        &PRODUCTION_SHADERS,
+        Some((record, status, taps)),
     )
 }
 
@@ -726,7 +823,13 @@ pub(super) fn build_band_readout(
     if response {
         uniform.mins = [0.0; 4];
     }
-    uniform.ratios[3] = u32::from(local) | (band.readout_flags << 1);
+    uniform.ratios[3] = u32::from(local)
+        | (band.readout_flags << 1)
+        | if !response && matches!(p.law, DyeFieldLaw::ScalarRecord { .. }) {
+            8
+        } else {
+            0
+        };
     let params = backend.pipe.static_buffer(
         "dye_response_readout_params",
         bytemuck::bytes_of(&uniform),
@@ -821,13 +924,13 @@ struct SpatialCase {
 impl SpatialCase {
     fn params(&self) -> DyeGpuParams {
         DyeGpuParams {
-            tables: DyeChannelTablesGpu {
+            law: spektrafilm_backend::dye_params::DyeFieldLaw::Capacity(DyeChannelTablesGpu {
                 tables: std::array::from_fn(|c| DyeChannelTableGpu {
                     min: self.mins[c] as f32,
                     ..Default::default()
                 }),
                 curves: Vec::new(),
-            },
+            }),
             cell_um: self.cell_um,
             taps: self.taps.clone(),
             source_pitch_um: self.source_pitch_um,
@@ -904,6 +1007,7 @@ impl SpatialCase {
             &formed,
             &output,
             shaders,
+            None,
         );
         let cell_readback = readback("dye_spatial_check_layers_readback", cell_bytes);
         let output_readback = readback("dye_spatial_check_output_readback", output_bytes);

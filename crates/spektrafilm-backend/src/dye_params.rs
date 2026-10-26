@@ -127,10 +127,21 @@ pub struct DyeReadoutGrid {
     pub height: u32,
 }
 
+/// Resolved field law. Scalar records carry no legacy capacity tables.
+#[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "One law per render; retain the existing inline capacity tables without another heap allocation"
+)]
+pub enum DyeFieldLaw {
+    Capacity(DyeChannelTablesGpu),
+    ScalarRecord { event_contribution_d_um2: f64 },
+}
+
 /// Packed representation of the model owner's resolved field parameters.
 #[derive(Clone, Debug)]
 pub struct DyeGpuParams {
-    pub tables: DyeChannelTablesGpu,
+    pub law: DyeFieldLaw,
     pub cell_um: f64,
     pub taps: Vec<f64>,
     pub source_pitch_um: f64,

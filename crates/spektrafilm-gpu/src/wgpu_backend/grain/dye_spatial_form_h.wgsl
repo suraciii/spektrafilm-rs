@@ -22,14 +22,13 @@ fn main(
     let ci = index % cols;
     let row = index / cols;
     let d = p.tile.x;
-    var acc = vec3<f32>(0.0);
-    for (var t = 0u; t <= 2u * d; t = t + 1u) {
-        let src = (row * p.cell_rect.z + (ci + 2u * d - t)) * 3u;
-        acc = acc + taps[t] * vec3<f32>(
-            cells[src], cells[src + 1u], cells[src + 2u]);
+    let components = select(3u, 1u, (p.ratios.w & 8u) != 0u);
+    for (var c = 0u; c < components; c++) {
+        var acc = 0.0;
+        for (var t = 0u; t <= 2u * d; t++) {
+            let src = (row * p.cell_rect.z + (ci + 2u * d - t)) * components + c;
+            acc = acc + taps[t] * cells[src];
+        }
+        horizontal[index * components + c] = acc;
     }
-    let dst = index * 3u;
-    horizontal[dst] = acc.x;
-    horizontal[dst + 1u] = acc.y;
-    horizontal[dst + 2u] = acc.z;
 }

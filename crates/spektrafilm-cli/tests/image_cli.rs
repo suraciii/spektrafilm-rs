@@ -1023,3 +1023,199 @@ fn standard_alias_renders_identically_and_emits_only_the_canonical_style() {
     );
     assert_eq!(report["scanner_provenance"]["model"], "lab_scan_v1");
 }
+
+#[test]
+fn scalar_record_render_persists_effective_configuration_and_rejects_unsupported_requests() {
+    let f = Fixture::new();
+    let scoped_command = |output: &str, backend: &str, film: &str, scan_output: &str| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
+        command
+            .arg("process")
+            .arg(f.0.join("input.png"))
+            .arg("--output")
+            .arg(f.0.join(output))
+            .args(["--backend", backend, "--data-dir"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
+            .args([
+                "--film", film,
+                "--route", "input > film > scan",
+                "--scan-output", scan_output,
+                "--input-color-space", "sRGB",
+                "--input-cctf-decoding", "true",
+                "--seed", "73",
+                "--set",
+                "enlarger.diffusion_filter.active=false,enlarger.lens_blur=0,print_render.glare.active=false,camera.film_format_mm=0.064,camera.auto_exposure=false,film_render.grain.engine=dye,film_render.grain.active=true,film_render.grain.v3_dye_support_um=1,film_render.glare.active=false,film_render.halation.active=false,scanner.lens_blur=0,scanner.unsharp_mask=[0,0],io.output_gamut_compress.algorithm=off",
+            ])
+            .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+            .env("RUST_LOG", "off");
+        for name in [
+            "SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS",
+            "SPEKTRAFILM_DATA_DIR",
+            "SPEKTRAFILM_BACKEND",
+            "SPEKTRAFILM_GRAIN_RECORD_Q",
+            "SPEKTRAFILM_GRAIN_V3_CELL_UM",
+            "SPEKTRAFILM_GRAIN_V3_EXPECTATION",
+            "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL",
+            "SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR",
+            "SPEKTRAFILM_GRAIN_V3_MASS_LAW",
+        ] {
+            command.env_remove(name);
+        }
+        command
+    };
+    let command =
+        |output: &str, backend: &str| scoped_command(output, backend, "kodak_trix", "direct_scan");
+    for (index, cell, expectation) in [(0, None, None), (1, Some("0.25"), Some("1"))] {
+        let output = format!("record-{index}.tif");
+        let report_path = f.0.join(format!("record-{index}.json"));
+        let mut request = command(&output, "cpu");
+        request
+            .env("SPEKTRAFILM_GRAIN_RECORD_Q", "0.2")
+            .arg("--diagnostics")
+            .arg(&report_path);
+        if let Some(cell) = cell {
+            request.env("SPEKTRAFILM_GRAIN_V3_CELL_UM", cell);
+        }
+        if let Some(expectation) = expectation {
+            request.env("SPEKTRAFILM_GRAIN_V3_EXPECTATION", expectation);
+        }
+        let result = request.output().unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(f.0.join(&output).exists());
+        let text = std::fs::read_to_string(report_path).unwrap();
+        spektrafilm_core::telemetry::Report::from_json(&text).unwrap();
+        let report: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(report["schema_version"], 1);
+        let record = &report["configuration"]["render"]["grain"]["record"];
+        assert_eq!(record["law"], "scalar_fixed_contribution");
+        assert_eq!(record["event_contribution_d_um2"], 0.2);
+        assert_eq!(record["support_um"], 1.0);
+        assert_eq!(record["cell_um"], if cell.is_some() { 0.25 } else { 0.5 });
+        assert_eq!(record["seed"], 73);
+        assert_eq!(record["expectation"], expectation.is_some());
+        assert_eq!(
+            record["optical_order"],
+            "formed_density_then_cell_response_then_fractional_integration"
+        );
+        assert!(
+            report["stages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|stage| { stage["name"] == "grain_v3_field" && stage["executor"] == "cpu" })
+        );
+    }
+    for (index, q) in ["", "0", "-1", "NaN", "inf", "bad"].into_iter().enumerate() {
+        let output = format!("invalid-q-{index}.tif");
+        let result = command(&output, "cpu")
+            .env("SPEKTRAFILM_GRAIN_RECORD_Q", q)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(!f.0.join(output).exists());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("SPEKTRAFILM_GRAIN_RECORD_Q"));
+    }
+    for (index, (name, value)) in [
+        ("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL", "0"),
+        ("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR", "2"),
+        ("SPEKTRAFILM_GRAIN_V3_MASS_LAW", "fixed"),
+        ("SPEKTRAFILM_GRAIN_V3_CELL_UM", "NaN"),
+        ("SPEKTRAFILM_GRAIN_V3_CELL_UM", "0.75"),
+        ("SPEKTRAFILM_GRAIN_V3_EXPECTATION", "unknown"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let output = format!("unsupported-record-{index}.tif");
+        let result = command(&output, "cpu")
+            .env("SPEKTRAFILM_GRAIN_RECORD_Q", "0.2")
+            .env(name, value)
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{name}={value}");
+        assert!(!f.0.join(output).exists());
+    }
+    for (index, edits) in [
+        "settings.use_scanner_lut=true",
+        "scanner.lens_blur=1",
+        "debug.deactivate_spatial_effects=true",
+        "film_render.grain.active=false",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let output = format!("unsupported-scope-{index}.tif");
+        let result = command(&output, "cpu")
+            .env("SPEKTRAFILM_GRAIN_RECORD_Q", "0.2")
+            .args(["--set", edits])
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{edits}");
+        assert!(!f.0.join(output).exists());
+    }
+    for (index, (film, scan_output)) in [
+        ("kodak_doublex", "negative_to_positive"),
+        ("kodak_portra_800", "direct_scan"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let output = format!("unsupported-material-readout-{index}.tif");
+        let result = scoped_command(&output, "cpu", film, scan_output)
+            .env("SPEKTRAFILM_GRAIN_RECORD_Q", "0.2")
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{film}/{scan_output}");
+        assert!(!f.0.join(output).exists());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("SPEKTRAFILM_GRAIN_RECORD_Q"));
+    }
+    let mut paired = Vec::new();
+    for backend in ["cpu", "gpu"] {
+        let output = format!("record-expectation-{backend}.tif");
+        let report_path = f.0.join(format!("record-expectation-{backend}.json"));
+        let result = command(&output, backend)
+            .env("SPEKTRAFILM_GRAIN_RECORD_Q", "0.2")
+            .env("SPEKTRAFILM_GRAIN_V3_EXPECTATION", "1")
+            .args([
+                "--bit-depth",
+                "32",
+                "--saving-cctf-encoding",
+                "false",
+                "--iters",
+                "2",
+            ])
+            .arg("--diagnostics")
+            .arg(&report_path)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{backend}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let report: Value = serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+        assert_eq!(
+            report["configuration"]["render"]["grain"]["record"]["expectation"],
+            true
+        );
+        assert_eq!(report["operation"]["outcome"], "succeeded");
+        if backend == "gpu" {
+            assert_eq!(report["execution"]["backend_selected"], "wgpu");
+            assert_eq!(report["execution"]["path"], "gpu_resident");
+            assert!(report["diagnostic_issues"].as_array().unwrap().is_empty());
+        }
+        paired.push(
+            image::open(f.0.join(output))
+                .unwrap()
+                .to_rgb32f()
+                .into_raw(),
+        );
+    }
+    for (cpu, gpu) in paired[0].iter().zip(&paired[1]) {
+        assert!((cpu - gpu).abs() <= 2e-4, "CPU {cpu} versus GPU {gpu}");
+    }
+}

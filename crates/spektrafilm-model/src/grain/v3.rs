@@ -16,6 +16,9 @@ use spektrafilm_math::stats::{FastStatsRng, cell_stream_index, poisson_exact};
 mod experiment_mass;
 use experiment_mass::MassLaw;
 
+mod record_field;
+pub use record_field::{RecordFieldParams, apply_record_field, apply_record_field_with_response};
+
 type CellResponse<'a> = &'a (dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + Sync);
 
 /// Production field pitch as a fraction of the support sigma (`h = sigma/2`).
@@ -1152,10 +1155,16 @@ fn remap_layers(
 /// grid, normalized to sum to one. Values outside the film bounds keep the
 /// nearest edge source pixel.
 fn axis_stencil(lo: f64, hi: f64, pitch: f64, extent: usize) -> Vec<(usize, f64)> {
+    let mut out = Vec::with_capacity(3);
+    fill_axis_stencil(&mut out, lo, hi, pitch, extent);
+    out
+}
+
+fn fill_axis_stencil(out: &mut Vec<(usize, f64)>, lo: f64, hi: f64, pitch: f64, extent: usize) {
+    out.clear();
     debug_assert!(extent > 0);
     let width = hi - lo;
     let end = extent as f64 * pitch;
-    let mut out = Vec::with_capacity(3);
     if lo < 0.0 {
         out.push((0, (hi.min(0.0) - lo) / width));
     }
@@ -1174,7 +1183,6 @@ fn axis_stencil(lo: f64, hi: f64, pitch: f64, extent: usize) -> Vec<(usize, f64)
     if hi > end {
         out.push((extent - 1, (hi - end.max(lo)) / width));
     }
-    out
 }
 
 /// Cells and normalized weights of one output footprint `[lo, hi)`.
